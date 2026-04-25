@@ -1,0 +1,23 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        rsync \
+        nfs-common \
+        open-iscsi \
+        util-linux \
+        kmod \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+        paramiko PySocks smbprotocol webdavclient3 boto3 pytest \
+        defusedxml keyring PyQt6 azure-storage-blob
+
+COPY . /app/
+
+# Default: drop into a shell so operators can run pytest subsets interactively
+# (`docker compose run --rm test-runner pytest tests/test_protocols.py -k nfs`).
+CMD ["bash"]

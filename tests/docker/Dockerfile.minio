@@ -1,0 +1,10 @@
+FROM minio/minio:latest
+
+ENV MINIO_ROOT_USER=minioadmin
+ENV MINIO_ROOT_PASSWORD=minioadmin123
+
+COPY minio-entrypoint.sh /usr/local/bin/minio-entrypoint.sh
+RUN chmod +x /usr/local/bin/minio-entrypoint.sh
+
+EXPOSE 9000 9001
+ENTRYPOINT ["/usr/local/bin/minio-entrypoint.sh"]

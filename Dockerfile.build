@@ -1,0 +1,87 @@
+# Cross-distro build image for axross one-file bundles.
+#
+# PyInstaller ELFs dynamically link against the glibc of the
+# BUILD host. A binary built on Arch (glibc 2.43) fails to start
+# on Ubuntu 22.04 LTS (glibc 2.35) with a ``GLIBC_2.43 not found``
+# ImportError. The fix is "build on the oldest glibc you want to
+# support, not the newest".
+#
+# Base choice: almalinux:9 (glibc 2.34).
+#
+# Why not quay.io/pypa/manylinux_2_34_x86_64? The pypa manylinux
+# images ship a STATIC-LINKED CPython at /opt/python, which
+# PyInstaller refuses to bundle ("Python was built without a
+# shared library"). AlmaLinux 9's distro python3.12 package is
+# shared-library, same glibc floor (2.34), same PyQt6-wheel
+# compatibility (manylinux_2_34 tag).
+#
+# Why not Debian bullseye (glibc 2.31)? PyQt6 only ships
+# manylinux_2_34 wheels (verified on PyPI 2026-04). On glibc 2.31,
+# pip refuses to install the wheel and falls back to a source
+# build that requires the full Qt toolchain — impractical.
+#
+# glibc 2.34 target runs on:
+#   Ubuntu 22.04+      (glibc 2.35)
+#   Debian 12+         (glibc 2.36)
+#   RHEL 9+ / Alma 9   (glibc 2.34 — exact match)
+#   Fedora 35+         (glibc 2.34+)
+#   Arch / openSUSE Tumbleweed (rolling, 2.34+)
+#
+# Does NOT cover Ubuntu 20.04 (glibc 2.31) or RHEL 8 (glibc 2.28).
+#
+# Build + run via scripts/build_bundle_docker.sh — don't invoke
+# this Dockerfile directly.
+
+FROM almalinux:9
+
+# System deps: python3.12 for the interpreter, binutils for
+# PyInstaller's objcopy / strip calls on the bundled ELF, and
+# glibc-devel so PyInstaller's bootloader can link against libc.
+RUN dnf install -y python3.12 python3.12-pip binutils glibc-devel \
+    && dnf clean all
+
+# Stable Python alias — the distro ships "python3.12" not "python".
+ENV PATH="/usr/bin:${PATH}"
+RUN ln -sf /usr/bin/python3.12 /usr/local/bin/python
+
+WORKDIR /build
+
+# Install Python-level deps in a dedicated layer so source-only
+# changes don't bust this cache.
+COPY pyproject.toml ./
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir \
+        "paramiko>=3" "cryptography>=41" "jsonschema>=4.21" \
+        "smbprotocol>=1.13" "boto3>=1.28" "webdavclient3>=3.14" \
+        "azure-storage-blob>=12.19" "azure-storage-file-share>=12.15" \
+        "msal>=1.26" "requests>=2.31" \
+        "google-api-python-client>=2.100" "google-auth-oauthlib>=1.1" \
+        "google-auth-httplib2>=0.2" "dropbox>=12.0" \
+        "pywinrm>=0.4" "impacket>=0.11" "exchangelib>=5.0" \
+        "adb-shell>=0.4" "py7zr>=0.20" \
+        "PyQt6==6.10.2" "PyQt6-Qt6==6.10.2" "PyQt6_sip>=13.11" \
+        "fusepy>=3.0" \
+        "pyinstaller>=6.0" "keyring>=24.0" "SecretStorage>=3.3"
+
+# Copy the application tree last so rebuilds on source changes
+# skip the pip-install layer.
+COPY core/ core/
+COPY ui/ ui/
+COPY models/ models/
+COPY build/ build/
+COPY main.py ./
+COPY scripts/ scripts/
+
+# Mark scripts as executable (COPY discards bit on some hosts).
+RUN chmod +x scripts/build_bundle.sh
+
+# Tell scripts/build_bundle.sh to use the distro interpreter
+# instead of looking for a .venv (we installed deps globally).
+ENV AXROSS_PYTHON="/usr/bin/python3.12"
+
+# Default entrypoint builds whatever flavour is passed via CMD.
+# scripts/build_bundle.sh writes to /build/dist/ inside the
+# container; the wrapper script on the host ``docker cp``s the
+# result out into the repo's dist/ dir.
+ENTRYPOINT ["bash", "scripts/build_bundle.sh"]
+CMD ["full"]

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- axross application icon.
+
+       Abstract: a central hub ("this machine") with four protocol
+       lines radiating to the corners, symbolising the multi-
+       protocol file manager. Palette matches the colourful icon
+       set: #4a90e2 (blue), #2ecc71 (green), #f39c12 (gold),
+       #e74c3c (red). Flat design, scalable to any size.
+  -->
+  <rect width="256" height="256" rx="48" fill="#1e1e2e"/>
+  <!-- central hub -->
+  <circle cx="128" cy="128" r="28" fill="#4a90e2" stroke="#cdd6f4" stroke-width="3"/>
+  <!-- four protocol endpoints + lines -->
+  <!-- top-left: SFTP (green) -->
+  <line x1="128" y1="128" x2="60" y2="60" stroke="#2ecc71" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="60" cy="60" r="16" fill="#2ecc71"/>
+  <!-- top-right: S3 (gold) -->
+  <line x1="128" y1="128" x2="196" y2="60" stroke="#f39c12" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="196" cy="60" r="16" fill="#f39c12"/>
+  <!-- bottom-right: WebDAV/cloud (blue-lighter) -->
+  <line x1="128" y1="128" x2="196" y2="196" stroke="#85c1e9" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="196" cy="196" r="16" fill="#85c1e9"/>
+  <!-- bottom-left: SMB/local (red) -->
+  <line x1="128" y1="128" x2="60" y2="196" stroke="#e74c3c" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="60" cy="196" r="16" fill="#e74c3c"/>
+  <!-- hub highlight -->
+  <circle cx="128" cy="128" r="12" fill="#cdd6f4"/>
+</svg>

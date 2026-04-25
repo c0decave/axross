@@ -1,0 +1,299 @@
+services:
+  # ── SSH servers ──────────────────────────────────────────────
+  ssh-alpha:
+    build:
+      context: .
+      dockerfile: Dockerfile.ssh
+      args:
+        USERNAME: alpha
+        PASSWORD: alpha123
+        HOSTNAME: alpha
+    hostname: alpha
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.10
+
+  ssh-beta:
+    build:
+      context: .
+      dockerfile: Dockerfile.ssh
+      args:
+        USERNAME: beta
+        PASSWORD: beta123
+        HOSTNAME: beta
+    hostname: beta
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.11
+
+  ssh-gamma:
+    build:
+      context: .
+      dockerfile: Dockerfile.ssh
+      args:
+        USERNAME: gamma
+        PASSWORD: gamma123
+        HOSTNAME: gamma
+    hostname: gamma
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.12
+
+  # ── SOCKS5 proxy ────────────────────────────────────────────
+  socks-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.socks
+    hostname: socksproxy
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.20
+
+  # ── HTTP CONNECT proxy ──────────────────────────────────────
+  http-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.httpproxy
+    hostname: httpproxy
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.21
+
+  # ── FTP server ─────────────────────────────────────────────
+  ftp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.ftp
+      args:
+        USERNAME: ftpuser
+        PASSWORD: ftp123
+    hostname: ftpserver
+    # pure-ftpd (stilliard image) is stable out of the box — no seccomp
+    # override needed.
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.30
+
+  # ── SMB server ─────────────────────────────────────────────
+  smb-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.smb
+      args:
+        USERNAME: smbuser
+        PASSWORD: smb123
+    hostname: smbserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.31
+
+  # ── WebDAV server ──────────────────────────────────────────
+  webdav-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.webdav
+      args:
+        USERNAME: davuser
+        PASSWORD: dav123
+    hostname: webdavserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.32
+
+  # ── S3 (MinIO) server ─────────────────────────────────────
+  s3-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
+    hostname: s3server
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.33
+
+  # ── Rsync server ─────────────────────────────────────────
+  rsync-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.rsync
+      args:
+        USERNAME: rsyncuser
+        PASSWORD: rsync123
+    hostname: rsyncserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.34
+
+  # ── NFS server ──────────────────────────────────────────
+  nfs-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.nfs
+    hostname: nfsserver
+    # kernel NFS needs privileged + a stable fs to export; tmpfs doesn't
+    # work (the kernel server refuses overlayfs), so we use a named
+    # volume which lands on the host's backing fs.
+    privileged: true
+    volumes:
+      - axross_nfs_share:/nfsshare
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.35
+
+  # ── IMAP server (Dovecot) ─────────────────────────────────
+  imap-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.imap
+      args:
+        USERNAME: imapuser
+        PASSWORD: imap123
+    hostname: imapserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.36
+
+  # ── Telnet server ─────────────────────────────────────────
+  telnet-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.telnet
+      args:
+        USERNAME: telnetuser
+        PASSWORD: telnet123
+    hostname: telnetserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.37
+
+  # ── FTPS server ────────────────────────────────────────────
+  ftps-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.ftps
+      args:
+        USERNAME: ftpsuser
+        PASSWORD: ftps123
+    hostname: ftpsserver
+    # pure-ftpd on alpine behaves well under default docker seccomp;
+    # no override needed.
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.38
+
+  # ── iSCSI target ─────────────────────────────────────────
+  iscsi-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.iscsi
+    hostname: iscsiserver
+    privileged: true
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.40
+
+  # ── Azurite (Azure Storage emulator) ──────────────────────
+  azurite-server:
+    image: mcr.microsoft.com/azure-storage/azurite
+    hostname: azuriteserver
+    # --skipApiVersionCheck lets Azurite accept requests from newer
+    # azure-storage-blob SDKs even if the image is slightly older than
+    # the SDK's pinned REST API version.
+    command: >-
+      azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+      --skipApiVersionCheck
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.39
+
+  # ── Tiny-disk FTP (quota-full / ENOSPC testing) ───────────
+  # Same image as ftp-server, but the user's home is a tmpfs
+  # capped at 16 MB. Writing more than that MUST surface ENOSPC
+  # to the client so tests for quota-exceeded can pin the
+  # expected behaviour.
+  tiny-ftp-server:
+    image: stilliard/pure-ftpd:latest
+    hostname: tinyftpserver
+    environment:
+      PUBLICHOST: 10.99.0.60
+      FTP_USER_NAME: tinyftp
+      FTP_USER_PASS: tiny123
+      FTP_USER_HOME: /home/tinyftp
+      FTP_PASSIVE_PORTS: 31000:31010
+    tmpfs:
+      - /home/tinyftp:size=16m,mode=0777
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.60
+
+  # ── Toxiproxy (network fault injection) ──────────────────
+  # Used for mid-transfer drop, rate-limit, latency, bandwidth tests.
+  # The admin API lives on :8474 inside the testnet. Test code
+  # dynamically defines proxies pointing at the backend server IPs and
+  # the test then connects via toxiproxy's listening port instead.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:latest
+    hostname: toxiproxy
+    # Listen on all interfaces for both the admin API and dynamic ports.
+    command: ["-host", "0.0.0.0", "-config", "/dev/null"]
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.50
+
+  # ── Test runner (our app) ───────────────────────────────────
+  # Host-networked variant for iSCSI tests only. The open-iscsi initiator
+  # uses NETLINK_ISCSI to talk to the kernel, which is not namespaced in a
+  # way that works from docker bridge networks — we must share the host
+  # netns. We keep the standard `test-runner` service on the bridge so all
+  # other protocol tests still use the deterministic 10.99.0.x addresses.
+  test-runner-iscsi:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.testrunner
+    privileged: true
+    network_mode: host
+    # Mount host kernel modules so modprobe/iscsi_tcp line-up matches.
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - /sys/kernel/config:/sys/kernel/config
+    command: ["bash"]
+
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.testrunner
+    privileged: true
+    depends_on:
+      - ssh-alpha
+      - ssh-beta
+      - ssh-gamma
+      - socks-proxy
+      - http-proxy
+      - ftp-server
+      - smb-server
+      - webdav-server
+      - s3-server
+      - rsync-server
+      - nfs-server
+      - imap-server
+      - telnet-server
+      - ftps-server
+      - iscsi-server
+      - azurite-server
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.100
+    volumes:
+      - ../../:/app:ro
+
+volumes:
+  axross_nfs_share:
+
+networks:
+  testnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.99.0.0/24

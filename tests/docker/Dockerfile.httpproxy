@@ -1,0 +1,11 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache tinyproxy
+
+RUN sed -i 's/^Port .*/Port 8888/' /etc/tinyproxy/tinyproxy.conf && \
+    sed -i 's/^Allow /#Allow /' /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 22" >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 443" >> /etc/tinyproxy/tinyproxy.conf
+
+EXPOSE 8888
+CMD ["tinyproxy", "-d"]

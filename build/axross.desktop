@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Axross
+GenericName=Multi-Protocol File Manager
+Comment=SFTP / SMB / S3 / WebDAV / Android / and many more — all in one pane
+Exec=axross
+Icon=axross
+Categories=FileManager;Network;Utility;System;
+Terminal=false
+StartupNotify=true
+StartupWMClass=axross
+Keywords=sftp;scp;ftp;smb;webdav;s3;rsync;nfs;adb;mtp;mcp;
