@@ -4,8 +4,25 @@ RUN apk add --no-cache tinyproxy
 
 RUN sed -i 's/^Port .*/Port 8888/' /etc/tinyproxy/tinyproxy.conf && \
     sed -i 's/^Allow /#Allow /' /etc/tinyproxy/tinyproxy.conf && \
-    echo "ConnectPort 22" >> /etc/tinyproxy/tinyproxy.conf && \
-    echo "ConnectPort 443" >> /etc/tinyproxy/tinyproxy.conf
+    echo "ConnectPort 22"   >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 443"  >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 21"   >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 445"  >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 110"  >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 143"  >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 995"  >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 993"  >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 873"  >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 9000" >> /etc/tinyproxy/tinyproxy.conf && \
+    echo "ConnectPort 5555" >> /etc/tinyproxy/tinyproxy.conf && \
+    # FTP PASV data ports — pure-ftpd container is configured to
+    # use 30000:30010, so the data-channel CONNECT must succeed
+    # for those.
+    for p in 30000 30001 30002 30003 30004 30005 30006 30007 30008 30009 30010; do \
+        echo "ConnectPort $p" >> /etc/tinyproxy/tinyproxy.conf; \
+    done
+# Note: port 23 (telnet) deliberately stays *disallowed* so the
+# existing 21d.4 test can keep verifying the proxy-refused path.
 
 EXPOSE 8888
 CMD ["tinyproxy", "-d"]

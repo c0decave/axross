@@ -47,6 +47,29 @@ def setup_logging(debug: bool = False) -> None:
         root.addHandler(console)
 
 
+def _load_app_icon():
+    """Build a multi-resolution :class:`PyQt6.QtGui.QIcon` from the
+    constellation PNGs that ship under ``resources/logo/``. We attach
+    every available size so taskbars / window managers can pick the
+    sharpest match. Falls back to an empty icon if the resources
+    tree is absent (slim wheel / repo-less install)."""
+    from PyQt6.QtGui import QIcon, QPixmap
+
+    icon = QIcon()
+    base = Path(__file__).resolve().parent / "resources" / "logo"
+    # The SVG works as a vector source; PyQt rasterises on demand
+    # when the SVG plugin is present. We add explicit PNGs too so
+    # the build still has crisp sizes if SVG plugin is unavailable.
+    svg = base / "axross-logo.svg"
+    if svg.exists():
+        icon.addFile(str(svg))
+    for size in (16, 32, 48, 64, 128, 256, 512):
+        png = base / f"axross-logo-{size}.png"
+        if png.exists():
+            icon.addPixmap(QPixmap(str(png)))
+    return icon
+
+
 def _install_excepthook() -> None:
     """Keep Qt from aborting the process on unhandled slot exceptions.
 
@@ -66,6 +89,16 @@ def _install_excepthook() -> None:
             return
         text = "".join(traceback.format_exception(exc_type, exc, tb))
         log.error("Unhandled exception:\n%s", text)
+        # REPL-originating exceptions: render inline + log only; never
+        # pop a dialog. The user is at an interactive prompt — a modal
+        # dialog interrupts the typing flow and is the wrong UX for a
+        # typo like ``axross.list_scrips()``.
+        walker = tb
+        while walker is not None:
+            fname = walker.tb_frame.f_code.co_filename
+            if fname == "<repl>" or fname.endswith("repl_widget.py"):
+                return
+            walker = walker.tb_next
         # Only pop a dialog when we're safely in the GUI thread AND
         # the app isn't already closing. Cross-thread modal dialogs
         # are undefined behaviour in Qt; showing a dialog during
@@ -99,6 +132,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Axross File Manager")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument(
+        "--script", default=None,
+        help="Run a Python script against the axross scripting surface "
+        "(headless, no GUI). Use '-' to read from stdin. Inside the script "
+        "the curated API is reachable as `axross.*`.",
+    )
+    parser.add_argument(
         "--mcp-server", action="store_true",
         help="Run as an MCP (Model Context Protocol) server on stdio instead "
         "of launching the GUI. Can also be enabled via AXROSS_MCP=1.",
@@ -107,6 +146,13 @@ def main() -> int:
         "--mcp-write", action="store_true",
         help="When running as an MCP server, expose the write tools "
         "(write_file, mkdir, remove). Off by default — read-only is safe.",
+    )
+    parser.add_argument(
+        "--mcp-allow-scripts", action="store_true",
+        help="Expose the script_list/read/write/run/delete tools to the "
+        "MCP client. script_run executes Python in the server process, "
+        "so this is gated behind its own opt-in (separate from "
+        "--mcp-write).",
     )
     parser.add_argument(
         "--mcp-http", default=None,
@@ -137,6 +183,16 @@ def main() -> int:
     # (headless MCP builds that drop it) — the helper is a no-op then.
     from core.client_identity import apply_paramiko_banner_override
     apply_paramiko_banner_override()
+
+    # Route tempfile to tmpfs if the user opted in and tmpfs is
+    # available. Affects every subsequent tempfile / NamedTemporaryFile
+    # / mkdtemp call (archive extracts, FUSE flush buffers, …) so
+    # short-lived temp data doesn't land on disk.
+    try:
+        from core.tmpfs_detect import apply_tempdir_preference
+        apply_tempdir_preference()
+    except Exception as exc:  # noqa: BLE001 — never block boot for this
+        log.debug("tmpfs tempdir routing skipped: %s", exc)
 
     # Feature flag: the MCP path must be explicitly opted into, either
     # via --mcp-server or via AXROSS_MCP={1,true,yes,on}. Anything
@@ -205,9 +261,33 @@ def main() -> int:
             M.ServerConfig(
                 backend=backend,
                 allow_write=allow_write,
+                allow_scripts=args.mcp_allow_scripts,
                 root=root,
             )
         )
+
+    if args.script:
+        log.info("Running Axross script %s", args.script)
+        from core.backend_registry import init_registry
+        init_registry()
+        if args.script == "-":
+            source = sys.stdin.read()
+            filename = "<stdin>"
+        else:
+            with open(args.script, "r", encoding="utf-8") as fh:
+                source = fh.read()
+            filename = args.script
+        import core.scripting as _scripting
+        ns: dict = {
+            "__name__": "__main__",
+            "__file__": filename,
+            "axross": _scripting,
+        }
+        try:
+            exec(compile(source, filename, "exec"), ns)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+        return 0
 
     log.info("Starting Axross")
     _install_excepthook()
@@ -215,6 +295,7 @@ def main() -> int:
     from core.backend_registry import init_registry
     init_registry()
 
+    from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication
 
     from ui.main_window import MainWindow
@@ -223,7 +304,17 @@ def main() -> int:
     app.setApplicationName("Axross")
     app.setOrganizationName("axross")
 
+    # Load the constellation logo at every standard icon size so the
+    # window manager / taskbar / Wayland xdg-toplevel pick the closest
+    # match without re-scaling. Falls back silently if the resources
+    # tree is missing (e.g. a slim wheel).
+    _icon = _load_app_icon()
+    if not _icon.isNull():
+        app.setWindowIcon(_icon)
+
     window = MainWindow()
+    if not _icon.isNull():
+        window.setWindowIcon(_icon)
     window.show()
 
     log.info("Application ready")

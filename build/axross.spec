@@ -69,6 +69,17 @@ hiddenimports += [
     "cryptography.hazmat.bindings.openssl.binding",
 ]
 
+# Slice 6 helper deps — small pure-Python wrappers loaded lazily by
+# core.net_helpers. PyInstaller doesn't always trace lazy imports
+# inside try/except ImportError, so be explicit.
+hiddenimports += [
+    "dnspython",
+    "dns.resolver",
+    "dns.reversename",
+    "puremagic",
+    "chardet",
+]
+
 # Keyring — credentials.py queries the OS-native backend via the
 # keyring package. Without these hidden imports, PyInstaller
 # bundles only the fallback "null" backend, and every profile
@@ -155,11 +166,18 @@ excludes += [
 # --------------------------------------------------------------------------
 # Data files
 # --------------------------------------------------------------------------
+# Bundled non-Python resources the runtime resolves relative to the
+# project root (= ``sys._MEIPASS`` inside a PyInstaller one-file build,
+# or ``dirname(dirname(__file__))`` otherwise). The (src, dest) tuple's
+# dest is RELATIVE to the bundle root, mirroring the source layout so
+# ``core.scripting._render_scripts_reference()`` etc. find them at
+# the same relative path inside and outside the bundle.
 datas = []
-# Anything under the project that isn't Python but the runtime
-# needs at startup goes here. We currently embed all icons as SVG
-# strings in ui/icon_provider.py, so there's nothing to ship as
-# sidecar — left for future use.
+_RESOURCES = os.path.join(PROJECT_ROOT, "resources")
+for sub in ("scripts", "wordlists", "logo", "icons"):
+    src = os.path.join(_RESOURCES, sub)
+    if os.path.isdir(src):
+        datas.append((src, f"resources/{sub}"))
 
 # --------------------------------------------------------------------------
 # Build graph

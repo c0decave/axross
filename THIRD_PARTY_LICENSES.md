@@ -25,7 +25,8 @@ for the distribution-layer license notice.
 | Extra | Package | SPDX license | Upstream |
 |---|---|---|---|
 | `[smb]` | smbprotocol | MIT | https://github.com/jborean93/smbprotocol |
-| `[webdav]` | webdavclient3 | MIT | https://github.com/ezhov-evgeny/webdav-client-python-3 |
+| `[webdav]` | requests | Apache-2.0 | https://requests.readthedocs.io |
+| `[webdav]` | defusedxml | PSF-2.0 | https://github.com/tiran/defusedxml |
 | `[s3]` | boto3 | Apache-2.0 | https://github.com/boto/boto3 |
 | `[azure]` | azure-storage-blob | MIT | https://github.com/Azure/azure-sdk-for-python |
 | `[azure]` | azure-storage-file-share | MIT | https://github.com/Azure/azure-sdk-for-python |
@@ -41,6 +42,7 @@ for the distribution-layer license notice.
 | `[exchange]` | exchangelib | BSD-2-Clause | https://github.com/ecederstrand/exchangelib |
 | `[adb]` | adb-shell | Apache-2.0 | https://github.com/JeffLIrion/adb_shell |
 | `[archive]` | py7zr | LGPL-2.1-or-later | https://github.com/miurahr/py7zr |
+| `[tftp]` | tftpy | MIT | https://github.com/msoulier/tftpy |
 
 ## System tools invoked via subprocess
 

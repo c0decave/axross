@@ -218,6 +218,129 @@ class IscsiSession:
         """Server-side copy on the mounted block device."""
         shutil.copy2(self._real(src), self._real(dst))
 
+    # ------------------------------------------------------------------
+    # iSCSI-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def targets_discover(portal_ip: str, *,
+                         portal_port: int = 3260,
+                         timeout: float = 10.0) -> list[dict]:
+        """Discover iSCSI targets advertised at ``portal_ip:portal_port``
+        via ``iscsiadm -m discovery -t sendtargets``. Static method so
+        a script can browse before logging in to a specific target.
+
+        Returns list of dicts ``{portal, iqn}`` — one entry per
+        target endpoint (a single IQN can advertise multiple
+        portals).
+
+        Requires ``iscsiadm`` (open-iscsi) on PATH and root/sudo
+        privileges (the SCSI mid-layer + initiator config require
+        them on Linux). Raises ``OSError`` when missing.
+        """
+        if "\r" in portal_ip or "\n" in portal_ip or " " in portal_ip:
+            raise ValueError(
+                "targets_discover portal_ip must not contain CR/LF/space"
+            )
+        binary = shutil.which("iscsiadm")
+        if not binary:
+            raise OSError(
+                "targets_discover requires the system 'iscsiadm' binary "
+                "(install open-iscsi)"
+            )
+        cmd = [
+            binary, "-m", "discovery",
+            "-t", "sendtargets",
+            "-p", f"{portal_ip}:{int(portal_port)}",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=float(timeout),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise OSError(f"iscsiadm discovery timed out: {exc}") from exc
+        if proc.returncode != 0:
+            raise OSError(
+                f"iscsiadm discovery rc={proc.returncode}: "
+                f"{(proc.stderr or proc.stdout).strip()[:300]}"
+            )
+        # Output lines: ``10.0.0.5:3260,1 iqn.2026-04.lab.axross:disk1``
+        out: list[dict] = []
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line or " " not in line:
+                continue
+            portal_part, iqn_part = line.split(" ", 1)
+            # ``portal,group``  — drop the group id.
+            portal_only = portal_part.split(",", 1)[0]
+            out.append({"portal": portal_only, "iqn": iqn_part.strip()})
+        return out
+
+    def portal_login(self) -> None:
+        """Explicit login to the configured target (already done by
+        ``connect()`` for normal flows). Returns None on success;
+        raises OSError with iscsiadm's stderr on failure.
+
+        Useful when a script wants to re-login after an iSCSI
+        connection drop without tearing down + rebuilding the
+        session."""
+        binary = shutil.which("iscsiadm")
+        if not binary:
+            raise OSError("portal_login requires iscsiadm (open-iscsi)")
+        cmd = [
+            binary, "-m", "node",
+            "-T", self._target_iqn,
+            "-p", f"{self._target_ip}:{self._port}",
+            "--login",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=30.0)
+        if proc.returncode != 0:
+            raise OSError(
+                f"iscsiadm login rc={proc.returncode}: "
+                f"{(proc.stderr or proc.stdout).strip()[:300]}"
+            )
+
+    def lun_list(self) -> list[dict]:
+        """List the SCSI LUNs the kernel currently sees from this
+        session. Returns dicts ``{device, size_bytes, scsi_id}``.
+
+        Walks ``lsblk -J`` to find block devices whose model / vendor
+        matches a typical iSCSI initiator pattern. Heuristic — the
+        kernel doesn't expose a clean "which devices belong to which
+        iSCSI session?" interface without parsing
+        ``/sys/class/iscsi_session/<id>/device/target*/...``.
+        """
+        binary = shutil.which("lsblk")
+        if not binary:
+            raise OSError("lun_list requires lsblk (util-linux)")
+        proc = subprocess.run(
+            [binary, "-J", "-O"],
+            capture_output=True, text=True, timeout=10.0,
+        )
+        if proc.returncode != 0:
+            raise OSError(
+                f"lsblk rc={proc.returncode}: "
+                f"{proc.stderr.strip()[:300]}"
+            )
+        import json as _json
+        try:
+            data = _json.loads(proc.stdout)
+        except _json.JSONDecodeError as exc:
+            raise OSError(f"lsblk JSON parse: {exc}") from exc
+        out: list[dict] = []
+        for d in data.get("blockdevices", []):
+            transport = (d.get("tran") or "").lower()
+            if transport != "iscsi":
+                continue
+            out.append({
+                "device": "/dev/" + d.get("name", ""),
+                "size_bytes": int(d.get("size") or 0),
+                "scsi_id": d.get("wwn") or "",
+            })
+        return out
+
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Stream-hash via the mounted block device. Kernel-cached
         so cheap compared to re-fetching over iSCSI."""

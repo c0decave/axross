@@ -98,6 +98,11 @@ class OneDriveSession:
         token_file: str = "~/.config/axross/onedrive_token.json",
         drive_type: str = "personal",
         site_url: str = "",
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if msal is None:
             raise ImportError(
@@ -122,6 +127,15 @@ class OneDriveSession:
         # docs/OPSEC.md #4.
         from core.client_identity import HTTP_USER_AGENT
         self._http.headers["User-Agent"] = HTTP_USER_AGENT
+
+        # Route Graph traffic through the configured proxy if any.
+        from core.proxy import build_requests_proxies
+        proxies = build_requests_proxies(
+            proxy_type, proxy_host, int(proxy_port or 0),
+            proxy_username, proxy_password,
+        )
+        if proxies:
+            self._http.proxies = dict(proxies)
 
         # MSAL scopes
         self._scopes = ["Files.ReadWrite.All", "User.Read"]
@@ -667,6 +681,206 @@ class OneDriveSession:
             self._graph_post(src_url, body)
         except Exception as exc:
             raise OSError(f"OneDrive copy {src} -> {dst} failed: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # OneDrive / SharePoint share verbs (slice 5 of API_GAPS)
+    # ------------------------------------------------------------------
+
+    def share(self, path: str, *,
+              link_type: str = "view",
+              scope: str = "anonymous",
+              password: str | None = None,
+              expires: str | None = None) -> str:
+        """Create a sharing link for the file/folder at ``path``.
+        Returns the URL.
+
+        ``link_type``: ``"view"`` (read-only), ``"edit"``, or
+                       ``"embed"``.
+        ``scope``:     ``"anonymous"`` (anyone with the link) or
+                       ``"organization"`` (signed-in tenant users).
+        ``password``:  optional access password (anonymous only).
+        ``expires``:   ISO-8601 datetime ``"2026-12-31T23:59:59Z"``;
+                       Graph rejects shares with past expiry.
+        """
+        # F40: paranoia — link_type / scope / password / expires
+        # all land verbatim in the JSON body that the Graph endpoint
+        # logs. CR/LF in any of them would smuggle log lines via
+        # JSON escapes (the requests JSON encoder escapes them but
+        # Microsoft Graph's audit log might not on round-trip).
+        for label, val in (("link_type", link_type), ("scope", scope),
+                           ("password", password or ""),
+                           ("expires", expires or "")):
+            if val and ("\r" in val or "\n" in val):
+                raise ValueError(
+                    f"OneDrive share: {label} must not contain CR/LF. F40."
+                )
+        url = (f"{GRAPH_BASE}{self._drive_prefix()}/root:"
+               f"{self._escape_path(path)}:/createLink")
+        body: dict = {"type": link_type, "scope": scope}
+        if password:
+            body["password"] = password
+        if expires:
+            body["expirationDateTime"] = expires
+        data = self._graph_post(url, body)
+        link = (data.get("link") or {}).get("webUrl", "")
+        if not link:
+            raise OSError(
+                f"OneDrive share({path}) returned no webUrl: {data}"
+            )
+        return link
+
+    def permissions_list(self, path: str) -> list[dict]:
+        """List every permission on a file: id, role(s), type, grantee
+        link/email."""
+        url = (f"{GRAPH_BASE}{self._drive_prefix()}/root:"
+               f"{self._escape_path(path)}:/permissions")
+        out: list[dict] = []
+        while url:
+            data = self._graph_get(url)
+            for p in data.get("value", []):
+                grantee = p.get("grantedTo") or p.get("grantedToV2") or {}
+                user = grantee.get("user") if isinstance(grantee, dict) else {}
+                out.append({
+                    "id": p.get("id", ""),
+                    "roles": p.get("roles", []),
+                    "type": "link" if p.get("link") else "user",
+                    "email": (user or {}).get("email", ""),
+                    "url": (p.get("link") or {}).get("webUrl", ""),
+                })
+            url = data.get("@odata.nextLink", "")
+        return out
+
+    # ------------------------------------------------------------------
+    # SharePoint-specific verbs (API_GAPS round 2)
+    # Only meaningful when drive_type=="sharepoint" — every method
+    # checks and raises a structured OSError otherwise.
+    # ------------------------------------------------------------------
+
+    def lists(self) -> list[dict]:
+        """Enumerate every SharePoint List in the connected site.
+        Returns dicts ``{id, name, display_name, list_type, item_count,
+        web_url}``. Includes both user-created lists and the
+        system-generated ones (Documents, Site Pages, …) — filter
+        on ``list_type`` to scope.
+        """
+        self._require_sharepoint("lists")
+        url = f"{GRAPH_BASE}/sites/{self._site_id}/lists"
+        out: list[dict] = []
+        while url:
+            data = self._graph_get(url)
+            for entry in data.get("value", []):
+                info = entry.get("list", {})
+                out.append({
+                    "id": entry.get("id", ""),
+                    "name": entry.get("name", ""),
+                    "display_name": entry.get("displayName", ""),
+                    "list_type": info.get("template", ""),
+                    "item_count": entry.get("@microsoft.graph.itemCount", 0),
+                    "web_url": entry.get("webUrl", ""),
+                })
+            url = data.get("@odata.nextLink", "")
+        return out
+
+    def items(self, list_id: str, *,
+              expand_fields: bool = True,
+              limit: int = 100) -> list[dict]:
+        """Fetch up to ``limit`` items from a SharePoint List by id.
+        ``expand_fields=True`` includes the ``fields`` (column values)
+        sub-object — usually what you want; the bare item record is
+        nearly empty without it.
+
+        Refuses CR/LF in ``list_id`` (interpolated into the URL).
+        """
+        self._require_sharepoint("items")
+        if "\r" in list_id or "\n" in list_id:
+            raise ValueError("items: list_id must not contain CR/LF")
+        url = (f"{GRAPH_BASE}/sites/{self._site_id}/lists/{list_id}/items"
+               f"?$top={int(limit)}")
+        if expand_fields:
+            url += "&$expand=fields"
+        out: list[dict] = []
+        while url and len(out) < int(limit):
+            data = self._graph_get(url)
+            for it in data.get("value", []):
+                out.append({
+                    "id": it.get("id", ""),
+                    "fields": it.get("fields", {}),
+                    "web_url": it.get("webUrl", ""),
+                    "created": it.get("createdDateTime", ""),
+                    "modified": it.get("lastModifiedDateTime", ""),
+                })
+                if len(out) >= int(limit):
+                    break
+            url = data.get("@odata.nextLink", "")
+        return out
+
+    def search(self, query: str, *,
+               entity_types: tuple[str, ...] = ("driveItem",),
+               limit: int = 25) -> list[dict]:
+        """Microsoft Search across the site's content. ``entity_types``
+        scopes to driveItem / listItem / list / site (any combination).
+        Returns simplified hit dicts.
+
+        Refuses CR/LF in ``query`` (the search payload is JSON; CR/LF
+        would otherwise be smuggled through the JSON encoder fine
+        but still surface in server-side logs as suspicious).
+        """
+        self._require_sharepoint("search")
+        if "\r" in query or "\n" in query:
+            raise ValueError("search: query must not contain CR/LF")
+        url = f"{GRAPH_BASE}/search/query"
+        body = {
+            "requests": [{
+                "entityTypes": list(entity_types),
+                "query": {"queryString": query},
+                "from": 0,
+                "size": int(limit),
+            }],
+        }
+        data = self._graph_post(url, body)
+        out: list[dict] = []
+        for resp in data.get("value", []):
+            for hit_container in resp.get("hitsContainers", []):
+                for hit in hit_container.get("hits", []):
+                    out.append({
+                        "id": hit.get("hitId", ""),
+                        "rank": hit.get("rank", 0),
+                        "summary": hit.get("summary", ""),
+                        "resource": hit.get("resource", {}),
+                    })
+                    if len(out) >= int(limit):
+                        return out
+        return out
+
+    def _require_sharepoint(self, verb: str) -> None:
+        if self._drive_type != "sharepoint":
+            raise OSError(
+                f"OneDriveSession.{verb}() is SharePoint-only; this "
+                f"session is drive_type={self._drive_type!r}"
+            )
+        if not self._site_id:
+            raise OSError(
+                f"OneDriveSession.{verb}(): SharePoint site_id not "
+                "resolved — was the session connected?"
+            )
+
+    def _graph_post(self, url: str, body: dict) -> dict:
+        """POST a JSON body to the Graph API. Mirrors _graph_get's
+        auth + error-mapping pattern."""
+        import requests
+        token = self._acquire_token()
+        resp = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"},
+            json=body, timeout=30,
+        )
+        if resp.status_code >= 400:
+            raise OSError(
+                f"Graph POST {url} → {resp.status_code}: "
+                f"{resp.text[:500]}"
+            )
+        return resp.json() if resp.content else {}
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return OneDrive's file.hashes.

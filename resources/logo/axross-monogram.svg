@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="axross monogram">
+  <title>axross — network-graph 'a' monogram</title>
+  <style>
+    .edge { stroke: #14B8A6; stroke-width: 2.4; fill: none; stroke-linecap: round; }
+    .node { fill: #0F172A; }
+    @media (prefers-color-scheme: dark) {
+      .node { fill: #F8FAFC; }
+    }
+  </style>
+  <!-- 'a'-shaped network: outer ring of nodes joined into the bowl + stem of a lowercase 'a' -->
+  <g>
+    <!-- bowl edges -->
+    <path class="edge" d="M20 40 Q20 22 32 22 Q44 22 44 40 Q44 50 32 50 Q20 50 20 40 Z"/>
+    <!-- stem (right side, like 'a') -->
+    <path class="edge" d="M44 22 L44 50"/>
+    <!-- crossing strand to suggest 'across / proxy' -->
+    <path class="edge" d="M14 14 L50 50" stroke-dasharray="2 5"/>
+  </g>
+  <!-- nodes at vertices -->
+  <g>
+    <circle class="node" cx="20" cy="40" r="3"/>
+    <circle class="node" cx="32" cy="22" r="3"/>
+    <circle class="node" cx="44" cy="40" r="3"/>
+    <circle class="node" cx="32" cy="50" r="3"/>
+    <circle class="node" cx="14" cy="14" r="2.4"/>
+    <circle class="node" cx="50" cy="50" r="2.4"/>
+  </g>
+</svg>

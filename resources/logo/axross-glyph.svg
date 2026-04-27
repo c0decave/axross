@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="axross glyph">
+  <title>axross — multi-pane crossing glyph</title>
+  <style>
+    .pane { fill: none; stroke: #0F172A; stroke-width: 2.4; }
+    .arrow { stroke: #14B8A6; stroke-width: 2.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    @media (prefers-color-scheme: dark) {
+      .pane { stroke: #F8FAFC; }
+    }
+  </style>
+  <!-- four-pane split, mimicking the multi-pane file manager -->
+  <rect class="pane" x="6"  y="6"  width="22" height="22" rx="2"/>
+  <rect class="pane" x="36" y="6"  width="22" height="22" rx="2"/>
+  <rect class="pane" x="6"  y="36" width="22" height="22" rx="2"/>
+  <rect class="pane" x="36" y="36" width="22" height="22" rx="2"/>
+  <!-- crossing arrows between panes -->
+  <path class="arrow" d="M28 17 L36 17"/>
+  <path class="arrow" d="M34 14 L36 17 L34 20"/>
+  <path class="arrow" d="M17 28 L17 36"/>
+  <path class="arrow" d="M14 34 L17 36 L20 34"/>
+  <!-- diagonal cross — the 'X' in axross -->
+  <path class="arrow" d="M28 28 L36 36"/>
+  <path class="arrow" d="M36 28 L28 36"/>
+</svg>

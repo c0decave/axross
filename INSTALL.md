@@ -46,7 +46,7 @@ in the Connection Manager with an inline `pip install` hint.
 
 ```bash
 pip install -e ".[smb]"       # SMB / CIFS + DFS-N (smbprotocol)
-pip install -e ".[webdav]"    # WebDAV (webdavclient3)
+pip install -e ".[webdav]"    # WebDAV (requests + defusedxml — pure-Python)
 pip install -e ".[s3]"        # S3-compatible (boto3)
 pip install -e ".[azure]"     # Azure Blob + Azure Files (azure-storage-*)
 pip install -e ".[onedrive]"  # OneDrive + SharePoint (msal, requests)

@@ -10,8 +10,31 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+# The module-level constants are kept so existing test fixtures that
+# do ``BM.BOOKMARKS_FILE = Path("/tmp/x.json")`` to redirect the
+# store keep working (BookmarkSchemaTests in test_hardening_regressions
+# uses that pattern). Their import-time values are snapshotted in
+# ``_DEFAULT_*`` below; the helpers prefer a live re-read from
+# ``Path.home()`` ONLY when the public constant still equals its
+# snapshot, so a HOME-patch (mock.patch.dict(os.environ, {"HOME":
+# ...})) also takes effect — that's what BundledScriptsTests relies
+# on.
 CONFIG_DIR = Path.home() / ".config" / "axross"
 BOOKMARKS_FILE = CONFIG_DIR / "bookmarks.json"
+_DEFAULT_CONFIG_DIR = CONFIG_DIR
+_DEFAULT_BOOKMARKS_FILE = BOOKMARKS_FILE
+
+
+def _config_dir() -> Path:
+    if CONFIG_DIR != _DEFAULT_CONFIG_DIR:
+        return CONFIG_DIR
+    return Path.home() / ".config" / "axross"
+
+
+def _bookmarks_file() -> Path:
+    if BOOKMARKS_FILE != _DEFAULT_BOOKMARKS_FILE:
+        return BOOKMARKS_FILE
+    return _config_dir() / "bookmarks.json"
 
 
 def _sanitize_icon_name(value: object) -> str:
@@ -58,10 +81,11 @@ class BookmarkManager:
         self.load()
 
     def load(self) -> None:
-        if not BOOKMARKS_FILE.exists():
+        bf = _bookmarks_file()
+        if not bf.exists():
             return
         try:
-            data = json.loads(BOOKMARKS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(bf.read_text(encoding="utf-8"))
             if not isinstance(data, list):
                 raise TypeError("Bookmarks JSON must be a list")
             self._bookmarks = [
@@ -88,7 +112,8 @@ class BookmarkManager:
             log.error("Failed to load bookmarks: %s", e)
 
     def save(self) -> None:
-        target_dir = BOOKMARKS_FILE.parent
+        bf = _bookmarks_file()
+        target_dir = bf.parent
         target_dir.mkdir(parents=True, exist_ok=True)
         try:
             data = [asdict(b) for b in self._bookmarks]
@@ -106,8 +131,8 @@ class BookmarkManager:
                 with os.fdopen(fd, "w", encoding="utf-8") as tmp:
                     fd = -1
                     tmp.write(payload)
-                os.replace(temp_name, BOOKMARKS_FILE)
-                os.chmod(BOOKMARKS_FILE, 0o600)
+                os.replace(temp_name, bf)
+                os.chmod(bf, 0o600)
             except BaseException:
                 if fd != -1:
                     try:

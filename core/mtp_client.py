@@ -432,6 +432,61 @@ class MtpSession(LocalFS):
         private attribute."""
         return self._mount_dir
 
+    # ------------------------------------------------------------------
+    # MTP-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    def device_info(self) -> dict:
+        """Return what we know about the connected MTP device:
+        ``{vendor_id, product_id, label, mounter, mount_dir,
+        device_id}``. Most fields come from the ``MtpDevice`` we were
+        constructed with — MTP has no protocol-level richer-than-this
+        device-info query without dropping into libmtp directly."""
+        return {
+            "device_id": self._device_id,
+            "label": self._device_label,
+            "mounter": self._mounter,
+            "mount_dir": self._mount_dir,
+        }
+
+    def storage_list(self) -> list[dict]:
+        """List the storage areas the device exposes (Internal
+        storage, SD card, …). After mount, each top-level directory
+        in ``mount_dir`` corresponds to one MTP storage. Returns
+        ``{name, path, total_bytes, free_bytes}`` per storage.
+
+        ``total_bytes`` / ``free_bytes`` may be 0 when the underlying
+        FUSE mount doesn't expose statvfs through the storage root —
+        on those mounts the user sees only the names.
+        """
+        import os as _os
+        out: list[dict] = []
+        try:
+            entries = sorted(_os.listdir(self._mount_dir))
+        except OSError as exc:
+            raise OSError(
+                f"MTP storage_list: cannot read mount {self._mount_dir!r}: {exc}"
+            ) from exc
+        for name in entries:
+            full = _os.path.join(self._mount_dir, name)
+            if not _os.path.isdir(full):
+                continue
+            try:
+                stat = _os.statvfs(full)
+                block_size = stat.f_frsize or stat.f_bsize or 0
+                total = (stat.f_blocks or 0) * block_size
+                free = (stat.f_bavail or 0) * block_size
+            except OSError:
+                total = 0
+                free = 0
+            out.append({
+                "name": name,
+                "path": full,
+                "total_bytes": int(total),
+                "free_bytes": int(free),
+            })
+        return out
+
 
 __all__ = [
     "LIST_DEVICES_TIMEOUT_SECONDS",

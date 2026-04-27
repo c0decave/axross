@@ -113,6 +113,11 @@ class S3Session:
         access_key: str = "",
         secret_key: str = "",
         endpoint: str | None = None,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if boto3 is None:
             raise ImportError(
@@ -136,7 +141,18 @@ class S3Session:
         }
         # Replace botocore's default User-Agent so requests don't
         # advertise Boto3/python/OS/glibc. See docs/OPSEC.md #4.
-        base_config = BotoConfig(user_agent=HTTP_USER_AGENT)
+        # Plus optional per-profile proxy via botocore's `proxies`
+        # config field (accepts {'http': '...', 'https': '...'} as
+        # produced by ``core.proxy.build_requests_proxies``).
+        from core.proxy import build_requests_proxies
+        proxies = build_requests_proxies(
+            proxy_type, proxy_host, int(proxy_port or 0),
+            proxy_username, proxy_password,
+        )
+        base_kwargs: dict = {"user_agent": HTTP_USER_AGENT}
+        if proxies:
+            base_kwargs["proxies"] = dict(proxies)
+        base_config = BotoConfig(**base_kwargs)
         if access_key and secret_key:
             kwargs["aws_access_key_id"] = access_key
             kwargs["aws_secret_access_key"] = secret_key
@@ -551,6 +567,59 @@ class S3Session:
             )
         except Exception as exc:
             raise OSError(f"S3 copy {src} -> {dst} failed: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # S3-specific verbs (slice 5 of API_GAPS)
+    # ------------------------------------------------------------------
+
+    def presign(self, path: str, *, expires: int = 3600,
+                method: str = "get_object",
+                response_headers: dict | None = None) -> str:
+        """Return a pre-signed URL for ``path`` valid for ``expires``
+        seconds. ``method`` is the boto3 ``ClientMethod`` name —
+        ``get_object`` for download links, ``put_object`` for
+        upload-anywhere flows, ``delete_object``, etc.
+
+        ``response_headers`` lets you override the ``Content-*``
+        headers the bucket will return when the URL is fetched
+        (handy for forcing a download filename:
+        ``{"ResponseContentDisposition": 'attachment; filename="x.zip"'}``).
+        """
+        params: dict = {"Bucket": self._bucket, "Key": self._to_key(path)}
+        if response_headers:
+            params.update(response_headers)
+        return self._s3.generate_presigned_url(
+            method, Params=params, ExpiresIn=int(expires),
+        )
+
+    def versioning_status(self) -> str:
+        """Return the bucket's versioning state: ``Enabled``,
+        ``Suspended``, or ``Disabled`` (boto3 returns ``""`` /
+        absent for never-enabled buckets — we normalise that)."""
+        try:
+            resp = self._s3.get_bucket_versioning(Bucket=self._bucket)
+        except Exception as exc:
+            raise OSError(f"S3 get_bucket_versioning: {exc}") from exc
+        return resp.get("Status") or "Disabled"
+
+    def lifecycle_get(self) -> list[dict]:
+        """Return the bucket's lifecycle rules as a list of dicts.
+        Empty list if no policy is configured (boto3 raises
+        ``NoSuchLifecycleConfiguration`` in that case; we map it to
+        ``[]`` so a script can branch on truthiness)."""
+        try:
+            resp = self._s3.get_bucket_lifecycle_configuration(
+                Bucket=self._bucket,
+            )
+            return resp.get("Rules", []) or []
+        except Exception as exc:  # noqa: BLE001
+            # NoSuchLifecycleConfiguration → no rules. Anything else
+            # surfaces as OSError with the original message.
+            err = getattr(exc, "response", {}) or {}
+            code = err.get("Error", {}).get("Code") if isinstance(err, dict) else ""
+            if code == "NoSuchLifecycleConfiguration":
+                return []
+            raise OSError(f"S3 get_bucket_lifecycle: {exc}") from exc
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return the object ETag.

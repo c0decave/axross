@@ -1,0 +1,57 @@
+FROM debian:bookworm-slim
+
+# Net-SNMP daemon for the axross integration suite.
+# Ships canned values for the standard system OIDs so the SNMP
+# helpers can be live-tested deterministically.
+#
+# KNOWN ISSUE (2026-04): on some Linux + Docker combinations
+# net-snmp 5.9.x exits at startup with "Error opening specified
+# endpoint" before the bind syscall — the suspect is a transport-
+# layer init failure, not a privilege one (it happens with -u root
+# -g root and even when listening on an unprivileged port).
+# When that happens, the container is harmless but useless; the
+# axross test suite skips the SNMP live tests automatically.
+# A working alternative (when this fires) is to run snmpsim outside
+# the container. Tracked in axross-dev-notes/.
+#
+# Communities:
+#   "public"   — read-only access to every OID
+#   "private"  — read-write access (used by snmp_set tests)
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+        snmpd \
+ && rm -rf /var/lib/apt/lists/*
+
+# Hand-write a minimal snmpd.conf — the Debian default refuses every
+# remote query and only listens on localhost. We open it up to the
+# test subnet (10.99.0.0/24) and grant rwcommunity for SET tests.
+RUN cat > /etc/snmp/snmpd.conf <<'EOF'
+# Listen on UDP/1161 — Docker's default seccomp profile blocks
+# net-snmp's bind() to privileged ports inside this CAP_NET_BIND
+# environment. The non-priv port keeps the container portable
+# across docker variants (Podman, rootless, …) without needing
+# extra capabilities.
+agentaddress udp:0.0.0.0:1161
+
+# Read-only community for the test subnet
+rocommunity public 10.99.0.0/24
+# Read-write community for snmp_set round-trip tests
+rwcommunity private 10.99.0.0/24
+
+# System OIDs — surfaced via ``axross.snmp_get`` tests
+sysLocation    "axross-test-lab"
+sysContact     "axross-tests <noreply@axross.test>"
+sysName        "snmpd-fake"
+sysServices    72
+EOF
+
+EXPOSE 1161/udp
+
+# snmpd's default behaviour is to fork + drop privileges to a
+# Debian-snmp user that can't bind even to high ports without
+# explicit CAP_NET_BIND. We force the daemon to stay as root
+# (-u root -g root) and run foreground (-f) so Docker doesn't
+# see a phantom-exit on start.
+CMD ["/usr/sbin/snmpd", "-f", "-Lo", "-u", "root", "-g", "root", \
+     "-Dudp_base", "-c", "/etc/snmp/snmpd.conf"]

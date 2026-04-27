@@ -457,6 +457,7 @@ class MainWindow(QMainWindow):
         self._setup_transfer_dock()
         self._setup_terminal_dock()
         self._setup_log_dock()
+        self._setup_console_dock()
         self._setup_bookmark_sidebar()
         self._apply_theme(self._current_theme)
         # Auto-load persistent visual settings (monochrome-icon
@@ -542,6 +543,23 @@ class MainWindow(QMainWindow):
 
         add_local_action = view_menu.addAction("Add &Local Pane")
         add_local_action.triggered.connect(self._add_local_pane)
+
+        # Layout-preset submenu + cycle hotkey. The submenu lists each
+        # preset; the hotkey rotates through them in PRESET_ORDER.
+        layout_menu = view_menu.addMenu("&Layout Preset")
+        from ui.layout_presets import PRESET_ORDER
+        for preset_name in PRESET_ORDER:
+            act = layout_menu.addAction(preset_name)
+            act.triggered.connect(
+                lambda _checked, n=preset_name: self.apply_layout_preset(n)
+            )
+        layout_menu.addSeparator()
+        cycle_fwd = layout_menu.addAction("Cycle Next")
+        cycle_fwd.setShortcut("Ctrl+Alt+L")
+        cycle_fwd.triggered.connect(lambda: self.cycle_layout_preset(forward=True))
+        cycle_back = layout_menu.addAction("Cycle Previous")
+        cycle_back.setShortcut("Ctrl+Alt+Shift+L")
+        cycle_back.triggered.connect(lambda: self.cycle_layout_preset(forward=False))
 
         view_menu.addSeparator()
 
@@ -802,6 +820,16 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._log_dock)
         self.tabifyDockWidget(self._terminal_dock, self._log_dock)
         self._transfer_dock.raise_()  # Keep transfer dock visible by default
+
+    def _setup_console_dock(self) -> None:
+        from ui.repl_widget import ConsoleDock
+        self._console_dock = ConsoleDock(self)
+        self._install_dock_titlebar(
+            self._console_dock, "Console", "code",
+        )
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
+        self.tabifyDockWidget(self._log_dock, self._console_dock)
+        self._transfer_dock.raise_()
         self._populate_dock_view_menu()
         self._wire_dock_activity_indicators()
 
@@ -817,6 +845,7 @@ class MainWindow(QMainWindow):
             self._transfer_dock: False,
             self._terminal_dock: False,
             self._log_dock: False,
+            self._console_dock: False,
         }
         for dock in self._dock_has_activity:
             dock.activity.connect(  # type: ignore[attr-defined]
@@ -878,6 +907,7 @@ class MainWindow(QMainWindow):
                         self._transfer_dock.windowTitle(),
                         self._terminal_dock.windowTitle(),
                         self._log_dock.windowTitle(),
+                        self._console_dock.windowTitle(),
                     ):
                         tabbar.setTabTextColor(i, default)
 
@@ -888,6 +918,7 @@ class MainWindow(QMainWindow):
         self._dock_view_menu.addAction(self._transfer_dock.toggleViewAction())
         self._dock_view_menu.addAction(self._terminal_dock.toggleViewAction())
         self._dock_view_menu.addAction(self._log_dock.toggleViewAction())
+        self._dock_view_menu.addAction(self._console_dock.toggleViewAction())
         # Bookmark sidebar toggle + F12 hotkey. Uses the dock's
         # built-in toggleViewAction so show / hide / close all stay
         # in sync — closing the panel via its X button flips the
@@ -1161,6 +1192,97 @@ class MainWindow(QMainWindow):
     def _close_active_pane(self) -> None:
         if self._active_pane:
             self._close_pane(self._active_pane)
+
+    # ------------------------------------------------------------------
+    # Layout presets — see ui/layout_presets.py
+    # ------------------------------------------------------------------
+
+    def _preset_make_file_pane(self) -> "FilePaneWidget":
+        """Factory hook for layout_presets.apply_preset — returns a
+        fresh FilePaneWidget on LocalFS, fully wired into the active-
+        pane / drop-target machinery just like a manual split would."""
+        pane = FilePaneWidget(LocalFS())
+        pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
+        pane.transfer_requested.connect(
+            lambda paths, p=pane: self._transfer_from_pane(p, paths)
+        )
+        pane.move_requested.connect(
+            lambda paths, p=pane: self._move_from_pane(p, paths)
+        )
+        pane.drop_transfer_requested.connect(self._on_drop_transfer)
+        pane.bookmark_requested.connect(self._on_bookmark_request)
+        pane.close_requested.connect(lambda p=pane: self._close_pane(p))
+        pane.set_as_target_requested.connect(lambda p=pane: self._set_target_pane(p))
+        pane.pane_drop_requested.connect(self._on_pane_drop)
+        pane.open_bookmarks_requested.connect(self._show_bookmarks_popup)
+        pane.cycle_pane_requested.connect(
+            lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
+        )
+        self._panes.append(pane)
+        return pane
+
+    def _preset_make_terminal_pane(self, profile_name: str) -> "TerminalPaneWidget":
+        """Factory hook for layout_presets — returns a TerminalPaneWidget.
+        ``profile_name`` is "local" for a local shell or a saved
+        connection profile name for an SSH/Telnet session."""
+        if profile_name == "local":
+            term = TerminalPaneWidget(label="Local Shell")
+        else:
+            profile = self._profile_manager.get(profile_name)
+            term = TerminalPaneWidget(
+                label=profile_name if profile else "Local Shell",
+                profile=profile,
+                connection_manager=self._connection_manager,
+            )
+        self._terminal_panes.append(term)
+        return term
+
+    def _preset_tear_down_existing(self) -> None:
+        """Close every file + terminal pane before applying a new
+        preset so we don't leak backend sessions / SSH transports."""
+        for pane in list(self._panes):
+            try:
+                pane.close()
+            except Exception:  # noqa: BLE001
+                pass
+        for term in list(self._terminal_panes):
+            try:
+                term.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._panes.clear()
+        self._terminal_panes.clear()
+        self._pane_profiles.clear()
+        self._pane_passwords.clear()
+        self._pane_key_passphrases.clear()
+        self._active_pane = None
+        self._target_pane = None
+
+    def _refresh_after_preset(self) -> None:
+        """Settle internal state after a fresh preset takes effect:
+        pick the first file pane (if any) as active, refresh styles."""
+        if self._panes:
+            self._set_active_pane(self._panes[0])
+        if len(self._panes) >= 2:
+            self._target_pane = self._panes[1]
+        self._refresh_pane_styles()
+
+    def apply_layout_preset(self, name: str) -> None:
+        """Public entry point — set the central layout from a named
+        preset (see :mod:`ui.layout_presets`)."""
+        from ui.layout_presets import apply_preset
+        apply_preset(self, name)
+
+    def cycle_layout_preset(self, *, forward: bool = True) -> None:
+        """Rotate through the built-in preset list. Wired to
+        ``Ctrl+Alt+L`` (forward) and ``Ctrl+Alt+Shift+L`` (back)."""
+        from ui.layout_presets import cycle_preset
+        new_name = cycle_preset(self, forward=forward)
+        # Lightweight statusbar hint so the user sees what they cycled to.
+        try:
+            self.statusBar().showMessage(f"Layout: {new_name}", 2000)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _close_pane(self, pane: FilePaneWidget) -> None:
         if pane not in self._panes or len(self._panes) <= 1:

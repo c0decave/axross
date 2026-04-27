@@ -31,6 +31,46 @@ except ImportError:
     ShareDirectoryClient = None  # type: ignore[assignment,misc]
 
 
+def _axross_azure_transport_kwargs(
+    proxy_type: str,
+    proxy_host: str,
+    proxy_port: int,
+    proxy_username: str,
+    proxy_password: str,
+) -> dict:
+    """Build the kwargs azure-sdk Service constructors need to route
+    every HTTP call through a SOCKS / HTTP proxy.
+
+    Returns a dict containing ``transport=...`` keyed to a
+    ``RequestsTransport`` whose underlying ``requests.Session`` has
+    the proxies dict pre-set (built via ``core.proxy.build_requests_proxies``).
+    Returns ``{}`` when no proxy is configured.
+
+    Why a custom transport: azure-sdk's pipeline uses its own
+    HTTP transport abstraction; setting ``proxies`` on a stray
+    requests.Session inside the SDK doesn't propagate. The
+    RequestsTransport class accepts a pre-built ``session=`` so we
+    can configure it before handing it over.
+    """
+    from core.proxy import build_requests_proxies
+    proxies = build_requests_proxies(
+        proxy_type, proxy_host, proxy_port, proxy_username, proxy_password,
+    )
+    if not proxies:
+        return {}
+    try:
+        import requests as _requests
+        from azure.core.pipeline.transport import RequestsTransport
+    except ImportError:
+        # Either azure-sdk or requests missing — caller already
+        # checks BlobServiceClient/ShareServiceClient before we get
+        # here, so silently fall back to the unproxied default.
+        return {}
+    sess = _requests.Session()
+    sess.proxies = dict(proxies)
+    return {"transport": RequestsTransport(session=sess)}
+
+
 # ---------------------------------------------------------------------------
 # _SpooledWriter helpers
 # ---------------------------------------------------------------------------
@@ -131,6 +171,11 @@ class AzureBlobSession:
         account_key: str = "",
         container: str = "",
         sas_token: str = "",
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if BlobServiceClient is None:
             raise ImportError(
@@ -142,14 +187,33 @@ class AzureBlobSession:
 
         # Replace azure-sdk's verbose User-Agent (which includes glibc
         # version and Python build info) with a neutral browser UA.
-        # See docs/OPSEC.md #4.
+        # See docs/OPSEC.md #4. Per-profile proxy goes via a custom
+        # RequestsTransport whose underlying requests.Session has the
+        # proxies dict pre-set; azure's pipeline then routes every
+        # request through it.
         from core.client_identity import HTTP_USER_AGENT
         ua_kwargs = {"user_agent": HTTP_USER_AGENT, "user_agent_overwrite": True}
+        ua_kwargs.update(_axross_azure_transport_kwargs(
+            proxy_type, proxy_host, int(proxy_port or 0),
+            proxy_username, proxy_password,
+        ))
 
+        # Stash the account-key locally so sas_url() (which signs
+        # SAS tokens client-side with the symmetric key) can reach
+        # it without re-prompting. None when token-based auth is in
+        # use; sas_url raises a structured OSError in that case.
+        self._account_key = account_key or ""
         if connection_string:
             self._service = BlobServiceClient.from_connection_string(
                 connection_string, **ua_kwargs,
             )
+            # Pull the account key out of the connection string for
+            # sas_url; the SDK exposes it on the client as
+            # ``credential.account_key`` after parsing.
+            try:
+                self._account_key = self._service.credential.account_key or ""
+            except AttributeError:
+                pass
         elif account_name and sas_token:
             account_url = f"https://{account_name}.blob.core.windows.net"
             self._service = BlobServiceClient(
@@ -439,6 +503,148 @@ class AzureBlobSession:
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         raise OSError("Azure Blob Storage does not support disk usage queries")
 
+    # ------------------------------------------------------------------
+    # Azure Blob-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    def snapshots_list(self, path: str) -> list[dict]:
+        """List existing snapshots of the blob at ``path``. Returns
+        dicts ``{snapshot, etag, size, modified}`` where ``snapshot``
+        is the timestamp ID Azure assigns (use it with
+        ``snapshot_open_read`` or pass to ``snapshot_delete``)."""
+        key = self._to_key(path)
+        out: list[dict] = []
+        for blob in self._container.list_blobs(
+            name_starts_with=key, include=["snapshots"],
+        ):
+            if blob.snapshot is None:
+                continue
+            if blob.name != key:
+                continue
+            out.append({
+                "snapshot": blob.snapshot,
+                "etag": blob.etag,
+                "size": blob.size,
+                "modified": blob.last_modified,
+            })
+        return out
+
+    def snapshot_create(self, path: str,
+                        metadata: dict[str, str] | None = None) -> str:
+        """Create a snapshot of the blob at ``path``. Returns the
+        snapshot ID (a timestamp string Azure assigns).
+
+        ``metadata`` keys/values are simple strings; refused if any
+        contain CR/LF (Azure's HTTP backend is permissive but the
+        SDK passes these through to headers — the explicit guard
+        defends against header smuggling)."""
+        if metadata:
+            for k, v in metadata.items():
+                if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
+                    raise ValueError(
+                        f"snapshot_create: CR/LF in metadata refused"
+                    )
+        key = self._to_key(path)
+        blob = self._container.get_blob_client(key)
+        result = blob.create_snapshot(metadata=metadata)
+        # SDK returns a dict; ``snapshot`` is the timestamp ID.
+        return result["snapshot"] if isinstance(result, dict) \
+            else getattr(result, "snapshot", "")
+
+    def lease_acquire(self, path: str, *,
+                      duration_seconds: int = 60,
+                      proposed_lease_id: str | None = None) -> str:
+        """Acquire an exclusive lease on the blob at ``path`` —
+        prevents other writers from modifying it for ``duration_seconds``
+        (15..60, or -1 for infinite). Returns the lease ID, which the
+        caller must pass to ``lease_release``.
+
+        Use cases: serialised state-file updates across multiple
+        axross instances; coordinating long-running writes."""
+        if duration_seconds != -1 and not (15 <= duration_seconds <= 60):
+            raise ValueError(
+                "lease duration must be 15..60 seconds, or -1 for infinite"
+            )
+        key = self._to_key(path)
+        blob = self._container.get_blob_client(key)
+        lease = blob.acquire_lease(
+            lease_duration=duration_seconds,
+            lease_id=proposed_lease_id,
+        )
+        return lease.id
+
+    def lease_release(self, path: str, lease_id: str) -> None:
+        """Release a previously-acquired lease."""
+        from azure.storage.blob import BlobLeaseClient
+        key = self._to_key(path)
+        blob = self._container.get_blob_client(key)
+        BlobLeaseClient(blob, lease_id=lease_id).release()
+
+    def tier_set(self, path: str, tier: str) -> None:
+        """Set the access tier of a blob (``Hot``, ``Cool``, ``Cold``,
+        ``Archive``). Mostly useful for cost optimisation on rarely-
+        accessed blobs.
+
+        ``Archive`` blobs cannot be read until rehydrated to ``Hot``/
+        ``Cool`` first — that takes hours and Azure charges for the
+        rehydration. Be intentional."""
+        valid = {"Hot", "Cool", "Cold", "Archive"}
+        if tier not in valid:
+            raise ValueError(
+                f"tier must be one of {sorted(valid)}, got {tier!r}"
+            )
+        key = self._to_key(path)
+        blob = self._container.get_blob_client(key)
+        blob.set_standard_blob_tier(tier)
+
+    def sas_url(self, path: str, *,
+                expires_in: int = 3600,
+                permissions: str = "r") -> str:
+        """Generate a time-limited Shared Access Signature URL for
+        ``path``. Equivalent to S3's ``presign``.
+
+        ``permissions`` is the standard SAS code (``r`` read,
+        ``w`` write, ``d`` delete, ``rwd`` for all three).
+        ``expires_in`` is seconds from now.
+
+        Requires the session to have been instantiated with an
+        account key (not an OAuth token) since SAS signing needs
+        the key locally.
+        """
+        from datetime import datetime, timedelta, timezone
+        from azure.storage.blob import (
+            generate_blob_sas, BlobSasPermissions,
+        )
+        if not self._account_key:
+            raise OSError(
+                "sas_url requires an account-key auth (not token-based) "
+                "— SAS signing needs the symmetric key locally"
+            )
+        if "\r" in permissions or "\n" in permissions:
+            raise ValueError("sas_url permissions must not contain CR/LF")
+        perms_map = {
+            "r": "read", "w": "write", "d": "delete",
+            "l": "list", "a": "add", "c": "create",
+        }
+        kw = {perms_map[c]: True for c in permissions if c in perms_map}
+        if not kw:
+            raise ValueError(
+                f"sas_url: no recognised permission chars in {permissions!r}"
+            )
+        sas = generate_blob_sas(
+            account_name=self._service.account_name,
+            container_name=self._container_name,
+            blob_name=self._to_key(path),
+            account_key=self._account_key,
+            permission=BlobSasPermissions(**kw),
+            expiry=datetime.now(timezone.utc)
+                + timedelta(seconds=int(expires_in)),
+        )
+        return (
+            f"https://{self._service.account_name}.blob.core.windows.net/"
+            f"{self._container_name}/{self._to_key(path)}?{sas}"
+        )
+
     def list_versions(self, path: str) -> list:
         """List blob versions if the container has versioning enabled."""
         from models.file_version import FileVersion
@@ -541,6 +747,11 @@ class AzureFilesSession:
         account_key: str = "",
         share_name: str = "",
         sas_token: str = "",
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if ShareServiceClient is None:
             raise ImportError(
@@ -550,9 +761,14 @@ class AzureFilesSession:
 
         self._share_name = share_name
 
-        # Replace azure-sdk default UA — see docs/OPSEC.md #4.
+        # Replace azure-sdk default UA — see docs/OPSEC.md #4. Plus
+        # per-profile proxy via custom RequestsTransport.
         from core.client_identity import HTTP_USER_AGENT
         ua_kwargs = {"user_agent": HTTP_USER_AGENT, "user_agent_overwrite": True}
+        ua_kwargs.update(_axross_azure_transport_kwargs(
+            proxy_type, proxy_host, int(proxy_port or 0),
+            proxy_username, proxy_password,
+        ))
 
         if connection_string:
             self._service = ShareServiceClient.from_connection_string(

@@ -511,6 +511,146 @@ class SSHSession:
             log.debug("df fallback unavailable for %s: %s", path, e)
         return (0, 0, 0)
 
+    def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = 30.0,
+        stdin: bytes | None = None,
+        stdout_cap: int = 1024 * 1024,
+        stderr_cap: int = 64 * 1024,
+        env: dict[str, str] | None = None,
+    ) -> "ExecResult":
+        """Run a shell command on the remote host, return an
+        :class:`~models.exec_result.ExecResult`.
+
+        ``cmd`` is sent verbatim to the remote ``/bin/sh`` (or whatever
+        the user's login shell is). Caller is responsible for escaping
+        substituted arguments — use ``shlex.quote()`` for any path or
+        user-supplied value spliced into the command string.
+
+        ``stdin`` is fed to the remote process before its stdout/stderr
+        are read. Pass ``None`` to skip stdin entirely.
+
+        ``stdout_cap`` / ``stderr_cap`` clip each stream after that many
+        bytes; the corresponding ``truncated_*`` flag on the result
+        tells the caller a clip happened. Defaults are generous (1 MiB
+        / 64 KiB) so most ``show``-style output round-trips intact.
+
+        ``env`` keys are validated against ``[A-Za-z_][A-Za-z0-9_]*`` so
+        a tainted key can't smuggle a second ``export`` line. Values
+        are sent through paramiko's ``update_environment`` channel call
+        — most sshd configs ignore client-set env unless ``AcceptEnv``
+        whitelists the key, so don't rely on env propagation as a
+        security boundary.
+
+        Raises ``OSError`` on transport failure, NOT on a non-zero
+        remote exit code; use ``.check()`` on the result for the latter.
+        """
+        from models.exec_result import ExecResult
+        if not self._transport or not self._transport.is_active():
+            raise OSError("SSH exec: transport not active")
+        if env:
+            import re as _re
+            for k, v in env.items():
+                if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                    raise OSError(
+                        f"SSH exec: env key {k!r} must match "
+                        "[A-Za-z_][A-Za-z0-9_]* (refusing to send)"
+                    )
+                # F39: a tainted VALUE with embedded NUL would terminate
+                # the C-string the SSH agent forwards; CR/LF would land
+                # in some sshd logs as a forged log line. Symmetry with
+                # the key allow-list — both halves of the env tuple are
+                # equally adversary-controllable in practice.
+                if "\x00" in v or "\r" in v or "\n" in v:
+                    raise OSError(
+                        f"SSH exec: env value for {k!r} must not contain "
+                        "NUL/CR/LF (refusing to send). F39."
+                    )
+        chan = self._transport.open_session()
+        try:
+            if timeout is not None:
+                chan.settimeout(timeout)
+            if env:
+                # paramiko's update_environment is best-effort; sshd
+                # silently drops unwhitelisted keys.
+                for k, v in env.items():
+                    try:
+                        chan.update_environment({k: v})
+                    except paramiko.SSHException:
+                        pass
+            chan.exec_command(cmd)
+            if stdin:
+                try:
+                    chan.sendall(stdin)
+                except OSError as exc:
+                    log.debug("SSH exec stdin sendall failed: %s", exc)
+                try:
+                    chan.shutdown_write()
+                except OSError:
+                    pass
+            # Read stdout + stderr concurrently up to their caps. We do
+            # this with select() to avoid the deadlock where a chatty
+            # remote fills its stderr pipe while we're blocked on stdout.
+            import select as _select
+            stdout_buf = bytearray()
+            stderr_buf = bytearray()
+            stdout_truncated = False
+            stderr_truncated = False
+            while True:
+                if chan.exit_status_ready() and not chan.recv_ready() \
+                        and not chan.recv_stderr_ready():
+                    break
+                rlist, _, _ = _select.select([chan], [], [], 0.1)
+                if chan in rlist:
+                    if chan.recv_ready():
+                        room = stdout_cap - len(stdout_buf)
+                        if room > 0:
+                            chunk = chan.recv(min(65536, room))
+                            if chunk:
+                                stdout_buf.extend(chunk)
+                        else:
+                            # Cap reached — drain to keep the remote
+                            # from blocking on a full pipe, but discard.
+                            chan.recv(65536)
+                            stdout_truncated = True
+                    if chan.recv_stderr_ready():
+                        room = stderr_cap - len(stderr_buf)
+                        if room > 0:
+                            chunk = chan.recv_stderr(min(65536, room))
+                            if chunk:
+                                stderr_buf.extend(chunk)
+                        else:
+                            chan.recv_stderr(65536)
+                            stderr_truncated = True
+            # Final drain after exit-status arrives.
+            while chan.recv_ready():
+                room = stdout_cap - len(stdout_buf)
+                if room <= 0:
+                    chan.recv(65536); stdout_truncated = True
+                    continue
+                stdout_buf.extend(chan.recv(min(65536, room)))
+            while chan.recv_stderr_ready():
+                room = stderr_cap - len(stderr_buf)
+                if room <= 0:
+                    chan.recv_stderr(65536); stderr_truncated = True
+                    continue
+                stderr_buf.extend(chan.recv_stderr(min(65536, room)))
+            rc = chan.recv_exit_status()
+        finally:
+            try:
+                chan.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return ExecResult(
+            returncode=rc,
+            stdout=bytes(stdout_buf),
+            stderr=bytes(stderr_buf),
+            truncated_stdout=stdout_truncated,
+            truncated_stderr=stderr_truncated,
+        )
+
     def list_versions(self, path: str) -> list:
         return []
 

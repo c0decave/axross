@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80" role="img" aria-label="axross subway">
+  <title>axross — subway-map intersection 'AX'</title>
+  <style>
+    .line-a { stroke: #14B8A6; stroke-width: 6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .line-x { stroke: #F97316; stroke-width: 6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .stop { fill: #FFFFFF; stroke: #0F172A; stroke-width: 1.6; }
+    .label { font-family: ui-monospace, monospace; font-size: 9px; fill: #0F172A; font-weight: 700; }
+    @media (prefers-color-scheme: dark) {
+      .stop { fill: #0F172A; stroke: #F8FAFC; }
+      .label { fill: #F8FAFC; }
+    }
+  </style>
+  <!-- A line (teal): horizontal -->
+  <path class="line-a" d="M10 40 L72 40 L92 60 L150 60"/>
+  <!-- X line (orange): diagonal sweep -->
+  <path class="line-x" d="M14 14 L50 40 L80 24 L116 56 L146 30"/>
+  <!-- stops -->
+  <g>
+    <circle class="stop" cx="22"  cy="40" r="4"/>
+    <circle class="stop" cx="50"  cy="40" r="4"/>
+    <circle class="stop" cx="80"  cy="48" r="4"/>
+    <circle class="stop" cx="116" cy="56" r="4"/>
+    <circle class="stop" cx="146" cy="38" r="4"/>
+  </g>
+  <!-- interchange marker (where the two lines cross): bigger, halo -->
+  <circle cx="50" cy="40" r="9" fill="none" stroke="#0F172A" stroke-width="1.6"/>
+  <!-- AX badges -->
+  <g class="label">
+    <text x="10"  y="70">A&#x2009;1</text>
+    <text x="78"  y="74">AX</text>
+    <text x="138" y="20">X&#x2009;9</text>
+  </g>
+</svg>

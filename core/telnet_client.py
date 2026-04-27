@@ -462,10 +462,121 @@ class _ShellSession:
 
         raise PermissionError(f"Telnet login failed: unexpected response: {result[-200:]!r}")
 
+    _SHELL_PROBE_MARKER = "__AXROSS_SHELL_PROBE__"
+
+    def _detect_remote_shell(self) -> str:
+        """Detect the remote shell so we can send the right
+        history-suppression syntax. Returns one of:
+        ``"bash"``, ``"zsh"``, ``"ksh"``, ``"fish"``, ``"csh"``,
+        ``"posix"`` (catch-all for sh/dash/ash/busybox), or
+        ``"unknown"``.
+
+        Strategy: emit a single probe line that mostly only does
+        something useful when the shell understands it. Read the
+        echoed response; pick the first matching signature. The
+        probe line is constructed so even fish/csh can output
+        SOMETHING (an error message we can recognise) without
+        breaking subsequent commands.
+        """
+        marker = self._SHELL_PROBE_MARKER
+        # POSIX-shell variables: $BASH_VERSION, $ZSH_VERSION,
+        # $KSH_VERSION are the canonical signatures. Fish exports
+        # FISH_VERSION and supports `printf` (it's a builtin in
+        # fish 3.x). csh/tcsh have $tcsh / $shell / $version.
+        #
+        # We send the probe in POSIX form. Fish parses
+        # ``${variable}`` differently — it does substitute the
+        # var if present, but the literal string ``${BASH_VERSION}``
+        # in fish becomes empty when BASH_VERSION isn't set. Same
+        # for csh which expands `$BASH_VERSION` to nothing or to
+        # an error if undefined. The output ALWAYS contains the
+        # marker, plus version strings of the shells that recognise
+        # the variable names — that's enough to disambiguate.
+        probe = (
+            f'echo "{marker}/${{BASH_VERSION:-_}}/${{ZSH_VERSION:-_}}/'
+            f'${{KSH_VERSION:-_}}/${{FISH_VERSION:-_}}/${{shell:-_}}"'
+        )
+        try:
+            self._transport.send(probe)
+            response = self._transport.read_until(marker, timeout=3.0)
+            # The marker line might have already been read; consume
+            # what's left of the line for parsing.
+            line_tail = self._transport.read_some(timeout=0.5)
+            full = response + line_tail
+        except (TimeoutError, OSError):
+            return "unknown"
+
+        # Look for the marker plus the trailing fields.
+        idx = full.rfind(marker)
+        if idx < 0:
+            return "unknown"
+        rest = full[idx + len(marker):].split("\n", 1)[0]
+        parts = rest.lstrip("/").split("/")
+        # parts[0] = BASH_VERSION, [1] = ZSH_VERSION, [2] = KSH_VERSION,
+        # [3] = FISH_VERSION, [4] = shell (csh/tcsh).
+        if len(parts) >= 4 and parts[0] != "_" and parts[0]:
+            return "bash"
+        if len(parts) >= 4 and parts[1] != "_" and parts[1]:
+            return "zsh"
+        if len(parts) >= 4 and parts[2] != "_" and parts[2]:
+            return "ksh"
+        if len(parts) >= 4 and parts[3] != "_" and parts[3]:
+            return "fish"
+        if len(parts) >= 5 and parts[4] != "_" and parts[4] and "csh" in parts[4]:
+            return "csh"
+        return "posix"
+
+    def _history_suppression_for(self, shell_kind: str) -> list[str]:
+        """Return the list of commands that disable shell history for
+        the detected shell. POSIX-style shells (bash/zsh/ksh/sh/dash/ash)
+        share one block; fish and csh get their own."""
+        if shell_kind == "fish":
+            # Fish stores history in a SQLite-ish file controlled by
+            # the ``fish_history`` universal variable; setting it to
+            # the literal string ``default`` would point to default,
+            # so we erase it (set -e) for the session. The session-
+            # local ``fish_history`` is also reset.
+            return [
+                "set -e fish_history",
+                "set -gx fish_history '/dev/null'",
+                # Disable fish's command-not-found handler so the
+                # subsequent POSIX history commands don't error.
+                "function fish_command_not_found; end",
+            ]
+        if shell_kind == "csh":
+            return [
+                "set history=0",
+                "set savehist=0",
+                "unset history",
+                "unset savehist",
+            ]
+        # POSIX family — bash, zsh, ksh, sh/dash/ash, busybox.
+        return [
+            "unset HISTFILE",
+            "export HISTFILE=/dev/null",
+            "export HISTSIZE=0 HISTFILESIZE=0 SAVEHIST=0",
+            "export LESSHISTFILE=/dev/null",
+            "export FCEDIT=/dev/null",
+            "set +o history 2>/dev/null; true",          # bash/ksh
+            "setopt HIST_IGNORE_SPACE 2>/dev/null; true", # zsh
+            "unsetopt SHARE_HISTORY INC_APPEND_HISTORY APPEND_HISTORY 2>/dev/null; true",
+        ]
+
     def _setup_prompt(self) -> None:
         """Set a unique, parseable prompt and configure shell for automation."""
+        # Probe the shell first so we send the right history-off
+        # syntax. fish/csh can't handle POSIX-style commands and
+        # would otherwise litter the terminal with errors. Probe
+        # is best-effort — any failure falls back to "posix" which
+        # works for the 99 % case (bash/zsh/ksh/sh/dash/ash).
+        shell_kind = self._detect_remote_shell()
+        log.debug("Telnet remote shell detected: %s", shell_kind)
+
         # Use printf to emit a real newline in PS1 (works in sh/dash/ash/bash)
         commands = [
+            # --- history suppression FIRST, shell-aware ---
+            *self._history_suppression_for(shell_kind),
+            # --- prompt + locale + alias hardening ---
             f"PS1=$(printf '{_PROMPT_MARKER}\\n'); export PS1",
             "export PS2=''",
             "export LANG=C LC_ALL=C TERM=dumb",
@@ -1041,8 +1152,50 @@ class TelnetSession:
 
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
-        output = self._exec(f"ls -la {shlex.quote(path)}")
-        return _parse_ls_la(output)
+        try:
+            output = self._exec(f"ls -la {shlex.quote(path)}")
+            return _parse_ls_la(output)
+        except OSError as exc:
+            # Stripped IoT / busybox / restricted-shell fallback:
+            # if `ls` isn't on PATH (or is refused by a restricted
+            # shell), use shell-glob `echo *` to at least retrieve
+            # the basename list. The output is just names — no
+            # size/perms/mtime — but it lets the user navigate.
+            if "command not found" not in str(exc).lower() \
+                    and "not found" not in str(exc).lower():
+                raise
+            return self._list_dir_via_glob(path)
+
+    def _list_dir_via_glob(self, path: str) -> list[FileItem]:
+        """Last-resort directory listing via shell glob expansion.
+
+        Only used when ``ls`` is unavailable (stripped busybox / IoT
+        firmware). Produces FileItem entries with name only — no
+        stat fields. Hidden files (.foo) are NOT returned by ``echo *``
+        per shell-glob default, so we do a second probe with
+        ``echo .* *`` and de-duplicate.
+        """
+        qpath = shlex.quote(path)
+        output = self._exec(
+            f"cd {qpath} && (echo *; echo .*); cd - >/dev/null",
+            timeout=CMD_TIMEOUT,
+        )
+        names: set[str] = set()
+        for token in output.split():
+            if token in ("*", ".*", ".", "..", ""):
+                continue
+            names.add(token)
+        out: list[FileItem] = []
+        for n in sorted(names):
+            out.append(FileItem(
+                name=n,
+                size=0,
+                modified=datetime.fromtimestamp(0),
+                permissions=0,
+                is_dir=False,  # we genuinely don't know; UI can stat on click
+                is_link=False,
+            ))
+        return out
 
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
@@ -1234,6 +1387,52 @@ class TelnetSession:
         if digest and all(c in "0123456789abcdef" for c in digest.lower()):
             return f"{algorithm}:{digest.lower()}"
         return ""
+
+    # ------------------------------------------------------------------
+    # Telnet-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    def expect(self, pattern: str, *,
+               timeout: float = 10.0,
+               read_size: int = 4096) -> tuple[str, bool]:
+        """Read from the live transport until ``pattern`` (a regex)
+        appears or ``timeout`` elapses. Returns ``(text, matched)``.
+
+        Useful for scripted Telnet sessions where the user wants to
+        wait for a specific prompt before sending the next command —
+        the FileBackend wrapper isn't enough for that. Pattern is
+        compiled with re.MULTILINE so ``^`` / ``$`` match line ends.
+
+        Doesn't consume past the match — the buffered text up to and
+        including the match is returned, the rest stays in the
+        transport's read buffer.
+        """
+        import re as _re
+        if not self._transport or self._transport.closed:
+            raise OSError("Telnet expect: transport not active")
+        rx = _re.compile(pattern, _re.MULTILINE)
+        text, m = self._transport.read_until_re(rx, timeout=float(timeout))
+        return text, bool(m)
+
+    def send_raw(self, data: bytes) -> None:
+        """Send raw bytes (no CRLF appending, no IAC framing). Useful
+        for protocols layered on top of a raw Telnet socket where the
+        upper layer manages its own framing.
+
+        ``data`` may include any byte except a literal IAC (0xFF) —
+        which we refuse, because it would otherwise be interpreted as
+        a start-of-Telnet-command and the receiver's behaviour would
+        diverge from the caller's intent. Pass IAC explicitly via the
+        proper option-negotiation API if that's really wanted.
+        """
+        if b"\xff" in data:
+            raise ValueError(
+                "Telnet send_raw: IAC byte (0xFF) is not allowed in raw data; "
+                "send option-negotiation through the dedicated API instead"
+            )
+        if not self._transport or self._transport.closed:
+            raise OSError("Telnet send_raw: transport not active")
+        self._transport.send_raw(data)
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         if not self._caps.has_df:

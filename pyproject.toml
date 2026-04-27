@@ -53,7 +53,7 @@ Documentation = "https://github.com/c0decave/axross#readme"
 
 [project.optional-dependencies]
 smb = ["smbprotocol>=1.13"]
-webdav = ["webdavclient3>=3.14"]
+webdav = ["requests>=2.31", "defusedxml>=0.7"]
 s3 = ["boto3>=1.28"]
 azure = ["azure-storage-blob>=12.19", "azure-storage-file-share>=12.15"]
 onedrive = ["msal>=1.26", "requests>=2.31"]
@@ -65,9 +65,22 @@ wmi = ["impacket>=0.11"]
 exchange = ["exchangelib>=5.0"]
 adb = ["adb-shell>=0.4"]
 archive = ["py7zr>=0.20"]
+tftp = ["tftpy>=0.8"]
+postgres = ["psycopg[binary]>=3.1"]
+redis = ["redis>=5.0"]
+mongo = ["pymongo>=4.6"]
+git = ["dulwich>=0.21"]
+dns = ["dnspython>=2.6"]
+magic = ["puremagic>=1.20"]
+encoding = ["chardet>=5.2"]
+snmp = ["pysnmp>=6.2"]
+ldap = ["ldap3>=2.9"]
+mac = ["manuf>=1.1"]
+whois = ["ipwhois>=1.3"]
+ntp = ["ntplib>=0.4"]
 all = [
     "smbprotocol>=1.13",
-    "webdavclient3>=3.14",
+    "defusedxml>=0.7",
     "boto3>=1.28",
     "azure-storage-blob>=12.19",
     "azure-storage-file-share>=12.15",
@@ -77,6 +90,14 @@ all = [
     "google-auth-oauthlib>=1.1",
     "google-auth-httplib2>=0.2",
     "dropbox>=12.0",
+    "dnspython>=2.6",
+    "puremagic>=1.20",
+    "chardet>=5.2",
+    "pysnmp>=6.2",
+    "ldap3>=2.9",
+    "manuf>=1.1",
+    "ipwhois>=1.3",
+    "ntplib>=0.4",
 ]
 
 [project.scripts]
@@ -92,6 +113,13 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Bundled example scripts under resources/scripts/ are exec()-ed inside
+# the REPL with ``axross`` injected as a global; static linters can't
+# see that binding. Suppress F821 (undefined name) and F401 (unused
+# import) for that tree only.
+"resources/scripts/*.py" = ["F821", "F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -55,6 +55,108 @@ def _build_allowlisted_env() -> dict[str, str]:
     return env
 
 
+# ---- proxy helpers ----------------------------------------------------- #
+
+def _resolve_nc_with_proxy_support() -> str:
+    """Return the path to a ``netcat`` build that supports ``-X``
+    (SOCKS proxy) and ``-x host:port`` (proxy address). On most Linux
+    distros this is OpenBSD nc (``/usr/bin/nc`` from ``netcat-openbsd``).
+    On systems where only ncat (Nmap project) is installed, ``-X`` has
+    different semantics; we explicitly prefer the OpenBSD variant.
+
+    Raises :class:`OSError` when no suitable nc is found, with a
+    pointer to the package that provides one.
+    """
+    candidates = ("/usr/bin/nc.openbsd", "/usr/bin/netcat", "/usr/bin/nc")
+    import subprocess
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            r = subprocess.run([path, "-h"], capture_output=True, text=True, timeout=2)
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+        merged = (r.stdout or "") + (r.stderr or "")
+        # OpenBSD nc spells the SOCKS proxy flags in its help output.
+        if "-X" in merged and "-x" in merged and "proxy" in merged.lower():
+            return path
+    raise OSError(
+        "No netcat with SOCKS-proxy support found on PATH. Install "
+        "the OpenBSD variant (Debian/Ubuntu: ``netcat-openbsd``; "
+        "Arch: ``openbsd-netcat``; Fedora: ``netcat``).",
+    )
+
+
+def _nc_proxy_scheme(proxy_type: str) -> str:
+    if proxy_type == "socks5":
+        return "5"
+    if proxy_type == "socks4":
+        return "4"
+    if proxy_type == "http":
+        return "connect"
+    raise ValueError(f"Unknown proxy_type: {proxy_type}")
+
+
+def _nc_proxy_address(proxy) -> str:
+    """Format ``host:port`` for OpenBSD nc's ``-x`` flag, bracketing
+    IPv6 literals so the port separator stays unambiguous.
+    """
+    import socket as _socket
+    host = proxy.host
+    try:
+        _socket.inet_pton(_socket.AF_INET6, host)
+        return f"[{host}]:{int(proxy.port)}"
+    except OSError:
+        return f"{host}:{int(proxy.port)}"
+
+
+def _build_rsync_connect_prog(proxy, daemon_port: int) -> str:
+    """Build the ``RSYNC_CONNECT_PROG`` value for rsync-daemon mode.
+
+    rsync 3.0+ recognises this env var and replaces its direct TCP
+    connect with a child process whose stdio is the daemon channel.
+    We hand it an nc invocation that does the SOCKS / HTTP dial-out
+    and connects to the rsync daemon's port.
+
+    Note: rsync substitutes only ``%H`` (host) into the env-var
+    string — *not* ``%P``. The man page is explicit:
+
+        The string may contain the escape "%H" to represent the
+        hostname specified in the rsync command.
+
+    The daemon port has to be baked into the connect-prog string at
+    build time. We pass ``daemon_port`` (typically 873, or the
+    profile's override) so each session gets the correct value.
+    """
+    nc = _resolve_nc_with_proxy_support()
+    scheme = _nc_proxy_scheme(proxy.proxy_type)
+    proxy_addr = _nc_proxy_address(proxy)
+    # OpenBSD nc does not propagate -x user:pass auth to SOCKS/HTTP
+    # in every build; we warn rather than silently drop the auth bit.
+    if proxy.username:
+        log.warning(
+            "RSYNC_CONNECT_PROG: nc does not propagate proxy auth "
+            "credentials to the daemon-mode connect. Use rsync-over-SSH "
+            "if your proxy requires authentication.",
+        )
+    return (
+        f"{shlex.quote(nc)} -X {scheme} -x {shlex.quote(proxy_addr)} "
+        f"%H {int(daemon_port)}"
+    )
+
+
+def _build_ssh_proxy_command(proxy) -> str:
+    """Build the value for ``ssh -o ProxyCommand=...`` so the SSH
+    dial-out underneath rsync-over-SSH (or any ssh) routes through
+    the proxy. ``%h`` and ``%p`` are openssh's placeholders for the
+    target host and port — ssh substitutes them at dial time.
+    """
+    nc = _resolve_nc_with_proxy_support()
+    scheme = _nc_proxy_scheme(proxy.proxy_type)
+    proxy_addr = _nc_proxy_address(proxy)
+    return f"{nc} -X {scheme} -x {proxy_addr} %h %p"
+
+
 def _redact_rsync_cmd(cmd: list[str]) -> str:
     """Redact sensitive flags before logging.
 
@@ -202,6 +304,11 @@ class RsyncSession:
         ssh_mode: bool = False,
         ssh_key: str = "",
         preserve_metadata: bool = False,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         self._host = host
         self._port = port
@@ -211,6 +318,14 @@ class RsyncSession:
         self._ssh_mode = ssh_mode
         self._ssh_key = ssh_key
         self._preserve_metadata = preserve_metadata
+        from core.proxy import ProxyConfig
+        self._proxy = ProxyConfig(
+            proxy_type=proxy_type or "none",
+            host=proxy_host,
+            port=int(proxy_port or 0),
+            username=proxy_username,
+            password=proxy_password,
+        )
         self._connected = False
 
         self._rsync_bin = shutil.which("rsync")
@@ -327,6 +442,18 @@ class RsyncSession:
             if self._ssh_key:
                 ssh_cmd += f" -i {shlex.quote(self._ssh_key)}"
             ssh_cmd += " -o BatchMode=yes"
+            # Defensive ``getattr`` — unit tests sometimes construct
+            # RsyncSession via ``object.__new__`` and set only the
+            # attrs they care about, so a missing ``_proxy`` shouldn't
+            # crash this method.
+            proxy = getattr(self, "_proxy", None)
+            if proxy is not None and proxy.enabled:
+                # Inject ProxyCommand so the underlying ssh dial-out
+                # itself routes through SOCKS / HTTP. See
+                # docs/PROXY_SUPPORT.md for the nc / netcat-bsd
+                # availability check.
+                pc = _build_ssh_proxy_command(proxy)
+                ssh_cmd += f" -o ProxyCommand={shlex.quote(pc)}"
             args += ["-e", ssh_cmd]
         else:
             if self._port != 873:
@@ -337,15 +464,26 @@ class RsyncSession:
     def _build_env(self) -> dict[str, str]:
         """Build environment dict, injecting RSYNC_PASSWORD if needed.
 
-        Do NOT clone the full local ``os.environ`` — if the user has
-        aggressive ``SendEnv`` config in ``~/.ssh/config`` *and* we
-        run in SSH-mode, cloned vars (AWS_*, *_TOKEN, *_KEY) can be
-        shipped to the remote host. Allow-list only what rsync and a
-        typical ssh client actually need. See docs/OPSEC.md finding #9.
+        Also wires the proxy:
+
+        * For rsync-over-SSH the proxy is on the ``-e ssh -o ProxyCommand=...``
+          line in :meth:`_base_args`, no env var needed.
+        * For native rsync-daemon mode (``rsync://``) we set
+          ``RSYNC_CONNECT_PROG`` so rsync 3.0+ pipes the daemon TCP
+          connection through ``nc -X 5 -x proxy:port`` (or HTTP
+          equivalent). Without this, the daemon connect would bypass
+          the proxy entirely.
+
+        Do NOT clone the full local ``os.environ`` — see docs/OPSEC.md #9.
         """
         env = _build_allowlisted_env()
         if self._password and not self._ssh_mode:
             env["RSYNC_PASSWORD"] = self._password
+        proxy = getattr(self, "_proxy", None)
+        if proxy is not None and proxy.enabled and not self._ssh_mode:
+            env["RSYNC_CONNECT_PROG"] = _build_rsync_connect_prog(
+                proxy, self._port,
+            )
         return env
 
     def _run_rsync(
@@ -699,6 +837,99 @@ class RsyncSession:
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         raise OSError("rsync backend does not support disk usage queries")
+
+    # ------------------------------------------------------------------
+    # Rsync-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    def dry_run(self, src_path: str, dst_local_path: str, *,
+                delete: bool = False,
+                bandwidth_limit_kbps: int | None = None,
+                timeout: float = 60.0) -> dict:
+        """Run ``rsync --dry-run`` from this session's remote (or
+        local, if ``src_path`` is local) path to ``dst_local_path``
+        and return a parsed summary. NOTHING is transferred or
+        modified — useful for "what would happen if I synced now?"
+        triage.
+
+        Returns ``{would_transfer: int, would_delete: int,
+        would_create_dir: int, files: list[str], raw_stdout: str}``.
+        ``files`` is the list of paths rsync says it would touch
+        (capped at 1000 entries; raw stdout always preserved).
+
+        ``delete`` adds ``--delete`` to also preview deletions
+        (default OFF — destructive verb, off by default).
+        ``bandwidth_limit_kbps`` maps to ``--bwlimit=KBPS``;
+        meaningless for a dry-run but kept for symmetry with
+        live ``rsync_transfer``.
+        """
+        import subprocess as _sp
+        args = self._base_args() + [
+            "--dry-run", "--itemize-changes", "--archive",
+            "--out-format=%i %n",
+        ]
+        if delete:
+            args.append("--delete")
+        if bandwidth_limit_kbps:
+            args.append(f"--bwlimit={int(bandwidth_limit_kbps)}")
+        # Source: rsync URL into the session; destination: local path.
+        args.append(self._build_url(src_path))
+        args.append(dst_local_path)
+        try:
+            proc = _sp.run(args, capture_output=True, text=True,
+                           timeout=float(timeout))
+        except _sp.TimeoutExpired as exc:
+            raise OSError(f"rsync dry-run timed out: {exc}") from exc
+        if proc.returncode not in (0, 23, 24):  # 23/24 = partial transfer (acceptable in dry-run)
+            raise OSError(
+                f"rsync dry-run rc={proc.returncode}: {proc.stderr.strip()[:300]}"
+            )
+        return _parse_rsync_itemized(proc.stdout)
+
+    def delete_preview(self, src_path: str, dst_local_path: str, *,
+                       timeout: float = 60.0) -> list[str]:
+        """Convenience: run a dry-run with ``--delete`` and return only
+        the list of paths that WOULD be deleted on the destination.
+        Empty list = nothing would be deleted."""
+        result = self.dry_run(src_path, dst_local_path,
+                              delete=True, timeout=timeout)
+        # Itemized lines for deletes start with ``*deleting``.
+        return [
+            line.split(" ", 1)[1]
+            for line in result["raw_stdout"].splitlines()
+            if line.startswith("*deleting")
+        ]
+
+
+def _parse_rsync_itemized(out: str) -> dict:
+    """Parse ``rsync -i --out-format='%i %n'`` lines into a summary
+    dict. The ``%i`` itemize code is 11 characters; the first byte
+    indicates the operation type (``<`` send, ``>`` receive, ``c``
+    create, ``*`` deleting, ``.`` no-change)."""
+    files: list[str] = []
+    would_transfer = 0
+    would_delete = 0
+    would_create_dir = 0
+    for line in out.splitlines():
+        if not line or len(line) < 12:
+            continue
+        code = line[:11]
+        path = line[12:].strip() if len(line) > 12 else ""
+        if code.startswith("*deleting"):
+            would_delete += 1
+        elif code.startswith("cd"):
+            would_create_dir += 1
+        elif code[0] in ("<", ">"):
+            would_transfer += 1
+        if path and len(files) < 1000:
+            files.append(path)
+    return {
+        "would_transfer": would_transfer,
+        "would_delete": would_delete,
+        "would_create_dir": would_create_dir,
+        "files": files,
+        "raw_stdout": out,
+    }
 
     # --------------------------------------------------------------------- #
     #  Transfer engine — class method for rsync-based copies                 #

@@ -139,6 +139,53 @@ IMAP_CAPS = BackendCapabilities(
     can_seek=False, can_stream_write=False, has_disk_usage=True,
     case_sensitive=True,
 )
+POP3_CAPS = BackendCapabilities(
+    # POP3 is fundamentally read-only: every write surface refused.
+    can_chmod=False, can_symlink=False, can_rename=False,
+    can_seek=False, can_stream_write=False,
+    has_disk_usage=False, case_sensitive=True,
+)
+GOPHER_CAPS = BackendCapabilities(
+    # RFC 1436: read-only, no rename, no chmod, no streaming write,
+    # no disk usage. Selectors are case-sensitive.
+    can_chmod=False, can_symlink=False, can_rename=False,
+    can_recursive_delete=False,
+    can_stream_write=False, can_seek=False,
+    has_disk_usage=False, case_sensitive=True,
+)
+NNTP_CAPS = BackendCapabilities(
+    # Read-mostly: list groups + articles, read+post; no rename/chmod/symlink.
+    can_chmod=False, can_symlink=False, can_rename=False,
+    can_recursive_delete=False,
+    can_stream_read=True, can_stream_write=False, can_seek=False,
+    has_disk_usage=False, case_sensitive=True,
+)
+DBFS_CAPS = BackendCapabilities(
+    # DB-as-storage: read+write+rename, no symlinks, no native sparse.
+    can_chmod=True, can_symlink=False, can_rename=True,
+    can_recursive_delete=True, can_stream_read=True,
+    can_stream_write=True, can_seek=True,
+    has_posix_paths=True, case_sensitive=True,
+    has_disk_usage=True,
+    can_server_side_copy=True,
+)
+TFTP_CAPS = BackendCapabilities(
+    # TFTP is read+write but with no rename/chmod/listing/seek.
+    can_chmod=False, can_symlink=False, can_rename=False,
+    can_seek=False, can_stream_read=False, can_stream_write=False,
+    can_recursive_delete=False,
+    has_disk_usage=False, case_sensitive=True,
+)
+RAMFS_CAPS = BackendCapabilities(
+    # In-process RAM. Same surface as LocalFS minus symlinks (we
+    # don't model link semantics in the dict store).
+    can_chmod=True, can_symlink=False, can_rename=True,
+    can_recursive_delete=True, can_stream_read=True,
+    can_stream_write=True, can_seek=True,
+    has_posix_paths=True, case_sensitive=True, has_disk_usage=True,
+    has_atime=False, has_sparse_files=False,
+    can_server_side_copy=True,
+)
 TELNET_CAPS = BackendCapabilities(
     can_chmod=True, can_symlink=True, can_rename=True,
     can_recursive_delete=True, can_stream_read=True,
@@ -338,7 +385,8 @@ def init_registry() -> None:
         class_name="WebDavSession",
         default_port=443,
         required_extra="webdav",
-        available=_check_available("webdav3"),
+        # Self-hosted WebDAV impl: needs requests + defusedxml only.
+        available=_check_available("requests") and _check_available("defusedxml"),
         capabilities=WEBDAV_CAPS,
         credential_kind=CredentialKind.PASSWORD,
     ))
@@ -481,6 +529,172 @@ def init_registry() -> None:
         credential_kind=CredentialKind.PASSWORD,
     ))
 
+    # --- POP3 (always available — stdlib poplib, read-only) ---
+    register(BackendInfo(
+        protocol_id="pop3",
+        display_name="POP3 (Mail, read-only)",
+        module="core.pop3_client",
+        class_name="Pop3Session",
+        default_port=995,
+        capabilities=POP3_CAPS,
+        credential_kind=CredentialKind.PASSWORD,
+    ))
+
+    # --- Gopher (RFC 1436, always available — stdlib sockets, read-only) ---
+    register(BackendInfo(
+        protocol_id="gopher",
+        display_name="Gopher (RFC 1436, read-only)",
+        module="core.gopher_client",
+        class_name="GopherSession",
+        default_port=70,
+        capabilities=GOPHER_CAPS,
+        credential_kind=CredentialKind.NONE,
+    ))
+
+    # --- NNTP / Usenet (always available — own wire-protocol lib) ---
+    register(BackendInfo(
+        protocol_id="nntp",
+        display_name="NNTP / Usenet",
+        module="core.nntp_client",
+        class_name="NntpSession",
+        default_port=563,  # implicit-TLS by default; profile can override to 119
+        capabilities=NNTP_CAPS,
+        credential_kind=CredentialKind.PASSWORD,
+    ))
+
+    # --- SQLite as filesystem (always available — stdlib sqlite3) ---
+    register(BackendInfo(
+        protocol_id="sqlite",
+        display_name="SQLite (file-as-FS)",
+        module="core.sqlite_fs_client",
+        class_name="SqliteFsSession",
+        default_port=0,
+        capabilities=DBFS_CAPS,
+        credential_kind=CredentialKind.NONE,
+    ))
+
+    # --- PostgreSQL-as-FS (optional: psycopg) ---
+    register(BackendInfo(
+        protocol_id="postgres",
+        display_name="PostgreSQL (table-as-FS)",
+        module="core.postgres_fs_client",
+        class_name="PostgresFsSession",
+        default_port=5432,
+        required_extra="postgres",
+        available=_check_available("psycopg"),
+        capabilities=DBFS_CAPS,
+        credential_kind=CredentialKind.PASSWORD,
+    ))
+
+    # --- Redis-as-FS (optional: redis) ---
+    register(BackendInfo(
+        protocol_id="redis",
+        display_name="Redis (hash-as-FS)",
+        module="core.redis_fs_client",
+        class_name="RedisFsSession",
+        default_port=6379,
+        required_extra="redis",
+        available=_check_available("redis"),
+        capabilities=DBFS_CAPS,
+        credential_kind=CredentialKind.PASSWORD,
+    ))
+
+    # --- MongoDB GridFS (optional: pymongo) ---
+    register(BackendInfo(
+        protocol_id="mongodb",
+        display_name="MongoDB GridFS",
+        module="core.mongo_fs_client",
+        class_name="MongoFsSession",
+        default_port=27017,
+        required_extra="mongo",
+        available=_check_available("pymongo"),
+        capabilities=DBFS_CAPS,
+        credential_kind=CredentialKind.PASSWORD,
+    ))
+
+    # --- Git-as-FS (optional: dulwich; pure Python, no git binary) ---
+    register(BackendInfo(
+        protocol_id="git",
+        display_name="Git (repo-as-FS)",
+        module="core.git_fs_client",
+        class_name="GitFsSession",
+        default_port=0,
+        required_extra="git",
+        available=_check_available("dulwich"),
+        capabilities=DBFS_CAPS,
+        credential_kind=CredentialKind.NONE,
+    ))
+
+    # --- PJL (Printer Job Language, port 9100) — stdlib sockets only ---
+    register(BackendInfo(
+        protocol_id="pjl",
+        display_name="PJL (Printer FS, port 9100)",
+        module="core.pjl_client",
+        class_name="PjlSession",
+        default_port=9100,
+        capabilities=GOPHER_CAPS,  # read-mostly + no chmod/symlink
+        credential_kind=CredentialKind.NONE,
+    ))
+
+    # --- SLP (Service Location Protocol v2, RFC 2608) — read-only ---
+    register(BackendInfo(
+        protocol_id="slp",
+        display_name="SLP (Service Discovery, read-only)",
+        module="core.slp_client",
+        class_name="SlpSession",
+        default_port=427,
+        capabilities=GOPHER_CAPS,
+        credential_kind=CredentialKind.NONE,
+    ))
+
+    # --- rsh / rcp (BSD r-services, plaintext) — needs system rsh binary ---
+    register(BackendInfo(
+        protocol_id="rsh",
+        display_name="rsh / rcp (legacy plaintext)",
+        module="core.rsh_client",
+        class_name="RshSession",
+        default_port=514,
+        # No pip dep — uses the system rsh binary (Debian: rsh-client).
+        available=_check_command_available("rsh"),
+        capabilities=TELNET_CAPS,  # shell-out semantics, like Telnet
+        credential_kind=CredentialKind.NONE,  # host-based auth via .rhosts
+    ))
+
+    # --- Cisco IOS Telnet (read-only show-* virtual filesystem) ---
+    register(BackendInfo(
+        protocol_id="cisco-telnet",
+        display_name="Cisco IOS / IOS-XE (Telnet, read-only)",
+        module="core.telnet_cisco",
+        class_name="CiscoTelnetSession",
+        default_port=23,
+        capabilities=GOPHER_CAPS,
+        credential_kind=CredentialKind.PASSWORD,
+    ))
+
+    # --- TFTP (optional: tftpy via [tftp] extra) ---
+    register(BackendInfo(
+        protocol_id="tftp",
+        display_name="TFTP (UDP, opt-in file-list)",
+        module="core.tftp_client",
+        class_name="TftpSession",
+        default_port=69,
+        capabilities=TFTP_CAPS,
+        required_extra="tftp",
+        available=_check_available("tftpy"),
+        credential_kind=CredentialKind.NONE,
+    ))
+
+    # --- RamFS (always available — pure Python in-process) ---
+    register(BackendInfo(
+        protocol_id="ramfs",
+        display_name="RAM Workspace (volatile)",
+        module="core.ram_fs",
+        class_name="RamFsSession",
+        default_port=0,
+        capabilities=RAMFS_CAPS,
+        credential_kind=CredentialKind.NONE,
+    ))
+
     # --- Telnet (always available — stdlib sockets) ---
     register(BackendInfo(
         protocol_id="telnet",
@@ -583,6 +797,24 @@ def init_registry() -> None:
         ),
         capabilities=MTP_CAPS,
         credential_kind=CredentialKind.NONE,
+    ))
+
+    # --- LDAP-as-FS (read-only directory tree as filesystem) ---
+    register(BackendInfo(
+        protocol_id="ldap",
+        display_name="LDAP (directory-as-FS, read-only)",
+        module="core.ldap_fs_client",
+        class_name="LdapFsSession",
+        default_port=389,
+        required_extra="ldap",
+        available=_check_available("ldap3"),
+        capabilities=BackendCapabilities(
+            can_chmod=False, can_symlink=False, can_rename=False,
+            can_recursive_delete=False, can_stream_read=True,
+            can_stream_write=False, can_seek=False,
+            has_disk_usage=False, case_sensitive=True,
+        ),
+        credential_kind=CredentialKind.PASSWORD,
     ))
 
     installed = [b.protocol_id for b in _registry.values() if b.available]

@@ -398,6 +398,77 @@ class WMISession:
             raise OSError(f"WMI DCOM connect to {self._host}: {exc}") from exc
         return self._wbem
 
+    # ------------------------------------------------------------------
+    # WMI-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    def cim_query(self, wql: str, *,
+                  namespace: str | None = None,
+                  limit: int = 1000) -> list[dict]:
+        """Run a WQL (WMI Query Language) query and return the
+        result rows as dicts ``{property_name: value}``.
+
+        ``namespace`` overrides the default ``//./root/cimv2`` —
+        pass e.g. ``"//./root/StandardCimv2"`` for the newer
+        CIM-style namespace. Uses impacket's DCOM client.
+
+        Refuses CR/LF in ``wql`` so a tainted argument can't
+        smuggle a second WBEM call. There IS no parameter
+        binding in WQL (it's a query language without prepared
+        statements) — caller is responsible for escaping any
+        single-quotes in spliced values.
+
+        ``limit`` caps the row count so a stray
+        ``SELECT * FROM Win32_PerfRawData_*`` doesn't drag
+        thousands of rows back over DCOM.
+        """
+        if "\r" in wql or "\n" in wql:
+            raise ValueError(
+                "WMI cim_query: WQL must not contain CR/LF"
+            )
+        if namespace is not None and ("\r" in namespace or "\n" in namespace):
+            raise ValueError("WMI cim_query: invalid namespace")
+        # Connect using the requested namespace (or fall back to the
+        # session's default ``//./root/cimv2``).
+        if namespace is None:
+            wbem = self._connect()
+        else:
+            # _connect caches a single namespace; for an off-cimv2
+            # namespace we open a fresh login and remember to release.
+            wbem = self._connect_namespace(namespace)
+        out: list[dict] = []
+        try:
+            for row in self._exec_query(wbem, wql):
+                out.append(row)
+                if len(out) >= int(limit):
+                    break
+        finally:
+            if namespace is not None and wbem is not None:
+                try:
+                    wbem.RemRelease()
+                except Exception:  # noqa: BLE001
+                    pass
+        return out
+
+    def _connect_namespace(self, namespace: str):
+        """Open a one-shot WBEM login at ``namespace``. Caller is
+        responsible for ``wbem.RemRelease()``."""
+        if self._dcom is None:
+            self._connect()       # ensures _dcom is up
+        try:
+            iInterface = self._dcom.CoCreateInstanceEx(
+                "8BC3F05E-D86B-11D0-A075-00C04FB68820",
+                "9556DC99-828C-11CF-A37E-00AA003240C7",
+            )
+            login = iWbemLevel1Login(iInterface)
+            wbem = login.NTLMLogin(namespace, NULL, NULL)
+            login.RemRelease()
+            return wbem
+        except Exception as exc:  # noqa: BLE001
+            raise OSError(
+                f"WMI namespace switch to {namespace}: {exc}"
+            ) from exc
+
     def _exec_query(self, wbem, query: str):
         """Yield row dicts {prop_name: value} until the enumerator
         signals end. Wraps the impacket Next() pattern."""

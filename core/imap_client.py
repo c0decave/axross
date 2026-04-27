@@ -52,6 +52,48 @@ def _sanitize_filename(name: str, max_len: int = 120) -> str:
     return name
 
 
+class _ProxyIMAP4(imaplib.IMAP4):
+    """IMAP4 subclass that builds its TCP socket through a SOCKS /
+    HTTP proxy via :func:`core.proxy.create_proxy_socket`.
+
+    ``imaplib`` itself has no proxy hook, but it cleanly delegates
+    socket creation to ``_create_socket(self, timeout)``. Overriding
+    that one method routes every byte of the IMAP session through
+    the proxy without touching the rest of imaplib's state machine.
+    """
+
+    def __init__(self, host: str, port: int, proxy_config):
+        self._axross_proxy = proxy_config
+        super().__init__(host, port)
+
+    def _create_socket(self, timeout=None):
+        from core.proxy import create_proxy_socket
+        timeout = float(timeout) if timeout is not None else 30.0
+        return create_proxy_socket(
+            self._axross_proxy, self.host, int(self.port), timeout=timeout,
+        )
+
+
+class _ProxyIMAP4_SSL(imaplib.IMAP4_SSL):
+    """IMAP4_SSL counterpart. Re-uses the proxy socket-builder, then
+    wraps the result in TLS via the SSL context imaplib already
+    constructs internally."""
+
+    def __init__(self, host: str, port: int, proxy_config, ssl_context=None):
+        self._axross_proxy = proxy_config
+        super().__init__(host, port, ssl_context=ssl_context)
+
+    def _create_socket(self, timeout=None):
+        from core.proxy import create_proxy_socket
+        timeout = float(timeout) if timeout is not None else 30.0
+        raw = create_proxy_socket(
+            self._axross_proxy, self.host, int(self.port), timeout=timeout,
+        )
+        # ssl_context is populated by IMAP4_SSL.__init__ (defaults to
+        # ssl._create_stdlib_context() when None was passed in).
+        return self.ssl_context.wrap_socket(raw, server_hostname=self.host)
+
+
 def _decode_header(raw: str | bytes | None) -> str:
     """Decode an RFC 2047 encoded header value into a plain string."""
     if raw is None:
@@ -237,12 +279,25 @@ class ImapSession:
         username: str = "",
         password: str = "",
         use_ssl: bool = True,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         self._host = host
         self._port = port
         self._username = username
         self._password = password
         self._use_ssl = use_ssl
+        from core.proxy import ProxyConfig
+        self._proxy = ProxyConfig(
+            proxy_type=proxy_type or "none",
+            host=proxy_host,
+            port=int(proxy_port or 0),
+            username=proxy_username,
+            password=proxy_password,
+        )
         self._imap: imaplib.IMAP4 | imaplib.IMAP4_SSL | None = None
         self._hierarchy_sep: str = "/"
         self._selected_mailbox: str | None = None
@@ -252,9 +307,16 @@ class ImapSession:
 
     def _connect(self) -> None:
         """Establish IMAP connection and authenticate."""
+        # ``_proxy`` is set by ``__init__``; defensively tolerate the
+        # __new__-bypass pattern some unit tests use.
+        proxy = getattr(self, "_proxy", None)
+        proxy_active = proxy is not None and proxy.enabled
         try:
             if self._use_ssl:
-                self._imap = imaplib.IMAP4_SSL(self._host, self._port)
+                if proxy_active:
+                    self._imap = _ProxyIMAP4_SSL(self._host, self._port, proxy)
+                else:
+                    self._imap = imaplib.IMAP4_SSL(self._host, self._port)
             else:
                 # Credentials will traverse the wire in plaintext — this is
                 # occasionally legitimate (localhost, overlay VPN), but it
@@ -265,7 +327,10 @@ class ImapSession:
                     "will be sent in plaintext",
                     self._host, self._port,
                 )
-                self._imap = imaplib.IMAP4(self._host, self._port)
+                if proxy_active:
+                    self._imap = _ProxyIMAP4(self._host, self._port, proxy)
+                else:
+                    self._imap = imaplib.IMAP4(self._host, self._port)
 
             typ, data = self._imap.login(self._username, self._password)
             if typ != "OK":
@@ -309,15 +374,25 @@ class ImapSession:
         return self._imap
 
     def _select_mailbox(self, mailbox: str, readonly: bool = True) -> None:
-        """Select a mailbox if not already selected."""
+        """Select a mailbox if not already selected.
+
+        Tracks the writable/read-only mode in the cache so that a
+        subsequent call asking for write access re-selects when
+        the previous selection was read-only (otherwise STOREs
+        would silently no-op against an EXAMINE'd mailbox).
+        """
         imap = self._ensure_connected()
         encoded = _imap_utf7_encode(mailbox).decode("ascii")
-        if self._selected_mailbox == mailbox:
+        if (
+            self._selected_mailbox == mailbox
+            and getattr(self, "_selected_readonly", True) == readonly
+        ):
             return
         typ, data = imap.select(encoded, readonly=readonly)
         if typ != "OK":
             raise OSError(f"Cannot select mailbox {mailbox!r}: {data}")
         self._selected_mailbox = mailbox
+        self._selected_readonly = readonly
 
     def _mailbox_names(self) -> set[str]:
         """Return known mailbox names, refreshing from IMAP when needed."""
@@ -1081,6 +1156,136 @@ class ImapSession:
         """IMAP doesn't checksum messages — FETCH BODY[] returns the
         full RFC822 which callers can stream-hash themselves."""
         return ""
+
+    # ------------------------------------------------------------------
+    # IMAP-specific verbs (slice 4 of API_GAPS)
+    # ------------------------------------------------------------------
+
+    def search(self, criteria: str = "ALL", *,
+               mailbox: str = "INBOX") -> list[int]:
+        """Run an IMAP SEARCH against ``mailbox`` and return the
+        matching UIDs (NOT the message-sequence numbers — UIDs are
+        stable across sessions; sequence numbers shift after expunge).
+
+        ``criteria`` is the raw IMAP search string (RFC 3501 §6.4.4),
+        e.g.::
+
+            sess.search('FROM "boss@x.com" SINCE 1-Jan-2026')
+            sess.search('UNSEEN SUBJECT "invoice"')
+            sess.search('LARGER 1048576')   # > 1 MiB
+
+        F32: refuse CR/LF in ``criteria`` and ``mailbox``. imaplib
+        sends each command as ``<tag> <verb> <args>\\r\\n`` without
+        re-escaping embedded CR/LF in the args, so a tainted
+        criterion would smuggle a second IMAP command on the same
+        connection. We block this BEFORE the wire frame is built.
+
+        Caller is still responsible for escaping ``"`` characters
+        inside quoted-string criteria — that's an IMAP-syntax issue
+        rather than a smuggling one.
+        """
+        if "\r" in criteria or "\n" in criteria:
+            raise ValueError(
+                "IMAP search: criteria must not contain CR/LF (would "
+                "smuggle a second IMAP command). F32."
+            )
+        if "\r" in mailbox or "\n" in mailbox:
+            raise ValueError(
+                "IMAP search: mailbox must not contain CR/LF. F32."
+            )
+        imap = self._ensure_connected()
+        self._select_mailbox(mailbox, readonly=True)
+        typ, data = imap.uid("SEARCH", None, criteria)
+        if typ != "OK":
+            raise OSError(f"IMAP SEARCH failed: {data}")
+        if not data or data[0] is None:
+            return []
+        raw = data[0].decode() if isinstance(data[0], bytes) else data[0]
+        return [int(u) for u in raw.split() if u.strip()]
+
+    def fetch_flags(self, uid: int, *, mailbox: str = "INBOX") -> list[str]:
+        """Return the flags currently set on a message (e.g.
+        ``["\\Seen", "\\Answered"]``)."""
+        imap = self._ensure_connected()
+        self._select_mailbox(mailbox, readonly=True)
+        typ, data = imap.uid("FETCH", str(int(uid)), "(FLAGS)")
+        if typ != "OK" or not data:
+            raise OSError(f"IMAP FETCH FLAGS failed: {data}")
+        raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
+        m = re.search(r"FLAGS\s*\(([^)]*)\)", raw)
+        if not m:
+            return []
+        return [f for f in m.group(1).split() if f]
+
+    def set_flags(self, uid: int, flags: list[str] | tuple[str, ...], *,
+                  mailbox: str = "INBOX",
+                  mode: str = "set") -> None:
+        """STORE flags on a message. ``mode`` is ``"set"`` (replace),
+        ``"add"`` (``+FLAGS``), or ``"remove"`` (``-FLAGS``).
+
+        ``flags`` are raw IMAP flag strings like ``"\\Seen"``,
+        ``"\\Flagged"``, ``"\\Deleted"``, or any custom keyword the
+        server allows.
+        """
+        if mode == "set":
+            verb = "FLAGS"
+        elif mode == "add":
+            verb = "+FLAGS"
+        elif mode == "remove":
+            verb = "-FLAGS"
+        else:
+            raise ValueError(f"set_flags mode must be set/add/remove, got {mode!r}")
+        # Validate flags shape — imaplib will happily smuggle a CR/LF
+        # into the wire if we don't.
+        for f in flags:
+            if "\r" in f or "\n" in f or " " in f:
+                raise ValueError(
+                    f"set_flags flag {f!r} must not contain CR/LF/space"
+                )
+        imap = self._ensure_connected()
+        self._select_mailbox(mailbox, readonly=False)
+        typ, data = imap.uid(
+            "STORE", str(int(uid)),
+            verb, "(" + " ".join(flags) + ")",
+        )
+        if typ != "OK":
+            raise OSError(f"IMAP STORE {verb} failed: {data}")
+
+    def move(self, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
+        """Move a message from ``src_mailbox`` to ``dst_mailbox`` by
+        UID. Uses the IMAP MOVE extension (RFC 6851) when the server
+        announces it; falls back to COPY + STORE \\Deleted + EXPUNGE
+        for pre-MOVE servers.
+
+        F32: mailbox names with CR/LF are refused before any wire
+        byte is sent."""
+        for label, val in (("src_mailbox", src_mailbox),
+                           ("dst_mailbox", dst_mailbox)):
+            if "\r" in val or "\n" in val:
+                raise ValueError(
+                    f"IMAP move: {label} must not contain CR/LF. F32."
+                )
+        imap = self._ensure_connected()
+        self._select_mailbox(src_mailbox, readonly=False)
+        # capability() ASKs the server; cache locally to avoid spam.
+        try:
+            typ, caps = imap.capability()
+            cap_str = b" ".join(caps).decode("ascii", errors="replace") \
+                if isinstance(caps, list) else str(caps)
+        except Exception:  # noqa: BLE001
+            cap_str = ""
+        dst_enc = _imap_utf7_encode(dst_mailbox).decode("ascii")
+        if "MOVE" in cap_str.upper():
+            typ, data = imap.uid("MOVE", str(int(uid)), dst_enc)
+            if typ != "OK":
+                raise OSError(f"IMAP MOVE failed: {data}")
+            return
+        # Fallback: COPY then STORE \\Deleted + EXPUNGE.
+        typ, data = imap.uid("COPY", str(int(uid)), dst_enc)
+        if typ != "OK":
+            raise OSError(f"IMAP COPY (move-fallback) failed: {data}")
+        self.set_flags(uid, ["\\Deleted"], mailbox=src_mailbox, mode="add")
+        imap.expunge()
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         """Return quota usage if the server supports IMAP QUOTA.

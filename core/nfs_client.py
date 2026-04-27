@@ -257,6 +257,60 @@ class NfsSession:
         """Server-side copy over the mounted FS (kernel-buffered)."""
         shutil.copy2(self._full_path(src), self._full_path(dst))
 
+    # ------------------------------------------------------------------
+    # NFS-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def exports_list(host: str, *, timeout: float = 5.0) -> list[dict]:
+        """Query the remote NFS server for its export list via
+        ``showmount -e``. Returns one dict per export
+        ``[{"path": "/srv/share", "clients": ["10.0.0.0/24", "*"]}, ...]``.
+
+        Static method so a script can browse before mounting::
+
+            for ex in axross.NfsSession.exports_list("10.0.0.5"):
+                print(ex["path"], ex["clients"])
+
+        Requires ``showmount`` on PATH (Debian/Ubuntu: ``apt install
+        nfs-common``; Arch: ``pacman -S nfs-utils``). Raises ``OSError``
+        when the binary is missing OR when the server doesn't expose
+        mountd (NFSv4-only servers don't — they advertise exports
+        through the pseudo-root ``/`` instead).
+        """
+        # Validate input BEFORE the binary lookup so a CR/LF check
+        # fires even when showmount isn't installed (defends against
+        # ``except OSError`` callers that would otherwise mask the
+        # smuggling guard with the not-installed message).
+        if "\r" in host or "\n" in host or " " in host:
+            raise ValueError(
+                "exports_list host must not contain CR/LF/space"
+            )
+        showmount = shutil.which("showmount")
+        if not showmount:
+            raise OSError(
+                "exports_list requires the system 'showmount' binary "
+                "(install nfs-common / nfs-utils)"
+            )
+        proc = subprocess.run(
+            [showmount, "-e", "--no-headers", host],
+            capture_output=True, text=True, timeout=float(timeout),
+        )
+        if proc.returncode != 0:
+            stderr = proc.stderr.strip() or "showmount returned non-zero"
+            raise OSError(f"showmount -e {host}: {stderr}")
+        out: list[dict] = []
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # ``/srv/share <clients-spec>`` — split on first whitespace.
+            parts = line.split(None, 1)
+            path = parts[0]
+            clients = parts[1].split(",") if len(parts) > 1 else ["*"]
+            out.append({"path": path, "clients": [c.strip() for c in clients]})
+        return out
+
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Stream-hash via the local mount. No cheap native hash, but
         reading from the mounted filesystem is kernel-buffered so cost

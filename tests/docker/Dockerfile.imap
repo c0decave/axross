@@ -4,7 +4,7 @@ ARG USERNAME=imapuser
 ARG PASSWORD=imap123
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends dovecot-imapd && \
+    apt-get install -y --no-install-recommends dovecot-imapd dovecot-pop3d && \
     rm -rf /var/lib/apt/lists/*
 
 # Create the test user
@@ -29,6 +29,10 @@ RUN mkdir -p /home/${USERNAME}/Maildir/new \
         > /home/${USERNAME}/Maildir/new/seed001.eml && \
     chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/Maildir
 
-EXPOSE 143
+# Enable both IMAP and POP3 listeners. Dovecot picks up the
+# protocols= directive from /etc/dovecot/dovecot.conf.
+RUN echo 'protocols = imap pop3' >> /etc/dovecot/dovecot.conf
+
+EXPOSE 143 110
 
 CMD ["dovecot", "-F"]

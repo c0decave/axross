@@ -99,6 +99,11 @@ class SmbSession:
         password: str = "",
         port: int = 445,
         client_name: str = "",
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if smbclient is None:
             raise ImportError(
@@ -112,6 +117,14 @@ class SmbSession:
         self._password = password
         self._port = port
         self._prefix = f"\\\\{host}\\{share}"
+        from core.proxy import ProxyConfig
+        self._proxy = ProxyConfig(
+            proxy_type=proxy_type or "none",
+            host=proxy_host,
+            port=int(proxy_port or 0),
+            username=proxy_username,
+            password=proxy_password,
+        )
 
         # smbclient keeps a process-wide session registry. Two threads
         # constructing SmbSession(host=X, ...) concurrently can race on
@@ -121,34 +134,46 @@ class SmbSession:
         # per-host lock below makes init atomic per-host: each thread
         # owns the registry entry for host during delete→register→probe.
         effective_client_name = client_name or SMB_CLIENT_NAME
+        from core.proxy import patched_create_connection
         with _session_lock(host):
             try:
                 smbclient.delete_session(host)
             except Exception:
                 pass
 
-            with _patched_gethostname(effective_client_name):
+            # Two scoped patches that nest cleanly:
+            # 1) socket.gethostname returns our chosen WORKSTATION name
+            #    (OpSec finding #3 — keeps the real hostname out of NTLM)
+            # 2) socket.create_connection routes through the SOCKS / HTTP
+            #    proxy when the profile has one set, otherwise no-op.
+            #
+            # Both patches MUST cover the eager probe listdir below as
+            # well — register_session is lazy, the actual TCP socket
+            # opens on first IO. Once it's open, the smbclient pool
+            # reuses the same socket for every subsequent op so the
+            # proxy stays in effect without re-patching.
+            with _patched_gethostname(effective_client_name), \
+                 patched_create_connection(self._proxy):
                 smbclient.register_session(
                     host,
                     username=username,
                     password=password,
                     port=port,
                 )
-            # register_session is lazy — it does not actually
-            # authenticate until the first I/O. Verify credentials
-            # eagerly by doing a cheap listdir on the share root, so a
-            # wrong-password / wrong-share misconfiguration surfaces at
-            # connection time instead of halfway into a transfer.
-            try:
-                smbclient.listdir(self._prefix)
-            except Exception as exc:
+                # Verify credentials eagerly by doing a cheap listdir
+                # on the share root so a wrong-password / wrong-share
+                # misconfiguration surfaces at connection time instead
+                # of halfway into a transfer.
                 try:
-                    smbclient.delete_session(host)
-                except Exception:
-                    pass
-                raise OSError(
-                    f"SMB connect failed for {self._prefix}: {exc}"
-                ) from exc
+                    smbclient.listdir(self._prefix)
+                except Exception as exc:
+                    try:
+                        smbclient.delete_session(host)
+                    except Exception:
+                        pass
+                    raise OSError(
+                        f"SMB connect failed for {self._prefix}: {exc}"
+                    ) from exc
 
         log.info("SMB connected: %s@%s\\%s:%d", username, host, share, port)
 
@@ -302,6 +327,104 @@ class SmbSession:
 
     def readlink(self, path: str) -> str:
         raise OSError("SMB does not support symlinks")
+
+    # ------------------------------------------------------------------
+    # SMB-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def shares_list(host: str, *,
+                    username: str = "",
+                    password: str = "",
+                    timeout: float = 10.0) -> list[dict]:
+        """Enumerate shares published by ``host``. Static method so a
+        script can browse before mounting a specific share.
+
+        Implementation: shells out to the system ``smbclient -L``
+        (samba-client package). Pure-Python NetShareEnum via DCE-RPC
+        over IPC$ would be possible with smbprotocol but adds ~400 LOC;
+        every Linux distro that ships SMB tools also ships ``smbclient``,
+        so the shellout is a fair trade.
+
+        Returns one dict per share ``{name, type, comment}`` where
+        ``type`` is ``Disk``, ``Printer``, ``IPC``, or whatever the
+        server reports.
+
+        Raises ``OSError`` when ``smbclient`` is missing.
+        """
+        import shutil as _shutil
+        import subprocess as _sp
+        if "\r" in host or "\n" in host:
+            raise ValueError("SMB shares_list host must not contain CR/LF")
+        binary = _shutil.which("smbclient")
+        if not binary:
+            raise OSError(
+                "shares_list requires the system 'smbclient' binary "
+                "(install samba-client / samba)"
+            )
+        cmd = [binary, "-L", f"//{host}", "-g"]
+        if username:
+            # ``-U user%password`` is the only safe way to pass a
+            # password on smbclient's CLI without a TTY prompt.
+            cmd += ["-U", f"{username}%{password}"]
+        else:
+            cmd += ["-N"]   # no auth
+        try:
+            proc = _sp.run(cmd, capture_output=True, text=True,
+                           timeout=float(timeout))
+        except _sp.TimeoutExpired as exc:
+            raise OSError(f"smbclient -L {host} timed out") from exc
+        if proc.returncode != 0:
+            stderr = (proc.stderr or proc.stdout).strip() \
+                or "smbclient -L returned non-zero"
+            raise OSError(f"smbclient -L {host}: {stderr}")
+        # ``-g`` (grepable) emits ``Type|Name|Comment`` lines; rows
+        # without ``Disk|`` / ``Printer|`` / ``IPC|`` prefix are skipped.
+        out: list[dict] = []
+        for line in proc.stdout.splitlines():
+            parts = line.split("|", 2)
+            if len(parts) < 2:
+                continue
+            kind = parts[0].strip()
+            if kind not in ("Disk", "Printer", "IPC"):
+                continue
+            out.append({
+                "name": parts[1].strip(),
+                "type": kind,
+                "comment": parts[2].strip() if len(parts) > 2 else "",
+            })
+        return out
+
+    def acl_get(self, path: str) -> dict:
+        """SMB security descriptor for ``path``. NOT IMPLEMENTED in
+        this round — the SMB2 QUERY_SECURITY_INFO IOCTL has no public
+        smbprotocol shortcut, so wiring it up is several hundred LOC
+        of DCE-RPC ceremony. Tracked as a follow-up.
+
+        Use the following pattern to pull it directly via smbprotocol
+        in the meantime::
+
+            from smbprotocol.open import Open, FilePipePrinterAccessMask
+            # ... open the file with READ_CONTROL access ...
+            # ... issue QUERY_SECURITY_INFORMATION request ...
+        """
+        raise NotImplementedError(
+            "acl_get is a follow-up — issue smbprotocol QUERY_SECURITY_INFO "
+            "directly for now (see docstring)"
+        )
+
+    def dfs_referrals(self, path: str = "/") -> list[dict]:
+        """DFS namespace resolution for ``path``. NOT IMPLEMENTED in
+        this round — needs FSCTL_DFS_GET_REFERRALS over an IOCTL,
+        which smbprotocol exposes structurally (smbprotocol.dfs.*) but
+        without a high-level method.
+
+        Tracked as a follow-up alongside ``acl_get``.
+        """
+        raise NotImplementedError(
+            "dfs_referrals is a follow-up — issue FSCTL_DFS_GET_REFERRALS "
+            "via smbprotocol directly for now"
+        )
 
     def list_versions(self, path: str) -> list:
         return []

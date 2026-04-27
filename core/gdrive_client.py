@@ -100,6 +100,11 @@ class GDriveSession:
         client_id: str,
         client_secret: str,
         token_file: str = "~/.config/axross/gdrive_token.json",
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if Credentials is None:
             raise ImportError(
@@ -113,6 +118,11 @@ class GDriveSession:
         self._token_file = os.path.expanduser(token_file)
         self._path_cache: dict[str, str] = {"/": "root"}
         self._service = None
+        self._proxy_type = proxy_type or "none"
+        self._proxy_host = proxy_host
+        self._proxy_port = int(proxy_port or 0)
+        self._proxy_username = proxy_username
+        self._proxy_password = proxy_password
 
         self._authenticate()
 
@@ -168,8 +178,56 @@ class GDriveSession:
                 log.error("Google Drive: failed to save token to %s: %s",
                           self._token_file, exc)
 
-        self._service = build("drive", "v3", credentials=creds)
+        self._service = self._build_service(creds)
         log.info("Google Drive connected")
+
+    def _build_service(self, creds):
+        """Construct the googleapiclient ``drive/v3`` service.
+
+        When a proxy is configured we attach an ``httplib2.Http``
+        carrying a ``ProxyInfo`` (httplib2 has native SOCKS support
+        via PySocks) and wrap it in ``google_auth_httplib2.AuthorizedHttp``
+        so Google's OAuth credentials still apply on top.
+
+        Tests sometimes construct GDriveSession via ``__new__`` to
+        bypass the network-touching ctor; tolerate the missing proxy
+        attrs by treating them as "no proxy".
+        """
+        ptype = getattr(self, "_proxy_type", "none") or "none"
+        phost = getattr(self, "_proxy_host", "") or ""
+        if ptype == "none" or not phost:
+            return build("drive", "v3", credentials=creds)
+        # Apply the same SSRF guard the SOCKS / HTTP-CONNECT path uses
+        # — keeps a hostile profile from making us proxy via metadata
+        # endpoints or RFC1918 addresses.
+        from core.proxy import _assert_proxy_host_not_private
+        _assert_proxy_host_not_private(phost)
+        try:
+            import httplib2
+            from google_auth_httplib2 import AuthorizedHttp
+        except ImportError as exc:
+            raise OSError(
+                "Google Drive proxy requires httplib2 + google-auth-httplib2 "
+                "(both come with the [gdrive] extra).",
+            ) from exc
+        if ptype == "socks5":
+            socks_type = httplib2.socks.PROXY_TYPE_SOCKS5
+        elif ptype == "socks4":
+            socks_type = httplib2.socks.PROXY_TYPE_SOCKS4
+        elif ptype == "http":
+            socks_type = httplib2.socks.PROXY_TYPE_HTTP
+        else:
+            raise ValueError(f"Unknown proxy_type: {ptype}")
+        proxy_info = httplib2.ProxyInfo(
+            proxy_type=socks_type,
+            proxy_host=phost,
+            proxy_port=int(getattr(self, "_proxy_port", 0) or 0),
+            proxy_user=getattr(self, "_proxy_username", "") or None,
+            proxy_pass=getattr(self, "_proxy_password", "") or None,
+            proxy_rdns=True,
+        )
+        http = httplib2.Http(proxy_info=proxy_info)
+        return build("drive", "v3", http=AuthorizedHttp(creds, http=http))
 
     # ------------------------------------------------------------------
     # Path resolution
@@ -534,6 +592,87 @@ class GDriveSession:
             ).execute()
         except Exception as exc:
             raise OSError(f"Drive copy {src} -> {dst} failed: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # Drive-specific verbs (slice 5 of API_GAPS)
+    # ------------------------------------------------------------------
+
+    def share(self, path: str, *,
+              role: str = "reader",
+              type: str = "anyone",
+              email: str | None = None,
+              allow_discovery: bool = False) -> dict:
+        """Grant a permission on the file at ``path`` and return the
+        shareable webViewLink.
+
+        ``role``  is ``reader`` (default) / ``commenter`` / ``writer`` /
+                   ``fileOrganizer`` / ``organizer`` / ``owner``.
+        ``type``  is ``anyone`` (link-shareable) / ``user`` /
+                   ``group`` / ``domain``.
+        ``email`` is required when ``type`` is ``user`` / ``group``.
+
+        Returns a dict::
+
+            {"permission_id": "...", "url": "https://drive.google.com/..."}
+        """
+        if email and ("\r" in email or "\n" in email):
+            raise ValueError(
+                "GDrive share: email must not contain CR/LF. F40."
+            )
+        if "\r" in role or "\n" in role:
+            raise ValueError("GDrive share: role must not contain CR/LF")
+        if "\r" in type or "\n" in type:
+            raise ValueError("GDrive share: type must not contain CR/LF")
+        fid = self._resolve_path(path)
+        body: dict = {"role": role, "type": type}
+        if email:
+            body["emailAddress"] = email
+        if type == "anyone":
+            body["allowFileDiscovery"] = bool(allow_discovery)
+        perm = self._service.permissions().create(
+            fileId=fid, body=body, fields="id",
+        ).execute()
+        meta = self._service.files().get(
+            fileId=fid, fields="webViewLink,webContentLink",
+        ).execute()
+        return {
+            "permission_id": perm.get("id", ""),
+            "url": meta.get("webViewLink") or meta.get("webContentLink") or "",
+        }
+
+    def share_revoke(self, path: str, permission_id: str) -> None:
+        """Remove a permission previously granted via share()."""
+        fid = self._resolve_path(path)
+        self._service.permissions().delete(
+            fileId=fid, permissionId=permission_id,
+        ).execute()
+
+    def permissions_list(self, path: str) -> list[dict]:
+        """List every permission on a file (incl. owners + inherited
+        permissions). One dict per permission with id/role/type/email."""
+        fid = self._resolve_path(path)
+        out: list[dict] = []
+        page_token = None
+        while True:
+            kwargs = dict(
+                fileId=fid,
+                fields="permissions(id,role,type,emailAddress,domain),nextPageToken",
+            )
+            if page_token:
+                kwargs["pageToken"] = page_token
+            resp = self._service.permissions().list(**kwargs).execute()
+            for p in resp.get("permissions", []):
+                out.append({
+                    "id": p.get("id", ""),
+                    "role": p.get("role", ""),
+                    "type": p.get("type", ""),
+                    "email": p.get("emailAddress", ""),
+                    "domain": p.get("domain", ""),
+                })
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        return out
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return Drive's md5Checksum field.

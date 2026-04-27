@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80" role="img" aria-label="axross cuneiform">
+  <title>axross — cuneiform tablet (ancient + retro)</title>
+  <style>
+    .clay { fill: #C8A475; stroke: #6B4F2A; stroke-width: 1.4; }
+    .wedge { fill: #3F2A14; }
+    @media (prefers-color-scheme: dark) {
+      .clay { fill: #5B4628; stroke: #C8A475; }
+      .wedge { fill: #F1E4C4; }
+    }
+  </style>
+  <rect class="clay" x="6" y="6" width="148" height="68" rx="4"/>
+  <!-- six characters of cuneiform-like wedges arranged across the tablet -->
+  <g class="wedge">
+    <!-- 'a' -->
+    <polygon points="14,22 22,18 22,26"/>
+    <polygon points="14,32 22,28 22,36"/>
+    <polygon points="14,42 22,38 22,46"/>
+    <!-- 'x' (cross of two slanted wedges) -->
+    <polygon points="32,20 44,30 32,30"/>
+    <polygon points="44,20 32,30 44,30"/>
+    <polygon points="32,40 44,30 32,30 32,40 44,40 44,30"/>
+    <!-- 'r' (vertical + slant) -->
+    <polygon points="56,18 60,26 52,26"/>
+    <polygon points="56,30 60,38 52,38"/>
+    <polygon points="56,42 64,42 60,48"/>
+    <!-- 'o' (square cluster of small wedges) -->
+    <polygon points="74,22 80,26 74,30"/>
+    <polygon points="86,22 80,26 86,30"/>
+    <polygon points="74,34 80,38 74,42"/>
+    <polygon points="86,34 80,38 86,42"/>
+    <!-- 's' (zig wedges) -->
+    <polygon points="100,18 108,22 100,26"/>
+    <polygon points="108,28 100,32 108,36"/>
+    <polygon points="100,38 108,42 100,46"/>
+    <!-- 's' duplicate -->
+    <polygon points="124,18 132,22 124,26"/>
+    <polygon points="132,28 124,32 132,36"/>
+    <polygon points="124,38 132,42 124,46"/>
+  </g>
+  <!-- subtle scratches on the bottom edge -->
+  <g stroke="#6B4F2A" stroke-width="0.5" opacity="0.6">
+    <line x1="14" y1="60" x2="146" y2="60"/>
+    <line x1="20" y1="66" x2="50" y2="66"/>
+    <line x1="60" y1="66" x2="100" y2="66"/>
+  </g>
+</svg>

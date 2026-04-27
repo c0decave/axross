@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="axross celtic knot">
+  <title>axross — celtic-knot 'X' (interwoven encryption)</title>
+  <style>
+    .knot { fill: none; stroke: #14B8A6; stroke-width: 6; stroke-linecap: round; }
+    .knot-back { fill: none; stroke: #0F172A; stroke-width: 8; stroke-linecap: round; }
+    @media (prefers-color-scheme: dark) { .knot-back { stroke: #F8FAFC; } }
+  </style>
+  <!-- two over-under loops crossed; draw outlines first then accent on top with gaps where the other strand is on top -->
+  <g>
+    <!-- strand A: top-left to bottom-right with a loop -->
+    <path class="knot-back" d="M16 16 C 36 36, 60 36, 80 16 M16 80 C 36 60, 60 60, 80 80"/>
+    <path class="knot" d="M16 16 C 36 36, 60 36, 80 16"/>
+    <path class="knot" d="M16 80 C 36 60, 60 60, 80 80"/>
+    <!-- strand B: vertical loops crossing over A -->
+    <path class="knot-back" d="M16 16 C 36 36, 36 60, 16 80 M80 16 C 60 36, 60 60, 80 80"/>
+    <path class="knot" d="M16 16 C 36 36, 36 60, 16 80"/>
+    <path class="knot" d="M80 16 C 60 36, 60 60, 80 80"/>
+  </g>
+  <!-- center jewel -->
+  <circle cx="48" cy="48" r="4" fill="#14B8A6" stroke="#0F172A" stroke-width="1.4"/>
+</svg>

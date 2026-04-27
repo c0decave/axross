@@ -65,6 +65,9 @@ VALID_PROTOCOLS = {
     "sftp", "scp", "ftp", "ftps", "smb", "webdav", "s3",
     "rsync", "nfs", "azure_blob", "azure_files",
     "onedrive", "sharepoint", "gdrive", "dropbox", "iscsi", "imap",
+    "pop3",
+    "tftp",
+    "ramfs",
     "telnet", "adb", "mtp",
 }
 
@@ -160,6 +163,17 @@ class ConnectionProfile:
     # IMAP
     imap_ssl: bool = True
 
+    # POP3 (read-only)
+    pop3_ssl: bool = True
+
+    # TFTP (UDP — no proxy support; opt-in file-list since TFTP
+    # has no native LIST). ``tftp_filelist`` is a comma-separated
+    # list of filenames in profiles.json, deserialised to a Python
+    # list. ``tftp_max_size_bytes`` caps each transfer.
+    tftp_filelist: str = ""
+    tftp_filelist_enabled: bool = False
+    tftp_max_size_bytes: int = 16 * 1024 * 1024
+
     # ADB (Android Debug Bridge)
     adb_mode: str = "tcp"          # "tcp" or "usb"
     adb_usb_serial: str = ""       # USB serial filter (optional)
@@ -194,6 +208,18 @@ class ConnectionProfile:
     # UID scheme. Set True on a per-profile basis when doing a true
     # archive/backup flow where metadata preservation matters.
     rsync_preserve_metadata: bool = False
+
+    # Shell-history suppression: when True (the safe default), the
+    # SSH/Telnet terminal flow silently disables HISTFILE / HISTSIZE /
+    # zsh-savehist on the remote shell so red-team / forensic engagements
+    # don't leak through ``~/.bash_history``. Users running their own
+    # boxes can flip this off per-profile to keep normal history.
+    suppress_shell_history: bool = True
+
+    # Terminal theme name (matches keys in ``ui.terminal_widget.TERMINAL_THEMES``).
+    # Empty string keeps the dock default. Valid: Dark / Solarized-Dark
+    # / Solarized-Light / Hacker / Amber / Light.
+    terminal_theme: str = ""
 
     def get_password(self) -> str | None:
         """Retrieve password from keyring."""
@@ -318,6 +344,17 @@ class ConnectionProfile:
         elif proto == "imap":
             d["imap_ssl"] = self.imap_ssl
 
+        elif proto == "pop3":
+            d["pop3_ssl"] = self.pop3_ssl
+
+        elif proto == "tftp":
+            if self.tftp_filelist:
+                d["tftp_filelist"] = self.tftp_filelist
+            if self.tftp_filelist_enabled:
+                d["tftp_filelist_enabled"] = True
+            if self.tftp_max_size_bytes != 16 * 1024 * 1024:
+                d["tftp_max_size_bytes"] = self.tftp_max_size_bytes
+
         elif proto == "adb":
             d["adb_mode"] = self.adb_mode
             if self.adb_usb_serial:
@@ -341,6 +378,13 @@ class ConnectionProfile:
             d["telnet_naws_height"] = self.telnet_naws_height
         if self.rsync_preserve_metadata:
             d["rsync_preserve_metadata"] = True
+        # Persist the suppression flag whenever the user OPTED OUT of
+        # the safe default — keeps profile JSON minimal in the common
+        # case (default True is implicit).
+        if not self.suppress_shell_history:
+            d["suppress_shell_history"] = False
+        if self.terminal_theme:
+            d["terminal_theme"] = self.terminal_theme
 
         return d
 
@@ -433,6 +477,17 @@ class ConnectionProfile:
             iscsi_mount_point=_string("iscsi_mount_point"),
             # IMAP
             imap_ssl=_boolean("imap_ssl", True),
+            # POP3 (read-only)
+            pop3_ssl=_boolean("pop3_ssl", True),
+            # TFTP
+            tftp_filelist=_string("tftp_filelist"),
+            tftp_filelist_enabled=_boolean("tftp_filelist_enabled"),
+            tftp_max_size_bytes=_int_in_range(
+                "tftp_max_size_bytes",
+                16 * 1024 * 1024,
+                1024,                # at least 1 KiB
+                512 * 1024 * 1024,   # at most 512 MiB
+            ),
             # ADB — "tcp" or "usb"; fall back to tcp on junk input.
             adb_mode=_string("adb_mode", "tcp") if _string(
                 "adb_mode", "tcp",
@@ -469,6 +524,11 @@ class ConnectionProfile:
                 "telnet_naws_height", 0, 0, 500,
             ),
             rsync_preserve_metadata=_boolean("rsync_preserve_metadata"),
+            # The safe default is True; only honour an explicit False.
+            suppress_shell_history=_boolean(
+                "suppress_shell_history", default=True,
+            ),
+            terminal_theme=_string("terminal_theme"),
         )
 
 

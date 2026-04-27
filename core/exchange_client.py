@@ -282,6 +282,11 @@ class ExchangeSession:
         *,
         server: str = "",          # "outlook.office365.com" etc.
         autodiscover: bool = True,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if not EXCHANGELIB_AVAILABLE:
             raise ImportError(
@@ -294,6 +299,25 @@ class ExchangeSession:
         # Bind early so the cleanup branch below can introspect even
         # if the failure happened before assignment.
         self._account = None
+
+        from core.proxy import build_requests_proxies
+        proxies = build_requests_proxies(
+            proxy_type, proxy_host, int(proxy_port or 0),
+            proxy_username, proxy_password,
+        )
+        # Autodiscover sends Pre-Account HTTP requests directly via
+        # exchangelib's static fetcher — those bypass the per-Account
+        # session pool, so a proxy set after the fact misses them.
+        # Refuse the combination loudly rather than leak unproxied.
+        # See docs/PROXY_SUPPORT.md.
+        if proxies and autodiscover:
+            raise OSError(
+                "Exchange: proxy + autodiscover=True is not supported — "
+                "the autodiscover step bypasses the session pool. "
+                "Set autodiscover=False and pass an explicit server=… "
+                "to route every byte through the proxy."
+            )
+
         try:
             creds = Credentials(self._username, password)  # type: ignore[misc]
             if autodiscover:
@@ -316,6 +340,12 @@ class ExchangeSession:
                     config=config, autodiscover=False,
                     access_type=DELEGATE,
                 )
+                # Wire the proxy into the protocol's session pool BEFORE
+                # any payload request runs. We patch existing pooled
+                # sessions plus override ``create_session`` so future
+                # sessions added on demand inherit the proxy.
+                if proxies:
+                    self._apply_protocol_proxy(self._account.protocol, proxies)
         except Exception as exc:  # noqa: BLE001 — surface to user
             # If autodiscover or the second Account ctor raised AFTER
             # we'd already established the protocol object, drop it
@@ -328,6 +358,46 @@ class ExchangeSession:
                 f"Exchange connect to {smtp_address}: {exc}",
             ) from exc
         log.info("ExchangeSession opened for %s", smtp_address)
+
+    @staticmethod
+    def _apply_protocol_proxy(protocol, proxies: dict) -> None:
+        """Inject ``proxies`` into every requests.Session that
+        exchangelib's protocol session pool produces.
+
+        Two halves: (1) patch any session already in the pool — the
+        Account ctor populates it with one or two — and (2) wrap the
+        protocol's ``create_session`` so future on-demand expansions
+        inherit the proxy. Best-effort: if exchangelib's internals
+        change, the patch silently no-ops and the connection still
+        works (just unproxied).
+        """
+        try:
+            pool = getattr(protocol, "_session_pool", None)
+            if pool is not None:
+                # exchangelib uses a Queue; iterate non-destructively.
+                inner = list(getattr(pool, "queue", []))
+                for sess in inner:
+                    if hasattr(sess, "proxies"):
+                        sess.proxies = dict(proxies)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Exchange proxy: pre-existing session patch skipped: %s", exc)
+
+        original = getattr(protocol, "create_session", None)
+        if original is None:
+            return
+
+        def _patched_create_session(*args, **kwargs):
+            sess = original(*args, **kwargs)
+            try:
+                sess.proxies = dict(proxies)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Exchange proxy: per-session set skipped: %s", exc)
+            return sess
+
+        try:
+            protocol.create_session = _patched_create_session  # type: ignore[assignment]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Exchange proxy: create_session patch skipped: %s", exc)
 
     def _safely_close_account(self) -> None:
         """Best-effort close of the underlying exchangelib Account /
@@ -710,6 +780,126 @@ class ExchangeSession:
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         return ""
+
+    # ------------------------------------------------------------------
+    # Exchange-specific verbs (slice 4 of API_GAPS)
+    # ------------------------------------------------------------------
+
+    def search(self, query: str, *,
+               folder: str | None = None,
+               limit: int = 100) -> list[dict]:
+        """Find messages matching a free-text query (subject + body
+        + sender). Returns up to ``limit`` lightweight dicts with
+        ``{id, subject, sender, datetime_received, has_attachments}``.
+
+        ``folder`` is a virtual path inside the mailbox
+        (``"/inbox"`` / ``"/sent items"`` / ``"/junk email"``).
+        ``None`` searches the inbox by default.
+
+        Power users wanting full QueryString DSL can hit
+        ``self.account.<folder>.filter(...)`` directly — this helper
+        just wraps the common ``contains-text`` case.
+        """
+        acct = self._account_or_raise()
+        target = acct.inbox
+        if folder:
+            parts = [p for p in folder.strip("/").split("/") if p]
+            target = self._resolve_folder(parts) if parts else acct.inbox
+        items = target.filter(subject__icontains=query) \
+            | target.filter(body__icontains=query)
+        out: list[dict] = []
+        for msg in items.order_by("-datetime_received")[:int(limit)]:
+            try:
+                sender = msg.sender.email_address if msg.sender else ""
+            except Exception:  # noqa: BLE001
+                sender = ""
+            out.append({
+                "id": self._msg_id(msg),
+                "subject": getattr(msg, "subject", "") or "",
+                "sender": sender,
+                "datetime_received": getattr(msg, "datetime_received", None),
+                "has_attachments": bool(getattr(msg, "has_attachments", False)),
+            })
+        return out
+
+    def move_message(self, src_path: str, dst_folder: str) -> None:
+        """Move a single message from ``src_path`` (virtual file path
+        inside a folder) to ``dst_folder`` (virtual folder path).
+        Wraps exchangelib's ``Item.move``."""
+        acct = self._account_or_raise()
+        src_parts = [p for p in src_path.strip("/").split("/") if p]
+        if len(src_parts) < 2:
+            raise OSError(f"move_message: bad source path {src_path!r}")
+        msg_seg = src_parts[-1]
+        folder_parts = src_parts[:-1]
+        src_folder = self._resolve_folder(folder_parts)
+        msg = self._fetch_message(src_folder, msg_seg)
+        dst_parts = [p for p in dst_folder.strip("/").split("/") if p]
+        if not dst_parts:
+            raise OSError(f"move_message: bad destination {dst_folder!r}")
+        dst = self._resolve_folder(dst_parts)
+        msg.move(dst)
+
+    def send_mail(self, to: list[str] | str, subject: str, body: str,
+                  *, cc: list[str] | None = None,
+                  bcc: list[str] | None = None,
+                  attachments: list[tuple[str, bytes]] | None = None) -> None:
+        """Send an email through the connected Exchange account.
+        ``to`` may be a single address or a list. ``attachments`` is
+        a list of ``(filename, bytes)``.
+
+        F34: every address (to/cc/bcc), the subject, AND every
+        attachment filename are validated for CR/LF before the
+        Mailbox/FileAttachment objects are constructed.
+        exchangelib serialises these into MIME headers; a tainted
+        value would otherwise smuggle additional headers (Bcc,
+        Reply-To, X-Mailer-Override, …). Body is sent as plain
+        text; HTML bodies are out of scope for this helper.
+        """
+        if "\r" in subject or "\n" in subject:
+            raise ValueError("send_mail subject must not contain CR/LF (F34)")
+        if isinstance(to, str):
+            to_list = [to]
+        else:
+            to_list = list(to)
+        for label, addrs in (("to", to_list),
+                             ("cc", cc or []),
+                             ("bcc", bcc or [])):
+            for a in addrs:
+                if "\r" in a or "\n" in a:
+                    raise ValueError(
+                        f"send_mail {label} address {a!r} must not "
+                        f"contain CR/LF (F34 — header-injection guard)"
+                    )
+        for fname, _blob in (attachments or []):
+            if "\r" in fname or "\n" in fname:
+                raise ValueError(
+                    f"send_mail attachment filename {fname!r} must "
+                    f"not contain CR/LF (F34)"
+                )
+        from exchangelib import Message as _Msg, FileAttachment as _Att, Mailbox as _Mb
+        acct = self._account_or_raise()
+        msg = _Msg(
+            account=acct,
+            subject=subject,
+            body=body,
+            to_recipients=[_Mb(email_address=a) for a in to_list],
+            cc_recipients=[_Mb(email_address=a) for a in (cc or [])],
+            bcc_recipients=[_Mb(email_address=a) for a in (bcc or [])],
+        )
+        for fname, blob in (attachments or []):
+            msg.attach(_Att(name=fname, content=blob))
+        msg.send()
+
+    def _account_or_raise(self):
+        """Resolve self.account or raise a structured OSError. Older
+        exchange code paths defer the connect, so guard."""
+        acct = getattr(self, "account", None) or getattr(self, "_account", None)
+        if acct is None:
+            raise OSError(
+                "Exchange backend not connected — call connect() first"
+            )
+        return acct
 
     def list_versions(self, path: str) -> list:
         return []

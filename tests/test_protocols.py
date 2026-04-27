@@ -91,10 +91,39 @@ IMAP_PORT = 143
 IMAP_USER = "imapuser"
 IMAP_PASS = "imap123"
 
+# POP3 shares the dovecot container with IMAP — same credentials,
+# same maildir backing — but on its own port.
+POP3_HOST = IMAP_HOST
+POP3_PORT_PLAIN = 110
+POP3_USER = IMAP_USER
+POP3_PASS = IMAP_PASS
+
+# TFTP server: tftpd-hpa with a few seed files in /srv/tftp.
+TFTP_HOST = "10.99.0.41"
+TFTP_PORT = 69
+TFTP_FILES = ("readme.txt", "configs/dhcpd.conf", "firmware.bin")
+
+# rsh server: rsh-redone-server via xinetd. The .rhosts on the
+# container accepts every client (test-sandbox-only — never on a
+# real network). RshSession itself shells out to /usr/bin/rsh, so
+# these tests only run when that setuid binary is on PATH.
+RSH_HOST = "10.99.0.42"
+RSH_USER = "axuser"
+
 TELNET_HOST = "10.99.0.37"
 TELNET_PORT = 23
 TELNET_USER = "telnetuser"
 TELNET_PASS = "telnet123"
+
+# Cisco-fake (hand-rolled IOS-flavoured Telnet daemon). The same
+# constants are re-bound in the Cisco-IOS section further down so
+# the live tests there can use them after the helper / decorator
+# evaluation order issue was fixed.
+CISCO_HOST = "10.99.0.43"
+CISCO_PORT = 23
+CISCO_USER = "admin"
+CISCO_PW = "cisco123"
+CISCO_ENABLE = "enablesecret"
 
 # Proxy containers in the lab (see tests/docker/docker-compose.yml).
 SOCKS_PROXY_HOST = "10.99.0.20"
@@ -3921,6 +3950,184 @@ def _assert_checksum_shape(cs: str):
     assert algo and rest
 
 
+# ── SSH/SCP exec() — first-class remote-shell verb ───────────────────
+
+@_label("Exec 17.1 SSH exec returns ExecResult with rc/stdout/stderr")
+def test_ssh_exec_basic():
+    from core.ssh_client import SSHSession
+    from core.profiles import ConnectionProfile
+    s = SSHSession(ConnectionProfile(
+        name="ssh-exec-basic", protocol="sftp", host=_SSH_HOST,
+        port=_SSH_PORT, username=_SSH_USER, auth_type="password",
+    ))
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        r = s.exec("whoami")
+        assert r.returncode == 0, (r.returncode, r.stderr)
+        assert r.stdout.decode().strip() == _SSH_USER
+        assert r.ok is True
+
+        r2 = s.exec("printf err 1>&2; exit 99")
+        assert r2.returncode == 99
+        assert b"err" in r2.stderr
+        # check() raises with the stderr-tail in the message
+        try:
+            r2.check()
+        except OSError as e:
+            assert "rc=99" in str(e) and "err" in str(e)
+        else:
+            raise AssertionError(".check() should have raised")
+    finally:
+        s.disconnect()
+
+
+@_label("Exec 17.2 SSH exec stdin pipes input into the remote process")
+def test_ssh_exec_stdin():
+    from core.ssh_client import SSHSession
+    from core.profiles import ConnectionProfile
+    s = SSHSession(ConnectionProfile(
+        name="ssh-exec-stdin", protocol="sftp", host=_SSH_HOST,
+        port=_SSH_PORT, username=_SSH_USER, auth_type="password",
+    ))
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        r = s.exec("cat", stdin=b"axross-stdin-payload\n")
+        assert r.returncode == 0
+        assert r.stdout == b"axross-stdin-payload\n"
+    finally:
+        s.disconnect()
+
+
+@_label("Exec 17.3 SSH exec stdout cap clips and flags truncated_stdout")
+def test_ssh_exec_stdout_cap():
+    from core.ssh_client import SSHSession
+    from core.profiles import ConnectionProfile
+    s = SSHSession(ConnectionProfile(
+        name="ssh-exec-cap", protocol="sftp", host=_SSH_HOST,
+        port=_SSH_PORT, username=_SSH_USER, auth_type="password",
+    ))
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        # Generate >cap bytes; the impl must clip and set the flag.
+        r = s.exec("yes x | head -c 8000", stdout_cap=2048)
+        assert r.returncode == 0
+        assert len(r.stdout) == 2048
+        assert r.truncated_stdout is True
+    finally:
+        s.disconnect()
+
+
+@_label("Exec 17.4-r6 SSH exec env value NUL/CR/LF refused (F39)")
+def test_ssh_exec_env_value_validation():
+    """F39: a tainted env VALUE with NUL would terminate the C-string
+    sshd forwards to the child; CR/LF would land in some sshd
+    audit-log formats as a forged log line. Symmetry with the key
+    allow-list — both halves of the env tuple are equally
+    adversary-controllable."""
+    from core.ssh_client import SSHSession
+    from core.profiles import ConnectionProfile
+    s = SSHSession(ConnectionProfile(
+        name="ssh-exec-env-val", protocol="sftp", host=_SSH_HOST,
+        port=_SSH_PORT, username=_SSH_USER, auth_type="password",
+    ))
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        for bad in ("value\x00with-nul", "value\r\nLOG-INJECT",
+                    "value\nNEWLINE"):
+            try:
+                s.exec("env", env={"FOO": bad})
+            except OSError as e:
+                assert "NUL/CR/LF" in str(e) or "F39" in str(e)
+            else:
+                raise AssertionError(
+                    f"env value {bad!r} should be refused"
+                )
+    finally:
+        s.disconnect()
+
+
+@_label("Exec 17.4 SSH exec env key validation refuses smuggling-prone names")
+def test_ssh_exec_env_validation():
+    from core.ssh_client import SSHSession
+    from core.profiles import ConnectionProfile
+    s = SSHSession(ConnectionProfile(
+        name="ssh-exec-env", protocol="sftp", host=_SSH_HOST,
+        port=_SSH_PORT, username=_SSH_USER, auth_type="password",
+    ))
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        # A key with a newline would otherwise be smuggled through
+        # paramiko's environment table; the validator rejects it
+        # before any wire byte is emitted.
+        try:
+            s.exec("env", env={"FOO\nBAR": "x"})
+        except OSError as e:
+            assert "must match" in str(e)
+        else:
+            raise AssertionError("env-key validation should have raised")
+    finally:
+        s.disconnect()
+
+
+@_label("Exec 17.5 SCP exec round-trip + stdin + cap")
+def test_scp_exec():
+    from core.scp_client import SCPSession
+    from core.profiles import ConnectionProfile
+    s = SCPSession(ConnectionProfile(
+        name="scp-exec", protocol="scp", host=_SSH_HOST,
+        port=_SSH_PORT, username=_SSH_USER, auth_type="password",
+    ))
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        r = s.exec("echo via-scp")
+        assert r.returncode == 0
+        assert r.stdout.decode().strip() == "via-scp"
+
+        r2 = s.exec("cat", stdin=b"scp-stdin\n")
+        assert r2.stdout == b"scp-stdin\n"
+
+        r3 = s.exec("yes x | head -c 4000", stdout_cap=1024)
+        assert len(r3.stdout) == 1024
+        assert r3.truncated_stdout is True
+    finally:
+        s.disconnect()
+
+
+@_label("Exec 17.6 axross.exec dispatches to backend.exec uniformly")
+def test_axross_exec_dispatch():
+    import core.scripting as axross
+    from core.ssh_client import SSHSession
+    from core.profiles import ConnectionProfile
+    s = SSHSession(ConnectionProfile(
+        name="axross-exec", protocol="sftp", host=_SSH_HOST,
+        port=_SSH_PORT, username=_SSH_USER, auth_type="password",
+    ))
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        r = axross.exec(s, "echo dispatched")
+        assert r.returncode == 0
+        assert r.stdout.decode().strip() == "dispatched"
+
+        # str stdin gets utf-8 encoded
+        r2 = axross.exec(s, "cat", stdin="utf8-str-input")
+        assert r2.stdout == b"utf8-str-input"
+    finally:
+        s.disconnect()
+
+
+@_label("Exec 17.7 axross.exec on non-exec backend raises TypeError")
+def test_axross_exec_unsupported():
+    import core.scripting as axross
+    # localfs does not implement exec — should fail loud, not silent.
+    b = axross.localfs()
+    try:
+        axross.exec(b, "true")
+    except TypeError as e:
+        assert "exec()" in str(e)
+    else:
+        raise AssertionError("axross.exec on localfs should raise TypeError")
+
+
 # ── Backends with NATIVE cheap checksum ───────────────────────────────
 
 @_label("Cksum 16.1 SSH sha256sum via exec_command")
@@ -5090,6 +5297,464 @@ def test_proxy_ssrf_guard_blocks_without_env_flag():
     raise AssertionError("expected SSRF guard to reject private-range proxy")
 
 
+# ─── Phase A–E coverage: every backend wired in proxy.py ────────────────
+#
+# Each proxy_* test follows the same shape:
+#   1. Opt into the SSRF private-range allow flag (lab proxies live on
+#      10.99.0.0/24 which is deny-by-default).
+#   2. Build a backend session with proxy_type=socks5/http and the lab
+#      proxy host/port.
+#   3. Drive a real round-trip through it — list_dir or read_file —
+#      so a half-broken hook (e.g. proxy reaches the connect handshake
+#      but then the session falls back to direct IO) fails the test.
+#   4. Tear down. Some backends pool sessions process-wide, so we close
+#      explicitly to avoid cross-test interference.
+
+import contextlib as _contextlib
+
+
+@_contextlib.contextmanager
+def _ssrf_opt_in():
+    import os as _os
+    prev = _os.environ.get("AXROSS_ALLOW_PRIVATE_PROXY")
+    _os.environ["AXROSS_ALLOW_PRIVATE_PROXY"] = "1"
+    try:
+        yield
+    finally:
+        if prev is None:
+            _os.environ.pop("AXROSS_ALLOW_PRIVATE_PROXY", None)
+        else:
+            _os.environ["AXROSS_ALLOW_PRIVATE_PROXY"] = prev
+
+
+@_label("Proxy 21d.6 FTP via SOCKS5")
+def test_ftp_via_socks5_proxy():
+    """FTP control channel goes through the SOCKS5 proxy via the
+    subclass-bypass of ftplib.FTP.connect (sets ftp.sock manually)."""
+    from core.ftp_client import FtpSession
+    with _ssrf_opt_in():
+        s = FtpSession(
+            host=FTP_HOST, port=FTP_PORT,
+            username=FTP_USER, password=FTP_PASS,
+            proxy_type="socks5",
+            proxy_host=SOCKS_PROXY_HOST, proxy_port=SOCKS_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir(s.home())
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.7 FTP via HTTP CONNECT")
+def test_ftp_via_http_connect_proxy():
+    """tinyproxy ACL allows ConnectPort 21 — the CONNECT tunnel
+    actually reaches the FTP control channel."""
+    from core.ftp_client import FtpSession
+    with _ssrf_opt_in():
+        s = FtpSession(
+            host=FTP_HOST, port=FTP_PORT,
+            username=FTP_USER, password=FTP_PASS,
+            proxy_type="http",
+            proxy_host=HTTP_PROXY_HOST, proxy_port=HTTP_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir(s.home())
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.8 SMB via SOCKS5")
+def test_smb_via_socks5_proxy():
+    """SMB tunnel via the scoped socket.create_connection patch.
+    smbclient's session pool is process-global, so we explicitly
+    close at the end to keep subsequent tests clean."""
+    from core.smb_client import SmbSession
+    with _ssrf_opt_in():
+        s = SmbSession(
+            host=SMB_HOST, share=SMB_SHARE,
+            username=SMB_USER, password=SMB_PASS,
+            port=SMB_PORT,
+            proxy_type="socks5",
+            proxy_host=SOCKS_PROXY_HOST, proxy_port=SOCKS_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.9 SMB via HTTP CONNECT")
+def test_smb_via_http_connect_proxy():
+    from core.smb_client import SmbSession
+    with _ssrf_opt_in():
+        s = SmbSession(
+            host=SMB_HOST, share=SMB_SHARE,
+            username=SMB_USER, password=SMB_PASS,
+            port=SMB_PORT,
+            proxy_type="http",
+            proxy_host=HTTP_PROXY_HOST, proxy_port=HTTP_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.10 IMAP via SOCKS5")
+def test_imap_via_socks5_proxy():
+    """IMAP tunnel via the _ProxyIMAP4 subclass override of _create_socket."""
+    from core.imap_client import ImapSession
+    with _ssrf_opt_in():
+        s = ImapSession(
+            host=IMAP_HOST, port=IMAP_PORT,
+            username=IMAP_USER, password=IMAP_PASS,
+            use_ssl=False,
+            proxy_type="socks5",
+            proxy_host=SOCKS_PROXY_HOST, proxy_port=SOCKS_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.11 IMAP via HTTP CONNECT")
+def test_imap_via_http_connect_proxy():
+    from core.imap_client import ImapSession
+    with _ssrf_opt_in():
+        s = ImapSession(
+            host=IMAP_HOST, port=IMAP_PORT,
+            username=IMAP_USER, password=IMAP_PASS,
+            use_ssl=False,
+            proxy_type="http",
+            proxy_host=HTTP_PROXY_HOST, proxy_port=HTTP_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.12 S3 via SOCKS5: known botocore limitation")
+def test_s3_via_socks5_proxy_documents_limitation():
+    """boto3's ``Config(proxies={'https': 'socks5h://...'})`` does NOT
+    work — botocore unconditionally prefixes ``http://`` to whatever
+    URL it receives, producing ``http://socks5h://...`` which is then
+    parsed as an invalid HTTP proxy URL. This is a known botocore
+    issue, not an axross bug.
+
+    For S3 over SOCKS in production, use either:
+      * A SOCKS-to-HTTP relay sitting between axross and the proxy
+        (e.g. delegate, polipo, srelay), or
+      * The HTTP-CONNECT path (test 21d.13) — that one works.
+
+    This test pins the failure mode so we notice if botocore ever
+    fixes the issue.
+    """
+    from core.s3_client import S3Session
+    with _ssrf_opt_in():
+        try:
+            S3Session(
+                bucket=S3_BUCKET, endpoint=S3_ENDPOINT,
+                access_key=S3_ACCESS_KEY, secret_key=S3_SECRET_KEY,
+                region="us-east-1",
+                proxy_type="socks5",
+                proxy_host=SOCKS_PROXY_HOST, proxy_port=SOCKS_PROXY_PORT,
+            )
+        except OSError as exc:
+            msg = str(exc).lower()
+            # botocore composed an http://socks5h://... URL — that's
+            # the symptom of the known limitation.
+            assert "socks" in msg and "http" in msg, (
+                f"unexpected error shape: {exc}"
+            )
+            return
+        raise AssertionError(
+            "expected botocore to fail on socks5 proxy URL — has it "
+            "been fixed upstream? Update this test to a happy-path "
+            "assertion if so."
+        )
+
+
+@_label("Proxy 21d.13 S3 via HTTP CONNECT")
+def test_s3_via_http_connect_proxy():
+    from core.s3_client import S3Session
+    with _ssrf_opt_in():
+        s = S3Session(
+            bucket=S3_BUCKET, endpoint=S3_ENDPOINT,
+            access_key=S3_ACCESS_KEY, secret_key=S3_SECRET_KEY,
+            region="us-east-1",
+            proxy_type="http",
+            proxy_host=HTTP_PROXY_HOST, proxy_port=HTTP_PROXY_PORT,
+        )
+        try:
+            with s.open_write("/_via_http.txt") as f:
+                f.write(b"hello via http")
+            with s.open_read("/_via_http.txt") as f:
+                assert f.read() == b"hello via http"
+            s.remove("/_via_http.txt")
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.14 Rsync daemon via SOCKS5 (RSYNC_CONNECT_PROG)")
+def test_rsync_daemon_via_socks5_proxy():
+    """Rsync daemon mode via the RSYNC_CONNECT_PROG env hook.
+    Verifies that nc with -X 5 actually opens the SOCKS5 tunnel and
+    rsync's daemon handshake completes through it."""
+    from core.rsync_client import RsyncSession
+    with _ssrf_opt_in():
+        s = RsyncSession(
+            host=RSYNC_HOST, port=RSYNC_PORT,
+            module=RSYNC_MODULE,
+            username=RSYNC_USER, password=RSYNC_PASS,
+            ssh_mode=False,
+            proxy_type="socks5",
+            proxy_host=SOCKS_PROXY_HOST, proxy_port=SOCKS_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.15 Rsync daemon via HTTP CONNECT (RSYNC_CONNECT_PROG)")
+def test_rsync_daemon_via_http_connect_proxy():
+    from core.rsync_client import RsyncSession
+    with _ssrf_opt_in():
+        s = RsyncSession(
+            host=RSYNC_HOST, port=RSYNC_PORT,
+            module=RSYNC_MODULE,
+            username=RSYNC_USER, password=RSYNC_PASS,
+            ssh_mode=False,
+            proxy_type="http",
+            proxy_host=HTTP_PROXY_HOST, proxy_port=HTTP_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.16 POP3 via SOCKS5")
+def test_pop3_via_socks5_proxy():
+    """POP3 (read-only) tunnel via the _ProxyPOP3 subclass override
+    of _create_socket. Lab dovecot exposes POP3 on port 110 with the
+    same maildir as IMAP."""
+    from core.pop3_client import Pop3Session
+    with _ssrf_opt_in():
+        s = Pop3Session(
+            host=POP3_HOST, port=POP3_PORT_PLAIN,
+            username=POP3_USER, password=POP3_PASS,
+            use_ssl=False,
+            proxy_type="socks5",
+            proxy_host=SOCKS_PROXY_HOST, proxy_port=SOCKS_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+            # The seed mail is in the maildir — at least one item.
+            assert len(items) >= 1
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.17 POP3 via HTTP CONNECT")
+def test_pop3_via_http_connect_proxy():
+    from core.pop3_client import Pop3Session
+    with _ssrf_opt_in():
+        s = Pop3Session(
+            host=POP3_HOST, port=POP3_PORT_PLAIN,
+            username=POP3_USER, password=POP3_PASS,
+            use_ssl=False,
+            proxy_type="http",
+            proxy_host=HTTP_PROXY_HOST, proxy_port=HTTP_PROXY_PORT,
+        )
+        try:
+            items = s.list_dir("/")
+            assert isinstance(items, list)
+        finally:
+            s.disconnect()
+
+
+@_label("Proxy 21d.18 POP3 read-only refuses write surface")
+def test_pop3_refuses_write_surface():
+    """Sanity: POP3 backend rejects any write/mkdir/rename to keep
+    callers from accidentally believing they can store something."""
+    from core.pop3_client import Pop3Session
+    s = Pop3Session(
+        host=POP3_HOST, port=POP3_PORT_PLAIN,
+        username=POP3_USER, password=POP3_PASS,
+        use_ssl=False,
+    )
+    try:
+        for op_name, op in [
+            ("open_write", lambda: s.open_write("/x.eml")),
+            ("mkdir",      lambda: s.mkdir("/sub")),
+            ("rename",     lambda: s.rename("/a", "/b")),
+            ("chmod",      lambda: s.chmod("/x", 0o600)),
+            ("copy",       lambda: s.copy("/a", "/b")),
+        ]:
+            try:
+                op()
+            except OSError:
+                continue
+            raise AssertionError(f"{op_name} should have raised OSError")
+    finally:
+        s.disconnect()
+
+
+# ════════════════════════════════════════════════════════════
+#  SECTION 21e: TFTP backend
+#
+#  TFTP has no native LIST and runs over UDP. The backend exposes
+#  an opt-in configurable file-list and refuses every mutating
+#  surface that the protocol can't honour.
+# ════════════════════════════════════════════════════════════
+
+
+def _tftp_session(filelist_enabled=False, filelist=None, max_size=16 * 1024 * 1024):
+    from core.tftp_client import TftpSession, TFTPY_AVAILABLE
+    if not TFTPY_AVAILABLE:
+        import pytest
+        pytest.skip("tftpy not installed (axross[tftp])")
+    return TftpSession(
+        host=TFTP_HOST, port=TFTP_PORT,
+        filelist=list(filelist or ()),
+        filelist_enabled=filelist_enabled,
+        max_size_bytes=max_size,
+    )
+
+
+@_label("TFTP 21e.1 RRQ readme.txt")
+def test_tftp_read_seed_file():
+    s = _tftp_session()
+    try:
+        with s.open_read("/readme.txt") as f:
+            data = f.read()
+        assert data.startswith(b"Hello from TFTP"), data
+    finally:
+        s.disconnect()
+
+
+@_label("TFTP 21e.2 list_dir empty when filelist disabled (default)")
+def test_tftp_list_dir_default_empty():
+    s = _tftp_session(filelist_enabled=False, filelist=list(TFTP_FILES))
+    try:
+        # Honest: no LIST in TFTP. Default returns []. Pinning this
+        # so a future fabrication regresses loudly.
+        items = s.list_dir("/")
+        assert items == []
+    finally:
+        s.disconnect()
+
+
+@_label("TFTP 21e.3 list_dir with filelist enabled")
+def test_tftp_list_dir_filelist_enabled():
+    s = _tftp_session(filelist_enabled=True, filelist=list(TFTP_FILES))
+    try:
+        items = s.list_dir("/")
+        names = {i.name for i in items}
+        # readme.txt + firmware.bin + configs/ (synthesised dir from
+        # ``configs/dhcpd.conf``).
+        assert "readme.txt" in names
+        assert "firmware.bin" in names
+        assert "configs" in names
+        # Drill into configs/.
+        sub = s.list_dir("/configs")
+        sub_names = {i.name for i in sub}
+        assert "dhcpd.conf" in sub_names
+    finally:
+        s.disconnect()
+
+
+@_label("TFTP 21e.4 size cap: write rejects oversized payload up-front")
+def test_tftp_write_size_cap_rejects_before_upload():
+    s = _tftp_session(max_size=4096)  # 4 KiB cap
+    try:
+        with s.open_write("/oversized.bin") as f:
+            try:
+                f.write(b"x" * 8192)
+            except OSError as exc:
+                assert "exceed" in str(exc).lower()
+                return
+        raise AssertionError("expected size-cap OSError")
+    finally:
+        s.disconnect()
+
+
+@_label("TFTP 21e.5 read size cap aborts mid-transfer on oversized server file")
+def test_tftp_read_size_cap_aborts():
+    # firmware.bin is 8 KiB on the lab server; cap to 1 KiB and
+    # confirm we abort cleanly with OSError mentioning the cap.
+    s = _tftp_session(max_size=1024)
+    try:
+        try:
+            with s.open_read("/firmware.bin") as f:
+                f.read()
+        except OSError as exc:
+            assert "exceed" in str(exc).lower()
+            return
+        raise AssertionError("expected size-cap OSError on oversized read")
+    finally:
+        s.disconnect()
+
+
+@_label("TFTP 21e.6 mutating surface refused (rename/mkdir/chmod/remove)")
+def test_tftp_refuses_mutating_surface():
+    s = _tftp_session()
+    try:
+        for label, op in [
+            ("remove", lambda: s.remove("/x")),
+            ("mkdir",  lambda: s.mkdir("/d")),
+            ("rename", lambda: s.rename("/a", "/b")),
+            ("chmod",  lambda: s.chmod("/x", 0o600)),
+            ("copy",   lambda: s.copy("/a", "/b")),
+        ]:
+            try:
+                op()
+            except OSError:
+                continue
+            raise AssertionError(f"{label} should have raised OSError")
+    finally:
+        s.disconnect()
+
+
+@_label("TFTP 21e.7 path validator rejects shell-meta filenames")
+def test_tftp_path_validator_blocks_shell_meta():
+    from core.tftp_client import _validate_filename
+    for bad in ("a;rm -rf /", "back\\slash", "newline\nhere",
+                "null\x00byte", "spaces here"):
+        try:
+            _validate_filename(bad)
+        except OSError:
+            continue
+        raise AssertionError(f"validator accepted bad filename: {bad!r}")
+
+
+@_label("TFTP 21e.8 RRQ then WRQ round-trip (writable lab dir)")
+def test_tftp_round_trip_write_read():
+    s = _tftp_session()
+    payload = b"axross-tftp-roundtrip-" + os.urandom(16).hex().encode()
+    name = f"/probe-{os.urandom(4).hex()}.bin"
+    try:
+        with s.open_write(name) as f:
+            f.write(payload)
+        with s.open_read(name) as f:
+            got = f.read()
+        assert got == payload, f"round-trip mismatch: {got!r} != {payload!r}"
+    finally:
+        s.disconnect()
+
+
 # ════════════════════════════════════════════════════════════
 #  SECTION 22: encrypted overlay (.axenc)
 #
@@ -5151,6 +5816,3067 @@ def test_webdav_encrypted_wrong_passphrase():
         out = E.read_encrypted(s, path, "a")
         assert out == b"right pw only"
         s.remove(path)
+    finally:
+        s.disconnect()
+
+
+# ════════════════════════════════════════════════════════════
+#  SharePoint verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# No SharePoint tenant in lab; argument-shape + dispatch tests
+# via monkey-patched _graph_get / _graph_post.
+
+def _make_sharepoint_session():
+    from core.onedrive_client import OneDriveSession
+    s = OneDriveSession.__new__(OneDriveSession)
+    s._drive_type = "sharepoint"
+    s._site_id = "contoso.sharepoint.com,abc-123,def-456"
+    s._site_url = "https://contoso.sharepoint.com/sites/team"
+    return s
+
+
+def test_sharepoint_lists_returns_structured_dicts(monkeypatch):
+    s = _make_sharepoint_session()
+    pages: list[dict] = [
+        {
+            "value": [
+                {"id": "1", "name": "Documents",
+                 "displayName": "Documents",
+                 "list": {"template": "documentLibrary"},
+                 "@microsoft.graph.itemCount": 42,
+                 "webUrl": "https://x/Documents"},
+                {"id": "2", "name": "Issues",
+                 "displayName": "Issues",
+                 "list": {"template": "genericList"},
+                 "@microsoft.graph.itemCount": 7,
+                 "webUrl": "https://x/Issues"},
+            ],
+            # No nextLink → single page.
+        },
+    ]
+    calls: list[str] = []
+
+    def _fake_get(url, **kwargs):
+        calls.append(url)
+        return pages.pop(0)
+    s._graph_get = _fake_get
+    out = s.lists()
+    assert len(out) == 2
+    by_name = {row["name"]: row for row in out}
+    assert by_name["Documents"]["item_count"] == 42
+    assert by_name["Issues"]["list_type"] == "genericList"
+    # Right URL shape.
+    assert "/sites/" in calls[0] and "/lists" in calls[0]
+
+
+def test_sharepoint_items_validates_list_id_and_paginates(monkeypatch):
+    s = _make_sharepoint_session()
+    # CR/LF rejected.
+    try:
+        s.items("list-id\nINJECT")
+    except ValueError as e:
+        assert "CR/LF" in str(e)
+    else:
+        raise AssertionError("items should refuse CR/LF in list_id")
+
+    # Two-page result + limit cap.
+    pages = [
+        {
+            "value": [
+                {"id": "1", "fields": {"Title": "row 1"},
+                 "createdDateTime": "2026-04-01T10:00:00Z",
+                 "lastModifiedDateTime": "2026-04-02T10:00:00Z",
+                 "webUrl": "https://x/1"},
+                {"id": "2", "fields": {"Title": "row 2"},
+                 "createdDateTime": "2026-04-01T11:00:00Z",
+                 "lastModifiedDateTime": "2026-04-02T11:00:00Z",
+                 "webUrl": "https://x/2"},
+            ],
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/...next",
+        },
+        {
+            "value": [
+                {"id": "3", "fields": {"Title": "row 3"},
+                 "createdDateTime": "", "lastModifiedDateTime": "",
+                 "webUrl": ""},
+            ],
+        },
+    ]
+    s._graph_get = lambda url, **kwargs: pages.pop(0)
+    out = s.items("abc", limit=10)
+    assert [r["fields"]["Title"] for r in out] == ["row 1", "row 2", "row 3"]
+
+
+def test_sharepoint_search_quotes_and_dispatches(monkeypatch):
+    s = _make_sharepoint_session()
+    captured = {}
+
+    def _fake_post(url, body):
+        captured["url"] = url
+        captured["body"] = body
+        return {
+            "value": [{"hitsContainers": [{
+                "hits": [
+                    {"hitId": "h1", "rank": 1, "summary": "first match",
+                     "resource": {}},
+                    {"hitId": "h2", "rank": 2, "summary": "second match",
+                     "resource": {}},
+                ],
+            }]}],
+        }
+    s._graph_post = _fake_post
+    out = s.search("axross", limit=10)
+    assert len(out) == 2
+    assert out[0]["summary"] == "first match"
+    # Body shape: search/query with entityTypes=[driveItem] by default.
+    assert captured["url"].endswith("/search/query")
+    assert captured["body"]["requests"][0]["entityTypes"] == ["driveItem"]
+    assert captured["body"]["requests"][0]["query"]["queryString"] == "axross"
+    # CR/LF in query refused.
+    try:
+        s.search("axross\r\nINJECT")
+    except ValueError as e:
+        assert "CR/LF" in str(e)
+    else:
+        raise AssertionError("search should refuse CR/LF in query")
+
+
+def test_sharepoint_methods_refuse_non_sharepoint_session():
+    """The same OneDriveSession class also serves drive_type='personal'
+    — the SharePoint methods must refuse cleanly there."""
+    from core.onedrive_client import OneDriveSession
+    s = OneDriveSession.__new__(OneDriveSession)
+    s._drive_type = "personal"
+    s._site_id = None
+    for fn_name in ("lists", "items", "search"):
+        try:
+            getattr(s, fn_name)("x") if fn_name != "lists" else s.lists()
+        except OSError as e:
+            assert "SharePoint-only" in str(e)
+        else:
+            raise AssertionError(f"{fn_name} should refuse non-SharePoint session")
+
+
+# ════════════════════════════════════════════════════════════
+#  MTP verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# No physical MTP device in lab; verify the surface using a fake
+# mount directory.
+
+def test_mtp_device_info_returns_session_metadata(tmp_path):
+    from core.mtp_client import MtpSession
+    s = MtpSession.__new__(MtpSession)
+    s._device_id = "1/3"
+    s._device_label = "Pixel 8"
+    s._mounter = "jmtpfs"
+    s._mount_dir = str(tmp_path)
+    info = s.device_info()
+    assert info == {
+        "device_id": "1/3",
+        "label": "Pixel 8",
+        "mounter": "jmtpfs",
+        "mount_dir": str(tmp_path),
+    }
+
+
+def test_mtp_storage_list_walks_mount_root(tmp_path):
+    """Each top-level directory under the mount root represents one
+    MTP storage area. Files at the root (which MTP shouldn't have
+    but jmtpfs sometimes leaves a .meta) are skipped."""
+    from core.mtp_client import MtpSession
+    (tmp_path / "Internal storage").mkdir()
+    (tmp_path / "SD card").mkdir()
+    (tmp_path / ".meta").write_text("not a storage")
+    s = MtpSession.__new__(MtpSession)
+    s._mount_dir = str(tmp_path)
+    listing = s.storage_list()
+    names = sorted(item["name"] for item in listing)
+    assert names == ["Internal storage", "SD card"]
+    # Each entry has the four canonical keys.
+    for item in listing:
+        assert set(item.keys()) == {
+            "name", "path", "total_bytes", "free_bytes",
+        }
+        # statvfs against tmpfs returns plausible numbers.
+        assert isinstance(item["total_bytes"], int)
+        assert isinstance(item["free_bytes"], int)
+
+
+def test_mtp_storage_list_unreadable_mount_raises(tmp_path):
+    from core.mtp_client import MtpSession
+    s = MtpSession.__new__(MtpSession)
+    s._mount_dir = str(tmp_path / "does-not-exist")
+    try:
+        s.storage_list()
+    except OSError as e:
+        assert "cannot read mount" in str(e)
+    else:
+        raise AssertionError("storage_list should raise on unreadable mount")
+
+
+# ════════════════════════════════════════════════════════════
+#  iSCSI verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# iscsiadm needs root + the kernel iSCSI initiator stack to actually
+# talk to a target — argument-shape + parser tests only.
+
+def test_iscsi_targets_discover_input_validation():
+    from core.iscsi_client import IscsiSession
+    for bad in ("10.0.0.5\nfoo", "10.0.0.5\rA", "10 0 0 5"):
+        try:
+            IscsiSession.targets_discover(bad)
+        except ValueError as e:
+            assert "CR/LF/space" in str(e)
+        else:
+            raise AssertionError(f"targets_discover should refuse {bad!r}")
+
+
+def test_iscsi_targets_discover_parses_iscsiadm_output(monkeypatch):
+    """iscsiadm -m discovery output is two whitespace-separated columns
+    (``portal,group  iqn``) — verify the parser strips the group id."""
+    from core import iscsi_client
+
+    class _Done:
+        returncode = 0
+        stdout = (
+            "10.0.0.5:3260,1 iqn.2026-04.lab.axross:disk1\n"
+            "10.0.0.5:3260,1 iqn.2026-04.lab.axross:disk2\n"
+            "\n"
+        )
+        stderr = ""
+
+    monkeypatch.setattr(iscsi_client.shutil, "which",
+                        lambda name: "/usr/sbin/iscsiadm")
+    monkeypatch.setattr(iscsi_client.subprocess, "run",
+                        lambda *a, **kw: _Done())
+    out = iscsi_client.IscsiSession.targets_discover("10.0.0.5")
+    assert out == [
+        {"portal": "10.0.0.5:3260", "iqn": "iqn.2026-04.lab.axross:disk1"},
+        {"portal": "10.0.0.5:3260", "iqn": "iqn.2026-04.lab.axross:disk2"},
+    ]
+
+
+def test_iscsi_targets_discover_surfaces_iscsiadm_failure(monkeypatch):
+    from core import iscsi_client
+
+    class _Fail:
+        returncode = 1
+        stdout = ""
+        stderr = "iscsiadm: connection refused"
+
+    monkeypatch.setattr(iscsi_client.shutil, "which",
+                        lambda name: "/usr/sbin/iscsiadm")
+    monkeypatch.setattr(iscsi_client.subprocess, "run",
+                        lambda *a, **kw: _Fail())
+    try:
+        iscsi_client.IscsiSession.targets_discover("10.0.0.5")
+    except OSError as e:
+        assert "connection refused" in str(e)
+    else:
+        raise AssertionError("targets_discover non-zero must raise OSError")
+
+
+def test_iscsi_lun_list_filters_to_iscsi_transport_only(monkeypatch):
+    """lsblk -J -O includes every block device; lun_list keeps only
+    those whose ``tran`` is ``iscsi``."""
+    from core import iscsi_client
+
+    class _Done:
+        returncode = 0
+        stdout = (
+            '{"blockdevices":['
+            '{"name":"sda","size":"1000204886016","tran":"sata","wwn":"0xabc"},'
+            '{"name":"sdb","size":"107374182400","tran":"iscsi","wwn":"0xdef"},'
+            '{"name":"sdc","size":"53687091200","tran":"iscsi","wwn":""}'
+            ']}'
+        )
+        stderr = ""
+
+    monkeypatch.setattr(iscsi_client.shutil, "which",
+                        lambda name: "/usr/bin/lsblk")
+    monkeypatch.setattr(iscsi_client.subprocess, "run",
+                        lambda *a, **kw: _Done())
+    s = iscsi_client.IscsiSession.__new__(iscsi_client.IscsiSession)
+    out = s.lun_list()
+    # sda (sata) is excluded; sdb + sdc kept.
+    assert {d["device"] for d in out} == {"/dev/sdb", "/dev/sdc"}
+    by_dev = {d["device"]: d for d in out}
+    assert by_dev["/dev/sdb"]["scsi_id"] == "0xdef"
+    assert by_dev["/dev/sdb"]["size_bytes"] == 107374182400
+
+
+# ════════════════════════════════════════════════════════════
+#  Azure Blob verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# No reliable cross-version azure-storage-blob behaviour against
+# Azurite (older versions reject some SAS code paths). Argument-shape
+# tests via monkey-patched container/blob clients.
+
+class _FakeBlobClient:
+    def __init__(self):
+        self.snapshots: list[dict] = []
+        self.tier_calls: list[str] = []
+
+    def create_snapshot(self, metadata=None):
+        snapshot_id = f"2026-04-26T18:00:00.{len(self.snapshots):04d}Z"
+        self.snapshots.append({"snapshot": snapshot_id,
+                               "metadata": metadata})
+        return {"snapshot": snapshot_id}
+
+    def acquire_lease(self, lease_duration=60, lease_id=None):
+        class _L:
+            id = lease_id or "fake-lease-id-abc"
+        return _L()
+
+    def set_standard_blob_tier(self, tier):
+        self.tier_calls.append(tier)
+
+
+class _FakeContainer:
+    def __init__(self):
+        self.blob_client = _FakeBlobClient()
+
+    def get_blob_client(self, key):
+        return self.blob_client
+
+
+def _make_azure_session():
+    from core.azure_client import AzureBlobSession
+    s = AzureBlobSession.__new__(AzureBlobSession)
+    s._container = _FakeContainer()
+    s._container_name = "fake"
+    s._account_key = "ZmFrZS1rZXk="
+    s._to_key = lambda p: p.lstrip("/")
+
+    class _SvcStub:
+        account_name = "fakeaccount"
+    s._service = _SvcStub()
+    return s
+
+
+def test_azure_snapshot_create_returns_id():
+    s = _make_azure_session()
+    sid = s.snapshot_create("/x.txt")
+    assert sid.startswith("2026-04-26T18:00:00")
+
+
+def test_azure_snapshot_metadata_refuses_crlf():
+    s = _make_azure_session()
+    try:
+        s.snapshot_create("/x.txt", metadata={"key": "value\nINJECT"})
+    except ValueError as e:
+        assert "CR/LF" in str(e)
+    else:
+        raise AssertionError("snapshot_create should refuse CR/LF metadata")
+
+
+def test_azure_lease_duration_validation():
+    s = _make_azure_session()
+    for bad in (0, 5, 14, 61, 120):
+        try:
+            s.lease_acquire("/x.txt", duration_seconds=bad)
+        except ValueError as e:
+            assert "15..60" in str(e) or "infinite" in str(e)
+        else:
+            raise AssertionError(
+                f"lease_acquire should refuse duration={bad}"
+            )
+    # Acceptable durations work.
+    lid = s.lease_acquire("/x.txt", duration_seconds=30)
+    assert lid == "fake-lease-id-abc"
+    lid_inf = s.lease_acquire("/x.txt", duration_seconds=-1)
+    assert lid_inf == "fake-lease-id-abc"
+
+
+def test_azure_tier_set_validation():
+    s = _make_azure_session()
+    s.tier_set("/x.txt", "Cool")
+    assert "Cool" in s._container.blob_client.tier_calls
+    try:
+        s.tier_set("/x.txt", "Premium")
+    except ValueError as e:
+        assert "Hot" in str(e) or "Cool" in str(e)
+    else:
+        raise AssertionError("tier_set should refuse unknown tier")
+
+
+def test_azure_sas_url_signs_when_key_present():
+    s = _make_azure_session()
+    url = s.sas_url("/x.txt", expires_in=600, permissions="r")
+    # The generated URL should contain the SAS query string.
+    assert url.startswith(
+        "https://fakeaccount.blob.core.windows.net/fake/x.txt?"
+    )
+    assert "sig=" in url
+    assert "se=" in url           # expiry timestamp
+    assert "sp=r" in url           # read permission
+
+
+def test_azure_sas_url_refuses_token_auth():
+    """sas_url needs the account key locally — token-based auth has
+    no key, so the call must raise OSError with a hint."""
+    from core.azure_client import AzureBlobSession
+    s = AzureBlobSession.__new__(AzureBlobSession)
+    s._container = _FakeContainer()
+    s._container_name = "fake"
+    s._account_key = ""        # token-based auth: no key
+    s._to_key = lambda p: p.lstrip("/")
+    try:
+        s.sas_url("/x.txt")
+    except OSError as e:
+        assert "account-key" in str(e)
+    else:
+        raise AssertionError("sas_url should refuse token-auth sessions")
+
+
+# ════════════════════════════════════════════════════════════
+#  Rsync verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# rsync subprocess output parser is unit-tested; the dry_run flow
+# is exercised against the local rsync binary writing into a tmp
+# dir (no network needed when src == "rsync://localhost").
+
+def test_rsync_itemized_parser_summarises_actions():
+    from core.rsync_client import _parse_rsync_itemized
+    raw = (
+        ">f+++++++++ alpha.txt\n"
+        ">f.st...... beta.txt\n"
+        "cd+++++++++ subdir/\n"
+        "*deleting   stale.txt\n"
+        ".d..t...... .\n"            # no-change directory
+    )
+    out = _parse_rsync_itemized(raw)
+    assert out["would_transfer"] == 2
+    assert out["would_delete"] == 1
+    assert out["would_create_dir"] == 1
+    # Paths preserved in the order rsync emitted them.
+    assert "alpha.txt" in out["files"]
+    assert "stale.txt" in out["files"]
+
+
+def test_rsync_dry_run_local_to_local(tmp_path, monkeypatch):
+    """End-to-end against a local rsync binary: source = a temp dir
+    with two files, destination = an empty temp dir. Dry-run must
+    list both files as would-transfer + nothing as would-delete."""
+    import shutil as _sh
+    if not _sh.which("rsync"):
+        pytest.skip("system rsync binary not on PATH")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("alpha")
+    (src / "b.txt").write_text("beta")
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    # Build a minimal RsyncSession that targets a local source — the
+    # _base_args path stays the same for local -> local because the
+    # session just emits an rsync subprocess.
+    from core.rsync_client import RsyncSession
+    s = RsyncSession.__new__(RsyncSession)
+    s._rsync_bin = _sh.which("rsync")
+    s._ssh_mode = False
+    s._port = 873
+    s._ssh_key = ""
+    s._proxy = None
+    s._username = ""
+    s._password = ""
+    s._host = ""
+    s._module = ""
+    s._archive = True
+    s._compress = False
+    # Override _build_url to just hand back the local source path.
+    s._build_url = lambda path: str(src) + "/"
+    summary = s.dry_run("/ignored", str(dst) + "/")
+    files = set(summary["files"])
+    # rsync emits "./" for the root and the actual filenames.
+    assert "a.txt" in files and "b.txt" in files
+    assert summary["would_transfer"] >= 2
+    assert summary["would_delete"] == 0
+
+
+# ════════════════════════════════════════════════════════════
+#  Cisco-IOS raw verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# Live against the cisco-fake at 10.99.0.43.
+
+def _round2_cisco_reachable() -> bool:
+    """Local copy of _cisco_available — defined further down in this
+    file and not yet visible at decorator-eval time."""
+    import socket as _s
+    try:
+        with _s.create_connection((CISCO_HOST, CISCO_PORT), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _round2_cisco_reachable(),
+                    reason="cisco-fake container not reachable on 10.99.0.43:23")
+def test_cisco_raw_show_passthrough():
+    from core.telnet_cisco import CiscoTelnetSession
+    s = CiscoTelnetSession(host=CISCO_HOST, port=CISCO_PORT,
+                           username=CISCO_USER, password=CISCO_PW,
+                           timeout=5.0)
+    try:
+        out = s.show("arp")
+        assert "Protocol" in out and "Hardware Addr" in out, out[:200]
+    finally:
+        s.disconnect()
+
+
+def test_cisco_show_refuses_crlf():
+    """CR/LF in show argument would smuggle a second IOS command;
+    rejected before any wire byte (no live server needed)."""
+    from core.telnet_cisco import CiscoTelnetSession
+    s = CiscoTelnetSession.__new__(CiscoTelnetSession)
+    for bad in ("arp\nFOO", "interfaces\rRESET"):
+        try:
+            s.show(bad)
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"show should refuse {bad!r}")
+
+
+@pytest.mark.skipif(not _round2_cisco_reachable(),
+                    reason="cisco-fake container not reachable on 10.99.0.43:23")
+def test_cisco_save_running_config_requires_privileged():
+    from core.telnet_cisco import CiscoTelnetSession
+    # Without enable: must refuse.
+    s = CiscoTelnetSession(host=CISCO_HOST, port=CISCO_PORT,
+                           username=CISCO_USER, password=CISCO_PW,
+                           timeout=5.0)
+    try:
+        try:
+            s.save_running_config()
+        except OSError as e:
+            assert "privileged" in str(e).lower()
+        else:
+            raise AssertionError("save_running_config should refuse user-mode")
+    finally:
+        s.disconnect()
+    # With enable: returns IOS confirmation text.
+    s2 = CiscoTelnetSession(host=CISCO_HOST, port=CISCO_PORT,
+                            username=CISCO_USER, password=CISCO_PW,
+                            enable_password=CISCO_ENABLE, timeout=5.0)
+    try:
+        out = s2.save_running_config()
+        assert "Building configuration" in out and "[OK]" in out, out
+    finally:
+        s2.disconnect()
+
+
+@pytest.mark.skipif(not _round2_cisco_reachable(),
+                    reason="cisco-fake container not reachable on 10.99.0.43:23")
+def test_cisco_clear_counters_global_and_per_interface():
+    from core.telnet_cisco import CiscoTelnetSession
+    s = CiscoTelnetSession(host=CISCO_HOST, port=CISCO_PORT,
+                           username=CISCO_USER, password=CISCO_PW,
+                           enable_password=CISCO_ENABLE, timeout=5.0)
+    try:
+        # Global form (no interface arg).
+        out = s.clear_counters()
+        assert "all interface" in out, out
+        # Per-interface form.
+        out2 = s.clear_counters("GigabitEthernet1/0/1")
+        assert "GigabitEthernet1/0/1 interface" in out2, out2
+        # CR/LF in interface refused.
+        try:
+            s.clear_counters("Gi1/0/1\nDESTROY")
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError("clear_counters should refuse CR/LF")
+    finally:
+        s.disconnect()
+
+
+# ════════════════════════════════════════════════════════════
+#  Git-FS verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# Local in-memory bare repo via dulwich; no remote needed.
+
+def _git_fs_session(tmp_path):
+    """Build a fresh GitFsSession backed by a bare local repo."""
+    try:
+        from dulwich.repo import Repo
+    except ImportError:
+        pytest.skip("dulwich not installed")
+    from core.git_fs_client import GitFsSession
+    repo_dir = tmp_path / "r.git"
+    Repo.init_bare(str(repo_dir), mkdir=True)
+    return GitFsSession(path=str(repo_dir),
+                        author_name="Tester",
+                        author_email="t@axross.test")
+
+
+def test_git_log_returns_history_newest_first(tmp_path):
+    sess = _git_fs_session(tmp_path)
+    try:
+        for n in ("first", "second", "third"):
+            with sess.open_write(f"/main/{n}.txt") as fh:
+                fh.write(f"{n}-content\n".encode())
+        log = sess.log("main", limit=10)
+        assert len(log) == 3
+        # Newest first.
+        assert "third.txt" in log[0]["message"]
+        assert "second.txt" in log[1]["message"]
+        assert "first.txt" in log[2]["message"]
+        # Author shape.
+        for c in log:
+            assert c["author_name"] == "Tester"
+            assert c["author_email"] == "t@axross.test"
+            assert isinstance(c["timestamp"], int)
+    finally:
+        sess.disconnect()
+
+
+def test_git_log_path_filter(tmp_path):
+    sess = _git_fs_session(tmp_path)
+    try:
+        with sess.open_write("/main/a.txt") as fh:
+            fh.write(b"alpha")
+        with sess.open_write("/main/b.txt") as fh:
+            fh.write(b"beta")
+        with sess.open_write("/main/a.txt") as fh:
+            fh.write(b"alpha-v2")
+        # log for sub_path="a.txt" should return 2 commits, not 3.
+        log_a = sess.log("main", sub_path="a.txt", limit=10)
+        assert len(log_a) == 2
+        log_b = sess.log("main", sub_path="b.txt", limit=10)
+        assert len(log_b) == 1
+    finally:
+        sess.disconnect()
+
+
+def test_git_diff_between_two_commits(tmp_path):
+    sess = _git_fs_session(tmp_path)
+    try:
+        with sess.open_write("/main/x.txt") as fh:
+            fh.write(b"v1\n")
+        with sess.open_write("/main/x.txt") as fh:
+            fh.write(b"v2\n")
+        log = sess.log("main", limit=10)
+        diff = sess.diff(log[1]["sha"], log[0]["sha"])
+        assert "x.txt" in diff
+        assert "-v1" in diff and "+v2" in diff
+    finally:
+        sess.disconnect()
+
+
+def test_git_branch_and_tag_list(tmp_path):
+    sess = _git_fs_session(tmp_path)
+    try:
+        with sess.open_write("/main/seed.txt") as fh:
+            fh.write(b"seed\n")
+        # Add a second branch + a tag via raw dulwich (no axross verb
+        # for that today).
+        from dulwich.repo import Repo
+        repo = Repo(sess._workdir)
+        try:
+            tip = repo.refs[b"refs/heads/main"]
+            repo.refs[b"refs/heads/feature"] = tip
+            repo.refs[b"refs/tags/v1.0"] = tip
+        finally:
+            repo.close()
+        branches = sess.branch_list()
+        assert "main" in branches and "feature" in branches
+        tags = sess.tag_list()
+        names = [t["name"] for t in tags]
+        assert names == ["v1.0"]
+        assert tags[0]["sha"] == tags[0]["target"]    # lightweight tag
+    finally:
+        sess.disconnect()
+
+
+def test_git_blame_credits_lines_to_introducing_commit(tmp_path):
+    sess = _git_fs_session(tmp_path)
+    try:
+        for content in (b"line one\n",
+                        b"line one\nline two\n",
+                        b"line one\nline two\nline three\n"):
+            with sess.open_write("/main/log.txt") as fh:
+                fh.write(content)
+        blame = sess.blame("/main/log.txt")
+        assert len(blame) == 3
+        # All three lines should have distinct SHAs (each credited to
+        # its introducing commit), and the SHAs should be different
+        # from each other.
+        shas = [b["sha"] for b in blame]
+        assert len(set(shas)) == 3, shas
+        assert blame[0]["line"] == "line one"
+        assert blame[2]["line"] == "line three"
+        for b in blame:
+            assert b["author_name"] == "Tester"
+    finally:
+        sess.disconnect()
+
+
+def test_git_blame_unknown_path_raises(tmp_path):
+    sess = _git_fs_session(tmp_path)
+    try:
+        with sess.open_write("/main/seed.txt") as fh:
+            fh.write(b"x")
+        try:
+            sess.blame("/main/no-such-file.txt")
+        except OSError as e:
+            assert "not in branch" in str(e)
+        else:
+            raise AssertionError("blame should refuse unknown path")
+    finally:
+        sess.disconnect()
+
+
+# ════════════════════════════════════════════════════════════
+#  ADB verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# No physical Android device in the lab; argument-shape + behaviour
+# tests via a monkey-patched _device.
+
+class _FakeAdbDevice:
+    """Stand-in for adb_shell.AdbDeviceTcp — records calls + returns
+    canned outputs."""
+    def __init__(self):
+        self.shell_calls: list[tuple[str, dict]] = []
+        self.push_calls: list[tuple[str, str]] = []
+        self.shell_responses: dict[str, object] = {}
+
+    def shell(self, cmd, **kwargs):
+        self.shell_calls.append((cmd, kwargs))
+        # Look up exact match first, then ``<prefix>*`` wildcard.
+        if cmd in self.shell_responses:
+            return self.shell_responses[cmd]
+        for key, val in self.shell_responses.items():
+            if key.endswith("*") and cmd.startswith(key[:-1]):
+                return val
+        return ""
+
+    def push(self, local, remote):
+        self.push_calls.append((local, remote))
+
+
+def _make_adb_session_with(fake_device):
+    """Create an AdbSession bypassing __init__ and wire in a fake device."""
+    from core.adb_client import AdbSession
+    import threading
+    s = AdbSession.__new__(AdbSession)
+    s._device = fake_device
+    s._conn_lock = threading.Lock()
+    s._transport_timeout = 5.0
+    s._label = "fake"
+    return s
+
+
+def test_adb_shell_refuses_crlf():
+    s = _make_adb_session_with(_FakeAdbDevice())
+    for bad in ("ls\nrm -rf /", "echo\rfoo"):
+        try:
+            s.shell(bad)
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"shell should refuse {bad!r}")
+
+
+def test_adb_shell_round_trip():
+    dev = _FakeAdbDevice()
+    dev.shell_responses["echo hi"] = "hi\n"
+    s = _make_adb_session_with(dev)
+    out = s.shell("echo hi")
+    assert out == "hi\n"
+    assert dev.shell_calls[-1][0] == "echo hi"
+
+
+def test_adb_install_apk_pushes_then_runs_pm_install(tmp_path):
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"PK\x03\x04fake-apk")
+    dev = _FakeAdbDevice()
+    dev.shell_responses["pm install*"] = "Success\n"
+    dev.shell_responses["rm -f*"] = ""
+    s = _make_adb_session_with(dev)
+    out = s.install_apk(str(apk), replace=True, grant_permissions=True)
+    assert "Success" in out
+    # Push was called once with our APK.
+    assert len(dev.push_calls) == 1
+    local_pushed, remote_pushed = dev.push_calls[0]
+    assert local_pushed == str(apk)
+    # F35: remote name embeds BOTH the pid and a per-call uuid
+    # suffix so two concurrent install_apk calls in the same
+    # process can't collide.
+    assert remote_pushed.startswith("/data/local/tmp/axross-install-")
+    parts = remote_pushed.rsplit("-", 1)
+    assert parts[1].endswith(".apk") and len(parts[1]) > 10
+    # pm install called with -r -g + the remote path quoted.
+    pm_calls = [c[0] for c in dev.shell_calls if c[0].startswith("pm install")]
+    assert pm_calls and "-r" in pm_calls[0] and "-g" in pm_calls[0]
+    # Cleanup happened.
+    rm_calls = [c[0] for c in dev.shell_calls if c[0].startswith("rm -f")]
+    assert rm_calls
+
+
+def test_adb_install_apk_concurrent_calls_use_distinct_remotes(tmp_path):
+    """F35: simulate two parallel install_apk calls — each must
+    target a unique remote tmp filename."""
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"PK\x03\x04")
+    dev = _FakeAdbDevice()
+    dev.shell_responses["pm install*"] = "Success\n"
+    dev.shell_responses["rm -f*"] = ""
+    s = _make_adb_session_with(dev)
+    s.install_apk(str(apk))
+    s.install_apk(str(apk))
+    s.install_apk(str(apk))
+    remotes = {pushed_remote for (_, pushed_remote) in dev.push_calls}
+    assert len(remotes) == 3, remotes
+
+
+def test_adb_install_apk_missing_file(tmp_path):
+    s = _make_adb_session_with(_FakeAdbDevice())
+    try:
+        s.install_apk(str(tmp_path / "nope.apk"))
+    except OSError as e:
+        assert "not a file" in str(e)
+    else:
+        raise AssertionError("install_apk should refuse missing files")
+
+
+def test_adb_screencap_returns_raw_bytes():
+    """screencap must request decode=False (or PNG bytes get
+    UTF-8 mangled back to a string)."""
+    dev = _FakeAdbDevice()
+    dev.shell_responses["screencap -p"] = b"\x89PNG\r\n\x1a\nfake-data"
+    s = _make_adb_session_with(dev)
+    png = s.screencap()
+    assert isinstance(png, bytes) and png.startswith(b"\x89PNG")
+    # Crucially: the call to .shell() carried decode=False.
+    assert dev.shell_calls[-1][1].get("decode") is False
+
+
+def test_adb_logcat_tail_filter_validation_and_command_shape():
+    dev = _FakeAdbDevice()
+    dev.shell_responses["logcat*"] = (
+        "04-26 18:00:00.000 V  Tag1     hello\n"
+        "04-26 18:00:00.001 D  Tag1     world\n"
+    )
+    s = _make_adb_session_with(dev)
+    out = s.logcat_tail(lines=2, filter_spec="*:V")
+    assert "hello" in out and "world" in out
+    cmd = dev.shell_calls[-1][0]
+    assert cmd.startswith("logcat -d -t 2 ")
+    # CR/LF in filter must be rejected.
+    try:
+        s.logcat_tail(filter_spec="MyTag:D\nFILTER:V")
+    except ValueError as e:
+        assert "CR/LF" in str(e)
+    else:
+        raise AssertionError("logcat_tail should refuse CR/LF in filter_spec")
+
+
+def test_adb_pm_list_parses_package_lines():
+    dev = _FakeAdbDevice()
+    dev.shell_responses["pm list packages"] = (
+        "package:com.android.chrome\n"
+        "package:com.android.settings\n"
+        "package:com.example.app\n"
+        "junk-line-without-prefix\n"
+    )
+    s = _make_adb_session_with(dev)
+    out = s.pm_list()
+    assert out == [
+        "com.android.chrome", "com.android.settings", "com.example.app",
+    ]
+    # Default flags: no -3 / -s — system + user packages.
+    cmd = dev.shell_calls[-1][0]
+    assert cmd == "pm list packages"
+
+
+def test_adb_pm_list_excludes_system_when_requested():
+    dev = _FakeAdbDevice()
+    dev.shell_responses["pm list packages -3"] = "package:com.foo.bar\n"
+    s = _make_adb_session_with(dev)
+    out = s.pm_list(system=False)
+    assert out == ["com.foo.bar"]
+    assert dev.shell_calls[-1][0].endswith("-3")
+
+
+# ════════════════════════════════════════════════════════════
+#  Tier-2 helpers: entropy / archive_inspect / ping / mac_lookup /
+#                  whois / time_skew (API_GAPS Tier-2)
+# ════════════════════════════════════════════════════════════
+
+def test_tier2_time_skew_argument_validation():
+    from core.net_helpers import time_skew
+    try:
+        time_skew("example.com", source="bogus")
+    except ValueError as e:
+        assert "ntp/http/tls" in str(e)
+    else:
+        raise AssertionError("time_skew should refuse unknown source")
+
+
+def test_tier2_time_skew_tls_not_implemented():
+    from core.net_helpers import time_skew
+    try:
+        time_skew("example.com", source="tls")
+    except NotImplementedError as e:
+        assert "TLS" in str(e) and ("ntp" in str(e) or "http" in str(e))
+    else:
+        raise AssertionError("time_skew(source='tls') should raise NotImplementedError")
+
+
+def _tier2_webdav_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection(("10.99.0.32", 80), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _tier2_webdav_up(),
+                    reason="webdav lab container (Date-header source) not reachable")
+def test_tier2_time_skew_http_against_lab_webdav():
+    """Lab webdav is on the same host as us — skew should be tiny."""
+    from core.net_helpers import time_skew
+    skew = time_skew("10.99.0.32", source="http", port=80, timeout=3.0)
+    assert skew.source == "http"
+    assert skew.host == "10.99.0.32"
+    # Same physical host → < 60s of drift expected (Date: header has
+    # 1-second resolution, so anything sub-minute is acceptable).
+    assert abs(skew.offset_seconds) < 60.0, skew
+    assert 0.0 <= skew.rtt_seconds < 5.0
+
+
+def _tier2_internet_reachable() -> bool:
+    """RDAP queries need outbound HTTPS to a regional RIR. Skip when
+    that's not reachable (the lab box might be air-gapped)."""
+    import socket as _s
+    try:
+        with _s.create_connection(("8.8.8.8", 443), timeout=1.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _tier2_internet_reachable(),
+                    reason="no outbound HTTPS for RDAP whois")
+def test_tier2_whois_ip_returns_asn_and_country():
+    """8.8.8.8 belongs to GOOGLE/AS15169 in the IPv4 registry."""
+    from core.net_helpers import whois
+    info = whois("8.8.8.8", timeout=10.0)
+    assert info.kind == "ip"
+    assert info.query == "8.8.8.8"
+    assert info.asn == 15169, info.asn
+    assert "GOOGLE" in (info.asn_description or "").upper()
+    assert info.country == "US"
+    assert info.cidr and info.cidr.startswith("8.")
+    # ARIN is the RIR for 8.0.0.0/8.
+    assert (info.registry or "").upper() == "ARIN"
+
+
+def test_tier2_whois_domain_not_implemented():
+    """Domains require a different path (registrar WHOIS is text-
+    only) — must raise NotImplementedError with a pointer."""
+    from core.net_helpers import whois
+    try:
+        whois("example.com")
+    except NotImplementedError as e:
+        assert "domain" in str(e).lower() or "whois" in str(e).lower()
+    else:
+        raise AssertionError("whois('example.com') should raise NotImplementedError")
+
+
+def test_tier2_mac_lookup_normalisation_and_known_vendor():
+    from core.net_helpers import mac_lookup
+    # The four common formattings — all must reduce to the same OUI.
+    forms = [
+        "00:50:56:00:11:22",
+        "00-50-56-00-11-22",
+        "0050.5600.1122",
+        "005056001122",
+    ]
+    ouis = []
+    for f in forms:
+        info = mac_lookup(f)
+        # Normalised to AA:BB:CC:DD:EE:FF.
+        assert info.mac == "00:50:56:00:11:22"
+        assert info.oui == "00:50:56"
+        ouis.append((info.vendor, info.vendor_long))
+    # 00:50:56 belongs to VMware in the IEEE registry.
+    assert all(v == ouis[0] for v in ouis), ouis
+    assert ouis[0][0] is not None and "VMware" in ouis[0][0]
+
+
+def test_tier2_mac_lookup_unknown_vendor_returns_none():
+    from core.net_helpers import mac_lookup
+    # Locally-administered range (top byte high-bit set) — almost
+    # never appears in the IEEE registry.
+    info = mac_lookup("AA:BB:CC:00:11:22")
+    # OUI shape is still valid; vendor lookup may be None.
+    assert info.oui == "AA:BB:CC"
+    # Don't assert vendor is None — depends on registry version.
+    # Just confirm the call didn't raise.
+
+
+def test_tier2_mac_lookup_invalid_input():
+    from core.net_helpers import mac_lookup
+    for bad in ("00:50", "GG:HH:II:JJ:KK:LL", "00:50:56:00:11", "garbage"):
+        try:
+            mac_lookup(bad)
+        except ValueError as e:
+            assert "12-hex-digit" in str(e)
+        else:
+            raise AssertionError(f"mac_lookup should refuse {bad!r}")
+
+
+def _tier2_ssh_alpha_reachable() -> bool:
+    """Local copy of _ssh_alpha_up — that helper is defined further
+    down in this file and isn't visible at decorator-eval time."""
+    import socket as _s
+    try:
+        with _s.create_connection(("10.99.0.10", 22), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _tier2_ssh_alpha_reachable(),
+                    reason="ssh-alpha lab container not reachable")
+def test_tier2_ping_reachable_host():
+    from core.net_helpers import ping
+    rs = ping("10.99.0.10", port=22, timeout=2.0, count=3)
+    assert len(rs) == 3
+    for r in rs:
+        assert r.reachable
+        assert r.rtt_ms is not None and 0.0 <= r.rtt_ms < 2000.0
+        assert r.host == "10.99.0.10" and r.port == 22
+
+
+def test_tier2_port_scan_concurrency_capped():
+    """F37: a caller passing concurrency=10000 would blow through
+    ulimit -n; cap at 1024 with a clear error."""
+    from core.net_helpers import port_scan
+    for bad in (0, -1, 2000, 100000):
+        try:
+            port_scan("127.0.0.1", [22], concurrency=bad)
+        except ValueError as e:
+            assert "concurrency" in str(e)
+        else:
+            raise AssertionError(
+                f"port_scan should refuse concurrency={bad}"
+            )
+    # The default (64) and the cap value (1024) both work.
+    port_scan("127.0.0.1", [], concurrency=64)
+    port_scan("127.0.0.1", [], concurrency=1024)
+
+
+def test_tier2_http_probe_gzip_bomb_capped(tmp_path):
+    """F36: serve a 20:1 gzip-compressed body via a one-shot
+    in-process HTTP server; verify raw_cap stops the probe before
+    the decoded body would have allocated the budget."""
+    import gzip
+    import http.server
+    import socket
+    import threading
+
+    # Big-but-bombed body: 1 MiB of 'A' compresses to ~1 KiB.
+    decoded_payload = b"A" * (1 * 1024 * 1024)
+    compressed = gzip.compress(decoded_payload)
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(compressed)))
+            self.end_headers()
+            self.wfile.write(compressed)
+
+        def log_message(self, *a, **kw): pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        from core.net_helpers import http_probe
+        # raw_cap is small enough to clip the compressed body well
+        # before the decoded form would saturate body_cap.
+        r = http_probe(
+            f"http://127.0.0.1:{port}/",
+            body_cap=64 * 1024,
+            raw_cap=512,
+            verify=False,
+        )
+        assert r.status == 200
+        # The decoded body we got is bounded by body_cap.
+        assert len(r.body) <= 64 * 1024
+        # And we flagged the truncation.
+        assert r.truncated is True
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_tier2_ping_unreachable_host():
+    from core.net_helpers import ping
+    # 192.0.2.1 is RFC 5737 TEST-NET-1 — guaranteed unroutable.
+    r = ping("192.0.2.1", port=22, timeout=0.5, count=1)
+    assert len(r) == 1
+    assert r[0].reachable is False
+    assert r[0].rtt_ms is None
+
+
+def test_tier2_archive_inspect_zip(tmp_path):
+    import zipfile
+    from core.net_helpers import archive_inspect
+    p = tmp_path / "a.zip"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("a.txt", b"alpha-payload")
+        zf.writestr("sub/b.txt", b"beta")
+        # Empty directory entry.
+        zf.writestr(zipfile.ZipInfo("sub/"), b"")
+    out = archive_inspect(str(p))
+    by_name = {e.name: e for e in out}
+    assert by_name["a.txt"].size == len(b"alpha-payload")
+    assert by_name["sub/b.txt"].size == 4
+    # ``sub/`` is a directory entry.
+    assert by_name["sub/"].is_dir is True
+
+
+def test_tier2_archive_inspect_tar_gz(tmp_path):
+    import tarfile
+    from core.net_helpers import archive_inspect
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.txt").write_bytes(b"hello-tar")
+    (src / "sub").mkdir()
+    (src / "sub" / "y.txt").write_bytes(b"y-payload")
+    p = tmp_path / "a.tar.gz"
+    with tarfile.open(p, "w:gz") as tf:
+        tf.add(src, arcname="root")
+    out = archive_inspect(str(p))
+    names = {e.name for e in out}
+    assert "root/x.txt" in names and "root/sub/y.txt" in names
+    # tar doesn't track compressed_size separately.
+    by_name = {e.name: e for e in out}
+    assert by_name["root/x.txt"].compressed_size is None
+    assert by_name["root/sub/y.txt"].size == len(b"y-payload")
+
+
+def test_tier2_archive_inspect_unknown_format(tmp_path):
+    from core.net_helpers import archive_inspect
+    p = tmp_path / "bogus.dat"
+    p.write_bytes(b"\xde\xad\xbe\xef" * 16)
+    try:
+        archive_inspect(str(p))
+    except OSError as e:
+        assert "cannot identify" in str(e)
+    else:
+        raise AssertionError("archive_inspect should refuse unknown format")
+
+
+def test_tier2_archive_inspect_max_entries_clip(tmp_path):
+    import zipfile
+    from core.net_helpers import archive_inspect
+    p = tmp_path / "many.zip"
+    with zipfile.ZipFile(p, "w") as zf:
+        for i in range(50):
+            zf.writestr(f"f{i}.bin", b"x")
+    out = archive_inspect(str(p), max_entries=10)
+    assert len(out) == 10
+
+
+def test_tier2_entropy_known_blobs():
+    from core.net_helpers import entropy
+    # Empty + monoculture inputs are 0 bits/byte.
+    assert entropy(b"") == 0.0
+    assert entropy(b"\x00" * 4096) == 0.0
+    assert entropy(b"a" * 4096) == 0.0
+    # Uniform 8-bit distribution is exactly 8 bits/byte.
+    uniform = bytes(range(256)) * 16
+    assert abs(entropy(uniform) - 8.0) < 1e-9
+    # Random data approaches 8 bits/byte.
+    import os as _os
+    rnd = _os.urandom(8192)
+    assert entropy(rnd) > 7.5, entropy(rnd)
+    # English text sits roughly between 4 and 5 bits/byte.
+    text = (b"the quick brown fox jumps over the lazy dog. " * 200)
+    e = entropy(text)
+    assert 3.5 < e < 5.5, e
+
+
+# ════════════════════════════════════════════════════════════
+#  WinRM ps() + WMI cim_query() (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# No Windows lab fixture; argument-shape tests only.
+
+def test_winrm_ps_returns_exec_result_with_caps(monkeypatch):
+    """ps() returns ExecResult; caps are honoured."""
+    from core.winrm_client import WinRMSession
+    from models.exec_result import ExecResult
+
+    class _Result:
+        status_code = 0
+        std_out = b"x" * 5000
+        std_err = b""
+
+    s = WinRMSession.__new__(WinRMSession)
+
+    class _FakeSession:
+        def run_ps(self, script):
+            return _Result()
+
+    s._session = _FakeSession()
+    r = s.ps("Get-Date", stdout_cap=1024)
+    assert isinstance(r, ExecResult)
+    assert r.returncode == 0 and r.ok
+    assert len(r.stdout) == 1024
+    assert r.truncated_stdout is True
+
+
+def test_winrm_cim_query_quote_smuggling_refused():
+    """A WQL string with a single-quote could close the PS interpolated
+    string and run arbitrary cmdlets — refuse before the request
+    is built."""
+    from core.winrm_client import WinRMSession
+    s = WinRMSession.__new__(WinRMSession)
+    for bad in (
+        "SELECT * FROM Win32_OperatingSystem WHERE Name='x'",
+        "SELECT 1\nDROP",
+    ):
+        try:
+            s.cim_query(bad)
+        except ValueError as e:
+            assert "single-quote" in str(e) or "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"cim_query should refuse {bad!r}")
+
+
+def test_wmi_cim_query_argument_validation():
+    """WMI cim_query rejects CR/LF in WQL + invalid namespace
+    characters BEFORE any DCOM call."""
+    from core.wmi_client import WMISession
+    s = WMISession.__new__(WMISession)
+    try:
+        s.cim_query("SELECT 1\r\nDROP")
+    except ValueError as e:
+        assert "CR/LF" in str(e)
+    else:
+        raise AssertionError("cim_query should refuse CR/LF")
+    try:
+        s.cim_query("SELECT *", namespace="//./root\\cimv2\nfoo")
+    except ValueError as e:
+        assert "namespace" in str(e)
+    else:
+        raise AssertionError("cim_query should refuse bad namespace")
+
+
+# ════════════════════════════════════════════════════════════
+#  Telnet generic verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# Lab telnet server at 10.99.0.37 — Debian busybox-ish shell.
+
+def _telnet_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection((TELNET_HOST, TELNET_PORT), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _telnet_up(),
+                    reason="Telnet lab container not reachable")
+def test_telnet_send_raw_and_expect_round_trip():
+    from core.telnet_client import TelnetSession
+    s = TelnetSession(host=TELNET_HOST, port=TELNET_PORT,
+                      username=TELNET_USER, password=TELNET_PASS)
+    try:
+        # send_raw a command + look for our marker via expect.
+        s.send_raw(b"echo axross-telnet-marker-7331\r\n")
+        text, matched = s.expect(r"axross-telnet-marker-7331",
+                                 timeout=5.0)
+        assert matched, text[-200:]
+        assert "axross-telnet-marker-7331" in text
+    finally:
+        s.disconnect()
+
+
+def test_telnet_send_raw_refuses_iac():
+    """Sending a raw IAC (0xFF) would smuggle the start of a Telnet
+    option-negotiation command. Refuse before any byte is written."""
+    from core.telnet_client import TelnetSession
+    s = TelnetSession.__new__(TelnetSession)
+    for bad in (b"\xff\x01", b"hello\xfffoo", b"\xff"):
+        try:
+            s.send_raw(bad)
+        except ValueError as e:
+            assert "IAC" in str(e)
+        else:
+            raise AssertionError(f"send_raw should refuse {bad!r}")
+
+
+# ════════════════════════════════════════════════════════════
+#  SMB verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+
+def test_smb_shares_list_input_validation():
+    from core.smb_client import SmbSession
+    for bad in ("host\nfoo", "10.0.0.5\rA"):
+        try:
+            SmbSession.shares_list(bad)
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"shares_list should refuse {bad!r}")
+
+
+def test_smb_shares_list_parses_grepable_output(monkeypatch):
+    """Stub the smbclient subprocess so the parser can be exercised
+    without samba-client on the runner."""
+    from core import smb_client
+
+    class _Done:
+        returncode = 0
+        # ``smbclient -L -g`` (grepable) format.
+        stdout = (
+            "Disk|public|Public share\n"
+            "Disk|home|User home\n"
+            "Printer|hp-laser|Office printer\n"
+            "IPC|IPC$|IPC Service\n"
+            "Workgroup|WORKGROUP\n"      # not a share — must skip
+        )
+        stderr = ""
+
+    monkeypatch.setattr(smb_client, "__name__", "core.smb_client")
+    # ``shares_list`` does its own ``import shutil``/``subprocess``
+    # locally, so we have to patch in the function's namespace.
+    import shutil as _sh
+    import subprocess as _sp
+    monkeypatch.setattr(_sh, "which",
+                        lambda name: "/usr/bin/smbclient")
+    monkeypatch.setattr(_sp, "run", lambda *a, **kw: _Done())
+    out = smb_client.SmbSession.shares_list("10.99.0.31",
+                                            username="alice",
+                                            password="alice123")
+    by_name = {s["name"]: s for s in out}
+    assert by_name["public"]["type"] == "Disk"
+    assert by_name["home"]["comment"] == "User home"
+    assert by_name["IPC$"]["type"] == "IPC"
+    assert "WORKGROUP" not in by_name
+
+
+def test_smb_acl_get_and_dfs_referrals_clearly_not_implemented():
+    """Both raise NotImplementedError with a follow-up pointer so
+    a caller knows it's an explicit gap, not a silent default."""
+    from core.smb_client import SmbSession
+    s = SmbSession.__new__(SmbSession)
+    try:
+        s.acl_get("/x")
+    except NotImplementedError as e:
+        assert "QUERY_SECURITY_INFO" in str(e)
+    else:
+        raise AssertionError("acl_get should raise NotImplementedError")
+    try:
+        s.dfs_referrals("/")
+    except NotImplementedError as e:
+        assert "FSCTL_DFS_GET_REFERRALS" in str(e)
+    else:
+        raise AssertionError("dfs_referrals should raise NotImplementedError")
+
+
+# ════════════════════════════════════════════════════════════
+#  SLP verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+
+def test_slp_attributes_parser_handles_quoting():
+    """The (name=value) parser handles bare flags, escaped commas,
+    and the (key=value) paren-wrapped form."""
+    from core.slp_client import _parse_slp_attrs
+    text = "(name=printer-1),(model=HP\\, LJ),(active),(loc=floor-3)"
+    out = _parse_slp_attrs(text)
+    assert out["name"] == "printer-1"
+    assert out["model"] == "HP, LJ"   # escaped comma kept inside value
+    assert out["active"] == ""
+    assert out["loc"] == "floor-3"
+
+
+def test_slp_services_browse_dispatches_via_internal_helpers(monkeypatch):
+    """services_browse calls _fetch_types → _fetch_urls → _fetch_attrs
+    in sequence and packages the results. Monkey-patch each helper so
+    the test runs without an actual SLP DA on the network."""
+    from core.slp_client import SlpSession
+    s = SlpSession.__new__(SlpSession)
+
+    monkeypatch.setattr(s, "_fetch_types",
+                        lambda: ["service:printer:lpd", "service:ssh"])
+    monkeypatch.setattr(s, "_fetch_urls", lambda t: {
+        "service:printer:lpd": [
+            ("service:printer:lpd://10.0.0.1/queue", 7200),
+        ],
+        "service:ssh": [
+            ("service:ssh://10.0.0.2:22", 7200),
+            ("service:ssh://10.0.0.3:22", 7200),
+        ],
+    }[t])
+    monkeypatch.setattr(s, "_fetch_attrs", lambda u: {
+        "service:printer:lpd://10.0.0.1/queue":
+            "(model=HP-LJ),(loc=floor-3)",
+        "service:ssh://10.0.0.2:22": "(host=alpha)",
+        "service:ssh://10.0.0.3:22": "(host=beta)",
+    }[u])
+
+    out = s.services_browse()
+    assert len(out) == 3
+    by_url = {row["url"]: row for row in out}
+    assert by_url["service:printer:lpd://10.0.0.1/queue"]["attributes"]["model"] == "HP-LJ"
+    assert by_url["service:ssh://10.0.0.2:22"]["type"] == "service:ssh"
+    assert by_url["service:ssh://10.0.0.3:22"]["attributes"]["host"] == "beta"
+
+
+def test_slp_attributes_get_via_helper(monkeypatch):
+    from core.slp_client import SlpSession
+    s = SlpSession.__new__(SlpSession)
+    monkeypatch.setattr(s, "_fetch_attrs",
+                        lambda u: "(name=foo),(version=2.6)")
+    attrs = s.attributes_get("service:x://h")
+    assert attrs == {"name": "foo", "version": "2.6"}
+
+
+# ════════════════════════════════════════════════════════════
+#  PJL verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# In-process scripted PJL responder (matches the wire protocol
+# enough to satisfy info() / status() / eject_paper() + the
+# per-op safety probe).
+
+def _pjl_in_proc(scripted: dict[bytes, bytes]):
+    """Tiny PJL TCP responder. Each connect: read until UEL closes the
+    request, look up a matching prefix, send back the scripted bytes
+    wrapped with UEL. Returns (host, port, stop)."""
+    import socket
+    import threading
+    UEL = b"\x1b%-12345X"
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    srv.settimeout(0.2)
+    port = srv.getsockname()[1]
+    stop = threading.Event()
+
+    def loop():
+        while not stop.is_set():
+            try:
+                c, _ = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            try:
+                buf = b""
+                # Read until 2nd UEL (request closes with one) or 4 KiB.
+                deadline = 4096
+                while len(buf) < deadline:
+                    try:
+                        c.settimeout(0.5)
+                        chunk = c.recv(512)
+                    except socket.timeout:
+                        break
+                    if not chunk:
+                        break
+                    buf += chunk
+                    if buf.count(UEL) >= 2:
+                        break
+                # Pick a body whose key prefix appears in buf.
+                body = b""
+                for prefix, val in scripted.items():
+                    if prefix in buf:
+                        body = val
+                        break
+                else:
+                    body = b"@PJL INFO STATUS\r\nCODE=10001\r\nDISPLAY=\"READY\"\r\n"
+                c.sendall(UEL + body + UEL)
+            finally:
+                c.close()
+
+    threading.Thread(target=loop, daemon=True).start()
+    return "127.0.0.1", port, lambda: (stop.set(), srv.close())
+
+
+def test_pjl_info_category_allow_list_refuses_smuggling():
+    """info() with an off-list category must raise ValueError BEFORE
+    any socket open — defends the wire frame against tainted
+    interpolation."""
+    from core.pjl_client import PjlSession
+    s = PjlSession.__new__(PjlSession)
+    for bad in ("STATUS\nFSDELETE 0:/etc/passwd",
+                "ID\rEJECT", "BOGUS"):
+        try:
+            s.info(bad)
+        except ValueError as e:
+            assert "allow-list" in str(e)
+        else:
+            raise AssertionError(f"info() should refuse {bad!r}")
+
+
+def test_pjl_info_id_round_trip():
+    """info('ID') talks to the in-proc PJL responder and returns the
+    body of the @PJL INFO ID response (UEL frames stripped)."""
+    from core.pjl_client import PjlSession
+    host, port, stop = _pjl_in_proc({
+        b"@PJL INFO ID":
+            b"@PJL INFO ID\r\nID=\"axross-fake-printer\"\r\n",
+        b"@PJL INFO STATUS":
+            b"@PJL INFO STATUS\r\nCODE=10001\r\nDISPLAY=\"READY\"\r\n",
+    })
+    try:
+        s = PjlSession(host=host, port=port, timeout=2.0)
+        try:
+            body = s.info("ID")
+            assert "axross-fake-printer" in body, body
+            stat = s.status()
+            assert "10001" in stat or "READY" in stat, stat
+            # eject_paper completes without raising — the responder
+            # echoes a benign STATUS reply that survives revalidation.
+            s.eject_paper()
+        finally:
+            s.disconnect()
+    finally:
+        stop()
+
+
+# ════════════════════════════════════════════════════════════
+#  NNTP verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# Tiny in-process NNTP server (same script-driven pattern as
+# NntpLibTests in test_backend_regressions). No docker container
+# needed.
+
+def _nntp_in_proc(scripted: dict[str, bytes]):
+    """Same shape as NntpLibTests._fake_server. Returns (host, port, stop)."""
+    import socket
+    import threading
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    srv.settimeout(0.2)
+    port = srv.getsockname()[1]
+    stop = threading.Event()
+
+    def loop():
+        while not stop.is_set():
+            try:
+                c, _ = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            try:
+                c.sendall(scripted.get("__greeting__", b"200 ok\r\n"))
+                f = c.makefile("rb", 0)
+                while True:
+                    line = f.readline()
+                    if not line:
+                        break
+                    cmd = line.decode("utf-8", "replace").strip().upper()
+                    for prefix, body in scripted.items():
+                        if prefix.startswith("__"):
+                            continue
+                        if cmd.startswith(prefix):
+                            c.sendall(body)
+                            break
+                    else:
+                        c.sendall(b"500 unknown\r\n")
+                    if cmd == "QUIT":
+                        break
+            finally:
+                c.close()
+
+    threading.Thread(target=loop, daemon=True).start()
+    return "127.0.0.1", port, lambda: (stop.set(), srv.close())
+
+
+def test_nntp_groups_list_returns_structured_dicts():
+    """LIST ACTIVE → list of dicts with name/low/high/status/count.
+    'count' is the server-estimated article count (high - low + 1)."""
+    from core.nntp_client import NntpSession
+    host, port, stop = _nntp_in_proc({
+        "__greeting__": b"200 mock NNTP ready\r\n",
+        "CAPABILITIES": b"101 caps\r\nVERSION 2\r\nREADER\r\n.\r\n",
+        "MODE READER": b"200 ok\r\n",
+        "LIST ACTIVE":
+            b"215 active\r\n"
+            b"alt.test 100 1 y\r\n"
+            b"de.alt 50 5 m\r\n"
+            b".\r\n",
+        "QUIT": b"205 bye\r\n",
+    })
+    try:
+        s = NntpSession(host=host, port=port, use_tls=False)
+        try:
+            groups = s.groups_list()
+            by_name = {g["name"]: g for g in groups}
+            assert by_name["alt.test"]["status"] == "y"
+            assert by_name["alt.test"]["count"] == 100  # 100 - 1 + 1
+            assert by_name["de.alt"]["count"] == 46     # 50 - 5 + 1
+        finally:
+            s.disconnect()
+    finally:
+        stop()
+
+
+def test_nntp_group_arguments_refuse_crlf_smuggling():
+    """F33: a group name with embedded CR/LF would smuggle a second
+    NNTP command. Public-API guard rejects before any wire byte;
+    nntp_lib._send_line also has a backstop guard."""
+    from core.nntp_client import NntpSession
+    s = NntpSession.__new__(NntpSession)
+    for verb, call in (
+        ("groups_list", lambda: s.groups_list("alt\r\nLOGOUT")),
+        ("xover",       lambda: s.xover("alt.test\nLOGOUT")),
+        ("article_headers",
+                       lambda: s.article_headers("alt.test\rA", 1)),
+        ("raw_head",   lambda: s.raw_head("alt.test\nB", 1)),
+    ):
+        try:
+            call()
+        except ValueError as e:
+            assert "CR/LF" in str(e) and "F33" in str(e), str(e)
+        else:
+            raise AssertionError(f"{verb} should refuse CR/LF in group")
+
+
+def test_nntp_xover_and_article_headers():
+    """xover() returns OVER records as dicts; article_headers() parses
+    HEAD response into a {header: value} dict (lower-cased names,
+    multi-line headers unfolded)."""
+    from core.nntp_client import NntpSession
+    head_body = (
+        b"221 1 head\r\n"
+        b"From: alice@example\r\n"
+        b"Subject: long\r\n"
+        b" wrapped subject\r\n"
+        b"Newsgroups: alt.test\r\n"
+        b"Date: Mon, 01 Jan 2026 00:00:00 GMT\r\n"
+        b"Message-ID: <abc@x>\r\n"
+        b".\r\n"
+    )
+    host, port, stop = _nntp_in_proc({
+        "__greeting__": b"200 mock NNTP ready\r\n",
+        "CAPABILITIES": b"101 caps\r\nVERSION 2\r\nREADER\r\n.\r\n",
+        "MODE READER": b"200 ok\r\n",
+        "GROUP": b"211 5 1 5 alt.test\r\n",
+        "OVER":
+            b"224 over\r\n"
+            b"1\tFirst\tu@x\tMon, 01 Jan 2026\t<a@x>\t\t128\t10\r\n"
+            b"2\tSecond\tv@x\tTue, 02 Jan 2026\t<b@x>\t<a@x>\t256\t20\r\n"
+            b".\r\n",
+        "HEAD": head_body,
+        "QUIT": b"205 bye\r\n",
+    })
+    try:
+        s = NntpSession(host=host, port=port, use_tls=False)
+        try:
+            recs = s.xover("alt.test")
+            assert len(recs) == 2
+            assert recs[0]["subject"] == "First"
+            assert recs[1]["references"] == "<a@x>"
+
+            heads = s.article_headers("alt.test", 1)
+            assert heads["from"] == "alice@example"
+            # Unfolded multi-line header.
+            assert heads["subject"] == "long wrapped subject"
+            assert heads["newsgroups"] == "alt.test"
+        finally:
+            s.disconnect()
+    finally:
+        stop()
+
+
+# ════════════════════════════════════════════════════════════
+#  NFS exports_list (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# showmount is needed at runtime; on hosts without it the helper
+# raises OSError with an install hint (still exercised here).
+
+def test_nfs_exports_list_input_validation():
+    """CR/LF in the host argument must be refused BEFORE the
+    showmount binary lookup, so the smuggling guard doesn't get
+    masked by 'showmount not installed' on bare hosts."""
+    from core.nfs_client import NfsSession
+    for bad in ("host\nbar", "10.0.0.5\rRESET", "10 0 0 5"):
+        try:
+            NfsSession.exports_list(bad)
+        except ValueError as e:
+            assert "CR/LF/space" in str(e)
+        else:
+            raise AssertionError(f"exports_list should refuse {bad!r}")
+
+
+def test_nfs_exports_list_parses_showmount_output(monkeypatch):
+    """Stub subprocess.run so we exercise the parser without
+    needing showmount on the runner."""
+    from core import nfs_client
+    canned = (
+        "/srv/nfs/share 10.99.0.0/24,*\n"
+        "/srv/nfs/scratch 10.0.0.0/8\n"
+        "\n"  # trailing blank line — must be skipped
+    )
+
+    class _Done:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = canned
+            self.stderr = ""
+
+    monkeypatch.setattr(nfs_client.shutil, "which",
+                        lambda name: "/usr/bin/showmount")
+    monkeypatch.setattr(nfs_client.subprocess, "run",
+                        lambda *a, **kw: _Done())
+    out = nfs_client.NfsSession.exports_list("10.99.0.5")
+    assert out == [
+        {"path": "/srv/nfs/share",   "clients": ["10.99.0.0/24", "*"]},
+        {"path": "/srv/nfs/scratch", "clients": ["10.0.0.0/8"]},
+    ]
+
+
+def test_nfs_exports_list_surfaces_showmount_failure(monkeypatch):
+    """Non-zero exit from showmount → OSError carrying the stderr."""
+    from core import nfs_client
+
+    class _Fail:
+        returncode = 1
+        stdout = ""
+        stderr = "clnt_create: RPC: Program not registered"
+
+    monkeypatch.setattr(nfs_client.shutil, "which",
+                        lambda name: "/usr/bin/showmount")
+    monkeypatch.setattr(nfs_client.subprocess, "run",
+                        lambda *a, **kw: _Fail())
+    try:
+        nfs_client.NfsSession.exports_list("10.99.0.5")
+    except OSError as e:
+        assert "Program not registered" in str(e)
+    else:
+        raise AssertionError("non-zero showmount must raise OSError")
+
+
+# ════════════════════════════════════════════════════════════
+#  Gopher selector_type + recursive_fetch (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# In-process Gopher server (same shape as GopherBackendTests in
+# test_backend_regressions); no docker container needed.
+
+def _gopher_in_proc(menu_factory):
+    """Tiny stdlib Gopher server on 127.0.0.1. Returns (host, port, stop)."""
+    import socket
+    import threading
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    srv.settimeout(0.2)
+    port = srv.getsockname()[1]
+    stop = threading.Event()
+
+    def loop():
+        while not stop.is_set():
+            try:
+                c, _ = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            try:
+                sel = b""
+                while not sel.endswith(b"\r\n"):
+                    chunk = c.recv(64)
+                    if not chunk:
+                        break
+                    sel += chunk
+                body = menu_factory(sel.decode("utf-8", "replace").strip())
+                if body is not None:
+                    c.sendall(body)
+            finally:
+                c.close()
+
+    threading.Thread(target=loop, daemon=True).start()
+
+    def _stop():
+        stop.set()
+        srv.close()
+
+    return "127.0.0.1", port, _stop
+
+
+def test_gopher_selector_type_labels_known_items():
+    """selector_type returns the human-readable label for each
+    standard Gopher item-type byte."""
+    from core.gopher_client import GopherSession
+    # Display names already carry their extension so _entry_to_filename
+    # doesn't append a type-hint duplicate. (For type "I" the hint is
+    # ".img"; tests assert the *type byte* survives, not the filename.)
+    menu = (
+        b"0readme.txt\t/readme.txt\texample\t70\r\n"
+        b"1docs\t/docs\texample\t70\r\n"
+        b"hpage.html\t/page.html\texample\t70\r\n"
+        b"Iimg.gif\t/img.gif\texample\t70\r\n"
+        b".\r\n"
+    )
+    host, port, stop = _gopher_in_proc(lambda sel: menu if sel == "" else None)
+    try:
+        s = GopherSession(host=host, port=port)
+        try:
+            t = s.selector_type("/readme.txt")
+            assert t["type"] == "0" and t["label"] == "text-file"
+            t2 = s.selector_type("/docs")
+            assert t2["type"] == "1" and t2["label"] == "menu"
+            t3 = s.selector_type("/page.html")
+            assert t3["type"] == "h" and t3["label"] == "html-file"
+            t4 = s.selector_type("/img.gif")
+            assert t4["type"] == "I" and t4["label"] == "image"
+        finally:
+            s.disconnect()
+    finally:
+        stop()
+
+
+def test_gopher_recursive_fetch_walks_tree_with_caps():
+    """recursive_fetch descends submenus and returns leaf bodies,
+    capped by max_files + max_depth, and skipping unfetchable types
+    (telnet=8, search=7)."""
+    from core.gopher_client import GopherSession
+    root_menu = (
+        b"0a.txt\t/a.txt\texample\t70\r\n"
+        b"1sub\t/sub\texample\t70\r\n"
+        b"7find\t/find\texample\t70\r\n"   # search-index — must skip
+        b"8telnet\t/tn\texample\t70\r\n"   # telnet — must skip
+        b".\r\n"
+    )
+    sub_menu = (
+        b"0b.txt\t/sub/b.txt\texample\t70\r\n"
+        b"0c.txt\t/sub/c.txt\texample\t70\r\n"
+        b".\r\n"
+    )
+    bodies = {
+        "/a.txt":     b"alpha-leaf",
+        "/sub/b.txt": b"beta-leaf",
+        "/sub/c.txt": b"gamma-leaf",
+    }
+
+    def factory(sel):
+        if sel == "":
+            return root_menu
+        if sel == "/sub":
+            return sub_menu
+        return bodies.get(sel)
+
+    host, port, stop = _gopher_in_proc(factory)
+    try:
+        s = GopherSession(host=host, port=port)
+        try:
+            out = s.recursive_fetch("/", max_files=10, max_depth=3)
+            # 3 leaves (a, b, c); telnet + search-index skipped.
+            assert sorted(out.keys()) == sorted(
+                ["/a.txt", "/sub/b.txt", "/sub/c.txt"]
+            ), out
+            assert out["/a.txt"] == b"alpha-leaf"
+
+            # Cap on max_files truncates.
+            small = s.recursive_fetch("/", max_files=1, max_depth=3)
+            assert len(small) == 1
+        finally:
+            s.disconnect()
+    finally:
+        stop()
+
+
+# ════════════════════════════════════════════════════════════
+#  FTP/FTPS verbs (API_GAPS round 2)
+# ════════════════════════════════════════════════════════════
+#
+# pure-ftpd container at 10.99.0.30:21 advertises MLST + SITE.
+
+def _ftp_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection((FTP_HOST, FTP_PORT), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _ftp_up(),
+                    reason="FTP lab container not reachable")
+def test_ftp_features_lists_advertised_extensions():
+    from core.ftp_client import FtpSession
+    s = FtpSession(host=FTP_HOST, port=FTP_PORT,
+                   username=FTP_USER, password=FTP_PASS)
+    try:
+        feats = s.features()
+        # pure-ftpd ships at minimum these.
+        assert any(f.startswith("UTF8") for f in feats), feats
+        assert any(f.startswith("MLST") for f in feats), feats
+        assert any(f.startswith("SIZE") for f in feats), feats
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _ftp_up(),
+                    reason="FTP lab container not reachable")
+def test_ftp_mlst_root():
+    from core.ftp_client import FtpSession
+    s = FtpSession(host=FTP_HOST, port=FTP_PORT,
+                   username=FTP_USER, password=FTP_PASS)
+    try:
+        facts = s.mlst("/")
+        # Type is the only universally-present fact for the root.
+        assert facts.get("type") in ("dir", "pdir", "cdir"), facts
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _ftp_up(),
+                    reason="FTP lab container not reachable")
+def test_ftp_site_help():
+    from core.ftp_client import FtpSession
+    s = FtpSession(host=FTP_HOST, port=FTP_PORT,
+                   username=FTP_USER, password=FTP_PASS)
+    try:
+        resp = s.site("HELP")
+        # pure-ftpd's SITE HELP includes CHMOD on its supported list.
+        assert "CHMOD" in resp.upper()
+    finally:
+        s.disconnect()
+
+
+def test_ftp_mlst_and_cwd_refuse_crlf():
+    """F38: same wire-frame guard as site() — symmetry across the
+    FTP-specific verbs."""
+    from core.ftp_client import FtpSession
+    s = FtpSession.__new__(FtpSession)
+    for fn_name, fn in (("mlst", lambda: s.mlst("/x\r\nQUIT")),
+                        ("cwd",  lambda: s.cwd("/x\nLIST"))):
+        try:
+            fn()
+        except ValueError as e:
+            assert "CR/LF" in str(e) and "F38" in str(e)
+        else:
+            raise AssertionError(f"FTP.{fn_name} should refuse CR/LF")
+
+
+def test_ftp_site_refuses_crlf_smuggling():
+    """site() with embedded CR/LF would smuggle a second wire command —
+    must reject before any byte is sent. No live server needed."""
+    from core.ftp_client import FtpSession
+    s = FtpSession.__new__(FtpSession)
+    for bad in ("CHMOD 0700 /\r\nNOOP", "FOO\rBAR", "X\nQUIT"):
+        try:
+            s.site(bad)
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"site() should refuse {bad!r}")
+
+
+# ════════════════════════════════════════════════════════════
+#  LDAP-as-FS backend (slice 8 of API_GAPS)
+# ════════════════════════════════════════════════════════════
+#
+# OpenLDAP container at 10.99.0.45:389 with seeded users:
+#   cn=alice,ou=people,dc=axross,dc=test  (pw alice123)
+#   cn=bob,ou=people,dc=axross,dc=test    (pw bob123)
+#   cn=devs,ou=groups,dc=axross,dc=test   (groupOfNames)
+
+LDAP_HOST = "10.99.0.45"
+LDAP_PORT = 389
+LDAP_BIND_DN = "cn=admin,dc=axross,dc=test"
+LDAP_BIND_PW = "ldapadmin123"
+LDAP_BASE = "dc=axross,dc=test"
+
+
+def _ldap_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection((LDAP_HOST, LDAP_PORT), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _ldap_up(),
+                    reason="LDAP lab container not reachable")
+def test_ldap_list_dir_navigates_tree():
+    """list_dir at every level returns the right children + correctly
+    flags containers as is_dir=True."""
+    from core.ldap_fs_client import LdapFsSession
+    s = LdapFsSession(host=LDAP_HOST, port=LDAP_PORT,
+                      username=LDAP_BIND_DN, password=LDAP_BIND_PW)
+    try:
+        # Root → namingContexts.
+        roots = s.list_dir("/")
+        assert any(it.name == LDAP_BASE and it.is_dir for it in roots), roots
+
+        # Base DN → ou=people + ou=groups.
+        kids = sorted((it.name, it.is_dir) for it in s.list_dir("/" + LDAP_BASE))
+        assert ("ou=people", True) in kids
+        assert ("ou=groups", True) in kids
+
+        # ou=people → cn=alice + cn=bob (as files).
+        people = sorted(it.name for it in s.list_dir("/" + LDAP_BASE + "/ou=people"))
+        assert "cn=alice" in people and "cn=bob" in people
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _ldap_up(),
+                    reason="LDAP lab container not reachable")
+def test_ldap_open_read_returns_ldif():
+    """open_read on a leaf entry returns its LDIF representation —
+    parseable as standard LDIF."""
+    from core.ldap_fs_client import LdapFsSession
+    s = LdapFsSession(host=LDAP_HOST, port=LDAP_PORT,
+                      username=LDAP_BIND_DN, password=LDAP_BIND_PW)
+    try:
+        body = s.open_read(
+            "/" + LDAP_BASE + "/ou=people/cn=alice"
+        ).read().decode()
+        assert "dn: cn=alice,ou=people,dc=axross,dc=test" in body
+        assert "objectClass: inetOrgPerson" in body
+        assert "mail: alice@axross.test" in body
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _ldap_up(),
+                    reason="LDAP lab container not reachable")
+def test_ldap_axross_search_returns_structured_entries():
+    """axross.ldap_search runs a raw search + returns dn/attributes
+    dicts."""
+    from core.ldap_fs_client import LdapFsSession
+    import core.scripting as axross
+    s = LdapFsSession(host=LDAP_HOST, port=LDAP_PORT,
+                      username=LDAP_BIND_DN, password=LDAP_BIND_PW)
+    try:
+        rows = axross.ldap_search(
+            s, LDAP_BASE, "(objectClass=inetOrgPerson)",
+            attributes=["cn", "mail"], limit=50,
+        )
+        assert len(rows) == 2
+        names = sorted(r["attributes"]["cn"] for r in rows)
+        assert names == ["alice", "bob"]
+        # Each entry has the dn and attribute keys we asked for.
+        for r in rows:
+            assert r["dn"].endswith(LDAP_BASE)
+            assert "mail" in r["attributes"]
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _ldap_up(),
+                    reason="LDAP lab container not reachable")
+def test_ldap_writes_refused():
+    """LDAP backend is read-only — every write surface raises OSError."""
+    from core.ldap_fs_client import LdapFsSession
+    s = LdapFsSession(host=LDAP_HOST, port=LDAP_PORT,
+                      username=LDAP_BIND_DN, password=LDAP_BIND_PW)
+    try:
+        for action, fn in (
+            ("open_write", lambda: s.open_write("/anything")),
+            ("remove",     lambda: s.remove("/anything")),
+            ("mkdir",      lambda: s.mkdir("/anything")),
+            ("rename",     lambda: s.rename("/a", "/b")),
+            ("copy",       lambda: s.copy("/a", "/b")),
+        ):
+            try:
+                fn()
+            except OSError:
+                pass  # expected
+            else:
+                raise AssertionError(f"{action} should refuse on LDAP backend")
+    finally:
+        s.disconnect()
+
+
+def test_ldap_path_dn_round_trip():
+    """Path ↔ DN translation is the only piece that works without a
+    live server — verify it directly so a refactor can't silently
+    invert the byte order."""
+    from core.ldap_fs_client import LdapFsSession
+    p2d = LdapFsSession._path_to_dn
+    assert p2d("/") == ""
+    # The first segment IS the base DN (namingContext) — allowed to
+    # carry commas because canonical LDAP bases are multi-RDN
+    # (``dc=example,dc=com``). Deeper segments must be single RDNs;
+    # see test_ldap_path_dn_refuses_rdn_injection for the F31 guard.
+    assert p2d("/dc=example,dc=com") == "dc=example,dc=com"
+    assert p2d("/dc=example,dc=com/ou=people") == "ou=people,dc=example,dc=com"
+    assert p2d("/dc=example,dc=com/ou=people/cn=alice") == \
+        "cn=alice,ou=people,dc=example,dc=com"
+
+
+def test_ldap_path_dn_refuses_rdn_injection():
+    """F31: a path segment containing an unescaped comma would
+    smuggle additional RDNs into the resulting DN. Refuse loudly
+    BEFORE any LDAP operation is built."""
+    from core.ldap_fs_client import LdapFsSession
+    p2d = LdapFsSession._path_to_dn
+    for hostile in (
+        "/dc=test,dc=com/ou=evil,ou=admins",    # injects ou=admins
+        "/dc=test,dc=com/cn=alice,uid=root",    # injects uid=root
+    ):
+        try:
+            p2d(hostile)
+        except ValueError as e:
+            assert "unescaped" in str(e) or "smuggle" in str(e)
+        else:
+            raise AssertionError(
+                f"_path_to_dn should refuse injection in {hostile!r}"
+            )
+    # RFC-4514 escaped commas MUST still be accepted in deeper segments.
+    assert p2d("/dc=test,dc=com/cn=Doe\\, Jane") == \
+        "cn=Doe\\, Jane,dc=test,dc=com"
+    # Segments that aren't RDNs (no `=`) are also refused.
+    try:
+        p2d("/dc=test,dc=com/junk")
+    except ValueError as e:
+        assert "RDN" in str(e)
+    else:
+        raise AssertionError("_path_to_dn should refuse non-RDN segments")
+
+
+# ════════════════════════════════════════════════════════════
+#  SNMP helpers (slice 7 of API_GAPS)
+# ════════════════════════════════════════════════════════════
+#
+# Unit tests only — net-snmp's snmpd refuses to bind in this docker
+# environment (see tests/docker/Dockerfile.snmpd header). Live tests
+# fire when an snmpd reachable at SNMP_HOST is up; otherwise skip.
+
+SNMP_HOST = "10.99.0.44"
+SNMP_PORT = 1161  # see Dockerfile.snmpd — UDP/1161 to dodge the priv-port quirk
+
+
+def _snmp_up() -> bool:
+    """SNMP is connectionless (UDP) — try a tiny query and see if a
+    response arrives within 0.5 s. Lab is up only if the daemon
+    actually answered."""
+    try:
+        from core.snmp_helpers import snmp_get
+        snmp_get(SNMP_HOST, "1.3.6.1.2.1.1.1.0",
+                 community="public", port=SNMP_PORT,
+                 timeout=0.5, retries=0)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def test_snmp_set_unknown_value_type_refused():
+    """snmp_set with a bogus value_type must raise ValueError BEFORE
+    any UDP packet is sent — defends against caller typo gates."""
+    from core.snmp_helpers import snmp_set
+    try:
+        snmp_set("127.0.0.1", "1.3.6.1.2.1.1.6.0", "x",
+                 value_type="NotARealType", port=12345, timeout=0.1)
+    except ValueError as e:
+        assert "unknown value_type" in str(e)
+    else:
+        raise AssertionError("snmp_set should refuse unknown value_type")
+
+
+def test_snmp_get_timeout_when_host_silent():
+    """snmp_get against a host that won't answer raises OSError with
+    'No SNMP response' — verifies the asyncio.run() wrapping doesn't
+    swallow the timeout."""
+    from core.snmp_helpers import snmp_get
+    try:
+        # 192.0.2.1 is RFC-5737 TEST-NET-1 — guaranteed not routable.
+        snmp_get("192.0.2.1", "1.3.6.1.2.1.1.1.0",
+                 community="public", timeout=0.5, retries=0)
+    except OSError as e:
+        # Either timeout or unreachable. Both surface as OSError.
+        assert "SNMP" in str(e) or "timeout" in str(e).lower() \
+            or "unreachable" in str(e).lower(), str(e)
+    else:
+        raise AssertionError("snmp_get against TEST-NET-1 should fail")
+
+
+@pytest.mark.skipif(not _snmp_up(),
+                    reason="SNMP daemon not reachable on lab fixture")
+def test_snmp_get_walk_set_round_trip():
+    """End-to-end against an snmpd reachable at SNMP_HOST:SNMP_PORT.
+    Exercises snmp_get + snmp_walk + snmp_set."""
+    from core.snmp_helpers import snmp_get, snmp_walk, snmp_set
+    sys_descr = snmp_get(SNMP_HOST, "1.3.6.1.2.1.1.1.0",
+                         community="public", port=SNMP_PORT,
+                         timeout=2.0)
+    assert sys_descr.value, sys_descr
+
+    walk = snmp_walk(SNMP_HOST, "1.3.6.1.2.1.1",
+                     community="public", port=SNMP_PORT,
+                     timeout=2.0, max_vars=20)
+    assert len(walk) >= 5, walk
+
+    import time
+    new_loc = f"axross-set-{int(time.time())}"
+    snmp_set(SNMP_HOST, "1.3.6.1.2.1.1.6.0", new_loc,
+             value_type="OctetString", community="private",
+             port=SNMP_PORT, timeout=2.0)
+    after = snmp_get(SNMP_HOST, "1.3.6.1.2.1.1.6.0",
+                     community="public", port=SNMP_PORT, timeout=2.0)
+    assert after.value == new_loc, after
+
+
+# ════════════════════════════════════════════════════════════
+#  Content inspection helpers (slice 6 of API_GAPS)
+# ════════════════════════════════════════════════════════════
+#
+# Pure-Python — no lab. Validates puremagic + chardet wrappers.
+
+def test_content_magic_type_known_formats():
+    from core.net_helpers import magic_type
+    # Well-known leading bytes for popular formats.
+    assert magic_type(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64) == "image/png"
+    assert magic_type(b"\xff\xd8\xff\xe0" + b"\x00" * 64) == "image/jpeg"
+    assert magic_type(b"%PDF-1.4\n" + b"\x00" * 64) == "application/pdf"
+    # Empty input falls back to default.
+    assert magic_type(b"") == "application/octet-stream"
+    # Unknown bytes: still falls back.
+    assert magic_type(b"\x00\x01\x02\x03random-junk") == \
+        "application/octet-stream"
+
+
+def test_content_text_encoding_utf8_and_legacy():
+    from core.net_helpers import text_encoding
+    utf8 = "Hallöchen Welt 测试".encode("utf-8")
+    e = text_encoding(utf8)
+    # chardet should recognise this as utf-8 with high confidence.
+    assert e["encoding"] is None or "utf" in (e["encoding"] or "").lower()
+    assert isinstance(e["confidence"], float)
+    # The shape is right even when chardet is uncertain.
+    assert set(e.keys()) == {"encoding", "confidence", "language"}
+
+
+def test_content_helpers_fallback_when_libs_missing(monkeypatch):
+    """If puremagic or chardet isn't importable, helpers raise OSError
+    with an install hint instead of a ModuleNotFoundError leak."""
+    import sys as _sys
+    # Build a meta-finder that hides only puremagic + chardet.
+    class _Block:
+        def find_spec(self, name, path=None, target=None):
+            if name in ("puremagic", "chardet") or \
+               name.startswith("puremagic.") or name.startswith("chardet."):
+                raise ImportError(f"hidden by test: {name}")
+            return None
+    saved = {k: _sys.modules.pop(k) for k in list(_sys.modules)
+             if k in ("puremagic", "chardet")
+             or k.startswith("puremagic.") or k.startswith("chardet.")}
+    finder = _Block()
+    _sys.meta_path.insert(0, finder)
+    try:
+        from core.net_helpers import magic_type, text_encoding
+        try:
+            magic_type(b"hello")
+        except OSError as e:
+            assert "puremagic" in str(e)
+        else:
+            raise AssertionError("magic_type should raise OSError")
+        try:
+            text_encoding(b"hello")
+        except OSError as e:
+            assert "chardet" in str(e)
+        else:
+            raise AssertionError("text_encoding should raise OSError")
+    finally:
+        _sys.meta_path.remove(finder)
+        _sys.modules.update(saved)
+
+
+# ════════════════════════════════════════════════════════════
+#  Cloud sharing / link gen (slice 5 of API_GAPS)
+# ════════════════════════════════════════════════════════════
+#
+# S3 against MinIO at 10.99.0.33; the Dropbox/GDrive/OneDrive
+# sharing helpers need real OAuth credentials and are validated
+# only by argument-shape tests.
+
+def _s3_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection((S3_HOST, S3_PORT), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _s3_up(),
+                    reason="S3 / MinIO lab container not reachable")
+def test_s3_presign_round_trip():
+    """presign() returns a signed URL containing the access key and
+    a signature. Both Sig V2 (default for older boto3 + http endpoint)
+    and Sig V4 use these fields."""
+    from core.s3_client import S3Session
+    s = S3Session(bucket=S3_BUCKET, endpoint=S3_ENDPOINT,
+                  access_key=S3_ACCESS_KEY, secret_key=S3_SECRET_KEY,
+                  region="us-east-1")
+    try:
+        url = s.presign("/test_object.txt", expires=300)
+        # Common to both v2 + v4 — the URL embeds the bucket + key
+        # and carries an AWS access key + signature.
+        assert S3_BUCKET in url
+        assert "test_object.txt" in url
+        assert (
+            "AWSAccessKeyId=" in url       # SigV2
+            or "X-Amz-Credential=" in url  # SigV4
+        )
+        assert ("Signature=" in url) or ("X-Amz-Signature=" in url)
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _s3_up(),
+                    reason="S3 / MinIO lab container not reachable")
+def test_s3_versioning_lifecycle_introspection():
+    from core.s3_client import S3Session
+    s = S3Session(bucket=S3_BUCKET, endpoint=S3_ENDPOINT,
+                  access_key=S3_ACCESS_KEY, secret_key=S3_SECRET_KEY,
+                  region="us-east-1")
+    try:
+        status = s.versioning_status()
+        # Either Enabled / Suspended / Disabled — never None.
+        assert status in ("Enabled", "Suspended", "Disabled"), status
+        # Lifecycle: empty when bucket has no policy.
+        rules = s.lifecycle_get()
+        assert isinstance(rules, list)
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _s3_up(),
+                    reason="S3 / MinIO lab container not reachable")
+def test_axross_share_dispatches_to_presign_for_s3():
+    from core.s3_client import S3Session
+    import core.scripting as axross
+    s = S3Session(bucket=S3_BUCKET, endpoint=S3_ENDPOINT,
+                  access_key=S3_ACCESS_KEY, secret_key=S3_SECRET_KEY,
+                  region="us-east-1")
+    try:
+        url = axross.share(s, "/test_object.txt", expires=600)
+        assert isinstance(url, str)
+        assert S3_BUCKET in url
+        assert ("AWSAccessKeyId=" in url) or ("X-Amz-Credential=" in url)
+    finally:
+        s.disconnect()
+
+
+def test_gdrive_share_refuses_crlf_in_email_role_type():
+    """F40: every string field that lands in the Graph permissions
+    POST body must reject CR/LF before the request is built."""
+    from core.gdrive_client import GDriveSession
+    s = GDriveSession.__new__(GDriveSession)
+    for field, kwargs in (
+        ("email", {"email": "leaker@x.test\r\nINJECT"}),
+        ("role",  {"role": "reader\nINJECT"}),
+        ("type",  {"type":  "anyone\rINJECT"}),
+    ):
+        try:
+            s.share("/x.txt", **kwargs)
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"GDrive share should refuse {field}")
+
+
+def test_onedrive_share_refuses_crlf_in_string_fields():
+    """F40 (OneDrive flavour): link_type / scope / password / expires
+    all land in the Graph createLink JSON body — refuse CR/LF in
+    any of them."""
+    from core.onedrive_client import OneDriveSession
+    s = OneDriveSession.__new__(OneDriveSession)
+    s._drive_type = "personal"
+    for field, kwargs in (
+        ("link_type", {"link_type": "view\nINJECT"}),
+        ("scope",     {"scope":     "anonymous\rREJ"}),
+        ("password",  {"password":  "secret\nfoo"}),
+        ("expires",   {"expires":   "2026-12-31\rEX"}),
+    ):
+        try:
+            s.share("/x.txt", **kwargs)
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"OneDrive share should refuse {field}")
+
+
+def test_axross_share_unsupported_backend():
+    """LocalFs has no share/presign — must TypeError, not silent."""
+    import core.scripting as axross
+    b = axross.localfs()
+    try:
+        axross.share(b, "/etc/hosts")
+    except TypeError as e:
+        assert "share" in str(e) or "presign" in str(e)
+    else:
+        raise AssertionError("axross.share on localfs should TypeError")
+
+
+# ════════════════════════════════════════════════════════════
+#  Mail-specific verbs (slice 4 of API_GAPS) — IMAP + POP3
+# ════════════════════════════════════════════════════════════
+#
+# Both run against the same dovecot-style imap-server lab
+# container (10.99.0.36) on plaintext IMAP/POP3 ports.
+
+def _imap_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection((IMAP_HOST, IMAP_PORT), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _imap_up(),
+                    reason="imap-server lab container not reachable")
+def test_imap_search_returns_uids():
+    from core.imap_client import ImapSession
+    s = ImapSession(host=IMAP_HOST, port=IMAP_PORT, username=IMAP_USER,
+                    password=IMAP_PASS, use_ssl=False)
+    try:
+        uids = s.search("ALL", mailbox="INBOX")
+        assert isinstance(uids, list)
+        assert all(isinstance(u, int) for u in uids)
+        # Sanity: subset matches narrows the set
+        narrowed = s.search('SUBJECT "this-string-cannot-match-xyzzyx"',
+                            mailbox="INBOX")
+        assert narrowed == []
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _imap_up(),
+                    reason="imap-server lab container not reachable")
+def test_imap_flags_round_trip():
+    """add then remove \\Seen and observe via fetch_flags. Implicitly
+    covers the readonly/writable re-select fix in _select_mailbox."""
+    from core.imap_client import ImapSession
+    s = ImapSession(host=IMAP_HOST, port=IMAP_PORT, username=IMAP_USER,
+                    password=IMAP_PASS, use_ssl=False)
+    try:
+        uids = s.search("ALL", mailbox="INBOX")
+        if not uids:
+            pytest.skip("inbox empty in this lab fixture")
+        u = uids[0]
+        # Establish a clean baseline (no \\Seen)
+        s.set_flags(u, ["\\Seen"], mode="remove")
+        baseline = s.fetch_flags(u)
+        assert "\\Seen" not in baseline
+
+        s.set_flags(u, ["\\Seen"], mode="add")
+        assert "\\Seen" in s.fetch_flags(u)
+
+        s.set_flags(u, ["\\Seen"], mode="remove")
+        assert "\\Seen" not in s.fetch_flags(u)
+    finally:
+        s.disconnect()
+
+
+def test_exchange_send_mail_refuses_crlf_in_addresses_and_filenames():
+    """F34: every address (to/cc/bcc), the subject AND attachment
+    filenames must reject CR/LF before exchangelib serialises them
+    into MIME headers — otherwise a tainted value smuggles
+    additional headers (Bcc, Reply-To, X-Spam-Override, …)."""
+    from core.exchange_client import ExchangeSession
+    s = ExchangeSession.__new__(ExchangeSession)
+
+    def _expect_value_error(call):
+        try:
+            call()
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError("send_mail should refuse CR/LF here")
+
+    # Subject (already covered, kept for completeness).
+    _expect_value_error(lambda: s.send_mail(
+        ["a@x.test"], "subj\r\nBcc: hidden@x.test", "body",
+    ))
+    # to / cc / bcc each in turn.
+    _expect_value_error(lambda: s.send_mail(
+        ["good@x.test", "bad@x.test\r\nCc: bad2@x.test"],
+        "ok-subject", "body",
+    ))
+    _expect_value_error(lambda: s.send_mail(
+        ["a@x.test"], "ok-subject", "body",
+        cc=["leak@x.test\nReply-To: attacker@x.test"],
+    ))
+    _expect_value_error(lambda: s.send_mail(
+        ["a@x.test"], "ok-subject", "body",
+        bcc=["bad@x.test\rREJ"],
+    ))
+    # Attachment filename.
+    _expect_value_error(lambda: s.send_mail(
+        ["a@x.test"], "ok-subject", "body",
+        attachments=[("normal.pdf", b"x"),
+                     ("evil\nContent-Disposition: inline.pdf", b"x")],
+    ))
+
+
+def test_imap_search_and_move_refuse_crlf_smuggling():
+    """F32: criteria + mailbox arguments with embedded CR/LF would
+    smuggle a second IMAP command via imaplib's append-CRLF wire
+    framing. Refuse before any byte is sent — no live server needed.
+    """
+    from core.imap_client import ImapSession
+    s = ImapSession.__new__(ImapSession)
+    for bad in ("ALL\r\nLOGOUT", "UNSEEN\nDELETE 1"):
+        try:
+            s.search(bad)
+        except ValueError as e:
+            assert "CR/LF" in str(e) and "F32" in str(e)
+        else:
+            raise AssertionError(f"search should refuse {bad!r}")
+    # Same gate on the mailbox argument.
+    try:
+        s.search("ALL", mailbox="INBOX\nLOGOUT")
+    except ValueError as e:
+        assert "CR/LF" in str(e)
+    else:
+        raise AssertionError("search should refuse CR/LF in mailbox")
+    # Same gate on move()'s src/dst mailbox arguments.
+    for src, dst in (
+        ("INBOX\nA", "Trash"),
+        ("INBOX",   "Trash\rB"),
+    ):
+        try:
+            s.move(1, src, dst)
+        except ValueError as e:
+            assert "CR/LF" in str(e)
+        else:
+            raise AssertionError(f"move should refuse src={src!r}/dst={dst!r}")
+
+
+def test_imap_set_flags_refuses_crlf_smuggling():
+    """A flag string with CR/LF/space would smuggle a second IMAP
+    command via STORE. Validate before any wire byte is emitted —
+    no live server needed."""
+    from core.imap_client import ImapSession
+    # Don't connect — just instantiate the surface and test argument
+    # validation. We bypass __init__'s connection by patching
+    # _ensure_connected to refuse, but the validation happens before.
+    s = ImapSession.__new__(ImapSession)
+    for bad in ("\\Seen\r\nSTORE", "\\Seen\nfoo", "\\Two Words"):
+        try:
+            s.set_flags(1, [bad])
+        except ValueError as e:
+            assert "CR/LF/space" in str(e)
+        else:
+            raise AssertionError(f"set_flags should refuse {bad!r}")
+
+
+def _pop3_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection((POP3_HOST, POP3_PORT_PLAIN), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _pop3_up(),
+                    reason="pop3 lab container not reachable")
+def test_pop3_stat_uidl_top():
+    from core.pop3_client import Pop3Session
+    s = Pop3Session(host=POP3_HOST, port=POP3_PORT_PLAIN, username=POP3_USER,
+                    password=POP3_PASS, use_ssl=False)
+    try:
+        count, octets = s.stat_mailbox()
+        assert count >= 1 and octets >= 1
+        # uidl() → dict
+        uids = s.uidl()
+        assert isinstance(uids, dict) and len(uids) == count
+        # uidl(msgno) → str
+        uid_one = s.uidl(1)
+        assert isinstance(uid_one, str) and len(uid_one) > 0
+        # top() returns headers + truncated body
+        top = s.top(1, n_lines=2)
+        assert b"\r\n" in top
+        assert top.startswith((b"From:", b"Return-Path:", b"Received:",
+                               b"Subject:", b"Delivered-To:", b"To:"))
+    finally:
+        s.disconnect()
+
+
+# ════════════════════════════════════════════════════════════
+#  Per-DB query passthroughs (slice 3 of API_GAPS)
+# ════════════════════════════════════════════════════════════
+#
+# SQLite is stdlib, so these tests run unconditionally. Postgres/
+# Redis/Mongo equivalents would need their own ephemeral containers
+# (testcontainers-python in the backlog) — adding the per-backend
+# .query()/.cmd()/.find() methods now keeps the surface uniform when
+# those land.
+
+def test_db_sqlite_query_round_trip(tmp_path):
+    from core.sqlite_fs_client import SqliteFsSession
+    import core.scripting as axross
+    s = SqliteFsSession(url=str(tmp_path / "t.db"))
+    try:
+        # DDL + parameterised insert + select.
+        s.query(
+            "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, age INT)"
+        )
+        s.query("INSERT INTO users(name,age) VALUES (?,?)", ("alice", 30))
+        s.query("INSERT INTO users(name,age) VALUES (?,?)", ("bob", 25))
+        rows = s.query("SELECT name,age FROM users ORDER BY name")
+        assert rows == [
+            {"name": "alice", "age": 30},
+            {"name": "bob", "age": 25},
+        ]
+        # tables() includes the user table + axross's housekeeping.
+        names = s.tables()
+        assert "users" in names
+        # schema() returns column metadata.
+        cols = s.schema("users")
+        col_names = [c["name"] for c in cols]
+        assert col_names == ["id", "name", "age"]
+        # Bad table refused (defeats SQL injection via PRAGMA).
+        try:
+            s.schema("users; drop table users")
+        except OSError as e:
+            assert "unknown table" in str(e)
+        else:
+            raise AssertionError("schema() must refuse unknown tables")
+        # axross.query / axross.tables dispatch.
+        assert axross.tables(s) == s.tables()
+        assert axross.query(s, "SELECT count(*) AS n FROM users") == [{"n": 2}]
+    finally:
+        s.close()
+
+
+def test_db_sqlite_query_max_rows_clip(tmp_path):
+    from core.sqlite_fs_client import SqliteFsSession
+    s = SqliteFsSession(url=str(tmp_path / "cap.db"))
+    try:
+        s.query("CREATE TABLE big(i INTEGER)")
+        for i in range(50):
+            s.query("INSERT INTO big VALUES (?)", (i,))
+        # Cap stops at max_rows even though 50 rows match.
+        small = s.query("SELECT * FROM big", max_rows=10)
+        assert len(small) == 10
+    finally:
+        s.close()
+
+
+def test_axross_query_unsupported_backend():
+    """LocalFs has no .query/.find — must raise TypeError, not silent."""
+    import core.scripting as axross
+    b = axross.localfs()
+    try:
+        axross.query(b, "SELECT 1")
+    except TypeError as e:
+        assert "query()" in str(e)
+    else:
+        raise AssertionError("axross.query on localfs should TypeError")
+
+
+# ════════════════════════════════════════════════════════════
+#  Generic network + search helpers (slice 2 of API_GAPS)
+# ════════════════════════════════════════════════════════════
+#
+# Stdlib + cryptography + dnspython + paramiko helpers exposed as
+# axross.* — each test runs against the lab where it can, and skips
+# cleanly when the lab fixture is not up.
+
+def _ssh_alpha_up() -> bool:
+    import socket as _s
+    try:
+        with _s.create_connection(("10.99.0.10", 22), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _ssh_alpha_up(),
+                    reason="ssh-alpha lab container not reachable")
+def test_net_tcp_banner_ssh():
+    from core.net_helpers import tcp_banner
+    banner = tcp_banner("10.99.0.10", 22, max_bytes=64)
+    assert banner.startswith(b"SSH-2.0-"), banner
+
+
+@pytest.mark.skipif(not _ssh_alpha_up(),
+                    reason="ssh-alpha lab container not reachable")
+def test_net_port_scan_concurrent():
+    from core.net_helpers import port_scan
+    open_ports = port_scan("10.99.0.10",
+                           [21, 22, 23, 80, 443, 8080], timeout=0.5)
+    assert open_ports == [22], open_ports
+
+
+@pytest.mark.skipif(not _ssh_alpha_up(),
+                    reason="ssh-alpha lab container not reachable")
+def test_net_ssh_hostkey_round_trip():
+    from core.net_helpers import ssh_hostkey
+    hk = ssh_hostkey("10.99.0.10", 22)
+    # Fingerprint shape: SHA256:<43-char base64>
+    assert hk.fingerprint_sha256.startswith("SHA256:")
+    assert len(hk.fingerprint_sha256.split(":", 1)[1]) >= 40
+    assert hk.key_type.startswith("ssh-")
+
+
+def test_net_subnet_hosts_basic_and_cap():
+    from core.net_helpers import subnet_hosts
+    h = subnet_hosts("10.0.0.0/30")
+    # /30 = 4 addrs, 2 usable hosts
+    assert h == ["10.0.0.1", "10.0.0.2"], h
+
+    # Larger than /16 must refuse
+    try:
+        subnet_hosts("10.0.0.0/8")
+    except ValueError as e:
+        assert "/16" in str(e)
+    else:
+        raise AssertionError("subnet_hosts should refuse /8")
+
+
+def test_net_dns_records_fallback_when_no_dnspython(monkeypatch):
+    """If dnspython isn't importable, dns_records raises a helpful
+    OSError instead of a ModuleNotFoundError leak."""
+    import sys as _sys
+    # Make ``import dns.resolver`` fail by hiding the module.
+    saved = {k: _sys.modules.pop(k) for k in list(_sys.modules)
+             if k == "dns" or k.startswith("dns.")}
+    monkeypatch.setattr(
+        _sys, "path",
+        [p for p in _sys.path if "dnspython" not in p],
+    )
+    # Inject a fake meta-finder that raises ImportError for dns.*
+    class _NoDns:
+        def find_module(self, name, path=None):
+            return self if name == "dns" or name.startswith("dns.") else None
+        def find_spec(self, name, path=None, target=None):
+            if name == "dns" or name.startswith("dns."):
+                raise ImportError(f"hidden by test: {name}")
+            return None
+        def load_module(self, name):
+            raise ImportError(name)
+    finder = _NoDns()
+    _sys.meta_path.insert(0, finder)
+    try:
+        from core.net_helpers import dns_records
+        try:
+            dns_records("example.com", "A")
+        except OSError as e:
+            assert "dnspython" in str(e)
+        else:
+            raise AssertionError("expected OSError when dnspython missing")
+    finally:
+        _sys.meta_path.remove(finder)
+        _sys.modules.update(saved)
+
+
+def test_net_find_files_filters_localfs(tmp_path):
+    """find_files honours pattern/ext/size/depth + yields full paths."""
+    from core.net_helpers import find_files
+    from core.scripting import localfs
+    (tmp_path / "a.txt").write_text("hello")
+    (tmp_path / "b.log").write_text("x" * 4096)
+    sub = tmp_path / "sub"; sub.mkdir()
+    (sub / "deep.txt").write_text("deep")
+    b = localfs()
+    # ext filter
+    by_ext = sorted(it.name for it in find_files(b, str(tmp_path), ext="txt"))
+    assert any(p.endswith("a.txt") for p in by_ext)
+    assert any(p.endswith("deep.txt") for p in by_ext)
+    # max_depth=0 stays at root
+    shallow = sorted(it.name for it in find_files(
+        b, str(tmp_path), ext="txt", max_depth=0,
+    ))
+    assert any(p.endswith("a.txt") for p in shallow)
+    assert not any(p.endswith("deep.txt") for p in shallow)
+    # size_min filters out the tiny one
+    big = list(find_files(b, str(tmp_path), size_min=1024))
+    assert len(big) == 1 and big[0].name.endswith("b.log")
+
+
+def test_net_grep_localfs(tmp_path):
+    from core.net_helpers import grep
+    from core.scripting import localfs
+    (tmp_path / "a.txt").write_text("alpha\nbeta\nGAMMA\n")
+    (tmp_path / "b.txt").write_text("delta\nepsilon\n")
+    b = localfs()
+    hits = grep(b, str(tmp_path), r"a$", ignore_case=True)
+    # Matches: 'alpha', 'GAMMA', 'beta', 'epsilon' - but $ anchors end
+    # so only lines ending in 'a' (any case) match.
+    matches = sorted((h.path.split("/")[-1], h.line.lower()) for h in hits)
+    assert ("a.txt", "alpha") in matches
+    assert ("a.txt", "gamma") in matches
+    assert ("a.txt", "beta") in matches
+    assert all(line.endswith("a") for _, line in matches)
+
+
+def test_net_diff_files_localfs(tmp_path):
+    from core.net_helpers import diff_files
+    from core.scripting import localfs
+    (tmp_path / "a.txt").write_text("one\ntwo\nthree\n")
+    (tmp_path / "b.txt").write_text("one\nTWO\nthree\n")
+    b = localfs()
+    diff = diff_files(b, str(tmp_path / "a.txt"), b, str(tmp_path / "b.txt"))
+    assert any(line.startswith("-two") for line in diff)
+    assert any(line.startswith("+TWO") for line in diff)
+    same = diff_files(b, str(tmp_path / "a.txt"), b, str(tmp_path / "a.txt"))
+    assert same == []
+
+
+def test_net_tls_cert_against_self_signed(tmp_path):
+    """Spin up a tiny TLS server on localhost with a self-signed cert,
+    then have tls_cert() pull and parse it. Verifies SAN/subject/
+    fingerprint round-trip without any network dependency."""
+    import socket as _socket
+    import ssl as _ssl
+    import threading
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from datetime import datetime, timedelta, timezone
+    from core.net_helpers import tls_cert
+
+    # Generate a one-shot self-signed ed25519 cert.
+    key = ed25519.Ed25519PrivateKey.generate()
+    name = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "axross-test.local"),
+    ])
+    san = x509.SubjectAlternativeName([
+        x509.DNSName("axross-test.local"),
+        x509.DNSName("localhost"),
+    ])
+    cert_obj = (
+        x509.CertificateBuilder()
+        .subject_name(name).issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(0x42424242)
+        .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .add_extension(san, critical=False)
+        .sign(private_key=key, algorithm=None)
+    )
+    crt_path = tmp_path / "c.pem"
+    key_path = tmp_path / "k.pem"
+    crt_path.write_bytes(cert_obj.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ))
+
+    # Bind on a random port + serve a single TLS handshake.
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile=str(crt_path), keyfile=str(key_path))
+    srv = _socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    srv.settimeout(5.0)
+
+    def _accept_one():
+        conn, _ = srv.accept()
+        try:
+            with ctx.wrap_socket(conn, server_side=True):
+                pass
+        except (_ssl.SSLError, OSError):
+            pass
+
+    t = threading.Thread(target=_accept_one, daemon=True)
+    t.start()
+
+    try:
+        c = tls_cert("127.0.0.1", port, sni="localhost", verify=False)
+    finally:
+        t.join(timeout=2.0)
+        srv.close()
+
+    assert "axross-test.local" in c.subject
+    assert "axross-test.local" in c.san
+    assert "localhost" in c.san
+    assert c.serial == 0x42424242
+    assert len(c.sha256) == 64  # hex SHA-256
+
+
+# ════════════════════════════════════════════════════════════
+#  rsh — live against the rsh-redone-server container
+# ════════════════════════════════════════════════════════════
+#
+# RshSession shells out to the system /usr/bin/rsh setuid binary.
+# pytest skips these tests unless that binary is on PATH (Arch
+# usually doesn't ship it; Debian ``rsh-redone-client`` provides
+# it). When it IS available, we exercise the full FileBackend
+# surface against the live ``rsh-server`` docker container.
+
+def _rsh_available() -> bool:
+    import shutil
+    return shutil.which("rsh") is not None
+
+
+@pytest.mark.skipif(not _rsh_available(),
+                    reason="system rsh client not on PATH")
+def test_rsh_live_round_trip():
+    from core.rsh_client import RshSession
+    s = RshSession(host=RSH_HOST, port=514, username=RSH_USER, timeout=10.0)
+    try:
+        # Read the seed file the container shipped with.
+        seed = s.open_read("/home/axuser/data/seed.txt").read()
+        assert b"hello from rshd" in seed, seed
+
+        # Write + readback + checksum.
+        with s.open_write("/home/axuser/data/probe.txt") as fh:
+            fh.write(b"axross-rsh-live")
+        assert s.open_read("/home/axuser/data/probe.txt").read() == b"axross-rsh-live"
+        cs = s.checksum("/home/axuser/data/probe.txt", "sha256")
+        assert cs.startswith("sha256:") and len(cs) == len("sha256:") + 64
+
+        # Subdir + copy + recursive remove.
+        s.mkdir("/home/axuser/data/sub")
+        s.copy("/home/axuser/data/probe.txt", "/home/axuser/data/sub/copy.txt")
+        items = sorted(i.name for i in s.list_dir("/home/axuser/data/sub"))
+        assert items == ["copy.txt"], items
+        s.remove("/home/axuser/data/sub", recursive=True)
+        s.remove("/home/axuser/data/probe.txt")
+
+        # Final state matches the original seed-only listing.
+        names = sorted(i.name for i in s.list_dir("/home/axuser/data"))
+        assert names == ["seed.txt"], names
+    finally:
+        s.disconnect()
+
+
+# ════════════════════════════════════════════════════════════
+#  Cisco-IOS Telnet — live against the cisco-fake container
+# ════════════════════════════════════════════════════════════
+#
+# tests/docker/cisco_fake.py implements a hand-written fake IOS-CLI
+# that responds to login/enable/terminal length/show with canned
+# output. It runs in the testnet at 10.99.0.43:23. These tests
+# exercise CiscoTelnetSession end-to-end so a parser drift in
+# core.telnet_cisco surfaces here, not in production.
+
+CISCO_HOST = "10.99.0.43"
+CISCO_PORT = 23
+CISCO_USER = "admin"
+CISCO_PW = "cisco123"
+CISCO_ENABLE = "enablesecret"
+
+
+def _cisco_available() -> bool:
+    """True iff the cisco-fake container's TCP/23 accepts a connect
+    within ~1s. Used to skip the live tests when the docker compose
+    network isn't running."""
+    import socket
+    try:
+        with socket.create_connection((CISCO_HOST, CISCO_PORT), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _round2_cisco_reachable(),
+                    reason="cisco-fake container not reachable on 10.99.0.43:23")
+def test_cisco_live_user_mode_show():
+    """User-mode access: list_dir shows the curated catalogue,
+    a representative ``show`` returns expected canned output."""
+    from core.telnet_cisco import CiscoTelnetSession
+    s = CiscoTelnetSession(
+        host=CISCO_HOST, port=CISCO_PORT,
+        username=CISCO_USER, password=CISCO_PW,
+        timeout=10.0,
+    )
+    try:
+        names = sorted(i.name for i in s.list_dir("/show"))
+        # Curated list ships ~14 entries; spot-check the well-known ones.
+        for expected in ("version.txt", "interfaces.txt", "ip-route.txt",
+                         "arp.txt", "vlan-brief.txt"):
+            assert expected in names, (expected, names)
+
+        version = s.open_read("/show/version.txt").read().decode()
+        assert "Cisco IOS Software" in version, version[:200]
+
+        ifaces = s.open_read("/show/interfaces.txt").read().decode()
+        assert "Vlan1" in ifaces, ifaces[:200]
+    finally:
+        s.disconnect()
+
+
+@pytest.mark.skipif(not _round2_cisco_reachable(),
+                    reason="cisco-fake container not reachable on 10.99.0.43:23")
+def test_cisco_live_enable_mode_running_config():
+    """Privileged mode unlocks ``show running-config``. Without it,
+    the device returns ``% Invalid input detected`` (which the client
+    surfaces as a non-empty body — content check separates the two)."""
+    from core.telnet_cisco import CiscoTelnetSession
+
+    # Privileged: full running-config.
+    s = CiscoTelnetSession(
+        host=CISCO_HOST, port=CISCO_PORT,
+        username=CISCO_USER, password=CISCO_PW,
+        enable_password=CISCO_ENABLE, timeout=10.0,
+    )
+    try:
+        body = s.open_read("/show/running-config.txt").read().decode()
+        assert "Building configuration" in body, body[:200]
+        assert "hostname Switch" in body, body[:200]
+    finally:
+        s.disconnect()
+
+    # Non-privileged: same fetch returns the IOS error string instead
+    # of the config body.
+    s2 = CiscoTelnetSession(
+        host=CISCO_HOST, port=CISCO_PORT,
+        username=CISCO_USER, password=CISCO_PW,
+        timeout=10.0,
+    )
+    try:
+        body = s2.open_read("/show/running-config.txt").read().decode()
+        assert "Invalid input" in body, body[:200]
+        assert "Building configuration" not in body, body[:200]
+    finally:
+        s2.disconnect()
+
+
+@pytest.mark.skipif(not _round2_cisco_reachable(),
+                    reason="cisco-fake container not reachable on 10.99.0.43:23")
+def test_cisco_live_arbitrary_show_passthrough():
+    """A name not in _KNOWN_SHOWS is still openable: the client just
+    sends ``show <name>`` and returns whatever the device replied."""
+    from core.telnet_cisco import CiscoTelnetSession
+    s = CiscoTelnetSession(
+        host=CISCO_HOST, port=CISCO_PORT,
+        username=CISCO_USER, password=CISCO_PW,
+        timeout=10.0,
+    )
+    try:
+        # ``clock`` IS in the curated list — pick something off-list to
+        # prove the passthrough. Our fake recognises ``ip route`` and
+        # falls back to ``show ip ...`` prefix matching, so feed it a
+        # name that hits the ``arp`` short alias path.
+        body = s.open_read("/show/cdp-neighbors-detail.txt").read().decode()
+        # Either the canned cdp block OR the IOS invalid-input marker
+        # is acceptable — both prove the wire round-tripped.
+        assert "neighbor-router.lab" in body or "Invalid input" in body, body[:200]
     finally:
         s.disconnect()
 

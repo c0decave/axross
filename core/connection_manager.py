@@ -17,22 +17,53 @@ log = logging.getLogger(__name__)
 
 
 # Which protocols actually consume the ``ProxyConfig`` on the profile.
-# Everything else either ignores it entirely or inherits from OS env
-# vars — see docs/PROXY_SUPPORT.md. We warn once per connect when a
-# user sets a proxy on an unsupported backend so the setting isn't
-# silently swallowed.
+# As of the Phase A–E proxy push every TCP-based backend except
+# kernel-level ones (NFS, iSCSI) honours the per-profile proxy fields.
+# Cloud HTTP backends use requests.Session.proxies / boto3 Config /
+# azure RequestsTransport / httplib2 ProxyInfo. SMB and ADB use the
+# scoped socket.create_connection patch from core.proxy. Rsync wires
+# the proxy into RSYNC_CONNECT_PROG (daemon mode) or ProxyCommand
+# (SSH mode). See docs/PROXY_SUPPORT.md.
 _PROTOCOLS_HONOURING_PROFILE_PROXY = frozenset({
     "sftp", "scp",
-    "webdav",   # uses requests.Session proxy
-    "telnet",   # we own the socket; swapped in with create_proxy_socket
+    "webdav",
+    "telnet",
+    "ftp", "ftps",
+    "smb",
+    "imap",
+    "pop3",
+    "rsync",
+    "adb",
+    "s3",
+    "azure_blob", "azure_files",
+    "onedrive", "sharepoint",
+    "gdrive",
+    "dropbox",
+    # exchange honours it but only with autodiscover=False — the
+    # backend itself raises a clear error in the autodiscover-on case.
 })
 
-# Cloud backends that at least inherit HTTPS_PROXY / HTTP_PROXY from
-# the process environment.
-_PROTOCOLS_INHERITING_ENV_PROXY = frozenset({
-    "s3", "azure_blob", "azure_files",
-    "onedrive", "sharepoint", "gdrive", "dropbox",
-})
+# Backends that genuinely cannot be proxied — kernel-level mounts
+# plus TFTP (UDP; common SOCKS proxies don't support UDP-ASSOCIATE
+# and HTTP CONNECT is TCP-only) plus RamFS (in-process, no network
+# at all).
+_PROTOCOLS_NOT_PROXIABLE = frozenset({"nfs", "iscsi", "mtp", "tftp", "ramfs"})
+
+
+def _proxy_kwargs(profile: "ConnectionProfile") -> dict:
+    """Build the proxy_* kwargs dict that every backend session ctor
+    accepts. Keeps the per-protocol blocks below short and consistent.
+    Returns ``{}`` when no proxy is configured.
+    """
+    if (profile.proxy_type or "none") == "none" or not profile.proxy_host:
+        return {}
+    return {
+        "proxy_type": profile.proxy_type,
+        "proxy_host": profile.proxy_host,
+        "proxy_port": int(profile.proxy_port or 0),
+        "proxy_username": profile.proxy_username,
+        "proxy_password": profile.get_proxy_password() or "",
+    }
 
 
 def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
@@ -44,18 +75,17 @@ def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
     proto = profile.protocol
     if proto in _PROTOCOLS_HONOURING_PROFILE_PROXY:
         return
-    if proto in _PROTOCOLS_INHERITING_ENV_PROXY:
+    if proto in _PROTOCOLS_NOT_PROXIABLE:
         log.warning(
-            "Profile %r uses %s but %s only honours HTTPS_PROXY / "
-            "HTTP_PROXY from the process environment, NOT the "
-            "per-profile proxy fields. See docs/PROXY_SUPPORT.md.",
+            "Profile %r configures a %s proxy, but %s is a kernel-level "
+            "transport that cannot be tunneled through user-space proxies. "
+            "The setting is ignored. See docs/PROXY_SUPPORT.md.",
             profile.name, profile.proxy_type, proto,
         )
     else:
         log.warning(
             "Profile %r configures a %s proxy, but the %s backend "
-            "has no proxy plumbing — the setting is ignored. See "
-            "docs/PROXY_SUPPORT.md.",
+            "has no proxy plumbing yet. See docs/PROXY_SUPPORT.md.",
             profile.name, profile.proxy_type, proto,
         )
 
@@ -177,6 +207,8 @@ class ConnectionManager:
             )
             return session
 
+        proxy_kw = _proxy_kwargs(profile)
+
         if proto in ("ftp", "ftps"):
             cls = load_backend_class(proto)
             return cls(
@@ -187,6 +219,7 @@ class ConnectionManager:
                 tls=(proto == "ftps"),
                 passive=profile.ftp_passive,
                 verify_tls=profile.ftps_verify_tls,
+                **proxy_kw,
             )
 
         if proto == "smb":
@@ -198,6 +231,7 @@ class ConnectionManager:
                 password=password,
                 port=profile.port,
                 client_name=profile.smb_client_name,
+                **proxy_kw,
             )
 
         if proto == "webdav":
@@ -208,11 +242,7 @@ class ConnectionManager:
                 password=password,
                 # Webdavclient3 exposes its requests.Session — we can
                 # push a proxy onto it. Covers SOCKS4/5 + HTTP CONNECT.
-                proxy_type=profile.proxy_type,
-                proxy_host=profile.proxy_host,
-                proxy_port=profile.proxy_port,
-                proxy_username=profile.proxy_username,
-                proxy_password=profile.get_proxy_password() or "",
+                **proxy_kw,
             )
 
         if proto == "s3":
@@ -223,6 +253,7 @@ class ConnectionManager:
                 access_key=profile.username,
                 secret_key=password,
                 endpoint=profile.s3_endpoint or None,
+                **proxy_kw,
             )
 
         if proto == "rsync":
@@ -236,6 +267,7 @@ class ConnectionManager:
                 ssh_mode=profile.rsync_ssh,
                 ssh_key=profile.rsync_ssh_key,
                 preserve_metadata=profile.rsync_preserve_metadata,
+                **proxy_kw,
             )
 
         if proto == "nfs":
@@ -255,6 +287,7 @@ class ConnectionManager:
                 account_key=password,
                 container=profile.azure_container,
                 sas_token=profile.azure_sas_token,
+                **proxy_kw,
             )
 
         if proto == "azure_files":
@@ -265,6 +298,7 @@ class ConnectionManager:
                 account_key=password,
                 share_name=profile.azure_share,
                 sas_token=profile.azure_sas_token,
+                **proxy_kw,
             )
 
         if proto in ("onedrive", "sharepoint"):
@@ -274,6 +308,7 @@ class ConnectionManager:
                 tenant_id=profile.onedrive_tenant_id,
                 drive_type="sharepoint" if proto == "sharepoint" else "personal",
                 site_url=profile.sharepoint_site_url,
+                **proxy_kw,
             )
 
         if proto == "gdrive":
@@ -281,6 +316,7 @@ class ConnectionManager:
             return cls(
                 client_id=profile.gdrive_client_id,
                 client_secret=password or profile.gdrive_client_secret,
+                **proxy_kw,
             )
 
         if proto == "dropbox":
@@ -288,6 +324,7 @@ class ConnectionManager:
             return cls(
                 app_key=profile.dropbox_app_key,
                 app_secret=password or profile.dropbox_app_secret,
+                **proxy_kw,
             )
 
         if proto == "iscsi":
@@ -312,6 +349,49 @@ class ConnectionManager:
                 username=profile.username,
                 password=password,
                 use_ssl=profile.imap_ssl,
+                **proxy_kw,
+            )
+
+        if proto == "pop3":
+            cls = load_backend_class("pop3")
+            return cls(
+                host=profile.host,
+                port=profile.port,
+                username=profile.username,
+                password=password,
+                use_ssl=profile.pop3_ssl,
+                **proxy_kw,
+            )
+
+        if proto == "tftp":
+            cls = load_backend_class("tftp")
+            # The profile stores filelist as a comma-separated string
+            # (JSON-friendly, single-field UI). Split here.
+            raw_list = (profile.tftp_filelist or "").strip()
+            filelist = [x.strip() for x in raw_list.split(",") if x.strip()]
+            return cls(
+                host=profile.host,
+                port=profile.port or 69,
+                filelist=filelist,
+                filelist_enabled=profile.tftp_filelist_enabled,
+                max_size_bytes=profile.tftp_max_size_bytes,
+            )
+
+        if proto == "ramfs":
+            cls = load_backend_class("ramfs")
+            from core.ramfs_settings import get_settings
+            settings = get_settings()
+            if not settings.ramfs_enabled:
+                raise OSError(
+                    "RamFS is disabled in settings (ramfs.json). "
+                    "Set ramfs_enabled=true to use a RAM workspace.",
+                )
+            # The profile's `name` doubles as the workspace label so
+            # the user sees "RAM:my-staging" rather than a generic tag.
+            return cls(
+                label=profile.name or "ramfs",
+                max_bytes=settings.ramfs_max_bytes,
+                system_reserve_bytes=settings.ramfs_system_reserve_bytes,
             )
 
         if proto == "telnet":
@@ -321,20 +401,15 @@ class ConnectionManager:
                 port=profile.port,
                 username=profile.username,
                 password=password,
-                # Telnet is plain TCP — tunnel it through the proxy if
-                # one is configured.
-                proxy_type=profile.proxy_type,
-                proxy_host=profile.proxy_host,
-                proxy_port=profile.proxy_port,
-                proxy_username=profile.proxy_username,
-                proxy_password=profile.get_proxy_password() or "",
                 naws_width=profile.telnet_naws_width,
                 naws_height=profile.telnet_naws_height,
+                **proxy_kw,
             )
 
         if proto == "adb":
             cls = load_backend_class("adb")
             if profile.adb_mode == "usb":
+                # USB transport doesn't use TCP — proxy can't apply.
                 return cls(
                     usb=True,
                     usb_serial=profile.adb_usb_serial,
@@ -342,6 +417,7 @@ class ConnectionManager:
             return cls(
                 host=profile.host,
                 port=profile.port or 5555,
+                **proxy_kw,
             )
 
         if proto == "mtp":

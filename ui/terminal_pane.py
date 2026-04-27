@@ -113,7 +113,17 @@ class TerminalPaneWidget(QWidget):
         inner_layout.addLayout(header)
 
         # Terminal emulator
-        self._terminal = TerminalEmulator()
+        # Honour per-profile terminal_theme (set on ConnectionProfile
+        # under the SCRIPTING-DOC-PANE feature). Empty string falls
+        # back to the dock default; TerminalEmulator clamps unknown
+        # names to "Dark".
+        theme_name = ""
+        if self._profile is not None:
+            theme_name = getattr(self._profile, "terminal_theme", "") or ""
+        from ui.terminal_widget import DEFAULT_TERMINAL_THEME
+        self._terminal = TerminalEmulator(
+            theme=theme_name or DEFAULT_TERMINAL_THEME,
+        )
         self._terminal.data_ready.connect(self._on_input)
         inner_layout.addWidget(self._terminal, stretch=1)
 
@@ -160,7 +170,17 @@ class TerminalPaneWidget(QWidget):
                         "\n--- No active connection. Connect to the host first. ---\n"
                     )
                     return
-                self._session = SSHTerminalSession(transport)
+                # Honour per-profile history-suppression toggle so
+                # users who want their own bash_history kept can opt
+                # out. Default is the safe ``True``.
+                suppress = True
+                if self._profile is not None:
+                    suppress = bool(getattr(
+                        self._profile, "suppress_shell_history", True,
+                    ))
+                self._session = SSHTerminalSession(
+                    transport, suppress_history=suppress,
+                )
             else:
                 self._session = LocalTerminalSession()
             self._session.start()

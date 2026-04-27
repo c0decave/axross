@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="axross iceberg">
+  <title>axross — iceberg with the 'X' visible above water</title>
+  <style>
+    .water { fill: #14B8A6; opacity: 0.18; }
+    .water-line { stroke: #14B8A6; stroke-width: 1; opacity: 0.7; }
+    .ice-top { fill: #F8FAFC; stroke: #0F172A; stroke-width: 1.4; stroke-linejoin: round; }
+    .ice-bottom { fill: #94A3B8; stroke: #0F172A; stroke-width: 1.4; stroke-linejoin: round; opacity: 0.85; }
+    .x { stroke: #14B8A6; stroke-width: 3; fill: none; stroke-linecap: round; }
+    @media (prefers-color-scheme: dark) {
+      .ice-top { fill: #E2E8F0; stroke: #F8FAFC; }
+      .ice-bottom { fill: #475569; stroke: #F8FAFC; }
+    }
+  </style>
+  <!-- water -->
+  <rect class="water" x="0" y="46" width="96" height="50"/>
+  <line class="water-line" x1="0" y1="46" x2="96" y2="46" stroke-dasharray="3 3"/>
+  <!-- iceberg above water -->
+  <polygon class="ice-top" points="34,46 48,18 56,30 62,46"/>
+  <!-- much larger underwater iceberg -->
+  <polygon class="ice-bottom" points="22,46 16,72 30,86 60,90 80,76 76,52 62,46"/>
+  <!-- X glyph carved on the visible peak -->
+  <line class="x" x1="42" y1="32" x2="54" y2="44"/>
+  <line class="x" x1="54" y1="32" x2="42" y2="44"/>
+  <!-- inner cracks underwater -->
+  <g stroke="#0F172A" stroke-width="0.6" opacity="0.4" fill="none">
+    <path d="M30 56 L46 70"/>
+    <path d="M50 60 L60 76"/>
+    <path d="M62 56 L70 64"/>
+  </g>
+</svg>

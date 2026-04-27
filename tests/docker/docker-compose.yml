@@ -155,6 +155,58 @@ services:
       testnet:
         ipv4_address: 10.99.0.36
 
+  # ── TFTP server (tftpd-hpa) ───────────────────────────────
+  tftp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.tftp
+    hostname: tftpserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.41
+
+  # ── rsh / rcp / rlogin server (rsh-redone-server via xinetd) ──
+  rsh-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.rsh
+    hostname: rshserver
+    # rshd needs to bind privileged ports (513/514) so the container
+    # runs as root internally — host stays unaffected.
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.42
+
+  # ── Cisco-IOS-flavoured Telnet (hand-written fake) ───────────
+  cisco-fake:
+    build:
+      context: .
+      dockerfile: Dockerfile.cisco
+    hostname: ciscofake
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.43
+
+  # ── SNMP daemon (Net-SNMP) for snmp_get / snmp_walk / snmp_set tests ──
+  snmpd-fake:
+    build:
+      context: .
+      dockerfile: Dockerfile.snmpd
+    hostname: snmpdfake
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.44
+
+  # ── OpenLDAP for LDAP-as-FS tests ───────────────────────────
+  ldap-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.ldap
+    hostname: ldapserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.45
+
   # ── Telnet server ─────────────────────────────────────────
   telnet-server:
     build:
@@ -278,6 +330,7 @@ services:
       - rsync-server
       - nfs-server
       - imap-server
+      - tftp-server
       - telnet-server
       - ftps-server
       - iscsi-server

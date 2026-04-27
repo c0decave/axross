@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import ipaddress
 import logging
 import os
 import socket
+import threading
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 MAX_HTTP_CONNECT_HEADER = 8192
+
+# Serialises the ``socket.create_connection`` patch used by
+# :func:`patched_create_connection` so two threads patching for
+# different profiles can't see each other's replacement function.
+_CREATE_CONNECTION_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +348,167 @@ def _create_http_connect_socket(
             connect_target, proxy.host, proxy.port, e,
         )
         raise ConnectionError(f"HTTP CONNECT failed: {e}") from e
+
+
+def build_requests_proxies(
+    proxy_type: str,
+    host: str,
+    port: int,
+    username: str = "",
+    password: str = "",
+) -> dict[str, str]:
+    """Build a ``requests``-style proxies dict from ProxyConfig fields.
+
+    The returned dict assigns to ``requests.Session().proxies`` and
+    works for any HTTP-based backend: WebDAV, OneDrive, Dropbox,
+    Exchange, WinRM, Azure (via custom transport), even boto3 (via
+    ``BotoConfig(proxies=...)``).
+
+    Returns ``{}`` when no proxy is configured. SOCKS5 uses the
+    ``socks5h://`` scheme so DNS resolution happens at the proxy
+    side — this matches how ``create_proxy_socket`` handles SOCKS5
+    via PySocks (``rdns=True``).
+
+    Routes through the SSRF guard so the requests path gets the same
+    deny-list as ``create_proxy_socket``.
+    """
+    if not proxy_type or proxy_type == "none" or not host:
+        return {}
+    _assert_proxy_host_not_private(host)
+    if proxy_type == "http":
+        scheme = "http"
+    elif proxy_type == "socks4":
+        scheme = "socks4"
+    elif proxy_type == "socks5":
+        scheme = "socks5h"  # 'h' = remote DNS via the proxy (safer)
+    else:
+        raise ValueError(f"Unknown proxy type: {proxy_type}")
+
+    # Password without username is meaningless (no auth identity).
+    # Refuse it loudly rather than silently emit a credential-free URL
+    # — the alternative is the user thinking the proxy auth was set
+    # when in fact the password got dropped on the floor.
+    if password and not username:
+        raise ValueError(
+            "Proxy password set without a proxy username — refusing to "
+            "drop the credential silently. Set the username too, or "
+            "clear the password.",
+        )
+
+    from urllib.parse import quote
+    cred = ""
+    if username:
+        cred = quote(username, safe="")
+        if password:
+            cred += ":" + quote(password, safe="")
+        cred += "@"
+
+    # IPv6 literals must be bracketed in a URL so the port separator
+    # ``:`` isn't ambiguous against the address's own colons.
+    if _is_ipv6_literal(host):
+        host_part = f"[{host}]"
+    else:
+        host_part = host
+
+    url = f"{scheme}://{cred}{host_part}:{int(port)}"
+    return {"http": url, "https": url}
+
+
+def apply_session_proxy(session, profile_or_config) -> None:
+    """Set ``session.proxies`` on a ``requests.Session`` from either
+    a :class:`ProxyConfig` instance or a ConnectionProfile-like
+    object exposing ``proxy_type`` / ``proxy_host`` / ``proxy_port``
+    / ``proxy_username`` / ``get_proxy_password()``.
+
+    Idempotent: a no-op when the source has no proxy configured.
+    """
+    if session is None or not hasattr(session, "headers"):
+        return
+    if hasattr(profile_or_config, "proxy_type") and hasattr(profile_or_config, "host"):
+        # ProxyConfig dataclass.
+        cfg = profile_or_config
+        if not cfg.enabled:
+            return
+        proxies = build_requests_proxies(
+            cfg.proxy_type, cfg.host, cfg.port, cfg.username, cfg.password,
+        )
+    else:
+        # ConnectionProfile-like (has proxy_host, proxy_port, proxy_*).
+        prof = profile_or_config
+        ptype = getattr(prof, "proxy_type", "none") or "none"
+        if ptype == "none" or not getattr(prof, "proxy_host", ""):
+            return
+        ppassword = ""
+        if hasattr(prof, "get_proxy_password"):
+            try:
+                ppassword = prof.get_proxy_password() or ""
+            except Exception:  # noqa: BLE001 — keyring failures shouldn't break connect
+                ppassword = ""
+        proxies = build_requests_proxies(
+            ptype,
+            prof.proxy_host,
+            int(getattr(prof, "proxy_port", 0) or 0),
+            getattr(prof, "proxy_username", "") or "",
+            ppassword,
+        )
+    if proxies:
+        session.proxies = dict(proxies)
+
+
+@contextlib.contextmanager
+def patched_create_connection(profile_or_config):
+    """Temporarily override ``socket.create_connection`` so it routes
+    through the proxy.
+
+    Use as a context manager around a third-party library call that
+    internally uses :func:`socket.create_connection` and exposes no
+    other proxy hook (smbprotocol, adb-shell, …). Same scoping
+    discipline as :func:`core.smb_client._patched_gethostname`: a
+    process-global lock serialises the patch across threads.
+
+    Yields without patching when no proxy is configured.
+    """
+    proxy_cfg: "ProxyConfig | None" = None
+    if isinstance(profile_or_config, ProxyConfig):
+        if profile_or_config.enabled:
+            proxy_cfg = profile_or_config
+    else:
+        prof = profile_or_config
+        ptype = getattr(prof, "proxy_type", "none") or "none"
+        host = getattr(prof, "proxy_host", "") or ""
+        if ptype != "none" and host:
+            ppassword = ""
+            if hasattr(prof, "get_proxy_password"):
+                try:
+                    ppassword = prof.get_proxy_password() or ""
+                except Exception:  # noqa: BLE001
+                    ppassword = ""
+            proxy_cfg = ProxyConfig(
+                proxy_type=ptype,
+                host=host,
+                port=int(getattr(prof, "proxy_port", 0) or 0),
+                username=getattr(prof, "proxy_username", "") or "",
+                password=ppassword,
+            )
+    if proxy_cfg is None:
+        yield
+        return
+
+    with _CREATE_CONNECTION_LOCK:
+        original = socket.create_connection
+
+        def proxied(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
+            host, port = address
+            t = timeout if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT else 10.0
+            return create_proxy_socket(
+                proxy_cfg, host, int(port), timeout=float(t),
+            )
+
+        socket.create_connection = proxied  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            socket.create_connection = original  # type: ignore[assignment]
 
 
 def create_direct_socket(

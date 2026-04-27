@@ -105,6 +105,11 @@ class WinRMSession:
         transport: str = "ntlm",
         verify_ssl: bool = True,
         operation_timeout_sec: int = 60,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if winrm is None:
             raise ImportError(
@@ -125,7 +130,12 @@ class WinRMSession:
             )
         except (InvalidCredentialsError, WinRMTransportError, OSError) as exc:
             raise OSError(f"WinRM connect to {host}: {exc}") from exc
-        self._apply_user_agent(self._session)
+        from core.proxy import build_requests_proxies
+        proxies = build_requests_proxies(
+            proxy_type, proxy_host, int(proxy_port or 0),
+            proxy_username, proxy_password,
+        )
+        self._apply_session_overrides(self._session, proxies)
         # Endpoint goes to INFO (operational); the username is PII —
         # keep it at DEBUG so it doesn't ship to centralised logs by
         # default. Anyone debugging an auth issue can flip the level.
@@ -133,21 +143,23 @@ class WinRMSession:
         log.debug("WinRM session user: %s", username)
 
     @staticmethod
-    def _apply_user_agent(session) -> None:
+    def _apply_session_overrides(session, proxies: dict | None = None) -> None:
         """Walk pywinrm's ``Session → Protocol → Transport → session``
-        chain and override the underlying :class:`requests.Session`
-        ``User-Agent`` header. pywinrm defaults to ``Python WinRM
-        client`` — a very distinctive fingerprint. Best-effort:
-        silently skipped when pywinrm's internal layout changes.
-        See docs/OPSEC.md #4.
+        chain and override the underlying :class:`requests.Session`:
+        uniform ``User-Agent`` (per docs/OPSEC.md #4) and per-profile
+        proxy dict if any. Best-effort: silently skipped when pywinrm's
+        internal layout changes.
         """
         from core.client_identity import HTTP_USER_AGENT
         try:
             req_session = session.protocol.transport.session
         except AttributeError:
             return
-        if req_session is not None and hasattr(req_session, "headers"):
-            req_session.headers["User-Agent"] = HTTP_USER_AGENT
+        if req_session is None or not hasattr(req_session, "headers"):
+            return
+        req_session.headers["User-Agent"] = HTTP_USER_AGENT
+        if proxies:
+            req_session.proxies = dict(proxies)
 
     # ------------------------------------------------------------------
     # FileBackend protocol — required surface
@@ -429,6 +441,97 @@ class WinRMSession:
 
     def open_version_read(self, path: str, version_id: str):
         raise OSError("WinRM backend has no version history")
+
+    # ------------------------------------------------------------------
+    # WinRM-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    def ps(self, script: str, *,
+           stdout_cap: int = 1024 * 1024,
+           stderr_cap: int = 64 * 1024) -> "ExecResult":
+        """Public PowerShell runner. Returns
+        :class:`models.exec_result.ExecResult` (rc/stdout/stderr/
+        truncated_*) — same shape as ``axross.exec()`` for SSH.
+
+        ``script`` is the PS body (not a one-liner — multi-line is
+        supported and goes through ``run_ps`` directly). Caps clip
+        each stream after the byte count; the corresponding
+        ``truncated_*`` flag is set when a clip happens.
+
+        Raises ``OSError`` on transport failure; non-zero remote
+        rc surfaces as ``ok=False`` on the result (use ``.check()``
+        to raise instead)."""
+        from models.exec_result import ExecResult
+        try:
+            result = self._session.run_ps(script)
+        except (InvalidCredentialsError, WinRMTransportError) as exc:
+            raise OSError(f"WinRM ps transport error: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 — pywinrm raises various
+            raise OSError(f"WinRM ps failed: {exc}") from exc
+        out = result.std_out or b""
+        err = result.std_err or b""
+        return ExecResult(
+            returncode=int(result.status_code),
+            stdout=bytes(out[:stdout_cap]),
+            stderr=bytes(err[:stderr_cap]),
+            truncated_stdout=len(out) > stdout_cap,
+            truncated_stderr=len(err) > stderr_cap,
+        )
+
+    def cim_query(self, wql: str, *,
+                  namespace: str = "root\\cimv2") -> list[dict]:
+        """Run a WQL (WMI Query Language) query via PowerShell's
+        ``Get-CimInstance -Query`` and return the result rows as
+        dicts (one row per object).
+
+        Refuses single-quote characters in ``wql`` because the query
+        is interpolated into a PowerShell single-quoted string and
+        a tainted ``'`` would close the string + run arbitrary PS
+        cmdlets. Use parameterised values via the WMI metadata
+        catalog if you need user input in the query.
+
+        Default namespace is ``root\\cimv2`` (the standard WMI
+        namespace); override for ``root\\StandardCimv2`` etc.
+        """
+        if "'" in wql:
+            raise ValueError(
+                "WinRM cim_query: single-quote in WQL is refused "
+                "(would break out of the PS interpolated string). "
+                "Filter clauses with %s placeholders are a follow-up."
+            )
+        if "\r" in wql or "\n" in wql:
+            raise ValueError(
+                "WinRM cim_query: WQL must not contain CR/LF"
+            )
+        if "'" in namespace or "\r" in namespace or "\n" in namespace:
+            raise ValueError(
+                "WinRM cim_query: invalid characters in namespace"
+            )
+        # ``ConvertTo-Json -Compress -Depth 4`` so we get parseable
+        # output for any nested object. -Depth 4 is enough for the
+        # vast majority of CIM classes.
+        script = (
+            f"$r = Get-CimInstance -Namespace '{namespace}' -Query '{wql}' "
+            f"-ErrorAction Stop | ConvertTo-Json -Compress -Depth 4; "
+            f"if ($r -is [string]) {{ $r }} else {{ $r -join \"\" }}"
+        )
+        out = self._run_ps(script)
+        if not out.strip():
+            return []
+        import json as _json
+        try:
+            data = _json.loads(out)
+        except _json.JSONDecodeError as exc:
+            raise OSError(
+                f"WinRM cim_query: malformed JSON from server: "
+                f"{out[:200]!r}"
+            ) from exc
+        # ConvertTo-Json returns a single object for 1 row, list for N.
+        if isinstance(data, dict):
+            return [data]
+        if isinstance(data, list):
+            return data
+        return []
 
     # ------------------------------------------------------------------
     # PowerShell runner

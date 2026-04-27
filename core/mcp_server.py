@@ -777,7 +777,8 @@ def _enforce_root(path: str, root: str) -> str:
 def _build_tools(backend, *, allow_write: bool,
                  backend_id: str | None = None,
                  root: str | None = None,
-                 backends: dict | None = None) -> list[_Tool]:
+                 backends: dict | None = None,
+                 allow_scripts: bool = False) -> list[_Tool]:
     """Build the catalogue. Write tools are added only when allowed.
 
     *backend_id* is the metadata-index key the search tool is allowed
@@ -2078,6 +2079,151 @@ def _build_tools(backend, *, allow_write: bool,
                 handler=_chmod, write=True,
             ),
         ])
+
+    # ----------------------------------------------------------------
+    # Scripting tools (opt-in via allow_scripts).
+    #
+    # script_list / script_read leak only metadata + bytes the user
+    # already wrote; script_write / script_run / script_delete
+    # mutate state. ALL are gated behind ``allow_scripts`` because
+    # script_run hands the LLM ``exec()`` over Python in the server
+    # process — that's strictly more powerful than the per-file
+    # write_file tool. Operators who want neither leave the flag off.
+    # ----------------------------------------------------------------
+    if allow_scripts:
+        from core import scripting as _scripting
+
+        def _script_list(args, ctx):
+            return {"scripts": _scripting.list_scripts()}
+
+        def _script_read(args, ctx):
+            name = args.get("name")
+            if not name:
+                raise ValueError("script_read requires a name")
+            return {"name": name, "source": _scripting.load_script(name)}
+
+        def _script_write(args, ctx):
+            name = args.get("name")
+            source = args.get("source", "")
+            if not name:
+                raise ValueError("script_write requires a name")
+            path = _scripting.save_script(name, source)
+            return {"name": name, "path": path, "size": len(source)}
+
+        def _script_delete(args, ctx):
+            name = args.get("name")
+            if not name:
+                raise ValueError("script_delete requires a name")
+            _scripting.delete_script(name)
+            return {"name": name, "deleted": True}
+
+        def _script_run(args, ctx):
+            """Execute a saved script in a fresh namespace (NOT the
+            server's). stdout from the script is captured and
+            returned so the LLM can see what the script printed."""
+            import contextlib
+            import io as _io
+            name = args.get("name")
+            if not name:
+                raise ValueError("script_run requires a name")
+            buf = _io.StringIO()
+            err_buf = _io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf), \
+                     contextlib.redirect_stderr(err_buf):
+                    ns = _scripting.run_script(name)
+            except SystemExit as exc:
+                return {
+                    "name": name, "exit": int(exc.code or 0),
+                    "stdout": buf.getvalue(),
+                    "stderr": err_buf.getvalue(),
+                    "namespace_keys": [],
+                }
+            # Strip private + dunder names so the LLM doesn't see
+            # injected helper modules.
+            keys = sorted(
+                k for k in ns
+                if not k.startswith("_") and k not in ("axross",)
+            )
+            return {
+                "name": name,
+                "stdout": buf.getvalue(),
+                "stderr": err_buf.getvalue(),
+                "namespace_keys": keys,
+            }
+
+        tools.extend([
+            _Tool(
+                name="script_list",
+                description=(
+                    "Names of every saved Python script in the server's "
+                    "script directory (~/.config/axross/scripts/)."
+                ),
+                schema={"type": "object", "properties": {}},
+                handler=_script_list,
+            ),
+            _Tool(
+                name="script_read",
+                description=(
+                    "Read the source of a saved script by name. Names are "
+                    "[A-Za-z0-9_-]+; the path is built relative to the "
+                    "server's script directory."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+                handler=_script_read,
+            ),
+            _Tool(
+                name="script_write",
+                description=(
+                    "Save Python source as ``<name>.py`` (mode 0600) in "
+                    "the server's script directory. Overwrites any "
+                    "existing script with the same name."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "source": {"type": "string"},
+                    },
+                    "required": ["name", "source"],
+                },
+                handler=_script_write, write=True,
+            ),
+            _Tool(
+                name="script_delete",
+                description=(
+                    "Remove a saved script by name. Idempotent — no error "
+                    "when the file is already gone."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+                handler=_script_delete, write=True,
+            ),
+            _Tool(
+                name="script_run",
+                description=(
+                    "Execute a saved script in a fresh namespace seeded "
+                    "with ``axross`` (the curated scripting module). "
+                    "Returns captured stdout/stderr and the names of "
+                    "top-level vars the script left behind. Read "
+                    "axross.help() for the available API."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+                handler=_script_run, write=True,
+            ),
+        ])
+
     # Multi-backend wiring: if the caller configured a registry,
     # advertise it via a list_backends tool AND decorate every tool's
     # input schema with an optional ``backend`` field. Single-backend
@@ -3006,6 +3152,12 @@ class ServerConfig:
     # this config is still the default (used when a tool call omits
     # ``backend``). Single-backend deployments leave this None.
     backends: dict | None = None
+    # Scripting tools (script_list / read / write / run / delete) are
+    # gated behind their own opt-in. Read-only would still leak any
+    # secrets the user has pasted into local scripts; write+run hands
+    # the LLM ``exec()`` over Python in the server process. Default
+    # OFF so a casual LLM connection can't reach the script surface.
+    allow_scripts: bool = False
     stdin: IO = field(default_factory=lambda: sys.stdin)
     stdout: IO = field(default_factory=lambda: sys.stdout)
     # Rate limit: token-bucket guarding tools/call only. Default on
@@ -3025,6 +3177,7 @@ def serve(config: ServerConfig) -> int:
         backend_id=config.backend_id,
         root=config.root,
         backends=config.backends,
+        allow_scripts=config.allow_scripts,
     )
     resources = _build_resources(config.backend, root=config.root)
     cancels = _CancelRegistry()

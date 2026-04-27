@@ -890,64 +890,67 @@ class WebDavXxeHardeningTests(unittest.TestCase):
             b'<D:multistatus xmlns:D="DAV:"><D:response>&lol2;</D:response></D:multistatus>'
         )
 
-        session = webdav_client.WebDavSession.__new__(webdav_client.WebDavSession)
-        session._url = "https://example.com/dav"
-        session._username = ""
-        session._password = ""
-        session._norm = lambda p: p or "/"
+        # Build a _WebDavClient that bypasses real HTTP — we inject the
+        # malicious payload directly via a patched session.request.
+        client = webdav_client._WebDavClient.__new__(webdav_client._WebDavClient)
+        client._base = "https://example.com/dav"
+        client._url_path = "/dav"
+        client._auth = None
+        client._timeout = 30.0
+        client.session = mock.MagicMock()
+        client.session.request.return_value = mock.MagicMock(
+            status_code=207, content=evil,
+        )
 
-        fake_resp = mock.MagicMock(status_code=207, content=evil)
-        with mock.patch.object(
-            webdav_client, "__import__", create=True,
-        ):
-            pass  # placeholder; we patch via sys.modules instead
-
-        import requests as real_requests
-        with mock.patch.object(real_requests, "request", return_value=fake_resp):
-            # A defused parser raises EntitiesForbidden / DTDForbidden on doctype
-            try:
-                session.disk_usage("/")
-            except Exception as exc:
-                name = type(exc).__name__
-                self.assertIn(
-                    name,
-                    ("EntitiesForbidden", "DTDForbidden"),
-                    f"unexpected exception {name}: {exc}",
-                )
-            else:
-                # defusedxml may silently drop the payload; the result must
-                # then not contain any expanded entity text.
-                pass
+        # A defused parser raises EntitiesForbidden / DTDForbidden on doctype.
+        try:
+            client.quota("/")
+        except Exception as exc:
+            name = type(exc).__name__
+            self.assertIn(
+                name,
+                ("EntitiesForbidden", "DTDForbidden"),
+                f"unexpected exception {name}: {exc}",
+            )
+        else:
+            # defusedxml may silently drop the payload; either way no
+            # billion-laughs explosion happened — we just need to confirm
+            # we didn't blow up the heap.
+            pass
 
     def test_disk_usage_without_defusedxml_is_fail_closed(self) -> None:
         """If defusedxml is not installed, disk_usage() must NOT silently
-        fall back to the vulnerable stdlib parser. Previous implementation
-        did; we now return (0, 0, 0) and log a warning instead."""
+        fall back to the vulnerable stdlib parser. _WebDavClient.quota()
+        re-imports defusedxml on each call so a runtime-broken install
+        produces (0, 0, 0) + a warning rather than an XXE-vulnerable
+        stdlib fallback."""
         import sys
         from core import webdav_client
 
-        session = webdav_client.WebDavSession.__new__(webdav_client.WebDavSession)
-        session._url = "https://example.com/dav"
-        session._username = ""
-        session._password = ""
-        session._norm = lambda p: p or "/"
+        client = webdav_client._WebDavClient.__new__(webdav_client._WebDavClient)
+        client._base = "https://example.com/dav"
+        client._url_path = "/dav"
+        client._auth = None
+        client._timeout = 30.0
+        client.session = mock.MagicMock()
 
-        # Hide defusedxml from the import system. The test hides only
+        # Hide defusedxml from the import system. The test only hides
         # the in-process import (so other tests in the same pytest run
         # still see it normally).
         saved = sys.modules.pop("defusedxml", None)
         saved_sub = sys.modules.pop("defusedxml.ElementTree", None)
+
+        real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
 
         def _blocking_find_module(name, *args, **kwargs):
             if name.startswith("defusedxml"):
                 raise ImportError("hidden for test")
             return real_import(name, *args, **kwargs)
 
-        real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
         try:
             with mock.patch("builtins.__import__", side_effect=_blocking_find_module):
                 with self.assertLogs("core.webdav_client", level="WARNING") as logs:
-                    result = session.disk_usage("/")
+                    result = client.quota("/")
         finally:
             if saved is not None:
                 sys.modules["defusedxml"] = saved
@@ -4533,21 +4536,63 @@ class ProxyUnsupportedWarningTests(unittest.TestCase):
             proxy_port=1080,
         )
 
-    def test_ftp_with_proxy_logs_warning(self) -> None:
+    def test_nfs_with_proxy_logs_warning(self) -> None:
+        # NFS is a kernel mount — genuinely cannot be tunneled through
+        # a userspace SOCKS / HTTP proxy. Warning required.
         from core.connection_manager import _warn_unsupported_proxy
         with self.assertLogs("core.connection_manager", level="WARNING") as logs:
-            _warn_unsupported_proxy(self._profile("ftp"))
-        self.assertTrue(any("ignored" in m for m in logs.output))
-
-    def test_s3_with_proxy_mentions_env_fallback(self) -> None:
-        from core.connection_manager import _warn_unsupported_proxy
-        with self.assertLogs("core.connection_manager", level="WARNING") as logs:
-            _warn_unsupported_proxy(self._profile("s3"))
+            _warn_unsupported_proxy(self._profile("nfs"))
         self.assertTrue(
-            any("HTTPS_PROXY" in m or "environment" in m
-                for m in logs.output),
-            f"expected env-proxy hint, got: {logs.output}",
+            any("kernel" in m.lower() for m in logs.output),
+            f"expected kernel-not-proxiable mention, got: {logs.output}",
         )
+
+    def test_iscsi_with_proxy_logs_warning(self) -> None:
+        # Same as NFS — kernel-level transport, not proxiable.
+        from core.connection_manager import _warn_unsupported_proxy
+        with self.assertLogs("core.connection_manager", level="WARNING") as logs:
+            _warn_unsupported_proxy(self._profile("iscsi"))
+        self.assertTrue(any("kernel" in m.lower() for m in logs.output))
+
+    def test_ftp_with_proxy_no_longer_warns(self) -> None:
+        # Phase B added FTP proxy support — the old warning is gone.
+        from core.connection_manager import _warn_unsupported_proxy
+        logger = logging.getLogger("core.connection_manager")
+
+        class _Grab(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.records: list = []
+            def emit(self, record): self.records.append(record)
+
+        h = _Grab()
+        h.setLevel(logging.WARNING)
+        logger.addHandler(h)
+        try:
+            _warn_unsupported_proxy(self._profile("ftp"))
+        finally:
+            logger.removeHandler(h)
+        self.assertEqual(h.records, [])
+
+    def test_s3_with_proxy_no_longer_warns(self) -> None:
+        # Phase A.5 added S3 proxy via BotoConfig(proxies=...) — no warning.
+        from core.connection_manager import _warn_unsupported_proxy
+        logger = logging.getLogger("core.connection_manager")
+
+        class _Grab(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.records: list = []
+            def emit(self, record): self.records.append(record)
+
+        h = _Grab()
+        h.setLevel(logging.WARNING)
+        logger.addHandler(h)
+        try:
+            _warn_unsupported_proxy(self._profile("s3"))
+        finally:
+            logger.removeHandler(h)
+        self.assertEqual(h.records, [])
 
     def test_sftp_with_proxy_does_not_warn(self) -> None:
         from core.connection_manager import _warn_unsupported_proxy
@@ -13126,12 +13171,15 @@ class DockActivityTabColorTests(unittest.TestCase):
         transfer = _FakeDock("Transfers", mw)
         terminal = _FakeDock("Terminal", mw)
         logd = _FakeDock("Log", mw)
+        console = _FakeDock("Console", mw)
         mw._transfer_dock = transfer
         mw._terminal_dock = terminal
         mw._log_dock = logd
+        mw._console_dock = console
         transfer.setProperty("_test_visible", True)
         terminal.setProperty("_test_visible", False)
         logd.setProperty("_test_visible", False)
+        console.setProperty("_test_visible", False)
 
         # Manually wire the bookkeeping dict + signal connections.
         mw._wire_dock_activity_indicators()
@@ -17081,6 +17129,254 @@ class UiRedTeamThirdPassFixesTests(unittest.TestCase):
         self.assertTrue(new_buffer.endswith("B"))
 
 
+class ProxyConstructionAuditTests(unittest.TestCase):
+    """HTTP-CONNECT (and SOCKS) audit: every backend that we *claim*
+    honours the proxy fields must actually wire them through to its
+    SDK-specific transport. The Section 21d lab covers FTP, SMB,
+    IMAP, S3, Rsync, POP3, WebDAV, Telnet against real servers; the
+    cloud backends below have no lab equivalent (OAuth SaaS / real
+    Azure / real Windows), so we mock the SDK boundaries and assert
+    that the proxy URL / transport object actually reaches the SDK.
+    """
+
+    PROXY_KW = dict(
+        proxy_type="http",
+        proxy_host="proxy.example",
+        proxy_port=8080,
+        proxy_username="u", proxy_password="p",
+    )
+
+    # ---- S3 (boto3) ----
+
+    def test_s3_session_passes_proxies_into_boto_config(self):
+        # Skip cleanly when boto3 is missing; the wiring code refuses
+        # to construct a session without it.
+        try:
+            from core.s3_client import S3Session
+        except ImportError:
+            self.skipTest("boto3 not installed")
+        # Patch boto3.client so no network IO happens — we only care
+        # whether the BotoConfig handed to it carries our proxies.
+        captured: dict = {}
+        from core import s3_client
+        if s3_client.boto3 is None:
+            self.skipTest("boto3 not installed")
+
+        def fake_client(**kwargs):
+            captured["kwargs"] = kwargs
+            class _Mock:
+                def list_objects_v2(self, **_): return {"Contents": []}
+                def head_bucket(self, **_): return {}
+            return _Mock()
+
+        with mock.patch.object(s3_client.boto3, "client", side_effect=fake_client):
+            try:
+                s3_client.S3Session(
+                    bucket="testbucket", region="us-east-1",
+                    access_key="k", secret_key="s",
+                    endpoint="http://localhost:1",
+                    **self.PROXY_KW,
+                )
+            except OSError:
+                # Connection-test stage may fail; we still got the
+                # constructed Config in captured.
+                pass
+
+        cfg = captured["kwargs"].get("config")
+        self.assertIsNotNone(cfg)
+        proxies = getattr(cfg, "proxies", None)
+        self.assertIsInstance(proxies, dict)
+        self.assertIn("http", proxies)
+        self.assertEqual(proxies["http"], "http://u:p@proxy.example:8080")
+
+    # ---- OneDrive ----
+
+    def test_onedrive_session_sets_session_proxies(self):
+        try:
+            from core import onedrive_client
+        except ImportError:
+            self.skipTest("onedrive deps missing")
+        if onedrive_client.msal is None or onedrive_client.requests is None:
+            self.skipTest("onedrive deps missing")
+
+        # Constructing OneDriveSession runs MSAL flows; we only need
+        # to verify that __init__ sets proxies on self._http BEFORE
+        # any network work, so we patch the cache loader to throw
+        # and catch the exception, then inspect.
+        with mock.patch.object(
+            onedrive_client.msal, "SerializableTokenCache",
+            side_effect=RuntimeError("stop here — not under test"),
+        ):
+            try:
+                onedrive_client.OneDriveSession(
+                    client_id="cid", **self.PROXY_KW,
+                )
+            except (RuntimeError, Exception):
+                pass
+
+        # Re-construct with a working stub so we can grab the http
+        # session and verify proxies.
+        captured = {}
+        orig_session_cls = onedrive_client.requests.Session
+
+        class _CapturingSession(orig_session_cls):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                captured["sess"] = self
+
+        with mock.patch.object(
+            onedrive_client.requests, "Session", _CapturingSession,
+        ), mock.patch.object(
+            onedrive_client.msal, "SerializableTokenCache",
+            return_value=mock.MagicMock(),
+        ), mock.patch.object(
+            onedrive_client.msal, "PublicClientApplication",
+            side_effect=RuntimeError("stop after http set up"),
+        ):
+            try:
+                onedrive_client.OneDriveSession(
+                    client_id="cid", **self.PROXY_KW,
+                )
+            except RuntimeError:
+                pass
+
+        sess = captured.get("sess")
+        self.assertIsNotNone(sess)
+        self.assertIn("http", sess.proxies)
+        self.assertIn("proxy.example:8080", sess.proxies["http"])
+
+    # ---- Dropbox ----
+
+    def test_dropbox_session_stores_proxies_for_apply(self):
+        try:
+            from core import dropbox_client
+        except ImportError:
+            self.skipTest("dropbox not installed")
+        if dropbox_client.dropbox is None:
+            self.skipTest("dropbox not installed")
+        # We don't need to authenticate — just construct via __new__
+        # and inspect that build_requests_proxies was called.
+        sess = dropbox_client.DropboxSession.__new__(dropbox_client.DropboxSession)
+        from core.proxy import build_requests_proxies
+        sess._proxies = build_requests_proxies(
+            self.PROXY_KW["proxy_type"],
+            self.PROXY_KW["proxy_host"],
+            self.PROXY_KW["proxy_port"],
+            self.PROXY_KW["proxy_username"],
+            self.PROXY_KW["proxy_password"],
+        )
+        self.assertIn("http", sess._proxies)
+
+        # Verify _apply_session_overrides reaches a fake dropbox
+        # client's session.
+        class _FakeSession:
+            def __init__(self):
+                self.headers = {}
+                self.proxies = {}
+        class _FakeDbx:
+            def __init__(self):
+                self._session = _FakeSession()
+        fake = _FakeDbx()
+        sess._apply_session_overrides(fake)
+        self.assertIn("http", fake._session.proxies)
+        self.assertIn("proxy.example", fake._session.proxies["http"])
+
+    # ---- Azure (RequestsTransport) ----
+
+    def test_azure_helper_returns_transport_with_proxied_session(self):
+        try:
+            from core.azure_client import _axross_azure_transport_kwargs
+        except ImportError:
+            self.skipTest("azure-sdk not installed")
+        kwargs = _axross_azure_transport_kwargs(
+            self.PROXY_KW["proxy_type"],
+            self.PROXY_KW["proxy_host"],
+            self.PROXY_KW["proxy_port"],
+            self.PROXY_KW["proxy_username"],
+            self.PROXY_KW["proxy_password"],
+        )
+        if not kwargs:
+            self.skipTest("azure RequestsTransport not importable")
+        transport = kwargs["transport"]
+        # The transport's underlying session must carry our proxies.
+        sess = getattr(transport, "session", None) or getattr(transport, "_session", None)
+        self.assertIsNotNone(sess)
+        self.assertIn("http", sess.proxies)
+        self.assertIn("proxy.example", sess.proxies["http"])
+
+    # ---- WinRM ----
+
+    def test_winrm_apply_session_overrides_sets_proxies(self):
+        # WinrmSession._apply_session_overrides walks
+        # session.protocol.transport.session.proxies; build the chain.
+        from core import winrm_client
+        from core.proxy import build_requests_proxies
+        proxies = build_requests_proxies(
+            self.PROXY_KW["proxy_type"],
+            self.PROXY_KW["proxy_host"],
+            self.PROXY_KW["proxy_port"],
+            self.PROXY_KW["proxy_username"],
+            self.PROXY_KW["proxy_password"],
+        )
+
+        class _Sess:
+            def __init__(self):
+                self.headers = {}
+                self.proxies = {}
+        class _Tx:
+            def __init__(self):
+                self.session = _Sess()
+        class _Proto:
+            def __init__(self):
+                self.transport = _Tx()
+        class _WinrmSession:
+            def __init__(self):
+                self.protocol = _Proto()
+
+        ws = _WinrmSession()
+        winrm_client.WinRMSession._apply_session_overrides(ws, proxies)
+        self.assertIn("http", ws.protocol.transport.session.proxies)
+
+    # ---- Google Drive (httplib2.ProxyInfo) ----
+
+    def test_gdrive_build_service_constructs_proxy_info(self):
+        try:
+            from core import gdrive_client
+        except ImportError:
+            self.skipTest("gdrive deps missing")
+        if gdrive_client.Credentials is None:
+            self.skipTest("gdrive deps missing")
+
+        # Bypass __init__ so we don't run the OAuth flow; only assert
+        # the proxy-info construction inside _build_service.
+        sess = gdrive_client.GDriveSession.__new__(gdrive_client.GDriveSession)
+        sess._proxy_type = self.PROXY_KW["proxy_type"]
+        sess._proxy_host = self.PROXY_KW["proxy_host"]
+        sess._proxy_port = self.PROXY_KW["proxy_port"]
+        sess._proxy_username = self.PROXY_KW["proxy_username"]
+        sess._proxy_password = self.PROXY_KW["proxy_password"]
+
+        captured = {}
+        def fake_build(*args, **kwargs):
+            captured["http"] = kwargs.get("http")
+            return mock.MagicMock()
+
+        with mock.patch.object(gdrive_client, "build", fake_build):
+            sess._build_service(creds=mock.MagicMock())
+
+        http = captured["http"]
+        self.assertIsNotNone(http)
+        # AuthorizedHttp wraps an httplib2.Http — the inner Http
+        # must carry our ProxyInfo. Walk to confirm.
+        inner = getattr(http, "http", None)
+        self.assertIsNotNone(inner)
+        proxy_info = getattr(inner, "proxy_info", None)
+        self.assertIsNotNone(proxy_info)
+        # ProxyInfo's host = our proxy host.
+        self.assertEqual(getattr(proxy_info, "proxy_host", None), "proxy.example")
+        self.assertEqual(getattr(proxy_info, "proxy_port", None), 8080)
+
+
 class OpSecHardeningTests(unittest.TestCase):
     """Regression guards for docs/OPSEC.md mitigations.
 
@@ -17221,6 +17517,403 @@ class OpSecHardeningTests(unittest.TestCase):
         self.assertEqual(len(tokens), 2)
         scrubbed = b" ".join(tokens[:2]) + b"\n"
         self.assertEqual(scrubbed, pub_in)
+
+
+class ProxySupportTests(unittest.TestCase):
+    """Guards for the per-backend proxy plumbing introduced in
+    Phases A–E. We do not stand up a SOCKS server; instead we verify
+    the *hook points* are correctly invoked / wired so a future
+    refactor that drops the proxy plumbing fails loudly here.
+    """
+
+    # ---- core.proxy.build_requests_proxies — URL formation ----
+
+    def test_build_requests_proxies_none(self):
+        from core.proxy import build_requests_proxies
+        self.assertEqual(build_requests_proxies("none", "p", 1080), {})
+        self.assertEqual(build_requests_proxies("socks5", "", 1080), {})
+
+    def test_build_requests_proxies_socks5_anonymous(self):
+        from core.proxy import build_requests_proxies
+        out = build_requests_proxies("socks5", "p", 1080)
+        # SOCKS5 must use socks5h:// (remote DNS) — never socks5://.
+        for url in out.values():
+            self.assertTrue(url.startswith("socks5h://"))
+
+    def test_build_requests_proxies_brackets_ipv6(self):
+        from core.proxy import build_requests_proxies
+        out = build_requests_proxies("socks5", "2001:db8::1", 1080)
+        for url in out.values():
+            self.assertIn("[2001:db8::1]:1080", url)
+
+    def test_build_requests_proxies_url_encodes_creds(self):
+        from core.proxy import build_requests_proxies
+        out = build_requests_proxies(
+            "socks5", "p", 1080, username="u@corp", password="p@ss",
+        )
+        for url in out.values():
+            self.assertIn("u%40corp:p%40ss@", url)
+
+    def test_build_requests_proxies_refuses_password_without_user(self):
+        from core.proxy import build_requests_proxies
+        with self.assertRaises(ValueError):
+            build_requests_proxies("socks5", "p", 1080, username="", password="x")
+
+    def test_build_requests_proxies_unknown_type(self):
+        from core.proxy import build_requests_proxies
+        with self.assertRaises(ValueError):
+            build_requests_proxies("ftp", "p", 1080)
+
+    def test_build_requests_proxies_ssrf_guard(self):
+        from core.proxy import build_requests_proxies
+        for ip in ("127.0.0.1", "169.254.169.254", "10.0.0.1"):
+            with self.assertRaises(ConnectionError):
+                build_requests_proxies("socks5", ip, 1080)
+
+    # ---- core.proxy.patched_create_connection — context manager safety ----
+
+    def test_patched_create_connection_restores_after_exception(self):
+        import socket
+        from core.proxy import ProxyConfig, patched_create_connection
+        original = socket.create_connection
+        cfg = ProxyConfig("socks5", "8.8.8.8", 1080)  # public IP, no SSRF deny
+        try:
+            with patched_create_connection(cfg):
+                self.assertIsNot(socket.create_connection, original)
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        self.assertIs(socket.create_connection, original)
+
+    def test_patched_create_connection_noop_when_disabled(self):
+        import socket
+        from core.proxy import ProxyConfig, patched_create_connection
+        original = socket.create_connection
+        with patched_create_connection(ProxyConfig("none", "", 0)):
+            self.assertIs(socket.create_connection, original)
+
+    def test_patched_create_connection_thread_safety(self):
+        """Concurrent patches must not strand each other's replacement —
+        ``_CREATE_CONNECTION_LOCK`` serialises entries / exits."""
+        import socket, threading, time
+        from core.proxy import ProxyConfig, patched_create_connection
+        original = socket.create_connection
+        cfg = ProxyConfig("socks5", "8.8.8.8", 1080)
+
+        def worker():
+            with patched_create_connection(cfg):
+                time.sleep(0.02)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        self.assertIs(socket.create_connection, original)
+
+    # ---- connection_manager._proxy_kwargs ----
+
+    def test_proxy_kwargs_empty_profile(self):
+        from core.connection_manager import _proxy_kwargs
+        from core.profiles import ConnectionProfile
+        prof = ConnectionProfile(name="x", protocol="sftp", host="h", port=22)
+        self.assertEqual(_proxy_kwargs(prof), {})
+
+    def test_proxy_kwargs_configured_profile(self):
+        from core.connection_manager import _proxy_kwargs
+        from core.profiles import ConnectionProfile
+        prof = ConnectionProfile(
+            name="x", protocol="sftp", host="h", port=22,
+            proxy_type="socks5", proxy_host="proxy.example",
+            proxy_port=1080, proxy_username="u",
+        )
+        kw = _proxy_kwargs(prof)
+        self.assertEqual(kw["proxy_type"], "socks5")
+        self.assertEqual(kw["proxy_host"], "proxy.example")
+        self.assertEqual(kw["proxy_port"], 1080)
+        self.assertEqual(kw["proxy_username"], "u")
+        self.assertEqual(kw["proxy_password"], "")
+
+    # ---- IMAP subclass wiring ----
+
+    def test_proxy_imap4_classes_override_create_socket(self):
+        from core.imap_client import _ProxyIMAP4, _ProxyIMAP4_SSL
+        # Both must define their own _create_socket so the parent's
+        # default doesn't bypass our proxy hook.
+        self.assertIn("_create_socket", _ProxyIMAP4.__dict__)
+        self.assertIn("_create_socket", _ProxyIMAP4_SSL.__dict__)
+
+    # ---- FTP helper symbol presence ----
+
+    def test_ftp_proxy_helper_exists(self):
+        from core import ftp_client
+        self.assertTrue(hasattr(ftp_client, "_ftp_connect_via_proxy"))
+
+    # ---- rsync helpers ----
+
+    def test_rsync_connect_prog_format(self):
+        from core.proxy import ProxyConfig
+        from core.rsync_client import _build_rsync_connect_prog
+        prog = _build_rsync_connect_prog(ProxyConfig("socks5", "p", 1080), 873)
+        # Must contain the rsync host placeholder + literal port +
+        # a SOCKS5 -X argument. Note: rsync substitutes only %H, not
+        # %P, so the daemon port is hard-coded by us.
+        self.assertIn("%H", prog)
+        self.assertNotIn("%P", prog)
+        self.assertIn("873", prog)
+        self.assertIn("-X 5", prog)
+
+    def test_rsync_connect_prog_uses_session_port(self):
+        from core.proxy import ProxyConfig
+        from core.rsync_client import _build_rsync_connect_prog
+        # Non-default daemon port should land in the resulting string.
+        prog = _build_rsync_connect_prog(ProxyConfig("socks5", "p", 1080), 8730)
+        self.assertIn(" 8730", prog)
+
+    def test_rsync_connect_prog_brackets_ipv6(self):
+        from core.proxy import ProxyConfig
+        from core.rsync_client import _build_rsync_connect_prog
+        prog = _build_rsync_connect_prog(
+            ProxyConfig("socks5", "2001:db8::1", 1080), 873,
+        )
+        self.assertIn("[2001:db8::1]:1080", prog)
+
+    def test_rsync_ssh_proxy_command_format(self):
+        from core.proxy import ProxyConfig
+        from core.rsync_client import _build_ssh_proxy_command
+        cmd = _build_ssh_proxy_command(ProxyConfig("http", "p", 8080))
+        self.assertIn("%h", cmd)
+        self.assertIn("%p", cmd)
+        self.assertIn("-X connect", cmd)
+
+    def test_rsync_connect_prog_unknown_type(self):
+        from core.proxy import ProxyConfig
+        from core.rsync_client import _build_rsync_connect_prog
+        with self.assertRaises(ValueError):
+            _build_rsync_connect_prog(ProxyConfig("none", "p", 1080), 873)
+
+    # ---- backend ctors accept proxy_* without crashing on defaults ----
+
+    def test_imap_session_accepts_proxy_kwargs_signature(self):
+        import inspect
+        from core.imap_client import ImapSession
+        sig = inspect.signature(ImapSession.__init__)
+        for k in ("proxy_type", "proxy_host", "proxy_port",
+                  "proxy_username", "proxy_password"):
+            self.assertIn(k, sig.parameters)
+
+    def test_smb_session_accepts_proxy_kwargs_signature(self):
+        import inspect
+        from core.smb_client import SmbSession
+        sig = inspect.signature(SmbSession.__init__)
+        for k in ("proxy_type", "proxy_host", "proxy_port",
+                  "proxy_username", "proxy_password"):
+            self.assertIn(k, sig.parameters)
+
+    def test_ftp_session_accepts_proxy_kwargs_signature(self):
+        import inspect
+        from core.ftp_client import FtpSession
+        sig = inspect.signature(FtpSession.__init__)
+        for k in ("proxy_type", "proxy_host", "proxy_port"):
+            self.assertIn(k, sig.parameters)
+
+    def test_rsync_session_accepts_proxy_kwargs_signature(self):
+        import inspect
+        from core.rsync_client import RsyncSession
+        sig = inspect.signature(RsyncSession.__init__)
+        for k in ("proxy_type", "proxy_host", "proxy_port"):
+            self.assertIn(k, sig.parameters)
+
+    def test_adb_session_accepts_proxy_kwargs_signature(self):
+        import inspect
+        from core.adb_client import AdbSession
+        sig = inspect.signature(AdbSession.__init__)
+        for k in ("proxy_type", "proxy_host", "proxy_port"):
+            self.assertIn(k, sig.parameters)
+
+    def test_adb_session_refuses_proxy_in_usb_mode(self):
+        # Sanity: USB mode + proxy must raise rather than silently fail.
+        from core.adb_client import AdbSession, ADB_SHELL_AVAILABLE
+        if not ADB_SHELL_AVAILABLE:
+            self.skipTest("adb-shell not installed")
+        with self.assertRaises(OSError):
+            AdbSession(usb=True, proxy_type="socks5",
+                       proxy_host="p", proxy_port=1080)
+
+    # ---- Exchange autodiscover-with-proxy refusal ----
+
+    def test_exchange_autodiscover_with_proxy_refused(self):
+        from core.exchange_client import ExchangeSession, EXCHANGELIB_AVAILABLE
+        if not EXCHANGELIB_AVAILABLE:
+            self.skipTest("exchangelib not installed")
+        with self.assertRaises(OSError) as ctx:
+            ExchangeSession(
+                "u@example.com", "u", "p", autodiscover=True,
+                proxy_type="socks5", proxy_host="proxy", proxy_port=1080,
+            )
+        self.assertIn("autodiscover", str(ctx.exception).lower())
+
+
+class RamFsTests(unittest.TestCase):
+    """Behavioural + capacity-guard tests for ``core.ram_fs``."""
+
+    def test_basic_round_trip(self):
+        from core.ram_fs import RamFsSession
+        s = RamFsSession("test")
+        try:
+            s.mkdir("/d", parents=True)
+            with s.open_write("/d/x.txt") as f:
+                f.write(b"hello")
+            with s.open_read("/d/x.txt") as f:
+                self.assertEqual(f.read(), b"hello")
+            items = s.list_dir("/d")
+            self.assertEqual({i.name for i in items}, {"x.txt"})
+        finally:
+            s.disconnect()
+
+    def test_disconnect_drops_all_bytes(self):
+        from core.ram_fs import RamFsSession
+        s = RamFsSession("test", max_bytes=1024)
+        with s.open_write("/a") as f:
+            f.write(b"X" * 100)
+        self.assertEqual(s.size_bytes, 100)
+        s.disconnect()
+        self.assertEqual(s.size_bytes, 0)
+        # After disconnect the root re-emerges; reading non-existent
+        # entries raises cleanly.
+        with self.assertRaises(OSError):
+            with s.open_read("/a"):
+                pass
+
+    def test_per_instance_cap_refuses_oversized_write(self):
+        from core.ram_fs import RamFsSession, RamFsCapacityError
+        s = RamFsSession("test", max_bytes=4096)
+        with self.assertRaises(RamFsCapacityError):
+            with s.open_write("/big") as f:
+                f.write(b"X" * 5000)
+
+    def test_system_reserve_refuses_when_low_available(self):
+        # Patch _available_memory_bytes to simulate near-OOM.
+        from core import ram_fs
+        s = ram_fs.RamFsSession(
+            "test",
+            max_bytes=10 * 1024 * 1024,
+            system_reserve_bytes=8 * 1024 * 1024,
+        )
+        try:
+            # Pretend only 9 MiB free system-wide; a 4 MiB write
+            # would leave 5 MiB — below the 8 MiB reserve, must refuse.
+            with mock.patch.object(
+                ram_fs, "_available_memory_bytes", return_value=9 * 1024 * 1024,
+            ):
+                with self.assertRaises(ram_fs.RamFsCapacityError):
+                    with s.open_write("/big") as f:
+                        f.write(b"X" * (4 * 1024 * 1024))
+        finally:
+            s.disconnect()
+
+    def test_system_reserve_skipped_when_psutil_absent(self):
+        from core import ram_fs
+        s = ram_fs.RamFsSession("test", max_bytes=1024 * 1024)
+        try:
+            # _available_memory_bytes returns -1 when psutil is gone;
+            # the guard must skip rather than refuse.
+            with mock.patch.object(
+                ram_fs, "_available_memory_bytes", return_value=-1,
+            ):
+                with s.open_write("/ok") as f:
+                    f.write(b"Y" * 1024)
+                self.assertEqual(s.size_bytes, 1024)
+        finally:
+            s.disconnect()
+
+    def test_rename_moves_subtree(self):
+        from core.ram_fs import RamFsSession
+        s = RamFsSession("t")
+        try:
+            s.mkdir("/a/b", parents=True)
+            with s.open_write("/a/b/c.txt") as f:
+                f.write(b"hi")
+            s.rename("/a", "/z")
+            with s.open_read("/z/b/c.txt") as f:
+                self.assertEqual(f.read(), b"hi")
+        finally:
+            s.disconnect()
+
+    def test_normalize_rejects_traversal(self):
+        from core.ram_fs import RamFsSession
+        s = RamFsSession("t")
+        # posixpath.normpath collapses ../, so ../etc/passwd → /etc/passwd
+        # We expect normalize to keep the path inside our root.
+        n = s.normalize("/foo/../../etc/passwd")
+        self.assertTrue(n.startswith("/"))
+        # And it isn't allowed to drop above root.
+        self.assertNotIn("..", n)
+
+    def test_decrypt_to_ram_workspace_lands_in_ramfs(self):
+        from core.local_fs import LocalFS
+        from core.encrypted_overlay import write_encrypted
+        from core.ram_fs import decrypt_to_ram_workspace
+        with tempfile.TemporaryDirectory() as td:
+            backend = LocalFS()
+            src = os.path.join(td, "secret.txt")
+            final = write_encrypted(backend, src, b"top-secret-payload", "pw1")
+            sess, path = decrypt_to_ram_workspace(backend, final, "pw1")
+            try:
+                with sess.open_read(path) as f:
+                    self.assertEqual(f.read(), b"top-secret-payload")
+                # Cleartext must NOT be on disk anywhere.
+                disk_listing = os.listdir(td)
+                self.assertIn("secret.txt.axenc", disk_listing)
+                self.assertNotIn("secret.txt", disk_listing)
+            finally:
+                sess.disconnect()
+
+
+class TmpfsDetectTests(unittest.TestCase):
+    def test_detect_returns_list_of_namedtuples(self):
+        from core.tmpfs_detect import detect_tmpfs_paths, reset_cache, TmpfsPath
+        reset_cache()
+        paths = detect_tmpfs_paths()
+        self.assertIsInstance(paths, list)
+        for p in paths:
+            self.assertIsInstance(p, TmpfsPath)
+            self.assertTrue(p.path.startswith("/"))
+
+    def test_apply_tempdir_preference_no_op_when_disabled(self):
+        from core.tmpfs_detect import apply_tempdir_preference
+        from core import ramfs_settings
+        # Force settings = disabled
+        prev = ramfs_settings._CACHED
+        ramfs_settings._CACHED = ramfs_settings.RamFsSettings(tmpfs_enabled=False)
+        try:
+            self.assertIsNone(apply_tempdir_preference())
+        finally:
+            ramfs_settings._CACHED = prev
+
+
+class RamFsSettingsTests(unittest.TestCase):
+    def test_load_defaults_when_file_missing(self):
+        from core import ramfs_settings as RS
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "does-not-exist.json"
+            with mock.patch.object(RS, "SETTINGS_FILE", missing):
+                s = RS.RamFsSettings.load()
+        self.assertTrue(s.ramfs_enabled)
+        self.assertTrue(s.tmpfs_enabled)
+        self.assertGreater(s.ramfs_max_bytes, 0)
+
+    def test_load_ignores_unknown_keys(self):
+        from core import ramfs_settings as RS
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td) / "ramfs.json"
+            fp.write_text(json.dumps({
+                "ramfs_enabled": False,
+                "ramfs_max_bytes": 1024,
+                "future_field_we_dont_know": True,
+            }))
+            with mock.patch.object(RS, "SETTINGS_FILE", fp):
+                s = RS.RamFsSettings.load()
+        self.assertFalse(s.ramfs_enabled)
+        self.assertEqual(s.ramfs_max_bytes, 1024)
 
 
 if __name__ == "__main__":

@@ -97,6 +97,11 @@ class DropboxSession:
         app_key: str,
         app_secret: str = "",
         token_file: str = _DEFAULT_TOKEN_PATH,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         if dropbox is None:
             raise ImportError(
@@ -107,6 +112,13 @@ class DropboxSession:
         self._app_key = app_key
         self._app_secret = app_secret
         self._token_file = os.path.expanduser(token_file)
+        # Build the requests proxies dict once; apply on every Dropbox()
+        # construction in _apply_session_overrides.
+        from core.proxy import build_requests_proxies
+        self._proxies = build_requests_proxies(
+            proxy_type, proxy_host, int(proxy_port or 0),
+            proxy_username, proxy_password,
+        )
         self._dbx: dropbox.Dropbox | None = None
 
         self._authenticate()
@@ -132,7 +144,7 @@ class DropboxSession:
                     app_key=self._app_key,
                     app_secret=self._app_secret or None,
                 )
-                self._apply_user_agent(self._dbx)
+                self._apply_session_overrides(self._dbx)
                 # Validate / refresh
                 try:
                     self._dbx.users_get_current_account()
@@ -145,7 +157,7 @@ class DropboxSession:
                     )
             elif access_token:
                 self._dbx = dropbox.Dropbox(oauth2_access_token=access_token)
-                self._apply_user_agent(self._dbx)
+                self._apply_session_overrides(self._dbx)
                 try:
                     self._dbx.users_get_current_account()
                     log.debug("Dropbox: authenticated with cached access token")
@@ -199,17 +211,16 @@ class DropboxSession:
             app_key=self._app_key,
             app_secret=self._app_secret or None,
         )
-        self._apply_user_agent(self._dbx)
+        self._apply_session_overrides(self._dbx)
 
         self._save_tokens(oauth_result.access_token, oauth_result.refresh_token)
         log.info("Dropbox: authorization successful, tokens saved")
 
-    @staticmethod
-    def _apply_user_agent(dbx) -> None:
-        """Override the underlying requests.Session User-Agent so the
-        SDK doesn't send ``OfficialDropboxPythonSDKv2/x.y.z`` as an
-        Axross fingerprint. Best-effort: private attribute; skipped
-        silently when the dropbox SDK layout changes.
+    def _apply_session_overrides(self, dbx) -> None:
+        """Override the underlying requests.Session: set the uniform
+        User-Agent (per docs/OPSEC.md #4) AND the proxy dict if one
+        is configured on this profile. Best-effort: private attribute;
+        skipped silently when the dropbox SDK layout changes.
         """
         from core.client_identity import HTTP_USER_AGENT
         for attr in ("_session", "session"):
@@ -217,6 +228,8 @@ class DropboxSession:
             if sess is not None and hasattr(sess, "headers"):
                 try:
                     sess.headers["User-Agent"] = HTTP_USER_AGENT
+                    if self._proxies:
+                        sess.proxies = dict(self._proxies)
                 except Exception:  # noqa: BLE001 — defensive
                     continue
                 return
@@ -540,6 +553,80 @@ class DropboxSession:
             dbx.files_copy_v2(self._norm(src), self._norm(dst))
         except Exception as exc:
             raise OSError(f"Dropbox copy {src} -> {dst} failed: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # Dropbox-specific verbs (slice 5 of API_GAPS)
+    # ------------------------------------------------------------------
+
+    def shared_link_create(self, path: str, *,
+                           public: bool = True,
+                           short: bool = False) -> str:
+        """Create (or fetch existing) shared-link URL for ``path``.
+
+        ``public=True`` makes the link viewable by anyone with the
+        URL (Dropbox default). For team-only links, set False (this
+        helper simply forwards Dropbox's ``visibility`` param).
+
+        ``short`` requests a ``short_url`` instead of the full
+        ``https://www.dropbox.com/scl/...`` form when available.
+
+        Re-uses an existing link if one is already attached to the
+        path (Dropbox's ``create_shared_link_with_settings`` errors
+        with ``shared_link_already_exists`` otherwise — we map that
+        to a ``list_shared_links`` lookup).
+        """
+        from dropbox.sharing import (
+            SharedLinkSettings, RequestedVisibility,
+        )
+        from dropbox.exceptions import ApiError
+        dbx = self._ensure_connected()
+        norm = self._norm(path)
+        vis = RequestedVisibility.public if public \
+            else RequestedVisibility.team_only
+        try:
+            link = dbx.sharing_create_shared_link_with_settings(
+                norm, settings=SharedLinkSettings(requested_visibility=vis),
+            )
+            return getattr(link, "url", "") or ""
+        except ApiError as exc:
+            # If a link already exists, look it up + return that one.
+            err_text = str(exc)
+            if "shared_link_already_exists" in err_text:
+                existing = dbx.sharing_list_shared_links(
+                    path=norm, direct_only=True,
+                )
+                if existing.links:
+                    return existing.links[0].url
+            raise OSError(f"Dropbox shared_link_create({path}): {exc}") from exc
+
+    def shared_link_revoke(self, url: str) -> None:
+        """Revoke a previously-issued shared link by URL."""
+        dbx = self._ensure_connected()
+        try:
+            dbx.sharing_revoke_shared_link(url)
+        except Exception as exc:  # noqa: BLE001
+            raise OSError(f"Dropbox shared_link_revoke: {exc}") from exc
+
+    def account_info(self) -> dict:
+        """Return basic account metadata (display_name, email,
+        account_type, country) plus storage usage. Useful for
+        ``axross.docs("dropbox")`` style what-am-I-connected-as
+        sanity checks."""
+        dbx = self._ensure_connected()
+        acct = dbx.users_get_current_account()
+        usage = dbx.users_get_space_usage()
+        out = {
+            "account_id": acct.account_id,
+            "display_name": acct.name.display_name if acct.name else "",
+            "email": acct.email,
+            "country": getattr(acct, "country", "") or "",
+            "used_bytes": usage.used,
+            "allocation_bytes": getattr(
+                getattr(usage.allocation, "get_individual", lambda: None)(),
+                "allocated", 0,
+            ) if hasattr(usage.allocation, "get_individual") else 0,
+        }
+        return out
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return Dropbox's content_hash.

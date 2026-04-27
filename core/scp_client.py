@@ -447,6 +447,77 @@ class SCPSession:
             )
         return output
 
+    def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = 30.0,
+        stdin: bytes | None = None,
+        stdout_cap: int = 1024 * 1024,
+        stderr_cap: int = 64 * 1024,
+        env: dict[str, str] | None = None,
+    ) -> "ExecResult":
+        """Public ``exec`` surface — same shape as ``SSHSession.exec``.
+
+        SCP backend already runs every primitive through paramiko's
+        ``exec_command`` (the SCP wire-protocol is just shell calls
+        wrapped around base64 streams). Re-exposing it as a first-class
+        verb means a script can do::
+
+            b = axross.open("scp_box")
+            r = b.exec("uptime").check()
+            print(r.stdout.decode())
+
+        without dropping to ``b._exec_raw`` (private). Implemented in
+        terms of paramiko's stream API so we can cap stdout/stderr and
+        pipe stdin in, just like ``SSHSession.exec``.
+        """
+        from models.exec_result import ExecResult
+        if not self._client:
+            raise OSError("SCP exec: not connected")
+        if env:
+            import re as _re
+            for k, v in env.items():
+                if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                    raise OSError(
+                        f"SCP exec: env key {k!r} must match "
+                        "[A-Za-z_][A-Za-z0-9_]* (refusing to send)"
+                    )
+                if "\x00" in v or "\r" in v or "\n" in v:
+                    raise OSError(
+                        f"SCP exec: env value for {k!r} must not contain "
+                        "NUL/CR/LF (refusing to send). F39."
+                    )
+        with self._lock:
+            try:
+                stdin_chan, stdout_chan, stderr_chan = self._client.exec_command(
+                    cmd, timeout=timeout, environment=env or None,
+                )
+                if stdin:
+                    try:
+                        stdin_chan.write(stdin)
+                        stdin_chan.flush()
+                    except OSError:
+                        pass
+                    try:
+                        stdin_chan.channel.shutdown_write()
+                    except Exception:  # noqa: BLE001
+                        pass
+                stdout_buf = stdout_chan.read(stdout_cap + 1)
+                stderr_buf = stderr_chan.read(stderr_cap + 1)
+                rc = stdout_chan.channel.recv_exit_status()
+            except (paramiko.SSHException, socket.error) as exc:
+                raise OSError(f"SCP exec failed: {exc}") from exc
+        truncated_stdout = len(stdout_buf) > stdout_cap
+        truncated_stderr = len(stderr_buf) > stderr_cap
+        return ExecResult(
+            returncode=rc,
+            stdout=bytes(stdout_buf[:stdout_cap]),
+            stderr=bytes(stderr_buf[:stderr_cap]),
+            truncated_stdout=truncated_stdout,
+            truncated_stderr=truncated_stderr,
+        )
+
     # -- FileBackend interface -----------------------------------------------
 
     def list_dir(self, path: str) -> list[FileItem]:

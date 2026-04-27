@@ -481,11 +481,14 @@ class ConnectionManagerRegressionTests(unittest.TestCase):
         mgr.set_profile_resolver(resolver)
         self.assertIs(mgr._profile_resolver, resolver)
 
-    def test_warn_unsupported_proxy_emits_for_cloud(self) -> None:
+    def test_warn_unsupported_proxy_emits_for_kernel_protocols(self) -> None:
+        # Kernel-level mounts (NFS, iSCSI, MTP) cannot be tunneled
+        # through a user-space proxy and must emit a warning if one
+        # is configured.
         import logging as _log
         from core.connection_manager import _warn_unsupported_proxy
         prof = ConnectionProfile(
-            name="c", protocol="s3", host="h",
+            name="c", protocol="nfs", host="h",
             proxy_type="socks5", proxy_host="p", proxy_port=1080,
         )
         with mock.patch.object(_log.getLogger("core.connection_manager"),

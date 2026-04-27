@@ -49,6 +49,149 @@ class _SpooledWriter:
         self.close()
 
 
+class _FtpProxyMixin:
+    """Mixin for ftplib.FTP / FTP_TLS that routes BOTH the control
+    channel and PASV data channels through a SOCKS / HTTP proxy.
+
+    Why both: many production FTP servers (vsftpd, pure-ftpd) enable
+    anti-hijack-check and reject a data connection whose source IP
+    differs from the control channel's source. With the control
+    channel coming from the proxy IP and the data channel coming
+    direct from the client, the server refuses → the client hangs
+    waiting for the ``150 Opening data connection`` reply that
+    never arrives. Routing the data channel through the proxy too
+    keeps the source IPs identical.
+
+    Use the helper :func:`_ftp_connect_via_proxy` to bring an
+    instance up; ``ntransfercmd`` is replaced below so each PASV
+    transfer also dials through the proxy.
+    """
+
+    _axross_proxy: object = None
+    _axross_timeout: float = 15.0
+
+    def ntransfercmd(self, cmd, rest=None):
+        """Override: open the data socket through the proxy, then
+        delegate to the standard control-channel sequence.
+
+        ftplib's stock implementation is structurally:
+            host, port = self.makepasv()
+            conn = socket.create_connection((host, port), self.timeout, ...)
+            (if TLS) conn = self._wrap_socket(...)
+            resp = self.sendcmd(cmd)
+            ...
+        We rebuild that here, swapping the data-socket constructor.
+
+        ftplib's ``makepasv`` defends against FTP-bounce by replacing
+        the PASV-announced host with ``self.sock.getpeername()[0]``
+        unless ``trust_server_pasv_ipv4_address`` is set. Under a
+        proxy, ``getpeername()`` returns the *proxy's* IP — using
+        that would route the data connection to the proxy host
+        instead of the FTP server. Force-trust the announced host
+        for the proxy path; the proxy + the SSRF guard already
+        enforce a stricter invariant than the bounce check would.
+        """
+        from core.proxy import create_proxy_socket
+        size = None
+        if self.passiveserver:
+            self.trust_server_pasv_ipv4_address = True
+            host, port = self.makepasv()
+            # Belt + braces: when the announced host happens to be
+            # the proxy's own IP (mis-configured server), override it
+            # with the original ftp.host the user typed.
+            if host == self.sock.getpeername()[0]:
+                host = self.host
+            conn = create_proxy_socket(
+                self._axross_proxy, host, int(port),
+                timeout=float(self._axross_timeout),
+            )
+            try:
+                # FTP_TLS wraps the data socket in TLS post-connect.
+                if hasattr(self, "_wrap_socket"):
+                    try:
+                        conn = self._wrap_socket(conn, server_hostname=self.host)  # type: ignore[attr-defined]
+                    except TypeError:  # older signatures
+                        conn = self._wrap_socket(conn)  # type: ignore[attr-defined]
+                if rest is not None:
+                    self.sendcmd(f"REST {rest}")
+                resp = self.sendcmd(cmd)
+                if resp[0] == "2":
+                    resp = self.getresp()
+                if resp[0] != "1":
+                    from ftplib import error_reply
+                    raise error_reply(resp)
+            except Exception:
+                conn.close()
+                raise
+        else:
+            # Active mode is incompatible with outbound-only proxies
+            # (server would dial back to the client). The session
+            # ctor flips passive_server=True when a proxy is set, so
+            # we should never land here — but be loud if we do.
+            raise OSError(
+                "FTP active mode is incompatible with a proxy. "
+                "Use passive=True (the default).",
+            )
+
+        # Parse 'size=...' if present in the 1xx reply (used by REST).
+        if resp[:3] == "150":
+            try:
+                size = parse150(resp)  # type: ignore[name-defined]
+            except Exception:
+                size = None
+        return conn, size
+
+
+class _ProxyFTP(_FtpProxyMixin, FTP):
+    """FTP subclass with proxy-aware control + data channels."""
+
+
+class _ProxyFTP_TLS(_FtpProxyMixin, FTP_TLS):
+    """FTPS subclass with proxy-aware control + data channels."""
+
+
+# Imported lazily inside the override above; expose for parse150 hook.
+try:
+    from ftplib import parse150  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover — Python<3.x
+    parse150 = None  # type: ignore[assignment]
+
+
+def _ftp_connect_via_proxy(ftp, host: str, port: int, proxy_config, timeout: float):
+    """Connect a proxy-aware ``ftplib.FTP`` (or ``FTP_TLS``) through a
+    SOCKS / HTTP proxy.
+
+    ``ftplib.FTP.connect`` opens its own TCP socket via
+    ``socket.create_connection``. We bypass it: pre-build a
+    socksified socket via :func:`core.proxy.create_proxy_socket`,
+    assign it onto ``ftp.sock``, and run the server-greeting read
+    that ``ftp.connect`` would have done.
+
+    The caller is expected to have constructed *ftp* as a
+    :class:`_ProxyFTP` / :class:`_ProxyFTP_TLS` instance so subsequent
+    PASV data channels also tunnel through the proxy.
+    """
+    from core.proxy import create_proxy_socket
+    sock = create_proxy_socket(
+        proxy_config, host, int(port), timeout=float(timeout),
+    )
+    ftp.host = host
+    ftp.port = int(port)
+    ftp.sock = sock
+    ftp.af = sock.family
+    # Propagate the timeout onto ``ftp.timeout`` too. Without this,
+    # ftplib's data-channel sockets (PASV ``ntransfercmd``) inherit
+    # ``None`` and block indefinitely if the data port is unreachable.
+    ftp.timeout = float(timeout)
+    # Stash the proxy + timeout where the mixin can find them.
+    ftp._axross_proxy = proxy_config  # type: ignore[attr-defined]
+    ftp._axross_timeout = float(timeout)  # type: ignore[attr-defined]
+    ftp.file = sock.makefile("r", encoding=ftp.encoding)
+    # Read the 220 server greeting — same shape as ftplib.FTP.connect.
+    ftp.welcome = ftp.getresp()
+    return ftp.welcome
+
+
 class FtpSession:
     """FTP/FTPS backend implementing the FileBackend protocol.
 
@@ -64,6 +207,11 @@ class FtpSession:
         tls: bool = False,
         passive: bool = True,
         verify_tls: bool = True,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ):
         """Create an FTP / FTPS session.
 
@@ -87,8 +235,23 @@ class FtpSession:
         self._tls = tls
         self._passive = passive
         self._verify_tls = verify_tls
+        from core.proxy import ProxyConfig
+        self._proxy = ProxyConfig(
+            proxy_type=proxy_type or "none",
+            host=proxy_host,
+            port=int(proxy_port or 0),
+            username=proxy_username,
+            password=proxy_password,
+        )
         self._ftp: FTP | None = None
         self._has_mlsd = False
+
+        if self._proxy.enabled and not self._passive:
+            log.warning(
+                "FTP proxy + active mode is not supported (the server "
+                "would dial back to the client directly). Forcing PASV.",
+            )
+            self._passive = True
 
         self._connect()
 
@@ -108,11 +271,16 @@ class FtpSession:
                 context = ssl.create_default_context()
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
-            ftp = FTP_TLS(context=context)
+            ftp = _ProxyFTP_TLS(context=context) if self._proxy.enabled else FTP_TLS(context=context)
         else:
-            ftp = FTP()
+            ftp = _ProxyFTP() if self._proxy.enabled else FTP()
 
-        ftp.connect(self._host, self._port, timeout=15)
+        if self._proxy.enabled:
+            _ftp_connect_via_proxy(
+                ftp, self._host, self._port, self._proxy, timeout=15.0,
+            )
+        else:
+            ftp.connect(self._host, self._port, timeout=15)
         ftp.login(self._username, self._password)
 
         if self._tls and isinstance(ftp, FTP_TLS):
@@ -142,12 +310,21 @@ class FtpSession:
         except Exception as exc:
             log.debug("Could not harden FTP response decoder: %s", exc)
 
-        # Probe MLSD support
-        try:
-            list(ftp.mlsd("/", facts=["type"]))
-            self._has_mlsd = True
-        except Exception:
+        # Probe MLSD support — but only on direct (non-proxied)
+        # connections. Under a proxy, the data-channel socket
+        # ftplib opens for MLSD is direct (the proxy only tunnels
+        # the control channel), and a half-completed MLSD leaves
+        # leftover bytes on the control channel that corrupt every
+        # subsequent command. We always have NLST as a fallback;
+        # losing the MLSD optimisation under proxy is fine.
+        if self._proxy.enabled:
             self._has_mlsd = False
+        else:
+            try:
+                list(ftp.mlsd("/", facts=["type"]))
+                self._has_mlsd = True
+            except Exception:
+                self._has_mlsd = False
 
         self._ftp = ftp
         log.info(
@@ -412,6 +589,113 @@ class FtpSession:
         """FTP has no native server-side copy. Raises so server_ops
         falls back to stream copy."""
         raise OSError("FTP has no server-side copy primitive")
+
+    # ------------------------------------------------------------------
+    # FTP-specific verbs (round 2 of API_GAPS)
+    # ------------------------------------------------------------------
+
+    def features(self) -> list[str]:
+        """``FEAT`` — list every server-advertised feature
+        (``MLSD``, ``UTF8``, ``HASH``, ``EPSV``, ``SIZE``, …). Returns
+        each feature line stripped of leading whitespace."""
+        ftp = self._ensure_connected()
+        try:
+            resp = ftp.sendcmd("FEAT")
+        except error_perm as exc:
+            raise OSError(f"FTP FEAT not supported: {exc}") from exc
+        # Response shape:
+        #   211-Features:
+        #    UTF8
+        #    MLST type*;size*;modify*;
+        #    ...
+        #   211 End
+        out: list[str] = []
+        for line in resp.splitlines():
+            stripped = line.strip()
+            # Skip the framing 211 line(s).
+            if not stripped or stripped.startswith("211"):
+                continue
+            if stripped.startswith("Features:") or stripped.lower() == "end":
+                continue
+            out.append(stripped)
+        return out
+
+    def site(self, command: str) -> str:
+        """Send a raw ``SITE <command>`` and return the textual
+        response. ``SITE`` is the universal extension verb — most
+        servers accept ``SITE CHMOD``, ``SITE UMASK``, ``SITE IDLE``,
+        ``SITE HELP`` etc.
+
+        Refuses CR/LF in ``command`` so a tainted argument can't smuggle
+        a second wire command (FTP commands are CRLF-delimited).
+        """
+        if "\r" in command or "\n" in command:
+            raise ValueError(
+                "FTP site() command must not contain CR/LF (would smuggle "
+                "a second wire command)"
+            )
+        ftp = self._ensure_connected()
+        try:
+            return ftp.sendcmd(f"SITE {command}")
+        except error_perm as exc:
+            raise OSError(f"FTP SITE {command!r}: {exc}") from exc
+
+    def mlst(self, path: str) -> dict[str, str]:
+        """``MLST <path>`` — RFC 3659 facts for one entry. Returns the
+        facts as a dict (e.g. ``{"size": "4096", "type": "dir",
+        "modify": "20260426170000"}``).
+
+        Server may not support MLST (it's still optional in many
+        deployments — ``vsftpd`` enables it, others don't); falls
+        through to ``error_perm`` -> OSError.
+
+        F38: refuse CR/LF in ``path`` (FTP wire-frame is CRLF-
+        delimited; symmetry with ``site()``).
+        """
+        if "\r" in path or "\n" in path:
+            raise ValueError(
+                "FTP mlst() path must not contain CR/LF "
+                "(would smuggle a second wire command). F38."
+            )
+        ftp = self._ensure_connected()
+        try:
+            resp = ftp.sendcmd(f"MLST {path}")
+        except error_perm as exc:
+            raise OSError(f"FTP MLST {path}: {exc}") from exc
+        # Response:
+        #   250-Listing PATH
+        #    type=dir;size=4096;modify=20260426170000; PATH
+        #   250 End
+        for line in resp.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("250") or not stripped:
+                continue
+            # Each fact line ends with ``; <pathname>``; split on the
+            # last `; ` to peel that off, then parse facts.
+            facts_str = stripped
+            if "; " in stripped:
+                facts_str, _ = stripped.rsplit("; ", 1)
+                facts_str += ";"
+            return self._parse_mlsd_facts(facts_str)
+        return {}
+
+    def cwd(self, path: str) -> None:
+        """Raw ``CWD`` — change the server-side working directory.
+        Useful when a script wants to run a sequence of relative-path
+        operations; most callers should keep using absolute paths.
+
+        F38: refuse CR/LF in ``path`` (FTP wire-frame is CRLF-delim;
+        symmetry with ``site()`` / ``mlst()``).
+        """
+        if "\r" in path or "\n" in path:
+            raise ValueError(
+                "FTP cwd() path must not contain CR/LF. F38."
+            )
+        ftp = self._ensure_connected()
+        try:
+            ftp.cwd(path)
+        except error_perm as exc:
+            raise OSError(f"FTP CWD {path}: {exc}") from exc
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """FTP has no native checksum command. Some servers advertise

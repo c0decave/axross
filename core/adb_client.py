@@ -368,6 +368,11 @@ class AdbSession:
         adb_key_path: str = DEFAULT_ADB_KEY_PATH,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         transport_timeout: float = DEFAULT_TRANSPORT_TIMEOUT,
+        proxy_type: str = "none",
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
     ) -> None:
         if not ADB_SHELL_AVAILABLE:
             raise ImportError(
@@ -386,7 +391,21 @@ class AdbSession:
         self._conn_lock = threading.Lock()
         ensure_adb_key(adb_key_path)
         self._signer = _load_signer(adb_key_path)
+        from core.proxy import ProxyConfig, patched_create_connection
+        self._proxy = ProxyConfig(
+            proxy_type=proxy_type or "none",
+            host=proxy_host,
+            port=int(proxy_port or 0),
+            username=proxy_username,
+            password=proxy_password,
+        )
         if self._usb:
+            if self._proxy.enabled:
+                raise OSError(
+                    "ADB USB mode does not use TCP — proxy_* fields are "
+                    "incompatible with usb=True; remove the proxy or "
+                    "switch to TCP mode.",
+                )
             self._device = AdbDeviceUsb(  # type: ignore[misc]
                 serial=usb_serial or None,
                 default_transport_timeout_s=transport_timeout,
@@ -399,10 +418,18 @@ class AdbSession:
             )
             self._label = f"{host}:{port}"
         try:
-            self._device.connect(
-                rsa_keys=[self._signer],
-                auth_timeout_s=connect_timeout,
-            )
+            # adb_shell.transport.tcp_transport.TcpTransport.connect()
+            # uses ``socket.create_connection`` under the hood. The
+            # patched_create_connection scope routes that through the
+            # SOCKS / HTTP proxy. After connect returns, the socket is
+            # owned by adb_shell and stays patched — but the patch
+            # reverts here, which is fine because subsequent IO
+            # reuses the existing socket directly.
+            with patched_create_connection(self._proxy):
+                self._device.connect(
+                    rsa_keys=[self._signer],
+                    auth_timeout_s=connect_timeout,
+                )
         except Exception as exc:
             raise OSError(
                 f"ADB connect to {self._label} failed: {exc}",
@@ -647,6 +674,138 @@ class AdbSession:
 
     def open_version_read(self, path: str, version_id: str):
         raise OSError("ADB backend has no version history")
+
+    # ------------------------------------------------------------------
+    # ADB-specific verbs (API_GAPS round 2)
+    # ------------------------------------------------------------------
+
+    def shell(self, cmd: str) -> str:
+        """Run an arbitrary shell command on the connected device and
+        return its stdout. Caller is responsible for shlex-quoting any
+        substituted path.
+
+        Note: Android's adb-shell wire protocol does NOT reliably
+        propagate non-zero exit codes back to the client (the
+        ``adb shell`` CLI shells over a stream that mixes stdout +
+        stderr without a clean status). Callers branch on the
+        content of the returned string instead of expecting an
+        OSError on remote-side failure.
+        """
+        if "\r" in cmd or "\n" in cmd:
+            raise ValueError(
+                "ADB shell(cmd): refusing CR/LF (would smuggle a second "
+                "shell line)"
+            )
+        return self._shell(cmd)
+
+    def install_apk(self, local_apk_path: str, *,
+                    replace: bool = True,
+                    grant_permissions: bool = False) -> str:
+        """Install an APK on the device.
+
+        Pushes the APK to a temp path on the device (``/data/local/tmp/
+        axross-install-<pid>.apk``), runs ``pm install`` against it,
+        then deletes the temp file. ``replace`` adds ``-r`` (replace
+        existing app); ``grant_permissions`` adds ``-g`` (grant runtime
+        perms at install time).
+
+        Returns the ``pm install`` stdout — typical success line is
+        ``Success`` or ``Success: streamed install`` depending on
+        Android version.
+        """
+        import os as _os
+        if not _os.path.isfile(local_apk_path):
+            raise OSError(f"install_apk: not a file: {local_apk_path!r}")
+        # F35: PID alone collides when two threads inside the SAME
+        # process call install_apk() concurrently (the REPL + the
+        # GUI's transfer worker, for example). Add a per-call uuid4
+        # suffix; the remote tmp dir is sticky-bit'd on Android so
+        # collisions overwrite each other's APK before the second
+        # ``pm install`` runs.
+        import uuid as _uuid
+        remote = (
+            f"/data/local/tmp/axross-install-{_os.getpid()}-"
+            f"{_uuid.uuid4().hex[:12]}.apk"
+        )
+        self._push_file(local_apk_path, remote)
+        flags = []
+        if replace:
+            flags.append("-r")
+        if grant_permissions:
+            flags.append("-g")
+        cmd = f"pm install {' '.join(flags)} {self._shell_q(remote)}"
+        try:
+            return self._shell(cmd)
+        finally:
+            # Best-effort cleanup; ignore errors so a failed install
+            # still surfaces its real reason instead of a cleanup IOError.
+            try:
+                self._shell(f"rm -f {self._shell_q(remote)}")
+            except OSError:
+                pass
+
+    def screencap(self, *, quality: int = 100) -> bytes:
+        """Capture the screen as PNG bytes via ``screencap -p``.
+        Returns the raw PNG data — caller can write it to a file or
+        pass to PIL/cv2."""
+        # screencap -p writes PNG to stdout. adb-shell returns this
+        # as a UTF-8 string by default (which corrupts binary). Use
+        # the raw shell that returns bytes.
+        try:
+            with self._conn_lock:
+                return self._device.shell(
+                    "screencap -p",
+                    transport_timeout_s=self._transport_timeout,
+                    decode=False,
+                )
+        except Exception as exc:
+            raise OSError(
+                f"ADB screencap on {self._label}: {exc}",
+            ) from exc
+
+    def logcat_tail(self, *, lines: int = 200,
+                    filter_spec: str = "*:V") -> str:
+        """Read recent logcat entries and return them as text.
+
+        ``lines`` caps the output count via ``logcat -d -t <n>`` —
+        ``-d`` dumps the buffer and exits (no streaming), ``-t``
+        keeps the result bounded.
+
+        ``filter_spec`` is the standard logcat filter format,
+        e.g. ``"AxrossTag:D *:S"`` for tag-filtering. Default
+        ``"*:V"`` captures everything down to verbose.
+        """
+        if "\r" in filter_spec or "\n" in filter_spec:
+            raise ValueError(
+                "logcat_tail: filter_spec must not contain CR/LF"
+            )
+        n = max(1, int(lines))
+        return self._shell(f"logcat -d -t {n} {self._shell_q(filter_spec)}")
+
+    def pm_list(self, *, system: bool = True,
+                user: bool = True) -> list[str]:
+        """List installed package names via ``pm list packages``.
+        ``system=False`` excludes pre-installed system apps,
+        ``user=False`` excludes user-installed ones (almost never
+        useful but the flag exists for symmetry).
+
+        Returns a sorted list of package names (e.g.
+        ``["com.android.chrome", "com.android.settings", ...]``).
+        """
+        flags = []
+        if not system:
+            flags.append("-3")   # third-party only (excludes system)
+        if not user and not system:
+            return []
+        if not user and system:
+            flags.append("-s")   # system only
+        out = self._shell(f"pm list packages {' '.join(flags)}".strip())
+        # Each line is "package:com.foo.bar".
+        return sorted(
+            line.partition(":")[2].strip()
+            for line in out.splitlines()
+            if line.startswith("package:")
+        )
 
     # ------------------------------------------------------------------
     # Teardown
