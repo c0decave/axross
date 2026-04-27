@@ -67,3 +67,4 @@ Only two places randomise by design: `secrets.token_hex(6)` for
 atomic temp files (already unavoidable — you need per-write
 uniqueness) and TLS session keys (protocol-mandated). Everything
 else aims for boring and uniform.
+
