@@ -1,0 +1,720 @@
+"""Proxy socket creation for tunneling SSH through SOCKS and HTTP proxies."""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import ipaddress
+import logging
+import os
+import socket
+import threading
+from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
+MAX_HTTP_CONNECT_HEADER = 8192
+
+# Serialises the ``socket.create_connection`` patch used by
+# :func:`patched_create_connection` so two threads patching for
+# different profiles can't see each other's replacement function.
+_CREATE_CONNECTION_LOCK = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard
+# ---------------------------------------------------------------------------
+
+# When the proxy host resolves to one of these network ranges, axross
+# by default refuses to route through it — that way an imported /
+# attacker-controlled profile can't silently make us proxy via the
+# cloud-metadata endpoint (AWS 169.254.169.254, GCP/Azure variants)
+# or the user's own loopback services (127.0.0.0/8).
+#
+# Users running axross from inside a private network genuinely need
+# to proxy through RFC1918 IPs — they opt in via
+# ``AXROSS_ALLOW_PRIVATE_PROXY=1``. The guard is a safety net, not a
+# hard wall; no backend protocol requires a proxy to RFC1918.
+_DENY_BY_DEFAULT = (
+    ipaddress.ip_network("127.0.0.0/8"),  # loopback
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local / AWS IMDS
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("10.0.0.0/8"),  # RFC1918
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),  # ULA
+    ipaddress.ip_network("0.0.0.0/8"),  # RFC5735 "this network"
+    ipaddress.ip_network("224.0.0.0/4"),  # multicast
+    ipaddress.ip_network("ff00::/8"),
+)
+
+
+def _resolve_ips(host: str) -> list[ipaddress._BaseAddress]:
+    """Return all IPs the host resolves to (v4 + v6). Empty if unknown."""
+    out: list[ipaddress._BaseAddress] = []
+    # Literal IPs first — skip DNS.
+    try:
+        return [ipaddress.ip_address(host)]
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return out
+    for info in infos:
+        sockaddr = info[4]
+        try:
+            out.append(ipaddress.ip_address(sockaddr[0]))
+        except ValueError:
+            continue
+    return out
+
+
+def _assert_proxy_host_not_private(host: str) -> None:
+    """Raise :class:`ConnectionError` if the proxy host is in a
+    deny-by-default range. Callers can opt in with
+    ``AXROSS_ALLOW_PRIVATE_PROXY=1``.
+    """
+    from core.security_mode import current_policy
+
+    if os.environ.get("AXROSS_ALLOW_PRIVATE_PROXY") == "1" and current_policy().allow_private_proxy:
+        return
+    ips = _resolve_ips(host)
+    if not ips:
+        # Failed to resolve — let the normal connect path surface the
+        # error; we don't want to second-guess DNS.
+        return
+    for ip in ips:
+        for net in _DENY_BY_DEFAULT:
+            if ip in net:
+                raise ConnectionError(
+                    f"Proxy host {host!r} resolves to {ip} which is in "
+                    f"the deny-by-default range {net}. Set "
+                    f"AXROSS_ALLOW_PRIVATE_PROXY=1 to override."
+                )
+
+
+@dataclass
+class ProxyConfig:
+    """Proxy configuration."""
+
+    proxy_type: str  # "none", "socks4", "socks5", "http"
+    host: str = ""
+    port: int = 0
+    username: str = ""
+    password: str = ""
+
+    def __post_init__(self) -> None:
+        self.proxy_type = (self.proxy_type or "none").lower()
+
+    @property
+    def enabled(self) -> bool:
+        return _proxy_enabled_or_raise(self.proxy_type, self.host)
+
+
+def _proxy_enabled_or_raise(proxy_type: str, host: str) -> bool:
+    """Return whether a proxy should be used, failing closed on
+    half-configured proxies.
+
+    ``proxy_type='none'`` is an explicit opt-out. Any other type means
+    the caller expects proxy routing; an empty host must not silently
+    become a direct connection.
+    """
+    ptype = (proxy_type or "none").lower()
+    if ptype == "none":
+        return False
+    if not host:
+        raise ValueError(f"proxy_type={ptype!r} requires proxy_host; refusing direct traffic.")
+    return True
+
+
+def _is_ipv6_literal(host: str) -> bool:
+    try:
+        socket.inet_pton(socket.AF_INET6, host)
+    except OSError:
+        return False
+    return True
+
+
+def _resolve_target_host(
+    host: str,
+    port: int,
+    family: int,
+) -> str:
+    """Resolve a host to a concrete address for a specific address family."""
+    try:
+        addr_infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise ConnectionError(f"Cannot resolve host {host!r}: {e}") from e
+    if not addr_infos:
+        raise ConnectionError(f"Cannot resolve host {host!r} for requested address family")
+    return addr_infos[0][4][0]
+
+
+def _validate_endpoint_host(host: str, label: str) -> None:
+    if not host:
+        raise ConnectionError(f"{label} must not be empty")
+    if any(ch in host for ch in ("\r", "\n", "\x00")):
+        raise ConnectionError(f"{label} contains invalid control characters")
+    if any(ch.isspace() for ch in host):
+        raise ConnectionError(f"{label} must not contain whitespace")
+
+
+def _validate_proxy_url_host(host: str) -> None:
+    """Validate a proxy host before embedding it in a URL authority."""
+    _validate_endpoint_host(host, "Proxy host")
+    if _is_ipv6_literal(host):
+        return
+    if any(
+        ch in host
+        for ch in (
+            "/",
+            "\\",
+            "@",
+            "?",
+            "#",
+            "[",
+            "]",
+            ":",
+            ";",
+            "'",
+            '"',
+            "`",
+            "$",
+            "&",
+            "|",
+            "(",
+            ")",
+            "<",
+            ">",
+        )
+    ):
+        raise ValueError(
+            "Proxy host contains delimiter characters; pass only the "
+            "hostname/IP and keep the port in the separate port field."
+        )
+
+
+def _validate_proxy_port(port: int) -> int:
+    """Return a validated proxy port.
+
+    Port ``0`` is used in profiles as "unset", but once a proxy host
+    is configured there is no sensible default. Refuse it centrally
+    so every transport path fails before opening a direct or malformed
+    connection.
+    """
+    try:
+        value = int(port)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Proxy port must be an integer; got {port!r}") from exc
+    if not (1 <= value <= 65535):
+        raise ValueError(
+            f"Proxy port must be in range 1..65535 when proxy_host is set; got {value}"
+        )
+    return value
+
+
+def _preferred_proxy_family(host: str, port: int) -> int:
+    """Pick a socket family that can reach the proxy itself."""
+    try:
+        addr_infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return socket.AF_INET6 if _is_ipv6_literal(host) else socket.AF_INET
+    if not addr_infos:
+        return socket.AF_INET
+    return addr_infos[0][0]
+
+
+def create_proxy_socket(
+    proxy: ProxyConfig,
+    target_host: str,
+    target_port: int,
+    timeout: float = 10.0,
+    family: int = socket.AF_UNSPEC,
+) -> socket.socket:
+    """Create a connected socket that tunnels through the proxy to the target.
+
+    Returns a socket suitable for passing to paramiko.Transport().
+
+    Raises:
+        ConnectionError: If proxy connection fails.
+        ImportError: If PySocks is not installed (for SOCKS proxies).
+    """
+    if not proxy.enabled:
+        raise ValueError("create_proxy_socket requires an enabled proxy config")
+    _validate_proxy_url_host(proxy.host)
+    _validate_endpoint_host(target_host, "Target host")
+    proxy = ProxyConfig(
+        proxy.proxy_type,
+        proxy.host,
+        _validate_proxy_port(proxy.port),
+        proxy.username,
+        proxy.password,
+    )
+    # SSRF guard: refuse to proxy through a deny-listed private /
+    # metadata address unless the user has explicitly opted in.
+    _assert_proxy_host_not_private(proxy.host)
+    if proxy.proxy_type in ("socks4", "socks5"):
+        return _create_socks_socket(proxy, target_host, target_port, timeout, family)
+    elif proxy.proxy_type == "http":
+        return _create_http_connect_socket(proxy, target_host, target_port, timeout, family)
+    else:
+        raise ValueError(f"Unknown proxy type: {proxy.proxy_type}")
+
+
+def _create_socks_socket(
+    proxy: ProxyConfig,
+    target_host: str,
+    target_port: int,
+    timeout: float,
+    family: int,
+) -> socket.socket:
+    """Create socket through SOCKS4/5 proxy using PySocks."""
+    import socks
+
+    socks_type = socks.SOCKS4 if proxy.proxy_type == "socks4" else socks.SOCKS5
+    resolved_target = target_host
+    rdns = proxy.proxy_type == "socks5"
+
+    if proxy.proxy_type == "socks4":
+        if family == socket.AF_INET6 or _is_ipv6_literal(target_host):
+            raise ConnectionError("SOCKS4 does not support IPv6 targets; use SOCKS5 instead")
+        # SOCKS4a can resolve hostnames remotely, but explicit family selection
+        # requires local resolution to an IPv4 literal.
+        rdns = family == socket.AF_UNSPEC
+
+    if family in (socket.AF_INET, socket.AF_INET6):
+        resolved_target = _resolve_target_host(target_host, target_port, family)
+        rdns = False
+
+    proxy_family = _preferred_proxy_family(proxy.host, proxy.port)
+    s = socks.socksocket(proxy_family, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    s.set_proxy(
+        socks_type,
+        proxy.host,
+        proxy.port,
+        rdns=rdns,
+        username=proxy.username or None,
+        password=proxy.password or None,
+    )
+
+    log.info(
+        "Connecting through %s proxy %s:%d to %s:%d",
+        proxy.proxy_type.upper(),
+        proxy.host,
+        proxy.port,
+        target_host,
+        target_port,
+    )
+
+    try:
+        s.connect((resolved_target, target_port))
+    except socket.timeout as exc:
+        s.close()
+        log.warning(
+            "Timeout (%.1fs) through %s proxy %s:%d -> %s:%d",
+            timeout,
+            proxy.proxy_type.upper(),
+            proxy.host,
+            proxy.port,
+            target_host,
+            target_port,
+        )
+        raise ConnectionError(
+            f"Timeout connecting through {proxy.proxy_type.upper()} proxy {proxy.host}:{proxy.port}"
+        ) from exc
+    except (OSError, socks.ProxyError) as e:
+        s.close()
+        log.warning(
+            "%s proxy %s:%d refused tunnel to %s:%d: %s",
+            proxy.proxy_type.upper(),
+            proxy.host,
+            proxy.port,
+            target_host,
+            target_port,
+            e,
+        )
+        raise ConnectionError(f"SOCKS proxy connection failed: {e}") from e
+
+    return s
+
+
+def _create_http_connect_socket(
+    proxy: ProxyConfig,
+    target_host: str,
+    target_port: int,
+    timeout: float,
+    family: int,
+) -> socket.socket:
+    """Create socket through HTTP CONNECT proxy."""
+    _validate_endpoint_host(proxy.host, "Proxy host")
+    _validate_endpoint_host(target_host, "Target host")
+    # Resolve proxy address (supports IPv4 and IPv6 proxy hosts)
+    try:
+        proxy_addrs = socket.getaddrinfo(
+            proxy.host, proxy.port, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
+    except socket.gaierror as e:
+        raise ConnectionError(f"Cannot resolve proxy host {proxy.host!r}: {e}") from e
+    if not proxy_addrs:
+        raise ConnectionError(f"Cannot resolve proxy host: {proxy.host}")
+
+    # Try each resolved address
+    last_error: Exception | None = None
+    sock: socket.socket | None = None
+
+    for af, socktype, proto, canonname, sockaddr in proxy_addrs:
+        s: socket.socket | None = None
+        try:
+            s = socket.socket(af, socktype, proto)
+            s.settimeout(timeout)
+            s.connect(sockaddr)
+            sock = s
+            break
+        except OSError as e:
+            last_error = e
+            if s is not None:
+                s.close()
+
+    if sock is None:
+        log.warning(
+            "Cannot reach HTTP proxy %s:%d: %s",
+            proxy.host,
+            proxy.port,
+            last_error,
+        )
+        raise ConnectionError(
+            f"Cannot connect to HTTP proxy {proxy.host}:{proxy.port}: {last_error}"
+        ) from last_error
+
+    connect_host = target_host
+    if family in (socket.AF_INET, socket.AF_INET6):
+        connect_host = _resolve_target_host(target_host, target_port, family)
+
+    # Format target for CONNECT — bracket IPv6 literals
+    if _is_ipv6_literal(connect_host):
+        connect_target = f"[{connect_host}]:{target_port}"
+    else:
+        connect_target = f"{connect_host}:{target_port}"
+
+    # Build CONNECT request
+    headers = f"CONNECT {connect_target} HTTP/1.1\r\nHost: {connect_target}\r\n"
+
+    if proxy.username:
+        creds = base64.b64encode(f"{proxy.username}:{proxy.password}".encode()).decode()
+        headers += f"Proxy-Authorization: Basic {creds}\r\n"
+
+    headers += "\r\n"
+
+    log.info("HTTP CONNECT to %s through %s:%d", connect_target, proxy.host, proxy.port)
+
+    try:
+        sock.sendall(headers.encode("ascii"))
+
+        # Read until the end of headers without consuming tunnel payload bytes.
+        response = b""
+        while b"\r\n\r\n" not in response and len(response) < MAX_HTTP_CONNECT_HEADER:
+            chunk = sock.recv(1)
+            if not chunk:
+                break
+            response += chunk
+
+        if b"\r\n\r\n" not in response:
+            sock.close()
+            raise ConnectionError("HTTP CONNECT returned an incomplete or oversized header")
+
+        response_text = response.decode("ascii", errors="replace")
+        status_line = response_text.split("\r\n")[0]
+        status_parts = status_line.split(" ", 2)
+
+        if len(status_parts) < 2 or status_parts[1] != "200":
+            sock.close()
+            raise ConnectionError(f"HTTP CONNECT failed: {status_line}")
+
+        log.debug("HTTP CONNECT established: %s", status_line)
+        return sock
+
+    except (socket.timeout, OSError) as e:
+        sock.close()
+        log.warning(
+            "HTTP CONNECT %s via %s:%d failed: %s",
+            connect_target,
+            proxy.host,
+            proxy.port,
+            e,
+        )
+        raise ConnectionError(f"HTTP CONNECT failed: {e}") from e
+
+
+def build_requests_proxies(
+    proxy_type: str,
+    host: str,
+    port: int,
+    username: str = "",
+    password: str = "",
+) -> dict[str, str]:
+    """Build a ``requests``-style proxies dict from ProxyConfig fields.
+
+    The returned dict assigns to ``requests.Session().proxies`` and
+    works for any HTTP-based backend: WebDAV, OneDrive, Dropbox,
+    Exchange, WinRM, Azure (via custom transport), even boto3 (via
+    ``BotoConfig(proxies=...)``).
+
+    Returns ``{}`` when no proxy is configured. SOCKS5 uses the
+    ``socks5h://`` scheme so DNS resolution happens at the proxy
+    side — this matches how ``create_proxy_socket`` handles SOCKS5
+    via PySocks (``rdns=True``).
+
+    Routes through the SSRF guard so the requests path gets the same
+    deny-list as ``create_proxy_socket``.
+    """
+    proxy_type = (proxy_type or "none").lower()
+    if not _proxy_enabled_or_raise(proxy_type, host):
+        return {}
+    _validate_proxy_url_host(host)
+    port = _validate_proxy_port(port)
+    _assert_proxy_host_not_private(host)
+    if proxy_type == "http":
+        scheme = "http"
+    elif proxy_type == "socks4":
+        scheme = "socks4"
+    elif proxy_type == "socks5":
+        scheme = "socks5h"  # 'h' = remote DNS via the proxy (safer)
+    else:
+        raise ValueError(f"Unknown proxy type: {proxy_type}")
+
+    # Password without username is meaningless (no auth identity).
+    # Refuse it loudly rather than silently emit a credential-free URL
+    # — the alternative is the user thinking the proxy auth was set
+    # when in fact the password got dropped on the floor.
+    if password and not username:
+        raise ValueError(
+            "Proxy password set without a proxy username — refusing to "
+            "drop the credential silently. Set the username too, or "
+            "clear the password.",
+        )
+
+    from urllib.parse import quote
+
+    cred = ""
+    if username:
+        cred = quote(username, safe="")
+        if password:
+            cred += ":" + quote(password, safe="")
+        cred += "@"
+
+    # IPv6 literals must be bracketed in a URL so the port separator
+    # ``:`` isn't ambiguous against the address's own colons.
+    if _is_ipv6_literal(host):
+        host_part = f"[{host}]"
+    else:
+        host_part = host
+
+    url = f"{scheme}://{cred}{host_part}:{int(port)}"
+    return {"http": url, "https": url}
+
+
+def apply_session_proxy(session, profile_or_config) -> None:
+    """Set ``session.proxies`` on a ``requests.Session`` from either
+    a :class:`ProxyConfig` instance or a ConnectionProfile-like
+    object exposing ``proxy_type`` / ``proxy_host`` / ``proxy_port``
+    / ``proxy_username`` / ``get_proxy_password()``.
+
+    Idempotent: a no-op when the source has no proxy configured.
+    """
+    if session is None or not hasattr(session, "headers"):
+        return
+    if isinstance(profile_or_config, ProxyConfig):
+        cfg = profile_or_config
+        if not cfg.enabled:
+            return
+        proxies = build_requests_proxies(
+            cfg.proxy_type,
+            cfg.host,
+            cfg.port,
+            cfg.username,
+            cfg.password,
+        )
+    else:
+        # ConnectionProfile-like (has proxy_host, proxy_port, proxy_*).
+        prof = profile_or_config
+        ptype = getattr(prof, "proxy_type", "none") or "none"
+        host = getattr(prof, "proxy_host", "") or ""
+        if not _proxy_enabled_or_raise(ptype, host):
+            return
+        ppassword = ""
+        if hasattr(prof, "get_proxy_password"):
+            try:
+                ppassword = prof.get_proxy_password() or ""
+            except Exception:  # noqa: BLE001 — keyring failures shouldn't break connect
+                ppassword = ""
+        proxies = build_requests_proxies(
+            ptype,
+            host,
+            int(getattr(prof, "proxy_port", 0) or 0),
+            getattr(prof, "proxy_username", "") or "",
+            ppassword,
+        )
+    lock_requests_session_to_profile_proxy(session, proxies)
+
+
+def lock_requests_session_to_profile_proxy(
+    session,
+    proxies: dict[str, str] | None = None,
+) -> None:
+    """Make a requests-like session obey only the profile proxy.
+
+    ``requests`` honours ``HTTP_PROXY`` / ``HTTPS_PROXY`` from the process
+    environment by default. Axross profiles are explicit per-connection
+    routing decisions, so SDK sessions we control should not silently
+    inherit environment proxies. When *proxies* is given, attach that
+    profile proxy after disabling environment inheritance.
+    """
+    if session is None:
+        return
+    try:
+        session.trust_env = False
+    except Exception as exc:  # noqa: BLE001 - SDK-private objects vary
+        if proxies:
+            raise OSError(
+                "Proxy configured but the requests-like session refused "
+                "trust_env=False; refusing direct traffic."
+            ) from exc
+    if proxies:
+        if not hasattr(session, "proxies"):
+            raise OSError(
+                "Proxy configured but the requests-like session has no "
+                "'proxies' attribute; refusing direct traffic."
+            )
+        session.proxies = dict(proxies)
+
+
+def warn_unsupported_proxy(
+    protocol: str,
+    proxy_type: str = "none",
+    proxy_host: str = "",
+    reason: str = "",
+) -> None:
+    """Log a consistent warning when a backend receives proxy kwargs
+    it cannot honour.
+
+    This is intentionally non-fatal: some direct-construction paths
+    accept ``**kwargs`` for forward compatibility. A warning is enough
+    to stop users from believing their traffic is tunnelled when it is
+    not, while keeping old scripts from breaking merely because they
+    passed a shared kwargs dict.
+    """
+    if (proxy_type or "none").lower() == "none" and not proxy_host:
+        return
+    detail = f" {reason}" if reason else ""
+    log.warning(
+        "%s backend does not support SOCKS/HTTP proxy tunnelling in "
+        "axross; proxy_type=%r proxy_host=%r will be ignored.%s",
+        protocol,
+        proxy_type,
+        proxy_host,
+        detail,
+    )
+
+
+@contextlib.contextmanager
+def patched_create_connection(profile_or_config):
+    """Temporarily override ``socket.create_connection`` so it routes
+    through the proxy.
+
+    Use as a context manager around a third-party library call that
+    internally uses :func:`socket.create_connection` and exposes no
+    other proxy hook (smbprotocol, adb-shell, …). Same scoping
+    discipline as :func:`core.smb_client._patched_gethostname`: a
+    process-global lock serialises the patch across threads.
+
+    Yields without patching when no proxy is configured.
+    """
+    proxy_cfg: "ProxyConfig | None" = None
+    if isinstance(profile_or_config, ProxyConfig):
+        if profile_or_config.enabled:
+            proxy_cfg = profile_or_config
+    else:
+        prof = profile_or_config
+        ptype = getattr(prof, "proxy_type", "none") or "none"
+        host = getattr(prof, "proxy_host", "") or ""
+        if _proxy_enabled_or_raise(ptype, host):
+            ppassword = ""
+            if hasattr(prof, "get_proxy_password"):
+                try:
+                    ppassword = prof.get_proxy_password() or ""
+                except Exception:  # noqa: BLE001
+                    ppassword = ""
+            proxy_cfg = ProxyConfig(
+                proxy_type=ptype,
+                host=host,
+                port=int(getattr(prof, "proxy_port", 0) or 0),
+                username=getattr(prof, "proxy_username", "") or "",
+                password=ppassword,
+            )
+    if proxy_cfg is None:
+        yield
+        return
+
+    proxy_cfg = ProxyConfig(
+        proxy_cfg.proxy_type,
+        proxy_cfg.host,
+        _validate_proxy_port(proxy_cfg.port),
+        proxy_cfg.username,
+        proxy_cfg.password,
+    )
+
+    with _CREATE_CONNECTION_LOCK:
+        original = socket.create_connection
+
+        def proxied(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
+            host, port = address
+            t = timeout if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT else 10.0
+            return create_proxy_socket(
+                proxy_cfg,
+                host,
+                int(port),
+                timeout=float(t),
+            )
+
+        socket.create_connection = proxied  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            socket.create_connection = original  # type: ignore[assignment]
+
+
+def create_direct_socket(
+    host: str,
+    port: int,
+    timeout: float = 10.0,
+    family: int = socket.AF_UNSPEC,
+) -> socket.socket:
+    """Create a direct TCP socket supporting IPv4 and IPv6.
+
+    Tries all resolved addresses, returning the first successful connection.
+    """
+    _validate_endpoint_host(host, "Target host")
+    try:
+        addr_infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise ConnectionError(f"Cannot resolve host {host!r}: {e}") from e
+    if not addr_infos:
+        raise ConnectionError(f"Cannot resolve host: {host}")
+
+    last_error: Exception | None = None
+    for af, socktype, proto, canonname, sockaddr in addr_infos:
+        s: socket.socket | None = None
+        try:
+            s = socket.socket(af, socktype, proto)
+            s.settimeout(timeout)
+            s.connect(sockaddr)
+            log.debug("Connected to %s (af=%s)", sockaddr, af)
+            return s
+        except OSError as e:
+            last_error = e
+            if s is not None:
+                s.close()
+
+    raise ConnectionError(f"Cannot connect to {host}:{port}: {last_error}")

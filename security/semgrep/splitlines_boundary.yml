@@ -1,0 +1,191 @@
+# Semgrep rules for PATTERN-001 — Line-Delimiter Pluralism Injection.
+#
+# Full pattern docs: docs/patterns/PATTERN-001-splitlines-boundary-trust-mismatch.md
+# Machine-readable:  security/patterns/splitlines-boundary-trust-mismatch.yaml
+#
+# Three tiers:
+#   ERROR    — splitlines() chained off git/subprocess stdout (always wrong).
+#   WARNING  — splitlines() on any read/stdout/stdin (almost always wrong if input is structured text).
+#   INFO     — splitlines() anywhere else (review at audit time).
+#
+# Run locally:
+#   semgrep --config security/semgrep/splitlines_boundary.yml --severity ERROR scripts/ security/ core/ axross/
+#
+# Run in CI on every PR; fail the build on ERROR.
+
+rules:
+  # ─── ERROR tier ─────────────────────────────────────────────────────────
+  - id: pattern-001-splitlines-on-git-subprocess
+    languages: [python]
+    severity: ERROR
+    message: |
+      `str.splitlines()` on git's stdout splits on \r, \v, \f, U+0085,
+      U+2028, U+2029 in addition to \n — but git only emits \n as a
+      structural delimiter. An attacker who commits content containing
+      bare \r bytes can forge fake diff headers and bypass content-based
+      scanners. Use `.split("\n")` instead.
+
+      PATTERN-001 / CWE-93.
+      docs/patterns/PATTERN-001-splitlines-boundary-trust-mismatch.md
+    metadata:
+      pattern: PATTERN-001
+      category: security
+      cwe: ["CWE-93", "CWE-444"]
+      confidence: HIGH
+      precedent: "axross"
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run([..., "git", ...], ...).stdout.splitlines()
+          - pattern: subprocess.check_output([..., "git", ...], ...).splitlines()
+          - pattern: subprocess.Popen([..., "git", ...], ...).stdout.read().splitlines()
+          - pattern: |
+              $X = subprocess.run([..., "git", ...], ...)
+              ...
+              $X.stdout.splitlines()
+          - pattern: |
+              $X = subprocess.check_output([..., "git", ...], ...)
+              ...
+              $X.splitlines()
+    fix: ".split(\"\\n\")"
+
+  # ─── WARNING tier ───────────────────────────────────────────────────────
+  - id: pattern-001-splitlines-on-subprocess-stdout
+    languages: [python]
+    severity: WARNING
+    message: |
+      `str.splitlines()` on subprocess output is almost always wrong if
+      the upstream emits structured text. splitlines() recognises 8+
+      line-boundary characters; the upstream typically emits exactly one
+      (usually \n or \r\n). An attacker who controls bytes between
+      delimiters can inject the "extra" delimiters to forge structural
+      metadata.
+
+      Verify what your subprocess emits, then `.split()` on that exact
+      delimiter. PATTERN-001 / CWE-93.
+    metadata:
+      pattern: PATTERN-001
+      category: security
+      cwe: ["CWE-93"]
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run(...).stdout.splitlines()
+          - pattern: subprocess.check_output(...).splitlines()
+          - pattern: |
+              $X = subprocess.run(...)
+              ...
+              $X.stdout.splitlines()
+          - pattern: |
+              $X = subprocess.check_output(...)
+              ...
+              $X.splitlines()
+
+  - id: pattern-001-splitlines-on-stdin
+    languages: [python]
+    severity: WARNING
+    message: |
+      `sys.stdin.read().splitlines()` is attacker-controlled by
+      definition for CLI tools that accept piped input. Split on the
+      expected delimiter (usually \n) so a single attacker-supplied
+      record cannot fan out into multiple "lines" that downstream code
+      treats as independently emitted.
+
+      PATTERN-001 / CWE-93.
+    metadata:
+      pattern: PATTERN-001
+      category: security
+      cwe: ["CWE-93"]
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: sys.stdin.read().splitlines()
+          - pattern: sys.stdin.readlines()      # implicit splitlines under the hood
+          - pattern: |
+              $X = sys.stdin.read()
+              ...
+              $X.splitlines()
+
+  - id: pattern-001-splitlines-on-file-read
+    languages: [python]
+    severity: WARNING
+    message: |
+      `Path(...).read_text().splitlines()` is safe iff the path is
+      project-internal config you wrote yourself; unsafe if the path
+      can be user/attacker-influenced (CLI arg, env-derived, fetched).
+
+      Confirm the file source, then split on its actual line
+      terminator. PATTERN-001.
+    metadata:
+      pattern: PATTERN-001
+      category: security
+      cwe: ["CWE-93"]
+      confidence: LOW
+    patterns:
+      - pattern-either:
+          - pattern: pathlib.Path(...).read_text(...).splitlines()
+          - pattern: Path(...).read_text(...).splitlines()
+          - pattern: open(...).read().splitlines()
+          - pattern: |
+              with open(...) as $F:
+                  ...
+                  $F.read().splitlines()
+
+  # ─── INFO tier ──────────────────────────────────────────────────────────
+  - id: pattern-001-splitlines-anywhere
+    languages: [python]
+    severity: INFO
+    message: |
+      `.splitlines()` recognises 8+ line-boundary characters. If the
+      source emits only \n or \r\n, prefer `.split()` on that exact
+      delimiter. Review the upstream contract before silencing this.
+
+      PATTERN-001 / docs/patterns/PATTERN-001-splitlines-boundary-trust-mismatch.md
+    metadata:
+      pattern: PATTERN-001
+      category: hygiene
+      confidence: LOW
+    pattern: $X.splitlines()
+
+  # ─── TAINT MODE — git output → splitlines() across local vars ─────────
+  - id: pattern-001-taint-git-stdout-to-splitlines
+    languages: [python]
+    severity: ERROR
+    message: |
+      Tainted git stdout reaches `.splitlines()`. git emits \n;
+      splitlines() oversplits on 8 boundaries. An attacker who commits
+      content with bare \r bytes can forge fake diff headers and
+      bypass content-based scanners.
+
+      PATTERN-001. Use `.split("\n")` (or
+      `security.diff_line_split.split_diff_stream` if you have it).
+    metadata:
+      pattern: PATTERN-001
+      category: security
+      cwe: ["CWE-93"]
+      confidence: HIGH
+      precedent: "axross"
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.run([..., "git", ...], ...).stdout
+              - pattern: subprocess.check_output([..., "git", ...], ...)
+              - pattern: subprocess.Popen([..., "git", ...], ...).stdout.read()
+    pattern-sinks:
+      - patterns:
+          - pattern: $X.splitlines()
+
+  # ─── POSITIVE — recommended replacement (informational) ──────────────────
+  - id: pattern-001-split-on-newline-is-recommended
+    languages: [python]
+    severity: INFO
+    message: |
+      `.split("\\n")` is the PATTERN-001-recommended replacement for
+      `.splitlines()` on git/subprocess/network streams. This rule is
+      INFO-level so reviewers can grep for the safe form when auditing.
+    metadata:
+      pattern: PATTERN-001
+      category: hygiene
+      confidence: HIGH
+    patterns:
+      - pattern: $X.split("\n")

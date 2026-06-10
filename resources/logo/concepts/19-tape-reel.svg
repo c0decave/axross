@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 80" role="img" aria-label="axross tape reel">
+  <title>axross — magnetic-tape reels with crossed tape (data transit, retro)</title>
+  <style>
+    .reel { fill: #0F172A; stroke: #14B8A6; stroke-width: 1.4; }
+    .hub { fill: #14B8A6; }
+    .tape { fill: none; stroke: #14B8A6; stroke-width: 2; stroke-linecap: round; }
+    @media (prefers-color-scheme: dark) {
+      .reel { fill: #F8FAFC; stroke: #14B8A6; }
+    }
+  </style>
+  <!-- left reel -->
+  <circle class="reel" cx="28" cy="40" r="22"/>
+  <circle class="hub" cx="28" cy="40" r="5"/>
+  <g stroke="#14B8A6" stroke-width="1.4">
+    <line x1="28" y1="20" x2="28" y2="60"/>
+    <line x1="8"  y1="40" x2="48" y2="40"/>
+    <line x1="14" y1="26" x2="42" y2="54"/>
+    <line x1="42" y1="26" x2="14" y2="54"/>
+  </g>
+  <!-- right reel -->
+  <circle class="reel" cx="100" cy="40" r="22"/>
+  <circle class="hub" cx="100" cy="40" r="5"/>
+  <g stroke="#14B8A6" stroke-width="1.4">
+    <line x1="100" y1="20" x2="100" y2="60"/>
+    <line x1="80"  y1="40" x2="120" y2="40"/>
+    <line x1="86"  y1="26" x2="114" y2="54"/>
+    <line x1="114" y1="26" x2="86"  y2="54"/>
+  </g>
+  <!-- tape crossing between the reels (forming an X) -->
+  <path class="tape" d="M48 32 Q64 36 80 48"/>
+  <path class="tape" d="M48 48 Q64 44 80 32"/>
+</svg>

@@ -1,0 +1,21 @@
+FROM debian:bookworm-slim
+
+ARG USERNAME=telnetuser
+ARG PASSWORD=telnet123
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xinetd telnetd coreutils && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -m -s /bin/bash ${USERNAME} && \
+    echo "${USERNAME}:${PASSWORD}" | chpasswd && \
+    mkdir -p /home/${USERNAME}/data/subdir /home/${USERNAME}/data/emptydir && \
+    echo "Hello from Telnet" > /home/${USERNAME}/data/readme.txt && \
+    echo "nested file" > /home/${USERNAME}/data/subdir/nested.txt && \
+    dd if=/dev/urandom of=/home/${USERNAME}/data/bigfile.bin bs=1k count=64 2>/dev/null && \
+    ln -s /home/${USERNAME}/data/readme.txt /home/${USERNAME}/data/link.txt && \
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+COPY telnetd.xinetd /etc/xinetd.d/telnet
+
+EXPOSE 23
+CMD ["/usr/sbin/xinetd", "-dontfork"]

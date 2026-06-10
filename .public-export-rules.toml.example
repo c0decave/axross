@@ -1,0 +1,56 @@
+# Sidecar configuration for scripts/export-public.py.
+#
+# Copy this file to `.public-export-rules.toml` and edit. The script
+# loads it (if present) and APPENDS to the inline defaults — it never
+# replaces them, so you can extend per project without forking the
+# script. To audit the active rule-set:
+#
+#   python3 scripts/export-public.py --list-config
+
+[forbidden]
+# Case-sensitive substrings. Any line containing one is rejected.
+substrings = [
+    # "my-company.internal",
+    # "team-alias@example.com",
+]
+
+# Python regexes (re.search, per line).
+regexes = [
+    # r"my-internal-pattern-\d+",
+]
+
+# File-extensions blocked by name (no content scan required).
+extensions = [
+    # ".my-internal-format",
+]
+
+# Exact basenames / suffix-paths blocked by name.
+filenames = [
+    # "internal-config.yaml",
+]
+
+[allowed]
+# Per-line escape hatch: any forbidden pattern hit on a line that ALSO
+# contains one of these is treated as a false-positive. Use this for
+# documented test fixtures and lab credentials.
+lab_patterns = [
+    # "fixture-token-1234",
+    # "test-customer-internal",
+]
+
+[gitignore]
+# Additional entries appended to .gitignore on full-export run.
+required = [
+    # "private-notes/",
+    # "scratch/",
+]
+
+[paranoid]
+# Enables a noisy pattern class that flags private IPs (RFC-1918),
+# internal TLDs (.internal/.corp/.lan/.intra/.local), and .onion
+# addresses. Off by default because tests/protocols use these
+# legitimately as fixtures. Turn on if you want maximum coverage and
+# are prepared to allowlist many fixtures.
+#
+# Equivalent to passing --paranoid on the CLI.
+enable = false

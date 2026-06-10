@@ -1,0 +1,26 @@
+FROM alpine:3.20
+
+ARG USERNAME=testuser
+ARG PASSWORD=testpass123
+ARG HOSTNAME=sshserver
+
+RUN apk add --no-cache openssh-server openssh-sftp-server && \
+    ssh-keygen -A && \
+    adduser -D -s /bin/sh ${USERNAME} && \
+    echo "${USERNAME}:${PASSWORD}" | chpasswd && \
+    mkdir -p /home/${USERNAME}/.ssh /home/${USERNAME}/data/subdir /home/${USERNAME}/data/emptydir && \
+    echo "Hello from ${HOSTNAME}" > /home/${USERNAME}/data/readme.txt && \
+    echo "Config file on ${HOSTNAME}" > /home/${USERNAME}/data/config.yml && \
+    echo "nested file" > /home/${USERNAME}/data/subdir/nested.txt && \
+    dd if=/dev/urandom of=/home/${USERNAME}/data/bigfile.bin bs=1M count=2 2>/dev/null && \
+    ln -s /home/${USERNAME}/data/readme.txt /home/${USERNAME}/data/link_to_readme && \
+    echo "${HOSTNAME}" > /home/${USERNAME}/hostname.txt && \
+    chmod 600 /home/${USERNAME}/data/config.yml && \
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    echo "Subsystem sftp /usr/lib/ssh/sftp-server" >> /etc/ssh/sshd_config && \
+    echo "PermitRootLogin no" >> /etc/ssh/sshd_config
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]

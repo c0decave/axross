@@ -1,0 +1,201 @@
+# Machine-readable companion to docs/patterns/PATTERN-001-splitlines-boundary-trust-mismatch.md
+#
+# Schema is project-local and intentionally simple. Consumers:
+#   - CI gates that want to inventory which attack classes are tracked
+#   - downstream auditors generating reports / dashboards
+#   - bandit / semgrep rule generators that compile YAML → engine rule
+#
+# The fields are stable; add new ones at the end, never reorder.
+
+id: PATTERN-001
+name: line-delimiter-pluralism-injection
+aliases:
+  - splitlines-boundary-trust-mismatch
+  - splitlines-bypass
+
+severity: high
+status: active
+discovered_in: axross (2026-05-30)
+attack_family: A9  # See SPEC.md § A9
+
+cwe:
+  - CWE-93   # CRLF Injection
+  - CWE-444  # Inconsistent Interpretation of HTTP Requests (Smuggling)
+  - CWE-707  # Improper Neutralization
+
+summary: |
+  A parser uses str.splitlines() (which recognises 8+ line-boundary
+  characters: \n, \r, \r\n, \v, \f, \x1c, \x1d, \x1e, U+0085, U+2028,
+  U+2029) to tokenise text from a source that emits exactly ONE
+  delimiter (most often \n or \r\n). An attacker who controls bytes
+  within a single emitter-record embeds the "extra" delimiters there;
+  the parser shatters that record into multiple fragments, each
+  interpreted as if independently emitted. Fragments can forge
+  structural metadata (per-file separators, frame markers,
+  exclusion-list headers) that downstream code trusts.
+
+trust_boundary: |
+  Emitter delimiter set ⊂ Parser delimiter set. The DIFFERENCE between
+  the two sets is the injection surface.
+
+affected_sources:
+  - format: unified-diff
+    emitter: git (show/diff/log -p)
+    emitter_delimiter: "\\n"
+    parser_oversplits_on: ["\\r", "\\v", "\\f", "\\x1c-\\x1e", "U+0085", "U+2028", "U+2029"]
+    real_world_bug: PATTERN-001
+
+  - format: syslog-rfc5424
+    emitter_delimiter: "\\n"
+    parser_oversplits_on: ["\\r", "\\v", "\\f", "U+2028", "U+2029"]
+    injection_target: "<PRI> header forge → severity / facility spoof"
+
+  - format: http
+    emitter_delimiter: "\\r\\n"
+    parser_oversplits_on: ["bare \\r", "bare \\n"]
+    injection_target: "request-line / header smuggling (CVE-2019-9512 family)"
+
+  - format: csv-rfc4180
+    emitter_delimiter: "\\r\\n outside quotes"
+    parser_oversplits_on: ["unquoted \\n / \\r in field"]
+    injection_target: "row forging"
+
+  - format: ndjson / jsonl
+    emitter_delimiter: "\\n"
+    parser_oversplits_on: ["\\r in stringified field"]
+    injection_target: "record forging"
+
+  - format: email-rfc5322
+    emitter_delimiter: "\\r\\n\\r\\n body separator"
+    parser_oversplits_on: ["bare \\n in header value"]
+    injection_target: "header injection (CVE-2017-7493 family)"
+
+  - format: container-stdout / k8s-log
+    emitter_delimiter: "\\n"
+    parser_oversplits_on: ["\\r in container stdout"]
+    injection_target: "audit-log evasion"
+
+  - format: python-logging
+    emitter_delimiter: "\\n per record"
+    parser_oversplits_on: ["\\r in user-controlled message field"]
+    injection_target: "extra-record forge → audit-log poisoning"
+
+indicators:
+  - pattern: ".splitlines()"
+    language: python
+    confidence: medium
+    note: |
+      Bare hit. Has to be reviewed in context: code that reads its
+      OWN config files is usually safe; code that reads any
+      non-self-controlled stream is usually NOT.
+
+  - pattern: "subprocess.{run,check_output,Popen}([..., 'git', ...]).stdout.splitlines()"
+    language: python
+    confidence: high
+    note: "Always wrong for git output. git emits \\n."
+
+  - pattern: "Path(...).read_text().splitlines()"
+    language: python
+    confidence: medium
+    note: "Safe iff the path is project-internal config; unsafe if it can be user/attacker-influenced."
+
+  - pattern: "sys.stdin.read().splitlines()"
+    language: python
+    confidence: high
+    note: "stdin is attacker-controlled by definition for CLI tools that accept piped input."
+
+mitigations:
+  primary:
+    name: use-emitter-delimiter
+    description: |
+      Replace .splitlines() with str.split() on the actual emitter
+      delimiter (most commonly "\n" or "\r\n"). Trailing empty string
+      from a final delimiter is harmless under most consumers; skip
+      it explicitly when in doubt.
+    code_example_python: |
+      # instead of:
+      for line in diff_text.splitlines():
+          ...
+      # use:
+      for line in diff_text.split("\n"):
+          ...
+
+  defense_in_depth:
+    name: content-line-discriminator
+    description: |
+      For diff-style parsers: also reject + lines carrying internal
+      CR (preserving the trailing-CRLF artefact for CRLF-source files).
+      Even if a future regression reintroduces splitlines(), this
+      guard keeps the bypass closed by forcing any metadata-state-
+      machine into its safe state.
+    code_example_python: |
+      def added_line_has_internal_cr(line: str) -> bool:
+          if not line.startswith("+"):
+              return False
+          payload = line[1:].removesuffix("\r")
+          return "\r" in payload
+
+  architectural:
+    name: contract-pinned-helper
+    description: |
+      Extract the splitting policy into a named helper module whose
+      docstring documents the forbidden-splitlines() rule. New code
+      that imports the helper inherits the safe behaviour; the naive
+      idiom (for line in diff.splitlines()) becomes a code-review-
+      visible cross-module change instead of a one-character edit.
+    code_example_python: |
+      # security/diff_line_split.py
+      def split_diff_stream(diff_text: str) -> list[str]:
+          return diff_text.split("\n")
+
+  ci_gate:
+    name: semgrep-rule
+    description: |
+      Enforce as machine-checked policy in CI.
+    path: security/semgrep/splitlines_boundary.yml
+
+detection_tools:
+  - tool: semgrep
+    rule_file: security/semgrep/splitlines_boundary.yml
+    coverage:
+      - "bare .splitlines() (warning)"
+      - "subprocess git stdout chain (error)"
+      - "Path.read_text().splitlines() (info)"
+
+  - tool: bandit
+    coverage: "none in 1.9 ships; custom plugin possible but semgrep is the cleaner integration point"
+
+  - tool: grep
+    one_liner: "grep -rnE '\\.splitlines\\(\\)' --include='*.py' ."
+    coverage: "all hits, manual triage required"
+
+  - tool: ast
+    description: |
+      A pure-Python AST scanner can match every Attribute node whose
+      `attr` is "splitlines" and whose value resolves (via a tiny
+      single-file dataflow pass) to a subprocess/file/network result.
+
+references:
+  - source: axross
+    doc: docs/patterns/PATTERN-001-splitlines-boundary-trust-mismatch.md
+  - source: axross
+    doc: SPEC.md
+    anchor: "A9"
+  - source: axross
+    commit: 8fad9cf
+    description: reproduce — full PoC + adversarial framing
+  - source: axross
+    commit: 7d82943
+    description: 1st-layer fix (splitlines → split('\\n') + inline CR-guard)
+  - source: axross
+    commit: d16f829
+    description: 2nd-layer fix (lift into security/diff_line_split.py)
+  - source: cpython
+    url: https://docs.python.org/3/library/stdtypes.html#str.splitlines
+    description: Authoritative list of recognised line boundaries
+  - source: mitre
+    url: https://cwe.mitre.org/data/definitions/93.html
+    description: CWE-93 CRLF Injection
+  - source: mitre
+    url: https://cwe.mitre.org/data/definitions/444.html
+    description: CWE-444 HTTP Request Smuggling

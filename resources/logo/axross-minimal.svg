@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" role="img" aria-label="axross shell prompt">
+  <title>axross — shell-prompt minimal</title>
+  <style>
+    .ink { fill: #0F172A; }
+    .accent { fill: #14B8A6; }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #F8FAFC; }
+    }
+    .mono { font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+            font-weight: 600; font-size: 36px; }
+    .cursor { animation: blink 1.1s steps(2, start) infinite; }
+    @keyframes blink { to { opacity: 0; } }
+  </style>
+  <text class="mono accent" x="12" y="44">$</text>
+  <text class="mono ink"    x="40" y="44">axross</text>
+  <rect class="accent cursor" x="190" y="18" width="14" height="32" rx="1"/>
+</svg>

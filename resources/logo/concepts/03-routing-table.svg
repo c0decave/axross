@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64" role="img" aria-label="axross routing">
+  <title>axross — routing arrows forming AX</title>
+  <style>
+    .ink { stroke: #0F172A; stroke-width: 2.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .accent { stroke: #14B8A6; }
+    @media (prefers-color-scheme: dark) { .ink { stroke: #F8FAFC; } }
+  </style>
+  <!-- 'A' shape as routing arrows: two arrows up, crossbar in -->
+  <g class="ink">
+    <path d="M8 56 L24 8 L40 56"/>
+    <path d="M14 36 L34 36"/>
+    <!-- arrowheads pointing up = packets traversing toward target -->
+    <path d="M20 14 L24 8 L28 14"/>
+    <!-- 'X' as crossing routes -->
+    <path class="accent" d="M52 12 L92 52"/>
+    <path class="accent" d="M92 12 L52 52"/>
+    <path class="accent" d="M86 48 L92 52 L88 46"/>
+    <path class="accent" d="M58 48 L52 52 L56 46"/>
+    <!-- subnets dots -->
+    <circle cx="52" cy="12" r="2.4" fill="#14B8A6" stroke="none"/>
+    <circle cx="92" cy="12" r="2.4" fill="#14B8A6" stroke="none"/>
+    <circle cx="52" cy="52" r="2.4" fill="#14B8A6" stroke="none"/>
+    <circle cx="92" cy="52" r="2.4" fill="#14B8A6" stroke="none"/>
+    <!-- dotted route hint -->
+    <path d="M40 56 L52 52" stroke-dasharray="2 3"/>
+  </g>
+  <text x="100" y="60" font-family="ui-monospace, monospace" font-size="8"
+        fill="#64748B" letter-spacing="1">RT</text>
+</svg>

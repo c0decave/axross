@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64" role="img" aria-label="axross quantum tunnel">
+  <title>axross — quantum-tunneling wave (proxy metaphor)</title>
+  <style>
+    .barrier { fill: #0F172A; opacity: 0.18; }
+    .wave { fill: none; stroke: #14B8A6; stroke-width: 2; stroke-linecap: round; }
+    .wave-faint { fill: none; stroke: #14B8A6; stroke-width: 1.2; stroke-linecap: round; opacity: 0.45; }
+    .axis { stroke: #0F172A; stroke-width: 0.6; opacity: 0.6; }
+    @media (prefers-color-scheme: dark) {
+      .axis { stroke: #F8FAFC; }
+      .barrier { fill: #F8FAFC; opacity: 0.18; }
+    }
+  </style>
+  <!-- the potential barrier in the middle -->
+  <rect class="barrier" x="58" y="14" width="14" height="36"/>
+  <!-- baseline -->
+  <line class="axis" x1="4" y1="32" x2="124" y2="32"/>
+  <!-- incoming wave (tall) -->
+  <path class="wave" d="M4 32 Q12 14 20 32 T36 32 T52 32"/>
+  <!-- attenuated wave inside barrier -->
+  <path class="wave-faint" d="M58 32 L72 32"/>
+  <!-- transmitted wave on the right (smaller amplitude) -->
+  <path class="wave" d="M72 32 Q80 24 88 32 T104 32 T120 32"/>
+  <!-- arrow tip -->
+  <path class="wave" d="M116 28 L120 32 L116 36"/>
+</svg>

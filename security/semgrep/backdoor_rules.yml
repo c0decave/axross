@@ -1,0 +1,59 @@
+rules:
+  - id: py-backdoor-exec-base64
+    languages: [python]
+    message: "Base64 decode used with exec/eval"
+    severity: WARNING
+    metadata:
+      category: backdoor
+      confidence: medium
+    patterns:
+      - pattern-either:
+          - pattern: exec(base64.b64decode($X))
+          - pattern: eval(base64.b64decode($X))
+          - pattern: exec(b64decode($X))
+          - pattern: eval(b64decode($X))
+
+  - id: py-backdoor-subprocess-network-tools
+    languages: [python]
+    message: "Subprocess invocation with common network tools"
+    severity: WARNING
+    metadata:
+      category: backdoor
+      confidence: low
+    pattern-regex: "(subprocess\\.(run|Popen|call)|os\\.system)\\([^\\)]*(curl|wget|nc|ncat|bash -i|powershell)"
+
+  - id: py-backdoor-pickle-loads
+    languages: [python]
+    message: "pickle.loads can enable remote code execution"
+    severity: WARNING
+    metadata:
+      category: risky
+      confidence: low
+    pattern: pickle.loads($X)
+
+  - id: js-backdoor-eval-base64
+    languages: [javascript, typescript]
+    message: "Eval/Function used with Base64 decode"
+    severity: WARNING
+    metadata:
+      category: backdoor
+      confidence: medium
+    pattern-regex: "(eval|Function)\\s*\\(.*(atob|Buffer\\.from\\([^,]+,\\s*['\"]base64['\"])"
+
+  - id: js-backdoor-child-process-net
+    languages: [javascript, typescript]
+    message: "child_process execution with network tooling"
+    severity: WARNING
+    metadata:
+      category: backdoor
+      confidence: low
+    pattern-regex: "child_process\\.(exec|execSync|spawn|spawnSync).*?(curl|wget|nc|ncat|bash -i|powershell)"
+
+  - id: go-backdoor-exec-network-tools
+    languages: [go]
+    message: "exec.Command with common network tooling"
+    severity: WARNING
+    metadata:
+      category: backdoor
+      confidence: low
+    pattern-regex: "exec\\.Command\\(.*(curl|wget|nc|ncat|bash -i|powershell)"

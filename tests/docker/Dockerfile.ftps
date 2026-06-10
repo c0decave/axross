@@ -1,0 +1,30 @@
+FROM stilliard/pure-ftpd:latest
+
+ARG USERNAME=ftpsuser
+ARG PASSWORD=ftps123
+
+# stilliard/pure-ftpd is a well-maintained pre-built image that handles
+# the vsftpd-in-container instabilities out of the box (TLS, PASV, user
+# setup via env vars). We keep it simple here: seed sample data under the
+# user's home and hand over the pre-baked entrypoint.
+#
+# Generate self-signed cert for TLS
+RUN openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+    -keyout /etc/ssl/private/pure-ftpd.pem \
+    -out   /etc/ssl/private/pure-ftpd.pem \
+    -subj "/CN=ftps-test" && \
+    chmod 600 /etc/ssl/private/pure-ftpd.pem && \
+    mkdir -p /home/${USERNAME}/data/subdir /home/${USERNAME}/data/emptydir && \
+    echo "Hello from FTPS" > /home/${USERNAME}/data/readme.txt && \
+    echo "nested file" > /home/${USERNAME}/data/subdir/nested.txt && \
+    dd if=/dev/urandom of=/home/${USERNAME}/data/bigfile.bin bs=1k count=64 2>/dev/null && \
+    ln -s /home/${USERNAME}/data/readme.txt /home/${USERNAME}/data/link.txt
+
+ENV PUBLICHOST=10.99.0.38 \
+    FTP_USER_NAME=${USERNAME} \
+    FTP_USER_PASS=${PASSWORD} \
+    FTP_USER_HOME=/home/${USERNAME} \
+    FTP_PASSIVE_PORTS=21100:21110 \
+    ADDED_FLAGS="--tls=1"
+
+EXPOSE 21 21100-21110

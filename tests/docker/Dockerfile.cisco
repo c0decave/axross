@@ -1,0 +1,31 @@
+FROM python:3.12-alpine
+
+# Tiny Cisco-IOS-flavoured Telnet daemon used by the live integration
+# suite (tests/test_protocols.py::TestCiscoTelnetLive). Stdlib-only —
+# no extra pip installs.
+#
+# Why a hand-written fake instead of a real IOS image:
+#   * Cisco IOS images are license-encumbered and can't be redistributed.
+#   * We only need parser/wire-protocol coverage, not switch fidelity.
+#   * Deterministic canned ``show`` output keeps the tests stable.
+#
+# Bind on TCP/23 — fixed in docker-compose.yml; never publish on the
+# host directly because the lab subnet is internal.
+
+WORKDIR /opt
+COPY cisco_fake.py /opt/cisco_fake.py
+
+# Defaults match the test fixtures in tests/test_protocols.py. Override
+# via env (CISCO_USERNAME / CISCO_PASSWORD / CISCO_ENABLE / CISCO_HOSTNAME)
+# at compose-time if a test wants a different identity.
+ENV CISCO_HOSTNAME=Switch \
+    CISCO_USERNAME=admin \
+    CISCO_PASSWORD=cisco123 \
+    CISCO_ENABLE=enablesecret \
+    CISCO_PORT=23 \
+    CISCO_BIND=0.0.0.0 \
+    CISCO_LOGLEVEL=INFO
+
+EXPOSE 23
+
+CMD ["python", "/opt/cisco_fake.py"]

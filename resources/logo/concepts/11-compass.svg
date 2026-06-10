@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="axross compass">
+  <title>axross — compass rose with 'X' overlay</title>
+  <style>
+    .ring { fill: none; stroke: #0F172A; stroke-width: 1.6; }
+    .needle-n { fill: #14B8A6; stroke: #0F172A; stroke-width: 1.0; stroke-linejoin: round; }
+    .needle-s { fill: #F8FAFC; stroke: #0F172A; stroke-width: 1.0; stroke-linejoin: round; }
+    .tick { stroke: #0F172A; stroke-width: 0.8; }
+    .cross { stroke: #14B8A6; stroke-width: 2.4; stroke-linecap: round; opacity: 0.55; }
+    @media (prefers-color-scheme: dark) {
+      .ring { stroke: #F8FAFC; }
+      .needle-s { fill: #0F172A; stroke: #F8FAFC; }
+      .tick { stroke: #F8FAFC; }
+    }
+  </style>
+  <circle class="ring" cx="48" cy="48" r="36"/>
+  <circle class="ring" cx="48" cy="48" r="30"/>
+  <!-- compass ticks every 30deg -->
+  <g class="tick">
+    <line x1="48" y1="12" x2="48" y2="20"/>
+    <line x1="48" y1="76" x2="48" y2="84"/>
+    <line x1="12" y1="48" x2="20" y2="48"/>
+    <line x1="76" y1="48" x2="84" y2="48"/>
+  </g>
+  <!-- the compass cardinals as rotated diamonds (N/E/S/W) -->
+  <polygon class="needle-n" points="48,16 54,48 48,42 42,48"/>
+  <polygon class="needle-s" points="48,80 54,48 48,54 42,48"/>
+  <polygon class="needle-s" points="80,48 48,54 54,48 48,42"/>
+  <polygon class="needle-n" points="16,48 48,54 42,48 48,42"/>
+  <!-- diagonal X overlay = "any-direction" -->
+  <line class="cross" x1="22" y1="22" x2="74" y2="74"/>
+  <line class="cross" x1="74" y1="22" x2="22" y2="74"/>
+</svg>

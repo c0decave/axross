@@ -1,0 +1,213 @@
+# axross — TFTP common-filename wordlist (~200 entries).
+# Comments start with '#'. Used by TftpSession.find_files() to probe
+# typical filenames exposed by routers, switches, PXE servers, embedded
+# devices and ISP gear. Sourced from public lists (SecLists Discovery/
+# TFTP, vendor advisories, common firmware-recovery docs). NOT exhaustive
+# — users can supply their own list to find_files(wordlist=<path>).
+
+# --- Router / switch configs (Cisco / IOS family) ---
+config.text
+running-config
+startup-config
+nvram:startup-config
+flash:running-config
+config.bin
+config-1
+config-2
+backup-config
+backup.cfg
+boot.cfg
+sysconfig
+defcfg.bin
+
+# --- Cisco IOS firmware images / common drop names ---
+c1700-y-mz.bin
+c2600-i-mz.bin
+c2950-i6q4l2-mz.bin
+c3550-i9q3l2-mz.bin
+c3725-adventerprisek9-mz.bin
+asa843-k8.bin
+asa924-k8.bin
+ios.bin
+firmware.bin
+
+# --- Switch / Layer-2 (Juniper, Brocade, Aruba, HP) ---
+juniper.conf
+juniper.conf.gz
+juniper-base
+hp_recovery.cfg
+arubaos.cfg
+brocade.cfg
+brocade.bin
+foundry.cfg
+
+# --- HP / Aruba access points ---
+ap-config.txt
+ap.cfg
+config.cfg
+
+# --- Mikrotik RouterOS ---
+routeros.npk
+backup.backup
+default.backup
+
+# --- Linksys / consumer routers ---
+linksys.bin
+linksys.cfg
+WRT54G.bin
+firmware.trx
+factory.bin
+
+# --- Yamaha / Polycom / Cisco IP-Phone provisioning (real-world TFTP target) ---
+SEPDEFAULT.cnf
+SEPDEFAULT.cnf.xml
+XMLDefault.cnf.xml
+SIPDefault.cnf
+000000000000.cfg
+ringlist.xml
+dialplan.xml
+configurationfile.xml
+000000000000-directory.xml
+phone1.cfg
+sip-phone.cfg
+
+# --- Polycom / VoIP firmware / config ---
+SoundPoint.tar
+spip300.tar
+sip.cfg
+phone1.tar.gz
+
+# --- Avaya / Mitel / NEC PBX provisioning ---
+ipphone.cfg
+46xxsettings.txt
+46xxsettings.xml
+nec_voipphone.cfg
+
+# --- VoIP (generic auto-provisioning paths) ---
+provisioning.xml
+provision.xml
+provisioning.cfg
+provision/cfg.xml
+
+# --- PXE / boot artifacts ---
+pxelinux.0
+ipxe.efi
+undionly.kpxe
+syslinux.cfg
+pxelinux.cfg/default
+boot.img
+boot.bin
+isolinux.bin
+ldlinux.sys
+
+# --- Linux kernel / initrd drops common on TFTP servers ---
+vmlinuz
+vmlinuz-amd64
+initrd.img
+initrd.gz
+boot/vmlinuz
+boot/initrd.img
+ramdisk.image.gz
+
+# --- Generic firmware / backup names (broad sweep) ---
+firmware
+firmware.img
+fw.bin
+fw_recovery.bin
+backup.tar.gz
+backup.zip
+recovery.bin
+upgrade.bin
+update.bin
+flash.bin
+image.bin
+image.elf
+core
+crashdump.txt
+
+# --- Common embedded "open" filenames ---
+hosts
+passwd
+shadow
+group
+inetd.conf
+fstab
+rc.local
+boot.ini
+ntldr
+bootmgr
+
+# --- IPMI / BMC / drac firmware drops ---
+drac.bin
+ipmi.bin
+bmc.bin
+
+# --- Surveillance camera / NVR provisioning ---
+cam.cfg
+camera.cfg
+nvr_cfg.bin
+hik_cfg.bin
+
+# --- Industrial / PLC ---
+plc.bin
+siemens.cfg
+profibus.cfg
+modbus.cfg
+
+# --- Generic logs (some appliances dump to TFTP) ---
+log.txt
+syslog
+debug.txt
+crash.log
+
+# --- Generic guesses / wildcard-friendly ---
+test
+test.txt
+admin
+admin.cfg
+network.cfg
+default
+default.cfg
+default.txt
+factory.cfg
+factory.txt
+backup
+backup.cfg
+backup.txt
+config
+config.txt
+config.xml
+config.json
+secrets
+secrets.txt
+secret.txt
+README
+readme.txt
+index.html
+
+# --- Vendor-namespaced (case sensitive on most servers) ---
+cisco/ios.bin
+cisco/c2900.bin
+cisco/asa.bin
+mikrotik/routeros.npk
+juniper/junos.tgz
+fortinet/fortios
+huawei/system.cc
+
+# --- Common short two-letter / number guesses (low-cost extra coverage) ---
+a.cfg
+b.cfg
+c.cfg
+1.cfg
+2.cfg
+01.cfg
+02.cfg
+
+# --- ISP-managed gateways (real auto-provisioning paths) ---
+inf/manifest
+inf/inf-1
+inf/inf-2
+ericsson.cfg
+zte.cfg
+zyxel.cfg
+fritzbox.cfg

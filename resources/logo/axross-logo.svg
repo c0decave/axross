@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="axross constellation">
+  <title>axross — constellation 'X' (star-map)</title>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+    <radialGradient id="star" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="40%" stop-color="#7DD3FC"/>
+      <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="96" height="96" fill="url(#bg)" rx="6"/>
+  <g stroke="#14B8A6" stroke-width="0.6" stroke-linecap="round" opacity="0.7">
+    <line x1="20" y1="20" x2="76" y2="76"/>
+    <line x1="76" y1="20" x2="20" y2="76"/>
+    <line x1="48" y1="48" x2="48" y2="14"/>
+    <line x1="48" y1="48" x2="84" y2="50"/>
+  </g>
+  <g fill="url(#star)">
+    <circle cx="20" cy="20" r="3.5"/>
+    <circle cx="76" cy="20" r="3"/>
+    <circle cx="48" cy="48" r="4.5"/>
+    <circle cx="20" cy="76" r="3"/>
+    <circle cx="76" cy="76" r="3.5"/>
+    <circle cx="48" cy="14" r="2.4"/>
+    <circle cx="84" cy="50" r="2.2"/>
+    <circle cx="32" cy="60" r="1.5"/>
+    <circle cx="62" cy="32" r="1.6"/>
+    <circle cx="14" cy="50" r="1.2"/>
+  </g>
+  <text x="48" y="92" text-anchor="middle"
+        font-family="ui-monospace, monospace" font-size="8" fill="#94A3B8" letter-spacing="2">AXROSS</text>
+</svg>

@@ -1,0 +1,24 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends tftpd-hpa && \
+    rm -rf /var/lib/apt/lists/*
+
+# Seed the TFTP root with a few files we can RRQ in tests. The
+# files are named to exercise the path-validator's allow-list
+# (alnum + dot + slash + dash + underscore).
+RUN mkdir -p /srv/tftp/configs && \
+    echo "Hello from TFTP" > /srv/tftp/readme.txt && \
+    printf 'config v1\nbackend=lab\n' > /srv/tftp/configs/dhcpd.conf && \
+    dd if=/dev/urandom of=/srv/tftp/firmware.bin bs=1k count=8 2>/dev/null && \
+    chown -R nobody:nogroup /srv/tftp && \
+    chmod -R a+rwX /srv/tftp
+
+EXPOSE 69/udp
+
+# tftpd-hpa runs in foreground via `--foreground`. ``--create`` lets
+# the lab tests exercise WRQ. ``--secure`` chroots into TFTP_DIRECTORY.
+CMD ["/usr/sbin/in.tftpd", \
+     "--foreground", "--listen", "--address", "0.0.0.0:69", \
+     "--secure", "--create", "--permissive", \
+     "/srv/tftp"]

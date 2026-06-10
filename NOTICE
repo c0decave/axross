@@ -1,0 +1,30 @@
+Axross
+Copyright 2026 Marco Lux
+
+This product includes software developed by Marco Lux.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+Axross is source-distributed under Apache-2.0 and dynamically imports the
+runtime dependencies listed in pyproject.toml and THIRD_PARTY_LICENSES.md.
+These dependencies are NOT bundled in the source tree; users install them via
+`pip install`.
+
+IMPORTANT: Pre-built PyInstaller bundles (dist/axross-slim, dist/axross-full,
+the AppImage) produced from this source tree statically include PyQt6, which
+is distributed by Riverbank Computing under the GNU General Public License,
+Version 3 (GPL-3.0) or a separate commercial license. When distributing those
+bundles, the combined binary is therefore redistributed under GPL-3.0 terms.
+The Axross source itself remains available under Apache-2.0, and users who
+wish to produce non-GPL binaries may rebuild against PySide6 (LGPL-3.0)
+instead of PyQt6.
+
+Per-dependency license attribution is maintained in THIRD_PARTY_LICENSES.md.

@@ -1,0 +1,28 @@
+FROM itsthenetwork/nfs-server-alpine:latest
+
+# itsthenetwork/nfs-server-alpine uses the kernel NFSv4 implementation
+# inside the container — far simpler and more robust than user-space
+# ganesha for a test lab. The image default exports /nfsshare.
+#
+# /nfsshare is mounted from a docker-managed volume by compose, so we
+# cannot seed sample data at image build time (the mount would hide it).
+# We seed at container start via an entrypoint shim, then hand over to
+# the image's upstream entrypoint.
+
+ENV SHARED_DIRECTORY=/nfsshare
+
+RUN printf '#!/bin/sh\n\
+set -e\n\
+if [ ! -f /nfsshare/readme.txt ]; then\n\
+    mkdir -p /nfsshare/subdir\n\
+    echo "Hello from NFS" > /nfsshare/readme.txt\n\
+    echo "nested file" > /nfsshare/subdir/nested.txt\n\
+    dd if=/dev/urandom of=/nfsshare/bigfile.bin bs=1k count=64 2>/dev/null\n\
+    chmod -R 777 /nfsshare\n\
+fi\n\
+exec /usr/bin/nfsd.sh "$@"\n' > /usr/local/bin/axross-nfs-start.sh && \
+    chmod +x /usr/local/bin/axross-nfs-start.sh
+
+EXPOSE 2049
+
+ENTRYPOINT ["/usr/local/bin/axross-nfs-start.sh"]

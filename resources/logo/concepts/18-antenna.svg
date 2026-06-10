@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 80" role="img" aria-label="axross antenna array">
+  <title>axross — phased-array antennas in cross pattern</title>
+  <style>
+    .mast { stroke: #0F172A; stroke-width: 2; stroke-linecap: round; }
+    .accent { stroke: #14B8A6; }
+    .wave { fill: none; stroke: #14B8A6; stroke-width: 1.2; opacity: 0.6; }
+    @media (prefers-color-scheme: dark) { .mast { stroke: #F8FAFC; } }
+  </style>
+  <!-- ground line -->
+  <line class="mast" x1="6" y1="68" x2="122" y2="68"/>
+  <!-- four antennas tilted to form an X -->
+  <g class="mast accent">
+    <line x1="32" y1="68" x2="22" y2="14"/>
+    <line x1="32" y1="68" x2="42" y2="14"/>
+    <line x1="96" y1="68" x2="86" y2="14"/>
+    <line x1="96" y1="68" x2="106" y2="14"/>
+  </g>
+  <!-- top dipole tips -->
+  <g fill="#14B8A6">
+    <circle cx="22" cy="14" r="2"/>
+    <circle cx="42" cy="14" r="2"/>
+    <circle cx="86" cy="14" r="2"/>
+    <circle cx="106" cy="14" r="2"/>
+  </g>
+  <!-- arc waves emanating between the two antenna pairs -->
+  <g class="wave">
+    <path d="M48 36 Q64 28 80 36"/>
+    <path d="M44 28 Q64 14 84 28"/>
+    <path d="M40 22 Q64 4 88 22"/>
+  </g>
+  <!-- subtle frequency tags -->
+  <g font-family="ui-monospace, monospace" font-size="6" fill="#64748B">
+    <text x="14" y="78">2.4G</text>
+    <text x="98" y="78">5G</text>
+  </g>
+</svg>
