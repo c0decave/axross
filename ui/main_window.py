@@ -502,6 +502,17 @@ class MainWindow(QMainWindow):
             self._load_recents()
         )  # Last connected profile names (max 8)
 
+        # Lazily-created, reused single archive-preview dock (Task A4).
+        # Content is transient per archive; the dock itself is created
+        # on first preview and re-targeted thereafter.
+        self._archive_dock = None
+        # Temp dirs created for single-member previews; cleaned on close.
+        self._archive_member_tempdirs: list[str] = []
+        # The most-recent single-member temp dir. Since the member viewer
+        # opens one file at a time, the previous one is reaped on the NEXT
+        # open (never immediately, in case a viewer still holds the file).
+        self._archive_last_member_tempdir: str | None = None
+
         self._setup_menubar()
         self._setup_toolbar()
         self._setup_central()
@@ -924,6 +935,361 @@ class MainWindow(QMainWindow):
         self._wire_dock_activity_indicators()
 
     # ------------------------------------------------------------------
+    # Archive preview dock (Task A4)
+    # ------------------------------------------------------------------
+    def open_archive_pane(self, path: str) -> None:
+        """Show *path* in the non-modal archive preview dock.
+
+        Creates a SINGLE right-area QDockWidget on first use and reuses
+        it for every subsequent archive — the listing is transient per
+        archive, so we just swap the dock's widget and retarget the
+        title rather than spawning a new dock each time. The dock is
+        closable / floatable (default ``QDockWidget`` features) and
+        registered in the Panels menu alongside the other docks so its
+        view/restore toggle stays consistent.
+
+        The hosted :class:`~ui.archive_pane.ArchivePaneWidget` emits
+        extraction signals; we wire them to the same QProgressDialog +
+        daemon-thread extraction flow as the file pane's right-click
+        "Entpacken…". The widget never extracts on its own.
+        """
+        from PyQt6.QtWidgets import QDockWidget
+
+        from ui.archive_pane import ArchivePaneWidget
+
+        basename = os.path.basename(path)
+        # ``on_open_member`` is left None; the open_member signal is
+        # wired below so the slot is the MainWindow's extractor rather
+        # than a pane-internal callback.
+        pane = ArchivePaneWidget(path, on_open_member=None)
+        pane.extract_all.connect(lambda p=path: self._archive_extract_all(p))
+        pane.extract_selected.connect(
+            lambda members, p=path: self._archive_extract_selected(p, members)
+        )
+        pane.extract_to.connect(lambda p=path: self._archive_extract_to(p))
+        pane.open_member.connect(lambda member, p=path: self._archive_open_member(p, member))
+
+        if self._archive_dock is None:
+            dock = QDockWidget(self)
+            dock.setAllowedAreas(
+                Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
+            )
+            self._archive_dock = dock
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+            self._register_archive_dock_view_action()
+        else:
+            dock = self._archive_dock
+            old = dock.widget()
+            if old is not None:
+                old.deleteLater()
+
+        dock.setWindowTitle(f"Archive: {basename}")
+        dock.setWidget(pane)
+        # ``_install_dock_titlebar`` constructs a fresh DockTitleBar each
+        # call, so this installs a new title bar carrying the new title.
+        self._install_dock_titlebar(dock, f"Archive: {basename}", "inbox")
+        dock.show()
+        dock.raise_()
+        if pane.load_error is not None:
+            log.info("Archive preview opened with load error for %s: %s", path, pane.load_error)
+
+    def _register_archive_dock_view_action(self) -> None:
+        """Add the archive dock's toggle to the Panels menu once.
+
+        Idempotent: safe to call again after a menu rebuild
+        (:meth:`_populate_dock_view_menu` clears the menu and re-adds the
+        static toggles, then calls back here). The dock's
+        ``toggleViewAction()`` is a stable, reused QAction, so we skip the
+        addAction if it's already present to avoid a duplicate entry."""
+        menu = getattr(self, "_dock_view_menu", None)
+        if menu is None or self._archive_dock is None:
+            return
+        action = self._archive_dock.toggleViewAction()
+        action.setText("&Archive Preview")
+        if action not in menu.actions():
+            menu.addAction(action)
+
+    # -- extraction-with-progress (shared with file_pane's pattern) -----
+    def _run_archive_extraction(
+        self,
+        archive_path: str,
+        target_dir: str,
+        members: list[str] | None,
+        *,
+        title: str,
+    ) -> None:
+        """Drive a daemon-thread extraction behind a QProgressDialog.
+
+        Mirrors :meth:`ui.file_pane.FilePaneWidget._extract_archive`:
+        the worker runs the (cancellable, self-cleaning) ``core.archive``
+        extractor while the GUI thread pumps events and watches the
+        Cancel button. ``members is None`` → ``extract`` (whole archive);
+        otherwise ``extract_members`` (partial). On success refreshes any
+        local file pane whose directory is the extraction parent; on
+        failure shows a non-crashing QMessageBox.
+        """
+        import threading
+
+        from PyQt6.QtWidgets import QProgressDialog
+
+        from core import archive as ARCH
+
+        arc_name = os.path.basename(archive_path)
+        progress = QProgressDialog(
+            f"Extracting {arc_name} → {os.path.basename(target_dir)}…",
+            "Cancel",
+            0,
+            0,
+            self,
+        )
+        progress.setWindowTitle(title)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(250)
+        progress.setValue(0)
+
+        done_event = threading.Event()
+        state: dict = {"ok": False, "count": 0, "error": None}
+
+        def _progress_cb(done: int, total: int, name: str) -> None:
+            if progress.wasCanceled():
+                raise ARCH.ExtractCancelled("user cancelled via progress dialog")
+
+        def _worker() -> None:
+            try:
+                if members is None:
+                    state["count"] = ARCH.extract(
+                        archive_path, target_dir, progress=_progress_cb
+                    )
+                else:
+                    state["count"] = ARCH.extract_members(
+                        archive_path, target_dir, members, progress=_progress_cb
+                    )
+                state["ok"] = True
+            except ARCH.ExtractCancelled:
+                state["error"] = "cancelled"
+            except ARCH.RarUnavailable as exc:
+                state["error"] = f"RAR support unavailable: {exc}"
+            except ARCH.UnsafeArchive as exc:
+                state["error"] = f"refused as unsafe: {exc}"
+            except NotImplementedError:
+                # Surfaced specially by the caller for partial 7z/RAR;
+                # re-flagged here so the message is precise.
+                state["error"] = "notimplemented"
+            except Exception as exc:  # noqa: BLE001
+                state["error"] = f"extraction failed: {exc}"
+            finally:
+                done_event.set()
+
+        t = threading.Thread(target=_worker, daemon=True, name=f"extract:{arc_name}")
+        t.start()
+        while not done_event.is_set():
+            QApplication.processEvents()
+            done_event.wait(0.05)
+        QApplication.processEvents()
+        progress.close()
+
+        if state["ok"]:
+            log.info(
+                "Extracted %s → %s (%d files)", archive_path, target_dir, state["count"]
+            )
+            self._refresh_panes_for_dir(os.path.dirname(target_dir))
+            QMessageBox.information(
+                self,
+                title,
+                f"Extracted {state['count']} files to\n{target_dir}",
+            )
+            return
+        if state["error"] == "cancelled":
+            log.info("Extraction cancelled: %s", archive_path)
+            return
+        if state["error"] == "notimplemented":
+            QMessageBox.information(
+                self,
+                title,
+                "Teil-Extraktion wird für dieses Format (7z/RAR) nicht "
+                "unterstützt — bitte 'Alles extrahieren' verwenden.",
+            )
+            return
+        QMessageBox.warning(
+            self,
+            title,
+            f"Could not extract {arc_name}:\n{state['error']}",
+        )
+
+    def _refresh_panes_for_dir(self, directory: str) -> None:
+        """Refresh any visible local file pane currently showing
+        *directory* so a fresh extraction appears without a manual
+        reload. Best-effort — pane refresh failures never propagate."""
+        from core import previews as PV
+
+        try:
+            target = os.path.realpath(directory)
+        except OSError:
+            target = directory
+        for pane in self._panes:
+            try:
+                if not PV._is_local_backend(pane.backend):
+                    continue
+                if os.path.realpath(pane.current_path) == target:
+                    pane.refresh()
+            except Exception as exc:  # noqa: BLE001 — never block on a pane
+                log.debug("Post-extract pane refresh skipped: %s", exc)
+
+    def _archive_extract_all(self, archive_path: str) -> None:
+        from core import archive as ARCH
+
+        parent = os.path.dirname(archive_path)
+        base = ARCH.strip_archive_extension(os.path.basename(archive_path))
+        try:
+            target = ARCH.auto_suffix_dir(parent, base)
+        except OSError as exc:
+            QMessageBox.warning(self, "Extract Archive", f"Cannot pick a target folder:\n{exc}")
+            return
+        self._run_archive_extraction(archive_path, target, None, title="Extract Archive")
+
+    def _archive_extract_selected(self, archive_path: str, members: list[str]) -> None:
+        from core import archive as ARCH
+
+        if not members:
+            QMessageBox.information(
+                self,
+                "Extract Selection",
+                "Keine Auswahl — bitte Dateien/Ordner im Baum auswählen.",
+            )
+            return
+        parent = os.path.dirname(archive_path)
+        base = ARCH.strip_archive_extension(os.path.basename(archive_path))
+        try:
+            target = ARCH.auto_suffix_dir(parent, base)
+        except OSError as exc:
+            QMessageBox.warning(self, "Extract Selection", f"Cannot pick a target folder:\n{exc}")
+            return
+        self._run_archive_extraction(
+            archive_path, target, members, title="Extract Selection"
+        )
+
+    def _archive_extract_to(self, archive_path: str) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        from core import archive as ARCH
+
+        parent = QFileDialog.getExistingDirectory(self, "Extract into folder")
+        if not parent:
+            return
+        base = ARCH.strip_archive_extension(os.path.basename(archive_path))
+        try:
+            target = ARCH.auto_suffix_dir(parent, base)
+        except OSError as exc:
+            QMessageBox.warning(self, "Extract Archive", f"Cannot pick a target folder:\n{exc}")
+            return
+        self._run_archive_extraction(archive_path, target, None, title="Extract Archive")
+
+    def _extract_single_member(self, archive_path: str, member_name: str) -> str | None:
+        """Extract ONE member to a fresh ``mkdtemp`` dir and return the
+        absolute path of the extracted file, or ``None`` (after showing
+        a non-crashing message) when it can't be produced.
+
+        Factored out of :meth:`_archive_open_member` so the extraction
+        half is unit-testable without spinning up a modal viewer.
+        7z/RAR single-member extraction is unsupported
+        (``NotImplementedError`` from ``extract_members``) → info
+        message.
+
+        Temp-dir lifecycle: the member viewer opens one file at a time,
+        so the PREVIOUS single-member temp dir is reaped here, on the
+        next open — never immediately after the prior viewer returns, in
+        case that viewer still holds the file open. Each dir is also
+        tracked in ``_archive_member_tempdirs`` as a close-time safety
+        net (deduped so ``closeEvent`` doesn't double-remove)."""
+        import tempfile as _tempfile
+
+        from core import archive as ARCH
+
+        self._reap_last_member_tempdir()
+        base = _tempfile.mkdtemp(prefix="axross-archive-")
+        # extract_members requires a non-existing target dir, so place
+        # the extraction in a child of the mkdtemp dir.
+        target = os.path.join(base, "member")
+        try:
+            ARCH.extract_members(archive_path, target, [member_name])
+        except NotImplementedError:
+            QMessageBox.information(
+                self,
+                "Open Member",
+                "Einzeldatei-Vorschau wird für dieses Format (7z/RAR) nicht "
+                "unterstützt — bitte 'Alles extrahieren' verwenden.",
+            )
+            return None
+        except (ARCH.RarUnavailable, ARCH.UnsafeArchive) as exc:
+            QMessageBox.warning(self, "Open Member", f"Could not open member:\n{exc}")
+            return None
+        except Exception as exc:  # noqa: BLE001 — never crash on a bad member
+            QMessageBox.warning(self, "Open Member", f"Could not open member:\n{exc}")
+            log.warning("Open archive member failed for %r: %s", member_name, exc)
+            return None
+
+        # Track for the close-time safety net (deduped) and mark as the
+        # current member temp dir so the NEXT open reaps it.
+        if base not in self._archive_member_tempdirs:
+            self._archive_member_tempdirs.append(base)
+        self._archive_last_member_tempdir = base
+        # The member name may include a directory prefix; resolve the
+        # actual extracted file path under the target dir.
+        extracted = os.path.join(target, member_name.replace("\\", "/"))
+        if not os.path.isfile(extracted):
+            # Fall back to the first regular file found under target.
+            extracted = None
+            for dirpath, _dirs, files in os.walk(target):
+                if files:
+                    extracted = os.path.join(dirpath, files[0])
+                    break
+        if extracted is None or not os.path.isfile(extracted):
+            QMessageBox.warning(self, "Open Member", "Extracted member not found on disk.")
+            return None
+        return extracted
+
+    def _archive_open_member(self, archive_path: str, member_name: str) -> None:
+        """Extract ONE member to a temp dir and open it in a read-only
+        viewer (image / hex / text dispatch shared with the file pane).
+        Extraction + failure handling live in
+        :meth:`_extract_single_member`; this wraps it with the modal
+        viewer open."""
+        from ui.file_pane import open_local_file_in_viewer
+
+        extracted = self._extract_single_member(archive_path, member_name)
+        if extracted is None:
+            return
+        open_local_file_in_viewer(self, extracted, read_only=True)
+
+    def _reap_last_member_tempdir(self) -> None:
+        """Remove the previous single-member preview temp dir, if any.
+
+        Called at the START of the next single-member open so we never
+        pull the file out from under a viewer that's still holding the
+        prior member. The dir is also dropped from the close-time
+        tracking list so ``closeEvent`` doesn't try to remove it twice."""
+        import shutil
+
+        prev = self._archive_last_member_tempdir
+        if prev is None:
+            return
+        self._archive_last_member_tempdir = None
+        shutil.rmtree(prev, ignore_errors=True)
+        try:
+            self._archive_member_tempdirs.remove(prev)
+        except ValueError:
+            pass
+
+    def _cleanup_archive_tempdirs(self) -> None:
+        """Remove every temp dir created for single-member previews."""
+        import shutil
+
+        for d in self._archive_member_tempdirs:
+            shutil.rmtree(d, ignore_errors=True)
+        self._archive_member_tempdirs.clear()
+        self._archive_last_member_tempdir = None
+
+    # ------------------------------------------------------------------
     # Tab-activity indicator: colour the tab label of any tabified dock
     # whose ``activity`` signal fired while it wasn't the raised tab.
     # Clears the moment the user raises that dock.
@@ -1019,6 +1385,13 @@ class MainWindow(QMainWindow):
             bm_toggle.setText("&Bookmark Sidebar")
             bm_toggle.setShortcut(QKeySequence("F12"))
             self._dock_view_menu.addAction(bm_toggle)
+        # The archive dock is created lazily (on first preview), so its
+        # toggle isn't part of the static rebuild above. Re-add it after
+        # any rebuild so the toggle survives. ``clear()`` only detaches
+        # actions from the menu (it doesn't delete the dock's reused
+        # toggleViewAction), and the register helper is idempotent.
+        if getattr(self, "_archive_dock", None) is not None:
+            self._register_archive_dock_view_action()
 
     def _setup_central(self) -> None:
         self._root_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -3407,5 +3780,6 @@ class MainWindow(QMainWindow):
         self._terminal_dock.shutdown()
         self._transfer_manager.shutdown()
         self._connection_manager.disconnect_all()
+        self._cleanup_archive_tempdirs()
         log.info("Cleanup complete")
         super().closeEvent(event)

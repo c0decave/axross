@@ -67,7 +67,7 @@ winrm = ["pywinrm>=0.4"]
 wmi = ["impacket>=0.11"]
 exchange = ["exchangelib>=5.0"]
 adb = ["adb-shell>=0.4"]
-archive = ["py7zr>=0.20"]
+archive = ["py7zr>=0.20", "rarfile>=4.0"]
 tftp = ["tftpy>=0.8"]
 postgres = ["psycopg[binary]>=3.1"]
 redis = ["redis>=5.0"]
@@ -95,6 +95,7 @@ all = [
     "dropbox>=12.0",
     "adb-shell>=0.4",
     "py7zr>=0.20",
+    "rarfile>=4.0",
     "tftpy>=0.8",
     "psycopg[binary]>=3.1",
     "redis>=5.0",
@@ -119,6 +120,7 @@ py-modules = ["main"]
 packages = [
     "axross",
     "core",
+    "security",
     "ui",
     "models",
     "examples",
