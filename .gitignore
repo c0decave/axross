@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+dist/
+# build/ catches PyInstaller work output, but the source files
+# for the bundled build (PyInstaller spec + AppImage resources)
+# live under build/ too and MUST be tracked. Ignore everything
+# under build/ by default, then explicitly un-ignore the tracked
+# source files.
+build/*
+!build/axross.spec
+!build/axross.desktop
+!build/axross.svg
+build-tmp/
+*.whl
+
+# Virtual environments
+.venv/
+.venv2/
+venv/
+env/
+
+# Scanner / tooling artifacts — output is ephemeral, regenerated
+# by security/run_analysis.sh, never committed.
+.scan-reports/
+.scan-reports-v2/
+security/reports/
+security/scanner_reports/
+security/security/
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+# SQLite ``:memory:`` is meant to be an in-memory marker but
+# ``sqlite_fs_client.py`` applies ``os.path.abspath`` to it,
+# materialising a real file named ``:memory:`` in whichever cwd
+# the test runs from. Filed as a follow-up; ignore the artifact
+# so worktree-clean gates aren't perpetually dirty.
+/:memory:
+
+# OAuth tokens (sensitive)
+*_token.json
+
+# Added by scripts/export-public.py — required-public-clean
+.codex/
+CLAUDE.md
+AGENTS.md
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bak
+*.pcap
+*.pcapng
+:memory:

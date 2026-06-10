@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 64" role="img" aria-label="axross tunnel">
+  <title>axross — tunnel motif (proxy / SOCKS)</title>
+  <style>
+    .line { fill: none; stroke: #0F172A; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .accent { stroke: #14B8A6; }
+    .node-fill { fill: #0F172A; }
+    @media (prefers-color-scheme: dark) {
+      .line { stroke: #F8FAFC; }
+      .node-fill { fill: #F8FAFC; }
+    }
+  </style>
+  <!-- left node cluster -->
+  <circle class="line" cx="12" cy="32" r="6"/>
+  <circle class="line" cx="22" cy="18" r="3"/>
+  <circle class="line" cx="22" cy="46" r="3"/>
+  <!-- right node cluster -->
+  <circle class="line" cx="84" cy="32" r="6"/>
+  <circle class="line" cx="74" cy="18" r="3"/>
+  <circle class="line" cx="74" cy="46" r="3"/>
+  <!-- tunnel constriction in the middle -->
+  <path class="line accent" d="M22 24 Q40 32 22 40"/>
+  <path class="line accent" d="M74 24 Q56 32 74 40"/>
+  <!-- through-line representing the proxied byte stream -->
+  <path class="line accent" d="M18 32 L78 32" stroke-dasharray="3 4"/>
+  <!-- arrow tip on the right -->
+  <path class="line accent" d="M74 28 L78 32 L74 36"/>
+</svg>

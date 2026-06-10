@@ -1,0 +1,21 @@
+FROM stilliard/pure-ftpd:latest
+
+ARG USERNAME=ftpuser
+ARG PASSWORD=ftp123
+
+# stilliard/pure-ftpd handles FTP cleanly without the vsftpd segfault
+# that plagues debian:bookworm-slim under rapid connects. Matches the
+# approach used for the FTPS container; keeping both on the same base
+# makes the lab predictable.
+RUN mkdir -p /home/${USERNAME}/data/subdir /home/${USERNAME}/data/emptydir && \
+    echo "Hello from FTP" > /home/${USERNAME}/data/readme.txt && \
+    echo "nested file" > /home/${USERNAME}/data/subdir/nested.txt && \
+    dd if=/dev/urandom of=/home/${USERNAME}/data/bigfile.bin bs=1k count=64 2>/dev/null
+
+ENV PUBLICHOST=10.99.0.30 \
+    FTP_USER_NAME=${USERNAME} \
+    FTP_USER_PASS=${PASSWORD} \
+    FTP_USER_HOME=/home/${USERNAME} \
+    FTP_PASSIVE_PORTS=30000:30010
+
+EXPOSE 21 30000-30010

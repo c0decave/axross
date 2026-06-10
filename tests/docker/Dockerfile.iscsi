@@ -1,0 +1,45 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        tgt \
+        iproute2 \
+        e2fsprogs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a 100 MB file-backed LUN and pre-format with ext4 so the client
+# can mount immediately without needing mkfs.
+RUN mkdir -p /backstores/fileio && \
+    dd if=/dev/zero of=/backstores/fileio/test_lun bs=1M count=100 && \
+    mkfs.ext4 -F -q /backstores/fileio/test_lun
+
+# tgtd configuration (read by tgt-admin --execute at startup)
+RUN mkdir -p /etc/tgt/conf.d && \
+    printf '<target iqn.2024-01.com.axross:test-target>\n\
+    backing-store /backstores/fileio/test_lun\n\
+    initiator-address ALL\n\
+</target>\n' > /etc/tgt/conf.d/iscsi.conf
+
+# tgtd by itself does NOT read /etc/tgt/conf.d/ — it needs tgt-admin to
+# apply the config after the daemon is listening. We wrap both in a small
+# entrypoint: start tgtd in the background, wait for the listener, then
+# push the config, then tail the daemon so the container stays alive and
+# logs go to stdout.
+RUN printf '#!/bin/sh\n\
+set -e\n\
+tgtd -f &\n\
+TGTD_PID=$!\n\
+# Wait for tgtd to accept control commands\n\
+for i in 1 2 3 4 5 6 7 8 9 10; do\n\
+    tgtadm --op show --mode system 2>/dev/null | grep -q "System direction" && break\n\
+    sleep 0.5\n\
+done\n\
+tgt-admin --execute\n\
+echo "iSCSI targets active:"\n\
+tgtadm --lld iscsi --op show --mode target | head -20\n\
+wait $TGTD_PID\n' > /usr/local/bin/start-tgtd.sh && \
+    chmod +x /usr/local/bin/start-tgtd.sh
+
+EXPOSE 3260
+
+CMD ["/usr/local/bin/start-tgtd.sh"]

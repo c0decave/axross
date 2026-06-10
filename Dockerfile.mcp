@@ -1,0 +1,96 @@
+# Headless axross MCP server image.
+#
+# This image does NOT ship the PyQt6 GUI — it's purpose-built for
+# running ``axross --mcp-server`` as a long-lived service behind a
+# reverse proxy, in Kubernetes, or via docker-compose. Omitting Qt
+# shaves ~250 MB off the final layer.
+#
+# Build:
+#   docker build -f Dockerfile.mcp -t axross-mcp:latest .
+#
+# Run (stdio, for manual testing):
+#   docker run -i --rm axross-mcp:latest --mcp-server
+#
+# Run (HTTP, behind the container's 7331):
+#   docker run -p 7331:7331 -v /path/to/data:/data axross-mcp:latest \
+#       --mcp-server --mcp-http 0.0.0.0:7331
+#
+# Run (mTLS-protected HTTP, production shape):
+#   docker run -p 7331:7331 \
+#       -v $(pwd)/certs:/certs:ro \
+#       -v /path/to/data:/data \
+#       axross-mcp:latest \
+#       --mcp-server --mcp-write \
+#       --mcp-http 0.0.0.0:7331 \
+#       --mcp-cert /certs/server.pem \
+#       --mcp-key /certs/server-key.pem \
+#       --mcp-ca /certs/ca.pem
+#
+# NOTE: --mcp-write exposes mutating tools (write_file, mkdir,
+# remove, rename, copy, chmod, symlink, hardlink, bulk_copy). The
+# container's ``/data`` mount is the root the write operations are
+# capped against — everything outside that path is refused by the
+# MCP _enforce_root guard. Mount only what the client should be
+# allowed to touch.
+
+FROM python:3.12-slim AS build
+
+WORKDIR /build
+COPY pyproject.toml ./
+COPY core/ core/
+COPY models/ models/
+COPY main.py ./
+
+# Minimal runtime deps for the MCP surface — explicitly NO PyQt6,
+# NO googleapiclient, NO dropbox, NO msal, NO exchangelib. The
+# slim flavour of the main app covers the same subset; this
+# container trims further because Qt is never needed.
+RUN pip install --no-cache-dir \
+        "paramiko>=3" \
+        "cryptography>=41" \
+        "jsonschema>=4.21" \
+        "smbprotocol>=1.13" \
+        "boto3>=1.28" \
+        "webdavclient3>=3.14" \
+        "adb-shell>=0.4" \
+        "py7zr>=0.20"
+
+# ----------------------------------------------------------------------
+# Final runtime image — copy over the interpreter + site-packages +
+# our code, drop build tooling.
+# ----------------------------------------------------------------------
+FROM python:3.12-slim
+
+# System tools the backends shell out to (rsync, iscsiadm, mount
+# are NOT installed here because iSCSI / NFS aren't MCP-surface
+# workloads). Keep the container small.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /usr/local/lib/python3.12/site-packages \
+                  /usr/local/lib/python3.12/site-packages
+COPY --from=build /build/core /app/core
+COPY --from=build /build/models /app/models
+COPY --from=build /build/main.py /app/main.py
+
+WORKDIR /app
+
+# Non-root user — write tools default to a chroot under /data so
+# the MCP client can't wander outside what the operator mounted.
+RUN useradd --create-home --shell /usr/sbin/nologin axross \
+    && mkdir -p /data \
+    && chown axross:axross /data
+
+USER axross
+
+# Default: stdio server — operator overrides with CMD args for
+# --mcp-http / --mcp-write / cert paths.
+ENTRYPOINT ["python", "/app/main.py"]
+CMD ["--mcp-server"]
+
+# Document the expected volume + port; operator still has to pass
+# them on docker run.
+VOLUME ["/data"]
+EXPOSE 7331

@@ -1,0 +1,110 @@
+{
+  "Docker SFTP (alpha)": {
+    "name": "Docker SFTP (alpha)",
+    "protocol": "sftp",
+    "host": "10.99.0.10",
+    "port": 22,
+    "username": "alpha",
+    "auth_type": "password",
+    "store_password": true,
+    "_password": "alpha123"
+  },
+  "Docker SFTP (beta)": {
+    "name": "Docker SFTP (beta)",
+    "protocol": "sftp",
+    "host": "10.99.0.11",
+    "port": 22,
+    "username": "beta",
+    "auth_type": "password",
+    "store_password": true,
+    "_password": "beta123"
+  },
+  "Docker SFTP (gamma)": {
+    "name": "Docker SFTP (gamma)",
+    "protocol": "sftp",
+    "host": "10.99.0.12",
+    "port": 22,
+    "username": "gamma",
+    "auth_type": "password",
+    "store_password": true,
+    "_password": "gamma123"
+  },
+  "Docker FTP": {
+    "name": "Docker FTP",
+    "protocol": "ftp",
+    "host": "10.99.0.30",
+    "port": 21,
+    "username": "ftpuser",
+    "auth_type": "password",
+    "store_password": true,
+    "ftp_passive": true,
+    "_password": "ftp123"
+  },
+  "Docker SMB": {
+    "name": "Docker SMB",
+    "protocol": "smb",
+    "host": "10.99.0.31",
+    "port": 445,
+    "username": "smbuser",
+    "auth_type": "password",
+    "store_password": true,
+    "smb_share": "testshare",
+    "_password": "smb123"
+  },
+  "Docker WebDAV": {
+    "name": "Docker WebDAV",
+    "protocol": "webdav",
+    "host": "10.99.0.32",
+    "port": 80,
+    "username": "davuser",
+    "auth_type": "password",
+    "store_password": true,
+    "webdav_url": "http://10.99.0.32/",
+    "_password": "dav123"
+  },
+  "Docker S3 (MinIO)": {
+    "name": "Docker S3 (MinIO)",
+    "protocol": "s3",
+    "host": "10.99.0.33",
+    "port": 9000,
+    "username": "minioadmin",
+    "auth_type": "password",
+    "store_password": true,
+    "s3_bucket": "testbucket",
+    "s3_region": "us-east-1",
+    "s3_endpoint": "http://10.99.0.33:9000",
+    "_password": "minioadmin123"
+  },
+  "Docker Rsync": {
+    "name": "Docker Rsync",
+    "protocol": "rsync",
+    "host": "10.99.0.34",
+    "port": 873,
+    "username": "rsyncuser",
+    "auth_type": "password",
+    "store_password": true,
+    "rsync_module": "testmod",
+    "_password": "rsync123"
+  },
+  "Docker NFS": {
+    "name": "Docker NFS",
+    "protocol": "nfs",
+    "host": "10.99.0.35",
+    "port": 2049,
+    "username": "",
+    "auth_type": "password",
+    "nfs_export": "/srv/nfs/share",
+    "nfs_version": 3
+  },
+  "Docker IMAP": {
+    "name": "Docker IMAP",
+    "protocol": "imap",
+    "host": "10.99.0.36",
+    "port": 143,
+    "username": "imapuser",
+    "auth_type": "password",
+    "store_password": true,
+    "imap_ssl": false,
+    "_password": "imap123"
+  }
+}

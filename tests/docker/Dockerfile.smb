@@ -1,0 +1,21 @@
+FROM alpine:3.20
+
+ARG USERNAME=smbuser
+ARG PASSWORD=smb123
+
+RUN apk add --no-cache samba samba-common-tools && \
+    adduser -D -s /sbin/nologin ${USERNAME} && \
+    mkdir -p /home/${USERNAME}/share/subdir /home/${USERNAME}/share/emptydir && \
+    echo "Hello from SMB" > /home/${USERNAME}/share/readme.txt && \
+    echo "nested file" > /home/${USERNAME}/share/subdir/nested.txt && \
+    dd if=/dev/urandom of=/home/${USERNAME}/share/bigfile.bin bs=1k count=64 2>/dev/null && \
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+COPY smb.conf /etc/samba/smb.conf
+
+# Create passdb directory and add SMB user
+RUN mkdir -p /var/lib/samba/private && \
+    printf "smb123\nsmb123\n" | pdbedit -a -t -u smbuser
+
+EXPOSE 445
+CMD ["smbd", "--foreground", "--no-process-group", "--debug-stdout"]

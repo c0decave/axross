@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="axross ascii skull">
+  <title>axross — ASCII-grid skull (cyber-occult)</title>
+  <style>
+    .glyph { font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+             font-size: 8px; font-weight: 700; fill: #14B8A6; }
+    .dim { fill: #0F172A; opacity: 0.55; }
+    @media (prefers-color-scheme: dark) { .dim { fill: #F8FAFC; } }
+  </style>
+  <rect x="0" y="0" width="96" height="96" fill="#0F172A"/>
+  <!-- 9x12 grid of mono chars; '#' eyes, ':' teeth, '.' filler shape skull -->
+  <g class="glyph">
+    <text x="8"  y="14">. . # # # # # # # . .</text>
+    <text x="8"  y="24">. # 1 0 1 0 1 0 1 # .</text>
+    <text x="8"  y="34">. # 0 X X 0 X X 0 # .</text>
+    <text x="8"  y="44">. # 1 X 0 0 0 X 1 # .</text>
+    <text x="8"  y="54">. # 0 1 0 1 0 1 0 # .</text>
+    <text x="8"  y="64">. . # : : : : : # . .</text>
+    <text x="8"  y="74">. . . # # # # # . . .</text>
+    <text x="8"  y="84" class="dim">a x r o s s</text>
+  </g>
+</svg>

@@ -1,0 +1,179 @@
+{
+  "Lab SFTP alpha": {
+    "name": "Lab SFTP alpha",
+    "protocol": "sftp",
+    "host": "10.99.0.10",
+    "port": 22,
+    "username": "alpha",
+    "auth_type": "password",
+    "store_password": false,
+    "_password": "alpha123"
+  },
+  "Lab SFTP beta": {
+    "name": "Lab SFTP beta",
+    "protocol": "sftp",
+    "host": "10.99.0.11",
+    "port": 22,
+    "username": "beta",
+    "auth_type": "password",
+    "store_password": false,
+    "_password": "beta123"
+  },
+  "Lab SFTP gamma": {
+    "name": "Lab SFTP gamma",
+    "protocol": "sftp",
+    "host": "10.99.0.12",
+    "port": 22,
+    "username": "gamma",
+    "auth_type": "password",
+    "store_password": false,
+    "_password": "gamma123"
+  },
+  "Lab SCP alpha": {
+    "name": "Lab SCP alpha",
+    "protocol": "scp",
+    "host": "10.99.0.10",
+    "port": 22,
+    "username": "alpha",
+    "auth_type": "password",
+    "store_password": false,
+    "_password": "alpha123"
+  },
+  "Lab FTP": {
+    "name": "Lab FTP",
+    "protocol": "ftp",
+    "host": "10.99.0.30",
+    "port": 21,
+    "username": "ftpuser",
+    "auth_type": "password",
+    "store_password": false,
+    "ftp_passive": true,
+    "_password": "ftp123"
+  },
+  "Lab FTPS (self-signed, verify off)": {
+    "name": "Lab FTPS (self-signed, verify off)",
+    "protocol": "ftps",
+    "host": "10.99.0.38",
+    "port": 21,
+    "username": "ftpsuser",
+    "auth_type": "password",
+    "store_password": false,
+    "ftp_passive": true,
+    "ftps_verify_tls": false,
+    "_password": "ftps123"
+  },
+  "Lab SMB": {
+    "name": "Lab SMB",
+    "protocol": "smb",
+    "host": "10.99.0.31",
+    "port": 445,
+    "username": "smbuser",
+    "auth_type": "password",
+    "store_password": false,
+    "smb_share": "testshare",
+    "_password": "smb123"
+  },
+  "Lab WebDAV": {
+    "name": "Lab WebDAV",
+    "protocol": "webdav",
+    "host": "10.99.0.32",
+    "port": 80,
+    "username": "davuser",
+    "auth_type": "password",
+    "store_password": false,
+    "webdav_url": "http://10.99.0.32:80",
+    "_password": "dav123"
+  },
+  "Lab S3 (MinIO)": {
+    "name": "Lab S3 (MinIO)",
+    "protocol": "s3",
+    "host": "10.99.0.33",
+    "port": 9000,
+    "username": "minioadmin",
+    "auth_type": "password",
+    "store_password": false,
+    "s3_bucket": "testbucket",
+    "s3_endpoint": "http://10.99.0.33:9000",
+    "s3_region": "us-east-1",
+    "_password": "minioadmin123"
+  },
+  "Lab Rsync (daemon)": {
+    "name": "Lab Rsync (daemon)",
+    "protocol": "rsync",
+    "host": "10.99.0.34",
+    "port": 873,
+    "username": "rsyncuser",
+    "auth_type": "password",
+    "store_password": false,
+    "rsync_module": "testmod",
+    "rsync_ssh": false,
+    "_password": "rsync123"
+  },
+  "Lab NFS v4": {
+    "name": "Lab NFS v4",
+    "protocol": "nfs",
+    "host": "10.99.0.35",
+    "port": 2049,
+    "username": "",
+    "auth_type": "password",
+    "store_password": false,
+    "nfs_export": "/",
+    "nfs_version": 4
+  },
+  "Lab IMAP": {
+    "name": "Lab IMAP",
+    "protocol": "imap",
+    "host": "10.99.0.36",
+    "port": 143,
+    "username": "imapuser",
+    "auth_type": "password",
+    "store_password": false,
+    "imap_ssl": false,
+    "_password": "imap123"
+  },
+  "Lab Telnet": {
+    "name": "Lab Telnet",
+    "protocol": "telnet",
+    "host": "10.99.0.37",
+    "port": 23,
+    "username": "telnetuser",
+    "auth_type": "password",
+    "store_password": false,
+    "_password": "telnet123"
+  },
+  "Lab Azure Blob (Azurite)": {
+    "name": "Lab Azure Blob (Azurite)",
+    "protocol": "azure_blob",
+    "host": "10.99.0.39",
+    "port": 10000,
+    "username": "devstoreaccount1",
+    "auth_type": "password",
+    "store_password": false,
+    "azure_container": "axross-test",
+    "azure_account_name": "devstoreaccount1",
+    "_comment": "Azurite uses a WELL-KNOWN dev-only account key. The GUI import skips azure_connection_string (it is a keyring-backed secret and fails on headless setups). verify_lab_profiles.py instead pulls the string from _azure_connection_string below. When you connect from the GUI for the first time, paste the string into the Connection dialog's Azure tab.",
+    "_azure_connection_string": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://10.99.0.39:10000/devstoreaccount1;"
+  },
+  "Lab iSCSI (requires root + iscsi_tcp)": {
+    "name": "Lab iSCSI (requires root + iscsi_tcp)",
+    "protocol": "iscsi",
+    "host": "10.99.0.40",
+    "port": 3260,
+    "username": "",
+    "auth_type": "password",
+    "store_password": false,
+    "iscsi_target_iqn": "iqn.2024-01.com.axross:test-target",
+    "iscsi_mount_point": ""
+  },
+  "Lab Tiny-FTP (quota demo)": {
+    "name": "Lab Tiny-FTP (quota demo)",
+    "protocol": "ftp",
+    "host": "10.99.0.60",
+    "port": 21,
+    "username": "tinyftp",
+    "auth_type": "password",
+    "store_password": false,
+    "ftp_passive": true,
+    "_password": "tiny123"
+  }
+}

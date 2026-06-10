@@ -1,0 +1,31 @@
+# Dev-only dependencies — tests, linting, packaging.
+# Runtime deps live in pyproject.toml (base + optional extras).
+#
+# Install: pip install -r dev-requirements.txt
+#
+# For a full developer setup including runtime extras:
+#   pip install -e ".[all]" && pip install -r dev-requirements.txt
+
+# ── testing ───────────────────────────────────────────────────
+pytest>=8.0
+coverage>=7.4
+
+# ── linting / formatting ──────────────────────────────────────
+ruff>=0.5
+
+# ── packaging ─────────────────────────────────────────────────
+build>=1.2
+twine>=5.1
+tomli>=2.0; python_version < "3.11"
+
+# ── deps some tests exercise directly ─────────────────────────
+# cryptography is ALSO used at runtime by core.encrypted_overlay
+# and the mTLS tests generate throw-away CA/client certs with it.
+cryptography>=42.0
+# jsonschema is an optional MCP validation dep — stdio/HTTP
+# transports work without it, but McpServerTests exercise the
+# ValidationError path, so tests need it installed.
+jsonschema>=4.21
+# ADB backend tests mock the transport but still exercise adb-shell's
+# keygen/signer helpers directly.
+adb-shell>=0.4

@@ -1,0 +1,53 @@
+FROM osixia/openldap:1.5.0
+
+# OpenLDAP server (osixia image — pre-configured init machinery) for
+# the axross LDAP-as-FS integration suite.
+#
+# Defaults baked in (every value here ends up as an env override
+# that osixia/openldap reads at first boot):
+#   Base DN         : dc=axross,dc=test
+#   Admin DN        : cn=admin,dc=axross,dc=test
+#   Admin password  : ldapadmin123
+#
+# Pre-seeds users and an OU through the LDAP_SEED_INTERNAL_LDIF_PATH
+# hook below.
+
+ENV LDAP_ORGANISATION="Axross Test" \
+    LDAP_DOMAIN=axross.test \
+    LDAP_ADMIN_PASSWORD=ldapadmin123 \
+    LDAP_TLS=false
+
+# Seed an OU, two users, and a group on first boot.
+COPY <<'EOF' /container/service/slapd/assets/config/bootstrap/ldif/91-axross-seed.ldif
+dn: ou=people,dc=axross,dc=test
+objectClass: organizationalUnit
+ou: people
+
+dn: cn=alice,ou=people,dc=axross,dc=test
+objectClass: inetOrgPerson
+cn: alice
+sn: Alice
+uid: alice
+mail: alice@axross.test
+userPassword: alice123
+
+dn: cn=bob,ou=people,dc=axross,dc=test
+objectClass: inetOrgPerson
+cn: bob
+sn: Bob
+uid: bob
+mail: bob@axross.test
+userPassword: bob123
+
+dn: ou=groups,dc=axross,dc=test
+objectClass: organizationalUnit
+ou: groups
+
+dn: cn=devs,ou=groups,dc=axross,dc=test
+objectClass: groupOfNames
+cn: devs
+member: cn=alice,ou=people,dc=axross,dc=test
+member: cn=bob,ou=people,dc=axross,dc=test
+EOF
+
+EXPOSE 389

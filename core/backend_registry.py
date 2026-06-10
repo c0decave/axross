@@ -1,0 +1,1102 @@
+"""Backend registry — capability model and factory for file backends."""
+
+from __future__ import annotations
+
+import importlib
+import logging
+import shutil
+from dataclasses import dataclass, field
+from enum import Enum, auto
+
+log = logging.getLogger(__name__)
+
+
+class CredentialKind(Enum):
+    """How a backend authenticates."""
+
+    NONE = auto()  # No credentials needed (e.g. local FS)
+    PASSWORD = auto()  # Username + password
+    SSH = auto()  # SSH auth (password, key, agent)
+    API_KEY = auto()  # Access key + secret key (S3)
+    OAUTH = auto()  # OAuth2 browser flow (Google Drive, OneDrive)
+
+
+@dataclass(frozen=True)
+class BackendCapabilities:
+    """Declares what a backend can and cannot do.
+
+    The registry consults this so the transfer engine and UI avoid
+    asking a backend for operations it cannot fulfill. New fields
+    default to ``False`` so unknown backends fall back to "unsupported"
+    — that's the safe choice.
+    """
+
+    can_chmod: bool = False
+    can_symlink: bool = False
+    can_rename: bool = True
+    can_recursive_delete: bool = True
+    can_stream_read: bool = True
+    can_stream_write: bool = True
+    can_seek: bool = True
+    has_posix_paths: bool = True
+    case_sensitive: bool = True
+    has_disk_usage: bool = False
+    # -- Added in the feature-coverage round ---------------------------
+    # True when the backend can return a checksum (sha256/md5/etag) for
+    # an existing object WITHOUT pulling the whole content down.
+    can_checksum_without_read: bool = False
+    # True when the backend supports a native server-side copy so a
+    # copy between two paths on the same server does not round-trip
+    # via the client (S3 CopyObject, WebDAV COPY, SFTP/Telnet cp, etc.).
+    can_server_side_copy: bool = False
+    # True when server-side rename covers arbitrary cross-directory
+    # moves (not just same-dir rename).
+    can_server_side_move: bool = True
+    # True when the backend can return a last-access time (atime) in
+    # addition to mtime.
+    has_atime: bool = False
+    # True when the backend natively supports a version history per
+    # object (S3 versioning, WebDAV DAV:version-tree, Dropbox,
+    # Google Drive).
+    has_version_history: bool = False
+    # True when the backend can fire change notifications for a
+    # watched path (inotify/kqueue for local, server-sent events for
+    # WebDAV, SNS/Lambda for S3, Drive activity for Google Drive).
+    has_watch: bool = False
+    # True when the backend supports sparse files (holes).
+    has_sparse_files: bool = False
+    # True when the backend's paths are on the machine that axross
+    # is running on — ``os.stat``, ``QImageReader``, ``xdg-open`` work.
+    # Remote backends MUST leave this False; the preview/open helpers
+    # refuse to touch them otherwise (to avoid accidentally shelling
+    # out on attacker-supplied paths from an S3 bucket, say).
+    is_local: bool = False
+    # Contract-level semantics used by transfer / atomic / recovery.
+    # These are intentionally more precise than broad feature flags:
+    # a backend may "support rename" without it being atomic or
+    # overwrite-compatible.
+    rename_overwrites: bool = False
+    rename_atomic: bool = False
+    append_native: bool = False
+    seekable_reads: bool = True
+    symlink_follows: bool = False
+    delete_recursive_safe: bool = True
+
+
+# Pre-built capability sets for common backend types
+POSIX_CAPS = BackendCapabilities(
+    can_chmod=True,
+    can_symlink=True,
+    has_disk_usage=True,
+    has_atime=True,
+    has_sparse_files=True,
+    has_watch=True,
+    can_server_side_copy=True,
+    rename_overwrites=True,
+    rename_atomic=True,
+    append_native=True,
+    symlink_follows=True,
+)
+FTP_CAPS = BackendCapabilities(
+    can_chmod=True,
+    can_symlink=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=False,
+    seekable_reads=False,
+)
+SMB_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=False,
+    has_posix_paths=False,
+    case_sensitive=False,
+    has_disk_usage=True,
+    rename_atomic=True,
+    append_native=True,
+)
+WEBDAV_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=False,
+    # WebDAV has native COPY / MOVE methods that run server-side
+    can_server_side_copy=True,
+    # DAV:getetag — strong etag functions as a content checksum
+    can_checksum_without_read=True,
+    # Some WebDAV servers support DAV:version-tree (RFC 3253).
+    # We don't assume it universally; per-server probe still needed.
+    seekable_reads=False,
+)
+S3_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=False,
+    # S3 CopyObject / versioning / ETag
+    can_server_side_copy=True,
+    can_checksum_without_read=True,
+    has_version_history=True,
+    seekable_reads=False,
+)
+RSYNC_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=True,
+    can_rename=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=False,
+    seekable_reads=False,
+    symlink_follows=True,
+)
+NFS_CAPS = BackendCapabilities(
+    can_chmod=True,
+    can_symlink=True,
+    has_disk_usage=True,
+    has_atime=True,
+    has_sparse_files=True,
+    can_server_side_copy=True,  # local mount → os.link / shutil copy
+    rename_overwrites=True,
+    rename_atomic=True,
+    append_native=True,
+    symlink_follows=True,
+)
+AZURE_BLOB_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=False,
+    can_server_side_copy=True,  # Azure's Copy Blob operation
+    can_checksum_without_read=True,  # Content-MD5
+    has_version_history=True,
+    seekable_reads=False,
+)
+AZURE_FILES_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=False,
+    has_posix_paths=False,
+    case_sensitive=False,
+    can_server_side_copy=True,
+    rename_atomic=True,
+    append_native=True,
+)
+CLOUD_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=True,
+    has_version_history=True,  # OneDrive/Dropbox/GDrive all keep history
+    can_checksum_without_read=True,
+    seekable_reads=False,
+)
+ISCSI_CAPS = BackendCapabilities(
+    can_chmod=True,
+    can_symlink=True,
+    has_disk_usage=True,
+    has_atime=True,
+    has_sparse_files=True,
+    can_server_side_copy=True,
+    rename_overwrites=True,
+    rename_atomic=True,
+    append_native=True,
+    symlink_follows=True,
+)
+IMAP_CAPS = BackendCapabilities(
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=True,
+    case_sensitive=True,
+    seekable_reads=False,
+)
+POP3_CAPS = BackendCapabilities(
+    # POP3 is fundamentally read-only: every write surface refused.
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_seek=False,
+    can_stream_write=False,
+    has_disk_usage=False,
+    case_sensitive=True,
+    seekable_reads=False,
+    delete_recursive_safe=False,
+)
+GOPHER_CAPS = BackendCapabilities(
+    # RFC 1436: read-only, no rename, no chmod, no streaming write,
+    # no disk usage. Selectors are case-sensitive.
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_recursive_delete=False,
+    can_stream_write=False,
+    can_seek=False,
+    has_disk_usage=False,
+    case_sensitive=True,
+    seekable_reads=False,
+    delete_recursive_safe=False,
+)
+NNTP_CAPS = BackendCapabilities(
+    # Read-mostly: list groups + articles, read+post; no rename/chmod/symlink.
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_recursive_delete=False,
+    can_stream_read=True,
+    can_stream_write=False,
+    can_seek=False,
+    has_disk_usage=False,
+    case_sensitive=True,
+    seekable_reads=False,
+    delete_recursive_safe=False,
+)
+DBFS_CAPS = BackendCapabilities(
+    # DB-as-storage: read+write+rename, no symlinks, no native sparse.
+    can_chmod=True,
+    can_symlink=False,
+    can_rename=True,
+    can_recursive_delete=True,
+    can_stream_read=True,
+    can_stream_write=True,
+    can_seek=True,
+    has_posix_paths=True,
+    case_sensitive=True,
+    has_disk_usage=True,
+    can_server_side_copy=True,
+    append_native=True,
+)
+TFTP_CAPS = BackendCapabilities(
+    # TFTP is read+write but with no rename/chmod/listing/seek.
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_seek=False,
+    can_stream_read=False,
+    can_stream_write=False,
+    can_recursive_delete=False,
+    has_disk_usage=False,
+    case_sensitive=True,
+    seekable_reads=False,
+    delete_recursive_safe=False,
+)
+RAMFS_CAPS = BackendCapabilities(
+    # In-process RAM. Same surface as LocalFS minus symlinks (we
+    # don't model link semantics in the dict store).
+    can_chmod=True,
+    can_symlink=False,
+    can_rename=True,
+    can_recursive_delete=True,
+    can_stream_read=True,
+    can_stream_write=True,
+    can_seek=True,
+    has_posix_paths=True,
+    case_sensitive=True,
+    has_disk_usage=True,
+    has_atime=False,
+    has_sparse_files=False,
+    can_server_side_copy=True,
+    rename_atomic=True,
+    append_native=True,
+)
+TELNET_CAPS = BackendCapabilities(
+    can_chmod=True,
+    can_symlink=True,
+    can_rename=True,
+    can_recursive_delete=True,
+    can_stream_read=True,
+    can_stream_write=False,
+    can_seek=False,
+    has_posix_paths=True,
+    case_sensitive=True,
+    has_disk_usage=True,
+    has_atime=True,
+    can_server_side_copy=True,  # shell cp
+    can_checksum_without_read=True,  # sha256sum on remote shell
+    seekable_reads=False,
+    symlink_follows=True,
+)
+SCP_CAPS = BackendCapabilities(
+    can_chmod=True,
+    can_symlink=True,
+    can_rename=True,
+    can_recursive_delete=True,
+    can_stream_read=True,
+    can_stream_write=False,
+    can_seek=False,
+    has_posix_paths=True,
+    case_sensitive=True,
+    has_disk_usage=True,
+    has_atime=True,
+    has_sparse_files=True,
+    can_server_side_copy=True,  # remote shell cp
+    can_checksum_without_read=True,  # remote sha256sum
+    seekable_reads=False,
+    symlink_follows=True,
+)
+WINRM_CAPS = BackendCapabilities(
+    can_chmod=False,  # NTFS ACLs don't map to POSIX bits
+    can_symlink=False,  # reparse points need elevated PS
+    can_rename=True,  # Move-Item handles cross-dir
+    can_recursive_delete=True,
+    can_stream_read=True,
+    can_stream_write=False,  # base64-buffered
+    can_seek=False,
+    has_posix_paths=False,
+    case_sensitive=False,
+    has_disk_usage=True,
+    can_server_side_copy=True,  # Copy-Item runs remote
+    can_checksum_without_read=True,  # Get-FileHash native SHA256
+    seekable_reads=False,
+)
+WMI_CAPS = BackendCapabilities(
+    # Metadata-only by design — every mutation / IO entry point raises.
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_recursive_delete=False,
+    can_stream_read=False,
+    can_stream_write=False,
+    can_seek=False,
+    has_posix_paths=False,
+    case_sensitive=False,
+    has_disk_usage=True,  # Win32_LogicalDisk is cheap
+    can_server_side_copy=False,
+    can_checksum_without_read=False,
+    seekable_reads=False,
+    delete_recursive_safe=False,
+)
+EXCHANGE_CAPS = BackendCapabilities(
+    # Read-mostly: messages + attachments readable; deletes work; rest
+    # raises. Same general shape as IMAP.
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=False,
+    can_recursive_delete=False,
+    can_stream_read=True,
+    can_stream_write=False,
+    can_seek=False,
+    has_posix_paths=True,
+    case_sensitive=True,
+    has_disk_usage=False,
+    seekable_reads=False,
+    delete_recursive_safe=False,
+)
+ADB_CAPS = BackendCapabilities(
+    # Android shell via ADB — chmod exists (toybox), symlinks don't
+    # (no ln on most images). Streams go through push/pull tempfiles
+    # so can_seek is False and can_stream_write is False. Checksum
+    # works via sha256sum on the remote shell.
+    can_chmod=True,
+    can_symlink=False,
+    can_rename=True,
+    can_recursive_delete=True,
+    can_stream_read=True,
+    can_stream_write=False,
+    can_seek=False,
+    has_posix_paths=True,
+    case_sensitive=True,
+    has_disk_usage=False,
+    can_server_side_copy=True,  # cp on the shell
+    can_checksum_without_read=True,
+    seekable_reads=False,
+)
+MTP_CAPS = BackendCapabilities(
+    # MTP-over-FUSE looks like a POSIX filesystem through the kernel,
+    # but the protocol underneath is NOT POSIX — random IO, chmod,
+    # and symlinks usually don't round-trip. Keep conservative.
+    can_chmod=False,
+    can_symlink=False,
+    can_rename=True,
+    can_recursive_delete=True,
+    can_stream_read=True,
+    can_stream_write=True,
+    can_seek=False,
+    has_posix_paths=True,
+    case_sensitive=True,
+    has_disk_usage=True,  # FUSE statfs reports device storage
+    is_local=True,  # we mount it locally; previews / xdg-open work
+    rename_atomic=True,
+)
+
+
+@dataclass(frozen=True)
+class BackendInfo:
+    """Describes a registered backend type."""
+
+    protocol_id: str
+    display_name: str
+    module: str  # e.g. "core.ftp_client"
+    class_name: str  # e.g. "FtpSession"
+    default_port: int = 0
+    required_extra: str | None = None  # pip extra name, e.g. "smb"
+    available: bool = True
+    capabilities: BackendCapabilities = field(default_factory=BackendCapabilities)
+    credential_kind: CredentialKind = CredentialKind.PASSWORD
+
+
+# Global registry
+_registry: dict[str, BackendInfo] = {}
+
+
+def ensure_initialized() -> None:
+    """Populate the registry on first use.
+
+    GUI and CLI entry points call :func:`init_registry` during startup,
+    but lower-level helpers are also used directly by scripting, tests,
+    and integrations. Lazily initializing here keeps capability lookups
+    from silently seeing an empty registry and choosing the wrong file
+    operation strategy.
+    """
+    if not _registry:
+        init_registry()
+
+
+def register(info: BackendInfo) -> None:
+    """Register a backend info entry."""
+    _registry[info.protocol_id] = info
+
+
+def get(protocol_id: str) -> BackendInfo | None:
+    """Look up a registered backend by protocol ID."""
+    ensure_initialized()
+    return _registry.get(protocol_id)
+
+
+def all_backends() -> list[BackendInfo]:
+    """Return all registered backends, sorted by display name."""
+    ensure_initialized()
+    return sorted(_registry.values(), key=lambda b: b.display_name)
+
+
+def available_backends() -> list[BackendInfo]:
+    """Return only backends whose dependencies are installed."""
+    return [b for b in all_backends() if b.available]
+
+
+def load_backend_class(protocol_id: str):
+    """Import and return the backend class for the given protocol."""
+    ensure_initialized()
+    info = _registry.get(protocol_id)
+    if info is None:
+        raise ValueError(f"Unknown protocol: {protocol_id}")
+    if not info.available:
+        extra = info.required_extra or protocol_id
+        raise ImportError(
+            f"Backend '{info.display_name}' is not available. "
+            f"Install it with: pip install axross[{extra}]"
+        )
+    mod = importlib.import_module(info.module)
+    return getattr(mod, info.class_name)
+
+
+def _check_available(import_probe: str) -> bool:
+    """Check if a Python package is importable."""
+    try:
+        __import__(import_probe)
+        return True
+    except ImportError:
+        return False
+
+
+def _check_command_available(*commands: str) -> bool:
+    """Check if all required system commands are present on PATH."""
+    return all(shutil.which(command) is not None for command in commands)
+
+
+def _check_any_command_available(*commands: str) -> bool:
+    """Check if at least one of the given system commands is present on PATH."""
+    return any(shutil.which(command) is not None for command in commands)
+
+
+def init_registry() -> None:
+    """Populate the global registry with all known backends."""
+    _registry.clear()
+
+    # --- Always available (stdlib or core dependency) ---
+    register(
+        BackendInfo(
+            protocol_id="sftp",
+            display_name="SFTP",
+            module="core.ssh_client",
+            class_name="SSHSession",
+            default_port=22,
+            capabilities=POSIX_CAPS,
+            credential_kind=CredentialKind.SSH,
+        )
+    )
+    register(
+        BackendInfo(
+            protocol_id="ftp",
+            display_name="FTP",
+            module="core.ftp_client",
+            class_name="FtpSession",
+            default_port=21,
+            capabilities=FTP_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+    register(
+        BackendInfo(
+            protocol_id="ftps",
+            display_name="FTPS",
+            module="core.ftp_client",
+            class_name="FtpSession",
+            default_port=990,
+            capabilities=FTP_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- Optional backends ---
+    register(
+        BackendInfo(
+            protocol_id="smb",
+            display_name="SMB / CIFS",
+            module="core.smb_client",
+            class_name="SmbSession",
+            default_port=445,
+            required_extra="smb",
+            available=_check_available("smbprotocol"),
+            capabilities=SMB_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+    register(
+        BackendInfo(
+            protocol_id="webdav",
+            display_name="WebDAV",
+            module="core.webdav_client",
+            class_name="WebDavSession",
+            default_port=443,
+            required_extra="webdav",
+            # Self-hosted WebDAV impl: needs requests + defusedxml only.
+            available=_check_available("requests") and _check_available("defusedxml"),
+            capabilities=WEBDAV_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+    register(
+        BackendInfo(
+            protocol_id="s3",
+            display_name="S3-kompatibel",
+            module="core.s3_client",
+            class_name="S3Session",
+            default_port=443,
+            required_extra="s3",
+            available=_check_available("boto3"),
+            capabilities=S3_CAPS,
+            credential_kind=CredentialKind.API_KEY,
+        )
+    )
+
+    # --- Rsync (always available — uses system rsync binary) ---
+    register(
+        BackendInfo(
+            protocol_id="rsync",
+            display_name="Rsync",
+            module="core.rsync_client",
+            class_name="RsyncSession",
+            default_port=873,
+            available=_check_command_available("rsync"),
+            capabilities=RSYNC_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- NFS (uses system mount.nfs — no pip dependency) ---
+    register(
+        BackendInfo(
+            protocol_id="nfs",
+            display_name="NFS",
+            module="core.nfs_client",
+            class_name="NfsSession",
+            default_port=2049,
+            available=_check_command_available("mount", "umount")
+            and _check_any_command_available("mount.nfs", "mount.nfs4", "mount"),
+            capabilities=NFS_CAPS,
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- Azure Blob Storage (optional: azure-storage-blob) ---
+    register(
+        BackendInfo(
+            protocol_id="azure_blob",
+            display_name="Azure Blob",
+            module="core.azure_client",
+            class_name="AzureBlobSession",
+            default_port=443,
+            required_extra="azure",
+            available=_check_available("azure.storage.blob"),
+            capabilities=AZURE_BLOB_CAPS,
+            credential_kind=CredentialKind.API_KEY,
+        )
+    )
+
+    # --- Azure Files (optional: azure-storage-file-share) ---
+    register(
+        BackendInfo(
+            protocol_id="azure_files",
+            display_name="Azure Files",
+            module="core.azure_client",
+            class_name="AzureFilesSession",
+            default_port=443,
+            required_extra="azure",
+            available=_check_available("azure.storage.fileshare"),
+            capabilities=AZURE_FILES_CAPS,
+            credential_kind=CredentialKind.API_KEY,
+        )
+    )
+
+    # --- OneDrive (optional: msal) ---
+    register(
+        BackendInfo(
+            protocol_id="onedrive",
+            display_name="OneDrive",
+            module="core.onedrive_client",
+            class_name="OneDriveSession",
+            default_port=443,
+            required_extra="onedrive",
+            available=_check_available("msal"),
+            capabilities=CLOUD_CAPS,
+            credential_kind=CredentialKind.OAUTH,
+        )
+    )
+
+    # --- SharePoint (optional: msal) ---
+    register(
+        BackendInfo(
+            protocol_id="sharepoint",
+            display_name="SharePoint",
+            module="core.onedrive_client",
+            class_name="OneDriveSession",
+            default_port=443,
+            required_extra="onedrive",
+            available=_check_available("msal"),
+            capabilities=CLOUD_CAPS,
+            credential_kind=CredentialKind.OAUTH,
+        )
+    )
+
+    # --- Google Drive (optional: google-api-python-client) ---
+    register(
+        BackendInfo(
+            protocol_id="gdrive",
+            display_name="Google Drive",
+            module="core.gdrive_client",
+            class_name="GDriveSession",
+            default_port=443,
+            required_extra="gdrive",
+            available=_check_available("googleapiclient"),
+            capabilities=CLOUD_CAPS,
+            credential_kind=CredentialKind.OAUTH,
+        )
+    )
+
+    # --- Dropbox (optional: dropbox) ---
+    register(
+        BackendInfo(
+            protocol_id="dropbox",
+            display_name="Dropbox",
+            module="core.dropbox_client",
+            class_name="DropboxSession",
+            default_port=443,
+            required_extra="dropbox",
+            available=_check_available("dropbox"),
+            capabilities=CLOUD_CAPS,
+            credential_kind=CredentialKind.OAUTH,
+        )
+    )
+
+    # --- iSCSI (always available — uses system iscsiadm) ---
+    register(
+        BackendInfo(
+            protocol_id="iscsi",
+            display_name="iSCSI",
+            module="core.iscsi_client",
+            class_name="IscsiSession",
+            default_port=3260,
+            available=_check_command_available("iscsiadm", "mount", "umount", "blkid"),
+            capabilities=ISCSI_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- IMAP (always available — stdlib imaplib) ---
+    register(
+        BackendInfo(
+            protocol_id="imap",
+            display_name="IMAP (Mail)",
+            module="core.imap_client",
+            class_name="ImapSession",
+            default_port=993,
+            capabilities=IMAP_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- POP3 (always available — stdlib poplib, read-only) ---
+    register(
+        BackendInfo(
+            protocol_id="pop3",
+            display_name="POP3 (Mail, read-only)",
+            module="core.pop3_client",
+            class_name="Pop3Session",
+            default_port=995,
+            capabilities=POP3_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- Gopher (RFC 1436, always available — stdlib sockets, read-only) ---
+    register(
+        BackendInfo(
+            protocol_id="gopher",
+            display_name="Gopher (RFC 1436, read-only)",
+            module="core.gopher_client",
+            class_name="GopherSession",
+            default_port=70,
+            capabilities=GOPHER_CAPS,
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- NNTP / Usenet (always available — own wire-protocol lib) ---
+    register(
+        BackendInfo(
+            protocol_id="nntp",
+            display_name="NNTP / Usenet",
+            module="core.nntp_client",
+            class_name="NntpSession",
+            default_port=563,  # implicit-TLS by default; profile can override to 119
+            capabilities=NNTP_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- SQLite as filesystem (always available — stdlib sqlite3) ---
+    register(
+        BackendInfo(
+            protocol_id="sqlite",
+            display_name="SQLite (file-as-FS)",
+            module="core.sqlite_fs_client",
+            class_name="SqliteFsSession",
+            default_port=0,
+            capabilities=DBFS_CAPS,
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- PostgreSQL-as-FS (optional: psycopg) ---
+    register(
+        BackendInfo(
+            protocol_id="postgres",
+            display_name="PostgreSQL (table-as-FS)",
+            module="core.postgres_fs_client",
+            class_name="PostgresFsSession",
+            default_port=5432,
+            required_extra="postgres",
+            available=_check_available("psycopg"),
+            capabilities=DBFS_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- Redis-as-FS (optional: redis) ---
+    register(
+        BackendInfo(
+            protocol_id="redis",
+            display_name="Redis (hash-as-FS)",
+            module="core.redis_fs_client",
+            class_name="RedisFsSession",
+            default_port=6379,
+            required_extra="redis",
+            available=_check_available("redis"),
+            capabilities=DBFS_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- MongoDB GridFS (optional: pymongo) ---
+    register(
+        BackendInfo(
+            protocol_id="mongodb",
+            display_name="MongoDB GridFS",
+            module="core.mongo_fs_client",
+            class_name="MongoFsSession",
+            default_port=27017,
+            required_extra="mongo",
+            available=_check_available("pymongo"),
+            capabilities=DBFS_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- Git-as-FS (optional: dulwich; pure Python, no git binary) ---
+    register(
+        BackendInfo(
+            protocol_id="git",
+            display_name="Git (repo-as-FS)",
+            module="core.git_fs_client",
+            class_name="GitFsSession",
+            default_port=0,
+            required_extra="git",
+            available=_check_available("dulwich"),
+            capabilities=DBFS_CAPS,
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- SVN (Subversion, read-only) — needs system svn binary ---
+    register(
+        BackendInfo(
+            protocol_id="svn",
+            display_name="Subversion (read-only)",
+            module="core.svn_fs_client",
+            class_name="SvnFsSession",
+            default_port=0,
+            # No pip dep — uses the system svn binary.
+            # (Arch: pacman -S subversion · Debian: apt install subversion)
+            available=_check_command_available("svn"),
+            capabilities=GOPHER_CAPS,  # read-only, no chmod/symlink/atime
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- PJL (Printer Job Language, port 9100) — stdlib sockets only ---
+    register(
+        BackendInfo(
+            protocol_id="pjl",
+            display_name="PJL (Printer FS, port 9100)",
+            module="core.pjl_client",
+            class_name="PjlSession",
+            default_port=9100,
+            capabilities=GOPHER_CAPS,  # read-mostly + no chmod/symlink
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- SLP (Service Location Protocol v2, RFC 2608) — read-only ---
+    register(
+        BackendInfo(
+            protocol_id="slp",
+            display_name="SLP (Service Discovery, read-only)",
+            module="core.slp_client",
+            class_name="SlpSession",
+            default_port=427,
+            capabilities=GOPHER_CAPS,
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- rsh / rcp (BSD r-services, plaintext) — needs system rsh binary ---
+    register(
+        BackendInfo(
+            protocol_id="rsh",
+            display_name="rsh / rcp (legacy plaintext)",
+            module="core.rsh_client",
+            class_name="RshSession",
+            default_port=514,
+            # No pip dep — uses the system rsh binary (Debian: rsh-client).
+            available=_check_command_available("rsh"),
+            capabilities=TELNET_CAPS,  # shell-out semantics, like Telnet
+            credential_kind=CredentialKind.NONE,  # host-based auth via .rhosts
+        )
+    )
+
+    # --- Cisco IOS Telnet (read-only show-* virtual filesystem) ---
+    register(
+        BackendInfo(
+            protocol_id="cisco-telnet",
+            display_name="Cisco IOS / IOS-XE (Telnet, read-only)",
+            module="core.telnet_cisco",
+            class_name="CiscoTelnetSession",
+            default_port=23,
+            capabilities=GOPHER_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- TFTP (optional: tftpy via [tftp] extra) ---
+    register(
+        BackendInfo(
+            protocol_id="tftp",
+            display_name="TFTP (UDP, opt-in file-list)",
+            module="core.tftp_client",
+            class_name="TftpSession",
+            default_port=69,
+            capabilities=TFTP_CAPS,
+            required_extra="tftp",
+            available=_check_available("tftpy"),
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- RamFS (always available — pure Python in-process) ---
+    register(
+        BackendInfo(
+            protocol_id="ramfs",
+            display_name="RAM Workspace (volatile)",
+            module="core.ram_fs",
+            class_name="RamFsSession",
+            default_port=0,
+            capabilities=RAMFS_CAPS,
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- Telnet (always available — stdlib sockets) ---
+    register(
+        BackendInfo(
+            protocol_id="telnet",
+            display_name="Telnet (Shell)",
+            module="core.telnet_client",
+            class_name="TelnetSession",
+            default_port=23,
+            capabilities=TELNET_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- SCP (always available — uses paramiko, same as SFTP) ---
+    register(
+        BackendInfo(
+            protocol_id="scp",
+            display_name="SCP (Shell over SSH)",
+            module="core.scp_client",
+            class_name="SCPSession",
+            default_port=22,
+            capabilities=SCP_CAPS,
+            credential_kind=CredentialKind.SSH,
+        )
+    )
+
+    # --- WinRM (PowerShell-Remoting, optional: pywinrm) ---
+    register(
+        BackendInfo(
+            protocol_id="winrm",
+            display_name="WinRM (PowerShell-Remoting)",
+            module="core.winrm_client",
+            class_name="WinRMSession",
+            default_port=5986,
+            required_extra="winrm",
+            available=_check_available("winrm"),
+            capabilities=WINRM_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- WMI / DCOM (metadata-only enumeration; impacket) ---
+    register(
+        BackendInfo(
+            protocol_id="wmi",
+            display_name="WMI / DCOM (Read-only)",
+            module="core.wmi_client",
+            class_name="WMISession",
+            default_port=135,
+            required_extra="wmi",
+            available=_check_available("impacket"),
+            capabilities=WMI_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- Exchange / EWS (optional: exchangelib) ---
+    register(
+        BackendInfo(
+            protocol_id="exchange",
+            display_name="Exchange (EWS)",
+            module="core.exchange_client",
+            class_name="ExchangeSession",
+            default_port=443,
+            required_extra="exchange",
+            available=_check_available("exchangelib"),
+            capabilities=EXCHANGE_CAPS,
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- DFS-N (Distributed File System Namespaces, uses smbprotocol) ---
+    register(
+        BackendInfo(
+            protocol_id="dfsn",
+            display_name="DFS-N (Distributed Namespace)",
+            module="core.dfsn_client",
+            class_name="DFSNamespaceSession",
+            default_port=445,
+            required_extra="smb",  # piggy-backs on the SMB extra
+            available=_check_available("smbprotocol"),
+            capabilities=SMB_CAPS,  # behaves like SMB on the wire
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    # --- ADB (Android Debug Bridge, optional: adb-shell) ---
+    register(
+        BackendInfo(
+            protocol_id="adb",
+            display_name="ADB (Android)",
+            module="core.adb_client",
+            class_name="AdbSession",
+            default_port=5555,
+            required_extra="adb",
+            available=_check_available("adb_shell"),
+            capabilities=ADB_CAPS,
+            credential_kind=CredentialKind.NONE,  # RSA keypair, no pw
+        )
+    )
+
+    # --- MTP (Media Transfer Protocol — Android via FUSE mount) ---
+    register(
+        BackendInfo(
+            protocol_id="mtp",
+            display_name="MTP (Android Phone)",
+            module="core.mtp_client",
+            class_name="MtpSession",
+            default_port=0,  # bus-level, no TCP port
+            # Available iff at least one MTP-FUSE mounter is on PATH.
+            # The core/mtp_client.py default list drives this — keep in
+            # sync if new mounters are added there.
+            available=_check_any_command_available(
+                "jmtpfs",
+                "simple-mtpfs",
+                "go-mtpfs",
+            ),
+            capabilities=MTP_CAPS,
+            credential_kind=CredentialKind.NONE,
+        )
+    )
+
+    # --- LDAP-as-FS (read-only directory tree as filesystem) ---
+    register(
+        BackendInfo(
+            protocol_id="ldap",
+            display_name="LDAP (directory-as-FS, read-only)",
+            module="core.ldap_fs_client",
+            class_name="LdapFsSession",
+            default_port=389,
+            required_extra="ldap",
+            available=_check_available("ldap3"),
+            capabilities=BackendCapabilities(
+                can_chmod=False,
+                can_symlink=False,
+                can_rename=False,
+                can_recursive_delete=False,
+                can_stream_read=True,
+                can_stream_write=False,
+                can_seek=False,
+                has_disk_usage=False,
+                case_sensitive=True,
+            ),
+            credential_kind=CredentialKind.PASSWORD,
+        )
+    )
+
+    installed = [b.protocol_id for b in _registry.values() if b.available]
+    log.info("Backend registry initialized: %s", ", ".join(installed))

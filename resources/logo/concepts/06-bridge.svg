@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 80" role="img" aria-label="axross bridge">
+  <title>axross — suspension bridge with crossed cables</title>
+  <style>
+    .stroke { stroke: #0F172A; stroke-width: 2; fill: none; stroke-linecap: round; }
+    .accent { stroke: #14B8A6; stroke-width: 1.6; }
+    @media (prefers-color-scheme: dark) { .stroke { stroke: #F8FAFC; } }
+  </style>
+  <!-- two towers -->
+  <path class="stroke" d="M32 12 L32 64 M40 12 L40 64"/>
+  <path class="stroke" d="M88 12 L88 64 M96 12 L96 64"/>
+  <!-- main deck -->
+  <line class="stroke" x1="6" y1="64" x2="122" y2="64"/>
+  <!-- main cables — sweeping curves -->
+  <path class="stroke accent" d="M6 50 Q36 8 64 32 Q92 8 122 50"/>
+  <!-- cross cables forming the X over the river -->
+  <path class="stroke accent" d="M40 12 L88 64"/>
+  <path class="stroke accent" d="M88 12 L40 64"/>
+  <!-- vertical hangers -->
+  <g class="stroke" stroke-width="0.8">
+    <line x1="50" y1="22" x2="50" y2="64"/>
+    <line x1="58" y1="28" x2="58" y2="64"/>
+    <line x1="70" y1="28" x2="70" y2="64"/>
+    <line x1="78" y1="22" x2="78" y2="64"/>
+  </g>
+  <!-- river hint -->
+  <path class="stroke" stroke-dasharray="2 4" d="M6 74 Q32 70 64 74 T122 74"/>
+</svg>

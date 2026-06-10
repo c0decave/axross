@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="axross lockpick">
+  <title>axross — crossed lockpicks (offensive-security mascot)</title>
+  <style>
+    .metal { fill: #94A3B8; stroke: #0F172A; stroke-width: 1.2; stroke-linejoin: round; }
+    .accent { fill: #14B8A6; stroke: #0F172A; stroke-width: 1.2; stroke-linejoin: round; }
+    .ink { fill: #0F172A; }
+    @media (prefers-color-scheme: dark) {
+      .metal { fill: #CBD5E1; stroke: #F8FAFC; }
+      .ink { fill: #F8FAFC; }
+    }
+  </style>
+  <!-- pick #1 (rotated 45deg, top-left to bottom-right) -->
+  <g transform="rotate(45 48 48)">
+    <rect class="metal" x="14" y="46" width="60" height="4" rx="1.5"/>
+    <!-- handle ring -->
+    <circle class="accent" cx="14" cy="48" r="6"/>
+    <!-- hooked tip -->
+    <path class="metal" d="M74 48 L80 44 L78 50 L74 48 Z"/>
+  </g>
+  <!-- pick #2 (rotated -45deg) -->
+  <g transform="rotate(-45 48 48)">
+    <rect class="metal" x="14" y="46" width="60" height="4" rx="1.5"/>
+    <circle class="accent" cx="14" cy="48" r="6"/>
+    <!-- diamond tip -->
+    <polygon class="metal" points="74,42 82,48 74,54 78,48"/>
+  </g>
+  <!-- center pin -->
+  <circle class="ink" cx="48" cy="48" r="2"/>
+</svg>
