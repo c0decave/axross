@@ -90,6 +90,78 @@ def _dialog_item_names(items, limit: int = 5) -> str:
     return shown
 
 
+def open_local_file_in_viewer(parent: QWidget | None, path: str, *, read_only: bool = True) -> None:
+    """Open a LOCAL file at *path* in the most appropriate viewer.
+
+    Shared dispatch used by the archive-preview "open member" flow
+    (Task A4): an archive member is extracted to a local temp dir and
+    handed here. Mirrors :meth:`FilePaneWidget._on_double_click`'s
+    viewer selection — image → ImageViewerDialog, binary → hex editor,
+    otherwise text editor — but always against a fresh ``LocalFS``
+    backend and defaulting to read-only (the temp extraction is a
+    throwaway preview, not the user's working copy).
+
+    The binary/text classification reuses ``FilePaneWidget``'s shared
+    extension tables + magic-byte signatures so a member is routed the
+    same way the file table would route it. Any viewer-construction
+    failure is swallowed with a log line — a broken preview must never
+    crash the caller.
+    """
+    import os as _os
+
+    from core.local_fs import LocalFS
+
+    name = _os.path.basename(path)
+    backend = LocalFS()
+    try:
+        if FilePaneWidget._looks_like_image(name):
+            from core import previews as _PV
+
+            if _PV._is_local_backend(backend):
+                from ui.image_viewer import ImageViewerDialog
+
+                dlg = ImageViewerDialog(backend, path, siblings=[path], parent=parent)
+                dlg.exec()
+                return
+        if _classify_local_file_is_binary(backend, path, name):
+            from ui.hex_editor import HexEditorDialog
+
+            HexEditorDialog(backend, path, parent=parent, read_only=read_only).exec()
+        else:
+            from ui.text_editor import TextEditorDialog
+
+            TextEditorDialog(backend, path, parent=parent, read_only=read_only).exec()
+    except Exception as exc:  # noqa: BLE001 — a preview must never crash the app
+        log.warning("Could not open %s in a viewer: %s", path, exc)
+
+
+def _classify_local_file_is_binary(backend, path: str, name: str) -> bool:
+    """Binary/text sniff for :func:`open_local_file_in_viewer`.
+
+    Reuses ``FilePaneWidget``'s extension tables + magic-byte
+    signatures (shared constants, not behaviour) so a standalone caller
+    routes a file the same way the file pane would, without needing a
+    live pane instance."""
+    lower = name.lower()
+    for ext in FilePaneWidget._BINARY_EXTENSIONS:
+        if lower.endswith(ext):
+            return True
+    for ext in FilePaneWidget._TEXT_EXTENSIONS:
+        if lower.endswith(ext):
+            return False
+    try:
+        with backend.open_read(path) as f:
+            header = f.read(512)
+    except (OSError, ValueError):
+        return False
+    if not header:
+        return False
+    for offset, magic in FilePaneWidget._BINARY_MAGIC:
+        if header[offset : offset + len(magic)] == magic:
+            return True
+    return b"\x00" in header
+
+
 def _escape_dialog_lines(lines) -> str:
     return "\n".join(escape(str(line)) for line in lines)
 
@@ -1267,6 +1339,16 @@ class FilePaneWidget(QWidget):
             # Symlink pointing to a directory — navigate into it
             self.navigate(full_path)
         else:
+            # Supported archives open in the non-modal preview dock
+            # (Task A4) BEFORE the binary/hex branch — otherwise a .zip
+            # would fall through to the hex editor. Local-backend only;
+            # the preview-dock owner extracts to the local filesystem.
+            from core import archive as _ARCH
+            from core import previews as _PV
+
+            if _PV._is_local_backend(self._backend) and _ARCH.is_supported_archive(item.name):
+                self._open_archive_preview(full_path)
+                return
             # Route to the best viewer:
             #   images (local only) → ImageViewerDialog
             #   binaries            → hex
@@ -1683,8 +1765,43 @@ class FilePaneWidget(QWidget):
                     files[0].name
                 ):
                     menu.addSeparator()
-                    extract_action = menu.addAction("Extract to folder…")
-                    extract_action.triggered.connect(lambda: self._extract_archive(files[0]))
+                    arc_item = files[0]
+                    arc_path = self._safe_item_path(arc_item, warn=False)
+
+                    # "Vorschau" (Preview) opens the non-modal archive
+                    # dock without extracting anything to disk.
+                    preview_action = menu.addAction("Vorschau")
+                    if arc_path is not None:
+                        preview_action.triggered.connect(
+                            lambda _checked=False, p=arc_path: self._open_archive_preview(p)
+                        )
+                    else:
+                        preview_action.setEnabled(False)
+
+                    extract_action = menu.addAction("Entpacken…")
+                    extract_action.triggered.connect(lambda: self._extract_archive(arc_item))
+                    # Colour-highlight the extract entry so it stands
+                    # apart from the read-only preview. QMenu/QAction
+                    # don't honour per-item stylesheets reliably across
+                    # platforms, so we go with the SIMPLEST robust combo
+                    # that visibly distinguishes it: bold font + a small
+                    # generated QPixmap icon filled with the WARNING
+                    # accent (#e5c07b, reused from ui.log_dock's palette).
+                    from PyQt6.QtGui import QColor, QIcon
+
+                    bold = extract_action.font()
+                    bold.setBold(True)
+                    extract_action.setFont(bold)
+                    # Defence in depth: the highlight swatch is purely
+                    # cosmetic, so a hypothetical icon-creation failure
+                    # must never abort the whole context menu. Guard JUST
+                    # the swatch/icon creation+set.
+                    try:
+                        swatch = QPixmap(12, 12)
+                        swatch.fill(QColor("#e5c07b"))
+                        extract_action.setIcon(QIcon(swatch))
+                    except Exception:  # noqa: BLE001 — cosmetic only
+                        log.debug("Extract-action highlight swatch failed", exc_info=True)
 
         # ``pos`` arrives in viewport-local coordinates per Qt's
         # QAbstractScrollArea contract, but user reports show the
@@ -2577,6 +2694,23 @@ class FilePaneWidget(QWidget):
         dlg = TrashBrowserDialog(self._backend, parent=self)
         dlg.finished.connect(lambda _code: self.refresh())
         dlg.open()
+
+    def _open_archive_preview(self, path: str) -> None:
+        """Open *path* in the main window's non-modal archive preview
+        dock (Task A4).
+
+        The pane is a reusable widget with no stored MainWindow
+        reference — we reach the owning window via ``self.window()``
+        (Qt returns the top-level ancestor, the MainWindow). Guard on
+        the ``open_archive_pane`` attribute so a pane hosted outside a
+        MainWindow (tests, an embedded harness) degrades to a no-op +
+        log line rather than crashing."""
+        win = self.window()
+        opener = getattr(win, "open_archive_pane", None)
+        if opener is None:
+            log.warning("Archive preview unavailable: no main window for %s", path)
+            return
+        opener(path)
 
     def _extract_archive(self, item) -> None:
         """Extract the archive at *item* into a same-named sibling
