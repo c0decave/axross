@@ -116,7 +116,7 @@ native Protokoll sie nicht kennt.
 | Neuer Symlink… | Rechtsklick | Zwei Prompts. Sichtbar nur auf Backends mit `supports_symlinks=True`. |
 | Neuer Hardlink… | Rechtsklick | Gleiche Form; Cross-Device → `OSError(EXDEV)`. |
 | Find in Index | `Strg+Shift+F` | Suche im Offline-Metadaten-Index. |
-| CAS Duplicate Finder | View-Menü | Gruppieren nach Content-Hash, `ax-cas://…`-URLs kopieren. |
+| Duplicate Finder | View-Menü | Gruppieren nach Content-Hash, `ax-cas://…`-URLs kopieren. |
 | Move to Trash | Rechtsklick | Universaler Papierkorb. |
 | Show Trash… | Rechtsklick | Wiederherstellen / Permanent-Löschen-Dialog. |
 | Show Versions… | Rechtsklick | Snapshot-Browser — Save Version As, Restore as Current. |

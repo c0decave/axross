@@ -296,6 +296,9 @@ class FilePaneWidget(QWidget):
     pane_drop_requested = pyqtSignal(str, object, str)
     cycle_pane_requested = pyqtSignal(bool)  # True = next, False = previous
     open_bookmarks_requested = pyqtSignal()  # Ctrl+B
+    # The pane does not own the duplicate-finder dialog; the main window
+    # does, because the index spans every connection rather than one pane.
+    open_duplicates_requested = pyqtSignal()
     # Emitted from the watcher background thread so the GUI thread
     # owns the actual list refresh. Internal: connect via Qt's auto
     # cross-thread queueing (PyQt does this when the receiver lives
@@ -1618,7 +1621,13 @@ class FilePaneWidget(QWidget):
         except OSError:
             return False
 
-    def _show_context_menu(self, pos) -> None:
+    def _build_context_menu(self) -> QMenu:
+        """Assemble the right-click menu for the current selection.
+
+        Split out from :meth:`_show_context_menu` so the menu's contents
+        can be asserted without popping up a modal — ``menu.exec`` blocks
+        until a human clicks.
+        """
         menu = QMenu(self)
         selected = self.selected_file_items()
 
@@ -1675,8 +1684,17 @@ class FilePaneWidget(QWidget):
         trash_browser_action = menu.addAction("Show Trash…")
         trash_browser_action.triggered.connect(self._show_trash_browser)
 
+        # Deliberately outside the ``if selected:`` block below: this
+        # acts on the directory you are standing in, which is exactly
+        # the moment you have nothing selected yet.
+        dupes_action = menu.addAction("Find Duplicate Files…")
+        dupes_action.triggered.connect(self.open_duplicates_requested.emit)
+
         if selected:
             menu.addSeparator()
+
+            props_action = menu.addAction("Properties…\tAlt+Enter")
+            props_action.triggered.connect(self._show_properties)
 
             copy_action = menu.addAction("Copy to Target Pane")
             copy_action.triggered.connect(
@@ -1690,7 +1708,7 @@ class FilePaneWidget(QWidget):
                 item = files[0]
                 full_path = self._safe_item_path(item, warn=False)
                 if full_path is None:
-                    return
+                    return menu
 
                 text_action = menu.addAction("Open as Text")
                 text_action.triggered.connect(lambda: self._open_editor(full_path))
@@ -1812,6 +1830,9 @@ class FilePaneWidget(QWidget):
                     except Exception:  # noqa: BLE001 — cosmetic only
                         log.debug("Extract-action highlight swatch failed", exc_info=True)
 
+        return menu
+
+    def _show_context_menu(self, pos) -> None:
         # ``pos`` arrives in viewport-local coordinates per Qt's
         # QAbstractScrollArea contract, but user reports show the
         # menu landing in the wrong place on some window-manager /
@@ -1822,7 +1843,7 @@ class FilePaneWidget(QWidget):
         # user actually clicked, every time.
         from PyQt6.QtGui import QCursor
 
-        menu.exec(QCursor.pos())
+        self._build_context_menu().exec(QCursor.pos())
 
     def _create_folder(self) -> None:
         from PyQt6.QtWidgets import QInputDialog
@@ -2104,6 +2125,9 @@ class FilePaneWidget(QWidget):
             self.refresh()
 
     def _show_permissions(self) -> None:
+        """Chmod-only editor. Kept as a separate entry point for callers
+        that want just the mode; Alt+Enter goes to the full properties
+        sheet, which embeds this same editor as its second tab."""
         from ui.permissions_dialog import PermissionsDialog
 
         items = self.selected_file_items()
@@ -2115,6 +2139,22 @@ class FilePaneWidget(QWidget):
             return
         dialog = PermissionsDialog(self._backend, path, item, parent=self)
         if dialog.exec():
+            self.refresh()
+
+    def _show_properties(self) -> None:
+        """Full properties sheet for the first selected entry."""
+        from ui.properties_dialog import PropertiesDialog
+
+        items = self.selected_file_items()
+        if not items:
+            return
+        item = items[0]
+        path = self._safe_item_path(item)
+        if path is None:
+            return
+        dialog = PropertiesDialog(self._backend, path, item, parent=self)
+        if dialog.exec():
+            # The permissions tab may have written a new mode.
             self.refresh()
 
     def _calculate_dir_size(self) -> None:
@@ -3011,9 +3051,12 @@ class FilePaneWidget(QWidget):
             alt = mods == Qt.KeyboardModifier.AltModifier
             no_mods = mods == Qt.KeyboardModifier.NoModifier
 
-            # --- Alt+Enter → permissions (must be before bare Enter) ---
+            # --- Alt+Enter → properties (must be before bare Enter) ---
+            # Used to open the chmod editor alone, which is why the app
+            # looked like it had no properties view; that editor is now
+            # the second tab of the properties sheet.
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and alt:
-                self._show_permissions()
+                self._show_properties()
                 return True
 
             # --- File operations ---

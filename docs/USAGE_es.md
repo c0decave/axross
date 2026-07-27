@@ -122,7 +122,7 @@ cuyo protocolo nativo no las soporta.
 | Nuevo symlink… | Click derecho | Dos prompts. Visible solo en backends con `supports_symlinks=True`. |
 | Nuevo hardlink… | Click derecho | Misma forma; cross-device → `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Búsqueda en el índice offline de metadata. |
-| CAS Duplicate Finder | Menú View | Agrupar por hash de contenido, copiar URLs `ax-cas://…`. |
+| Duplicate Finder | Menú View | Agrupar por hash de contenido, copiar URLs `ax-cas://…`. |
 | Move to Trash | Click derecho | Papelera universal. |
 | Show Trash… | Click derecho | Diálogo restaurar / borrar permanentemente. |
 | Show Versions… | Click derecho | Snapshot browser — Save Version As, Restore as Current. |

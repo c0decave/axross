@@ -112,7 +112,7 @@ native protocol doesn't support them.
 | New Symlink… | Right-click | Two prompts. Visible only on `supports_symlinks=True` backends. |
 | New Hardlink… | Right-click | Same shape; cross-device hardlinks surface as `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Search the offline metadata index by name / ext / size. |
-| CAS Duplicate Finder | View menu | Group rows by content hash, copy `ax-cas://…` URLs. |
+| Duplicate Finder | View menu | Group rows by content hash, copy `ax-cas://…` URLs. |
 | Move to Trash | Right-click | Universal recycle bin. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
