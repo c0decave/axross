@@ -1,4 +1,8 @@
-"""CAS Duplicate Finder — dialog over :mod:`core.cas`.
+"""Duplicate Finder — dialog over :mod:`core.cas`.
+
+Named for what it does, not for how. "CAS" is the storage technique
+behind it and means nothing to someone looking for a way to find
+duplicate files, which is how the feature went unnoticed.
 
 The CAS index is a client-side SQLite store mapping
 ``(backend_id, path) -> (algorithm, value, size)``. Two files
@@ -20,6 +24,7 @@ A "Rebuild" run is the only way fresh data lands in the index; a
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QGuiApplication
@@ -40,6 +45,56 @@ from PyQt6.QtWidgets import (
 from core import cas as CAS
 
 log = logging.getLogger("ui.cas_dialog")
+
+
+@dataclass(frozen=True)
+class DeletionPlan:
+    """What a delete request resolves to, after the safety check."""
+
+    #: Entries that may be removed.
+    deletable: list = field(default_factory=list)
+    #: Hash values of groups held back because every copy was selected.
+    refused_groups: list = field(default_factory=list)
+    #: Copies that would remain across the affected groups.
+    survivors: int = 0
+
+
+def plan_deletion(selected, groups) -> DeletionPlan:
+    """Resolve a selection into a plan that cannot erase content.
+
+    A duplicate group exists precisely because the same bytes live in
+    more than one place. Selecting every row in a group and pressing
+    delete would remove the content entirely — turning a deduplication
+    tool into a deletion tool, in one click, on data the user believes
+    is safely duplicated.
+
+    So a group whose every copy is selected is refused as a whole rather
+    than partially applied: dropping "one of them" silently would leave
+    the user with a survivor they did not choose. Refusals are returned
+    so the UI can explain itself, and they never block deletions in
+    other groups — one reckless selection should not cost the rest of
+    an intended cleanup.
+
+    A group of one is not a duplicate and is likewise refused; deleting
+    a lone file is ordinary deletion and belongs in the file pane.
+    """
+    selected_keys = {(e.backend_id, e.path, e.value) for e in selected}
+    deletable: list = []
+    refused: list = []
+    survivors = 0
+
+    for group in groups:
+        in_group = [e for e in group if (e.backend_id, e.path, e.value) in selected_keys]
+        if not in_group:
+            continue
+        remaining = len(group) - len(in_group)
+        if remaining < 1:
+            refused.append(group[0].value)
+            continue
+        deletable.extend(in_group)
+        survivors += remaining
+
+    return DeletionPlan(deletable=deletable, refused_groups=refused, survivors=survivors)
 
 
 def _format_size(n: int) -> str:
@@ -66,7 +121,7 @@ class CasDuplicatesDialog(QDialog):
     def __init__(self, active_pane=None, parent=None) -> None:
         super().__init__(parent)
         self._active_pane = active_pane
-        self.setWindowTitle("CAS — Duplicate Finder")
+        self.setWindowTitle("Duplicate Finder")
         self.resize(900, 600)
         self._build_ui()
         self._reload()
@@ -78,8 +133,9 @@ class CasDuplicatesDialog(QDialog):
         root = QVBoxLayout(self)
 
         intro = QLabel(
-            "Files indexed in the CAS DB are grouped by content hash. "
-            "Two rows in the same group have identical content."
+            "Indexed files grouped by content hash — every row in a group "
+            "holds identical content, wherever it lives. Use “Rebuild from "
+            "Active Pane” to index a directory first."
         )
         intro.setStyleSheet("color: #666;")
         intro.setWordWrap(True)
@@ -98,6 +154,19 @@ class CasDuplicatesDialog(QDialog):
         self._copy_btn = QPushButton("Copy ax-cas URL", self)
         self._copy_btn.clicked.connect(self._copy_url)
         btn_row.addWidget(self._copy_btn)
+
+        self._delete_btn = QPushButton("Delete selected copies…", self)
+        self._delete_btn.setToolTip(
+            "Remove the selected duplicates. At least one copy of every "
+            "group is always kept."
+        )
+        self._delete_btn.clicked.connect(self._delete_selected)
+        btn_row.addWidget(self._delete_btn)
+
+        self._export_btn = QPushButton("Copy list", self)
+        self._export_btn.setToolTip("Copy every duplicate group to the clipboard")
+        self._export_btn.clicked.connect(self._export)
+        btn_row.addWidget(self._export_btn)
 
         btn_row.addStretch(1)
         self._status = QLabel("")
@@ -121,6 +190,10 @@ class CasDuplicatesDialog(QDialog):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        # Removing duplicates is inherently a multi-row action, and the
+        # default single-selection tree made "delete the copies I don't
+        # want" a one-at-a-time affair.
+        self._tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self._tree.itemDoubleClicked.connect(self._on_double_click)
         root.addWidget(self._tree, stretch=1)
 
@@ -134,6 +207,10 @@ class CasDuplicatesDialog(QDialog):
     # ------------------------------------------------------------------
     def _reload(self) -> None:
         self._tree.clear()
+        # Kept so plan_deletion can see whole groups, not just the rows
+        # the user happened to click — the safety check needs to know
+        # how many copies a group started with.
+        self._groups: list[list] = []
         # Try a few common algorithms; CAS rebuild defaults to sha256
         # but a backend could've registered md5 (S3 ETag, Azure
         # Content-MD5) so we surface those groups too.
@@ -153,6 +230,7 @@ class CasDuplicatesDialog(QDialog):
                         continue
                     total_groups += 1
                     total_files += len(group)
+                    self._groups.append(list(group))
                     parent = QTreeWidgetItem(self._tree)
                     head = group[0]
                     parent.setText(0, f"[{head.algorithm}] {len(group)} copies")
@@ -228,6 +306,113 @@ class CasDuplicatesDialog(QDialog):
         if not data:
             return None, None
         return data[0], data[1:]
+
+    def selected_entries(self) -> list:
+        """Every ``CasEntry`` row currently selected in the tree."""
+        entries = []
+        for item in self._tree.selectedItems():
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data and data[0] == "entry":
+                entries.append(data[1])
+        return entries
+
+    def _delete_selected(self) -> None:
+        selected = self.selected_entries()
+        if not selected:
+            QMessageBox.information(
+                self, "Delete duplicates", "Select the file rows you want to remove."
+            )
+            return
+
+        plan = plan_deletion(selected, getattr(self, "_groups", []))
+
+        if plan.refused_groups:
+            QMessageBox.warning(
+                self,
+                "Every copy selected",
+                f"{len(plan.refused_groups)} group(s) had ALL their copies selected. "
+                "Deleting those would erase the content entirely, so they were "
+                "left alone — deselect at least one copy per group to proceed.",
+            )
+        if not plan.deletable:
+            return
+
+        pane = self._active_pane
+        backend = getattr(pane, "backend", None) if pane is not None else None
+        if backend is None:
+            QMessageBox.information(
+                self,
+                "No backend",
+                "Deleting needs an active pane whose backend holds the files.",
+            )
+            return
+
+        # Only touch entries that belong to the backend we actually
+        # hold. The index spans hosts that may not be connected, and
+        # deleting on the wrong one is unrecoverable.
+        bid = _backend_id_for(backend)
+        mine = [e for e in plan.deletable if e.backend_id == bid]
+        others = len(plan.deletable) - len(mine)
+        if not mine:
+            QMessageBox.information(
+                self,
+                "Not reachable from here",
+                "The selected copies live on backends other than the active "
+                "pane's. Open a pane on that host and delete from there.",
+            )
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Delete duplicates",
+            f"Delete {len(mine)} file(s) from {bid}?\n"
+            f"{plan.survivors} copy/copies will remain."
+            + (
+                f"\n\n{others} selected copy/copies live elsewhere and are skipped."
+                if others
+                else ""
+            )
+            + "\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        removed, errors = 0, []
+        for entry in mine:
+            try:
+                backend.remove(entry.path)
+            except OSError as exc:
+                errors.append(f"{entry.path}: {exc}")
+                continue
+            removed += 1
+            try:
+                CAS.remove(None, entry.backend_id, entry.path)
+            except Exception as exc:  # noqa: BLE001 — index drift must not mask success
+                log.warning("CAS index cleanup failed for %s: %s", entry.path, exc)
+
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Some deletions failed",
+                f"{removed} removed, {len(errors)} failed:\n" + "\n".join(errors[:10]),
+            )
+        self._status.setText(f"Deleted {removed} duplicate(s)")
+        self._reload()
+
+    def _export(self) -> None:
+        lines = ["algorithm\thash\tbackend\tpath\tsize"]
+        for group in getattr(self, "_groups", []):
+            for entry in group:
+                lines.append(
+                    f"{entry.algorithm}\t{entry.value}\t{entry.backend_id}\t"
+                    f"{entry.path}\t{entry.size}"
+                )
+        if len(lines) == 1:
+            lines.append("# no duplicate groups in the index")
+        QGuiApplication.clipboard().setText("\n".join(lines) + "\n")
+        self._status.setText(f"{len(lines) - 1} row(s) copied to clipboard")
 
     def _copy_url(self) -> None:
         kind, payload = self._selected_kind_payload()

@@ -6,7 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -474,6 +474,10 @@ QTableView {
 class MainWindow(QMainWindow):
     """Main application window with file panes."""
 
+    #: (job_id, ok, detail) — emitted from a scheduler worker thread so
+    #: the store write and the status bar happen on the GUI thread.
+    _scheduler_done = pyqtSignal(str, bool, str)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Axross")
@@ -521,6 +525,13 @@ class MainWindow(QMainWindow):
         self._setup_log_dock()
         self._setup_console_dock()
         self._setup_bookmark_sidebar()
+        # Arm the recurring-job tick. Failure here must never stop the
+        # window from opening — a broken schedule file should cost the
+        # user their schedule, not their file manager.
+        try:
+            self._start_scheduler()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("scheduler: not started: %s", exc)
         self._apply_theme(self._current_theme)
         # Auto-load persistent visual settings (monochrome-icon
         # toggle) from session.json. Deliberately a narrow loader
@@ -554,6 +565,12 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
 
         # File menu
+        edit_menu = menubar.addMenu("&Edit")
+        undo_action = edit_menu.addAction("&Undo Last Operation")
+        undo_action.setShortcut(QKeySequence("Ctrl+Z"))
+        undo_action.setToolTip("Reverse the most recent move or trash")
+        undo_action.triggered.connect(self._undo_last_operation)
+
         file_menu = menubar.addMenu("&File")
 
         quick_connect_action = file_menu.addAction("&Quick Connect...")
@@ -681,8 +698,20 @@ class MainWindow(QMainWindow):
         find_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
         find_action.triggered.connect(self._open_metadata_search)
 
-        cas_action = view_menu.addAction("CAS &Duplicate Finder…")
+        cas_action = view_menu.addAction("&Duplicate Finder…")
         cas_action.triggered.connect(self._open_cas_duplicates)
+
+        disk_action = view_menu.addAction("Dis&k Usage…")
+        disk_action.setToolTip("Capacity of every open connection")
+        disk_action.triggered.connect(self._open_disk_usage)
+
+        compare_action = view_menu.addAction("Co&mpare Panes…")
+        compare_action.setToolTip("Diff the active pane's tree against the target pane's")
+        compare_action.triggered.connect(self._open_compare_panes)
+
+        sched_action = view_menu.addAction("Scheduled &Jobs…")
+        sched_action.setToolTip("Run scripts on a recurring schedule")
+        sched_action.triggered.connect(self._open_scheduler)
 
         view_menu.addSeparator()
 
@@ -1416,6 +1445,7 @@ class MainWindow(QMainWindow):
         pane.set_as_target_requested.connect(lambda p=pane: self._set_target_pane(p))
         pane.pane_drop_requested.connect(self._on_pane_drop)
         pane.open_bookmarks_requested.connect(self._show_bookmarks_popup)
+        pane.open_duplicates_requested.connect(self._open_cas_duplicates)
         pane.cycle_pane_requested.connect(
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
@@ -1675,6 +1705,7 @@ class MainWindow(QMainWindow):
         pane.set_as_target_requested.connect(lambda p=pane: self._set_target_pane(p))
         pane.pane_drop_requested.connect(self._on_pane_drop)
         pane.open_bookmarks_requested.connect(self._show_bookmarks_popup)
+        pane.open_duplicates_requested.connect(self._open_cas_duplicates)
         pane.cycle_pane_requested.connect(
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
@@ -1961,6 +1992,376 @@ class MainWindow(QMainWindow):
         for pane in self._panes:
             pane.set_show_hidden(show)
             pane.refresh()
+
+    # ------------------------------------------------------------------
+    # Scheduled jobs
+    # ------------------------------------------------------------------
+
+    def _job_store(self):
+        """The on-disk schedule, alongside the operation journal."""
+        from pathlib import Path
+
+        from core.operation_journal import JOURNAL_PATH
+        from core.scheduler import JobStore
+
+        return JobStore(Path(JOURNAL_PATH).parent / "jobs.json")
+
+    def _open_scheduler(self) -> None:
+        from ui.scheduler_dialog import SchedulerDialog
+
+        dlg = SchedulerDialog(self._job_store(), parent=self)
+        dlg.exec()
+        # Pick up edits without waiting for the next tick.
+        self._scheduler_jobs = self._job_store().load()
+
+    def _start_scheduler(self) -> None:
+        """Arm the tick that runs due jobs.
+
+        60 s is deliberately coarse: the shortest offered interval is
+        five minutes, so a finer tick would only wake the process more
+        often to decide there is nothing to do.
+        """
+        from PyQt6.QtCore import QTimer
+
+        self._scheduler_jobs = self._job_store().load()
+        self._scheduler_done.connect(self._on_scheduled_job_finished)
+        self._scheduler_timer = QTimer(self)
+        self._scheduler_timer.setInterval(60_000)
+        self._scheduler_timer.timeout.connect(self._scheduler_tick)
+        self._scheduler_timer.start()
+
+    def _scheduler_tick(self) -> None:
+        from dataclasses import replace
+        from datetime import datetime
+
+        from core.scheduler import due_jobs
+
+        jobs = getattr(self, "_scheduler_jobs", None)
+        if not jobs:
+            return
+        now = datetime.now()
+        for job in due_jobs(jobs, now=now):
+            # Mark it in flight BEFORE starting: due_jobs excludes
+            # running jobs, and without this a slow job would be
+            # started again on the next tick.
+            self._scheduler_jobs = [
+                replace(j, running=True) if j.job_id == job.job_id else j
+                for j in self._scheduler_jobs
+            ]
+            self._run_scheduled_job(job)
+
+    @staticmethod
+    def _scheduled_runner(job):
+        """What a job actually does. Runs on a worker thread."""
+        if job.kind == "script":
+            from core import scripting
+
+            scripting.run_script(job.target)
+            return f"ran {job.target}"
+        raise ValueError(f"unknown job kind {job.kind!r}")
+
+    def _run_scheduled_job(self, job) -> None:
+        """Start one job on a worker thread.
+
+        Off the GUI thread on purpose: the first wiring called
+        run_script straight from the timer slot, so a nightly mirror
+        over SFTP froze the window for as long as it took — the one
+        thing a background schedule must never do.
+
+        The outcome comes back through a queued signal so the store is
+        written and the status bar touched on the GUI thread only.
+        """
+        from PyQt6.QtCore import QThread
+
+        from core.scheduler import run_job
+
+        thread = QThread(self)
+        # Keep a reference: a QThread that goes out of scope while
+        # running is destroyed mid-flight, which Qt answers with an
+        # abort.
+        self._scheduler_threads = getattr(self, "_scheduler_threads", [])
+        self._scheduler_threads.append(thread)
+
+        def _work():
+            run_job(
+                job,
+                runner=self._scheduled_runner,
+                on_finished=lambda j, ok, detail: self._scheduler_done.emit(
+                    j.job_id, ok, detail
+                ),
+            )
+            thread.quit()
+
+        thread.started.connect(_work)
+        thread.finished.connect(
+            lambda t=thread: self._scheduler_threads.remove(t)
+            if t in self._scheduler_threads
+            else None
+        )
+        thread.start()
+
+    def _on_scheduled_job_finished(self, job_id: str, ok: bool, detail: str) -> None:
+        """Record a finished run. Always on the GUI thread."""
+        from datetime import datetime
+
+        from core.scheduler import record_result
+
+        job = next((j for j in self._scheduler_jobs if j.job_id == job_id), None)
+        if job is None:
+            return
+        updated = record_result(job, ok=ok, at=datetime.now(), detail=detail)
+        self._scheduler_jobs = [
+            updated if j.job_id == job_id else j for j in self._scheduler_jobs
+        ]
+        try:
+            self._job_store().save(self._scheduler_jobs)
+        except OSError as exc:
+            log.warning("scheduler: could not persist job state: %s", exc)
+        if not ok:
+            self.statusBar().showMessage(f"Scheduled job {job.name!r} failed: {detail}", 8000)
+
+    def _backends_by_label(self) -> dict:
+        """Every open backend, keyed by the label the journal records."""
+        out: dict = {}
+        for pane in self._panes:
+            backend = getattr(pane, "backend", None)
+            if backend is None:
+                continue
+            out.setdefault(getattr(backend, "name", type(backend).__name__), (backend, pane))
+        return out
+
+    def _undo_last_operation(self) -> None:
+        """Reverse the newest operation that can actually be reversed.
+
+        The journal spans every connection the app has ever had, so the
+        candidate has to be one whose backend is open right now — see
+        core.undo.pick_undoable. Non-reversible entries are reported
+        with their reason rather than skipped in silence: a user who
+        presses undo and gets no response assumes it worked.
+        """
+        from core.operation_journal import read_recent
+        from core.undo import apply_undo, pick_undoable, undoable
+
+        try:
+            events = read_recent(limit=200)
+        except Exception as exc:  # noqa: BLE001 — a broken journal must not block the app
+            log.warning("undo: could not read the journal: %s", exc)
+            QMessageBox.warning(self, "Undo", f"Could not read the operation journal:\n{exc}")
+            return
+
+        plans = undoable(events)
+        by_label = self._backends_by_label()
+        plan = pick_undoable(plans, set(by_label))
+        if plan is None:
+            newest = plans[0] if plans else None
+            if newest is not None and not newest.reversible:
+                QMessageBox.information(
+                    self,
+                    "Nothing to undo",
+                    f"The most recent operation ({newest.operation}) cannot be "
+                    f"reversed:\n\n{newest.reason}",
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Nothing to undo",
+                    "No recent operation on a currently open connection can be reversed.",
+                )
+            return
+
+        if QMessageBox.question(
+            self,
+            "Undo",
+            f"Undo the last {plan.operation}?\n\n{plan.reason}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        backend, pane = by_label[plan.backend] if plan.backend in by_label else (None, None)
+        if backend is None:
+            backend, pane = next(iter(by_label.values()))
+        try:
+            apply_undo(
+                plan,
+                backend,
+                source_backend=self._undo_source_backend(plan, by_label),
+                transfer=self._undo_transfer,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Undo failed", str(exc))
+            return
+        if pane is not None:
+            pane.refresh()
+        self.statusBar().showMessage(f"Undone: {plan.reason}", 5000)
+
+    def _undo_source_backend(self, plan, by_label: dict):
+        """The far side of a cross-backend move, if it is open.
+
+        Returns ``None`` when it is not, which makes apply_undo refuse
+        with an explanation instead of pushing data to whichever host
+        happened to be at hand.
+        """
+        if plan.action != "transfer_back":
+            return None
+        for label, (backend, _pane) in by_label.items():
+            if label != plan.backend:
+                return backend
+        return None
+
+    def _undo_transfer(self, *, src_backend, src_path, dst_backend, dst_path) -> str:
+        """Move data back through the normal transfer engine."""
+        src_pane = dst_pane = None
+        for pane in self._panes:
+            if getattr(pane, "backend", None) is src_backend:
+                src_pane = pane
+            elif getattr(pane, "backend", None) is dst_backend:
+                dst_pane = pane
+        if src_pane is None or dst_pane is None:
+            raise OSError("both sides of the move must be open in a pane to undo it")
+        self._start_transfer_between(src_pane, dst_pane, [src_path], move=True)
+        return dst_path
+
+    def _open_compare_panes(self) -> None:
+        """Diff the active pane's tree against the target pane's.
+
+        Uses the existing active/target pair rather than asking for two
+        paths — it is the same pairing the transfer actions already use,
+        so "left" and "right" are whatever the user is looking at.
+        """
+        from ui.compare_dialog import CompareDialog
+
+        left, right = self._active_pane, self._target_pane
+        if left is None or right is None or left is right:
+            QMessageBox.information(
+                self,
+                "Compare Panes",
+                "Comparing needs two panes: an active one and a target. "
+                "Split the view (Ctrl+Shift+H) and mark the second pane as "
+                "target from its header.",
+            )
+            return
+
+        dlg = CompareDialog(left, right, parent=self)
+        dlg.reveal_requested.connect(
+            lambda side, path, left=left, right=right: self._reveal_compared(
+                left if side == "left" else right, path
+            )
+        )
+        dlg.copy_requested.connect(
+            lambda direction, paths, left=left, right=right: self._copy_compared(
+                left, right, direction, paths
+            )
+        )
+        dlg.delete_requested.connect(
+            lambda side, paths, left=left, right=right: self._delete_compared(
+                left if side == "left" else right, paths
+            )
+        )
+        dlg.sync_requested.connect(
+            lambda items, left=left, right=right: self._apply_sync(left, right, items)
+        )
+        # Modeless on purpose: "reveal in pane" navigates the window
+        # behind this one, which a modal exec() would hide until the
+        # user closed the very dialog they were navigating from.
+        dlg.show()
+
+    def _reveal_compared(self, pane, full_path: str) -> None:
+        """Navigate ``pane`` to the directory holding ``full_path``."""
+        parent = full_path.rsplit("/", 1)[0] or "/"
+        try:
+            pane.navigate(parent)
+        except OSError as exc:
+            log.debug("compare: could not reveal %s: %s", full_path, exc)
+
+    def _apply_sync(self, left, right, items: list) -> None:
+        """Carry out a confirmed sync plan.
+
+        Directories are created first — the plan is already ordered
+        shallowest-first, so copying into a freshly made directory
+        works. Copies go through the normal transfer engine in two
+        batches, one per direction, so the transfer dock shows them as
+        ordinary transfers.
+        """
+        if not items:
+            return
+        made, errors = 0, []
+        for item in items:
+            if item.get("kind") != "mkdir":
+                continue
+            target = right if item["direction"] == "to_right" else left
+            backend = getattr(target, "backend", None)
+            if backend is None:
+                continue
+            try:
+                backend.mkdir(item["dest"])
+                made += 1
+            except OSError as exc:
+                # An existing directory is the normal case on a re-run.
+                log.debug("sync: mkdir %s: %s", item["dest"], exc)
+
+        for direction, (source, target) in (
+            ("to_right", (left, right)),
+            ("to_left", (right, left)),
+        ):
+            paths = [
+                i["source"]
+                for i in items
+                if i["direction"] == direction and i.get("kind") == "copy"
+            ]
+            if paths:
+                self._start_transfer_between(source, target, paths, move=False)
+
+        if errors:
+            QMessageBox.warning(
+                self, "Sync", f"{len(errors)} step(s) failed:\n" + "\n".join(errors[:10])
+            )
+        self.statusBar().showMessage(
+            f"Sync started: {made} directory/directories created, "
+            f"{sum(1 for i in items if i.get('kind') == 'copy')} file(s) queued",
+            5000,
+        )
+
+    def _copy_compared(self, left, right, direction: str, paths: list) -> None:
+        """Route a comparison copy through the normal transfer engine."""
+        if not paths:
+            return
+        source, target = (left, right) if direction == "to_right" else (right, left)
+        self._start_transfer_between(source, target, list(paths), move=False)
+
+    def _delete_compared(self, pane, paths: list) -> None:
+        """Delete paths the compare window asked for.
+
+        The dialog has already confirmed and has already refused
+        anything that exists on both sides, so this only carries it out
+        and reports what failed.
+        """
+        backend = getattr(pane, "backend", None)
+        if backend is None or not paths:
+            return
+        removed, errors = 0, []
+        for path in paths:
+            try:
+                backend.remove(path)
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+                continue
+            removed += 1
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Some deletions failed",
+                f"{removed} removed, {len(errors)} failed:\n" + "\n".join(errors[:10]),
+            )
+        pane.refresh()
+
+    def _open_disk_usage(self) -> None:
+        """Capacity table over every open connection. The probing and
+        its timeouts already live in core.dashboard; this is the view."""
+        from ui.disk_usage_dialog import DiskUsageDialog, collect_backends
+
+        dlg = DiskUsageDialog(collect_backends(self._panes), parent=self)
+        dlg.exec()
 
     def _open_cas_duplicates(self) -> None:
         """Open the CAS duplicate-finder. The active pane is wired in
@@ -3582,7 +3983,7 @@ class MainWindow(QMainWindow):
 <tr><td><b>Ctrl+C</b></td><td>Pfade in Zwischenablage</td></tr>
 <tr><td><b>Ctrl+D</b></td><td>Verzeichnis als Lesezeichen</td></tr>
 <tr><td><b>Ctrl+B</b></td><td>Lesezeichen öffnen</td></tr>
-<tr><td><b>Alt+Enter</b></td><td>Berechtigungen</td></tr>
+<tr><td><b>Alt+Enter</b></td><td>Eigenschaften (Größe, Owner, Rechte)</td></tr>
 <tr><td><b>Ctrl+Q</b></td><td>Beenden</td></tr>
 <tr><td><b>F1</b></td><td>Diese Übersicht</td></tr>
 </table>

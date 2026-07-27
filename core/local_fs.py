@@ -24,6 +24,13 @@ class LocalFS:
     supports_symlinks = True
     supports_hardlinks = True
 
+    # Walking a directory tree here is local syscalls, not network round
+    # trips, so the UI may total up a directory's size without asking
+    # first. Every other backend leaves this False and gets an explicit
+    # "Calculate" button instead — the safe default, since one recursive
+    # listing over SFTP or S3 is unbounded work.
+    has_cheap_recursive_walk = True
+
     @property
     def name(self) -> str:
         return "Local"
