@@ -131,6 +131,13 @@ def _install_excepthook() -> None:
     sys.excepthook = _hook
 
 
+def _resolve_mcp_root(backend, raw_root: str | None) -> str:
+    if not raw_root:
+        return backend.home()
+    root = Path(raw_root).expanduser()
+    return str(root.resolve(strict=False))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Axross File Manager")
     from axross._version import __version__
@@ -167,6 +174,12 @@ def main() -> int:
         "MCP client. script_run executes Python in the server process, "
         "so this is gated behind its own opt-in (separate from "
         "--mcp-write).",
+    )
+    parser.add_argument(
+        "--mcp-root",
+        default=None,
+        help="Filesystem root exposed to MCP file tools. Defaults to the "
+        "backend home directory.",
     )
     parser.add_argument(
         "--mcp-http",
@@ -247,7 +260,7 @@ def main() -> int:
         # cannot read or write outside what we deliberately exposed
         # (e.g. read_file("/etc/passwd")). Users who want a wider
         # surface have to lower the root explicitly.
-        root = backend.home()
+        root = _resolve_mcp_root(backend, args.mcp_root)
         if args.mcp_http:
             host, _, port_str = args.mcp_http.partition(":")
             if not port_str:

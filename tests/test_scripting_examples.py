@@ -27,9 +27,22 @@ def test_every_public_scripting_api_has_an_example_mapping() -> None:
     assert missing == []
 
 
-def test_example_modules_compile() -> None:
-    for path in sorted((REPO_ROOT / "examples").rglob("*.py")):
-        py_compile.compile(str(path), doraise=True)
+def test_example_modules_compile(tmp_path: Path) -> None:
+    """Every bundled example must be syntactically valid.
+
+    ``cfile`` is redirected into tmp_path on purpose. The default
+    behaviour writes the ``.pyc`` next to the source, which (a) drops
+    ``__pycache__`` directories into the checked-out examples tree on
+    every run and (b) hard-fails with ``OSError: Read-only file
+    system`` whenever the source is mounted read-only — a container
+    test run, a CI cache, or an installed package directory. The
+    syntax check itself needs no artefact to survive the call.
+    """
+    examples = sorted((REPO_ROOT / "examples").rglob("*.py"))
+    assert examples, "no example modules found — the glob or layout changed"
+    for path in examples:
+        cfile = tmp_path / (path.relative_to(REPO_ROOT).as_posix().replace("/", "_") + "c")
+        py_compile.compile(str(path), cfile=str(cfile), doraise=True)
 
 
 def test_local_scripting_examples_run(tmp_path: Path) -> None:

@@ -1,0 +1,55 @@
+# Build-context exclusions for `podman build` / `docker build`.
+#
+# Honoured by both engines (podman also reads .containerignore; this
+# file covers both since podman falls back to .dockerignore).
+#
+# Without this the context is ~1.3 GB — dist/ alone holds the previous
+# PyInstaller ELFs (~340 MB) and a virtualenv another ~315 MB, none of
+# which any Dockerfile needs.
+#
+# NOTE: build/ is NOT excluded wholesale — Dockerfile.build copies the
+# source tree and PyInstaller needs build/axross.spec. Only the heavy,
+# regenerable artifacts under it are dropped.
+
+# Every hidden top-level entry: VCS metadata, virtualenvs, editor and
+# tooling scratch dirs, local agent/control-plane state, cache dirs,
+# dotenv files. None of it is needed to build or test (no Dockerfile or
+# test reads a dot-path), and some of it is large or private — it must
+# never be sent as build context, let alone baked into an image layer
+# by `COPY . .`.
+#
+# Deliberately a wildcard rather than an enumerated list: a new hidden
+# directory appearing in a working tree is then excluded by default,
+# instead of being shipped until someone remembers to add it.
+.*
+
+venv/
+env/
+
+dist/
+build-tmp/
+build/appimagetool-*.AppImage
+build/__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+
+htmlcov/
+security/reports/
+security/scanner_reports/
+
+# Secrets must never enter a build context — a COPY . would bake them
+# into an image layer that survives even if a later step deletes them.
+# (Dotfile forms such as .env are already covered by the `.*` rule
+# above; these catch the non-hidden spellings.)
+*.key
+*.pem
+*.pfx
+*.p12
+*_token.json
+*.sqlite
+*.sqlite3
+*.db
+
+*.log
+:memory:

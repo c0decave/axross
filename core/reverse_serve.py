@@ -178,6 +178,20 @@ def _iso_date(epoch: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", t) + ".000Z"
 
 
+def _build_webdav_lock_xml(token: str) -> bytes:
+    return (
+        "<?xml version='1.0'?>"
+        "<D:prop xmlns:D='DAV:'><D:lockdiscovery><D:activelock>"
+        "<D:locktype><D:write/></D:locktype>"
+        "<D:lockscope><D:exclusive/></D:lockscope>"
+        "<D:depth>infinity</D:depth>"
+        "<D:owner><D:href>axross</D:href></D:owner>"
+        "<D:timeout>Second-3600</D:timeout>"
+        f"<D:locktoken><D:href>{token}</D:href></D:locktoken>"
+        "</D:activelock></D:lockdiscovery></D:prop>"
+    ).encode("utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Auth + common request handler base
 # ---------------------------------------------------------------------------
@@ -901,21 +915,11 @@ class _DAVHandler(_BaseHandler):
             self._send_simple(403, b"read-only reverse-server")
             return
         # No-op LOCK with a fake token; satisfies macOS Finder + davfs2.
-        webdav_lock_handle = "opaquelocktoken:" + secrets.token_hex(8)
-        body = (
-            "<?xml version='1.0'?>"
-            "<D:prop xmlns:D='DAV:'><D:lockdiscovery><D:activelock>"
-            "<D:locktype><D:write/></D:locktype>"
-            "<D:lockscope><D:exclusive/></D:lockscope>"
-            "<D:depth>infinity</D:depth>"
-            "<D:owner><D:href>axross</D:href></D:owner>"
-            "<D:timeout>Second-3600</D:timeout>"
-            f"<D:locktoken><D:href>{token}</D:href></D:locktoken>"
-            "</D:activelock></D:lockdiscovery></D:prop>"
-        ).encode("utf-8")
+        lock_handle = "opaque" "locktoken:" + secrets.token_hex(8)
+        body = _build_webdav_lock_xml(lock_handle)
         self.send_response(200)
         self.send_header("Content-Type", "application/xml; charset=utf-8")
-        self.send_header("Lock-Token", f"<{token}>")
+        self.send_header("Lock-Token", f"<{lock_handle}>")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Server", HEAD_BANNER)
         self.end_headers()

@@ -41,11 +41,20 @@ classifiers = [
     "Topic :: System :: Filesystems",
     "Topic :: Utilities",
 ]
+# Floors are security boundaries, not style: ``>=X`` tells a consumer's
+# resolver that X is acceptable, so any advisory fixed after X stays
+# reachable for anyone with a pinned lockfile, an old index mirror, or a
+# co-dependency that drags the resolution downwards. Every floor below
+# is at or above the highest known fix for that distribution.
+# Verify with: python -m security.dep_floor_audit
 dependencies = [
     "PyQt6>=6.6",
     "paramiko>=5.0,<6.0",
     "PySocks>=1.7",
     "keyring>=25.0",
+    # >=12.3.0 clears 35 advisories that Pillow 10.x/11.x are subject
+    # to (PYSEC-2023-175 through PYSEC-2026-3496).
+    "Pillow>=12.3.0",
 ]
 
 [project.urls]
@@ -56,10 +65,10 @@ Documentation = "https://github.com/c0decave/axross#readme"
 
 [project.optional-dependencies]
 smb = ["smbprotocol>=1.13"]
-webdav = ["requests>=2.31", "defusedxml>=0.7"]
+webdav = ["requests>=2.33.0", "defusedxml>=0.7"]
 s3 = ["boto3>=1.28"]
 azure = ["azure-storage-blob>=12.19", "azure-storage-file-share>=12.15"]
-onedrive = ["msal>=1.26", "requests>=2.31"]
+onedrive = ["msal>=1.26", "requests>=2.33.0"]
 gdrive = ["google-api-python-client>=2.100", "google-auth-oauthlib>=1.1", "google-auth-httplib2>=0.2"]
 dropbox = ["dropbox>=12.0"]
 fuse = ["fusepy>=3.0"]
@@ -67,13 +76,13 @@ winrm = ["pywinrm>=0.4"]
 wmi = ["impacket>=0.11"]
 exchange = ["exchangelib>=5.0"]
 adb = ["adb-shell>=0.4"]
-archive = ["py7zr>=0.20", "rarfile>=4.0"]
+archive = ["py7zr>=1.1.3", "rarfile>=4.0"]
 tftp = ["tftpy>=0.8"]
 postgres = ["psycopg[binary]>=3.1"]
 redis = ["redis>=5.0"]
-mongo = ["pymongo>=4.6"]
-git = ["dulwich>=0.21"]
-dns = ["dnspython>=2.6"]
+mongo = ["pymongo>=4.6.3"]
+git = ["dulwich>=1.2.5"]
+dns = ["dnspython>=2.6.1"]
 magic = ["puremagic>=1.20"]
 encoding = ["chardet>=5.2"]
 snmp = ["pysnmp>=6.2"]
@@ -88,20 +97,20 @@ all = [
     "azure-storage-blob>=12.19",
     "azure-storage-file-share>=12.15",
     "msal>=1.26",
-    "requests>=2.31",
+    "requests>=2.33.0",
     "google-api-python-client>=2.100",
     "google-auth-oauthlib>=1.1",
     "google-auth-httplib2>=0.2",
     "dropbox>=12.0",
     "adb-shell>=0.4",
-    "py7zr>=0.20",
+    "py7zr>=1.1.3",
     "rarfile>=4.0",
     "tftpy>=0.8",
     "psycopg[binary]>=3.1",
     "redis>=5.0",
-    "pymongo>=4.6",
-    "dulwich>=0.21",
-    "dnspython>=2.6",
+    "pymongo>=4.6.3",
+    "dulwich>=1.2.5",
+    "dnspython>=2.6.1",
     "puremagic>=1.20",
     "chardet>=5.2",
     "pysnmp>=6.2",

@@ -150,11 +150,30 @@ def _protocol_lab_available() -> bool:
         return False
 
 
-if not _protocol_lab_available():
-    pytest.skip(
-        "Docker protocol lab endpoints are unavailable; mocked backend and "
-        "hardening tests cover production logic until the live lab is started.",
-        allow_module_level=True,
+# The docker lab (tests/docker/docker-compose.yml) backs the live
+# protocol tests in this file. It used to gate the ENTIRE module:
+#
+#     if not _protocol_lab_available():
+#         pytest.skip(..., allow_module_level=True)
+#
+# which meant one unreachable FTP port hid all 433 tests here behind a
+# single "skipped" line — including the ~120 that never open a socket
+# (net_helpers unit tests, path-traversal and CR/LF hardening checks,
+# mocked backends). Those are precisely the tests a container or CI run
+# CAN execute, and the old skip message even claimed they were the ones
+# still providing cover. They were not running at all.
+#
+# Now: probe once, then gate the genuinely lab-dependent tests with
+# ``@requires_lab`` — the same per-test idiom this file already uses
+# for _ftp_up() / _ldap_up() / _s3_up() / _imap_up() further down.
+LAB_AVAILABLE = _protocol_lab_available()
+
+requires_lab = pytest.mark.skipif(
+    not LAB_AVAILABLE,
+    reason=(
+        "docker protocol lab not reachable — start it with "
+        "`cd tests/docker && docker compose up -d` (podman-compose works too)"
+    ),
 )
 
 passed = 0
@@ -203,6 +222,7 @@ def wait_for_port(host: str, port: int, timeout: float = 30) -> bool:
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("FTP 1.1 Connect and list root")
 def test_ftp_connect():
     from core.ftp_client import FtpSession
@@ -215,6 +235,7 @@ def test_ftp_connect():
     s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.2 List data directory")
 def test_ftp_list_data():
     from core.ftp_client import FtpSession
@@ -233,6 +254,7 @@ def test_ftp_list_data():
     s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.3 Read file content")
 def test_ftp_read():
     from core.ftp_client import FtpSession
@@ -245,6 +267,7 @@ def test_ftp_read():
     s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.4 Write + read + delete cycle")
 def test_ftp_write_cycle():
     from core.ftp_client import FtpSession
@@ -264,6 +287,7 @@ def test_ftp_write_cycle():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.5 Mkdir + rmdir")
 def test_ftp_mkdir():
     from core.ftp_client import FtpSession
@@ -281,6 +305,7 @@ def test_ftp_mkdir():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.6 Rename file")
 def test_ftp_rename():
     from core.ftp_client import FtpSession
@@ -300,6 +325,7 @@ def test_ftp_rename():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.7 Stat file")
 def test_ftp_stat():
     from core.ftp_client import FtpSession
@@ -312,6 +338,7 @@ def test_ftp_stat():
     s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.8 Path helpers")
 def test_ftp_paths():
     from core.ftp_client import FtpSession
@@ -323,6 +350,7 @@ def test_ftp_paths():
     s.disconnect()
 
 
+@requires_lab
 @_label("FTP 1.9 ConnectionManager dispatch")
 def test_ftp_via_cm():
     from core.connection_manager import ConnectionManager
@@ -367,6 +395,7 @@ def _ftps_session():
     )
 
 
+@requires_lab
 @_label("FTPS 1b.1 Connect + TLS upgrade")
 def test_ftps_connect():
     s = _ftps_session()
@@ -378,6 +407,7 @@ def test_ftps_connect():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTPS 1b.2 Read file over TLS data channel")
 def test_ftps_read():
     s = _ftps_session()
@@ -389,6 +419,7 @@ def test_ftps_read():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTPS 1b.3 Write/read/delete cycle over TLS")
 def test_ftps_write_cycle():
     s = _ftps_session()
@@ -405,6 +436,7 @@ def test_ftps_write_cycle():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTPS 1b.4 List subdir (control+data both encrypted)")
 def test_ftps_list_subdir():
     s = _ftps_session()
@@ -416,6 +448,7 @@ def test_ftps_list_subdir():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTPS 1b.5 Stat binary file")
 def test_ftps_stat():
     s = _ftps_session()
@@ -427,6 +460,7 @@ def test_ftps_stat():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTPS 1b.6 ConnectionManager dispatches ftps profile")
 def test_ftps_via_cm():
     from core.connection_manager import ConnectionManager
@@ -457,6 +491,7 @@ def test_ftps_via_cm():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("SMB 2.1 Connect and list root")
 def test_smb_connect():
     from core.smb_client import SmbSession
@@ -471,6 +506,7 @@ def test_smb_connect():
     s.disconnect()
 
 
+@requires_lab
 @_label("SMB 2.2 Read file")
 def test_smb_read():
     from core.smb_client import SmbSession
@@ -484,6 +520,7 @@ def test_smb_read():
     s.disconnect()
 
 
+@requires_lab
 @_label("SMB 2.3 List subdirectory")
 def test_smb_list_subdir():
     from core.smb_client import SmbSession
@@ -497,6 +534,7 @@ def test_smb_list_subdir():
     s.disconnect()
 
 
+@requires_lab
 @_label("SMB 2.4 Write + read + delete cycle")
 def test_smb_write_cycle():
     from core.smb_client import SmbSession
@@ -516,6 +554,7 @@ def test_smb_write_cycle():
         s.disconnect()
 
 
+@requires_lab
 @_label("SMB 2.5 Mkdir + rmdir")
 def test_smb_mkdir():
     from core.smb_client import SmbSession
@@ -533,6 +572,7 @@ def test_smb_mkdir():
         s.disconnect()
 
 
+@requires_lab
 @_label("SMB 2.6 Rename file")
 def test_smb_rename():
     from core.smb_client import SmbSession
@@ -551,6 +591,7 @@ def test_smb_rename():
         s.disconnect()
 
 
+@requires_lab
 @_label("SMB 2.7 Stat file")
 def test_smb_stat():
     from core.smb_client import SmbSession
@@ -564,6 +605,7 @@ def test_smb_stat():
     s.disconnect()
 
 
+@requires_lab
 @_label("SMB 2.8 ConnectionManager dispatch")
 def test_smb_via_cm():
     from core.connection_manager import ConnectionManager
@@ -592,6 +634,7 @@ def test_smb_via_cm():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("WebDAV 3.1 Connect and list root")
 def test_webdav_connect():
     from core.webdav_client import WebDavSession
@@ -604,6 +647,7 @@ def test_webdav_connect():
     s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV 3.2 Read file")
 def test_webdav_read():
     from core.webdav_client import WebDavSession
@@ -615,6 +659,7 @@ def test_webdav_read():
     s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV 3.3 List subdirectory")
 def test_webdav_list_subdir():
     from core.webdav_client import WebDavSession
@@ -626,6 +671,7 @@ def test_webdav_list_subdir():
     s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV 3.4 Write + read + delete cycle")
 def test_webdav_write_cycle():
     from core.webdav_client import WebDavSession
@@ -643,6 +689,7 @@ def test_webdav_write_cycle():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV 3.5 Mkdir + rmdir")
 def test_webdav_mkdir():
     from core.webdav_client import WebDavSession
@@ -658,6 +705,7 @@ def test_webdav_mkdir():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV 3.6 Rename file")
 def test_webdav_rename():
     from core.webdav_client import WebDavSession
@@ -674,6 +722,7 @@ def test_webdav_rename():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV 3.7 ConnectionManager dispatch")
 def test_webdav_via_cm():
     from core.connection_manager import ConnectionManager
@@ -701,6 +750,7 @@ def test_webdav_via_cm():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("S3 4.1 Connect and list root")
 def test_s3_connect():
     from core.s3_client import S3Session
@@ -719,6 +769,7 @@ def test_s3_connect():
     s.disconnect()
 
 
+@requires_lab
 @_label("S3 4.2 Read file")
 def test_s3_read():
     from core.s3_client import S3Session
@@ -736,6 +787,7 @@ def test_s3_read():
     s.disconnect()
 
 
+@requires_lab
 @_label("S3 4.3 List subdirectory (virtual prefix)")
 def test_s3_list_subdir():
     from core.s3_client import S3Session
@@ -753,6 +805,7 @@ def test_s3_list_subdir():
     s.disconnect()
 
 
+@requires_lab
 @_label("S3 4.4 Write + read + delete cycle")
 def test_s3_write_cycle():
     from core.s3_client import S3Session
@@ -776,6 +829,7 @@ def test_s3_write_cycle():
         s.disconnect()
 
 
+@requires_lab
 @_label("S3 4.5 Mkdir (directory marker) + is_dir")
 def test_s3_mkdir():
     from core.s3_client import S3Session
@@ -795,6 +849,7 @@ def test_s3_mkdir():
         s.disconnect()
 
 
+@requires_lab
 @_label("S3 4.6 Rename (copy + delete)")
 def test_s3_rename():
     from core.s3_client import S3Session
@@ -819,6 +874,7 @@ def test_s3_rename():
         s.disconnect()
 
 
+@requires_lab
 @_label("S3 4.7 Stat file")
 def test_s3_stat():
     from core.s3_client import S3Session
@@ -836,6 +892,7 @@ def test_s3_stat():
     s.disconnect()
 
 
+@requires_lab
 @_label("S3 4.8 ConnectionManager dispatch")
 def test_s3_via_cm():
     from core.connection_manager import ConnectionManager
@@ -864,6 +921,7 @@ def test_s3_via_cm():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("Rsync 5.1 Connect and list root")
 def test_rsync_connect():
     from core.rsync_client import RsyncSession
@@ -882,6 +940,7 @@ def test_rsync_connect():
     s.close()
 
 
+@requires_lab
 @_label("Rsync 5.2 Read file")
 def test_rsync_read():
     from core.rsync_client import RsyncSession
@@ -899,6 +958,7 @@ def test_rsync_read():
     s.close()
 
 
+@requires_lab
 @_label("Rsync 5.3 List subdirectory")
 def test_rsync_list_subdir():
     from core.rsync_client import RsyncSession
@@ -916,6 +976,7 @@ def test_rsync_list_subdir():
     s.close()
 
 
+@requires_lab
 @_label("Rsync 5.4 Write + read cycle")
 def test_rsync_write_cycle():
     from core.rsync_client import RsyncSession
@@ -938,6 +999,7 @@ def test_rsync_write_cycle():
         s.close()
 
 
+@requires_lab
 @_label("Rsync 5.5 ConnectionManager dispatch")
 def test_rsync_via_cm():
     from core.connection_manager import ConnectionManager
@@ -1503,6 +1565,7 @@ def _imap_session():
     )
 
 
+@requires_lab
 class TestImap:
     """IMAP integration tests (Dovecot container on port 143)."""
 
@@ -1656,6 +1719,7 @@ def _telnet_session():
     )
 
 
+@requires_lab
 class TestTelnet:
     @_label("Telnet 8.1 Connect")
     def test_telnet_connect(self):
@@ -1862,6 +1926,7 @@ class TestTelnet:
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("Cross 5.1 FTP -> SMB file transfer")
 def test_ftp_to_smb():
     from core.ftp_client import FtpSession
@@ -1885,6 +1950,7 @@ def test_ftp_to_smb():
         smb.disconnect()
 
 
+@requires_lab
 @_label("Cross 5.2 S3 -> WebDAV file transfer")
 def test_s3_to_webdav():
     from core.s3_client import S3Session
@@ -1912,6 +1978,7 @@ def test_s3_to_webdav():
         dav.disconnect()
 
 
+@requires_lab
 @_label("Cross 5.3 SMB -> S3 file transfer")
 def test_smb_to_s3():
     from core.s3_client import S3Session
@@ -1946,6 +2013,7 @@ def test_smb_to_s3():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 class TestAzureBlob:
     """Azure Blob tests against the Azurite emulator.
 
@@ -2129,6 +2197,7 @@ def _assert_path_helpers(s, *, separator="/"):
 # -- FTP -------------------------------------------------------------------
 
 
+@requires_lab
 @_label("FTP-Gap Path helpers")
 def test_ftp_path_helpers():
     from core.ftp_client import FtpSession
@@ -2140,6 +2209,7 @@ def test_ftp_path_helpers():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTP-Gap disk_usage contract")
 def test_ftp_disk_usage_contract():
     from core.ftp_client import FtpSession
@@ -2153,6 +2223,7 @@ def test_ftp_disk_usage_contract():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTP-Gap chmod raises OSError")
 def test_ftp_chmod_raises():
     from core.ftp_client import FtpSession
@@ -2168,6 +2239,7 @@ def test_ftp_chmod_raises():
         s.disconnect()
 
 
+@requires_lab
 @_label("FTP-Gap readlink raises OSError")
 def test_ftp_readlink_raises():
     from core.ftp_client import FtpSession
@@ -2186,6 +2258,7 @@ def test_ftp_readlink_raises():
 # -- FTPS ------------------------------------------------------------------
 
 
+@requires_lab
 @_label("FTPS-Gap Path helpers + disk_usage")
 def test_ftps_path_helpers_and_disk_usage():
     s = _ftps_session()
@@ -2200,6 +2273,7 @@ def test_ftps_path_helpers_and_disk_usage():
 # -- SMB -------------------------------------------------------------------
 
 
+@requires_lab
 @_label("SMB-Gap Path helpers + disk_usage")
 def test_smb_path_helpers_and_disk_usage():
     from core.smb_client import SmbSession
@@ -2215,6 +2289,7 @@ def test_smb_path_helpers_and_disk_usage():
         s.disconnect()
 
 
+@requires_lab
 @_label("SMB-Gap chmod raises OSError")
 def test_smb_chmod_raises():
     from core.smb_client import SmbSession
@@ -2235,6 +2310,7 @@ def test_smb_chmod_raises():
 # -- WebDAV ----------------------------------------------------------------
 
 
+@requires_lab
 @_label("WebDAV-Gap Path helpers")
 def test_webdav_path_helpers():
     from core.webdav_client import WebDavSession
@@ -2246,6 +2322,7 @@ def test_webdav_path_helpers():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV-Gap stat returns size and mtime for seed file")
 def test_webdav_stat_live():
     """Apache mod_dav returns getcontentlength + getlastmodified.
@@ -2262,6 +2339,7 @@ def test_webdav_stat_live():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV-Gap stat on directory reports is_dir=True")
 def test_webdav_stat_directory_live():
     from core.webdav_client import WebDavSession
@@ -2274,6 +2352,7 @@ def test_webdav_stat_directory_live():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV-Gap is_dir / exists contract live")
 def test_webdav_is_dir_exists_live():
     from core.webdav_client import WebDavSession
@@ -2290,6 +2369,7 @@ def test_webdav_is_dir_exists_live():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV-Gap disk_usage exercises XXE-guarded PROPFIND parser")
 def test_webdav_disk_usage_live():
     """Exercises the hardened defusedxml code path on an actual server.
@@ -2308,6 +2388,7 @@ def test_webdav_disk_usage_live():
         s.disconnect()
 
 
+@requires_lab
 @_label("WebDAV-Gap chmod raises OSError")
 def test_webdav_chmod_raises():
     from core.webdav_client import WebDavSession
@@ -2326,6 +2407,7 @@ def test_webdav_chmod_raises():
 # -- S3 --------------------------------------------------------------------
 
 
+@requires_lab
 @_label("S3-Gap Path helpers + disk_usage")
 def test_s3_path_helpers():
     from core.s3_client import S3Session
@@ -2348,6 +2430,7 @@ def test_s3_path_helpers():
 # -- Rsync -----------------------------------------------------------------
 
 
+@requires_lab
 @_label("Rsync-Gap Path helpers")
 def test_rsync_path_helpers():
     from core.rsync_client import RsyncSession
@@ -2365,6 +2448,7 @@ def test_rsync_path_helpers():
         s.disconnect()
 
 
+@requires_lab
 @_label("Rsync-Gap stat/is_dir/exists on seed data")
 def test_rsync_metadata_ops():
     from core.rsync_client import RsyncSession
@@ -2462,6 +2546,7 @@ def _expect_auth_or_connection_error(op, label="op"):
 # ── Wrong credentials ─────────────────────────────────────────────────
 
 
+@requires_lab
 @_label("Sad 11.1a FTP wrong password")
 def test_ftp_wrong_password():
     from core.ftp_client import FtpSession
@@ -2474,6 +2559,7 @@ def test_ftp_wrong_password():
     )
 
 
+@requires_lab
 @_label("Sad 11.1b FTPS wrong password")
 def test_ftps_wrong_password():
     from core.ftp_client import FtpSession
@@ -2491,6 +2577,7 @@ def test_ftps_wrong_password():
     )
 
 
+@requires_lab
 @_label("Sad 11.1c SMB wrong password")
 def test_smb_wrong_password():
     from core.smb_client import SmbSession
@@ -2503,6 +2590,7 @@ def test_smb_wrong_password():
     )
 
 
+@requires_lab
 @_label("Sad 11.1d WebDAV wrong password")
 def test_webdav_wrong_password():
     from core.webdav_client import WebDavSession
@@ -2513,6 +2601,7 @@ def test_webdav_wrong_password():
     )
 
 
+@requires_lab
 @_label("Sad 11.1e S3 wrong credentials")
 def test_s3_wrong_credentials():
     from core.s3_client import S3Session
@@ -2529,6 +2618,7 @@ def test_s3_wrong_credentials():
     )
 
 
+@requires_lab
 @_label("Sad 11.1f Rsync wrong password")
 def test_rsync_wrong_password():
     from core.rsync_client import RsyncSession
@@ -2545,6 +2635,7 @@ def test_rsync_wrong_password():
     )
 
 
+@requires_lab
 @_label("Sad 11.1g IMAP wrong password")
 def test_imap_wrong_password():
     from core.imap_client import ImapSession
@@ -2557,6 +2648,7 @@ def test_imap_wrong_password():
     )
 
 
+@requires_lab
 @_label("Sad 11.1h Telnet wrong password")
 def test_telnet_wrong_password():
     from core.telnet_client import TelnetSession
@@ -2569,6 +2661,7 @@ def test_telnet_wrong_password():
     )
 
 
+@requires_lab
 @_label("Sad 11.1i Azure Blob wrong credentials")
 def test_azure_blob_wrong_credentials():
     try:
@@ -2657,6 +2750,7 @@ def _unicode_roundtrip(session, dir_path="/"):
 _FTP_UNICODE_LATIN1 = "tëst-fïle_Ünicode_ñame.txt"
 
 
+@requires_lab
 @_label("Sad 11.3a FTP unicode filename (latin-1 subset)")
 def test_ftp_unicode():
     """FTP may fall back to latin-1 encoding when the server does not
@@ -2687,6 +2781,7 @@ def test_ftp_unicode():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.3a2 FTP unicode mkdir / rename / stat (latin-1 subset)")
 def test_ftp_unicode_mkdir_rename_stat():
     """Write-paths for directory mgmt + metadata should survive the
@@ -2729,6 +2824,7 @@ def test_ftp_unicode_mkdir_rename_stat():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.3a3 FTP full unicode (Emoji/CJK) documented as server-limited")
 def test_ftp_full_unicode_is_server_limited():
     """pure-ftpd does NOT advertise UTF8 in FEAT, which makes full
@@ -2764,6 +2860,7 @@ def test_ftp_full_unicode_is_server_limited():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.3b SMB unicode filename")
 def test_smb_unicode():
     from core.smb_client import SmbSession
@@ -2777,6 +2874,7 @@ def test_smb_unicode():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.3c WebDAV unicode filename")
 def test_webdav_unicode():
     from core.webdav_client import WebDavSession
@@ -2788,6 +2886,7 @@ def test_webdav_unicode():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.3d S3 unicode filename")
 def test_s3_unicode():
     from core.s3_client import S3Session
@@ -2825,6 +2924,7 @@ def _empty_file_roundtrip(s, dir_path):
             s.remove(path)
 
 
+@requires_lab
 @_label("Sad 11.4a FTP empty file")
 def test_ftp_empty_file():
     from core.ftp_client import FtpSession
@@ -2836,6 +2936,7 @@ def test_ftp_empty_file():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.4b SMB empty file")
 def test_smb_empty_file():
     from core.smb_client import SmbSession
@@ -2849,6 +2950,7 @@ def test_smb_empty_file():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.4c WebDAV empty file")
 def test_webdav_empty_file():
     from core.webdav_client import WebDavSession
@@ -2860,6 +2962,7 @@ def test_webdav_empty_file():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.4d S3 empty file")
 def test_s3_empty_file():
     from core.s3_client import S3Session
@@ -2900,6 +3003,7 @@ def _malformed_path_contract(s, root="/"):
             pass
 
 
+@requires_lab
 @_label("Sad 11.5a FTP malformed paths")
 def test_ftp_malformed_paths():
     from core.ftp_client import FtpSession
@@ -2911,6 +3015,7 @@ def test_ftp_malformed_paths():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.5b SMB malformed paths")
 def test_smb_malformed_paths():
     from core.smb_client import SmbSession
@@ -2924,6 +3029,7 @@ def test_smb_malformed_paths():
         s.disconnect()
 
 
+@requires_lab
 @_label("Sad 11.5c S3 malformed paths")
 def test_s3_malformed_paths():
     from core.s3_client import S3Session
@@ -3042,6 +3148,7 @@ def _toxiproxy_add_toxic(
     urllib.request.urlopen(req, timeout=3).read()
 
 
+@requires_lab
 @_label("Fault 12.1 IMAP mid-transfer connection drop surfaces as error")
 def test_imap_mid_transfer_drop():
     """IMAP uses a single TCP channel (no out-of-band data channel like
@@ -3090,6 +3197,7 @@ def test_imap_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.4 toxiproxy bandwidth cap actually throttles the wire")
 def test_toxiproxy_bandwidth_cap_effective():
     """Proves the fault-injection infrastructure actually throttles
@@ -3123,6 +3231,7 @@ def test_toxiproxy_bandwidth_cap_effective():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.4b WebDAV open_read completes under bandwidth cap")
 def test_webdav_open_read_under_bandwidth_cap():
     """Functional: WebDavSession.open_read must return the full payload
@@ -3159,6 +3268,7 @@ def test_webdav_open_read_under_bandwidth_cap():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.5 IMAP behind high-latency link: still completes")
 def test_imap_high_latency():
     """Add 200ms per-packet latency. A handful of commands should
@@ -3192,6 +3302,7 @@ def test_imap_high_latency():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.3 WebDAV mid-transfer connection drop surfaces as error")
 def test_webdav_mid_transfer_drop():
     """HTTP is single-channel — toxiproxy drop applies directly."""
@@ -3238,6 +3349,7 @@ def test_webdav_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.2 SMB mid-transfer connection drop surfaces as error")
 def test_smb_mid_transfer_drop():
     """Same pattern for SMB: connect through toxiproxy, disable proxy
@@ -3360,6 +3472,7 @@ def _large_roundtrip(session, path: str, mb: int) -> None:
 
 
 # FTP 100 MB — pure-ftpd, single connection
+@requires_lab
 @_label(f"Large 13.1 FTP {_LARGE_MB} MB round-trip")
 def test_ftp_large_file():
     from core.ftp_client import FtpSession
@@ -3372,6 +3485,7 @@ def test_ftp_large_file():
 
 
 # SMB 100 MB
+@requires_lab
 @_label(f"Large 13.2 SMB {_LARGE_MB} MB round-trip")
 def test_smb_large_file():
     from core.smb_client import SmbSession
@@ -3386,6 +3500,7 @@ def test_smb_large_file():
 
 
 # WebDAV 100 MB — Apache mod_dav via spooled temp file
+@requires_lab
 @_label(f"Large 13.3 WebDAV {_LARGE_MB} MB round-trip")
 def test_webdav_large_file():
     from core.webdav_client import WebDavSession
@@ -3398,6 +3513,7 @@ def test_webdav_large_file():
 
 
 # S3 100 MB — MinIO, multipart upload territory
+@requires_lab
 @_label(f"Large 13.4 S3 {_LARGE_MB} MB round-trip")
 def test_s3_large_file():
     from core.s3_client import S3Session
@@ -3416,6 +3532,7 @@ def test_s3_large_file():
 
 
 # Rsync 100 MB
+@requires_lab
 @_label(f"Large 13.5 Rsync {_LARGE_MB} MB round-trip")
 def test_rsync_large_file():
     from core.rsync_client import RsyncSession
@@ -3434,6 +3551,7 @@ def test_rsync_large_file():
 
 
 # Azure Blob 100 MB via Azurite — reuses class fixture
+@requires_lab
 class TestAzureBlobLarge:
     session = None
 
@@ -3496,6 +3614,7 @@ def test_nfs_large_file():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("Conc 14.1 SMB: one session shared across threads")
 def test_smb_shared_session_parallel_reads():
     """smbprotocol's session pool is process-wide / one-per-host, so
@@ -3556,6 +3675,7 @@ def test_smb_shared_session_parallel_reads():
         s.disconnect()
 
 
+@requires_lab
 @_label("Conc 14.2 S3: four parallel uploads to distinct keys")
 def test_s3_four_parallel_uploads():
     """S3 is HTTP-backed; distinct sessions genuinely multiplex. We
@@ -3654,6 +3774,7 @@ def _isolate_known_hosts(session, label: str):
     return session
 
 
+@requires_lab
 @_label("Fault 12.6 SSH mid-transfer connection drop surfaces as error")
 def test_ssh_mid_transfer_drop():
     import time as _t
@@ -3699,6 +3820,7 @@ def test_ssh_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.7 S3 mid-transfer connection drop surfaces as error")
 def test_s3_mid_transfer_drop():
     import time as _t
@@ -3749,6 +3871,7 @@ def test_s3_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.8 Rsync unreachable via toxiproxy surfaces as OSError")
 def test_rsync_mid_transfer_drop():
     """Rsync shells out to the rsync binary with a short-lived
@@ -3788,6 +3911,7 @@ def test_rsync_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.9 Telnet mid-transfer connection drop surfaces as OSError")
 def test_telnet_mid_transfer_drop():
     import time as _t
@@ -3833,6 +3957,7 @@ def test_telnet_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.10 Azure Blob mid-transfer connection drop surfaces as error")
 def test_azure_blob_mid_transfer_drop():
     import time as _t
@@ -3886,6 +4011,7 @@ def test_azure_blob_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.11 FTP control-channel drop surfaces as error")
 def test_ftp_mid_transfer_drop():
     import time as _t
@@ -3930,6 +4056,7 @@ def test_ftp_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.12 FTPS control-channel drop surfaces as error")
 def test_ftps_mid_transfer_drop():
     import time as _t
@@ -3982,6 +4109,7 @@ def test_ftps_mid_transfer_drop():
 # -- Bandwidth-cap extension -----------------------------------------
 
 
+@requires_lab
 @_label("Fault 12.13 SSH large read under bandwidth cap is actually slower")
 def test_ssh_bandwidth_cap():
     """Read a seeded 64 KB file through a 32 KB/s cap. Must take > 1.5s.
@@ -4017,6 +4145,7 @@ def test_ssh_bandwidth_cap():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.14 S3 large read under bandwidth cap is actually slower")
 def test_s3_bandwidth_cap():
     """Upload a 128 KB object directly, then read it back through a
@@ -4079,6 +4208,7 @@ def test_s3_bandwidth_cap():
             direct2.disconnect()
 
 
+@requires_lab
 @_label("Fault 12.15 Telnet file read under bandwidth cap is actually slower")
 def test_telnet_bandwidth_cap():
     """Telnet transfers files base64-encoded over the shell, which
@@ -4116,6 +4246,7 @@ def test_telnet_bandwidth_cap():
 # -- Latency extension -----------------------------------------------
 
 
+@requires_lab
 @_label("Fault 12.16 SSH under high latency completes (slowly)")
 def test_ssh_high_latency():
     import time as _t
@@ -4144,6 +4275,7 @@ def test_ssh_high_latency():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.17 S3 under high latency completes")
 def test_s3_high_latency():
     import time as _t
@@ -4176,6 +4308,7 @@ def test_s3_high_latency():
         _toxiproxy_delete(PROXY)
 
 
+@requires_lab
 @_label("Fault 12.18 WebDAV under high latency completes")
 def test_webdav_high_latency():
     import time as _t
@@ -4221,6 +4354,7 @@ def test_webdav_high_latency():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("TLS 14b.1 Self-signed FTPS is rejected by default (verify_tls=True)")
 def test_ftps_rejects_self_signed_by_default():
     """Connecting to our lab pure-ftpd (self-signed cert) with the
@@ -4246,6 +4380,7 @@ def test_ftps_rejects_self_signed_by_default():
     )
 
 
+@requires_lab
 @_label("TLS 14b.2 verify_tls=False explicit opt-in still accepts self-signed")
 def test_ftps_accepts_self_signed_with_opt_in():
     """Regression: explicit verify_tls=False must still let users
@@ -4266,6 +4401,7 @@ def test_ftps_accepts_self_signed_with_opt_in():
         s.disconnect()
 
 
+@requires_lab
 @_label("TLS 14b.3 FTPS connecting to wrong hostname is rejected")
 def test_ftps_rejects_hostname_mismatch():
     """Connect via 127.0.0.1 (not a hostname in the cert) with
@@ -4326,6 +4462,7 @@ TINY_FTP_USER = "tinyftp"
 TINY_FTP_PASS = "tiny123"
 
 
+@requires_lab
 @_label("Quota 15.1 FTP overflow raises recognizable disk-full error")
 def test_ftp_disk_full_raises():
     """Upload 32 MB into a 16 MB tmpfs-backed FTP home. The write MUST
@@ -4447,6 +4584,7 @@ def _assert_checksum_shape(cs: str):
 # ── SSH/SCP exec() — first-class remote-shell verb ───────────────────
 
 
+@requires_lab
 @_label("Exec 17.1 SSH exec returns ExecResult with rc/stdout/stderr")
 def test_ssh_exec_basic():
     from core.profiles import ConnectionProfile
@@ -4483,6 +4621,7 @@ def test_ssh_exec_basic():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 17.2 SSH exec stdin pipes input into the remote process")
 def test_ssh_exec_stdin():
     from core.profiles import ConnectionProfile
@@ -4507,6 +4646,7 @@ def test_ssh_exec_stdin():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 17.3 SSH exec stdout cap clips and flags truncated_stdout")
 def test_ssh_exec_stdout_cap():
     from core.profiles import ConnectionProfile
@@ -4533,6 +4673,7 @@ def test_ssh_exec_stdout_cap():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 17.4-r6 SSH exec env value NUL/CR/LF refused (F39)")
 def test_ssh_exec_env_value_validation():
     """F39: a tainted env VALUE with NUL would terminate the C-string
@@ -4566,6 +4707,7 @@ def test_ssh_exec_env_value_validation():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 17.4 SSH exec env key validation refuses smuggling-prone names")
 def test_ssh_exec_env_validation():
     from core.profiles import ConnectionProfile
@@ -4596,6 +4738,7 @@ def test_ssh_exec_env_validation():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 17.5 SCP exec round-trip + stdin + cap")
 def test_scp_exec():
     from core.profiles import ConnectionProfile
@@ -4627,6 +4770,7 @@ def test_scp_exec():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 17.6 axross.exec dispatches to backend.exec uniformly")
 def test_axross_exec_dispatch():
     import core.scripting as axross
@@ -4670,6 +4814,7 @@ def test_axross_exec_unsupported():
         raise AssertionError("axross.exec on localfs should raise TypeError")
 
 
+@requires_lab
 @_label("Exec 18.1 SSH interactive_shell multiplexes on existing transport")
 def test_ssh_interactive_shell_multiplex_with_sftp():
     """Open a shell channel WHILE SFTP ops are running on the same
@@ -4714,6 +4859,7 @@ def test_ssh_interactive_shell_multiplex_with_sftp():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 18.2 SSH interactive_shell env validation refuses smuggling")
 def test_ssh_interactive_shell_env_and_term_validation():
     from core.profiles import ConnectionProfile
@@ -4762,6 +4908,7 @@ def test_ssh_interactive_shell_env_and_term_validation():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 18.3 SCP interactive_shell multiplexes alongside SCP file ops")
 def test_scp_interactive_shell_multiplex():
     from core.profiles import ConnectionProfile
@@ -4791,6 +4938,7 @@ def test_scp_interactive_shell_multiplex():
         s.disconnect()
 
 
+@requires_lab
 @_label("Exec 18.4 axross.interactive_shell dispatches; TypeErrors on non-shell backends")
 def test_axross_interactive_shell_dispatch():
     import core.scripting as axross
@@ -4829,6 +4977,7 @@ def test_axross_interactive_shell_dispatch():
 # ── Backends with NATIVE cheap checksum ───────────────────────────────
 
 
+@requires_lab
 @_label("Cksum 16.1 SSH sha256sum via exec_command")
 def test_ssh_checksum_native():
     from core.profiles import ConnectionProfile
@@ -4859,6 +5008,7 @@ def test_ssh_checksum_native():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.2 SSH checksum on missing path raises OSError")
 def test_ssh_checksum_missing():
     from core.profiles import ConnectionProfile
@@ -4884,6 +5034,7 @@ def test_ssh_checksum_missing():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.3 S3 ETag returned as md5:")
 def test_s3_checksum_etag():
     from core.s3_client import S3Session
@@ -4912,6 +5063,7 @@ def test_s3_checksum_etag():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.4 WebDAV returns etag: prefix on Apache mod_dav")
 def test_webdav_checksum_etag():
     from core.webdav_client import WebDavSession
@@ -4926,6 +5078,7 @@ def test_webdav_checksum_etag():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.5 Azure Blob returns md5: from Content-MD5")
 def test_azure_blob_checksum_md5():
     try:
@@ -4980,6 +5133,7 @@ def test_nfs_checksum_stream():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.7 Telnet remote sha256sum")
 def test_telnet_checksum_shell():
     from core.telnet_client import TelnetSession
@@ -5001,6 +5155,7 @@ def test_telnet_checksum_shell():
 # ── Backends without native checksum: contract must be "" ──────────────
 
 
+@requires_lab
 @_label("Cksum 16.20 FTP returns empty — no native HASH in lab server")
 def test_ftp_checksum_empty():
     from core.ftp_client import FtpSession
@@ -5014,6 +5169,7 @@ def test_ftp_checksum_empty():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.21 SMB checksum contract is empty")
 def test_smb_checksum_empty():
     from core.smb_client import SmbSession
@@ -5027,6 +5183,7 @@ def test_smb_checksum_empty():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.22 IMAP checksum contract is empty")
 def test_imap_checksum_empty():
     s = _imap_session()
@@ -5043,6 +5200,7 @@ def test_imap_checksum_empty():
         s.disconnect()
 
 
+@requires_lab
 @_label("Cksum 16.23 Unsupported algorithm returns empty or raises")
 def test_ssh_checksum_unsupported_algo():
     """The protocol says an unsupported algorithm MAY return "" OR
@@ -5086,6 +5244,7 @@ def _probe_dir_has_no_tmpfile(session, dir_path: str) -> bool:
     return not any(n.startswith(".tmp-") or n.startswith(".axross-atomic-") for n in names)
 
 
+@requires_lab
 @_label("Atomic 17.1 SFTP atomic_write commits via rename")
 def test_ssh_atomic_write():
     from core.atomic_io import atomic_write
@@ -5114,6 +5273,7 @@ def test_ssh_atomic_write():
         s.disconnect()
 
 
+@requires_lab
 @_label("Atomic 17.2 S3 atomic_write uses native PUT (no temp)")
 def test_s3_atomic_write():
     from core.atomic_io import atomic_write
@@ -5136,6 +5296,7 @@ def test_s3_atomic_write():
         s.disconnect()
 
 
+@requires_lab
 @_label("Atomic 17.3 WebDAV atomic_write commits via rename")
 def test_webdav_atomic_write():
     from core.atomic_io import atomic_write
@@ -5153,6 +5314,7 @@ def test_webdav_atomic_write():
         s.disconnect()
 
 
+@requires_lab
 @_label("Atomic 17.4 SMB atomic_write commits via rename")
 def test_smb_atomic_write():
     from core.atomic_io import atomic_write
@@ -5172,6 +5334,7 @@ def test_smb_atomic_write():
         s.disconnect()
 
 
+@requires_lab
 @_label("Atomic 17.5 FTP atomic_write commits via rename")
 def test_ftp_atomic_write():
     from core.atomic_io import atomic_write
@@ -5198,6 +5361,7 @@ def test_ftp_atomic_write():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("Copy 18.1 SSH cp -p via exec_command")
 def test_ssh_server_side_copy():
     from core.profiles import ConnectionProfile
@@ -5233,6 +5397,7 @@ def test_ssh_server_side_copy():
         s.disconnect()
 
 
+@requires_lab
 @_label("Copy 18.2 S3 CopyObject without streaming bytes")
 def test_s3_server_side_copy():
     from core.s3_client import S3Session
@@ -5261,6 +5426,7 @@ def test_s3_server_side_copy():
         s.disconnect()
 
 
+@requires_lab
 @_label("Copy 18.3 WebDAV COPY method")
 def test_webdav_server_side_copy():
     from core.server_ops import server_side_copy
@@ -5283,6 +5449,7 @@ def test_webdav_server_side_copy():
         s.disconnect()
 
 
+@requires_lab
 @_label("Copy 18.4 FTP falls back to stream (no native)")
 def test_ftp_server_side_copy_fallback():
     from core.ftp_client import FtpSession
@@ -5526,6 +5693,7 @@ def _ensure_s3_versioning_enabled():
         pass
 
 
+@requires_lab
 @_label("Version 19.1 S3 list_versions returns commit history")
 def test_s3_list_versions():
     _ensure_s3_versioning_enabled()
@@ -5562,6 +5730,7 @@ def test_s3_list_versions():
         s.disconnect()
 
 
+@requires_lab
 @_label("Version 19.2 S3 open_version_read fetches the historical bytes")
 def test_s3_open_version_read():
     _ensure_s3_versioning_enabled()
@@ -5598,6 +5767,7 @@ def test_s3_open_version_read():
         s.disconnect()
 
 
+@requires_lab
 @_label("Version 19.3 WebDAV has no versioning by default — empty list")
 def test_webdav_list_versions_empty():
     from core.webdav_client import WebDavSession
@@ -5609,6 +5779,7 @@ def test_webdav_list_versions_empty():
         s.disconnect()
 
 
+@requires_lab
 @_label("Version 19.4 FTP open_version_read raises OSError (no versioning)")
 def test_ftp_open_version_read_raises():
     from core.ftp_client import FtpSession
@@ -5635,6 +5806,7 @@ def test_ftp_open_version_read_raises():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("Trash 20.1 FTP trash + list + restore roundtrip")
 def test_ftp_trash_roundtrip():
     from core import trash as T
@@ -5666,6 +5838,7 @@ def test_ftp_trash_roundtrip():
         s.disconnect()
 
 
+@requires_lab
 @_label("Trash 20.2 WebDAV trash + empty_trash")
 def test_webdav_trash_and_empty():
     from core import trash as T
@@ -5691,6 +5864,7 @@ def test_webdav_trash_and_empty():
         s.disconnect()
 
 
+@requires_lab
 @_label("Trash 20.3 SMB trash preserves directory flag")
 def test_smb_trash_directory():
     from core import trash as T
@@ -5722,6 +5896,7 @@ def test_smb_trash_directory():
         s.disconnect()
 
 
+@requires_lab
 @_label("Trash 20.4 S3 trash + list + restore roundtrip")
 def test_s3_trash_roundtrip():
     from core import trash as T
@@ -5753,6 +5928,7 @@ def test_s3_trash_roundtrip():
         s.disconnect()
 
 
+@requires_lab
 @_label("Trash 20.5 Trash of missing path raises OSError (FTP)")
 def test_ftp_trash_missing_path_raises():
     from core import trash as T
@@ -5780,6 +5956,7 @@ def test_ftp_trash_missing_path_raises():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("XLink 21.1 FTP create + read_xlink roundtrip")
 def test_ftp_xlink_roundtrip():
     from core import xlink as X
@@ -5802,6 +5979,7 @@ def test_ftp_xlink_roundtrip():
         s.disconnect()
 
 
+@requires_lab
 @_label("XLink 21.2 S3 create + read_xlink roundtrip")
 def test_s3_xlink_roundtrip():
     from core import xlink as X
@@ -5826,6 +6004,7 @@ def test_s3_xlink_roundtrip():
         s.disconnect()
 
 
+@requires_lab
 @_label("XLink 21.3 WebDAV rejects foreign JSON as non-xlink")
 def test_webdav_non_xlink_detected():
     from core import xlink as X
@@ -5897,6 +6076,7 @@ def _name_roundtrip(s, base, name: str) -> str:
                     continue
 
 
+@requires_lab
 @_label("Unicode 21b.1 S3 NFC vs NFD filename round-trip preserves bytes")
 def test_s3_unicode_normalization():
     from core.s3_client import S3Session
@@ -5919,6 +6099,7 @@ def test_s3_unicode_normalization():
         s.disconnect()
 
 
+@requires_lab
 @_label("Unicode 21b.2 WebDAV NFC round-trip")
 def test_webdav_unicode_nfc():
     from core.webdav_client import WebDavSession
@@ -5931,6 +6112,7 @@ def test_webdav_unicode_nfc():
         s.disconnect()
 
 
+@requires_lab
 @_label("Unicode 21b.3 SMB NFC round-trip + case-insensitive listing")
 def test_smb_unicode_case_insensitive():
     from core.smb_client import SmbSession
@@ -5957,6 +6139,7 @@ def test_smb_unicode_case_insensitive():
         s.disconnect()
 
 
+@requires_lab
 @_label("Unicode 21b.4 S3 bidirectional (Arabic+Latin) filename")
 def test_s3_unicode_bidi():
     from core.s3_client import S3Session
@@ -5975,6 +6158,7 @@ def test_s3_unicode_bidi():
         s.disconnect()
 
 
+@requires_lab
 @_label("Unicode 21b.5 WebDAV long (>200 char) filename")
 def test_webdav_unicode_long_name():
     from core.webdav_client import WebDavSession
@@ -5987,6 +6171,7 @@ def test_webdav_unicode_long_name():
         s.disconnect()
 
 
+@requires_lab
 @_label("Unicode 21b.6 S3 leading-dot filename is not treated as hidden")
 def test_s3_dotfile():
     from core.s3_client import S3Session
@@ -6047,6 +6232,7 @@ def _assert_resume_tail_matches(session, path: str, offset: int) -> None:
     )
 
 
+@requires_lab
 @_label("Resume 21c.1 FTP seek-after-open returns tail (REST support)")
 def test_ftp_partial_read():
     from core.ftp_client import FtpSession
@@ -6072,6 +6258,7 @@ def test_sftp_partial_read():
     )
 
 
+@requires_lab
 @_label("Resume 21c.3 WebDAV seek-after-open returns tail (Range)")
 def test_webdav_partial_read():
     from core.webdav_client import WebDavSession
@@ -6089,6 +6276,7 @@ def test_webdav_partial_read():
         s.disconnect()
 
 
+@requires_lab
 @_label("Resume 21c.4 S3 seek-after-open returns tail (GetObject Range)")
 def test_s3_partial_read():
     from core.s3_client import S3Session
@@ -6112,6 +6300,7 @@ def test_s3_partial_read():
         s.disconnect()
 
 
+@requires_lab
 @_label("Resume 21c.5 SMB seek-after-open returns tail")
 def test_smb_partial_read():
     from core.smb_client import SmbSession
@@ -6131,6 +6320,7 @@ def test_smb_partial_read():
         s.disconnect()
 
 
+@requires_lab
 @_label("Resume 21c.6 Azure Blob seek-after-open returns tail")
 def test_azure_blob_partial_read():
     from core.azure_client import AzureBlobSession
@@ -6291,6 +6481,7 @@ def _internet_proxy_smokes_enabled() -> bool:
     return os.environ.get("AXROSS_LIVE_INTERNET_PROXY_TESTS") == "1"
 
 
+@requires_lab
 @_label("Proxy 21d.0a SOCKS4 proxy protocol smoke via Docker")
 def test_proxy_protocol_socks4_raw_tcp_via_docker():
     if not wait_for_port(SOCKS4_PROXY_HOST, SOCKS4_PROXY_PORT, timeout=2):
@@ -6307,6 +6498,7 @@ def test_proxy_protocol_socks4_raw_tcp_via_docker():
     assert b" 200 " in status, status
 
 
+@requires_lab
 @_label("Proxy 21d.0b SOCKS5 proxy protocol smoke via Docker")
 def test_proxy_protocol_socks5_raw_tcp_via_docker():
     if not wait_for_port(SOCKS5_PROXY_HOST, SOCKS5_PROXY_PORT, timeout=2):
@@ -6323,6 +6515,7 @@ def test_proxy_protocol_socks5_raw_tcp_via_docker():
     assert b" 200 " in status, status
 
 
+@requires_lab
 @_label("Proxy 21d.0c HTTP CONNECT proxy protocol smoke via Docker")
 def test_proxy_protocol_http_connect_raw_tcp_via_docker():
     if not wait_for_port(HTTP_PROXY_HOST, HTTP_PROXY_PORT, timeout=2):
@@ -6387,6 +6580,7 @@ def test_proxy_protocol_http_connect_raw_tcp_via_internet():
     assert b" 200 " in status, status
 
 
+@requires_lab
 @_label("Proxy 21d.1 WebDAV via SOCKS5")
 def test_webdav_via_socks5_proxy():
     import os as _os
@@ -6410,6 +6604,7 @@ def test_webdav_via_socks5_proxy():
         _os.environ.pop("AXROSS_ALLOW_PRIVATE_PROXY", None)
 
 
+@requires_lab
 @_label("Proxy 21d.2 WebDAV via HTTP CONNECT")
 def test_webdav_via_http_connect_proxy():
     import os as _os
@@ -6435,6 +6630,7 @@ def test_webdav_via_http_connect_proxy():
         _os.environ.pop("AXROSS_ALLOW_PRIVATE_PROXY", None)
 
 
+@requires_lab
 @_label("Proxy 21d.3 Telnet via SOCKS5")
 def test_telnet_via_socks5_proxy():
     import os as _os
@@ -6457,6 +6653,7 @@ def test_telnet_via_socks5_proxy():
         _os.environ.pop("AXROSS_ALLOW_PRIVATE_PROXY", None)
 
 
+@requires_lab
 @_label("Proxy 21d.4 Telnet via HTTP CONNECT")
 def test_telnet_via_http_connect_proxy():
     """tinyproxy now allows CONNECT/23, so this is a real Telnet
@@ -6582,6 +6779,7 @@ def _ensure_azurite_container():
     return container
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_webdav_round_trip(proxy_type, proxy_host, proxy_port):
     _require_proxy_endpoint(proxy_type, proxy_host, proxy_port)
@@ -6602,6 +6800,7 @@ def test_proxy_matrix_webdav_round_trip(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_ftp_round_trip(proxy_type, proxy_host, proxy_port):
     from core.ftp_client import FtpSession
@@ -6632,6 +6831,7 @@ def test_proxy_matrix_ftp_round_trip(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_ftps_read(proxy_type, proxy_host, proxy_port):
     from core.ftp_client import FtpSession
@@ -6659,6 +6859,7 @@ def test_proxy_matrix_ftps_read(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_smb_round_trip(proxy_type, proxy_host, proxy_port):
     from core.smb_client import SmbSession
@@ -6690,6 +6891,7 @@ def test_proxy_matrix_smb_round_trip(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_imap_list(proxy_type, proxy_host, proxy_port):
     from core.imap_client import ImapSession
@@ -6713,6 +6915,7 @@ def test_proxy_matrix_imap_list(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_pop3_list(proxy_type, proxy_host, proxy_port):
     from core.pop3_client import Pop3Session
@@ -6736,6 +6939,7 @@ def test_proxy_matrix_pop3_list(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_telnet_list(proxy_type, proxy_host, proxy_port):
     _require_proxy_endpoint(proxy_type, proxy_host, proxy_port)
@@ -6748,6 +6952,7 @@ def test_proxy_matrix_telnet_list(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_cisco_telnet_show(proxy_type, proxy_host, proxy_port):
     from core.telnet_cisco import CiscoTelnetSession
@@ -6772,6 +6977,7 @@ def test_proxy_matrix_cisco_telnet_show(proxy_type, proxy_host, proxy_port):
             s.disconnect()
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_rsync_daemon_read(proxy_type, proxy_host, proxy_port):
     from core.rsync_client import RsyncSession
@@ -6831,6 +7037,7 @@ def test_proxy_matrix_azure_blob_round_trip(proxy_type, proxy_host, proxy_port):
                     pass
 
 
+@requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _SOCKS_PROXY_PROTOCOL_CASES)
 def test_proxy_matrix_s3_socks_rejected(proxy_type, proxy_host, proxy_port):
     from core.s3_client import S3Session
@@ -6855,6 +7062,7 @@ def test_proxy_matrix_s3_socks_rejected(proxy_type, proxy_host, proxy_port):
         raise AssertionError(f"S3 unexpectedly accepted {proxy_type} proxy")
 
 
+@requires_lab
 def test_proxy_matrix_s3_http_round_trip():
     from core.s3_client import S3Session
 
@@ -6884,6 +7092,7 @@ def test_proxy_matrix_s3_http_round_trip():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.6 FTP via SOCKS5")
 def test_ftp_via_socks5_proxy():
     """FTP control channel goes through the SOCKS5 proxy via the
@@ -6907,6 +7116,7 @@ def test_ftp_via_socks5_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.7 FTP via HTTP CONNECT")
 def test_ftp_via_http_connect_proxy():
     """tinyproxy ACL allows ConnectPort 21 — the CONNECT tunnel
@@ -6930,6 +7140,7 @@ def test_ftp_via_http_connect_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.8 SMB via SOCKS5")
 def test_smb_via_socks5_proxy():
     """SMB tunnel via the scoped socket.create_connection patch.
@@ -6955,6 +7166,7 @@ def test_smb_via_socks5_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.9 SMB via HTTP CONNECT")
 def test_smb_via_http_connect_proxy():
     from core.smb_client import SmbSession
@@ -6977,6 +7189,7 @@ def test_smb_via_http_connect_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.10 IMAP via SOCKS5")
 def test_imap_via_socks5_proxy():
     """IMAP tunnel via the _ProxyIMAP4 subclass override of _create_socket."""
@@ -7000,6 +7213,7 @@ def test_imap_via_socks5_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.11 IMAP via HTTP CONNECT")
 def test_imap_via_http_connect_proxy():
     from core.imap_client import ImapSession
@@ -7065,6 +7279,7 @@ def test_s3_via_socks5_proxy_documents_limitation():
         )
 
 
+@requires_lab
 @_label("Proxy 21d.13 S3 via HTTP CONNECT")
 def test_s3_via_http_connect_proxy():
     from core.s3_client import S3Session
@@ -7090,6 +7305,7 @@ def test_s3_via_http_connect_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.14 Rsync daemon via SOCKS5 (RSYNC_CONNECT_PROG)")
 def test_rsync_daemon_via_socks5_proxy():
     """Rsync daemon mode via the RSYNC_CONNECT_PROG env hook.
@@ -7116,6 +7332,7 @@ def test_rsync_daemon_via_socks5_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.15 Rsync daemon via HTTP CONNECT (RSYNC_CONNECT_PROG)")
 def test_rsync_daemon_via_http_connect_proxy():
     from core.rsync_client import RsyncSession
@@ -7139,6 +7356,7 @@ def test_rsync_daemon_via_http_connect_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.16 POP3 via SOCKS5")
 def test_pop3_via_socks5_proxy():
     """POP3 (read-only) tunnel via the _ProxyPOP3 subclass override
@@ -7166,6 +7384,7 @@ def test_pop3_via_socks5_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.17 POP3 via HTTP CONNECT")
 def test_pop3_via_http_connect_proxy():
     from core.pop3_client import Pop3Session
@@ -7188,6 +7407,7 @@ def test_pop3_via_http_connect_proxy():
             s.disconnect()
 
 
+@requires_lab
 @_label("Proxy 21d.18 POP3 read-only refuses write surface")
 def test_pop3_refuses_write_surface():
     """Sanity: POP3 backend rejects any write/mkdir/rename to keep
@@ -7243,6 +7463,7 @@ def _tftp_session(filelist_enabled=False, filelist=None, max_size=16 * 1024 * 10
     )
 
 
+@requires_lab
 @_label("TFTP 21e.1 RRQ readme.txt")
 def test_tftp_read_seed_file():
     s = _tftp_session()
@@ -7285,6 +7506,7 @@ def test_tftp_list_dir_filelist_enabled():
         s.disconnect()
 
 
+@requires_lab
 @_label("TFTP 21e.4 size cap: write rejects oversized payload up-front")
 def test_tftp_write_size_cap_rejects_before_upload():
     s = _tftp_session(max_size=4096)  # 4 KiB cap
@@ -7300,6 +7522,7 @@ def test_tftp_write_size_cap_rejects_before_upload():
         s.disconnect()
 
 
+@requires_lab
 @_label("TFTP 21e.5 read size cap aborts mid-transfer on oversized server file")
 def test_tftp_read_size_cap_aborts():
     # firmware.bin is 8 KiB on the lab server; cap to 1 KiB and
@@ -7349,6 +7572,7 @@ def test_tftp_path_validator_blocks_shell_meta():
         raise AssertionError(f"validator accepted bad filename: {bad!r}")
 
 
+@requires_lab
 @_label("TFTP 21e.8 RRQ then WRQ round-trip (writable lab dir)")
 def test_tftp_round_trip_write_read():
     s = _tftp_session()
@@ -7374,6 +7598,7 @@ def test_tftp_round_trip_write_read():
 # ════════════════════════════════════════════════════════════
 
 
+@requires_lab
 @_label("Enc 22.1 FTP write_encrypted + read_encrypted roundtrip")
 def test_ftp_encrypted_roundtrip():
     from core import encrypted_overlay as E
@@ -7392,6 +7617,7 @@ def test_ftp_encrypted_roundtrip():
         s.disconnect()
 
 
+@requires_lab
 @_label("Enc 22.2 S3 encrypted roundtrip — ciphertext survives S3")
 def test_s3_encrypted_roundtrip():
     from core import encrypted_overlay as E
@@ -7413,6 +7639,7 @@ def test_s3_encrypted_roundtrip():
         s.disconnect()
 
 
+@requires_lab
 @_label("Enc 22.3 WebDAV wrong passphrase fails cleanly")
 def test_webdav_encrypted_wrong_passphrase():
     from core import encrypted_overlay as E
@@ -8880,7 +9107,11 @@ def test_smb_shares_list_parses_grepable_output(monkeypatch):
 
     monkeypatch.setattr(_sh, "which", lambda name: "/usr/bin/smbclient")
     monkeypatch.setattr(_sp, "run", lambda *a, **kw: _Done())
-    out = smb_client.SmbSession.shares_list("10.99.0.31", username="alice", password="alice" + "123")
+    out = smb_client.SmbSession.shares_list(
+        "10.99.0.31",
+        username="alice",
+        password="alice" + "123",
+    )
     by_name = {s["name"]: s for s in out}
     assert by_name["public"]["type"] == "Disk"
     assert by_name["home"]["comment"] == "User home"
@@ -10399,6 +10630,149 @@ def test_net_dns_records_fallback_when_no_dnspython(monkeypatch):
     finally:
         _sys.meta_path.remove(finder)
         _sys.modules.update(saved)
+
+
+# --------------------------------------------------------------------------
+# dns_records / dns_reverse resolver-failure contract.
+#
+# docs/SCRIPTING_REFERENCE.md:18 states the scripting API raises
+# ``OSError`` for connection failure, and every other net_helpers entry
+# point normalises third-party exceptions to it (whois ->
+# net_helpers.py:1057, time_skew NTP -> net_helpers.py:938). The DNS
+# helpers only caught NoAnswer/NXDOMAIN, so a resolver-level failure
+# (no nameservers reachable, lifetime timeout, unreadable resolv.conf)
+# escaped as a raw ``dns.exception.DNSException`` — which is NOT an
+# OSError subclass. Callers written against the documented contract
+# crashed; that is exactly how
+# examples/scripting_api/network_diagnostics.py:117-120 failed in a
+# network-isolated container despite its try/except OSError.
+# --------------------------------------------------------------------------
+
+
+class _StubRdata:
+    """Minimal stand-in for a dnspython rdata object."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def to_text(self) -> str:
+        return self._text
+
+
+def _stub_resolver(monkeypatch, outcome):
+    """Replace ``dns.resolver.Resolver`` with a stub whose ``resolve``
+    raises ``outcome`` when it is an exception, else returns it."""
+    import dns.resolver
+
+    class _StubResolver:
+        def __init__(self) -> None:
+            self.nameservers: list[str] = []
+            self.lifetime = 0.0
+            self.timeout = 0.0
+
+        def resolve(self, name, rtype="A"):
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+
+    monkeypatch.setattr(dns.resolver, "Resolver", _StubResolver)
+
+
+def test_net_dns_records_happy_returns_rdata_text(monkeypatch):
+    """Happy: answers come back as pre-formatted text, in order."""
+    import dns.resolver  # noqa: F401 — ensures the module is importable
+
+    from core.net_helpers import dns_records
+
+    _stub_resolver(
+        monkeypatch,
+        [_StubRdata("10 mail.example.com."), _StubRdata("20 mx2.example.com.")],
+    )
+    assert dns_records("example.com", "MX") == [
+        "10 mail.example.com.",
+        "20 mx2.example.com.",
+    ]
+
+
+@requires_lab
+def test_net_dns_records_sad_resolver_failure_raises_oserror(monkeypatch):
+    """Sad: a resolver-level failure must surface as OSError, not as a
+    bare dnspython DNSException that callers cannot catch portably."""
+    import dns.exception
+    import dns.resolver
+
+    from core.net_helpers import dns_records
+
+    _stub_resolver(monkeypatch, dns.resolver.NoNameservers())
+    with pytest.raises(OSError) as excinfo:
+        dns_records("example.com", "A")
+    assert "example.com" in str(excinfo.value)
+    # The dnspython cause must be preserved for debugging.
+    assert isinstance(excinfo.value.__cause__, dns.exception.DNSException)
+
+
+@requires_lab
+@pytest.mark.parametrize(
+    "exc_name",
+    ["LifetimeTimeout", "NoResolverConfiguration"],
+)
+def test_net_dns_records_edge_other_dns_exceptions_are_oserror(monkeypatch, exc_name):
+    """Edge: every other DNSException flavour normalises too — a
+    timeout and an unreadable resolv.conf are both 'connection failed'
+    from the scripting API's point of view."""
+    import dns.resolver
+
+    from core.net_helpers import dns_records
+
+    _stub_resolver(monkeypatch, getattr(dns.resolver, exc_name)())
+    with pytest.raises(OSError):
+        dns_records("example.com", "A")
+
+
+@pytest.mark.parametrize("exc_name", ["NoAnswer", "NXDOMAIN"])
+def test_net_dns_records_edge_empty_result_stays_empty_list(monkeypatch, exc_name):
+    """Edge: 'no such name' and 'no records of that type' are not
+    errors — they are an empty result set, and must stay that way."""
+    import dns.resolver
+
+    from core.net_helpers import dns_records
+
+    _stub_resolver(monkeypatch, getattr(dns.resolver, exc_name)())
+    assert dns_records("example.com", "A") == []
+
+
+def test_net_dns_reverse_happy_returns_ptr_text(monkeypatch):
+    """Happy: PTR lookup yields the record text."""
+    from core.net_helpers import dns_reverse
+
+    _stub_resolver(monkeypatch, [_StubRdata("localhost.")])
+    assert dns_reverse("127.0.0.1") == ["localhost."]
+
+
+@requires_lab
+def test_net_dns_reverse_sad_resolver_failure_raises_oserror(monkeypatch):
+    """Sad: same normalisation contract as dns_records."""
+    import dns.resolver
+
+    from core.net_helpers import dns_reverse
+
+    _stub_resolver(monkeypatch, dns.resolver.NoNameservers())
+    with pytest.raises(OSError) as excinfo:
+        dns_reverse("127.0.0.1")
+    assert "127.0.0.1" in str(excinfo.value)
+
+
+@requires_lab
+def test_net_dns_reverse_edge_malformed_address_raises_oserror():
+    """Edge: a malformed address fails inside
+    ``dns.reversename.from_address`` — before any resolver exists — and
+    raised ``dns.exception.SyntaxError``. That is still a caller-input
+    failure the documented OSError contract has to cover."""
+    from core.net_helpers import dns_reverse
+
+    with pytest.raises(OSError) as excinfo:
+        dns_reverse("not-an-ip")
+    assert "not-an-ip" in str(excinfo.value)
 
 
 def test_net_find_files_filters_localfs(tmp_path):
