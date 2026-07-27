@@ -45,6 +45,7 @@ directories.
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import os
 from dataclasses import dataclass
@@ -55,6 +56,15 @@ if TYPE_CHECKING:  # pragma: no cover
     pass
 
 log = logging.getLogger(__name__)
+
+# Optional Pillow fallback. Qt's QImageReader is the primary decoder,
+# but its plugin set varies by build (this environment has no TIFF
+# plugin, for example). When Qt can't read a format we still trust
+# (it's in ALLOWED_THUMBNAIL_MIMES), we fall back to Pillow.
+try:
+    from PIL import Image as _PILImage
+except Exception:  # pragma: no cover - Pillow optional at runtime
+    _PILImage = None
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +79,14 @@ MAX_INPUT_SIZE = 50 * 1024 * 1024
 # this the file is almost certainly a decompression bomb
 # (a 1x1 PNG can declare 100_000 × 100_000 and explode on decode).
 MAX_DIMENSION = 20_000
+
+# Pillow's own decompression-bomb guard — keep it in lock-step with
+# our dimension cap so a malicious file can't slip past one decoder.
+if _PILImage is not None:  # pragma: no branch
+    try:
+        _PILImage.MAX_IMAGE_PIXELS = MAX_DIMENSION * MAX_DIMENSION
+    except Exception as _exc:  # pragma: no cover - defensive
+        log.debug("could not set PIL.Image.MAX_IMAGE_PIXELS: %s", _exc)
 
 # Qt allocation limit in MiB — applies to every QImageReader we create.
 QIMAGE_ALLOC_LIMIT_MIB = 128
@@ -255,6 +273,83 @@ def _store_cached(cache_file: Path, data: bytes) -> None:
             pass
 
 
+def _decode_with_pillow(abs_path: str, edge: int | None) -> bytes:
+    """Decode *abs_path* with Pillow and return PNG-encoded bytes.
+
+    This is the fallback for formats Qt's ``QImageReader`` can't read
+    in this build (e.g. TIFF when the Qt tiff plugin is absent). The
+    same security caps as the Qt path apply:
+
+    * ``MAX_INPUT_SIZE`` (file st_size) is already enforced by the
+      caller *before* we ever open the file here.
+    * Dimension cap (``MAX_DIMENSION``) is checked from the header
+      (``img.size`` is available lazily, before ``.load()``) so a
+      decompression bomb is rejected before a full decode.
+    * Pillow's own ``MAX_IMAGE_PIXELS`` guard is wired to
+      ``MAX_DIMENSION**2`` at import time as a second layer.
+
+    Raises:
+      * :class:`PreviewDecodeFailed` — Pillow missing or decode failed.
+      * :class:`PreviewTooLarge` — header dimensions or a Pillow
+        decompression-bomb error exceed the cap.
+    """
+    if _PILImage is None:
+        raise PreviewDecodeFailed(
+            f"{abs_path}: Qt cannot decode this format and Pillow is not "
+            f"installed (pip install Pillow for TIFF/extra formats)"
+        )
+
+    try:
+        img = _PILImage.open(abs_path)
+    except Exception as exc:
+        raise PreviewDecodeFailed(f"{abs_path}: Pillow could not open file: {exc}") from exc
+
+    # Multi-page formats (TIFF, GIF) — always decode the first frame.
+    try:
+        img.seek(0)
+    except Exception:
+        pass
+
+    # Dimension cap from the header, BEFORE a full load — blocks bombs.
+    w, h = img.size
+    if w > MAX_DIMENSION or h > MAX_DIMENSION:
+        raise PreviewTooLarge(
+            f"{abs_path}: dimensions {w}x{h} exceed MAX_DIMENSION {MAX_DIMENSION}"
+        )
+
+    try:
+        img.load()
+    except _PILImage.DecompressionBombError as exc:
+        raise PreviewTooLarge(
+            f"{abs_path}: Pillow decompression-bomb guard tripped: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise PreviewDecodeFailed(f"{abs_path}: Pillow decode failed: {exc}") from exc
+
+    # Convert to a PNG-friendly mode. CMYK / I;16 / YCbCr etc. can't be
+    # PNG-encoded directly; RGBA is the safe superset (handles palette
+    # transparency too).
+    if img.mode not in ("RGB", "RGBA", "L", "LA", "P"):
+        try:
+            img = img.convert("RGBA")
+        except Exception as exc:
+            raise PreviewDecodeFailed(
+                f"{abs_path}: Pillow mode conversion failed: {exc}"
+            ) from exc
+
+    # Downscale only when the image is LARGER than the requested edge.
+    # The viewer passes a large edge meaning "full res" — never upscale.
+    if edge is not None and max(w, h) > edge:
+        img.thumbnail((edge, edge))
+
+    buf = io.BytesIO()
+    try:
+        img.save(buf, format="PNG")
+    except Exception as exc:
+        raise PreviewDecodeFailed(f"{abs_path}: Pillow PNG encode failed: {exc}") from exc
+    return buf.getvalue()
+
+
 def thumbnail(
     backend, path: str, *, edge: int = DEFAULT_THUMBNAIL_EDGE, use_cache: bool = True
 ) -> ThumbnailResult:
@@ -347,9 +442,31 @@ def thumbnail(
                 new_w = max(1, round(w * edge / h))
             reader.setScaledSize(QSize(new_w, new_h))
 
-    image: QImage = reader.read()
+    # Qt-first: only fall back to Pillow when Qt genuinely can't read
+    # this format here (no plugin → canRead() False, or read() returns
+    # a null QImage). Formats Qt CAN decode (png/jpg/gif/webp/…) stay
+    # on the QImageReader path untouched.
+    can_read = reader.canRead()
+    image: QImage = reader.read() if can_read else QImage()
     if image.isNull():
-        raise PreviewDecodeFailed(f"QImageReader failed on {abs_path}: {reader.errorString()}")
+        # Pillow fallback. The MAX_INPUT_SIZE gate already ran above;
+        # _decode_with_pillow re-checks the dimension cap from the
+        # header before fully decoding.
+        data = _decode_with_pillow(abs_path, edge)
+        # Parse dimensions back from the PNG we just produced so the
+        # ThumbnailResult contract (width/height) matches the Qt path.
+        decoded = QImage.fromData(data, "PNG")
+        out_w = decoded.width() if not decoded.isNull() else edge
+        out_h = decoded.height() if not decoded.isNull() else edge
+        if cache_file is not None:
+            _store_cached(cache_file, data)
+        return ThumbnailResult(
+            data=data,
+            mime=mime,
+            width=out_w,
+            height=out_h,
+            from_cache=False,
+        )
 
     buf = QBuffer()
     buf.open(QIODevice.OpenModeFlag.WriteOnly)

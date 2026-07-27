@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -137,12 +138,31 @@ class BundleStringsCacheTests(unittest.TestCase):
         # ``strings`` happily reads any file; we don't need a real ELF.
         import tempfile
         tmpdir = tempfile.mkdtemp()
-        self.addCleanup(lambda: __import__("shutil").rmtree(tmpdir, ignore_errors=True))
+        self.addCleanup(lambda: shutil.rmtree(tmpdir, ignore_errors=True))
         p = Path(tmpdir) / "fakebin"
         p.write_bytes(body)
         return p
 
+    def _require_strings(self) -> None:
+        """Skip when binutils' ``strings`` is not installed.
+
+        The two tests below assert on real ``strings`` OUTPUT, so they
+        cannot run without the tool — the helper deliberately returns
+        ``None`` in that case (that contract is covered separately by
+        ``test_sad_missing_strings_binary_returns_none``, which mocks
+        the tool away). Without this guard the pair reported a hard
+        FAIL on any host lacking binutils — e.g. the python:3.12-slim
+        test container, where nothing else needs it — turning a missing
+        build tool into a phantom product bug.
+        """
+        if shutil.which("strings") is None:
+            raise unittest.SkipTest(
+                "binutils' `strings` not on PATH — install binutils to "
+                "exercise the bundle strings cache"
+            )
+
     def test_happy_second_call_hits_cache_and_skips_strings(self) -> None:
+        self._require_strings()
         binary = self._fake_binary(b"abracadabra-needle-zzz\n")
         with unittest.mock.patch(
             "tests.test_packaging.subprocess.run",
@@ -161,6 +181,7 @@ class BundleStringsCacheTests(unittest.TestCase):
         # Edge: a rebuild of the bundle mid-session must not return
         # stale strings output. The key includes mtime_ns so a
         # rewrite (even to the same path) refetches.
+        self._require_strings()
         binary = self._fake_binary(b"first-payload-marker\n")
         first = _bundle_strings_blob(binary)
         self.assertIn("first-payload-marker", first or "")
@@ -209,13 +230,17 @@ class _McpStdioClient:
     so we don't pull in a proper MCP client dep just for test
     fixtures."""
 
-    def __init__(self, binary: Path):
+    def __init__(self, binary: Path, *, root: Path | None = None):
         self._binary = binary
+        self._root = root
         self._proc: subprocess.Popen | None = None
 
     def __enter__(self) -> "_McpStdioClient":
+        cmd = [str(self._binary), "--mcp-server"]
+        if self._root is not None:
+            cmd.extend(["--mcp-root", str(self._root)])
         self._proc = subprocess.Popen(
-            [str(self._binary), "--mcp-server"],
+            cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -350,19 +375,25 @@ class PackagingMcpStdioTests(unittest.TestCase):
         # the result is a sane filesystem listing. Proves the whole
         # LocalFS backend made it into the bundle with its
         # os.scandir-based list_dir intact.
+        import tempfile
+
         binary = _binary_for("slim")
         _skip_if_missing(binary)
-        with _McpStdioClient(binary) as client:
-            client.call("initialize", {}, req_id=1)
-            resp = client.call(
-                "tools/call",
-                {"name": "list_dir", "arguments": {"path": "/tmp"}},
-                req_id=2,
-            )
+        with tempfile.TemporaryDirectory(prefix="axross-pkg-root-") as tmp:
+            root = Path(tmp)
+            (root / "visible.txt").write_text("hello", encoding="utf-8")
+            with _McpStdioClient(binary, root=root) as client:
+                client.call("initialize", {}, req_id=1)
+                resp = client.call(
+                    "tools/call",
+                    {"name": "list_dir", "arguments": {"path": "."}},
+                    req_id=2,
+                )
         self.assertIn("result", resp)
         content = resp["result"]["content"][0]["text"]
         listing = json.loads(content)
         self.assertIsInstance(listing, list)
+        self.assertIn("visible.txt", {entry["name"] for entry in listing})
 
     def test_tools_call_checksum_matches_hashlib(self) -> None:
         # Write a known file, checksum it via the bundled binary,
@@ -378,24 +409,20 @@ class PackagingMcpStdioTests(unittest.TestCase):
 
         binary = _binary_for("slim")
         _skip_if_missing(binary)
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            delete=False,
-            prefix="axross-pkg-",
-        ) as f:
+        with tempfile.TemporaryDirectory(prefix="axross-pkg-root-") as tmp:
+            root = Path(tmp)
             payload = b"hello from a bundled binary " * 100
-            f.write(payload)
-            path = f.name
-        try:
+            path = root / "payload.bin"
+            path.write_bytes(payload)
             expected = hashlib.sha256(payload).hexdigest()
-            with _McpStdioClient(binary) as client:
+            with _McpStdioClient(binary, root=root) as client:
                 client.call("initialize", {}, req_id=1)
                 resp = client.call(
                     "tools/call",
                     {
                         "name": "checksum",
                         "arguments": {
-                            "path": path,
+                            "path": str(path),
                             "algorithm": "sha256",
                         },
                     },
@@ -404,8 +431,6 @@ class PackagingMcpStdioTests(unittest.TestCase):
             result = json.loads(resp["result"]["content"][0]["text"])
             self.assertEqual(result["value"], expected)
             self.assertEqual(result["algorithm"], "sha256")
-        finally:
-            os.unlink(path)
 
 
 class PackagingFlavourDeltaTests(unittest.TestCase):

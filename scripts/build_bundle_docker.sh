@@ -20,9 +20,10 @@
 # Outputs:
 #   dist/axross-<flavor>                         (portable ELF)
 #
-# Requires docker on the host — no Python, PyInstaller, or Qt
-# needed locally; the container brings its own. First run pulls
-# ~1 GB base image; subsequent runs reuse it.
+# Requires podman (preferred) or docker on the host — no Python,
+# PyInstaller, or Qt needed locally; the container brings its own.
+# Override the auto-detection with CONTAINER_ENGINE=<binary>. First
+# run pulls ~1 GB base image; subsequent runs reuse it.
 
 set -euo pipefail
 
@@ -36,34 +37,48 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-if ! command -v docker >/dev/null 2>&1; then
-    echo "docker not on PATH. Install it first:" >&2
-    echo "  Arch:  sudo pacman -S docker" >&2
-    echo "  Ubuntu: sudo apt install docker.io" >&2
+# Engine selection. podman is preferred: it runs rootless by default,
+# so an untrusted `pip install` inside the build image never executes
+# as host root. Override with CONTAINER_ENGINE=docker if you need it.
+ENGINE="${CONTAINER_ENGINE:-}"
+if [[ -z "$ENGINE" ]]; then
+    for candidate in podman docker; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            ENGINE="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -z "$ENGINE" ]] || ! command -v "$ENGINE" >/dev/null 2>&1; then
+    echo "No container engine on PATH (looked for podman, docker)." >&2
+    echo "  Arch:   sudo pacman -S podman" >&2
+    echo "  Ubuntu: sudo apt install podman" >&2
+    echo "Or set CONTAINER_ENGINE to the binary you want to use." >&2
     exit 1
 fi
+echo ">>> Using container engine: $ENGINE"
 
 IMAGE_TAG="axross-builder:alma9-glibc2.34"
 
 echo ">>> Building builder image $IMAGE_TAG (one-time, ~1 GB)"
-docker build -f Dockerfile.build -t "$IMAGE_TAG" .
+"$ENGINE" build -f Dockerfile.build -t "$IMAGE_TAG" .
 
 mkdir -p "$PROJECT_ROOT/dist"
 
 # Run the build inside the container. scripts/build_bundle.sh
 # drops the ELF under /build/dist inside the container; we copy
-# it out with docker cp so the host doesn't need write access
+# it out with `<engine> cp` so the host doesn't need write access
 # to the container's working tree.
-CONTAINER_ID=$(docker create "$IMAGE_TAG" "$FLAVOR")
+CONTAINER_ID=$("$ENGINE" create "$IMAGE_TAG" "$FLAVOR")
 
 echo ">>> Running $FLAVOR build inside the container"
-docker start -a "$CONTAINER_ID"
+"$ENGINE" start -a "$CONTAINER_ID"
 
 echo ">>> Copying axross-$FLAVOR out of the container"
-docker cp "$CONTAINER_ID:/build/dist/axross-$FLAVOR" \
-          "$PROJECT_ROOT/dist/axross-$FLAVOR"
+"$ENGINE" cp "$CONTAINER_ID:/build/dist/axross-$FLAVOR" \
+             "$PROJECT_ROOT/dist/axross-$FLAVOR"
 
-docker rm -v "$CONTAINER_ID" >/dev/null
+"$ENGINE" rm -v "$CONTAINER_ID" >/dev/null
 
 ELF_PATH="$PROJECT_ROOT/dist/axross-$FLAVOR"
 BINARY_SIZE=$(du -h "$ELF_PATH" | cut -f1)

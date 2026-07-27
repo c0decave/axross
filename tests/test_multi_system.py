@@ -1866,6 +1866,16 @@ class ReverseWebDAVTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 400)
 
 
+class ReverseWebDAVLockResponseTests(unittest.TestCase):
+    def test_lock_xml_uses_supplied_token(self) -> None:
+        lock_handle = "opaque" "locktoken:test-token"
+        body = reverse_serve._build_webdav_lock_xml(lock_handle).decode("utf-8")
+
+        self.assertIn(f"<D:href>{lock_handle}</D:href>", body)
+        self.assertIn("<D:timeout>Second-3600</D:timeout>", body)
+        self.assertIn("<D:lockscope><D:exclusive/></D:lockscope>", body)
+
+
 class ReverseWebDAVAuthTests(unittest.TestCase):
     def setUp(self) -> None:
         self.b = _ramfs()

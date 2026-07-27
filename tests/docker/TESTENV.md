@@ -7,6 +7,30 @@ cd tests/docker && docker compose up -d --build
 
 Subnet: `10.99.0.0/24`
 
+## Running the suite without the lab (podman)
+
+The lab is only needed for the *live protocol* tests. Everything else —
+net_helpers unit tests, path-traversal and CR/LF hardening checks,
+mocked backends, archive and preview logic — runs in a plain container
+with no network at all:
+
+```bash
+podman build -f tests/docker/Dockerfile.testrunner -t axross-testrunner:local .
+podman run --rm --network=none --cap-drop=ALL \
+    --security-opt=no-new-privileges --memory=4g \
+    -v "$PWD:/app:ro" axross-testrunner:local \
+    pytest -q -p no:cacheprovider --timeout=60 --timeout-method=signal tests/
+```
+
+Lab-dependent tests carry `@requires_lab` (or their own `_<proto>_up()`
+guard) and report as skipped. They are *not* hidden behind a
+module-level skip — one unreachable port used to suppress all 433 tests
+in `test_protocols.py` as a single "skipped" line.
+
+Use `--timeout`: several backends retry with a sleep-backoff, so an
+unreachable endpoint otherwise turns into a multi-minute hang rather
+than a failure.
+
 ## Services
 
 | Service | Protocol | IP | Port | Username | Password | Notes |

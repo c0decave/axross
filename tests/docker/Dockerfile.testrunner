@@ -1,9 +1,36 @@
+# Containerised test runner for the axross suite.
+#
+# Build/run via podman (rootless, disposable) — see
+# tests/docker/TESTENV.md. The image carries every optional backend
+# dependency so no test silently skips for a missing import.
+#
+# Dependency source of truth is pyproject.toml, NOT a hand-kept pip
+# list. The previous revision of this file hard-coded its own package
+# list and drifted from the project metadata: it installed
+# `webdavclient3` (dropped upstream — axross ships its own WebDAV
+# client on requests+defusedxml) while missing `Pillow` (a *core*
+# runtime dep since the preview pane landed) and `rarfile`. Tests that
+# import those degraded to skips, so the suite reported green on an
+# environment that could not exercise them. Deriving the list from
+# pyproject at build time makes that class of drift impossible.
+
 FROM python:3.12-slim
 
 WORKDIR /app
 
+# Runtime libs:
+#   - Qt6 offscreen platform plugin needs GL/EGL, glib, fontconfig,
+#     xkbcommon and dbus even when it never opens a window.
+#   - libarchive-tools provides bsdtar, which `rarfile` shells out to
+#     for RAR extraction (tests/test_archive_rar_safety.py).
+#   - binutils provides `strings`, which tests/test_packaging.py uses to
+#     scan bundled binaries. Without it those tests skip, so the bundle
+#     import-presence coverage would quietly disappear in the container.
+#   - rsync/netcat/nfs-common/open-iscsi back the protocol tests that
+#     talk to the lab containers in docker-compose.yml.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        binutils \
         rsync \
         netcat-openbsd \
         nfs-common \
@@ -11,6 +38,7 @@ RUN apt-get update && \
         util-linux \
         kmod \
         procps \
+        libarchive-tools \
         libglib2.0-0 \
         libgl1 \
         libegl1 \
@@ -19,18 +47,46 @@ RUN apt-get update && \
         libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
-ENV QT_QPA_PLATFORM=offscreen
+ENV QT_QPA_PLATFORM=offscreen \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-RUN pip install --no-cache-dir \
-        paramiko PySocks smbprotocol webdavclient3 boto3 pytest \
-        defusedxml keyring PyQt6 azure-storage-blob azure-storage-file-share \
-        msal requests google-api-python-client google-auth-oauthlib \
-        google-auth-httplib2 dropbox adb-shell py7zr tftpy psycopg[binary] \
-        redis pymongo dulwich fusepy pywinrm impacket exchangelib dnspython \
-        puremagic chardet pysnmp ldap3 manuf ipwhois ntplib
+# --- dependency layer -------------------------------------------------
+# Only pyproject.toml is copied here so that source-only edits reuse
+# this (slow) layer. Deps are read out of the same [project] tables the
+# published wheel uses, with every optional extra enabled.
+COPY pyproject.toml ./
+RUN python - <<'PY' > /tmp/requirements.txt
+import tomllib
+meta = tomllib.load(open("pyproject.toml", "rb"))["project"]
+reqs = list(meta["dependencies"])
+for extra, pkgs in meta.get("optional-dependencies", {}).items():
+    reqs.extend(pkgs)
+# dict.fromkeys keeps first-seen order while dropping the duplicates
+# that the "all" extra shares with the per-backend extras.
+for req in dict.fromkeys(reqs):
+    print(req)
+PY
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir -r /tmp/requirements.txt
 
+# Test tooling in its own layer so adding a tool does not re-resolve the
+# ~130-package dependency set above.
+#
+# pytest-timeout is not optional here: several protocol tests retry with
+# a sleep-backoff loop, so an unreachable endpoint turns into a silent
+# multi-minute hang instead of a failure. A hard per-test cap makes the
+# suite terminate with a traceback pointing at the offender.
+RUN python -m pip install --no-cache-dir pytest pytest-timeout pip-audit ruff
+
+# --- source layer -----------------------------------------------------
 COPY . /app/
 
-# Default: drop into a shell so operators can run pytest subsets interactively
-# (`docker compose run --rm test-runner pytest tests/test_protocols.py -k nfs`).
+# `--no-deps`: everything is already resolved above; this step only
+# registers the project so `import axross` and the console script work.
+RUN python -m pip install --no-cache-dir --no-deps -e .
+
+# Default: drop into a shell so operators can run pytest subsets
+# interactively
+# (`podman run --rm -it axross-testrunner pytest tests/test_protocols.py -k nfs`).
 CMD ["bash"]

@@ -38,6 +38,10 @@ from core.db_fs_base import DbFsBackend
 
 log = logging.getLogger(__name__)
 
+# SQLite's reserved name for a private in-memory database. Kept as a
+# constant so the "do not treat this as a path" rule is greppable.
+_MEMORY_DB = ":memory:"
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS axross_files (
@@ -76,7 +80,13 @@ class SqliteFsSession(DbFsBackend):
             path = url[len("sqlite://") :]
         if not path:
             raise OSError("SQLite backend requires a database file path")
-        self._db_path = os.path.abspath(path)
+        # ``:memory:`` is SQLite's magic name for a private in-memory
+        # database — it is NOT a filesystem path. Running it through
+        # ``os.path.abspath`` turns it into ``<cwd>/:memory:``, which
+        # sqlite3 then happily creates as a REAL file: callers who asked
+        # for a throwaway database silently got on-disk persistence, and
+        # every working directory collected a stray ``:memory:`` file.
+        self._db_path = path if path == _MEMORY_DB else os.path.abspath(path)
         # check_same_thread=False — Qt slots routinely cross thread
         # boundaries (transfer worker → UI). We protect with our own
         # lock so SQLite itself stays consistent.

@@ -86,6 +86,7 @@ REQUIRED_MODS=(
     "paramiko:SSH/SFTP/SCP"
     "socks:SOCKS proxy support (pip: PySocks)"
     "keyring:OS-native credential store"
+    "PIL.Image:image preview decode fallback (pip: Pillow)"
     "cryptography:TLS + key handling"
     "requests:WebDAV / OneDrive / OAuth flows"
     "defusedxml:XML hardening (WebDAV PROPFIND, etc.)"

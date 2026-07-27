@@ -37,7 +37,29 @@ FROM almalinux:9
 # System deps: python3.12 for the interpreter, binutils for
 # PyInstaller's objcopy / strip calls on the bundled ELF, and
 # glibc-devel so PyInstaller's bootloader can link against libc.
-RUN dnf install -y python3.12 python3.12-pip binutils glibc-devel \
+#
+# The Qt runtime libraries are NOT optional at build time. PyQt6's
+# extension modules link against libGL / libxkbcommon / fontconfig,
+# so a bare image can import PyQt6.QtCore but dies on QtGui, QtWidgets
+# and QtSvg with "libGL.so.1: cannot open shared object file". That
+# tripped the REQUIRED_MODS pre-flight in scripts/build_bundle.sh and
+# aborted every containerised build (exit 2) — which is why the
+# shipped bundles had been produced on the developer's host instead,
+# against glibc 2.43, and failed to start on any glibc < 2.43 target.
+# PyInstaller also needs to actually IMPORT these modules to trace
+# their dependencies, so the libs must be present, not just the .so
+# files inside the wheel.
+#
+# fuse-libs is here for the same reason: fusepy resolves libfuse via
+# ctypes at IMPORT time and raises "Unable to find libfuse" without it,
+# which the flavor=full pre-flight rejects.
+RUN dnf install -y \
+        python3.12 python3.12-pip binutils glibc-devel \
+        mesa-libGL mesa-libEGL \
+        libxkbcommon libxkbcommon-x11 \
+        fontconfig freetype \
+        libX11 libXext libXrender dbus-libs \
+        fuse-libs \
     && dnf clean all
 
 # Stable Python alias — the distro ships "python3.12" not "python".
@@ -54,21 +76,25 @@ WORKDIR /build
 # build if any of these are missing, so a drift here surfaces fast.
 # webdavclient3 is intentionally NOT installed: axross now ships its
 # own WebDAV client built on requests + defusedxml.
+# Floors mirror pyproject.toml, which is audited against OSV by
+# ``python -m security.dep_floor_audit``. Do not lower one here to
+# "make the build work" — that reintroduces a known-vulnerable release
+# into the shipped bundle, where users cannot upgrade it independently.
 COPY pyproject.toml ./
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir \
-        "paramiko>=3" "cryptography>=41" "jsonschema>=4.21" \
-        "PySocks>=1.7" \
+        "paramiko>=5.0,<6.0" "cryptography>=41" "jsonschema>=4.21" \
+        "PySocks>=1.7" "Pillow>=12.3.0" \
         "smbprotocol>=1.13" "boto3>=1.28" \
-        "requests>=2.31" "defusedxml>=0.7" \
+        "requests>=2.33.0" "defusedxml>=0.7" \
         "azure-storage-blob>=12.19" "azure-storage-file-share>=12.15" \
         "msal>=1.26" \
         "google-api-python-client>=2.100" "google-auth-oauthlib>=1.1" \
         "google-auth-httplib2>=0.2" "dropbox>=12.0" \
         "pywinrm>=0.4" "impacket>=0.11" "exchangelib>=5.0" \
-        "adb-shell>=0.4" "py7zr>=0.20" "tftpy>=0.8" \
-        "psycopg[binary]>=3.1" "redis>=5.0" "pymongo>=4.6" "dulwich>=0.21" \
-        "dnspython>=2.6" "puremagic>=1.20" "chardet>=5.2" \
+        "adb-shell>=0.4" "py7zr>=1.1.3" "rarfile>=4.0" "tftpy>=0.8" \
+        "psycopg[binary]>=3.1" "redis>=5.0" "pymongo>=4.6.3" "dulwich>=1.2.5" \
+        "dnspython>=2.6.1" "puremagic>=1.20" "chardet>=5.2" \
         "ldap3>=2.9" "ipwhois>=1.3" "ntplib>=0.4" "pysnmp>=6.2" "manuf>=1.1" \
         "PyQt6==6.10.2" "PyQt6-Qt6==6.10.2" "PyQt6_sip>=13.11" \
         "fusepy>=3.0" \
@@ -76,12 +102,16 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 
 # Copy the application tree last so rebuilds on source changes
 # skip the pip-install layer.
-COPY core/ core/
-COPY ui/ ui/
-COPY models/ models/
-COPY build/ build/
-COPY main.py ./
-COPY scripts/ scripts/
+#
+# This used to cherry-pick core/ ui/ models/ build/ main.py scripts/,
+# which silently omitted resources/. build/axross.spec only bundles
+# resources/{scripts,wordlists,logo,icons} when the directory EXISTS
+# (os.path.isdir guard), so the container build produced a binary with
+# no bundled scripts — the exact condition scripts/build_bundle.sh
+# smoke-tests for and aborts on (exit 4). Copying the whole tree keeps
+# the spec and the image from drifting apart again; .dockerignore is
+# what keeps the context small (dist/, .venv/, .git/ … are excluded).
+COPY . .
 
 # Mark scripts as executable (COPY discards bit on some hosts).
 RUN chmod +x scripts/build_bundle.sh

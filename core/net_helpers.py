@@ -361,6 +361,7 @@ def dns_records(
     know the rdata structure.
     """
     try:
+        import dns.exception  # type: ignore
         import dns.resolver  # type: ignore
     except ImportError as exc:
         raise OSError(
@@ -374,10 +375,18 @@ def dns_records(
     res.timeout = float(timeout)
     try:
         answers = res.resolve(name, rtype.upper())
-    except dns.resolver.NoAnswer:
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        # Not failures: the query completed and the answer is "there
+        # is no such record". An empty list is the honest result.
         return []
-    except dns.resolver.NXDOMAIN:
-        return []
+    except dns.exception.DNSException as exc:
+        # Everything else is a resolver-level failure — no reachable
+        # nameserver, lifetime expired, unreadable resolv.conf.
+        # dnspython's exception tree does NOT descend from OSError, so
+        # letting these escape breaks the documented scripting-API
+        # contract ("OSError for connection failure",
+        # docs/SCRIPTING_REFERENCE.md) that every sibling helper keeps.
+        raise OSError(f"dns_records({name!r}, {rtype!r}): {exc}") from exc
     return [r.to_text() for r in answers]
 
 
@@ -385,13 +394,19 @@ def dns_reverse(ip: str, *, resolver: str | None = None, timeout: float = 3.0) -
     """PTR lookup for an IP. Returns a list (most addresses have at
     most one PTR but the protocol allows multiple)."""
     try:
+        import dns.exception  # type: ignore
         import dns.resolver  # type: ignore
         import dns.reversename  # type: ignore
     except ImportError as exc:
         raise OSError(
             "dns_reverse requires dnspython — install with `pip install dnspython`"
         ) from exc
-    rev = dns.reversename.from_address(ip)
+    try:
+        rev = dns.reversename.from_address(ip)
+    except dns.exception.DNSException as exc:
+        # A malformed address raises dns.exception.SyntaxError here,
+        # before any resolver exists — still an OSError to the caller.
+        raise OSError(f"dns_reverse({ip!r}): {exc}") from exc
     res = dns.resolver.Resolver()
     if resolver:
         res.nameservers = [resolver]
@@ -401,6 +416,9 @@ def dns_reverse(ip: str, *, resolver: str | None = None, timeout: float = 3.0) -
         answers = res.resolve(rev, "PTR")
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
         return []
+    except dns.exception.DNSException as exc:
+        # Same OSError-normalisation contract as dns_records above.
+        raise OSError(f"dns_reverse({ip!r}): {exc}") from exc
     return [r.to_text() for r in answers]
 
 
