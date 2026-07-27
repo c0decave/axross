@@ -480,6 +480,15 @@ class FilePaneWidget(QWidget):
         self._progress_bar.setRange(0, 0)  # Indeterminate
         self._progress_bar.setFixedHeight(3)
         self._progress_bar.setTextVisible(False)
+        # Keep the layout cell reserved while the bar is hidden.
+        # Without this, Qt drops the cell on hide() and everything below
+        # slides up by the bar's height plus the layout spacing — 3 + 2 =
+        # 5 px. navigate() shows the bar on entry and hides it in its
+        # finally block, so every single directory change made the file
+        # list twitch down and back up.
+        _bar_policy = self._progress_bar.sizePolicy()
+        _bar_policy.setRetainSizeWhenHidden(True)
+        self._progress_bar.setSizePolicy(_bar_policy)
         self._progress_bar.hide()
         layout.addWidget(self._progress_bar)
 

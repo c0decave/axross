@@ -79,16 +79,34 @@ _TOOL_ICONS = {
         '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
     ),
     # Pane / layout verbs.
+    # The divider drawn in each glyph must match the layout its action
+    # produces, NOT the name's axis. "Split Horizontal" hands
+    # Qt.Orientation.Horizontal to _split_pane, and a horizontal
+    # QSplitter lays its children out left-to-right — so the resulting
+    # panes sit SIDE BY SIDE and the seam between them is VERTICAL.
+    # These two bodies were swapped, so both toolbar buttons showed the
+    # opposite of what they do.
     "split-h": _svg(
-        '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/>',
+        # side-by-side panes -> vertical seam
+        '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/>',
     ),
     "split-v": _svg(
-        '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/>',
+        # stacked panes -> horizontal seam
+        '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/>',
     ),
     "close-pane": _svg(
         '<rect x="3" y="3" width="18" height="18" rx="2"/>'
         '<line x1="9" y1="9" x2="15" y2="15"/>'
         '<line x1="15" y1="9" x2="9" y2="15"/>',
+    ),
+    # "close every panel in this dock area" — the single-close glyph
+    # with a second panel stacked behind it, so the two buttons read as
+    # one-vs-many at a glance instead of relying on the tooltip.
+    "close-all-panes": _svg(
+        '<path d="M3 16V5a2 2 0 0 1 2-2h11"/>'
+        '<rect x="7" y="7" width="14" height="14" rx="2"/>'
+        '<line x1="11" y1="11" x2="17" y2="17"/>'
+        '<line x1="17" y1="11" x2="11" y2="17"/>',
     ),
     "toggle-layout": _svg(
         # h/v swap arrows
@@ -336,6 +354,7 @@ _ICON_COLORS: dict[str, str | None] = {
     "split-h": "#00bcd4",  # cyan
     "split-v": "#00bcd4",  # cyan
     "close-pane": "#e74c3c",  # red
+    "close-all-panes": "#e74c3c",  # red — same verb, wider scope
     "toggle-layout": "#e67e22",  # orange rotate
     "equalize": "#9b59b6",  # violet
     "extract-pane": "#9b59b6",  # violet
