@@ -1452,7 +1452,11 @@ class RshBackendTests(unittest.TestCase):
         """Patch ``subprocess.run`` so we can capture the rsh
         invocations and feed canned stdout."""
 
-        def fake_run(argv, *, input=None, capture_output, timeout, check):
+        # **kwargs, not an exhaustive signature: the production call
+        # gained env=clean_child_env() (a frozen bundle otherwise hands
+        # rsh its own LD_LIBRARY_PATH), and a stub that enumerates
+        # keywords turns every such addition into a phantom failure.
+        def fake_run(argv, *, input=None, capture_output, timeout, check, **kwargs):
             recorded.append(" ".join(argv))
 
             class _R:

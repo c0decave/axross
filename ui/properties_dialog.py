@@ -106,6 +106,34 @@ class _SizeWorker(QObject):
         return total
 
 
+class _SummaryWorker(QObject):
+    """Totals a multi-entry selection, off the GUI thread."""
+
+    done = pyqtSignal(object)
+
+    def __init__(self, backend: FileBackend, parent_path: str, items: list) -> None:
+        super().__init__()
+        self._backend = backend
+        self._parent_path = parent_path
+        self._items = items
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        from core.fs_summary import summarize_selection
+
+        self.done.emit(
+            summarize_selection(
+                self._backend,
+                self._parent_path,
+                self._items,
+                should_continue=lambda: not self._cancelled,
+            )
+        )
+
+
 class PropertiesDialog(QDialog):
     """Tabbed properties sheet for one file or directory."""
 
@@ -113,22 +141,40 @@ class PropertiesDialog(QDialog):
         self,
         backend: FileBackend,
         file_path: str,
-        item: FileItem,
+        item: FileItem | list,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self._backend = backend
         self._file_path = file_path
-        self._item = item
-        self._size_override: int | None = None
-        self._thread: QThread | None = None
-        self._worker: _SizeWorker | None = None
 
-        self.setWindowTitle(f"Properties: {item.name}")
+        # A selection of several entries gets ONE summary. The dialog
+        # used to take item[0] and describe whichever entry happened to
+        # be first, silently ignoring the rest — which is not an answer
+        # to "how big is all of this?".
+        if isinstance(item, (list, tuple)):
+            self._items = list(item)
+            self._multi = len(self._items) > 1
+            self._item = self._items[0] if self._items else FileItem(name="")
+        else:
+            self._items = [item]
+            self._multi = False
+            self._item = item
+
+        self._size_override: int | None = None
+        self._summary = None
+        self._thread: QThread | None = None
+        self._worker = None
+
+        if self._multi:
+            self.setWindowTitle(f"Properties: {len(self._items)} items")
+        else:
+            self.setWindowTitle(f"Properties: {self._item.name}")
         self.setMinimumWidth(420)
         self._build()
 
-        if item.is_dir and getattr(backend, "has_cheap_recursive_walk", False):
+        cheap = getattr(backend, "has_cheap_recursive_walk", False)
+        if cheap and (self._multi or self._item.is_dir):
             self._start_size_walk()
 
     # -- construction ----------------------------------------------------
@@ -140,14 +186,23 @@ class PropertiesDialog(QDialog):
 
         self._tabs.addTab(self._build_general(), "General")
 
-        self._permissions = PermissionsWidget(
-            self._backend, self._file_path, self._item, self
-        )
-        self._tabs.addTab(self._permissions, "Permissions")
+        # No chmod tab for a multi-selection: chmod applies to one file,
+        # and offering the editor for a mixed selection invites applying
+        # one mode to all of them.
+        self._permissions = None
+        if not self._multi:
+            self._permissions = PermissionsWidget(
+                self._backend, self._file_path, self._item, self
+            )
+            self._tabs.addTab(self._permissions, "Permissions")
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        flags = QDialogButtonBox.StandardButton.Close
+        if not self._multi:
+            flags = (
+                QDialogButtonBox.StandardButton.Ok
+                | QDialogButtonBox.StandardButton.Cancel
+            )
+        buttons = QDialogButtonBox(flags)
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -170,14 +225,14 @@ class PropertiesDialog(QDialog):
         self._calc_btn = QPushButton("Calculate", page)
         self._calc_btn.setToolTip("Walk the directory and total up its contents")
         self._calc_btn.clicked.connect(self._start_size_walk)
-        self._calc_btn.setVisible(
-            self._item.is_dir
-            and not getattr(self._backend, "has_cheap_recursive_walk", False)
-        )
+        cheap = getattr(self._backend, "has_cheap_recursive_walk", False)
+        self._calc_btn.setVisible((self._multi or self._item.is_dir) and not cheap)
         form.addRow("", self._calc_btn)
         return page
 
     def _field_order(self) -> list[str]:
+        if self._multi:
+            return ["Selection", "Size", "Path", "Backend"]
         keys = ["Path", "Type"]
         if self._item.is_link:
             keys.append("Link target")
@@ -189,6 +244,11 @@ class PropertiesDialog(QDialog):
 
     def _compute_field(self, key: str) -> str:
         item = self._item
+        if self._multi:
+            if key == "Selection":
+                return self._selection_text()
+            if key == "Size":
+                return self._summary_size_text()
         if key == "Path":
             return self._file_path
         if key == "Type":
@@ -224,6 +284,24 @@ class PropertiesDialog(QDialog):
             return getattr(self._backend, "name", None) or DASH
         return DASH
 
+    def _selection_text(self) -> str:
+        from core.fs_summary import describe
+
+        if self._summary is None:
+            return f"{len(self._items)} items — not counted yet"
+        return f"{len(self._items)} items selected: {describe(self._summary)}"
+
+    def _summary_size_text(self) -> str:
+        if self._summary is None:
+            return DASH
+        total = format_size(self._summary.total_bytes)
+        if self._summary.complete:
+            return total
+        # An incomplete walk must not present its total as a fact: it is
+        # a floor, and it is wrong in the direction that matters —
+        # somebody checking whether a copy fits is told yes.
+        return f"at least {total}"
+
     def general_fields(self) -> dict[str, str]:
         """The General tab as a mapping, in display order."""
         return {key: self._compute_field(key) for key in self._field_order()}
@@ -237,11 +315,24 @@ class PropertiesDialog(QDialog):
         self._value_labels["Size"].setText("calculating…")
 
         self._thread = QThread(self)
-        self._worker = _SizeWorker(self._backend, self._file_path)
+        if self._multi:
+            self._worker = _SummaryWorker(self._backend, self._file_path, self._items)
+        else:
+            self._worker = _SizeWorker(self._backend, self._file_path)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.done.connect(self._on_size_ready)
+        if self._multi:
+            self._worker.done.connect(self._on_summary_ready)
+        else:
+            self._worker.done.connect(self._on_size_ready)
         self._thread.start()
+
+    def _on_summary_ready(self, summary: object) -> None:
+        self._summary = summary
+        self._value_labels["Size"].setText(self._summary_size_text())
+        self._value_labels["Selection"].setText(self._selection_text())
+        self._calc_btn.setEnabled(True)
+        self._stop_thread()
 
     def _on_size_ready(self, total: int) -> None:
         self._size_override = total
@@ -300,6 +391,9 @@ class PropertiesDialog(QDialog):
     # -- lifecycle -------------------------------------------------------
 
     def _on_accept(self) -> None:
+        if self._permissions is None:
+            self.accept()
+            return
         error = self._permissions.apply()
         if error is None:
             self.accept()

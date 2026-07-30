@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -274,6 +275,7 @@ class IscsiSession:
                 capture_output=True,
                 text=True,
                 timeout=float(timeout),
+                            env=clean_child_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(f"iscsiadm discovery timed out: {exc}") from exc
@@ -315,7 +317,9 @@ class IscsiSession:
             f"{self._target_ip}:{self._port}",
             "--login",
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30.0)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30.0, env=clean_child_env()
+        )
         if proc.returncode != 0:
             raise OSError(
                 f"iscsiadm login rc={proc.returncode}: {(proc.stderr or proc.stdout).strip()[:300]}"
@@ -339,6 +343,7 @@ class IscsiSession:
             capture_output=True,
             text=True,
             timeout=10.0,
+                    env=clean_child_env(),
         )
         if proc.returncode != 0:
             raise OSError(f"lsblk rc={proc.returncode}: {proc.stderr.strip()[:300]}")
@@ -435,6 +440,7 @@ class IscsiSession:
                 capture_output=capture,
                 text=True,
                 timeout=timeout,
+                            env=clean_child_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(
@@ -567,6 +573,7 @@ class IscsiSession:
                 capture_output=True,
                 text=True,
                 check=False,
+                            env=clean_child_env(),
             )
         except Exception as exc:  # noqa: BLE001
             log.debug("sudo glob of node config failed: %s", exc)
@@ -621,6 +628,7 @@ class IscsiSession:
             capture_output=True,
             text=True,
             check=False,
+                    env=clean_child_env(),
         )
         if result.returncode != 0:
             raise OSError(
@@ -641,6 +649,7 @@ class IscsiSession:
             capture_output=True,
             text=True,
             check=False,
+                    env=clean_child_env(),
         )
         if result.returncode != 0:
             raise OSError(

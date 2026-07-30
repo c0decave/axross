@@ -289,9 +289,14 @@ class LocalTerminalSession:
         """Start a local shell."""
         pid, master_fd = pty.fork()
         if pid == 0:
+            from core.subprocess_env import clean_child_env
+
             shell = os.environ.get("SHELL", "/bin/sh")
-            env = os.environ.copy()
-            env["TERM"] = "xterm"
+            # A frozen bundle points LD_LIBRARY_PATH at its own
+            # extraction directory, and the shell would resolve
+            # libreadline against ours — "symbol lookup error:
+            # undefined symbol: rl_trim_arg_from_keyseq".
+            env = clean_child_env(TERM="xterm")
             os.execve(shell, [shell], env)
         else:
             self._pid = pid

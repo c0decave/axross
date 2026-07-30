@@ -18,6 +18,7 @@ import tempfile
 from datetime import datetime
 from typing import IO
 
+from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -83,6 +84,7 @@ class NfsSession:
             text=True,
             check=check,
             timeout=30,
+                    env=clean_child_env(),
         )
 
     def _connect(self) -> None:
@@ -306,6 +308,7 @@ class NfsSession:
             capture_output=True,
             text=True,
             timeout=float(timeout),
+                    env=clean_child_env(),
         )
         if proc.returncode != 0:
             stderr = proc.stderr.strip() or "showmount returned non-zero"

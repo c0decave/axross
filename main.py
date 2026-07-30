@@ -209,6 +209,14 @@ def main() -> int:
     setup_logging(args.debug)
     log = logging.getLogger("axross")
 
+    # Interface language, before any window is built. Precedence and the
+    # reasoning behind it live in core.i18n: a deliberate locale
+    # outranks the timezone, because a timezone says where the machine
+    # is and not what its owner reads.
+    from core.i18n import detect_language, install, stored_language
+
+    install(detect_language(configured=stored_language()))
+
     # Apply the SSH banner override globally before any Transport is
     # instantiated downstream. Safe to call when paramiko is absent
     # (headless MCP builds that drop it) — the helper is a no-op then.

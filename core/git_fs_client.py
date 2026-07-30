@@ -29,6 +29,7 @@ Requires: ``pip install axross[git]`` — dulwich>=0.21.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import logging
@@ -45,6 +46,37 @@ from core.redaction import redact_url
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
+
+@contextlib.contextmanager
+def _as_oserror(operation: str, path: str):
+    """Normalise dulwich/zlib failures into the documented OSError.
+
+    Loose git objects are zlib streams, so this is the one backend where
+    a decompression failure is reachable. ``zlib.error`` is NOT an
+    OSError — its MRO is ``error -> Exception`` — so it escaped the
+    contract every other backend keeps (docs/SCRIPTING_REFERENCE.md:18).
+    Concretely, ``ui/text_editor._save_file`` wraps the save in
+    ``except OSError``, so a corrupt object gave the user a raw
+    traceback reading "Error -3 while decompressing data: incorrect
+    header check" instead of the Save Error dialog that exists for it.
+
+    OSError subclasses pass through untouched: re-wrapping them would
+    bury errno and the original message. KeyboardInterrupt and
+    SystemExit are deliberately not caught — a user pressing Ctrl+C is
+    not a corrupt repository.
+    """
+    try:
+        yield
+    except OSError:
+        raise
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:  # noqa: BLE001 — dulwich raises its own tree
+        raise OSError(
+            f"Git {operation} failed for {path}: the repository object could "
+            f"not be decoded and may be corrupt ({type(exc).__name__}: {exc})"
+        ) from exc
+
 
 from core.git_fs_writer_helper import _GitWriter  # noqa: E402
 
@@ -808,7 +840,7 @@ class GitFsSession:
                 "author_name / author_email on the profile or in "
                 "~/.gitconfig.",
             )
-        with self._lock:
+        with self._lock, _as_oserror("write", f"/{branch}/{sub}"):
             tip_sha = self._branch_tips.get(branch)
             if tip_sha is None:
                 # Brand-new branch: empty tree, no parent.

@@ -334,3 +334,111 @@ def test_context_menu_offers_properties(tmp_path):
         pane.close()
         pane.deleteLater()
         APP.processEvents()
+
+
+# --------------------------------------------------------------------------
+# Multi-selection: Ctrl+A then Properties
+#
+# The dialog took items[0] and described whichever entry happened to be
+# first, silently ignoring the rest of the selection. What is wanted is
+# one summary — and it has to be honest about entries it could not read,
+# because a total that quietly omits an unreadable subtree UNDER-reports,
+# and somebody checking whether a copy will fit is told yes.
+# --------------------------------------------------------------------------
+
+
+def _dir_backend():
+    return _FakeBackend(
+        {
+            "/d": [_f("a.txt", size=100), _f("sub", is_dir=True)],
+            "/d/sub": [_f("b.txt", size=23)],
+        },
+        cheap=True,
+    )
+
+
+def test_happy_multi_selection_reports_a_summary_not_the_first_item(opened):
+    from ui.properties_dialog import PropertiesDialog
+
+    items = [_f("a.txt", size=100), _f("sub", is_dir=True)]
+    dlg = PropertiesDialog(_dir_backend(), "/d", items)
+    dlg.show()
+    APP.processEvents()
+    try:
+        dlg.wait_for_size()
+        fields = dlg.general_fields()
+        assert fields["Selection"].startswith("2 items")
+        assert "123" in fields["Size"], fields["Size"]
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+        APP.processEvents()
+
+
+def test_happy_single_selection_keeps_the_per_file_sheet(opened):
+    """One item must still show the detailed sheet, not a summary."""
+    dlg = opened(_FakeBackend(), "/a.txt", _f("a.txt", size=5, owner="alice"))
+    fields = dlg.general_fields()
+    assert "Selection" not in fields
+    assert fields["Owner"] == "alice"
+
+
+def test_sad_unreadable_entries_are_reported_not_silently_dropped(opened):
+    from ui.properties_dialog import PropertiesDialog
+
+    class _Denying(_FakeBackend):
+        def list_dir(self, path):
+            self.walks += 1
+            if path == "/d/locked":
+                raise PermissionError("permission denied")
+            return {"/d": [_f("ok", size=10)]}.get(path, [])
+
+    backend = _Denying(cheap=True)
+    items = [_f("ok", size=10), _f("locked", is_dir=True)]
+    dlg = PropertiesDialog(backend, "/d", items)
+    dlg.show()
+    APP.processEvents()
+    try:
+        dlg.wait_for_size()
+        fields = dlg.general_fields()
+        assert "could not be read" in fields["Selection"], fields["Selection"]
+        # And the total must not pretend to be exact.
+        assert "at least" in fields["Size"].lower(), fields["Size"]
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+        APP.processEvents()
+
+
+def test_edge_multi_selection_has_no_permissions_tab(opened):
+    """chmod applies to one file. Offering the tab for a mixed
+    selection would invite applying one mode to all of them."""
+    from ui.properties_dialog import PropertiesDialog
+
+    items = [_f("a.txt", size=1), _f("b.txt", size=2)]
+    dlg = PropertiesDialog(_FakeBackend(cheap=True), "/d", items)
+    dlg.show()
+    APP.processEvents()
+    try:
+        assert [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())] == ["General"]
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+        APP.processEvents()
+
+
+def test_edge_remote_multi_selection_waits_for_the_button(opened):
+    from ui.properties_dialog import PropertiesDialog
+
+    backend = _FakeBackend({"/d/sub": [_f("b.txt", size=23)]})  # not cheap
+    items = [_f("a.txt", size=100), _f("sub", is_dir=True)]
+    dlg = PropertiesDialog(backend, "/d", items)
+    dlg.show()
+    APP.processEvents()
+    try:
+        assert backend.walks == 0, "a remote summary must not walk on open"
+        assert dlg._calc_btn.isVisible()
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+        APP.processEvents()
