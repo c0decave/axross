@@ -46,6 +46,7 @@ import subprocess
 from datetime import datetime
 from typing import IO
 
+from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -239,6 +240,7 @@ class RshSession:
                 capture_output=True,
                 timeout=self._timeout,
                 check=False,
+                            env=clean_child_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise RshError(f"rsh timed out: {exc}") from exc

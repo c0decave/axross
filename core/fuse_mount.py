@@ -58,6 +58,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from core.subprocess_env import clean_child_env
+
 log = logging.getLogger(__name__)
 
 
@@ -835,6 +837,7 @@ class MountHandle:
                     capture_output=True,
                     timeout=timeout,
                     check=False,
+                                    env=clean_child_env(),
                 )
             except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
                 log.debug("unmount(%s): %s failed: %s", self.mount_point, cmd[0], exc)

@@ -104,6 +104,30 @@ def _temp_sibling(backend, path: str) -> str:
     return os.path.join(parent, name)
 
 
+def _existing_mode(backend, path: str) -> int | None:
+    """The target's permission bits, or ``None``.
+
+    ``None`` covers both "the file is new" (it should get the default
+    mode, not an inherited one) and "this backend does not report a
+    mode" — S3, IMAP and the cloud stores have no such concept, and
+    inventing one would be worse than leaving it alone.
+    """
+    try:
+        info = backend.stat(path)
+    except OSError:
+        return None
+    mode = getattr(info, "permissions", 0)
+    return int(mode) & 0o7777 if mode else None
+
+
+def _restore_mode(backend, path: str, mode: int) -> None:
+    """Best effort: a backend without chmod must not fail the save."""
+    try:
+        backend.chmod(path, mode)
+    except (OSError, AttributeError, NotImplementedError) as exc:
+        log.debug("atomic_write: could not restore mode %04o on %s: %s", mode, path, exc)
+
+
 def atomic_write(backend, path: str, data: bytes) -> None:
     """Write *data* to *path* atomically.
 
@@ -148,9 +172,17 @@ def atomic_write(backend, path: str, data: bytes) -> None:
         return
 
     tmp = _temp_sibling(backend, path)
+    # The commit below renames a FRESH file over the target, so the
+    # target's mode does not survive on its own — the replacement
+    # carries whatever the umask gave the temp file. For an executable
+    # that is not cosmetic: saving ~/.xinitrc at 0755 handed it back as
+    # 0644 and the next X session would not start.
+    previous_mode = _existing_mode(backend, path)
     try:
         with backend.open_write(tmp) as f:
             f.write(data)
+        if previous_mode is not None:
+            _restore_mode(backend, tmp, previous_mode)
         from core.server_ops import _finalize_temp_destination
 
         _finalize_temp_destination(backend, tmp, path)

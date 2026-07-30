@@ -44,6 +44,7 @@ import threading
 from dataclasses import dataclass
 
 from core.local_fs import LocalFS
+from core.subprocess_env import clean_child_env
 from security.protocol_line_split import split_lf_only_stream
 
 log = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ MOUNT_TIMEOUT_SECONDS = 30.0
 # "pick a device" UI.
 LIST_DEVICES_TIMEOUT_SECONDS = 10.0
 
-# Device-id format allowlist. subprocess.run([...], ...) protects
+# Device-id format allowlist. subprocess.run([...], ..., env=clean_child_env()) protects
 # against shell injection by itself, but a hostile value can still
 # crash the mounter OR be interpolated into log / UI strings that
 # render untrusted input for the user. Restrict to the characters
@@ -164,6 +165,7 @@ def list_devices(mounter: str | None = None) -> list[MtpDevice]:
             text=True,
             check=False,
             timeout=LIST_DEVICES_TIMEOUT_SECONDS,
+                    env=clean_child_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise OSError(
@@ -340,6 +342,7 @@ class MtpSession(LocalFS):
                 text=True,
                 check=False,
                 timeout=timeout,
+                            env=clean_child_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(
@@ -398,6 +401,7 @@ class MtpSession(LocalFS):
                     text=True,
                     check=False,
                     timeout=timeout,
+                                    env=clean_child_env(),
                 )
             except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
                 log.debug(

@@ -28,6 +28,7 @@ from datetime import datetime
 from typing import IO, Callable
 
 from core.append_helpers import read_existing_for_append
+from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -81,7 +82,13 @@ def _resolve_nc_with_proxy_support() -> str:
         if not os.path.exists(path):
             continue
         try:
-            r = subprocess.run([path, "-h"], capture_output=True, text=True, timeout=2)
+            r = subprocess.run(
+                [path, "-h"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                env=clean_child_env(),
+            )
         except (subprocess.TimeoutExpired, OSError):
             continue
         merged = (r.stdout or "") + (r.stderr or "")
@@ -136,6 +143,7 @@ def _nc_supports_proxy_username(nc_path: str) -> bool:
             capture_output=True,
             text=True,
             timeout=2,
+                    env=clean_child_env(),
         )
     except (subprocess.TimeoutExpired, OSError):
         return False

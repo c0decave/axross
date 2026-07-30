@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from core.bookmarks import Bookmark, BookmarkManager
 from core.connection_manager import ConnectionManager
+from core.i18n import tr
 from core.local_fs import LocalFS
 from core.profiles import ConnectionProfile, ProfileManager
 from core.ssh_client import SSHSession, UnknownHostKeyError
@@ -565,48 +566,42 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
 
         # File menu
-        edit_menu = menubar.addMenu("&Edit")
-        undo_action = edit_menu.addAction("&Undo Last Operation")
-        undo_action.setShortcut(QKeySequence("Ctrl+Z"))
-        undo_action.setToolTip("Reverse the most recent move or trash")
-        undo_action.triggered.connect(self._undo_last_operation)
+        file_menu = menubar.addMenu(tr("&File"))
 
-        file_menu = menubar.addMenu("&File")
-
-        quick_connect_action = file_menu.addAction("&Quick Connect...")
+        quick_connect_action = file_menu.addAction(tr("&Quick Connect..."))
         quick_connect_action.setShortcut(QKeySequence("Ctrl+N"))
         quick_connect_action.triggered.connect(self._show_quick_connect)
 
-        connect_action = file_menu.addAction("Connection &Manager...")
+        connect_action = file_menu.addAction(tr("Connection &Manager..."))
         connect_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
         connect_action.triggered.connect(self._on_connect)
 
-        ssh_menu = file_menu.addMenu("Import SSH &Config")
-        ssh_default_action = ssh_menu.addAction("From ~/.ssh/config")
+        ssh_menu = file_menu.addMenu(tr("Import SSH &Config"))
+        ssh_default_action = ssh_menu.addAction(tr("From ~/.ssh/config"))
         ssh_default_action.triggered.connect(self._import_ssh_config)
-        ssh_file_action = ssh_menu.addAction("From File...")
+        ssh_file_action = ssh_menu.addAction(tr("From File..."))
         ssh_file_action.triggered.connect(self._import_ssh_config_file)
-        ssh_paste_action = ssh_menu.addAction("Paste Config Text...")
+        ssh_paste_action = ssh_menu.addAction(tr("Paste Config Text..."))
         ssh_paste_action.triggered.connect(self._import_ssh_config_paste)
 
-        import_profiles_action = file_menu.addAction("Import &Profiles (JSON)...")
+        import_profiles_action = file_menu.addAction(tr("Import &Profiles (JSON)..."))
         import_profiles_action.triggered.connect(self._import_profiles_json)
 
-        export_profiles_action = file_menu.addAction("&Export Profiles (JSON)...")
+        export_profiles_action = file_menu.addAction(tr("&Export Profiles (JSON)..."))
         export_profiles_action.triggered.connect(self._export_profiles_json)
 
-        view_profiles_action = file_menu.addAction("&View All Profiles...")
+        view_profiles_action = file_menu.addAction(tr("&View All Profiles..."))
         view_profiles_action.triggered.connect(self._view_all_profiles)
 
         file_menu.addSeparator()
 
-        restore_action = file_menu.addAction("&Restore Last Session")
+        restore_action = file_menu.addAction(tr("&Restore Last Session"))
         restore_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
         restore_action.triggered.connect(self._restore_session)
 
         file_menu.addSeparator()
 
-        recheck_keyring_action = file_menu.addAction("Re-&detect System Keyring")
+        recheck_keyring_action = file_menu.addAction(tr("Re-&detect System Keyring"))
         recheck_keyring_action.setToolTip(
             "Force a fresh check for SecretService / KWallet / "
             "KeePassXC. Useful after starting a keyring daemon while "
@@ -616,43 +611,52 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        quit_action = file_menu.addAction("&Quit")
+        quit_action = file_menu.addAction(tr("&Quit"))
         quit_action.setShortcut(QKeySequence("Ctrl+Q"))
         quit_action.triggered.connect(self.close)
 
-        # View menu
-        view_menu = menubar.addMenu("&View")
+        # Edit menu. Order matters: File, Edit, View, ... is what every
+        # desktop toolkit has done for thirty years, and a menu bar that
+        # opens with Edit reads as broken before a single item is read.
+        edit_menu = menubar.addMenu(tr("&Edit"))
+        undo_action = edit_menu.addAction(tr("&Undo Last Operation"))
+        undo_action.setShortcut(QKeySequence("Ctrl+Z"))
+        undo_action.setToolTip(tr("Reverse the most recent move or trash"))
+        undo_action.triggered.connect(self._undo_last_operation)
 
-        self._hidden_action = view_menu.addAction("Show &Hidden Files")
+        # View menu
+        view_menu = menubar.addMenu(tr("&View"))
+
+        self._hidden_action = view_menu.addAction(tr("Show &Hidden Files"))
         self._hidden_action.setCheckable(True)
         self._hidden_action.setShortcut(QKeySequence("Ctrl+H"))
         self._hidden_action.toggled.connect(self._toggle_hidden)
 
         view_menu.addSeparator()
 
-        add_local_action = view_menu.addAction("Add &Local Pane")
+        add_local_action = view_menu.addAction(tr("Add &Local Pane"))
         add_local_action.triggered.connect(self._add_local_pane)
 
         # Layout-preset submenu + cycle hotkey. The submenu lists each
         # preset; the hotkey rotates through them in PRESET_ORDER.
-        layout_menu = view_menu.addMenu("&Layout Preset")
+        layout_menu = view_menu.addMenu(tr("&Layout Preset"))
         from ui.layout_presets import PRESET_ORDER
 
         for preset_name in PRESET_ORDER:
             act = layout_menu.addAction(preset_name)
             act.triggered.connect(lambda _checked, n=preset_name: self.apply_layout_preset(n))
         layout_menu.addSeparator()
-        cycle_fwd = layout_menu.addAction("Cycle Next")
+        cycle_fwd = layout_menu.addAction(tr("Cycle Next"))
         cycle_fwd.setShortcut("Ctrl+Alt+L")
         cycle_fwd.triggered.connect(lambda: self.cycle_layout_preset(forward=True))
-        cycle_back = layout_menu.addAction("Cycle Previous")
+        cycle_back = layout_menu.addAction(tr("Cycle Previous"))
         cycle_back.setShortcut("Ctrl+Alt+Shift+L")
         cycle_back.triggered.connect(lambda: self.cycle_layout_preset(forward=False))
 
         view_menu.addSeparator()
 
         # Theme submenu
-        theme_menu = view_menu.addMenu("&Theme")
+        theme_menu = view_menu.addMenu(tr("&Theme"))
         for theme_name, theme_label in [
             ("default", "Light Mode"),
             ("dark", "Dark Mode"),
@@ -662,118 +666,121 @@ class MainWindow(QMainWindow):
             action = theme_menu.addAction(theme_label)
             action.triggered.connect(lambda checked, t=theme_name: self._apply_theme(t))
 
-        self._compact_action = view_menu.addAction("&Compact Mode")
+        self._compact_action = view_menu.addAction(tr("&Compact Mode"))
         self._compact_action.setCheckable(True)
         self._compact_action.setChecked(False)
         self._compact_action.toggled.connect(self._toggle_compact_mode)
 
         # Monochrome icon toggle. Default: colourful (False). Persisted
         # in session.json; see _save_session / _restore_session.
-        self._monochrome_action = view_menu.addAction("&Monochrome Icons")
+        self._monochrome_action = view_menu.addAction(tr("&Monochrome Icons"))
         self._monochrome_action.setCheckable(True)
         self._monochrome_action.setChecked(False)
         self._monochrome_action.toggled.connect(self._toggle_monochrome_icons)
 
         view_menu.addSeparator()
 
-        zoom_in_action = view_menu.addAction("Zoom &In")
+        zoom_in_action = view_menu.addAction(tr("Zoom &In"))
         zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
         zoom_in_action.triggered.connect(lambda: self._change_font_size(1))
 
-        zoom_out_action = view_menu.addAction("Zoom &Out")
+        zoom_out_action = view_menu.addAction(tr("Zoom &Out"))
         zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
         zoom_out_action.triggered.connect(lambda: self._change_font_size(-1))
 
-        zoom_reset_action = view_menu.addAction("Zoom &Reset")
+        zoom_reset_action = view_menu.addAction(tr("Zoom &Reset"))
         zoom_reset_action.setShortcut(QKeySequence("Ctrl+0"))
         zoom_reset_action.triggered.connect(lambda: self._set_font_size(10))
 
         view_menu.addSeparator()
 
-        self._dock_view_menu = view_menu.addMenu("&Panels")
+        self._dock_view_menu = view_menu.addMenu(tr("&Panels"))
 
         view_menu.addSeparator()
 
-        find_action = view_menu.addAction("&Find in Index…")
+        find_action = view_menu.addAction(tr("&Find in Index…"))
         find_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
         find_action.triggered.connect(self._open_metadata_search)
 
-        cas_action = view_menu.addAction("&Duplicate Finder…")
+        cas_action = view_menu.addAction(tr("&Duplicate Finder…"))
         cas_action.triggered.connect(self._open_cas_duplicates)
 
-        disk_action = view_menu.addAction("Dis&k Usage…")
+        disk_action = view_menu.addAction(tr("Dis&k Usage…"))
         disk_action.setToolTip("Capacity of every open connection")
         disk_action.triggered.connect(self._open_disk_usage)
 
-        compare_action = view_menu.addAction("Co&mpare Panes…")
+        compare_action = view_menu.addAction(tr("Co&mpare Panes…"))
         compare_action.setToolTip("Diff the active pane's tree against the target pane's")
         compare_action.triggered.connect(self._open_compare_panes)
 
-        sched_action = view_menu.addAction("Scheduled &Jobs…")
+        sched_action = view_menu.addAction(tr("Scheduled &Jobs…"))
         sched_action.setToolTip("Run scripts on a recurring schedule")
         sched_action.triggered.connect(self._open_scheduler)
 
         view_menu.addSeparator()
 
         # Bookmarks submenu
-        self._bookmarks_menu = view_menu.addMenu("&Bookmarks")
+        lang_menu = view_menu.addMenu(tr("&Language"))
+        self._build_language_menu(lang_menu)
+
+        self._bookmarks_menu = view_menu.addMenu(tr("&Bookmarks"))
         self._rebuild_bookmarks_menu()
 
         # Pane menu
-        pane_menu = menubar.addMenu("&Pane")
+        pane_menu = menubar.addMenu(tr("&Pane"))
 
-        split_h_action = pane_menu.addAction("Split &Horizontal")
+        split_h_action = pane_menu.addAction(tr("Split &Horizontal"))
         split_h_action.setShortcut(QKeySequence("Ctrl+Shift+H"))
         split_h_action.triggered.connect(lambda: self._split_pane(Qt.Orientation.Horizontal))
 
-        split_v_action = pane_menu.addAction("Split &Vertical")
+        split_v_action = pane_menu.addAction(tr("Split &Vertical"))
         split_v_action.setShortcut(QKeySequence("Ctrl+Shift+V"))
         split_v_action.triggered.connect(lambda: self._split_pane(Qt.Orientation.Vertical))
 
-        close_pane_action = pane_menu.addAction("&Close Pane")
+        close_pane_action = pane_menu.addAction(tr("&Close Pane"))
         close_pane_action.setShortcut(QKeySequence("Ctrl+W"))
         close_pane_action.triggered.connect(self._close_active_pane)
 
         pane_menu.addSeparator()
 
-        toggle_orient_action = pane_menu.addAction("Toggle &Layout (H/V)")
+        toggle_orient_action = pane_menu.addAction(tr("Toggle &Layout (H/V)"))
         toggle_orient_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
         toggle_orient_action.triggered.connect(self._toggle_splitter_orientation)
 
-        equalize_action = pane_menu.addAction("&Equalize Pane Sizes")
+        equalize_action = pane_menu.addAction(tr("&Equalize Pane Sizes"))
         equalize_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
         equalize_action.triggered.connect(self._equalize_pane_sizes)
 
         pane_menu.addSeparator()
 
-        move_left_action = pane_menu.addAction("Move Pane &Left")
+        move_left_action = pane_menu.addAction(tr("Move Pane &Left"))
         move_left_action.setShortcut(QKeySequence("Ctrl+Shift+Left"))
         move_left_action.triggered.connect(lambda: self._move_pane(-1))
 
-        move_right_action = pane_menu.addAction("Move Pane &Right")
+        move_right_action = pane_menu.addAction(tr("Move Pane &Right"))
         move_right_action.setShortcut(QKeySequence("Ctrl+Shift+Right"))
         move_right_action.triggered.connect(lambda: self._move_pane(1))
 
-        extract_action = pane_menu.addAction("E&xtract Pane to Root")
+        extract_action = pane_menu.addAction(tr("E&xtract Pane to Root"))
         extract_action.setShortcut(QKeySequence("Ctrl+Shift+X"))
         extract_action.triggered.connect(self._extract_pane_from_split)
 
         pane_menu.addSeparator()
 
-        next_pane_action = pane_menu.addAction("&Next Pane\tTab")
+        next_pane_action = pane_menu.addAction(tr("&Next Pane\tTab"))
         next_pane_action.triggered.connect(self._cycle_next_pane)
 
-        prev_pane_action = pane_menu.addAction("&Previous Pane\tShift+Tab")
+        prev_pane_action = pane_menu.addAction(tr("&Previous Pane\tShift+Tab"))
         prev_pane_action.triggered.connect(self._cycle_prev_pane)
 
         # Tools menu
-        tools_menu = menubar.addMenu("&Tools")
-        diag_action = tools_menu.addAction("Run Active Pane &Diagnostics…")
+        tools_menu = menubar.addMenu(tr("&Tools"))
+        diag_action = tools_menu.addAction(tr("Run Active Pane &Diagnostics…"))
         diag_action.triggered.connect(self._run_active_pane_diagnostics)
-        recovery_action = tools_menu.addAction("&Recovery Scan…")
+        recovery_action = tools_menu.addAction(tr("&Recovery Scan…"))
         recovery_action.triggered.connect(self._run_recovery_scan)
         tools_menu.addSeparator()
-        self._paranoid_action = tools_menu.addAction("&Paranoid Security Mode")
+        self._paranoid_action = tools_menu.addAction(tr("&Paranoid Security Mode"))
         self._paranoid_action.setCheckable(True)
         from core.security_mode import is_paranoid
 
@@ -781,69 +788,69 @@ class MainWindow(QMainWindow):
         self._paranoid_action.triggered.connect(self._toggle_paranoid_mode)
 
         # Help menu
-        help_menu = menubar.addMenu("&Help")
-        shortcuts_action = help_menu.addAction("&Keyboard Shortcuts")
+        help_menu = menubar.addMenu(tr("&Help"))
+        shortcuts_action = help_menu.addAction(tr("&Keyboard Shortcuts"))
         shortcuts_action.setShortcut(QKeySequence("F1"))
         shortcuts_action.triggered.connect(self._show_shortcuts)
-        about_action = help_menu.addAction("&About axross")
+        about_action = help_menu.addAction(tr("&About axross"))
         about_action.triggered.connect(self._show_about)
 
     def _setup_toolbar(self) -> None:
         toolbar = self.addToolBar("Main")
         toolbar.setMovable(False)
 
-        quick_btn = toolbar.addAction("Quick Connect")
+        quick_btn = toolbar.addAction(tr("Quick Connect"))
         quick_btn.setToolTip("Quick connect to recent profiles (Ctrl+N)")
         quick_btn.triggered.connect(self._show_quick_connect)
 
-        manager_btn = toolbar.addAction("Connection Manager")
+        manager_btn = toolbar.addAction(tr("Connection Manager"))
         manager_btn.setToolTip("Open connection manager (Ctrl+Shift+N)")
         manager_btn.triggered.connect(self._on_connect)
 
-        shell_btn = toolbar.addAction("Shell")
+        shell_btn = toolbar.addAction(tr("Shell"))
         shell_btn.setToolTip("Open inline terminal pane (Ctrl+Shift+T)")
         shell_btn.setShortcut(QKeySequence("Ctrl+Shift+T"))
         shell_btn.triggered.connect(self._open_shell_pane)
 
         toolbar.addSeparator()
 
-        split_h_btn = toolbar.addAction("Split Horizontal")
+        split_h_btn = toolbar.addAction(tr("Split Horizontal"))
         split_h_btn.setToolTip("Split pane horizontally (Ctrl+Shift+H)")
         split_h_btn.triggered.connect(lambda: self._split_pane(Qt.Orientation.Horizontal))
 
-        split_v_btn = toolbar.addAction("Split Vertical")
+        split_v_btn = toolbar.addAction(tr("Split Vertical"))
         split_v_btn.setToolTip("Split pane vertically (Ctrl+Shift+V)")
         split_v_btn.triggered.connect(lambda: self._split_pane(Qt.Orientation.Vertical))
 
-        close_btn = toolbar.addAction("Close Pane")
+        close_btn = toolbar.addAction(tr("Close Pane"))
         close_btn.setToolTip("Close active pane (Ctrl+W)")
         close_btn.triggered.connect(self._close_active_pane)
 
-        toggle_btn = toolbar.addAction("Toggle Layout")
+        toggle_btn = toolbar.addAction(tr("Toggle Layout"))
         toggle_btn.setToolTip("Toggle layout horizontal/vertical (Ctrl+Shift+L)")
         toggle_btn.triggered.connect(self._toggle_splitter_orientation)
 
-        eq_btn = toolbar.addAction("Equalize Panes")
+        eq_btn = toolbar.addAction(tr("Equalize Panes"))
         eq_btn.setToolTip("Equalize pane sizes (Ctrl+Shift+E)")
         eq_btn.triggered.connect(self._equalize_pane_sizes)
 
-        extract_btn = toolbar.addAction("Extract Pane")
+        extract_btn = toolbar.addAction(tr("Extract Pane"))
         extract_btn.setToolTip("Extract pane from nested split (Ctrl+Shift+X)")
         extract_btn.triggered.connect(self._extract_pane_from_split)
 
         toolbar.addSeparator()
 
-        copy_btn = toolbar.addAction("Copy to Target")
+        copy_btn = toolbar.addAction(tr("Copy to Target"))
         copy_btn.setToolTip("Copy selected files to target pane (F5)")
         copy_btn.setShortcut(QKeySequence("F5"))
         copy_btn.triggered.connect(self._transfer_to_target)
 
-        move_btn = toolbar.addAction("Move to Target")
+        move_btn = toolbar.addAction(tr("Move to Target"))
         move_btn.setToolTip("Move selected files to target pane (F6)")
         move_btn.setShortcut(QKeySequence("F6"))
         move_btn.triggered.connect(self._move_files)
 
-        refresh_btn = toolbar.addAction("Refresh")
+        refresh_btn = toolbar.addAction(tr("Refresh"))
         # Refresh moved off F2 because the file pane uses F2 for
         # rename (Windows / GNOME Files / KDE Dolphin convention).
         # Ctrl+R is the standard refresh shortcut across most
@@ -2006,6 +2013,45 @@ class MainWindow(QMainWindow):
 
         return JobStore(Path(JOURNAL_PATH).parent / "jobs.json")
 
+    def _build_language_menu(self, menu) -> None:
+        """One entry per shipped language, plus automatic detection.
+
+        A restart is required and the entry says so: retranslating a
+        live window means rebuilding every menu, dock title and open
+        dialog, and a half-retranslated interface is worse than an
+        honest prompt.
+        """
+        from core.i18n import SUPPORTED, active, store_language
+
+        current = active().language
+        auto = menu.addAction(tr("Automatic (system locale)"))
+        auto.setCheckable(True)
+        auto.triggered.connect(lambda: self._set_language(None))
+        menu.addSeparator()
+        for code, name in SUPPORTED.items():
+            action = menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(code == current)
+            action.triggered.connect(lambda _checked=False, c=code: self._set_language(c))
+        self._language_store = store_language
+
+    def _set_language(self, code: str | None) -> None:
+        from core.i18n import SUPPORTED, store_language
+
+        try:
+            store_language(code or "")
+        except OSError as exc:
+            QMessageBox.warning(
+                self, tr("Language"), tr("Could not save the language setting:") + f"\n{exc}"
+            )
+            return
+        label = SUPPORTED.get(code or "", tr("Automatic (system locale)"))
+        QMessageBox.information(
+            self,
+            tr("Language"),
+            tr("The language changes when axross restarts.") + f"\n\n{label}",
+        )
+
     def _open_scheduler(self) -> None:
         from ui.scheduler_dialog import SchedulerDialog
 
@@ -2505,11 +2551,11 @@ class MainWindow(QMainWindow):
                 action.triggered.connect(lambda checked, p=profile: self._quick_connect_profile(p))
 
         if menu.isEmpty():
-            action = menu.addAction("No profiles — open Connection Manager")
+            action = menu.addAction(tr("No profiles — open Connection Manager"))
             action.triggered.connect(self._on_connect)
 
         menu.addSeparator()
-        manager_action = menu.addAction("Connection Manager... [Ctrl+Shift+N]")
+        manager_action = menu.addAction(tr("Connection Manager... [Ctrl+Shift+N]"))
         manager_action.triggered.connect(self._on_connect)
 
         # Show at a reasonable position
@@ -3736,7 +3782,7 @@ class MainWindow(QMainWindow):
     def _rebuild_bookmarks_menu(self) -> None:
         self._bookmarks_menu.clear()
 
-        add_action = self._bookmarks_menu.addAction("Add Current Directory")
+        add_action = self._bookmarks_menu.addAction(tr("Add Current Directory"))
         # F8 = add bookmark. Doesn't collide with any other binding:
         # F2 rename, F3 view, F4 edit, F5 copy, F6 move, F7 mkdir,
         # F8 bookmark, F9 rename-alias, F10 context menu, F12
@@ -3744,7 +3790,7 @@ class MainWindow(QMainWindow):
         add_action.setShortcut(QKeySequence("F8"))
         add_action.triggered.connect(self._bookmark_active_dir)
 
-        manage_action = self._bookmarks_menu.addAction("Manage Bookmarks...")
+        manage_action = self._bookmarks_menu.addAction(tr("Manage Bookmarks..."))
         manage_action.triggered.connect(self._manage_bookmarks)
 
         bookmarks = self._bookmark_manager.all()

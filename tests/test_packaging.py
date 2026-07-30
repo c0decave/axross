@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -776,3 +777,208 @@ class PackagingHttpServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BundledFontconfigTests(unittest.TestCase):
+    """The bundle must not carry a fontconfig older than the host's config.
+
+    PyInstaller pulls libfontconfig.so.1 out of the BUILD image
+    (AlmaLinux 9 → fontconfig 2.14), and at runtime that old library
+    parses the HOST's /etc/fonts/conf.d, which on any current distro is
+    written for 2.17+. It does not understand `xsi:nil` or the
+    genericfamily constants, so it prints a warning per occurrence —
+    ninety lines on this machine — every time the font database
+    initialises.
+
+    Nothing breaks: fontconfig skips the rules it cannot parse and font
+    matching still works. But an application that vomits ninety warnings
+    on startup reads as broken, and it buries any message that matters.
+    """
+
+    def _font_init_stderr(self, flavor: str) -> str:
+        binary = _binary_for(flavor)
+        _skip_if_missing(binary)
+        env = dict(os.environ)
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        # --help exits before Qt builds its font database, so it has to
+        # be forced for this to test anything.
+        script = (
+            "from PyQt6.QtWidgets import QApplication\n"
+            "from PyQt6.QtGui import QFontDatabase\n"
+            "app = QApplication.instance() or QApplication([])\n"
+            "print(len(QFontDatabase.families()))\n"
+        )
+        result = subprocess.run(
+            [str(binary), "--script", "-"],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            check=False,
+        )
+        return result.stderr
+
+    def test_slim_bundle_initialises_fonts_without_fontconfig_warnings(self) -> None:
+        stderr = self._font_init_stderr("slim")
+        warnings = [line for line in stderr.splitlines() if "Fontconfig warning" in line]
+        self.assertEqual(
+            warnings,
+            [],
+            f"{len(warnings)} fontconfig warning(s); first: {warnings[:1]}",
+        )
+
+    def test_full_bundle_initialises_fonts_without_fontconfig_warnings(self) -> None:
+        stderr = self._font_init_stderr("full")
+        warnings = [line for line in stderr.splitlines() if "Fontconfig warning" in line]
+        self.assertEqual(
+            warnings,
+            [],
+            f"{len(warnings)} fontconfig warning(s); first: {warnings[:1]}",
+        )
+
+
+class BundledSubprocessEnvironmentTests(unittest.TestCase):
+    """External programs must work when spawned from the BUNDLE.
+
+    This class exists because of a whole family of bugs the rest of the
+    suite structurally cannot see. Everything else runs against the
+    source tree, where PyInstaller's loader variables do not exist — so
+    the suite stayed green while the shipped binary could not run a
+    single external tool:
+
+        /usr/bin/bash: symbol lookup error: /usr/bin/bash:
+        undefined symbol: rl_trim_arg_from_keyseq
+
+    A one-file bundle points LD_LIBRARY_PATH at its own extraction
+    directory, every child inherits it, and bash resolved libreadline
+    against ours. Ten call sites drive external programs — rsync,
+    iscsiadm, showmount, mount.nfs, svn, rsh, fusermount, the MTP
+    utilities, the elevated-write helper and the shell — and all of them
+    were affected.
+
+    The rule these tests encode: anything that only breaks in the
+    artifact has to be asserted against the artifact.
+    """
+
+    def _run_in_bundle(self, flavor: str, script: str) -> subprocess.CompletedProcess:
+        binary = _binary_for(flavor)
+        _skip_if_missing(binary)
+        env = dict(os.environ)
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        return subprocess.run(
+            [str(binary), "--script", "-"],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            check=False,
+        )
+
+    def test_bundle_can_spawn_a_shell(self) -> None:
+        """The reported failure, asserted directly."""
+        result = self._run_in_bundle(
+            "slim",
+            "import os, subprocess\n"
+            "from core.subprocess_env import clean_child_env\n"
+            "sh = os.environ.get('SHELL', '/bin/sh')\n"
+            "r = subprocess.run([sh, '-c', 'echo spawn-ok'], capture_output=True,\n"
+            "                   text=True, env=clean_child_env())\n"
+            "print('RC', r.returncode)\n"
+            "print('OUT', r.stdout.strip())\n"
+            "print('ERR', r.stderr.strip())\n",
+        )
+        self.assertIn("RC 0", result.stdout, result.stdout + result.stderr)
+        self.assertIn("OUT spawn-ok", result.stdout)
+        self.assertNotIn("symbol lookup error", result.stdout + result.stderr)
+
+    def test_bundle_strips_its_own_loader_path_from_children(self) -> None:
+        """The mechanism, not just the symptom: a child must not see the
+        extraction directory in LD_LIBRARY_PATH."""
+        result = self._run_in_bundle(
+            "slim",
+            "from core.subprocess_env import clean_child_env\n"
+            "env = clean_child_env()\n"
+            "print('HAS_LD', 'LD_LIBRARY_PATH' in env)\n"
+            "print('HAS_ORIG', 'LD_LIBRARY_PATH_ORIG' in env)\n",
+        )
+        self.assertIn("HAS_LD False", result.stdout, result.stdout + result.stderr)
+        self.assertIn("HAS_ORIG False", result.stdout)
+
+    def test_bundle_still_sets_the_loader_path_for_itself(self) -> None:
+        """Guard against over-correcting: the frozen interpreter needs
+        its own LD_LIBRARY_PATH, and clearing it process-wide instead of
+        per-child would break the application itself."""
+        result = self._run_in_bundle(
+            "slim",
+            "import os\nprint('SELF', 'LD_LIBRARY_PATH' in os.environ)\n",
+        )
+        self.assertIn("SELF True", result.stdout, result.stdout + result.stderr)
+
+
+class BundledResourcesTests(unittest.TestCase):
+    """Every resource directory the code reads must be in the bundle.
+
+    Third omission of this kind. build/axross.spec enumerates the
+    resource subdirectories to collect, and code that reads a NEW one
+    works perfectly from source — the directory is simply there — while
+    the shipped binary silently gets nothing. Previously it was
+    resources/ as a whole missing from the builder image; then the
+    i18n catalogues, which made the German interface fall back to
+    English in the binary while every source-tree test passed.
+
+    So this asserts the RELATIONSHIP rather than a list: whatever
+    resources/ subdirectories exist in the tree have to be reachable
+    from the bundle.
+    """
+
+    def _bundle_can_read(self, flavor: str, script: str) -> str:
+        binary = _binary_for(flavor)
+        _skip_if_missing(binary)
+        env = dict(os.environ)
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        result = subprocess.run(
+            [str(binary), "--script", "-"],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            check=False,
+        )
+        return result.stdout + result.stderr
+
+    def test_spec_collects_every_resource_subdirectory(self) -> None:
+        """Catches the omission statically, before a build."""
+        spec = (REPO_ROOT / "build/axross.spec").read_text()
+        # Parse the loop's tuple directly rather than scanning a window
+        # of characters — a comment added nearby would otherwise shift
+        # the window and make this pass for the wrong reason.
+        match = re.search(r"for sub in \(([^)]*)\):", spec)
+        self.assertIsNotNone(match, "could not find the resource-collection loop")
+        listed = set(re.findall(r'"([a-z0-9_]+)"', match.group(1)))
+        on_disk = {
+            p.name
+            for p in (REPO_ROOT / "resources").iterdir()
+            if p.is_dir() and not p.name.startswith("__")
+        }
+        missing = on_disk - listed
+        self.assertEqual(
+            missing,
+            set(),
+            f"resources/{{{', '.join(sorted(missing))}}} exists but the spec does "
+            "not collect it — the shipped binary would read nothing there",
+        )
+
+    def test_bundle_loads_the_german_catalogue(self) -> None:
+        """The concrete case: a German UI in the shipped binary."""
+        out = self._bundle_can_read(
+            "slim",
+            "from core.i18n import install, tr\n"
+            "t = install('de')\n"
+            "print('ENTRIES', len(t))\n"
+            "print('FILE', tr('&File'))\n",
+        )
+        self.assertNotIn("ENTRIES 0", out, out)
+        self.assertIn("&Datei", out, out)

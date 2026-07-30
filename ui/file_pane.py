@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.i18n import tr
 from core.redaction import redact_url
 from models.file_item import FileItem
 from models.file_table_model import COL_NAME, FileSortProxyModel, FileTableModel
@@ -1631,31 +1632,31 @@ class FilePaneWidget(QWidget):
         menu = QMenu(self)
         selected = self.selected_file_items()
 
-        refresh_action = menu.addAction("Refresh")
+        refresh_action = menu.addAction(tr("Refresh"))
         refresh_action.triggered.connect(self.refresh)
 
         menu.addSeparator()
 
-        mkdir_action = menu.addAction("New Folder")
+        mkdir_action = menu.addAction(tr("New Folder"))
         mkdir_action.triggered.connect(self._create_folder)
 
-        newfile_action = menu.addAction("New File…")
+        newfile_action = menu.addAction(tr("New File…"))
         newfile_action.triggered.connect(self._create_empty_file)
 
         # Symlink / Hardlink are backend-dependent. Hide when the
         # backend doesn't flag support so users don't see actions
         # that will fail the moment they click them.
         if getattr(self._backend, "supports_symlinks", False):
-            sym_action = menu.addAction("New Symlink…")
+            sym_action = menu.addAction(tr("New Symlink…"))
             sym_action.triggered.connect(self._create_symlink)
         if getattr(self._backend, "supports_hardlinks", False):
-            hard_action = menu.addAction("New Hardlink…")
+            hard_action = menu.addAction(tr("New Hardlink…"))
             hard_action.triggered.connect(self._create_hardlink)
 
-        bookmark_action = menu.addAction("Bookmark This Directory")
+        bookmark_action = menu.addAction(tr("Bookmark This Directory"))
         bookmark_action.triggered.connect(self._add_bookmark)
 
-        xlink_action = menu.addAction("Create XLink…")
+        xlink_action = menu.addAction(tr("Create XLink…"))
         xlink_action.triggered.connect(self._create_xlink)
 
         # FUSE mount toggle — only shown when fusepy is importable.
@@ -1667,36 +1668,36 @@ class FilePaneWidget(QWidget):
 
             if FM.is_available():
                 if getattr(self, "_fuse_handle", None) is not None:
-                    fuse_action = menu.addAction("Unmount FUSE")
+                    fuse_action = menu.addAction(tr("Unmount FUSE"))
                     fuse_action.triggered.connect(self._unmount_fuse)
                 else:
-                    ro_action = menu.addAction("Mount as FUSE (read-only)…")
+                    ro_action = menu.addAction(tr("Mount as FUSE (read-only)…"))
                     ro_action.triggered.connect(
                         lambda: self._mount_as_fuse(writeable=False),
                     )
-                    rw_action = menu.addAction("Mount as FUSE (read-write)…")
+                    rw_action = menu.addAction(tr("Mount as FUSE (read-write)…"))
                     rw_action.triggered.connect(
                         lambda: self._mount_as_fuse(writeable=True),
                     )
         except Exception as exc:  # noqa: BLE001 — never let fuse break the menu
             log.debug("Skipping FUSE menu entry: %s", exc)
 
-        trash_browser_action = menu.addAction("Show Trash…")
+        trash_browser_action = menu.addAction(tr("Show Trash…"))
         trash_browser_action.triggered.connect(self._show_trash_browser)
 
         # Deliberately outside the ``if selected:`` block below: this
         # acts on the directory you are standing in, which is exactly
         # the moment you have nothing selected yet.
-        dupes_action = menu.addAction("Find Duplicate Files…")
+        dupes_action = menu.addAction(tr("Find Duplicate Files…"))
         dupes_action.triggered.connect(self.open_duplicates_requested.emit)
 
         if selected:
             menu.addSeparator()
 
-            props_action = menu.addAction("Properties…\tAlt+Enter")
+            props_action = menu.addAction(tr("Properties…\tAlt+Enter"))
             props_action.triggered.connect(self._show_properties)
 
-            copy_action = menu.addAction("Copy to Target Pane")
+            copy_action = menu.addAction(tr("Copy to Target Pane"))
             copy_action.triggered.connect(
                 lambda: self.transfer_requested.emit(self.selected_items())
             )
@@ -1710,10 +1711,10 @@ class FilePaneWidget(QWidget):
                 if full_path is None:
                     return menu
 
-                text_action = menu.addAction("Open as Text")
+                text_action = menu.addAction(tr("Open as Text"))
                 text_action.triggered.connect(lambda: self._open_editor(full_path))
 
-                hex_action = menu.addAction("Open as Hex")
+                hex_action = menu.addAction(tr("Open as Hex"))
                 hex_action.triggered.connect(lambda: self._open_hex_editor(full_path))
 
                 # "Open as root…" only shows for local backends and only
@@ -1721,27 +1722,27 @@ class FilePaneWidget(QWidget):
                 # actually present. Hiding it on remote / pkexec-less
                 # systems avoids the "click → error dialog" UX dead-end.
                 if self._elevated_io_available():
-                    elev_action = menu.addAction("Open as root…")
+                    elev_action = menu.addAction(tr("Open as root…"))
                     elev_action.triggered.connect(lambda: self._open_as_root(full_path))
 
             menu.addSeparator()
 
-            rename_action = menu.addAction("Rename")
+            rename_action = menu.addAction(tr("Rename"))
             rename_action.triggered.connect(self._rename_selected)
 
             if len(selected) > 1:
-                batch_rename_action = menu.addAction("Batch Rename...")
+                batch_rename_action = menu.addAction(tr("Batch Rename..."))
                 batch_rename_action.triggered.connect(self._batch_rename)
 
-            trash_action = menu.addAction("Move to Trash")
+            trash_action = menu.addAction(tr("Move to Trash"))
             trash_action.triggered.connect(self._trash_selected)
 
-            delete_action = menu.addAction("Delete Permanently")
+            delete_action = menu.addAction(tr("Delete Permanently"))
             delete_action.triggered.connect(self._delete_selected)
 
             menu.addSeparator()
 
-            perms_action = menu.addAction("Permissions...")
+            perms_action = menu.addAction(tr("Permissions..."))
             perms_action.triggered.connect(self._show_permissions)
 
             # Checksum is a single-file action — most backends return a
@@ -1750,10 +1751,10 @@ class FilePaneWidget(QWidget):
             # via open_read after a confirmation prompt.
             files_for_csum = [i for i in selected if not i.is_dir]
             if len(files_for_csum) == 1:
-                csum_action = menu.addAction("Show Checksum…")
+                csum_action = menu.addAction(tr("Show Checksum…"))
                 csum_action.triggered.connect(lambda: self._show_checksum(files_for_csum[0]))
 
-                versions_action = menu.addAction("Show Versions…")
+                versions_action = menu.addAction(tr("Show Versions…"))
                 versions_action.triggered.connect(lambda: self._show_versions(files_for_csum[0]))
 
             # Directory size
@@ -1765,7 +1766,7 @@ class FilePaneWidget(QWidget):
             # Symlink info
             links = [i for i in selected if i.is_link]
             if links:
-                link_target_action = menu.addAction("Show Link Target")
+                link_target_action = menu.addAction(tr("Show Link Target"))
                 link_target_action.triggered.connect(self._show_link_target)
 
             # Encryption (single file only — passphrase prompt flow).
@@ -1773,10 +1774,10 @@ class FilePaneWidget(QWidget):
                 item = files[0]
                 menu.addSeparator()
                 if item.name.endswith(".axenc"):
-                    dec_action = menu.addAction("Decrypt with passphrase…")
+                    dec_action = menu.addAction(tr("Decrypt with passphrase…"))
                     dec_action.triggered.connect(lambda: self._decrypt_selected_file(item))
                 else:
-                    enc_action = menu.addAction("Encrypt with passphrase…")
+                    enc_action = menu.addAction(tr("Encrypt with passphrase…"))
                     enc_action.triggered.connect(lambda: self._encrypt_selected_file(item))
 
             # Archive extraction — offered only for local backends
@@ -1797,7 +1798,7 @@ class FilePaneWidget(QWidget):
 
                     # "Vorschau" (Preview) opens the non-modal archive
                     # dock without extracting anything to disk.
-                    preview_action = menu.addAction("Vorschau")
+                    preview_action = menu.addAction(tr("Vorschau"))
                     if arc_path is not None:
                         preview_action.triggered.connect(
                             lambda _checked=False, p=arc_path: self._open_archive_preview(p)
@@ -1805,7 +1806,7 @@ class FilePaneWidget(QWidget):
                     else:
                         preview_action.setEnabled(False)
 
-                    extract_action = menu.addAction("Entpacken…")
+                    extract_action = menu.addAction(tr("Entpacken…"))
                     extract_action.triggered.connect(lambda: self._extract_archive(arc_item))
                     # Colour-highlight the extract entry so it stands
                     # apart from the read-only preview. QMenu/QAction
@@ -2142,17 +2143,27 @@ class FilePaneWidget(QWidget):
             self.refresh()
 
     def _show_properties(self) -> None:
-        """Full properties sheet for the first selected entry."""
+        """Properties for the selection.
+
+        One entry gets the detailed sheet; several get a single summary
+        rooted at the current directory. Passing only items[0] for a
+        multi-selection — which is what this did — answers a question
+        nobody asked after Ctrl+A.
+        """
         from ui.properties_dialog import PropertiesDialog
 
         items = self.selected_file_items()
         if not items:
             return
-        item = items[0]
-        path = self._safe_item_path(item)
-        if path is None:
-            return
-        dialog = PropertiesDialog(self._backend, path, item, parent=self)
+        if len(items) == 1:
+            path = self._safe_item_path(items[0])
+            if path is None:
+                return
+            dialog = PropertiesDialog(self._backend, path, items[0], parent=self)
+        else:
+            dialog = PropertiesDialog(
+                self._backend, self._current_path, items, parent=self
+            )
         if dialog.exec():
             # The permissions tab may have written a new mode.
             self.refresh()

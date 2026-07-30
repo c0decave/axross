@@ -83,3 +83,24 @@ def test_edge_menu_still_offers_the_pre_existing_entries(pane):
     texts = _menu_texts(pane)
     for expected in ("Refresh", "New Folder", "New File…"):
         assert any(expected in t for t in texts), (expected, texts)
+
+
+# --------------------------------------------------------------------------
+# Menu bar order
+# --------------------------------------------------------------------------
+
+
+def test_menu_bar_starts_with_file_then_edit():
+    """File, Edit, View, … is what every desktop toolkit has done for
+    thirty years. A menu bar that opens with Edit reads as broken before
+    a single item is read — which is exactly what happened when the Edit
+    menu was appended at the point the Undo action was added.
+
+    Asserted against the source order because that IS the order Qt
+    renders: menubar.addMenu appends left to right.
+    """
+    import re
+
+    source = (Path(__file__).resolve().parent.parent / "ui/main_window.py").read_text()
+    names = re.findall(r'menubar\.addMenu\(tr\("&?([A-Za-z]+)"\)\)', source)
+    assert names[:3] == ["File", "Edit", "View"], names

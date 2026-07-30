@@ -50,6 +50,7 @@ from datetime import datetime
 from typing import IO, cast
 from xml.etree import ElementTree as ET
 
+from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -272,6 +273,7 @@ class SvnFsSession:
                 capture_output=True,
                 timeout=timeout,
                 check=False,
+                            env=clean_child_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(f"SVN command timed out after {timeout:.0f}s: {args[0]}") from exc
