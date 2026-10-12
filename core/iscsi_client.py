@@ -70,13 +70,13 @@ class IscsiSession:
         proxy_username: str = "",
         proxy_password: str = "",
     ):
-        from core.proxy import warn_unsupported_proxy
+        from core.proxy import refuse_unsupported_proxy
 
-        warn_unsupported_proxy(
+        refuse_unsupported_proxy(
             "iSCSI",
             proxy_type,
             proxy_host,
-            "iSCSI is handled by the kernel initiator; proxy at the OS/network layer instead.",
+            "iSCSI is handled by the kernel initiator, so a user-space proxy cannot carry it.",
         )
         self._target_ip = target_ip
         self._target_iqn = target_iqn

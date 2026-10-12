@@ -2,6 +2,8 @@ include LICENSE NOTICE README.md README_PYPI.md README_de.md README_es.md INSTAL
 include dev-requirements.txt
 include OAUTH_SETUP.md SECURITY.md CONTRIBUTING.md THIRD_PARTY_LICENSES.md
 recursive-include docs *.md
+prune docs/plans
+exclude docs/HANDOFF.md docs/BACKLOG.md docs/SECURITY-REVIEW-2026-10.md
 recursive-include examples *.md *.py
 recursive-include resources/logo *.png *.svg
 recursive-include resources/scripts *.md *.py

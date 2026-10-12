@@ -30,6 +30,7 @@ from core.profiles import ConnectionProfile, ProfileManager
 from core.ssh_client import SSHSession, UnknownHostKeyError
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
+from ui import themes
 from ui.file_pane import FilePaneWidget
 from ui.layout_utils import (
     equal_split_sizes,
@@ -39,6 +40,12 @@ from ui.layout_utils import (
 from ui.log_dock import LogDock
 from ui.terminal_pane import TerminalPaneWidget
 from ui.terminal_widget import TerminalDock
+from ui.themes import (  # noqa: F401  (theme constants stay importable from here)
+    AMBER_THEME,
+    COMPACT_CSS,
+    DARK_THEME,
+    HACKER_THEME,
+)
 from ui.transfer_dock import TransferDock
 
 log = logging.getLogger(__name__)
@@ -93,385 +100,6 @@ def _write_private_text(path: Path | str, text: str) -> None:
         raise
 
 
-DARK_THEME = """
-QMainWindow, QWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-}
-QMenuBar {
-    background-color: #181825;
-    color: #cdd6f4;
-}
-QMenuBar::item:selected {
-    background-color: #45475a;
-}
-QMenu {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-}
-QMenu::item:selected {
-    background-color: #45475a;
-}
-QToolBar {
-    background-color: #181825;
-    border: none;
-    spacing: 4px;
-}
-QTableView {
-    background-color: #1e1e2e;
-    alternate-background-color: #181825;
-    color: #cdd6f4;
-    gridline-color: #313244;
-    selection-background-color: #45475a;
-    selection-color: #cdd6f4;
-}
-QHeaderView::section {
-    background-color: #181825;
-    color: #cdd6f4;
-    border: 1px solid #313244;
-    padding: 4px;
-}
-QLineEdit {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-    border-radius: 3px;
-    padding: 2px 4px;
-}
-QPushButton {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-    border-radius: 3px;
-    padding: 4px 8px;
-}
-QPushButton:hover {
-    background-color: #45475a;
-}
-QProgressBar {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 3px;
-    text-align: center;
-    color: #cdd6f4;
-}
-QProgressBar::chunk {
-    background-color: #89b4fa;
-}
-QDockWidget {
-    color: #cdd6f4;
-}
-QDockWidget::title {
-    background-color: #181825;
-    padding: 4px;
-}
-QLabel {
-    color: #cdd6f4;
-}
-QSplitter::handle {
-    background-color: #45475a;
-}
-QScrollBar:vertical, QScrollBar:horizontal {
-    background-color: #1e1e2e;
-}
-QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-    background-color: #45475a;
-    border-radius: 3px;
-}
-QTabBar::tab {
-    background-color: #181825;
-    color: #cdd6f4;
-    padding: 4px 8px;
-    border: 1px solid #313244;
-}
-QTabBar::tab:selected {
-    background-color: #313244;
-}
-QPlainTextEdit {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    selection-background-color: #45475a;
-}
-QListWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-}
-QComboBox {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-}
-QDialog {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-}
-"""
-
-HACKER_THEME = """
-QMainWindow, QWidget {
-    background-color: #0a0a0a;
-    color: #00ff41;
-    font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
-}
-QMenuBar {
-    background-color: #0d0d0d;
-    color: #00ff41;
-}
-QMenuBar::item:selected {
-    background-color: #003300;
-}
-QMenu {
-    background-color: #0a0a0a;
-    color: #00ff41;
-    border: 1px solid #004400;
-}
-QMenu::item:selected {
-    background-color: #003300;
-}
-QToolBar {
-    background-color: #0d0d0d;
-    border-bottom: 1px solid #004400;
-    spacing: 4px;
-}
-QTableView {
-    background-color: #0a0a0a;
-    alternate-background-color: #0d0d0d;
-    color: #00ff41;
-    gridline-color: #003300;
-    selection-background-color: #004400;
-    selection-color: #00ff41;
-}
-QHeaderView::section {
-    background-color: #0d0d0d;
-    color: #00cc33;
-    border: 1px solid #003300;
-    padding: 4px;
-}
-QLineEdit {
-    background-color: #111111;
-    color: #00ff41;
-    border: 1px solid #004400;
-    border-radius: 0px;
-    padding: 2px 4px;
-}
-QPushButton {
-    background-color: #111111;
-    color: #00ff41;
-    border: 1px solid #004400;
-    border-radius: 0px;
-    padding: 4px 8px;
-}
-QPushButton:hover {
-    background-color: #003300;
-    border-color: #00ff41;
-}
-QProgressBar {
-    background-color: #111111;
-    border: 1px solid #004400;
-    border-radius: 0px;
-    text-align: center;
-    color: #00ff41;
-}
-QProgressBar::chunk {
-    background-color: #00cc33;
-}
-QDockWidget {
-    color: #00ff41;
-}
-QDockWidget::title {
-    background-color: #0d0d0d;
-    padding: 4px;
-}
-QLabel {
-    color: #00ff41;
-}
-QSplitter::handle {
-    background-color: #004400;
-}
-QScrollBar:vertical, QScrollBar:horizontal {
-    background-color: #0a0a0a;
-}
-QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-    background-color: #003300;
-}
-QTabBar::tab {
-    background-color: #0d0d0d;
-    color: #00ff41;
-    padding: 4px 8px;
-    border: 1px solid #003300;
-}
-QTabBar::tab:selected {
-    background-color: #003300;
-    border-bottom: 2px solid #00ff41;
-}
-QPlainTextEdit {
-    background-color: #0a0a0a;
-    color: #00ff41;
-    selection-background-color: #003300;
-    font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
-}
-QListWidget {
-    background-color: #0a0a0a;
-    color: #00ff41;
-}
-QComboBox {
-    background-color: #111111;
-    color: #00ff41;
-    border: 1px solid #004400;
-}
-QDialog {
-    background-color: #0a0a0a;
-    color: #00ff41;
-}
-"""
-
-AMBER_THEME = """
-QMainWindow, QWidget {
-    background-color: #0a0a0a;
-    color: #ff8c00;
-    font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
-}
-QMenuBar {
-    background-color: #0d0d0d;
-    color: #ff8c00;
-}
-QMenuBar::item:selected {
-    background-color: #331a00;
-}
-QMenu {
-    background-color: #0a0a0a;
-    color: #ff8c00;
-    border: 1px solid #442200;
-}
-QMenu::item:selected {
-    background-color: #331a00;
-}
-QToolBar {
-    background-color: #0d0d0d;
-    border-bottom: 1px solid #442200;
-    spacing: 4px;
-}
-QTableView {
-    background-color: #0a0a0a;
-    alternate-background-color: #0d0d0d;
-    color: #ff8c00;
-    gridline-color: #331a00;
-    selection-background-color: #442200;
-    selection-color: #ffaa00;
-}
-QHeaderView::section {
-    background-color: #0d0d0d;
-    color: #cc7000;
-    border: 1px solid #331a00;
-    padding: 4px;
-}
-QLineEdit {
-    background-color: #111111;
-    color: #ff8c00;
-    border: 1px solid #442200;
-    border-radius: 0px;
-    padding: 2px 4px;
-}
-QPushButton {
-    background-color: #111111;
-    color: #ff8c00;
-    border: 1px solid #442200;
-    border-radius: 0px;
-    padding: 4px 8px;
-}
-QPushButton:hover {
-    background-color: #331a00;
-    border-color: #ff8c00;
-}
-QProgressBar {
-    background-color: #111111;
-    border: 1px solid #442200;
-    border-radius: 0px;
-    text-align: center;
-    color: #ff8c00;
-}
-QProgressBar::chunk {
-    background-color: #cc7000;
-}
-QDockWidget {
-    color: #ff8c00;
-}
-QDockWidget::title {
-    background-color: #0d0d0d;
-    padding: 4px;
-}
-QLabel {
-    color: #ff8c00;
-}
-QSplitter::handle {
-    background-color: #442200;
-}
-QScrollBar:vertical, QScrollBar:horizontal {
-    background-color: #0a0a0a;
-}
-QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-    background-color: #331a00;
-}
-QTabBar::tab {
-    background-color: #0d0d0d;
-    color: #ff8c00;
-    padding: 4px 8px;
-    border: 1px solid #331a00;
-}
-QTabBar::tab:selected {
-    background-color: #331a00;
-    border-bottom: 2px solid #ff8c00;
-}
-QPlainTextEdit {
-    background-color: #0a0a0a;
-    color: #ff8c00;
-    selection-background-color: #331a00;
-    font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
-}
-QListWidget {
-    background-color: #0a0a0a;
-    color: #ff8c00;
-}
-QComboBox {
-    background-color: #111111;
-    color: #ff8c00;
-    border: 1px solid #442200;
-}
-QDialog {
-    background-color: #0a0a0a;
-    color: #ff8c00;
-}
-"""
-
-
-COMPACT_CSS = """
-QSplitter::handle {
-    width: 1px;
-    height: 1px;
-}
-QHeaderView::section {
-    padding: 1px 3px;
-}
-QDockWidget::title {
-    padding: 1px;
-}
-QTabBar::tab {
-    padding: 2px 6px;
-}
-QToolBar {
-    spacing: 1px;
-    padding: 0px;
-}
-QPushButton {
-    padding: 2px 4px;
-}
-QTableView {
-    gridline-color: transparent;
-}
-"""
-
-
 class MainWindow(QMainWindow):
     """Main application window with file panes."""
 
@@ -501,7 +129,7 @@ class MainWindow(QMainWindow):
         # drain off this list once their threads have actually exited.
         self._connect_tasks: list = []
 
-        self._current_theme = "dark"
+        self._current_theme = themes.DEFAULT_THEME
         self._compact_mode = False
         self._recent_profiles: list[str] = (
             self._load_recents()
@@ -534,6 +162,15 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             log.warning("scheduler: not started: %s", exc)
         self._apply_theme(self._current_theme)
+        # "Modern (follow system)" must follow the desktop live.
+        try:
+            from PyQt6.QtGui import QGuiApplication
+
+            hints = QGuiApplication.styleHints()
+            if hints is not None:
+                hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
+        except (AttributeError, ImportError):  # Qt < 6.5: no signal
+            pass
         # Auto-load persistent visual settings (monochrome-icon
         # toggle) from session.json. Deliberately a narrow loader
         # — the full pane layout stays behind a manual "Restore
@@ -657,13 +294,10 @@ class MainWindow(QMainWindow):
 
         # Theme submenu
         theme_menu = view_menu.addMenu(tr("&Theme"))
-        for theme_name, theme_label in [
-            ("default", "Light Mode"),
-            ("dark", "Dark Mode"),
-            ("hacker", "Hacker Mode"),
-            ("amber", "Amber Mode"),
-        ]:
-            action = theme_menu.addAction(theme_label)
+        for theme_name, theme_label in themes.THEME_CHOICES:
+            if theme_name == "classic":
+                theme_menu.addSeparator()
+            action = theme_menu.addAction(tr(theme_label))
             action.triggered.connect(lambda checked, t=theme_name: self._apply_theme(t))
 
         self._compact_action = view_menu.addAction(tr("&Compact Mode"))
@@ -1513,7 +1147,12 @@ class MainWindow(QMainWindow):
         self._panes[idx]._table.setFocus()
 
     def _refresh_pane_styles(self) -> None:
-        theme = getattr(self, "_current_theme", "default")
+        theme = themes.pane_family(
+            themes.resolve(
+                getattr(self, "_current_theme", themes.DEFAULT_THEME),
+                themes.system_scheme(),
+            )
+        )
         for pane in self._panes:
             if pane is self._active_pane:
                 pane.set_pane_role("source", theme)
@@ -2846,6 +2485,8 @@ class MainWindow(QMainWindow):
         win = data.get("window") if isinstance(data, dict) else None
         if not isinstance(win, dict):
             return
+        if win.get("ui_theme"):
+            self._apply_theme(win["ui_theme"])
         mono = bool(win.get("monochrome_icons", False))
         if mono and hasattr(self, "_monochrome_action"):
             # setChecked fires the toggle handler → icons
@@ -2861,7 +2502,7 @@ class MainWindow(QMainWindow):
             "window": {
                 "width": self.width(),
                 "height": self.height(),
-                "theme": self._current_theme,
+                "ui_theme": self._current_theme,
                 "compact": self._compact_mode,
                 "monochrome_icons": _is_mono(),
             },
@@ -2972,8 +2613,11 @@ class MainWindow(QMainWindow):
         if win.get("width") and win.get("height"):
             self.resize(win["width"], win["height"])
         self._compact_action.setChecked(bool(win.get("compact", False)))
-        if win.get("theme"):
-            self._apply_theme(win["theme"])
+        # ``theme`` is the pre-modern key and is deliberately ignored:
+        # the modern theme became the default for everyone, and the old
+        # key could not tell a deliberate choice from the old default.
+        if win.get("ui_theme"):
+            self._apply_theme(win["ui_theme"])
         # Restore monochrome-icons setting. Guarded: the action only
         # exists after _setup_menubar ran, which always precedes
         # _restore_session. The toggle path handles the icon cache
@@ -4125,28 +3769,39 @@ class MainWindow(QMainWindow):
     # --- Themes ---
 
     def _apply_theme(self, theme: str) -> None:
+        theme = themes.normalize(theme)
         self._current_theme = theme
         app = QApplication.instance()
         if app is None:
             return
 
-        if theme == "dark":
-            css = DARK_THEME
-        elif theme == "hacker":
-            css = HACKER_THEME
-        elif theme == "amber":
-            css = AMBER_THEME
+        scheme = themes.system_scheme()
+        resolved = themes.resolve(theme, scheme)
+        tokens = themes.tokens_for(resolved)
+        if not hasattr(self, "_base_style_name"):
+            # Remember what the desktop gave us so classic can restore it.
+            self._base_style_name = app.style().objectName()
+            self._base_palette = app.palette()
+        if tokens is not None:
+            # Fusion honours the palette and the stylesheet uniformly;
+            # native styles (Breeze, Windows11, ...) draw some controls
+            # themselves and ignore parts of both.
+            app.setStyle("Fusion")
+            app.setPalette(themes.qpalette_for(tokens))
         else:
-            css = ""
-
-        if self._compact_mode:
-            css += COMPACT_CSS
-
+            if self._base_style_name:
+                app.setStyle(self._base_style_name)
+            app.setPalette(self._base_palette)
+        css = themes.stylesheet_for(theme, scheme, compact=self._compact_mode)
         app.setStyleSheet(css)
 
         # Re-apply pane border styles on top of the theme
         self._refresh_pane_styles()
         log.info("Theme changed to: %s", theme)
+
+    def _on_system_scheme_changed(self, *_args) -> None:
+        if self._current_theme == "modern":
+            self._apply_theme("modern")
 
     def _toggle_compact_mode(self, checked: bool) -> None:
         self._compact_mode = checked

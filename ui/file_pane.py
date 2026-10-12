@@ -361,7 +361,10 @@ class FilePaneWidget(QWidget):
         self._border_frame = QFrame(self)
         self._border_frame.setFrameShape(QFrame.Shape.Box)
         self._border_frame.setLineWidth(3)
-        self._border_frame.setStyleSheet("QFrame { border: 3px solid #888; border-radius: 4px; }")
+        self._border_frame.setObjectName("axPaneBorder")
+        self._border_frame.setStyleSheet(
+            "QFrame#axPaneBorder { border: 3px solid #888; border-radius: 4px; }"
+        )
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -554,7 +557,7 @@ class FilePaneWidget(QWidget):
         status_layout.addStretch()
 
         self._disk_label = QLabel()
-        self._disk_label.setStyleSheet("color: #666;")
+        self._disk_label.setProperty("role", "muted")
         status_layout.addWidget(self._disk_label)
 
         layout.addLayout(status_layout)
@@ -1062,8 +1065,15 @@ class FilePaneWidget(QWidget):
                 return "root"
         return "remote"
 
-    def update_header_color(self, theme: str = "default") -> None:
-        """Update header label color based on session type and current theme."""
+    def update_header_color(self, theme: str | None = None) -> None:
+        """Update header label color based on session type and current theme.
+
+        ``None`` re-uses the last theme this pane was given, so a
+        backend swap does not snap the header back to the light colours.
+        """
+        if theme is None:
+            theme = getattr(self, "_header_theme", "default")
+        self._header_theme = theme
         session_type = self.get_session_type()
 
         # Color schemes: {theme: {session_type: (bg_color, text_color)}}
@@ -1077,6 +1087,16 @@ class FilePaneWidget(QWidget):
                 "local": ("#45475a", "#89b4fa"),  # Catppuccin blue
                 "remote": ("#45475a", "#a6e3a1"),  # Catppuccin green
                 "root": ("#5c2d2d", "#f38ba8"),  # Catppuccin red
+            },
+            "modern-light": {
+                "local": ("#dbe3ff", "#2f4ac2"),
+                "remote": ("#d3f2e0", "#17693b"),
+                "root": ("#ffe0e0", "#a61e1e"),
+            },
+            "modern-dark": {
+                "local": ("#26305a", "#9db3ff"),
+                "remote": ("#1d3a2c", "#7fe3a6"),
+                "root": ("#4a2226", "#ff9a9a"),
             },
             "hacker": {
                 "local": ("#0a2a0a", "#00ff41"),  # Matrix green
@@ -1115,7 +1135,7 @@ class FilePaneWidget(QWidget):
         }
         color = border_colors.get(role, border_colors[""])
         self._border_frame.setStyleSheet(
-            f"QFrame {{ border: 3px solid {color}; border-radius: 4px; }}"
+            f"QFrame#axPaneBorder {{ border: 3px solid {color}; border-radius: 4px; }}"
         )
 
         # Role badge

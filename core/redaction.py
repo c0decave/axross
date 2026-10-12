@@ -40,11 +40,15 @@ SENSITIVE_KEYS = frozenset(
 )
 _COMPACT_SENSITIVE_KEYS = frozenset(re.sub(r"[^a-z0-9]", "", key) for key in SENSITIVE_KEYS)
 
+# ``\b`` is not a boundary between ``_`` and a letter, so the key may
+# carry ``snake_case`` / ``kebab-case`` prefixes (``access_token``,
+# ``AWS_SECRET_ACCESS_KEY``). Quoted keys and values (JSON, repr) are
+# matched too; a quoted value may contain spaces.
 _ASSIGNMENT_RE = re.compile(
-    r"(?i)\b("
-    r"password|passwd|pwd|token|secret|access[_-]?key|"
-    r"secret[_-]?key|client[_-]?secret|sig|signature"
-    r")\s*[:=]\s*([^&\s;]+)"
+    r"(?i)(?<![a-z0-9])((?:[a-z0-9]+[_-])*(?:"
+    r"password|passwd|passphrase|pwd|token|secret|access[_-]?key|"
+    r"secret[_-]?key|client[_-]?secret|api[_-]?key|sig|signature"
+    r"))([\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^&\s;\"',}]+)"
 )
 _CLI_SECRET_OPTION_RE = re.compile(
     r"(?i)(\s--(?:password|passwd|token|secret|api-key|access-key|"
@@ -89,6 +93,15 @@ def redact_url(value: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
 
 
+def _redact_assignment(match: re.Match[str]) -> str:
+    key, sep, value = match.group(1), match.group(2), match.group(3)
+    if value[:1] in ("'", '"'):
+        return f"{key}{sep}{value[0]}<redacted>{value[0]}"
+    if sep.startswith(("'", '"')):
+        return f"{key}{sep}<redacted>"
+    return f"{key}=<redacted>"
+
+
 def redact_text(value: str) -> str:
     """Best-effort redaction for human log strings."""
     text = _AUTH_TOKEN_RE.sub(lambda m: f"{m.group(1)} <redacted>", value)
@@ -105,7 +118,7 @@ def redact_text(value: str) -> str:
         return f"__AXROSS_REDACTED_URL_{len(urls) - 1}__"
 
     text = _URL_RE.sub(replace_url, text)
-    text = _ASSIGNMENT_RE.sub(lambda m: f"{m.group(1)}=<redacted>", text)
+    text = _ASSIGNMENT_RE.sub(_redact_assignment, text)
     text = _CLI_SECRET_OPTION_RE.sub(lambda m: f"{m.group(1)}<redacted>", text)
     text = _SSHPASS_RE.sub(lambda m: f"{m.group(1)}<redacted>", text)
     for idx, url in enumerate(urls):

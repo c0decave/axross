@@ -128,7 +128,7 @@ class BookmarkEditDialog(QDialog):
         # editable.
         form.addRow("Path:", self._path_edit)
         backend_label = QLabel(self._bookmark.backend_name or "Local", self)
-        backend_label.setStyleSheet("color: #888;")
+        backend_label.setProperty("role", "muted")
         form.addRow("Backend:", backend_label)
         root.addLayout(form)
 

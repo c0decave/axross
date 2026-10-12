@@ -70,4 +70,32 @@ def safe_leaf(name: str) -> str:
     return name
 
 
-__all__ = ["BackendPathPolicy", "safe_join", "safe_leaf"]
+def drop_unsafe_names(items, *, keep_dots: bool = False, origin: str = ""):
+    """Drop listing entries whose name is not a single safe path component.
+
+    A remote server controls ``item.name``. Consumers join it onto local
+    destinations (mirror scripts, compare/sync, downloads); ``../../x`` or
+    ``a/b`` would then land outside the target. Validating once at the
+    listing is the choke point every consumer shares. ``.`` and ``..`` are
+    kept only when the caller's own parser emits them on purpose.
+    """
+    import logging
+
+    kept = []
+    for item in items:
+        name = getattr(item, "name", "")
+        if keep_dots and name in (".", ".."):
+            kept.append(item)
+            continue
+        try:
+            validate_remote_name(name)
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "dropping unsafe remote name %r%s", name, f" from {origin}" if origin else ""
+            )
+            continue
+        kept.append(item)
+    return kept
+
+
+__all__ = ["BackendPathPolicy", "drop_unsafe_names", "safe_join", "safe_leaf"]

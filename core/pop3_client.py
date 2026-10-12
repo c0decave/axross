@@ -174,12 +174,14 @@ class Pop3Session:
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        verify_tls: bool = True,
     ):
         self._host = host
         self._port = port
         self._username = username
         self._password = password
         self._use_ssl = use_ssl
+        self._verify_tls = bool(verify_tls)
         from core.proxy import ProxyConfig
 
         self._proxy = ProxyConfig(
@@ -199,15 +201,21 @@ class Pop3Session:
     def _connect(self) -> None:
         try:
             if self._use_ssl:
+                from core.tls_context import client_tls_context
+
+                tls_ctx = client_tls_context(getattr(self, "_verify_tls", True), label="POP3")
                 if self._proxy.enabled:
                     self._pop = _ProxyPOP3_SSL(
                         self._host,
                         self._port,
                         self._proxy,
                         timeout=30.0,
+                        context=tls_ctx,
                     )
                 else:
-                    self._pop = poplib.POP3_SSL(self._host, self._port, timeout=30.0)
+                    self._pop = poplib.POP3_SSL(
+                        self._host, self._port, timeout=30.0, context=tls_ctx
+                    )
             else:
                 # Plaintext POP3 — credentials traverse the wire in
                 # the clear via USER/PASS. Loud warning so a misconfig

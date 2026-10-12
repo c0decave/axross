@@ -137,7 +137,7 @@ class MetadataSearchDialog(QDialog):
 
         btn_row.addStretch(1)
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #666;")
+        self._status.setProperty("role", "muted")
         btn_row.addWidget(self._status)
         root.addLayout(btn_row)
 

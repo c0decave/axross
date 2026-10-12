@@ -50,13 +50,13 @@ class NfsSession:
         proxy_username: str = "",
         proxy_password: str = "",
     ):
-        from core.proxy import warn_unsupported_proxy
+        from core.proxy import refuse_unsupported_proxy
 
-        warn_unsupported_proxy(
+        refuse_unsupported_proxy(
             "NFS",
             proxy_type,
             proxy_host,
-            "NFS is mounted by the kernel; user-space proxy settings cannot apply.",
+            "NFS is mounted by the kernel, so a user-space proxy cannot carry it.",
         )
         self._host = host
         self._export = export_path.rstrip("/") or "/"

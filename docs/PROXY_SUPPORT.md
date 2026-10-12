@@ -6,8 +6,11 @@ actually affects the network path for each backend.
 
 The rule is deliberately strict: a protocol is marked supported only
 when axross can wire the configured profile proxy into the transport
-itself. Backends without a reliable SOCKS/HTTP-CONNECT hook now emit
-a warning instead of silently ignoring proxy fields.
+itself. A backend that touches the network but cannot honour the proxy
+**fails closed** (`ProxyUnsupportedError`, an `OSError`) instead of
+connecting directly; removing the proxy from the profile is the explicit
+opt-out. Backends with no network transport at all (RamFS, SQLite, MTP)
+only log that the setting has no effect, because nothing can leak.
 
 ## Verdict table
 
@@ -36,13 +39,22 @@ a warning instead of silently ignoring proxy fields.
 | **ADB (Android, TCP)** | ✅ | ✅ | ✅ | ✅ | scoped monkey-patch of `socket.create_connection` during `AdbDeviceTcp.connect` |
 | **ADB (Android, USB)** | ❌ | ❌ | ❌ | — | USB transport has no TCP layer. Setting a proxy on a USB profile raises a clear error rather than silently ignoring it. |
 | **MTP (Android)** | ❌ | ❌ | ❌ | — | external FUSE mounter, USB-only — not a network transport. |
-| **TFTP** | ❌ | ❌ | ❌ | — | UDP transport. SOCKS5 UDP-ASSOCIATE is rare in production proxies; HTTP CONNECT is TCP-only. |
-| **NFS** | ❌ | ❌ | ❌ | — | kernel mount; not proxiable from user space. |
-| **iSCSI** | ❌ | ❌ | ❌ | — | kernel initiator; not proxiable from user space. |
+| **PostgreSQL** | ✅ | ✅ | ✅ | ✅ | libpq dials a loopback tunnel (`core.proxy.LocalTunnel`) via `hostaddr`/`port`; `host` keeps the real name so TLS verifies it |
+| **Redis** | ✅ | ✅ | ✅ | ✅ | custom redis-py connection class opens the socket with `create_proxy_socket`; `rediss://` is layered on top, verifying the real host |
+| **MongoDB** | ✅ | ✅ | ✅ | ✅ | pymongo dials a loopback tunnel with `directConnection=True` (otherwise the driver would dial discovered replica-set members around the proxy). The backend sets no TLS options today. |
+| **LDAP / LDAPS** | ✅ | ✅ | ✅ | ✅ | ldap3 dials a loopback tunnel; LDAPS passes `valid_names`/`sni` so the certificate is still checked against the real host |
+| **Git** | ✅ | ✅ | ✅ | ✅ | `http(s)`: urllib3 `SOCKSProxyManager`/`ProxyManager` handed to dulwich; `ssh` / scp-style / `git://`: loopback tunnel, ssh keeps the real host identity via `HostKeyAlias` |
+| **SVN** | ⚠ | ⚠ | ⚠ | ✅ | `svn://`, `svn+ssh://`: loopback tunnel (`HostKeyAlias` for ssh). `http(s)://`: **HTTP proxy only** (the svn client has no SOCKS) via a private 0600 `servers` file, so the proxy password never appears in argv; SOCKS fails closed. The private `--config-dir` replaces `~/.subversion` for that session. |
+| **SLP** | ⚠ | ⚠ | ⚠ | ✅ | TCP mode: `create_proxy_socket`. UDP mode: **SOCKS5 only** (UDP ASSOCIATE); the target is resolved by the proxy, never locally. Other proxy types fail closed. |
+| **TFTP** | ❌ | ⚠ | ❌ | ✅ | UDP: **SOCKS5 only** (UDP ASSOCIATE) through a scoped patch of tftpy's UDP socket. The server must be an **IP address** (tftpy resolves names locally, which would leak the lookup); SOCKS4/HTTP fail closed. Transfers are serialised by a lock. |
+| **NFS / iSCSI** | ❌ | ❌ | ❌ | — | kernel mount / initiator; **fails closed** when a proxy is set. |
+| **rsh** | ❌ | ❌ | ❌ | — | needs a reverse stderr connection from the server and a privileged source port; **fails closed**. |
+| **WMI** | ❌ | ❌ | ❌ | — | DCOM negotiates dynamic RPC ports after the endpoint mapper; **fails closed**. |
 | **RamFS** | — | — | — | — | in-process; no network at all, proxy fields N/A. |
 | **SQLite** | — | — | — | — | local file backend; proxy fields N/A. |
-| **PostgreSQL / Redis / MongoDB / LDAP** | ❌ | ❌ | ❌ | — | library transports are not currently wrapped by `core.proxy`; setting proxy kwargs logs a warning. |
-| **Git / SVN / rsh / WMI / SLP** | ❌ | ❌ | ❌ | — | subprocess/library transports are not uniformly proxyable in axross; setting proxy kwargs logs a warning. |
+
+The connection dialog disables the proxy group for protocols that cannot
+use it (`core.connection_manager.proxy_unavailable_reason`).
 
 ### Legend
 
@@ -80,6 +92,15 @@ Every backend now reaches the proxy via one of three primitives:
    happen.
    Used by SMB, DFS-N and ADB, which use libraries that have no
    better hook.
+4. **`LocalTunnel` / `open_tunnel(kwargs, host, port)`** — a loopback
+   listener (127.0.0.1, ephemeral port, **same-uid peers only** via
+   `/proc/net/tcp`, 64-connection cap) that relays every accepted
+   connection through the proxy. For libraries that open their own
+   sockets and offer no hook (psycopg, pymongo, ldap3, `svn://`, dulwich
+   over ssh). The tunnel dies with the session.
+5. **`create_udp_proxy_socket` / `patched_module_udp_socket`** — SOCKS5
+   UDP ASSOCIATE for SLP and TFTP. SOCKS4 and HTTP CONNECT cannot carry
+   UDP and are refused.
 
 ### SSRF guard
 

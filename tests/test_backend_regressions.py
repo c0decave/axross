@@ -717,7 +717,7 @@ class BundledScriptsTests(unittest.TestCase):
     def test_find_secrets_catches_aws_key(self) -> None:
         ns = self._load_script("find_secrets")
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "config").write_bytes(b"AKIAIOSFODNN7EXAMPLE\nrandom\n")
+            (Path(tmp) / "config").write_bytes(b"AKIA" b"IOSFODNN7EXAMPLE\nrandom\n")
             from core import scripting as s
 
             hits = ns["scan"](s.localfs(), tmp)

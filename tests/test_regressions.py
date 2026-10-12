@@ -661,6 +661,7 @@ class ConnectionManagerRegressionTests(unittest.TestCase):
             set(cm._PROTOCOLS_HONOURING_PROFILE_PROXY)
             | set(cm._PROTOCOLS_PARTIAL_PROFILE_PROXY)
             | set(cm._PROTOCOLS_NOT_PROXIABLE)
+            | set(cm._PROTOCOLS_HONOURING_KWARG_PROXY)
         )
         registered = {b.protocol_id for b in backend_registry.all_backends()}
 
@@ -943,25 +944,45 @@ class ConnectionManagerRegressionTests(unittest.TestCase):
         mgr.set_profile_resolver(resolver)
         self.assertIs(mgr._profile_resolver, resolver)
 
-    def test_warn_unsupported_proxy_emits_for_kernel_protocols(self) -> None:
-        # Kernel-level mounts (NFS, iSCSI, MTP) cannot be tunneled
-        # through a user-space proxy and must emit a warning if one
-        # is configured.
+    def test_unsupported_network_protocols_fail_closed_with_a_proxy(self) -> None:
+        # Kernel mounts / DCOM / rsh touch the network but cannot use a
+        # user-space proxy: connecting would silently go around it, so
+        # the guard raises instead of merely warning.
+        from core.connection_manager import _warn_unsupported_proxy
+        from core.proxy import ProxyUnsupportedError
+
+        for proto in ("nfs", "iscsi"):
+            with self.subTest(proto=proto):
+                prof = ConnectionProfile(
+                    name="c",
+                    protocol=proto,
+                    host="h",
+                    proxy_type="socks5",
+                    proxy_host="p",
+                    proxy_port=1080,
+                )
+                with self.assertRaises(ProxyUnsupportedError):
+                    _warn_unsupported_proxy(prof)
+
+    def test_local_only_protocols_just_warn_with_a_proxy(self) -> None:
         import logging as _log
 
         from core.connection_manager import _warn_unsupported_proxy
 
-        prof = ConnectionProfile(
-            name="c",
-            protocol="nfs",
-            host="h",
-            proxy_type="socks5",
-            proxy_host="p",
-            proxy_port=1080,
-        )
-        with mock.patch.object(_log.getLogger("core.connection_manager"), "warning") as warn:
-            _warn_unsupported_proxy(prof)
-        warn.assert_called()
+        for proto in ("mtp", "ramfs", "sqlite"):
+            with self.subTest(proto=proto):
+                prof = ConnectionProfile(
+                    name="c",
+                    protocol=proto,
+                    host="h",
+                    proxy_type="socks5",
+                    proxy_host="p",
+                    proxy_port=1080,
+                )
+                logger = _log.getLogger("core.connection_manager")
+                with mock.patch.object(logger, "warning") as warn:
+                    _warn_unsupported_proxy(prof)
+                warn.assert_called()
 
     def test_warn_unsupported_proxy_silent_for_sftp(self) -> None:
         # sftp natively honours the profile's proxy → no warning.
@@ -1018,23 +1039,16 @@ class ConnectionManagerRegressionTests(unittest.TestCase):
             mgr._create_session(prof, "pw", "", None)
         self.assertIn("Proxy port must be in range", str(ctx.exception))
 
-    def test_warn_unsupported_proxy_for_backend_without_proxy(self) -> None:
-        import logging as _log
-
-        from core.connection_manager import _warn_unsupported_proxy
-
-        # Kernel / local / explicit non-proxy backends must warn.
-        prof = ConnectionProfile(
-            name="n",
-            protocol="nfs",
-            host="h",
-            proxy_type="socks5",
-            proxy_host="p",
-            proxy_port=1080,
+    def test_formerly_ignoring_protocols_are_now_proxy_aware(self) -> None:
+        from core.connection_manager import (
+            _PROTOCOLS_HONOURING_KWARG_PROXY,
+            _PROTOCOLS_HONOURING_PROFILE_PROXY,
         )
-        with mock.patch.object(_log.getLogger("core.connection_manager"), "warning") as warn:
-            _warn_unsupported_proxy(prof)
-        warn.assert_called()
+
+        for proto in ("svn", "tftp"):
+            self.assertIn(proto, _PROTOCOLS_HONOURING_PROFILE_PROXY)
+        for proto in ("postgres", "redis", "mongodb", "ldap", "git", "slp"):
+            self.assertIn(proto, _PROTOCOLS_HONOURING_KWARG_PROXY)
 
     def test_connect_reuses_existing_active_session(self) -> None:
         mgr = ConnectionManager()

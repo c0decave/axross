@@ -68,8 +68,9 @@ class TerminalPaneWidget(QWidget):
         self._border_frame = QFrame(self)
         self._border_frame.setFrameShape(QFrame.Shape.Box)
         self._border_frame.setLineWidth(2)
+        self._border_frame.setObjectName("axPaneBorder")
         self._border_frame.setStyleSheet(
-            "QFrame { border: 2px solid #569cd6; border-radius: 4px; }"
+            "QFrame#axPaneBorder { border: 2px solid #569cd6; border-radius: 4px; }"
         )
 
         outer_layout = QVBoxLayout(self)
@@ -212,13 +213,13 @@ class TerminalPaneWidget(QWidget):
             window.installEventFilter(self)
             self._terminal.setFocus()
             self._border_frame.setStyleSheet(
-                "QFrame { border: 2px solid #e5c07b; border-radius: 4px; }"
+                "QFrame#axPaneBorder { border: 2px solid #e5c07b; border-radius: 4px; }"
             )
             log.info("Terminal pane pinned: %s", self._label_text)
         else:
             window.removeEventFilter(self)
             self._border_frame.setStyleSheet(
-                "QFrame { border: 2px solid #569cd6; border-radius: 4px; }"
+                "QFrame#axPaneBorder { border: 2px solid #569cd6; border-radius: 4px; }"
             )
             log.info("Terminal pane unpinned: %s", self._label_text)
 

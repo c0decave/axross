@@ -161,7 +161,7 @@ class DiskUsageDialog(QDialog):
 
         bottom = QHBoxLayout()
         self._status = QLabel(self)
-        self._status.setStyleSheet("color: #666;")
+        self._status.setProperty("role", "muted")
         bottom.addWidget(self._status, stretch=1)
 
         self._refresh_btn = QPushButton("Refresh", self)
@@ -225,7 +225,7 @@ class DiskUsageDialog(QDialog):
             # No bar at all: a 0 %-filled bar reads as "empty disk",
             # which is precisely the claim we cannot make.
             label = QLabel(_UNSUPPORTED)
-            label.setStyleSheet("color: #888;")
+            label.setProperty("role", "muted")
             return label
         bar = QProgressBar()
         bar.setRange(0, 100)

@@ -41,7 +41,9 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import posixpath
+import shlex
 import shutil
 import subprocess
 import threading
@@ -138,14 +140,10 @@ class SvnFsSession:
         revision: str = "HEAD",
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
-
-        warn_unsupported_proxy(
-            "SVN",
-            _ignored.get("proxy_type", "none"),
-            _ignored.get("proxy_host", ""),
-            "The system svn binary is not wired through core.proxy.",
-        )
+        self._tunnel = None
+        self._config_dir = ""
+        self._connect_url = ""
+        self._child_env: dict = {}
         if not _svn_available():
             raise ImportError(
                 "SVN backend requires the 'svn' command-line client. "
@@ -159,6 +157,7 @@ class SvnFsSession:
         # URL otherwise spread into subprocess argv, session names and
         # logs because the URL is repeated for every ``svn`` operation.
         self._url = clean_url
+        self._setup_proxy(clean_url, _ignored)
         self._username = username or url_username
         self._password = password or url_password
         if self._password:
@@ -172,7 +171,11 @@ class SvnFsSession:
         self._closed = False
         # Lazy probe: a cheap `svn info` to validate connectivity +
         # fail fast on bad creds before the user starts navigating.
-        self._info()
+        try:
+            self._info()
+        except BaseException:
+            self._teardown_proxy()
+            raise
 
     # ------------------------------------------------------------------
     # Identity / lifecycle
@@ -192,6 +195,79 @@ class SvnFsSession:
         if not self._closed:
             log.info("SVN closing: %s", self._url)
         self._closed = True
+        self._teardown_proxy()
+
+    def _setup_proxy(self, url: str, kwargs: dict) -> None:
+        """Wire the profile proxy into the ``svn`` child process.
+
+        * ``svn://`` and ``svn+ssh://``: a loopback tunnel; the URL the
+          binary sees points at it (ssh keeps the real host identity via
+          ``HostKeyAlias``).
+        * ``http(s)://``: only HTTP proxies exist in the svn client; the
+          settings go into a private ``servers`` file so the proxy
+          password never lands in argv. SOCKS fails closed.
+        * ``file://``: local, nothing to proxy.
+        """
+        from core import proxy as proxy_mod
+
+        cfg = proxy_mod.proxy_config_from_kwargs(kwargs)
+        self._connect_url = url
+        if cfg is None:
+            return
+        parts = urllib.parse.urlsplit(url)
+        scheme = parts.scheme.lower()
+        if scheme in ("http", "https"):
+            if cfg.proxy_type != "http":
+                proxy_mod.refuse_unsupported_proxy(
+                    "SVN over HTTP(S)",
+                    cfg.proxy_type,
+                    cfg.host,
+                    "The svn client only supports HTTP proxies, not SOCKS.",
+                )
+            self._write_servers_file(cfg)
+            return
+        if scheme not in ("svn", "svn+ssh"):
+            return
+        host = parts.hostname or ""
+        if not host or host.startswith("-"):
+            raise OSError(f"SVN remote host {host!r} is not acceptable")
+        port = parts.port or (3690 if scheme == "svn" else 22)
+        self._tunnel = proxy_mod.LocalTunnel(cfg, host, port).start()
+        userinfo = parts.netloc.rpartition("@")[0]
+        netloc = f"{userinfo + '@' if userinfo else ''}{self._tunnel.host}:{self._tunnel.port}"
+        self._connect_url = urllib.parse.urlunsplit(
+            (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
+        )
+        if scheme == "svn+ssh":
+            self._child_env["SVN_SSH"] = f"ssh -o HostKeyAlias={shlex.quote(host)}"
+
+    def _write_servers_file(self, cfg) -> None:
+        import tempfile
+
+        from core.proxy import _assert_proxy_host_not_private, _validate_proxy_port
+
+        _assert_proxy_host_not_private(cfg.host)
+        self._config_dir = tempfile.mkdtemp(prefix="axross-svn-")  # 0700
+        lines = [
+            "[global]",
+            f"http-proxy-host = {cfg.host}",
+            f"http-proxy-port = {_validate_proxy_port(cfg.port)}",
+        ]
+        if cfg.username:
+            lines.append(f"http-proxy-username = {cfg.username}")
+        if cfg.password:
+            lines.append(f"http-proxy-password = {cfg.password}")
+        path = os.path.join(self._config_dir, "servers")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+
+    def _teardown_proxy(self) -> None:
+        if self._tunnel is not None:
+            self._tunnel.close()
+        if self._config_dir:
+            shutil.rmtree(self._config_dir, ignore_errors=True)
+            self._config_dir = ""
 
     def disconnect(self) -> None:
         self.close()
@@ -227,8 +303,8 @@ class SvnFsSession:
         to the repository root URL the session was configured with."""
         path = self.normalize(path)
         if path == "/":
-            return self._url
-        return self._url.rstrip("/") + path
+            return self._connect_url
+        return self._connect_url.rstrip("/") + path
 
     # ------------------------------------------------------------------
     # Subprocess helper
@@ -243,6 +319,8 @@ class SvnFsSession:
         # SVN clients vary on whether they trust unknown server certs;
         # for HTTPS repos we leave validation strictly enabled — the
         # user can pin the cert via their system trust store.
+        if self._config_dir:
+            argv += ["--config-dir", self._config_dir]
         argv += list(args)
         return argv
 
@@ -273,7 +351,7 @@ class SvnFsSession:
                 capture_output=True,
                 timeout=timeout,
                 check=False,
-                            env=clean_child_env(),
+                env=clean_child_env(**self._child_env),
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(f"SVN command timed out after {timeout:.0f}s: {args[0]}") from exc
@@ -300,7 +378,7 @@ class SvnFsSession:
         ``svn info --xml`` for the root URL the user supplied."""
         out = self._run(
             "info",
-            self._url,
+            self._connect_url,
             "--xml",
             "--revision",
             self._revision,

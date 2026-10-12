@@ -449,6 +449,20 @@ class ConnectionDialog(QDialog):
         is_iscsi = proto == "iscsi"
         is_imap = proto == "imap"
 
+        # A proxy the backend cannot honour is refused at connect time;
+        # make that visible here instead of letting it be configured.
+        from core.connection_manager import proxy_unavailable_reason
+
+        proxy_reason = proxy_unavailable_reason(proto)
+        self._proxy_group.setEnabled(proxy_reason is None)
+        self._proxy_group.setToolTip(
+            ""
+            if proxy_reason is None
+            else f"A proxy cannot be used with this protocol. {proxy_reason}"
+        )
+        if proxy_reason is not None:
+            self._proxy_group.setChecked(False)
+
         # SSH-only widgets
         for w in (self._auth_password, self._auth_key, self._auth_agent):
             w.parentWidget().setVisible(is_ssh) if w.parentWidget() else None
@@ -774,7 +788,7 @@ class ConnectionDialog(QDialog):
 
         proxy_type = "none"
         proxy_command = ""
-        if self._proxy_group.isChecked():
+        if self._proxy_group.isChecked() and self._proxy_group.isEnabled():
             proxy_map = {0: "socks5", 1: "socks4", 2: "http"}
             proxy_type = proxy_map.get(self._proxy_type.currentIndex(), "socks5")
             proxy_command = self._proxy_command.text().strip()

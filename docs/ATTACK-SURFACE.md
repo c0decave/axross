@@ -41,7 +41,8 @@ each opt-in (`--mcp-write`, `--mcp-allow-scripts`).
 normalisation against MCP root; per-scope task registry with
 `MAX_TASKS_PER_SCOPE` (DoS cap); cooperative cancellation; rate
 limiter (`_RateLimiter`); output size cap (`_read_capped_stream`);
-write tools default OFF; `script_run` requires explicit
+write tools default OFF and, when enabled, require an explicit
+`--mcp-root` (the default root is `$HOME`); `script_run` requires explicit
 `--mcp-allow-scripts` AND a non-paranoid `security_mode`.
 
 **Known gaps to attack.** TOCTOU on path normalisation after
@@ -53,13 +54,13 @@ truly cannot escape via `os.system` / `ctypes` even when allowed.
 ## MCP Server, HTTP / SSE transport (`--mcp-http HOST:PORT`)
 
 **Entry point / route.** `core/mcp_http.py` `_McpHTTPHandler`
-serves `POST /`, `GET /sse`, `DELETE /session`. Non-loopback hosts
+serves `POST|GET|DELETE /messages` and `GET /health`. Non-loopback hosts
 require `--mcp-cert / --mcp-key / --mcp-ca`, enabling mTLS;
 loopback bind is allowed plain.
 
 **Untrusted input.** HTTP request body (JSON-RPC), URL path, query
-string, headers (`Authorization`, `X-Session-Id`), client
-certificate (under mTLS). All values reach the same tool
+string, headers (`Host`, `Origin`, `Mcp-Session-Id`; there is no
+bearer authentication), client certificate (under mTLS). All values reach the same tool
 dispatcher used by stdio.
 
 **Trust boundary.** Network ↔ host. mTLS pins the trust boundary
@@ -67,16 +68,21 @@ at the CA bundle; without TLS, loopback-only by policy.
 
 **Defenses in place.** `--mcp-http` host check refuses
 non-loopback without TLS; `_make_ssl_context` enforces
-`CERT_REQUIRED` and the supplied CA; `_PerIPRateLimiter` caps
-request rate per source IP; `_SessionRegistry` evicts idle
-sessions; peer-cert fingerprint logged for audit;
+`CERT_REQUIRED` and the supplied CA, with the handshake done in the
+connection thread under a socket timeout; plain loopback servers
+refuse any non-loopback `Host` and any foreign `Origin` (DNS
+rebinding); `_PerIPRateLimiter` caps request rate per source IP;
+`_SessionRegistry` evicts idle sessions on create and caps live
+sessions (`MAX_SESSIONS`); partial TLS flags are an error;
 `HTTPServerConfig` validates port (1..65535) before bind.
 
 **Known gaps to attack.** Reverse-proxy deployments where
 `X-Forwarded-For` is unspoofable only if proxy strips client
 headers; SSE long-poll keepalive may leak side-channel timing;
-verify the session id is HMAC-bound to the peer cert (not just a
-random uuid the client may swap).
+under mTLS the session id is bound to the SHA-256 of the peer
+certificate; on plain loopback sessions are unbound, so the
+Host/Origin check is the only guard. `tasks/start` is not yet
+rate-limited or timed like `tools/call`.
 
 ## Headless script runner (`--script <file|->`)
 

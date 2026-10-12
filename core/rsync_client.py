@@ -376,6 +376,16 @@ class _RsyncWriter:
             self.close()
 
 
+def _escape_rsync_pattern(name: str) -> str:
+    """Make a file name literal inside an rsync include/exclude pattern.
+
+    ``--include '*'`` with ``--exclude '*'`` and ``--delete`` removes every
+    sibling the glob matches, so a file called ``*`` or ``[ab]`` used to
+    delete its neighbours.
+    """
+    return "".join("\\" + c if c in "\\*?[" else c for c in name)
+
+
 class RsyncSession:
     """Rsync backend implementing the FileBackend protocol.
 
@@ -783,7 +793,7 @@ class RsyncSession:
                         "-r",
                         "--delete",
                         "--include",
-                        name,
+                        _escape_rsync_pattern(name),
                         "--exclude",
                         "*",
                         tmpdir + "/",

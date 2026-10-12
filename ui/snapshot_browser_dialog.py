@@ -93,7 +93,7 @@ class SnapshotBrowserDialog(QDialog):
         root = QVBoxLayout(self)
 
         self._info = QLabel(self._path)
-        self._info.setStyleSheet("color: #666;")
+        self._info.setProperty("role", "muted")
         self._info.setWordWrap(True)
         root.addWidget(self._info)
 

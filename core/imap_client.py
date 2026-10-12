@@ -101,6 +101,31 @@ class _ProxyIMAP4_SSL(imaplib.IMAP4_SSL):
         return self.ssl_context.wrap_socket(raw, server_hostname=self.host)
 
 
+def _expunge_one(imap, uid) -> tuple[str, list]:
+    """Expunge only message *uid*, never the mailbox's other \\Deleted mail.
+
+    A bare ``EXPUNGE`` permanently removes every message flagged
+    ``\\Deleted`` in the selected mailbox, including ones the user
+    flagged in another client. Prefer ``UID EXPUNGE`` (UIDPLUS); without
+    it, expunge only when ours is the sole flagged message and otherwise
+    leave the flag in place.
+    """
+    uid = str(uid)
+    caps = getattr(imap, "capabilities", ()) or ()
+    if any(str(c).upper() == "UIDPLUS" for c in caps):
+        return imap.uid("EXPUNGE", uid)
+    typ, data = imap.uid("SEARCH", None, "DELETED")
+    flagged = b" ".join(data or []).split() if typ == "OK" else None
+    if flagged is not None and all(f.decode("ascii", "ignore") == uid for f in flagged):
+        return imap.expunge()
+    log.warning(
+        "IMAP: UID %s flagged \\Deleted but not expunged — server lacks UIDPLUS "
+        "and other messages are flagged too",
+        uid,
+    )
+    return "OK", []
+
+
 def _decode_header(raw: str | bytes | None) -> str:
     """Decode an RFC 2047 encoded header value into a plain string."""
     if raw is None:
@@ -303,12 +328,14 @@ class ImapSession:
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        verify_tls: bool = True,
     ):
         self._host = host
         self._port = port
         self._username = username
         self._password = password
         self._use_ssl = use_ssl
+        self._verify_tls = bool(verify_tls)
         from core.proxy import ProxyConfig
 
         self._proxy = ProxyConfig(
@@ -333,10 +360,15 @@ class ImapSession:
         proxy_active = proxy is not None and proxy.enabled
         try:
             if self._use_ssl:
+                from core.tls_context import client_tls_context
+
+                tls_ctx = client_tls_context(getattr(self, "_verify_tls", True), label="IMAP")
                 if proxy_active:
-                    self._imap = _ProxyIMAP4_SSL(self._host, self._port, proxy)
+                    self._imap = _ProxyIMAP4_SSL(
+                        self._host, self._port, proxy, ssl_context=tls_ctx
+                    )
                 else:
-                    self._imap = imaplib.IMAP4_SSL(self._host, self._port)
+                    self._imap = imaplib.IMAP4_SSL(self._host, self._port, ssl_context=tls_ctx)
             else:
                 # Credentials will traverse the wire in plaintext — this is
                 # occasionally legitimate (localhost, overlay VPN), but it
@@ -970,7 +1002,7 @@ class ImapSession:
             typ, data = imap.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
             if typ != "OK":
                 raise OSError(f"Cannot mark UID {uid} as deleted in {mailbox!r}: {data}")
-            typ, data = imap.expunge()
+            typ, data = _expunge_one(imap, uid)
             if typ != "OK":
                 log.warning("Expunge failed in %s: %s", mailbox, data)
             self._selected_mailbox = None  # State may have changed
@@ -1037,7 +1069,7 @@ class ImapSession:
                     src_uid,
                     data,
                 )
-            imap.expunge()
+            _expunge_one(imap, src_uid)
             self._selected_mailbox = None
             log.info(
                 "Moved message UID %s from %s to %s",
@@ -1298,7 +1330,7 @@ class ImapSession:
         if typ != "OK":
             raise OSError(f"IMAP COPY (move-fallback) failed: {data}")
         self.set_flags(uid, ["\\Deleted"], mailbox=src_mailbox, mode="add")
-        imap.expunge()
+        _expunge_one(imap, str(int(uid)))
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         """Return quota usage if the server supports IMAP QUOTA.

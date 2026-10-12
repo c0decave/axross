@@ -70,11 +70,11 @@ class TextEditorDialog(QDialog):
         # Info bar
         info = QHBoxLayout()
         self._path_label = QLabel(self._file_path)
-        self._path_label.setStyleSheet("color: #666;")
+        self._path_label.setProperty("role", "muted")
         info.addWidget(self._path_label)
 
         self._size_label = QLabel()
-        self._size_label.setStyleSheet("color: #666;")
+        self._size_label.setProperty("role", "muted")
         info.addStretch()
         info.addWidget(self._size_label)
         layout.addLayout(info)
@@ -97,7 +97,7 @@ class TextEditorDialog(QDialog):
         status.addWidget(self._status_label)
 
         self._encoding_label = QLabel("UTF-8")
-        self._encoding_label.setStyleSheet("color: #666;")
+        self._encoding_label.setProperty("role", "muted")
         status.addStretch()
         status.addWidget(self._encoding_label)
         layout.addLayout(status)

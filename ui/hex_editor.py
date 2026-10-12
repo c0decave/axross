@@ -444,11 +444,11 @@ class HexEditorDialog(QDialog):
         # Info bar
         info = QHBoxLayout()
         self._path_label = QLabel(self._file_path)
-        self._path_label.setStyleSheet("color: #666;")
+        self._path_label.setProperty("role", "muted")
         info.addWidget(self._path_label)
 
         self._size_label = QLabel()
-        self._size_label.setStyleSheet("color: #666;")
+        self._size_label.setProperty("role", "muted")
         info.addStretch()
         info.addWidget(self._size_label)
         layout.addLayout(info)
@@ -496,12 +496,12 @@ class HexEditorDialog(QDialog):
         status.addWidget(self._status_label)
 
         self._offset_label = QLabel("Offset: 0x00000000")
-        self._offset_label.setStyleSheet("color: #666;")
+        self._offset_label.setProperty("role", "muted")
         status.addStretch()
         status.addWidget(self._offset_label)
 
         self._mode_label = QLabel("[HEX]")
-        self._mode_label.setStyleSheet("color: #666;")
+        self._mode_label.setProperty("role", "muted")
         status.addWidget(self._mode_label)
         layout.addLayout(status)
 

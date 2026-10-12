@@ -284,7 +284,11 @@ def parse_attr_reply(blob: bytes) -> str:
 
 
 def query_udp(
-    host: str, packet: bytes, port: int = DEFAULT_PORT, timeout: float = DEFAULT_TIMEOUT
+    host: str,
+    packet: bytes,
+    port: int = DEFAULT_PORT,
+    timeout: float = DEFAULT_TIMEOUT,
+    proxy=None,
 ) -> bytes:
     """Send ``packet`` via UDP unicast to ``host:port`` and return the
     response bytes. Refuses to use multicast / broadcast addresses —
@@ -293,15 +297,24 @@ def query_udp(
     spoofing a UDP datagram cannot inject responses."""
     if host in ("239.255.255.253",) or host.startswith("224."):
         raise OSError("SLP backend refuses to query multicast (CVE-2023-29552 mitigation)")
-    # Resolve the destination once so we can compare the reply's
-    # source against the addresses the host name maps to. recvfrom
-    # returns the on-wire address, which is what we compare.
-    try:
-        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)
-    except socket.gaierror as exc:
-        raise OSError(f"SLP DNS resolution for {host}: {exc}") from exc
-    expected_addrs = {info[4][0] for info in infos}
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if proxy is not None:
+        # SOCKS5 UDP relay: the proxy resolves the name (resolving it here
+        # would leak the lookup), and the relay reports the remote's
+        # address, so only the port can be pinned.
+        from core.proxy import create_udp_proxy_socket
+
+        expected_addrs = None
+        sock = create_udp_proxy_socket(proxy, timeout=timeout)
+    else:
+        # Resolve the destination once so we can compare the reply's
+        # source against the addresses the host name maps to. recvfrom
+        # returns the on-wire address, which is what we compare.
+        try:
+            infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)
+        except socket.gaierror as exc:
+            raise OSError(f"SLP DNS resolution for {host}: {exc}") from exc
+        expected_addrs = {info[4][0] for info in infos}
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
     try:
         sock.sendto(packet, (host, port))
@@ -320,7 +333,7 @@ def query_udp(
                 )
             sock.settimeout(remaining)
             data, addr = sock.recvfrom(MAX_RESPONSE_BYTES)
-            if addr[0] in expected_addrs and addr[1] == port:
+            if (expected_addrs is None or addr[0] in expected_addrs) and addr[1] == port:
                 return data
             log.debug("SLP: dropping datagram from unexpected source %s", addr)
     finally:
@@ -328,11 +341,20 @@ def query_udp(
 
 
 def query_tcp(
-    host: str, packet: bytes, port: int = DEFAULT_PORT, timeout: float = DEFAULT_TIMEOUT
+    host: str,
+    packet: bytes,
+    port: int = DEFAULT_PORT,
+    timeout: float = DEFAULT_TIMEOUT,
+    proxy=None,
 ) -> bytes:
     """TCP unicast variant. Some daemons require TCP for replies that
     won't fit in a UDP datagram."""
-    sock = socket.create_connection((host, port), timeout=timeout)
+    if proxy is not None:
+        from core.proxy import create_proxy_socket
+
+        sock = create_proxy_socket(proxy, host, port, timeout=timeout)
+    else:
+        sock = socket.create_connection((host, port), timeout=timeout)
     sock.settimeout(timeout)
     try:
         sock.sendall(packet)

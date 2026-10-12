@@ -544,6 +544,9 @@ class PjlSession:
 
     def remove(self, path: str, recursive: bool = False) -> None:
         self._ensure_safe()
+        if self.normalize(path) in ("/", ""):
+            # '/' maps to the volume root ('0:/'): never send that.
+            raise OSError("refusing to delete the printer filesystem root")
         target = self._to_pjl_path(path)
         sock = _open_socket(self._host, self._port, self._proxy, self._timeout)
         try:

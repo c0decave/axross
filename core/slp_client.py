@@ -107,14 +107,16 @@ class SlpSession:
         timeout: float = 5.0,
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
+        from core.proxy import proxy_config_from_kwargs, refuse_unsupported_proxy
 
-        warn_unsupported_proxy(
-            "SLP",
-            _ignored.get("proxy_type", "none"),
-            _ignored.get("proxy_host", ""),
-            "SLP defaults to UDP and axross does not implement SOCKS UDP-ASSOCIATE.",
-        )
+        self._proxy = proxy_config_from_kwargs(_ignored)
+        if self._proxy is not None and not use_tcp and self._proxy.proxy_type != "socks5":
+            refuse_unsupported_proxy(
+                "SLP over UDP",
+                self._proxy.proxy_type,
+                self._proxy.host,
+                "Only SOCKS5 can relay UDP; enable TCP for this profile or use a SOCKS5 proxy.",
+            )
         self._host = host
         self._port = int(port)
         self._scope = scope.encode("utf-8")
@@ -191,7 +193,7 @@ class SlpSession:
         from core.slp_lib import query_tcp, query_udp
 
         fn = query_tcp if self._use_tcp else query_udp
-        return fn(self._host, packet, port=self._port, timeout=self._timeout)
+        return fn(self._host, packet, port=self._port, timeout=self._timeout, proxy=self._proxy)
 
     def _fetch_types(self) -> list[str]:
         from core.slp_lib import build_srv_type_req, parse_srv_type_reply

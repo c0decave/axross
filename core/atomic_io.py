@@ -128,6 +128,18 @@ def _restore_mode(backend, path: str, mode: int) -> None:
         log.debug("atomic_write: could not restore mode %04o on %s: %s", mode, path, exc)
 
 
+def _precreate_with_mode(backend, tmp: str, mode: int) -> None:
+    """Create *tmp* empty and give it *mode* BEFORE any data lands.
+
+    Chmod-after-write leaves a window in which a 0600 secret sits in a
+    umask-mode (typically 0644) temp file next to its target. Truncating
+    re-open keeps the mode the file already has.
+    """
+    with backend.open_write(tmp):
+        pass
+    _restore_mode(backend, tmp, mode)
+
+
 def atomic_write(backend, path: str, data: bytes) -> None:
     """Write *data* to *path* atomically.
 
@@ -179,10 +191,10 @@ def atomic_write(backend, path: str, data: bytes) -> None:
     # 0644 and the next X session would not start.
     previous_mode = _existing_mode(backend, path)
     try:
+        if previous_mode is not None:
+            _precreate_with_mode(backend, tmp, previous_mode)
         with backend.open_write(tmp) as f:
             f.write(data)
-        if previous_mode is not None:
-            _restore_mode(backend, tmp, previous_mode)
         from core.server_ops import _finalize_temp_destination
 
         _finalize_temp_destination(backend, tmp, path)
@@ -249,7 +261,10 @@ def atomic_write_stream(
         return bytes_done
 
     tmp = _temp_sibling(backend, path)
+    previous_mode = _existing_mode(backend, path)
     try:
+        if previous_mode is not None:
+            _precreate_with_mode(backend, tmp, previous_mode)
         with backend.open_write(tmp) as f:
             while True:
                 chunk = reader.read(chunk_size)

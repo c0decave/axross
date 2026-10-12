@@ -33,16 +33,17 @@ Two consequences shape this backend:
    lower. ``tftp_max_size_bytes`` (default 16 MiB) is enforced
    before every transfer and refuses anything bigger up-front.
 
-**Proxy support: NONE.** TFTP is UDP. SOCKS5's UDP-ASSOCIATE
-extension is rarely supported in production proxies, and HTTP
-CONNECT is TCP-only. The connection_manager warns when a proxy is
-configured for a TFTP profile.
+**Proxy support: SOCKS5 only.** TFTP is UDP, so only SOCKS5's
+UDP ASSOCIATE can relay it (HTTP CONNECT and SOCKS4 are TCP-only and
+are refused, never bypassed). The server must be given as an IP
+address: tftpy resolves names locally, which would leak the lookup.
 
 Requires the ``tftpy`` package (``pip install axross[tftp]``).
 """
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import os
@@ -122,14 +123,37 @@ class TftpSession:
         proxy_username: str = "",
         proxy_password: str = "",
     ):
-        from core.proxy import warn_unsupported_proxy
+        import ipaddress
 
-        warn_unsupported_proxy(
-            "TFTP",
-            proxy_type,
-            proxy_host,
-            "TFTP is UDP; SOCKS/HTTP CONNECT support is not implemented.",
+        from core.proxy import proxy_config_from_kwargs, refuse_unsupported_proxy
+
+        self._proxy = proxy_config_from_kwargs(
+            {
+                "proxy_type": proxy_type,
+                "proxy_host": proxy_host,
+                "proxy_port": proxy_port,
+                "proxy_username": proxy_username,
+                "proxy_password": proxy_password,
+            }
         )
+        if self._proxy is not None:
+            if self._proxy.proxy_type != "socks5":
+                refuse_unsupported_proxy(
+                    "TFTP",
+                    self._proxy.proxy_type,
+                    self._proxy.host,
+                    "TFTP is UDP and only SOCKS5 (UDP ASSOCIATE) can relay it.",
+                )
+            try:
+                ipaddress.ip_address(host)
+            except ValueError:
+                refuse_unsupported_proxy(
+                    "TFTP",
+                    self._proxy.proxy_type,
+                    self._proxy.host,
+                    "tftpy resolves host names locally, which would leak the lookup "
+                    "around the proxy; use the server's IP address.",
+                )
         if not TFTPY_AVAILABLE:
             raise ImportError(
                 "TFTP support requires tftpy. Install with: pip install axross[tftp]",
@@ -265,6 +289,16 @@ class TftpSession:
 
         return sorted(entries.values(), key=lambda i: (not i.is_dir, i.name))
 
+    def _udp_scope(self):
+        """Route tftpy's internal UDP socket through the profile proxy."""
+        from core.proxy import patched_module_udp_socket
+
+        if self._proxy is None:
+            return contextlib.nullcontext()
+        import tftpy.TftpContexts as contexts
+
+        return patched_module_udp_socket(contexts, self._proxy)
+
     def _probe_size(self, name: str) -> int:
         """Best-effort: ask the server for the file's ``tsize`` via
         the OACK option. Many tftpd daemons honour this; some don't.
@@ -281,7 +315,7 @@ class TftpSession:
             # size off the context. We cap reads at 1 byte's worth
             # of blocks to abort fast if the server doesn't honour
             # tsize and just streams.
-            with tempfile.NamedTemporaryFile(delete=True) as tmp:
+            with tempfile.NamedTemporaryFile(delete=True) as tmp, self._udp_scope():
                 client.download(
                     name,
                     tmp.name,
@@ -367,13 +401,14 @@ class TftpSession:
 
         with tempfile.NamedTemporaryFile(delete=True) as tmp:
             try:
-                client.download(
-                    name,
-                    tmp.name,
-                    packethook=_packethook,
-                    timeout=self._timeout,
-                    retries=self._retries,
-                )
+                with self._udp_scope():
+                    client.download(
+                        name,
+                        tmp.name,
+                        packethook=_packethook,
+                        timeout=self._timeout,
+                        retries=self._retries,
+                    )
             except OSError:
                 raise
             except Exception as exc:  # tftpy raises tftpy.TftpException
@@ -579,12 +614,13 @@ class TftpSession:
             tmp.seek(0)
             client = tftpy.TftpClient(self._host, self._port)  # type: ignore[union-attr]
             try:
-                client.upload(
-                    name,
-                    tmp.name,
-                    timeout=self._timeout,
-                    retries=self._retries,
-                )
+                with self._udp_scope():
+                    client.upload(
+                        name,
+                        tmp.name,
+                        timeout=self._timeout,
+                        retries=self._retries,
+                    )
             except Exception as exc:
                 raise OSError(f"TFTP WRQ {name!r}: {exc}") from exc
 

@@ -52,14 +52,7 @@ class MongoFsSession(DbFsBackend):
         url: str = "",
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
-
-        warn_unsupported_proxy(
-            "MongoDB",
-            _ignored.get("proxy_type", "none"),
-            _ignored.get("proxy_host", ""),
-            "pymongo connections are not currently wrapped by core.proxy.",
-        )
+        self._tunnel = None
         if pymongo is None:
             raise ImportError(
                 "MongoDB backend requires pymongo. Install with: pip install axross[mongo]",
@@ -73,17 +66,35 @@ class MongoFsSession(DbFsBackend):
             if parts.path and parts.path != "/":
                 database = parts.path.lstrip("/")
 
+        from core import proxy as proxy_mod
+
+        # pymongo opens its own sockets and has no proxy hook, so with a
+        # proxy it dials a loopback tunnel. ``directConnection`` stops the
+        # driver from "discovering" the real replica-set member names and
+        # dialling those around the proxy.
+        self._tunnel = proxy_mod.open_tunnel(_ignored, host, int(port))
         client_kwargs: dict = {"host": host, "port": int(port)}
+        if self._tunnel is not None:
+            client_kwargs = {
+                "host": self._tunnel.host,
+                "port": self._tunnel.port,
+                "directConnection": True,
+            }
         if username:
             client_kwargs["username"] = username
         if password:
             client_kwargs["password"] = password
-        self._client = pymongo.MongoClient(**client_kwargs)
-        self._db = self._client[database]
-        self._fs = gridfs.GridFS(self._db, collection="axross_files")
-        self._dirs = self._db["axross_dirs"]
-        self._dirs.create_index("path", unique=True)
-        self._dirs.create_index("parent")
+        try:
+            self._client = pymongo.MongoClient(**client_kwargs)
+            self._db = self._client[database]
+            self._fs = gridfs.GridFS(self._db, collection="axross_files")
+            self._dirs = self._db["axross_dirs"]
+            self._dirs.create_index("path", unique=True)
+            self._dirs.create_index("parent")
+        except BaseException:
+            if self._tunnel is not None:
+                self._tunnel.close()
+            raise
         self._lock = threading.RLock()
         self._display = f"mongodb://{host}:{port}/{database}"
         log.info("Mongo-FS connected: %s", self._display)
@@ -98,6 +109,8 @@ class MongoFsSession(DbFsBackend):
             self._client.close()
         except Exception:  # noqa: BLE001
             pass
+        if self._tunnel is not None:
+            self._tunnel.close()
 
     # ------------------------------------------------------------------
     # Pymongo passthrough — slice 3 of API_GAPS.

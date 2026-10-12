@@ -134,13 +134,14 @@ class RshSession:
         timeout: float = DEFAULT_TIMEOUT,
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
+        from core.proxy import refuse_unsupported_proxy
 
-        warn_unsupported_proxy(
+        refuse_unsupported_proxy(
             "rsh",
             _ignored.get("proxy_type", "none"),
             _ignored.get("proxy_host", ""),
-            "The system rsh binary owns the TCP connection.",
+            "rsh needs a reverse stderr connection from the server to the client and a "
+            "privileged source port, which no forward proxy can provide.",
         )
         self._host = host
         self._port = int(port)

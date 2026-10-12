@@ -46,6 +46,8 @@ _DENY_BY_DEFAULT = (
     ipaddress.ip_network("0.0.0.0/8"),  # RFC5735 "this network"
     ipaddress.ip_network("224.0.0.0/4"),  # multicast
     ipaddress.ip_network("ff00::/8"),
+    ipaddress.ip_network("100.64.0.0/10"),  # RFC6598 CGNAT / shared space
+    ipaddress.ip_network("::/128"),  # unspecified
 )
 
 
@@ -85,8 +87,12 @@ def _assert_proxy_host_not_private(host: str) -> None:
         # error; we don't want to second-guess DNS.
         return
     for ip in ips:
+        # ``::ffff:169.254.169.254`` is an IPv6Address and is never "in"
+        # an IPv4 network, yet the kernel connects to the v4 target.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
         for net in _DENY_BY_DEFAULT:
-            if ip in net:
+            if ip.version == net.version and ip in net:
                 raise ConnectionError(
                     f"Proxy host {host!r} resolves to {ip} which is in "
                     f"the deny-by-default range {net}. Set "
@@ -588,6 +594,338 @@ def lock_requests_session_to_profile_proxy(
                 "'proxies' attribute; refusing direct traffic."
             )
         session.proxies = dict(proxies)
+
+
+def proxy_config_from_kwargs(kwargs: dict) -> "ProxyConfig | None":
+    """Build a :class:`ProxyConfig` from the ``proxy_*`` kwargs every
+    backend constructor receives. Returns ``None`` when no proxy is
+    configured and raises ``ValueError`` for a half-configured one."""
+    ptype = (kwargs.get("proxy_type") or "none").lower()
+    host = kwargs.get("proxy_host") or ""
+    if not _proxy_enabled_or_raise(ptype, host):
+        return None
+    return ProxyConfig(
+        proxy_type=ptype,
+        host=host,
+        port=int(kwargs.get("proxy_port") or 0),
+        username=kwargs.get("proxy_username") or "",
+        password=kwargs.get("proxy_password") or "",
+    )
+
+
+def _peer_is_same_user(peer: tuple) -> bool:
+    """True when the loopback client at *peer* belongs to our uid.
+
+    A loopback listener is reachable by every local account; without
+    this check another user on the host could ride the tunnel (and the
+    proxy credentials behind it). Reads ``/proc/net/tcp{,6}``; where
+    that is unavailable (non-Linux) there is nothing to compare, so the
+    peer is accepted.
+    """
+    if not os.path.exists("/proc/net/tcp"):
+        return True
+    host, port = peer[0], peer[1]
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    uid = os.getuid()
+    for table, want_v6 in (("/proc/net/tcp", False), ("/proc/net/tcp6", True)):
+        try:
+            with open(table, encoding="ascii") as fh:
+                rows = fh.read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            fields = row.split()
+            if len(fields) < 8:
+                continue
+            local_addr, local_port = fields[1].rsplit(":", 1)
+            if int(local_port, 16) != port:
+                continue
+            raw = bytes.fromhex(local_addr)
+            if want_v6:
+                # /proc stores IPv6 as four little-endian 32-bit words.
+                raw = b"".join(raw[i : i + 4][::-1] for i in range(0, 16, 4))
+                row_ip = ipaddress.IPv6Address(raw)
+                if row_ip.ipv4_mapped is not None:
+                    row_ip = row_ip.ipv4_mapped
+            else:
+                row_ip = ipaddress.IPv4Address(raw[::-1])
+            if row_ip == ip:
+                return int(fields[7]) == uid
+    return False
+
+
+class LocalTunnel:
+    """Loopback TCP listener that relays every connection through a proxy.
+
+    Many client libraries (psycopg, pymongo, ldap3, ``svn://``) open the
+    TCP connection themselves and offer no proxy hook. Pointing them at
+    ``tunnel.host:tunnel.port`` makes each connection they open travel
+    through the configured SOCKS / HTTP-CONNECT proxy to the real
+    target. Bound to 127.0.0.1 only, restricted to the owning uid and
+    capped in concurrent connections.
+    """
+
+    def __init__(
+        self,
+        proxy: "ProxyConfig",
+        target_host: str,
+        target_port: int,
+        timeout: float = 10.0,
+        max_connections: int = 64,
+    ) -> None:
+        if not proxy.enabled:
+            raise ValueError("LocalTunnel requires an enabled proxy config")
+        self._proxy = proxy
+        self._target = (target_host, int(target_port))
+        self._timeout = timeout
+        self._slots = threading.BoundedSemaphore(max_connections)
+        self._listener: socket.socket | None = None
+        self._closed = threading.Event()
+        self._active: set[socket.socket] = set()
+        self._active_lock = threading.Lock()
+        self.host = "127.0.0.1"
+        self.port = 0
+
+    # -- lifecycle ---------------------------------------------------------
+    def start(self) -> "LocalTunnel":
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind((self.host, 0))
+        listener.listen(16)
+        self.port = listener.getsockname()[1]
+        self._listener = listener
+        threading.Thread(target=self._accept_loop, name="axross-proxy-tunnel", daemon=True).start()
+        return self
+
+    def close(self) -> None:
+        self._closed.set()
+        if self._listener is not None:
+            # close() alone leaves a blocked accept() holding the fd, so
+            # the port would keep accepting; shutdown wakes it first.
+            with contextlib.suppress(OSError):
+                self._listener.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(OSError):
+                self._listener.close()
+        with self._active_lock:
+            active = list(self._active)
+        for sock in active:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(OSError):
+                sock.close()
+
+    def __enter__(self) -> "LocalTunnel":
+        return self.start()
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    # -- relay -------------------------------------------------------------
+    def _accept_loop(self) -> None:
+        assert self._listener is not None
+        while not self._closed.is_set():
+            try:
+                client, peer = self._listener.accept()
+            except OSError:
+                return
+            if not _peer_is_same_user(peer):
+                log.warning("proxy tunnel: dropped connection from foreign local user %s", peer)
+                client.close()
+                continue
+            if not self._slots.acquire(blocking=False):
+                log.warning("proxy tunnel: connection cap reached, dropping %s", peer)
+                client.close()
+                continue
+            threading.Thread(target=self._relay, args=(client,), daemon=True).start()
+
+    def _track(self, sock: socket.socket, add: bool) -> None:
+        with self._active_lock:
+            (self._active.add if add else self._active.discard)(sock)
+
+    def _relay(self, client: socket.socket) -> None:
+        upstream: socket.socket | None = None
+        try:
+            try:
+                upstream = create_proxy_socket(
+                    self._proxy, self._target[0], self._target[1], timeout=self._timeout
+                )
+            except (OSError, ValueError) as exc:
+                log.warning("proxy tunnel: %s:%d unreachable via proxy: %s", *self._target, exc)
+                return
+            upstream.settimeout(None)
+            client.settimeout(None)
+            self._track(client, True)
+            self._track(upstream, True)
+            back = threading.Thread(target=self._pump, args=(upstream, client), daemon=True)
+            back.start()
+            self._pump(client, upstream)
+            back.join(timeout=5)
+        finally:
+            for sock in (client, upstream):
+                if sock is not None:
+                    self._track(sock, False)
+                    with contextlib.suppress(OSError):
+                        sock.close()
+            self._slots.release()
+
+    @staticmethod
+    def _pump(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            for sock in (src, dst):
+                with contextlib.suppress(OSError):
+                    sock.shutdown(socket.SHUT_RDWR)
+
+
+def open_tunnel(
+    kwargs: dict, target_host: str, target_port: int, timeout: float = 10.0
+) -> "LocalTunnel | None":
+    """Start a :class:`LocalTunnel` for the ``proxy_*`` kwargs, or return
+    ``None`` when no proxy is configured (caller connects directly)."""
+    cfg = proxy_config_from_kwargs(kwargs)
+    if cfg is None:
+        return None
+    _validate_endpoint_host(target_host, "Target host")
+    return LocalTunnel(cfg, target_host, int(target_port), timeout=timeout).start()
+
+
+def create_udp_proxy_socket(proxy: "ProxyConfig", timeout: float = 10.0) -> socket.socket:
+    """UDP socket relayed through a SOCKS5 proxy (UDP ASSOCIATE).
+
+    ``sendto`` / ``recvfrom`` work like on a plain datagram socket.
+    SOCKS4 and HTTP CONNECT are TCP-only, so they raise
+    :class:`ConnectionError` rather than silently going direct.
+    """
+    if not proxy.enabled:
+        raise ValueError("create_udp_proxy_socket requires an enabled proxy config")
+    if proxy.proxy_type != "socks5":
+        raise ConnectionError(
+            f"{proxy.proxy_type} proxies cannot carry UDP; use a SOCKS5 proxy or remove the proxy."
+        )
+    import socks
+
+    _validate_proxy_url_host(proxy.host)
+    _assert_proxy_host_not_private(proxy.host)
+    s = socks.socksocket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(timeout)
+    s.set_proxy(
+        socks.SOCKS5,
+        proxy.host,
+        _validate_proxy_port(proxy.port),
+        username=proxy.username or None,
+        password=proxy.password or None,
+    )
+    return s
+
+
+class ProxyUnsupportedError(OSError):
+    """A proxy is configured for a backend that cannot honour it.
+
+    Raised instead of connecting directly: a profile that says "use this
+    proxy" must never silently send traffic around it.
+    """
+
+
+def refuse_unsupported_proxy(
+    protocol: str,
+    proxy_type: str = "none",
+    proxy_host: str = "",
+    reason: str = "",
+) -> None:
+    """Fail closed when *protocol* cannot use the configured proxy.
+
+    No-op when no proxy is configured. The remedy is part of the message:
+    remove the proxy from the profile (an explicit decision to connect
+    directly) or route at the OS / network layer.
+    """
+    if (proxy_type or "none").lower() == "none" and not proxy_host:
+        return
+    detail = f" {reason}" if reason else ""
+    raise ProxyUnsupportedError(
+        f"{protocol} cannot be tunnelled through the configured "
+        f"{proxy_type or 'unknown'} proxy.{detail} Remove the proxy from "
+        "the profile to connect directly, or route this traffic at the "
+        "OS / network layer. See docs/PROXY_SUPPORT.md."
+    )
+
+
+def build_urllib3_proxy_manager(proxy: "ProxyConfig"):
+    """urllib3 pool manager that sends everything through *proxy*.
+
+    SOCKS proxies resolve names remotely (``socks5h`` / ``socks4a``) so
+    internal host names are not looked up locally.
+    """
+    from urllib.parse import quote
+
+    _validate_proxy_url_host(proxy.host)
+    _assert_proxy_host_not_private(proxy.host)
+    port = _validate_proxy_port(proxy.port)
+    auth = ""
+    if proxy.username:
+        auth = quote(proxy.username, safe="")
+        if proxy.password:
+            auth += ":" + quote(proxy.password, safe="")
+        auth += "@"
+    host = f"[{proxy.host}]" if _is_ipv6_literal(proxy.host) else proxy.host
+    if proxy.proxy_type == "http":
+        import urllib3
+
+        return urllib3.ProxyManager(f"http://{auth}{host}:{port}")
+    from urllib3.contrib.socks import SOCKSProxyManager
+
+    scheme = "socks5h" if proxy.proxy_type == "socks5" else "socks4a"
+    return SOCKSProxyManager(f"{scheme}://{auth}{host}:{port}")
+
+
+class _SocketModuleShim:
+    """Stand-in for the ``socket`` module whose ``socket()`` factory hands
+    out SOCKS5-relayed datagram sockets; everything else is delegated."""
+
+    def __init__(self, proxy: "ProxyConfig") -> None:
+        self._proxy = proxy
+
+    def socket(self, family=socket.AF_INET, type=socket.SOCK_STREAM, *args, **kwargs):  # noqa: A002
+        if type != socket.SOCK_DGRAM:
+            raise ConnectionError("proxied module may only open datagram sockets")
+        return create_udp_proxy_socket(self._proxy, timeout=10.0)
+
+    def __getattr__(self, name: str):
+        return getattr(socket, name)
+
+
+_UDP_PATCH_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def patched_module_udp_socket(module, proxy: "ProxyConfig | None"):
+    """Temporarily make ``module.socket.socket(AF_INET, SOCK_DGRAM)`` a
+    SOCKS5 UDP relay (for libraries such as tftpy that create their UDP
+    socket internally). Scoped and serialised like
+    :func:`patched_create_connection`. Yields untouched without a proxy.
+    """
+    if proxy is None:
+        yield
+        return
+    if proxy.proxy_type != "socks5":
+        raise ConnectionError(
+            f"{proxy.proxy_type} proxies cannot carry UDP; use a SOCKS5 proxy or remove the proxy."
+        )
+    with _UDP_PATCH_LOCK:
+        original = module.socket
+        module.socket = _SocketModuleShim(proxy)
+        try:
+            yield
+        finally:
+            module.socket = original
 
 
 def warn_unsupported_proxy(

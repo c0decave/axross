@@ -49,7 +49,16 @@ _PROTOCOLS_HONOURING_PROFILE_PROXY = frozenset(
         "gdrive",
         "dropbox",
         "winrm",
+        "svn",
+        "tftp",
     }
+)
+
+# Registry-only backends (reachable from scripts / the REPL through
+# ``proxy_*`` keyword arguments, not through saved profiles) that route
+# their traffic through the proxy they are given.
+_PROTOCOLS_HONOURING_KWARG_PROXY = frozenset(
+    {"postgres", "redis", "mongodb", "ldap", "git", "slp"}
 )
 
 _PROTOCOLS_PARTIAL_PROFILE_PROXY = {
@@ -63,27 +72,41 @@ _PROTOCOLS_PARTIAL_PROFILE_PROXY = {
     ),
 }
 
-# Backends that genuinely cannot be proxied — kernel-level mounts
-# plus TFTP (UDP; common SOCKS proxies don't support UDP-ASSOCIATE
-# and HTTP CONNECT is TCP-only) plus RamFS (in-process, no network
-# at all).
-_PROTOCOLS_NOT_PROXIABLE = {
+# Backends that cannot be proxied AND would put traffic on the network:
+# connecting would silently go around the configured proxy, so they fail
+# closed (``ProxyUnsupportedError``). Removing the proxy from the profile
+# is the explicit opt-out.
+_PROTOCOLS_PROXY_REFUSED = {
     "nfs": "NFS is mounted by the kernel; user-space SOCKS/HTTP proxies cannot see it.",
     "iscsi": "iSCSI is handled by the kernel initiator; proxy at the OS/network layer instead.",
+    "rsh": (
+        "rsh needs a reverse stderr connection and a privileged source port; "
+        "no forward proxy can provide that."
+    ),
+    "wmi": (
+        "WMI/DCOM negotiates dynamic RPC ports after the endpoint mapper; "
+        "a single proxied connection is not enough."
+    ),
+}
+
+# Backends without any network transport: a proxy is meaningless, so it is
+# only reported (nothing can leak).
+_PROTOCOLS_NO_NETWORK = {
     "mtp": "MTP is USB/FUSE based here, not a TCP transport.",
-    "tftp": "TFTP is UDP; HTTP CONNECT is TCP-only and SOCKS UDP-ASSOCIATE is not implemented.",
     "ramfs": "RamFS is in-process memory and has no network path.",
     "sqlite": "SQLite is a local file backend and has no network path.",
-    "postgres": "PostgreSQL proxy tunnelling is not implemented for psycopg connections.",
-    "redis": "Redis proxy tunnelling is not implemented for redis-py connections.",
-    "mongodb": "MongoDB proxy tunnelling is not implemented for pymongo connections.",
-    "git": "Git transport proxying is not uniform across dulwich HTTP/SSH transports.",
-    "svn": "SVN uses the system svn binary; SOCKS/HTTP CONNECT is not wired in.",
-    "slp": "SLP defaults to UDP and is not proxied by axross.",
-    "rsh": "rsh uses the system rsh binary and cannot be tunnelled by axross.",
-    "wmi": "WMI/DCOM uses RPC/DCOM with dynamic transport details; proxying is not implemented.",
-    "ldap": "LDAP proxy tunnelling is not implemented for ldap3 connections.",
 }
+
+# Union kept for the classification test and docs.
+_PROTOCOLS_NOT_PROXIABLE = {**_PROTOCOLS_PROXY_REFUSED, **_PROTOCOLS_NO_NETWORK}
+
+
+def proxy_unavailable_reason(protocol: str) -> str | None:
+    """Why a proxy cannot apply to *protocol*, or ``None`` when it can.
+
+    The connection dialog uses this to disable the proxy group instead of
+    letting the user configure a setting that would be refused."""
+    return _PROTOCOLS_NOT_PROXIABLE.get(protocol)
 
 
 def _health_key(session_key: tuple[str, ...]) -> str:
@@ -150,9 +173,12 @@ def _validate_proxy_request(profile: "ConnectionProfile") -> None:
 
 
 def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
-    """Emit a WARNING when the profile's proxy config will not take
-    effect for the chosen protocol. Called from ``_create_session``
-    before we instantiate the backend."""
+    """Guard the profile's proxy config before the backend is built.
+
+    Raises ``ProxyUnsupportedError`` for network backends that cannot
+    honour a proxy (never a silent direct connection), warns for backends
+    where a proxy is merely meaningless (no network at all), and logs the
+    partial-support cases. Called from ``_create_session``."""
     if _proxy_kind(profile) == "none":
         return
     proto = profile.protocol
@@ -165,7 +191,7 @@ def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
             profile.proxy_type,
         )
         return
-    if proto in _PROTOCOLS_HONOURING_PROFILE_PROXY:
+    if proto in _PROTOCOLS_HONOURING_PROFILE_PROXY or proto in _PROTOCOLS_HONOURING_KWARG_PROXY:
         return
     if proto == "s3":
         if _proxy_kind(profile) == "http":
@@ -188,23 +214,20 @@ def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
             _PROTOCOLS_PARTIAL_PROFILE_PROXY[proto],
         )
         return
-    if proto in _PROTOCOLS_NOT_PROXIABLE:
-        log.warning(
-            "Profile %r configures a %s proxy, but %s does not support "
-            "SOCKS/HTTP proxy tunnelling in axross. %s The setting is "
-            "ignored. See docs/PROXY_SUPPORT.md.",
-            profile.name,
-            profile.proxy_type,
-            proto,
-            _PROTOCOLS_NOT_PROXIABLE[proto],
+    if proto in _PROTOCOLS_PROXY_REFUSED:
+        from core.proxy import refuse_unsupported_proxy
+
+        refuse_unsupported_proxy(
+            proto, profile.proxy_type, profile.proxy_host, _PROTOCOLS_PROXY_REFUSED[proto]
         )
-    else:
+    if proto in _PROTOCOLS_NO_NETWORK:
         log.warning(
-            "Profile %r configures a %s proxy, but the %s backend "
-            "has no proxy plumbing yet. See docs/PROXY_SUPPORT.md.",
+            "Profile %r configures a %s proxy, but %s has no network transport, "
+            "so the setting has no effect. %s See docs/PROXY_SUPPORT.md.",
             profile.name,
             profile.proxy_type,
             proto,
+            _PROTOCOLS_NO_NETWORK[proto],
         )
 
 
@@ -608,6 +631,7 @@ class ConnectionManager:
                 filelist=filelist,
                 filelist_enabled=profile.tftp_filelist_enabled,
                 max_size_bytes=profile.tftp_max_size_bytes,
+                **proxy_kw,
             )
 
         if proto == "ramfs":
@@ -634,6 +658,7 @@ class ConnectionManager:
                 url=profile.host,
                 username=profile.username,
                 password=password,
+                **proxy_kw,
             )
 
         if proto == "telnet":

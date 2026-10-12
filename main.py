@@ -268,6 +268,16 @@ def main() -> int:
         # cannot read or write outside what we deliberately exposed
         # (e.g. read_file("/etc/passwd")). Users who want a wider
         # surface have to lower the root explicitly.
+        if allow_write and not args.mcp_root:
+            # The default root is $HOME. A writable $HOME lets a
+            # prompt-injected client plant ~/.bashrc, ~/.ssh/authorized_keys
+            # or an autostart entry, which the user then executes.
+            print(
+                "MCP write tools need an explicit --mcp-root DIR: the default "
+                "root (your home directory) is too wide to be writable.",
+                file=sys.stderr,
+            )
+            return 2
         root = _resolve_mcp_root(backend, args.mcp_root)
         if args.mcp_http:
             host, _, port_str = args.mcp_http.partition(":")

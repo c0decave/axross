@@ -91,6 +91,18 @@ if _PILImage is not None:  # pragma: no branch
 # Qt allocation limit in MiB — applies to every QImageReader we create.
 QIMAGE_ALLOC_LIMIT_MIB = 128
 
+# The Pillow fallback is reached exactly when Qt refused (often because
+# of QIMAGE_ALLOC_LIMIT_MIB), so it needs its own RGBA decode budget;
+# MAX_DIMENSION alone still allows 20000x20000 = 1.6 GiB.
+PILLOW_ALLOC_LIMIT_MIB = 512
+
+# Raster formats the fallback may open. Deliberately excludes EPS (runs
+# Ghostscript), PDF/WMF/EMF and anything else that is a program or a
+# container rather than pixels.
+PILLOW_FALLBACK_FORMATS = (
+    "PNG", "JPEG", "GIF", "BMP", "WEBP", "TIFF", "PPM", "ICO", "TGA", "PCX", "DDS", "ICNS",
+)
+
 # Default thumbnail edge length.
 DEFAULT_THUMBNAIL_EDGE = 256
 
@@ -300,7 +312,10 @@ def _decode_with_pillow(abs_path: str, edge: int | None) -> bytes:
         )
 
     try:
-        img = _PILImage.open(abs_path)
+        # An explicit format list: Pillow's default opens EPS, which
+        # spawns Ghostscript on load(), and sniffs content rather than
+        # the extension, so "x.png" can be a PostScript program.
+        img = _PILImage.open(abs_path, formats=list(PILLOW_FALLBACK_FORMATS))
     except Exception as exc:
         raise PreviewDecodeFailed(f"{abs_path}: Pillow could not open file: {exc}") from exc
 
@@ -315,6 +330,11 @@ def _decode_with_pillow(abs_path: str, edge: int | None) -> bytes:
     if w > MAX_DIMENSION or h > MAX_DIMENSION:
         raise PreviewTooLarge(
             f"{abs_path}: dimensions {w}x{h} exceed MAX_DIMENSION {MAX_DIMENSION}"
+        )
+
+    if w * h * 4 > PILLOW_ALLOC_LIMIT_MIB * 1024 * 1024:
+        raise PreviewTooLarge(
+            f"{abs_path}: {w}x{h} would need more than {PILLOW_ALLOC_LIMIT_MIB} MiB to decode"
         )
 
     try:

@@ -137,7 +137,7 @@ class CasDuplicatesDialog(QDialog):
             "holds identical content, wherever it lives. Use “Rebuild from "
             "Active Pane” to index a directory first."
         )
-        intro.setStyleSheet("color: #666;")
+        intro.setProperty("role", "muted")
         intro.setWordWrap(True)
         root.addWidget(intro)
 
@@ -170,7 +170,7 @@ class CasDuplicatesDialog(QDialog):
 
         btn_row.addStretch(1)
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #666;")
+        self._status.setProperty("role", "muted")
         btn_row.addWidget(self._status)
         root.addLayout(btn_row)
 

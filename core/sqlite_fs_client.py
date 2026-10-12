@@ -263,14 +263,15 @@ class SqliteFsSession(DbFsBackend):
             self._conn.execute("DELETE FROM axross_files WHERE path = ?", (path,))
 
     def _db_delete_subtree(self, path: str) -> None:
-        # LIKE-escape '%' and '_' so a path containing those wildcards
-        # cannot accidentally widen the deletion across siblings
-        # (e.g. delete('/fo%') matching '/foo/...').
-        escaped = path.rstrip("/").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        # substr() compares bytes-exact and case-sensitively. LIKE is
+        # ASCII case-insensitive in SQLite, so deleting '/Foo' used to
+        # wipe the children of '/foo' too, and it needed wildcard
+        # escaping for '%' and '_' on top.
+        prefix = path.rstrip("/") + "/"
         with self._lock:
             self._conn.execute(
-                "DELETE FROM axross_files WHERE path = ? OR path LIKE ? || '/%' ESCAPE '\\'",
-                (path, escaped),
+                "DELETE FROM axross_files WHERE path = ? OR substr(path, 1, ?) = ?",
+                (path, len(prefix), prefix),
             )
 
     # ------------------------------------------------------------------

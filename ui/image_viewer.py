@@ -127,7 +127,7 @@ class ImageViewerDialog(QDialog):
         root.addLayout(bar)
 
         self._info = QLabel("")
-        self._info.setStyleSheet("color: #888;")
+        self._info.setProperty("role", "muted")
         root.addWidget(self._info)
 
         # Keyboard shortcuts

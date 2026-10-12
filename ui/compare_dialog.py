@@ -214,7 +214,7 @@ class CompareDialog(QDialog):
 
         actions.addStretch(1)
         self._summary = QLabel(self)
-        self._summary.setStyleSheet("color: #666;")
+        self._summary.setProperty("role", "muted")
         actions.addWidget(self._summary)
         layout.addLayout(actions)
 

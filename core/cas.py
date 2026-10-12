@@ -114,7 +114,11 @@ _lock = threading.Lock()
 @contextmanager
 def _connect(db_path: Path | None):
     path = Path(db_path) if db_path else _DEFAULT_DB
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # The index lists backend ids, full remote paths and checksums of
+    # everything indexed: private to the user, like trail.py's store.
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not path.exists():
+        os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))
     with _lock:
         conn = sqlite3.connect(str(path))
         try:

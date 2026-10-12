@@ -75,6 +75,11 @@ def _probe_resumable_temp(
                     exc,
                 )
                 continue
+            # Only a real regular file may be resumed: a symlink's
+            # "size" is its target-string length, and appending through
+            # it writes into whatever it points at.
+            if getattr(item, "is_link", False) or getattr(item, "is_dir", False):
+                continue
             size = int(getattr(item, "size", 0) or 0)
             if size > 0:
                 return tmp_path, size

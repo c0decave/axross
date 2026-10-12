@@ -253,7 +253,31 @@ class ReplWidget(QPlainTextEdit):
 
     def _maybe_run_startup(self, startup_path: Path | None) -> None:
         path = startup_path or Path.home() / ".config" / "axross" / "startup.py"
-        if not path.exists():
+        try:
+            st = path.lstat()
+        except OSError:
+            return  # no startup script: nothing to say
+        from core import security_mode
+
+        if not security_mode.current_policy().allow_scripts:
+            self._append(f"[startup script {path} skipped: scripts are blocked in this mode]\n")
+            return
+        # The file runs with the app's whole session (profiles, keyring).
+        # Same bar the saved-script loader applies: a regular file, ours,
+        # not writable by anyone else.
+        import stat as stat_module
+
+        reason = ""
+        if stat_module.S_ISLNK(st.st_mode):
+            reason = "is a symlink"
+        elif not stat_module.S_ISREG(st.st_mode):
+            reason = "is not a regular file"
+        elif hasattr(os, "getuid") and st.st_uid != os.getuid():
+            reason = "is not owned by you"
+        elif st.st_mode & (stat_module.S_IWGRP | stat_module.S_IWOTH):
+            reason = "is group- or world-writable"
+        if reason:
+            self._append(f"[startup script {path} refused: file {reason}]\n")
             return
         try:
             src = _read_text_limited(path, max_bytes=MAX_STARTUP_SCRIPT_BYTES)

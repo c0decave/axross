@@ -36,12 +36,12 @@ class ChecksumDialog(QDialog):
         root = QVBoxLayout(self)
 
         path_label = QLabel(path)
-        path_label.setStyleSheet("color: #666;")
+        path_label.setProperty("role", "muted")
         path_label.setWordWrap(True)
         root.addWidget(path_label)
 
         meta = QLabel(f"{algo}  ({source})")
-        meta.setStyleSheet("color: #666;")
+        meta.setProperty("role", "muted")
         root.addWidget(meta)
 
         self._field = QLineEdit(value)

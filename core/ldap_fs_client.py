@@ -48,6 +48,7 @@ try:
         SUBTREE,
         Connection,
         Server,
+        Tls,
     )
     from ldap3.core.exceptions import LDAPException
 except ImportError:  # pragma: no cover
@@ -73,16 +74,10 @@ class LdapFsSession:
         password: str = "",
         use_tls: bool = False,
         timeout: float = 10.0,
+        verify_tls: bool = True,
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
-
-        warn_unsupported_proxy(
-            "LDAP",
-            _ignored.get("proxy_type", "none"),
-            _ignored.get("proxy_host", ""),
-            "ldap3 connections are not currently wrapped by core.proxy.",
-        )
+        self._tunnel = None
         if ldap3 is None:
             raise OSError("LDAP backend requires ldap3. Install with: pip install axross[ldap]")
         self._host = host
@@ -91,14 +86,36 @@ class LdapFsSession:
         self._password = password
         self._use_tls = bool(use_tls)
         self._timeout = float(timeout)
-        self._server = Server(
-            host,
-            port=self._port,
-            use_ssl=self._use_tls,
-            get_info=ALL,
-            connect_timeout=int(self._timeout),
-        )
+        # ldap3 defaults to Tls(validate=CERT_NONE) when none is given,
+        # i.e. LDAPS would accept any certificate. Validate unless the
+        # profile explicitly opts out.
+        from core import proxy as proxy_mod
+
+        # ldap3 dials the socket itself; with a proxy it connects to a
+        # loopback tunnel instead and TLS keeps verifying the real name.
+        self._tunnel = proxy_mod.open_tunnel(_ignored, host, self._port, timeout=self._timeout)
+        connect_host, connect_port = host, self._port
+        if self._tunnel is not None:
+            connect_host, connect_port = self._tunnel.host, self._tunnel.port
+        tls = None
+        if self._use_tls:
+            import ssl
+
+            if not verify_tls:
+                log.warning("LDAP: certificate verification DISABLED by profile option")
+            tls_kwargs: dict = {"validate": ssl.CERT_REQUIRED if verify_tls else ssl.CERT_NONE}
+            if self._tunnel is not None:
+                tls_kwargs.update(valid_names=[host], sni=host)
+            tls = Tls(**tls_kwargs)
         try:
+            self._server = Server(
+                connect_host,
+                port=connect_port,
+                use_ssl=self._use_tls,
+                tls=tls,
+                get_info=ALL,
+                connect_timeout=int(self._timeout),
+            )
             self._conn = Connection(
                 self._server,
                 user=username or None,
@@ -107,7 +124,13 @@ class LdapFsSession:
                 receive_timeout=int(self._timeout),
             )
         except LDAPException as exc:
+            if self._tunnel is not None:
+                self._tunnel.close()
             raise OSError(f"LDAP bind to {host}:{port} failed: {exc}") from exc
+        except BaseException:
+            if self._tunnel is not None:
+                self._tunnel.close()
+            raise
         # Cache the namingContexts for root-listing (single SEARCH on
         # the rootDSE; cheap).
         self._naming_contexts: list[str] = []
@@ -139,6 +162,8 @@ class LdapFsSession:
             self._conn.unbind()
         except Exception:  # noqa: BLE001
             pass
+        if self._tunnel is not None:
+            self._tunnel.close()
 
     def disconnect(self) -> None:
         self.close()

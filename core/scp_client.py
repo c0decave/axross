@@ -664,7 +664,9 @@ class SCPSession:
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
         output = self._exec(f"LANG=C LC_ALL=C ls -la {shlex.quote(path)}")
-        return _parse_ls_la(output)
+        from core.path_policy import drop_unsafe_names
+
+        return drop_unsafe_names(_parse_ls_la(output), keep_dots=True, origin=f"SCP {path}")
 
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)

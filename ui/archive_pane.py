@@ -384,7 +384,7 @@ class ArchivePaneWidget(QWidget):
         layout.addLayout(btn_row)
 
         self._status_label = QLabel()
-        self._status_label.setStyleSheet("color: #666;")
+        self._status_label.setProperty("role", "muted")
         layout.addWidget(self._status_label)
 
     # -- Loading ----------------------------------------------------------

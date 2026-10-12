@@ -1054,6 +1054,17 @@ def _build_tools(
         if args.get("max_size"):
             kwargs["max_size"] = int(args["max_size"])
         entries = MX.search_all(**kwargs)
+
+        def _in_root(entry_path: str) -> bool:
+            # The index is shared by every session of every backend id;
+            # only rows under the configured MCP root may leave.
+            try:
+                _scope_path(entry_path)
+            except (PermissionError, ValueError):
+                return False
+            return True
+
+        entries = [e for e in entries if _in_root(e.path)]
         return [
             {
                 "backend_id": e.backend_id,
@@ -3040,6 +3051,20 @@ def _dispatch(
     req_id = req.get("id")
     method = req.get("method")
     params = req.get("params") or {}
+    if req_id is not None and (isinstance(req_id, bool) or not isinstance(req_id, (str, int))):
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "id must be a string or integer"},
+        }
+    if not isinstance(params, dict):
+        if req_id is None:
+            return None  # a malformed notification gets no reply
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32602, "message": "params must be an object"},
+        }
     if method == "initialize":
         # Echo the client's requested protocolVersion if we recognise
         # it; fall back to our newest. Let the client decide whether

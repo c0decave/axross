@@ -19,9 +19,9 @@ Security model
   be an absolute path, no traversal components, length-capped.
 * Output is bounded by :data:`MAX_OUTPUT_SIZE` so ``elevated_read``
   on ``/dev/urandom`` (or a 100-GiB log) fails cleanly.
-* ``pkexec`` must be discovered via a trusted absolute path lookup
-  (``shutil.which``) — we don't trust the user's ``PATH`` for the
-  binary we shell to.
+* ``pkexec`` and its helpers are resolved only from root-owned system
+  directories (:func:`_trusted_which`) — never from the user's
+  ``PATH``, which could put a planted ``cat`` ahead of ``/usr/bin``.
 
 Why subprocess + pkexec and not ``os.setuid``
 ---------------------------------------------
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
+import stat
 import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -144,15 +144,40 @@ class _Pkexec:
     helpers: dict[str, str]  # name -> absolute path for cat/tee/stat/ls
 
 
+_TRUSTED_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+
+
+def _trusted_which(name: str, dirs: tuple[str, ...] = _TRUSTED_DIRS) -> str | None:
+    """Find *name* only in root-owned system directories.
+
+    ``shutil.which`` walks the caller's ``$PATH``; a ``~/.local/bin/cat``
+    placed ahead of ``/usr/bin`` would be handed to pkexec as the program
+    to run as root. A candidate must be a regular, executable file owned
+    by root and writable by nobody but root.
+    """
+    for directory in dirs:
+        candidate = os.path.join(directory, name)
+        try:
+            st = os.stat(candidate)
+        except OSError:
+            continue
+        if not stat.S_ISREG(st.st_mode) or not os.access(candidate, os.X_OK):
+            continue
+        if st.st_uid != 0 or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            continue
+        return candidate
+    return None
+
+
 def _resolve_helpers() -> _Pkexec | None:
     """Resolve absolute paths to pkexec + the helper binaries. Returns
     None when pkexec or any required helper is missing."""
-    pkexec = shutil.which("pkexec")
+    pkexec = _trusted_which("pkexec")
     if pkexec is None:
         return None
     helpers: dict[str, str] = {}
     for name in ("cat", "tee", "stat", "ls"):
-        full = shutil.which(name)
+        full = _trusted_which(name)
         if full is None:
             log.debug("elevated_io: helper missing: %s", name)
             return None

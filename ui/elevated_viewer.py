@@ -87,7 +87,7 @@ class ElevatedViewerDialog(QDialog):
         info = QLabel(
             f"{self._path}  —  {len(self._data)} bytes  ({kind}, read via pkexec, read-only)"
         )
-        info.setStyleSheet("color: #666;")
+        info.setProperty("role", "muted")
         root.addWidget(info)
 
         self._editor = QPlainTextEdit()

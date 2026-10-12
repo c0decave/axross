@@ -35,11 +35,14 @@ import io
 import logging
 import os
 import posixpath
+import re
+import shlex
 import stat as st_mod
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import IO
+from urllib.parse import urlsplit, urlunsplit
 
 from core.append_helpers import read_existing_for_append
 from core.redaction import redact_url
@@ -124,6 +127,51 @@ def _cache_dir_for(url: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+_SCP_LIKE_RE = re.compile(r"^(?:(?P<user>[^@/:]+)@)?(?P<host>[^:/@]+):(?P<path>.*)$")
+
+
+def _proxied_transport(url: str, proxy_cfg) -> tuple[str, dict, list]:
+    """Route a remote through *proxy_cfg*.
+
+    Returns ``(connect_url, transport_kwargs, tunnels)``:
+
+    * http(s): a urllib3 proxy manager (SOCKS or HTTP CONNECT); the URL is
+      untouched so TLS verifies the real host.
+    * ssh / scp-style: a loopback tunnel; ssh dials it but keeps the real
+      host's identity via ``HostKeyAlias``.
+    * git://: a loopback tunnel.
+    * local paths / file://: nothing to proxy.
+    """
+    from core import proxy as proxy_mod
+
+    if "://" not in url:
+        match = _SCP_LIKE_RE.match(url)
+        if not match or url.startswith(("/", ".")) or len(match.group("host")) == 1:
+            return url, {}, []  # plain local path
+        path = match.group("path")
+        user = f"{match.group('user')}@" if match.group("user") else ""
+        tail = path if path.startswith("/") else f"/~/{path}"
+        url = f"ssh://{user}{match.group('host')}{tail}"
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    if scheme in ("http", "https"):
+        return url, {"pool_manager": proxy_mod.build_urllib3_proxy_manager(proxy_cfg)}, []
+    if scheme not in ("ssh", "git", "git+ssh", "ssh+git"):
+        return url, {}, []
+    host = parts.hostname or ""
+    if not host or host.startswith("-"):
+        raise OSError(f"Git remote host {host!r} is not acceptable")
+    port = parts.port or (9418 if scheme == "git" else 22)
+    tunnel = proxy_mod.LocalTunnel(proxy_cfg, host, port).start()
+    userinfo = parts.netloc.rpartition("@")[0]
+    netloc = f"{userinfo + '@' if userinfo else ''}{tunnel.host}:{tunnel.port}"
+    connect_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    kwargs: dict = {}
+    if scheme != "git":
+        kwargs["ssh_command"] = f"ssh -o HostKeyAlias={shlex.quote(host)}"
+    return connect_url, kwargs, [tunnel]
+
+
 class GitFsSession:
     """Git-backed FileBackend."""
 
@@ -140,14 +188,9 @@ class GitFsSession:
         default_branch: str = "main",
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
-
-        warn_unsupported_proxy(
-            "Git",
-            _ignored.get("proxy_type", "none"),
-            _ignored.get("proxy_host", ""),
-            "dulwich transport proxying is not uniform across HTTP and SSH remotes.",
-        )
+        self._tunnels: list = []
+        self._transport_kwargs: dict = {}
+        self._connect_url = url or ""
         if Repo is None:
             raise ImportError("Git backend requires dulwich. Install with: pip install axross[git]")
         if not url and not path:
@@ -165,28 +208,40 @@ class GitFsSession:
         else:
             cache_dir = _cache_dir_for(url)
             cache_dir.parent.mkdir(parents=True, exist_ok=True)
-            if (cache_dir / ".git").exists() or (cache_dir / "HEAD").exists():
-                self._repo = Repo(str(cache_dir))
-                self._workdir = str(cache_dir)
-                # Refresh from origin so we operate on current refs.
-                try:
-                    porcelain.fetch(self._repo, remote_location=url)
-                    log.debug("Git-FS fetched from %s", self._display_origin_url)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "Git-FS fetch from %s failed: %s",
-                        self._display_origin_url,
-                        exc,
-                    )
-            else:
-                log.info("Git-FS cloning %s -> %s", self._display_origin_url, cache_dir)
-                self._repo = porcelain.clone(
-                    url,
-                    str(cache_dir),
-                    bare=True,
-                    depth=None,
+            from core.proxy import proxy_config_from_kwargs
+
+            proxy_cfg = proxy_config_from_kwargs(_ignored)
+            if proxy_cfg is not None:
+                self._connect_url, self._transport_kwargs, self._tunnels = _proxied_transport(
+                    url, proxy_cfg
                 )
-                self._workdir = str(cache_dir)
+            try:
+                if (cache_dir / ".git").exists() or (cache_dir / "HEAD").exists():
+                    self._repo = Repo(str(cache_dir))
+                    self._workdir = str(cache_dir)
+                    # Refresh from origin so we operate on current refs.
+                    try:
+                        self._fetch_origin()
+                        log.debug("Git-FS fetched from %s", self._display_origin_url)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "Git-FS fetch from %s failed: %s",
+                            self._display_origin_url,
+                            exc,
+                        )
+                else:
+                    log.info("Git-FS cloning %s -> %s", self._display_origin_url, cache_dir)
+                    self._repo = porcelain.clone(
+                        self._connect_url,
+                        str(cache_dir),
+                        bare=True,
+                        depth=None,
+                        **self._transport_kwargs,
+                    )
+                    self._workdir = str(cache_dir)
+            except BaseException:
+                self._close_tunnels()
+                raise
 
         # Author identity. Profile takes precedence, then git config,
         # then a deliberately-broken default that forces the user to
@@ -222,9 +277,29 @@ class GitFsSession:
             self._repo.close()
         except Exception:  # noqa: BLE001
             pass
+        self._close_tunnels()
 
     def disconnect(self) -> None:
         self.close()
+
+    def _close_tunnels(self) -> None:
+        for tunnel in self._tunnels:
+            tunnel.close()
+        self._tunnels = []
+
+    def _fetch_origin(self) -> None:
+        """Fetch from origin, honouring the profile proxy when set."""
+        if not self._transport_kwargs:
+            porcelain.fetch(self._repo, remote_location=self._connect_url)
+            return
+        # ``porcelain.fetch`` has no pool_manager hook, so go through the
+        # transport directly (it never updates refs for a bare URL anyway).
+        client, path = get_transport_and_path(
+            self._connect_url,
+            config=self._repo.get_config_stack(),
+            **self._transport_kwargs,
+        )
+        client.fetch(path.encode() if isinstance(path, str) else path, self._repo)
 
     def _git_config_value(self, section: str, key: str) -> str:
         try:
@@ -986,9 +1061,10 @@ class GitFsSession:
             try:
                 porcelain.push(
                     self._repo,
-                    remote_location=self._origin_url,
+                    remote_location=self._connect_url,
                     refspecs=[f"refs/heads/{b}:refs/heads/{b}".encode()],
                     force=False,
+                    **self._transport_kwargs,
                 )
             except Exception as exc:
                 if "non-fast-forward" in str(exc).lower():

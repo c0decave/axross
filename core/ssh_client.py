@@ -378,7 +378,9 @@ class SSHSession:
         items: list[FileItem] = []
         for attr in self.sftp.listdir_attr(path):
             items.append(self._attr_to_item(attr))
-        return items
+        from core.path_policy import drop_unsafe_names
+
+        return drop_unsafe_names(items, origin=f"SFTP {path}")
 
     def stat(self, path: str) -> FileItem:
         attr = self.sftp.lstat(path)

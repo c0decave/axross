@@ -194,13 +194,14 @@ class WMISession:
         proxy_username: str = "",
         proxy_password: str = "",
     ):
-        from core.proxy import warn_unsupported_proxy
+        from core.proxy import refuse_unsupported_proxy
 
-        warn_unsupported_proxy(
+        refuse_unsupported_proxy(
             "WMI",
             proxy_type,
             proxy_host,
-            "WMI/DCOM uses RPC/DCOM; core.proxy is not wired into impacket DCOM.",
+            "WMI/DCOM negotiates dynamic RPC ports after the endpoint mapper, so a single "
+            "proxied connection is not enough.",
         )
         if not IMPACKET_AVAILABLE:
             raise ImportError(

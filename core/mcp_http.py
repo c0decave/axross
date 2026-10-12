@@ -95,6 +95,12 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 # activity shouldn't hold resources forever. Tunable via server
 # config for long-running batch workflows.
 DEFAULT_SESSION_IDLE_SECONDS = 30 * 60  # 30 minutes
+#: Hard cap on live sessions. Each session owns a 10k-entry queue, a
+#: replay ring and a log route, so an unauthenticated ``initialize``
+#: loop must not be able to mint them without bound.
+MAX_SESSIONS = 256
+#: Socket timeout per connection, which also bounds the TLS handshake.
+CONNECTION_TIMEOUT_SECONDS = 30.0
 
 # Maximum number of queued notifications per session. A client that
 # never consumes its SSE stream shouldn't be able to grow the queue
@@ -186,6 +192,24 @@ def _is_loopback(host: str) -> bool:
     except ValueError:
         # Hostname — assume non-loopback unless literally "localhost".
         return host.lower() == "localhost"
+
+
+def _loopback_host_header(value: str) -> bool:
+    """True when a ``Host`` / ``Origin`` authority names this machine.
+
+    A DNS-rebinding page reaches the loopback listener with its own
+    hostname in ``Host``; only literal loopback names pass.
+    """
+    host = (value or "").strip()
+    if host.startswith("["):
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:
+        host = host.split(":", 1)[0]
+    return bool(host) and _is_loopback(host)
+
+
+class SessionLimitError(RuntimeError):
+    """The registry is at ``max_sessions`` even after idle eviction."""
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +311,9 @@ class _SessionRegistry:
         log_forwarder: "_mcp._LogForwarder | None" = None,
         rate_burst: int | None = None,
         rate_refill_per_sec: float | None = None,
+        max_sessions: int = MAX_SESSIONS,
     ):
+        self._max_sessions = max_sessions
         self._sessions: dict[str, _HttpSession] = {}
         self._lock = threading.Lock()
         self._idle_seconds = idle_seconds
@@ -299,6 +325,12 @@ class _SessionRegistry:
         self._rate_refill_per_sec = rate_refill_per_sec
 
     def create(self) -> _HttpSession:
+        # Idle eviction runs here so it needs no timer thread; the cap
+        # is checked after it, so a quiet server never refuses.
+        self.evict_idle()
+        with self._lock:
+            if len(self._sessions) >= self._max_sessions:
+                raise SessionLimitError(f"more than {self._max_sessions} live sessions")
         sid = uuid.uuid4().hex
         limiter = None
         if self._rate_burst is not None and self._rate_refill_per_sec is not None:
@@ -476,6 +508,13 @@ def _make_ssl_context(config: HTTPServerConfig) -> ssl.SSLContext:
 
 
 class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
+    # StreamRequestHandler applies this to the connection socket, so a
+    # client that connects and never speaks (or never finishes the TLS
+    # handshake) is dropped instead of pinning a thread forever.
+    timeout = CONNECTION_TIMEOUT_SECONDS
+    # True for plain-HTTP loopback servers: enables the Host/Origin
+    # check in :meth:`_check_local_origin`. Set by the factory.
+    _local_only: bool = False
     # Set by the factory below.
     _tools: list = []
     _server_name: str = "axross-mcp"
@@ -554,7 +593,35 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         self._send_error(429, "too many requests from this IP — slow down")
         return False
 
+    def _check_local_origin(self) -> bool:
+        """Refuse DNS-rebinding on the unauthenticated loopback listener.
+
+        Plain (non-TLS) servers have no client authentication, so the
+        only thing keeping a web page from driving them is that a page
+        cannot forge ``Host``. After a rebind the page's own hostname
+        arrives in ``Host`` / ``Origin``; reject anything that is not a
+        literal loopback name. mTLS servers authenticate the peer and
+        are served under whatever name their certificate carries.
+        """
+        if not self._local_only:
+            return True
+        host = self.headers.get("Host")
+        origin = self.headers.get("Origin")
+        if host is not None and not _loopback_host_header(host):
+            self._send_error(403, "Host header is not a loopback name")
+            return False
+        if origin is not None:
+            from urllib.parse import urlsplit
+
+            netloc = urlsplit(origin).netloc
+            if not _loopback_host_header(netloc):
+                self._send_error(403, "cross-origin request refused")
+                return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802 — stdlib naming
+        if not self._check_local_origin():
+            return
         if not self._check_ip_cap():
             return
         if self.path == "/health":
@@ -578,6 +645,8 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         self._send_error(404, "not found")
 
     def do_DELETE(self) -> None:  # noqa: N802 — stdlib naming
+        if not self._check_local_origin():
+            return
         if not self._check_ip_cap():
             return
         if self.path != "/messages":
@@ -606,6 +675,8 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802 — stdlib naming
+        if not self._check_local_origin():
+            return
         if not self._check_ip_cap():
             return
         if self.path != "/messages":
@@ -684,7 +755,11 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
                         "missing Mcp-Session-Id (only initialize may omit it)",
                     )
                     return
-                sess = self._sessions.create()
+                try:
+                    sess = self._sessions.create()
+                except SessionLimitError:
+                    self._send_error(503, "too many sessions — retry later")
+                    return
                 sess.cert_fingerprint = peer_fp
                 created_now = True
 
@@ -858,7 +933,13 @@ class _ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def _build_handler_class(
-    tools: list, resources=None, sessions=None, log_forwarder=None, http_ip_limiter=None, tasks=None
+    tools: list,
+    resources=None,
+    sessions=None,
+    log_forwarder=None,
+    http_ip_limiter=None,
+    tasks=None,
+    local_only: bool = False,
 ) -> type:
     """Return a _McpHTTPHandler subclass with ``_tools`` bound.
 
@@ -877,12 +958,19 @@ def _build_handler_class(
     _Bound._log_forwarder = log_forwarder
     _Bound._http_ip_limiter = http_ip_limiter
     _Bound._tasks = tasks
+    _Bound._local_only = local_only
     return _Bound
 
 
 def build_server(config: HTTPServerConfig) -> _ThreadingServer:
     """Construct the HTTP server. Separated from :func:`serve_http` so
     tests can drive a single request at a time."""
+    tls_flags = (config.cert_file, config.key_file, config.ca_file)
+    if any(tls_flags) and not all(tls_flags):
+        raise ValueError(
+            "mTLS needs cert_file, key_file and ca_file together; "
+            "refusing to fall back to plain HTTP with a partial set"
+        )
     if not config.tls_enabled() and not _is_loopback(config.host):
         raise ValueError(
             f"refusing to bind to non-loopback host {config.host!r} "
@@ -930,6 +1018,7 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
         log_forwarder=log_forwarder,
         http_ip_limiter=http_ip_limiter,
         tasks=tasks,
+        local_only=not config.tls_enabled(),
     )
     srv = _ThreadingServer((config.host, config.port), handler_cls)
     # Stash the forwarder on the server so serve_http's teardown
@@ -938,7 +1027,12 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
     srv._mcp_log_forwarder = log_forwarder  # type: ignore[attr-defined]
     if config.tls_enabled():
         ctx = _make_ssl_context(config)
-        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        # Handshake in the per-connection thread (first read, under the
+        # handler's socket timeout), not inside accept(): otherwise one
+        # silent TCP client stalls the accept loop for everyone.
+        srv.socket = ctx.wrap_socket(
+            srv.socket, server_side=True, do_handshake_on_connect=False
+        )
         log.info(
             "MCP HTTP+mTLS bound on %s:%d (cert=%s, ca=%s)",
             config.host,

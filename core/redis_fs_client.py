@@ -39,6 +39,32 @@ except ImportError:
     redis = None  # type: ignore[assignment]
 
 
+def _proxied_connection_class(proxy_cfg, use_tls: bool):
+    """redis-py connection class whose TCP leg goes through *proxy_cfg*.
+
+    TLS (``rediss``) is layered on top of the proxied socket by redis-py
+    itself, so certificate and host-name checks still use the real host.
+    """
+    from core.proxy import create_proxy_socket
+
+    base = redis.connection.SSLConnection if use_tls else redis.connection.Connection
+
+    class ProxiedConnection(base):  # type: ignore[misc, valid-type]
+        def _connect(self):
+            timeout = self.socket_connect_timeout or 10.0
+            sock = create_proxy_socket(proxy_cfg, self.host, int(self.port), timeout=float(timeout))
+            sock.settimeout(self.socket_timeout)
+            if use_tls:
+                try:
+                    return self._wrap_socket_with_ssl(sock)
+                except Exception:
+                    sock.close()
+                    raise
+            return sock
+
+    return ProxiedConnection
+
+
 _NS_META = "axross:meta:"
 _NS_DATA = "axross:data:"
 _NS_KIDS = "axross:children:"
@@ -57,14 +83,9 @@ class RedisFsSession(DbFsBackend):
         use_tls: bool = False,
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
+        from core.proxy import proxy_config_from_kwargs
 
-        warn_unsupported_proxy(
-            "Redis",
-            _ignored.get("proxy_type", "none"),
-            _ignored.get("proxy_host", ""),
-            "redis-py connections are not currently wrapped by core.proxy.",
-        )
+        proxy_cfg = proxy_config_from_kwargs(_ignored)
         if redis is None:
             raise ImportError(
                 "Redis backend requires redis-py. Install with: pip install axross[redis]",
@@ -79,14 +100,28 @@ class RedisFsSession(DbFsBackend):
             except ValueError:
                 database = 0
             use_tls = use_tls or parts.scheme == "rediss"
-        self._client = redis.Redis(
-            host=host,
-            port=int(port),
-            password=password or None,
-            db=int(database),
-            ssl=bool(use_tls),
-            decode_responses=False,
-        )
+        client_kwargs: dict = {}
+        if proxy_cfg is not None:
+            # A dedicated pool keeps every connection redis-py ever opens
+            # (reconnects included) on the proxied connection class.
+            client_kwargs["connection_pool"] = redis.ConnectionPool(
+                connection_class=_proxied_connection_class(proxy_cfg, bool(use_tls)),
+                host=host,
+                port=int(port),
+                password=password or None,
+                db=int(database),
+                decode_responses=False,
+            )
+        else:
+            client_kwargs.update(
+                host=host,
+                port=int(port),
+                password=password or None,
+                db=int(database),
+                ssl=bool(use_tls),
+                decode_responses=False,
+            )
+        self._client = redis.Redis(**client_kwargs)
         self._client.ping()
         self._lock = threading.RLock()
         self._display = f"{'rediss' if use_tls else 'redis'}://{host}:{port}/{database}"

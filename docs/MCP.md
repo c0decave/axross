@@ -26,6 +26,9 @@ AXROSS_MCP=1 axross
 axross --mcp-server --mcp-write --mcp-root ~/data
 ```
 
+`--mcp-write` without `--mcp-root` is refused (exit 2): the default root
+is your home directory, which is too wide to be writable.
+
 Requests arrive on stdin (line-delimited JSON), responses go out on
 stdout. Logs go to stderr only. When the MCP path is taken, PyQt is
 not imported — the server runs cleanly on a headless host.

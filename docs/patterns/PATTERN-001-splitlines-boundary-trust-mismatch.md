@@ -78,7 +78,7 @@ for line in diff_text.splitlines():
 A single commit whose file content is:
 
 ```
-OK<CR>diff --git a/.secrets-allowlist b/.secrets-allowlist<CR>--- a/.secrets-allowlist<CR>+++ b/.secrets-allowlist<CR>@@ -1,1 +1,1 @@<CR>+SECRET=AKIAIOSFODNN7EXAMPLE<LF>
+OK<CR>diff --git a/.secrets-allowlist b/.secrets-allowlist<CR>--- a/.secrets-allowlist<CR>+++ b/.secrets-allowlist<CR>@@ -1,1 +1,1 @@<CR>+SECRET=AKIA<example-key-id><LF>
 ```
 
 Constructed with `printf 'OK\rdiff --git a/.secrets-allowlist...' > evil.txt`.
@@ -98,7 +98,7 @@ Constructed with `printf 'OK\rdiff --git a/.secrets-allowlist...' > evil.txt`.
 | 3 | `--- a/.secrets-allowlist` | tracker accepts as old-side header |
 | 4 | `+++ b/.secrets-allowlist` | tracker sets `current_file = ".secrets-allowlist"` |
 | 5 | `@@ -1,1 +1,1 @@` | `in_hunk_body = True` |
-| 6 | `+SECRET=AKIAIOSFODNN7EXAMPLE` | **SKIPPED** — `is_excluded(".secrets-allowlist")` is True |
+| 6 | `+SECRET=AKIA<example-key-id>` | **SKIPPED** — `is_excluded(".secrets-allowlist")` is True |
 
 Scanner output: `clean (1 commits, 0 hits)`. Leak commits, then pushes.
 

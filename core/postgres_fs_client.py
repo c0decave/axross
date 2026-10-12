@@ -50,6 +50,13 @@ CREATE INDEX IF NOT EXISTS axross_files_parent ON axross_files(parent);
 """
 
 
+def _dsn_quote(value: object) -> str:
+    """Quote one libpq connection-string value so spaces, quotes and
+    backslashes in a password or host cannot inject further parameters."""
+    text = str(value).replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{text}'"
+
+
 class PostgresFsSession(DbFsBackend):
     """PostgreSQL-backed FileBackend."""
 
@@ -63,14 +70,7 @@ class PostgresFsSession(DbFsBackend):
         url: str = "",
         **_ignored,
     ):
-        from core.proxy import warn_unsupported_proxy
-
-        warn_unsupported_proxy(
-            "PostgreSQL",
-            _ignored.get("proxy_type", "none"),
-            _ignored.get("proxy_host", ""),
-            "psycopg connections are not currently wrapped by core.proxy.",
-        )
+        self._tunnel = None
         if psycopg is None:
             raise ImportError(
                 "PostgreSQL backend requires psycopg. Install with: pip install axross[postgres]",
@@ -84,11 +84,30 @@ class PostgresFsSession(DbFsBackend):
             database = database or parts.path.lstrip("/")
         if not host or not database:
             raise OSError("PostgreSQL backend needs host and database")
-        self._dsn = f"host={host} port={port} user={username} password={password} dbname={database}"
-        self._conn = psycopg.connect(self._dsn, autocommit=True)
-        self._lock = threading.RLock()
-        with self._lock, self._conn.cursor() as cur:
-            cur.execute(_SCHEMA)
+        from core import proxy as proxy_mod
+
+        # With a proxy, libpq dials a loopback tunnel (``hostaddr``/``port``)
+        # while ``host`` keeps the real name for TLS verification.
+        self._tunnel = proxy_mod.open_tunnel(_ignored, host, int(port))
+        try:
+            if self._tunnel is not None:
+                params = [
+                    ("host", host),
+                    ("hostaddr", self._tunnel.host),
+                    ("port", self._tunnel.port),
+                ]
+            else:
+                params = [("host", host), ("port", port)]
+            params += [("user", username), ("password", password), ("dbname", database)]
+            self._dsn = " ".join(f"{k}={_dsn_quote(v)}" for k, v in params)
+            self._conn = psycopg.connect(self._dsn, autocommit=True)
+            self._lock = threading.RLock()
+            with self._lock, self._conn.cursor() as cur:
+                cur.execute(_SCHEMA)
+        except BaseException:
+            if self._tunnel is not None:
+                self._tunnel.close()
+            raise
         self._display = f"postgres://{username}@{host}:{port}/{database}"
         log.info("PostgreSQL-FS connected: %s", self._display)
 
@@ -102,6 +121,8 @@ class PostgresFsSession(DbFsBackend):
             self._conn.close()
         except Exception:  # noqa: BLE001
             pass
+        if self._tunnel is not None:
+            self._tunnel.close()
 
     # ------------------------------------------------------------------
     # Query passthrough — slice 3 of API_GAPS.

@@ -150,7 +150,7 @@ class SchedulerDialog(QDialog):
 
         actions.addStretch(1)
         self._status = QLabel(self)
-        self._status.setStyleSheet("color: #666;")
+        self._status.setProperty("role", "muted")
         actions.addWidget(self._status)
         layout.addLayout(actions)
 
