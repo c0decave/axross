@@ -50,14 +50,33 @@ class NfsSession:
         proxy_username: str = "",
         proxy_password: str = "",
     ):
-        from core.proxy import refuse_unsupported_proxy
+        from core.proxy import LocalTunnel, proxy_config_from_kwargs, refuse_unsupported_proxy
 
-        refuse_unsupported_proxy(
-            "NFS",
-            proxy_type,
-            proxy_host,
-            "NFS is mounted by the kernel, so a user-space proxy cannot carry it.",
+        cfg = proxy_config_from_kwargs(
+            {
+                "proxy_type": proxy_type,
+                "proxy_host": proxy_host,
+                "proxy_port": proxy_port,
+                "proxy_username": proxy_username,
+                "proxy_password": proxy_password,
+            }
         )
+        self._tunnel = None
+        self._mount_host, self._mount_port = host, port
+        if cfg is not None:
+            if version < 4:
+                refuse_unsupported_proxy(
+                    "NFSv3",
+                    proxy_type,
+                    proxy_host,
+                    "NFSv3 negotiates mountd / portmap / statd on several ports, which one "
+                    "proxied connection cannot carry. Set the profile's NFS version to 4.",
+                )
+            # NFSv4 is a single TCP port: the kernel mounts the loopback end of
+            # a tunnel and every byte goes through the proxy. The kernel's own
+            # socket belongs to root, hence allow_root_peers.
+            self._tunnel = LocalTunnel(cfg, host, port, allow_root_peers=True).start()
+            self._mount_host, self._mount_port = self._tunnel.host, self._tunnel.port
         self._host = host
         self._export = export_path.rstrip("/") or "/"
         self._port = port
@@ -71,7 +90,11 @@ class NfsSession:
             self._own_mount = True
 
         self._mounted = False
-        self._connect()
+        try:
+            self._connect()
+        except BaseException:
+            self._close_tunnel()
+            raise
 
     def _run(self, cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
         """Run a command, prepending sudo if not root."""
@@ -84,19 +107,21 @@ class NfsSession:
             text=True,
             check=check,
             timeout=30,
-                    env=clean_child_env(),
+            env=clean_child_env(),
         )
 
     def _connect(self) -> None:
         """Mount the NFS export."""
-        source = f"{self._host}:{self._export}"
+        # With a proxy the kernel dials the loopback tunnel, not the server.
+        source = f"{self._mount_host}:{self._export}"
         # NFSv4 does not use a separate MOUNT protocol, so passing
         # mountport= only makes sense for v3. Including it on v4 causes
         # mount.nfs to reject the request ("Protocol not supported").
+        port = self._mount_port
         if self._version >= 4:
-            opts = f"vers={self._version},port={self._port},nolock,tcp"
+            opts = f"vers={self._version},port={port},nolock,tcp"
         else:
-            opts = f"vers={self._version},port={self._port},mountport={self._port},nolock,tcp"
+            opts = f"vers={self._version},port={port},mountport={port},nolock,tcp"
 
         try:
             self._run(["mount", "-t", "nfs", "-o", opts, source, self._mount_point])
@@ -146,6 +171,13 @@ class NfsSession:
                 os.rmdir(self._mount_point)
             except OSError:
                 pass
+        self._close_tunnel()
+
+    def _close_tunnel(self) -> None:
+        tunnel = getattr(self, "_tunnel", None)
+        if tunnel is not None:
+            tunnel.close()
+            self._tunnel = None
 
     def list_dir(self, path: str) -> list[FileItem]:
         full = self._full_path(path)
@@ -308,7 +340,7 @@ class NfsSession:
             capture_output=True,
             text=True,
             timeout=float(timeout),
-                    env=clean_child_env(),
+            env=clean_child_env(),
         )
         if proc.returncode != 0:
             stderr = proc.stderr.strip() or "showmount returned non-zero"

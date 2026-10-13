@@ -12,6 +12,60 @@ connecting directly; removing the proxy from the profile is the explicit
 opt-out. Backends with no network transport at all (RamFS, SQLite, MTP)
 only log that the setting has no effect, because nothing can leak.
 
+## Proxy kinds
+
+`proxy_type` is one string: transport, optionally `+` an authentication
+scheme (HTTP kinds only).
+
+| Kind | Meaning |
+|---|---|
+| `socks4` | SOCKS4. Host names are sent as SOCKS4a; a server that only speaks plain SOCKS4 (e.g. Dante) needs an IPv4 address as target |
+| `socks5` | SOCKS5 (host names resolved at the proxy), optional username/password |
+| `http` | HTTP CONNECT; Basic when a username is set |
+| `https` | HTTP CONNECT over **TLS to the proxy**; certificate verified against `ca_file`, else the system store |
+| `http+basic` / `+ntlm` / `+negotiate` / `+kerberos` | explicit scheme; `https+…` likewise |
+
+NTLM and Negotiate use `pyspnego` (already shipped with SMB support).
+Kerberos needs the optional `gssapi` / `krb5` libraries, which the
+prebuilt binaries do not bundle; without them the error says so.
+
+## Default proxy, bypass list, PAC
+
+*Tools → Network & Proxy…* stores one default (`~/.config/axross/proxy.json`,
+mode 0600; the password lives in the keyring entry `__default_proxy__`):
+kind, endpoint, credentials, CA file, a **bypass list** and an optional
+**PAC** location.
+
+Each profile chooses how it uses it (`proxy_mode`):
+
+| Mode | Effect |
+|---|---|
+| `custom` | the profile's own proxy fields (what every profile did before; no proxy fields means direct) |
+| `default` | the default above: bypass list first, then PAC if set, else the fixed endpoint |
+| `none` | always direct, even when a default exists |
+
+Profiles that exist before the upgrade stay `custom`, i.e. they do **not**
+silently inherit the default. *Use for all profiles…* switches every
+proxy-capable profile to `default` in one step.
+
+- **Bypass entries**: `host`, `.domain` / `*.domain` (the domain and its
+  subdomains), IP literals, CIDR blocks, `<local>`, `*`, each optionally
+  `:port`. A host name is never resolved to test a CIDR (that would be a
+  DNS lookup outside the proxy).
+- **PAC** (`http(s)` URL or file): evaluated by a restricted interpreter
+  (`core/pac.py`) -- no `eval`, no I/O, step / depth / string limits, the
+  usual helper functions. Results are cached for 300 s, and the last good
+  script is kept when a refresh fails. A script that cannot be fetched or
+  evaluated **fails the connection closed**; it never falls back to
+  direct. For PAC results the authentication scheme comes from the
+  default's kind (`http+ntlm` makes a PAC `PROXY` entry authenticate with
+  NTLM).
+- **Test proxy** opens a real tunnel to a target you name and reports the
+  stage that failed (`config`, `proxy`, `tls`, `auth`, `tunnel`).
+- Each pane shows its route (`via SOCKS5 host:port`; tooltip: why, never a
+  password).
+- `scripting.open_url(...)` without `proxy_*` keywords uses the default.
+
 ## Verdict table
 
 | Protocol | SOCKS4 | SOCKS5 | HTTP CONNECT | Auth | Mechanism |
@@ -27,7 +81,7 @@ only log that the setting has no effect, because nothing can leak.
 | **NNTP / NNTPS** | ✅ | ✅ | ✅ | ✅ | own NNTP wire client opens via `create_proxy_socket` before optional TLS / STARTTLS |
 | **Gopher / Gophers** | ✅ | ✅ | ✅ | ✅ | own Gopher socket helper uses `create_proxy_socket`, then optional TLS |
 | **PJL** | ✅ | ✅ | ✅ | ✅ | raw JetDirect/PJL socket helper uses `create_proxy_socket` |
-| **S3-compatible** | ❌ | ❌ | ✅ | ✅ | `botocore.config.Config(proxies={...})`; botocore does not reliably accept SOCKS proxy URLs, so axross rejects SOCKS with a warning. |
+| **S3-compatible** | ✅ | ✅ | ✅ | ✅ | `botocore.config.Config(proxies={...})` pointed at the loopback shim for every kind botocore cannot speak itself (SOCKS, HTTPS, NTLM/Negotiate) |
 | **Azure Blob / Files** | ✅ | ✅ | ✅ | ✅ | custom `azure.core.pipeline.transport.RequestsTransport` with pre-proxied `requests.Session` |
 | **OneDrive / SharePoint** | ⚠ | ⚠ | ⚠ | ✅ | Graph calls use a proxied `requests.Session`; MSAL receives the same proxy dict. First-time interactive browser consent is outside axross and may use browser/system proxy settings. |
 | **Google Drive** | ⚠ | ⚠ | ⚠ | ✅ | OAuth token/refresh uses a proxied `requests` transport; Drive API uses `httplib2.Http(proxy_info=ProxyInfo(...))` via `AuthorizedHttp`. First-time browser consent is outside axross. |
@@ -44,10 +98,11 @@ only log that the setting has no effect, because nothing can leak.
 | **MongoDB** | ✅ | ✅ | ✅ | ✅ | pymongo dials a loopback tunnel with `directConnection=True` (otherwise the driver would dial discovered replica-set members around the proxy). The backend sets no TLS options today. |
 | **LDAP / LDAPS** | ✅ | ✅ | ✅ | ✅ | ldap3 dials a loopback tunnel; LDAPS passes `valid_names`/`sni` so the certificate is still checked against the real host |
 | **Git** | ✅ | ✅ | ✅ | ✅ | `http(s)`: urllib3 `SOCKSProxyManager`/`ProxyManager` handed to dulwich; `ssh` / scp-style / `git://`: loopback tunnel, ssh keeps the real host identity via `HostKeyAlias` |
-| **SVN** | ⚠ | ⚠ | ⚠ | ✅ | `svn://`, `svn+ssh://`: loopback tunnel (`HostKeyAlias` for ssh). `http(s)://`: **HTTP proxy only** (the svn client has no SOCKS) via a private 0600 `servers` file, so the proxy password never appears in argv; SOCKS fails closed. The private `--config-dir` replaces `~/.subversion` for that session. |
+| **SVN** | ✅ | ✅ | ✅ | ✅ | `svn://`, `svn+ssh://`: loopback tunnel (`HostKeyAlias` for ssh). `http(s)://`: the svn client only speaks plain HTTP proxies, so SOCKS / HTTPS / NTLM go through the loopback shim; the endpoint and secret live in a private 0600 `servers` file, never in argv. The private `--config-dir` replaces `~/.subversion` for that session. |
 | **SLP** | ⚠ | ⚠ | ⚠ | ✅ | TCP mode: `create_proxy_socket`. UDP mode: **SOCKS5 only** (UDP ASSOCIATE); the target is resolved by the proxy, never locally. Other proxy types fail closed. |
 | **TFTP** | ❌ | ⚠ | ❌ | ✅ | UDP: **SOCKS5 only** (UDP ASSOCIATE) through a scoped patch of tftpy's UDP socket. The server must be an **IP address** (tftpy resolves names locally, which would leak the lookup); SOCKS4/HTTP fail closed. Transfers are serialised by a lock. |
-| **NFS / iSCSI** | ❌ | ❌ | ❌ | — | kernel mount / initiator; **fails closed** when a proxy is set. |
+| **NFS (v4)** | ✅ | ✅ | ✅ | ✅ | the kernel mounts the loopback end of a tunnel (`127.0.0.1:/export`, `port=<tunnel>`); one TCP port is all NFSv4 needs. **NFSv3 fails closed** (mountd / portmap / statd need several ports). |
+| **iSCSI** | ✅ | ✅ | ✅ | ✅ | the initiator logs in to the loopback end of a tunnel; the node record is created by hand (SendTargets would hand back the target's real portal addresses), and a login that the target redirects off the tunnel is torn down and rejected. |
 | **rsh** | ❌ | ❌ | ❌ | — | needs a reverse stderr connection from the server and a privileged source port; **fails closed**. |
 | **WMI** | ❌ | ❌ | ❌ | — | DCOM negotiates dynamic RPC ports after the endpoint mapper; **fails closed**. |
 | **RamFS** | — | — | — | — | in-process; no network at all, proxy fields N/A. |
@@ -101,6 +156,15 @@ Every backend now reaches the proxy via one of three primitives:
 5. **`create_udp_proxy_socket` / `patched_module_udp_socket`** — SOCKS5
    UDP ASSOCIATE for SLP and TFTP. SOCKS4 and HTTP CONNECT cannot carry
    UDP and are refused.
+6. **`core.proxy_http.LocalProxyShim` / `effective_http_proxy(cfg)`** — a
+   loopback *HTTP* proxy for libraries that only accept a plain HTTP
+   proxy URL (botocore, the svn client, rsync's helper, httplib2). It
+   dials the real upstream itself -- SOCKS4/5, TLS to the proxy, Basic /
+   NTLM / Negotiate -- and relays CONNECT and absolute-form requests.
+   Same-uid peers only; a shim port is registered with the SSRF guard
+   only while it is live. Chunked request bodies are refused (501);
+   authenticated absolute-form requests buffer the body (limit 16 MiB)
+   because NTLM may need to resend it.
 
 ### SSRF guard
 
@@ -119,7 +183,8 @@ that accept proxy metadata for warning purposes, use the same five
 kwargs:
 
 ```
-proxy_type      "none" | "socks4" | "socks5" | "http"
+proxy_type      "none" | "socks4" | "socks5" | "http" | "https"
+                # optionally "+basic" | "+ntlm" | "+negotiate" | "+kerberos" on http / https
 proxy_host      "proxy.example"
 proxy_port      1080
 proxy_username  ""        # optional
@@ -187,14 +252,10 @@ documented backend proxy hook.
 
 ### S3 SOCKS
 
-S3 is intentionally **HTTP CONNECT only** in axross. The boto3 /
-botocore proxy path accepts ordinary HTTP proxy URLs, but SOCKS URLs
-are not handled reliably by botocore's transport stack. When a saved
-profile or direct `S3Session` configures `proxy_type="socks4"` or
-`"socks5"`, axross logs a warning and raises a clear `OSError`.
-
-Use a local SOCKS-to-HTTP relay if you need to reach S3 through an
-upstream SOCKS proxy.
+botocore (via urllib3) only speaks HTTP proxy URLs, so SOCKS4/5, HTTPS
+and NTLM/Negotiate proxies are fronted by the loopback shim
+(`effective_http_proxy`): botocore sees `http://127.0.0.1:<port>`, the
+shim talks to the real proxy. Earlier versions rejected SOCKS for S3.
 
 ### Unsupported backends
 
@@ -224,12 +285,21 @@ rather than silently ignored.
 
 ### NFS / iSCSI / MTP
 
-These are kernel-level mounts (NFS via `mount -t nfs`, iSCSI via
-`iscsiadm`, MTP via an external FUSE mounter). Network IO happens
-entirely in kernel space and is invisible to a userspace SOCKS
-proxy. If you need to tunnel them, do it at the OS level (e.g.
-route the entire process or container through a proxied network
-namespace).
+NFSv4 and iSCSI are kernel clients, but each needs only one TCP
+connection. axross starts a loopback tunnel to the real server through
+the proxy and points the kernel at it:
+
+- **NFSv4**: `mount -t nfs -o vers=4.x,port=<tunnel>,nolock,tcp
+  127.0.0.1:/export`. The session shows the real server name.
+- **iSCSI**: `iscsiadm -m node -o new` for the tunnel portal, then login.
+  After login the session's current portal is verified; a target that
+  redirects the login to another address would bypass the proxy, so the
+  session is logged out and the connect fails.
+- The tunnel peer is the kernel (uid 0), so these two tunnels also accept
+  root-owned peers; every other tunnel stays same-uid only.
+- **NFSv3 fails closed**: it negotiates mountd, portmap and statd on
+  several ports. Switch the profile to NFSv4 or remove the proxy.
+- **MTP** is USB / FUSE and has no network path.
 
 ## How to test
 
@@ -261,14 +331,37 @@ The host test suite includes a `ProxySupportTests` class
   proxy raises, and Exchange / WinRM / Dropbox / Google Drive SDK
   hooks fail closed when a configured proxy cannot be attached.
 
-For end-to-end proxy tests against real protocols there is a
+### Proxy lab (podman)
+
+`tests/test_proxy_lab.py` runs against **real proxy servers** and is
+opt-in because it builds images:
+
+```
+AXROSS_PROXY_LAB=1 .venv/bin/python -m pytest tests/test_proxy_lab.py -q
+python -m tests.proxy_lab up|down      # start / remove the lab by hand
+```
+
+Everything is named `axproxy-*` on its own network and removed afterwards.
+squid 6 serves Basic, an NTLM handshake (`ntlm_fake_auth`: validates the
+message flow, not the password), an open port and a TLS port; Dante serves
+SOCKS4/5 with and without authentication. The targets (sshd, FTP with
+passive mode, HTTP, redis) publish no ports and their names (`ssh.lab` ...)
+do not resolve on the host, so every green test is proof of routing -- the
+negative controls assert that the same name fails without a proxy. The
+suite covers raw tunnels for every proxy kind, wrong / missing credentials,
+a TLS proxy with the wrong CA, the probe stages, SFTP / FTP / HTTP through
+each kind, and the default proxy, bypass list and PAC through
+`ConnectionManager`. The NTLM *password check* is covered by
+`tests/test_proxy_http.py` (a pyspnego server verifies the credentials).
+Kerberos is not exercised (it needs a KDC).
+
+For end-to-end proxy tests against real protocols there is also a
 `socks-proxy` (SOCKS4/SOCKS5) and `http-proxy` (HTTP proxy/CONNECT)
 container in `tests/docker/` — exercised by `test_protocols.py`
 Section 21d. That section has one direct smoke per proxy protocol
 (SOCKS4, SOCKS5, HTTP CONNECT), then a backend-level proxy matrix for
 WebDAV, FTP, FTPS, SMB, IMAP, POP3, Telnet, Cisco-Telnet, Rsync,
-Azure Blob, and S3. S3 pins SOCKS4/SOCKS5 as explicit rejection tests
-and HTTP as the supported proxy path. Bring up the lab
+Azure Blob, and S3 (SOCKS5 and HTTP). Bring up the lab
 (`cd tests/docker && docker compose up -d --build`) and run the proxy
 subset with:
 

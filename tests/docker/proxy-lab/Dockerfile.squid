@@ -1,0 +1,10 @@
+# HTTP / HTTPS proxy for the proxy lab: Basic (ncsa), NTLM handshake
+# (ntlm_fake_auth: validates the message flow, not the password), an
+# open port, and a TLS port (https_port) for "TLS to the proxy".
+FROM docker.io/library/alpine:3.20
+RUN apk add --no-cache squid openssl
+COPY squid.conf /etc/squid/squid.conf
+COPY entrypoint-squid.sh /entrypoint.sh
+RUN chmod 0755 /entrypoint.sh
+EXPOSE 3128 3129 3130
+CMD ["/entrypoint.sh"]

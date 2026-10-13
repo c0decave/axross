@@ -70,14 +70,25 @@ class IscsiSession:
         proxy_username: str = "",
         proxy_password: str = "",
     ):
-        from core.proxy import refuse_unsupported_proxy
+        from core.proxy import LocalTunnel, proxy_config_from_kwargs
 
-        refuse_unsupported_proxy(
-            "iSCSI",
-            proxy_type,
-            proxy_host,
-            "iSCSI is handled by the kernel initiator, so a user-space proxy cannot carry it.",
+        cfg = proxy_config_from_kwargs(
+            {
+                "proxy_type": proxy_type,
+                "proxy_host": proxy_host,
+                "proxy_port": proxy_port,
+                "proxy_username": proxy_username,
+                "proxy_password": proxy_password,
+            }
         )
+        self._tunnel = None
+        self._proxied = cfg is not None
+        # The portal the initiator is told about: the real one, or, behind a
+        # proxy, the loopback end of a tunnel (iscsid's socket is root's).
+        self._portal_ip, self._portal_port = target_ip, port
+        if cfg is not None:
+            self._tunnel = LocalTunnel(cfg, target_ip, port, allow_root_peers=True).start()
+            self._portal_ip, self._portal_port = self._tunnel.host, self._tunnel.port
         self._target_ip = target_ip
         self._target_iqn = target_iqn
         self._port = port
@@ -94,7 +105,11 @@ class IscsiSession:
         else:
             self._mount_point = tempfile.mkdtemp(prefix="axross-iscsi-")
             self._tmp_dir_created = True
-        self.connect()
+        try:
+            self.connect()
+        except BaseException:
+            self._close_tunnel()
+            raise
 
     # ------------------------------------------------------------------
     # FileBackend protocol -- identity / state
@@ -141,6 +156,13 @@ class IscsiSession:
             except OSError as exc:
                 log.warning("Could not remove temp dir %s: %s", self._mount_point, exc)
             self._tmp_dir_created = False
+        self._close_tunnel()
+
+    def _close_tunnel(self) -> None:
+        tunnel = getattr(self, "_tunnel", None)
+        if tunnel is not None:
+            tunnel.close()
+            self._tunnel = None
 
     # ------------------------------------------------------------------
     # File operations (delegate to mounted local filesystem)
@@ -275,7 +297,7 @@ class IscsiSession:
                 capture_output=True,
                 text=True,
                 timeout=float(timeout),
-                            env=clean_child_env(),
+                env=clean_child_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(f"iscsiadm discovery timed out: {exc}") from exc
@@ -314,7 +336,7 @@ class IscsiSession:
             "-T",
             self._target_iqn,
             "-p",
-            f"{self._target_ip}:{self._port}",
+            f"{self._portal_ip}:{self._portal_port}",
             "--login",
         ]
         proc = subprocess.run(
@@ -343,7 +365,7 @@ class IscsiSession:
             capture_output=True,
             text=True,
             timeout=10.0,
-                    env=clean_child_env(),
+            env=clean_child_env(),
         )
         if proc.returncode != 0:
             raise OSError(f"lsblk rc={proc.returncode}: {proc.stderr.strip()[:300]}")
@@ -440,7 +462,7 @@ class IscsiSession:
                 capture_output=capture,
                 text=True,
                 timeout=timeout,
-                            env=clean_child_env(),
+                env=clean_child_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(
@@ -453,7 +475,26 @@ class IscsiSession:
 
     def _discover(self) -> None:
         """Discover iSCSI targets on the portal."""
-        portal = f"{self._target_ip}:{self._port}"
+        portal = f"{self._portal_ip}:{self._portal_port}"
+        if self._proxied:
+            # SendTargets answers with the target's own portal addresses, and
+            # iscsid would then dial those directly -- around the proxy. So
+            # the node record is created by hand for the tunnel portal only.
+            log.info("Registering iSCSI node %s for tunnel portal %s", self._target_iqn, portal)
+            self._run_privileged(
+                [
+                    "iscsiadm",
+                    "-m",
+                    "node",
+                    "-T",
+                    self._target_iqn,
+                    "-p",
+                    portal,
+                    "-o",
+                    "new",
+                ],
+            )
+            return
         log.info("Discovering iSCSI targets on %s", portal)
         result = self._run_privileged(
             ["iscsiadm", "-m", "discovery", "-t", "sendtargets", "-p", portal],
@@ -492,7 +533,7 @@ class IscsiSession:
         if not self._username:
             return
 
-        portal = f"{self._target_ip}:{self._port}"
+        portal = f"{self._portal_ip}:{self._portal_port}"
         base = [
             "iscsiadm",
             "-m",
@@ -547,15 +588,17 @@ class IscsiSession:
                 self._target_iqn,
             )
             return []
-        if not _IP_SAFE.match(self._target_ip or ""):
+        if not _IP_SAFE.match(self._portal_ip or ""):
             log.debug(
                 "IP %r contains characters we refuse to glob",
-                self._target_ip,
+                self._portal_ip,
             )
             return []
-        if not isinstance(self._port, int):
+        if not isinstance(self._portal_port, int):
             return []
-        pattern = f"/etc/iscsi/nodes/{self._target_iqn}/{self._target_ip},{self._port},*/default"
+        pattern = (
+            f"/etc/iscsi/nodes/{self._target_iqn}/{self._portal_ip},{self._portal_port},*/default"
+        )
         # Try non-privileged glob first. If the on-disk perms let us
         # read the node directory we get the paths without sudo.
         local = sorted(glob.glob(pattern))
@@ -573,7 +616,7 @@ class IscsiSession:
                 capture_output=True,
                 text=True,
                 check=False,
-                            env=clean_child_env(),
+                env=clean_child_env(),
             )
         except Exception as exc:  # noqa: BLE001
             log.debug("sudo glob of node config failed: %s", exc)
@@ -628,7 +671,7 @@ class IscsiSession:
             capture_output=True,
             text=True,
             check=False,
-                    env=clean_child_env(),
+            env=clean_child_env(),
         )
         if result.returncode != 0:
             raise OSError(
@@ -649,7 +692,7 @@ class IscsiSession:
             capture_output=True,
             text=True,
             check=False,
-                    env=clean_child_env(),
+            env=clean_child_env(),
         )
         if result.returncode != 0:
             raise OSError(
@@ -701,7 +744,7 @@ class IscsiSession:
         left a kernel session behind (a crash, or a disconnect that could
         not free the block device because it was still open).
         """
-        portal = f"{self._target_ip}:{self._port}"
+        portal = f"{self._portal_ip}:{self._portal_port}"
         log.info("Logging in to %s via %s", self._target_iqn, portal)
         try:
             self._run_privileged(
@@ -716,11 +759,39 @@ class IscsiSession:
             else:
                 raise
         self._logged_in = True
+        if self._proxied:
+            self._assert_session_via_tunnel(portal)
         log.info("iSCSI login successful")
+
+    def _assert_session_via_tunnel(self, portal: str) -> None:
+        """Fail closed when the session did not stay on the tunnel portal.
+
+        A target may answer the login with a redirect to another address;
+        the initiator would follow it with a direct connection that no proxy
+        carries. The session is checked after login and torn down if its
+        current portal is not the tunnel's loopback address.
+        """
+        result = self._run_privileged(["iscsiadm", "-m", "session", "-P", "3"], check=False)
+        in_target = False
+        seen: list[str] = []
+        for line in split_lf_only_stream(result.stdout or ""):
+            stripped = line.strip()
+            if stripped.startswith("Target:"):
+                in_target = self._target_iqn in stripped
+            elif in_target and stripped.startswith(("Current Portal:", "Persistent Portal:")):
+                seen.append(stripped.split(":", 1)[1].strip().split(",")[0])
+        if seen and all(addr == portal for addr in seen):
+            return
+        self._logout()
+        raise OSError(
+            f"iSCSI session for {self._target_iqn} left the proxy tunnel "
+            f"(portals: {', '.join(seen) or 'unknown'}, expected {portal}); "
+            "the target redirected the login, which would bypass the proxy."
+        )
 
     def _logout(self) -> None:
         """Log out from the iSCSI target."""
-        portal = f"{self._target_ip}:{self._port}"
+        portal = f"{self._portal_ip}:{self._portal_port}"
         log.info("Logging out from %s", self._target_iqn)
         try:
             self._run_privileged(
@@ -742,9 +813,8 @@ class IscsiSession:
         name. We parse ``iscsiadm -m session -P 3`` output for the
         ``Attached scsi disk sdX`` line and promote it to ``/dev/sdX``.
         """
-        pattern = (
-            f"/dev/disk/by-path/ip-{self._target_ip}:{self._port}-iscsi-{self._target_iqn}-lun-*"
-        )
+        portal = f"{self._portal_ip}:{self._portal_port}"
+        pattern = f"/dev/disk/by-path/ip-{portal}-iscsi-{self._target_iqn}-lun-*"
         log.info("Waiting for block device matching %s", pattern)
 
         deadline = time.monotonic() + _DEVICE_POLL_TIMEOUT

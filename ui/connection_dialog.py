@@ -29,6 +29,13 @@ from PyQt6.QtWidgets import (
 from core.backend_registry import all_backends, init_registry
 from core.profiles import ConnectionProfile, ProfileManager
 from core.ssh_client import SSHSession, UnknownHostKeyError
+from ui.network_proxy_dialog import (
+    AUTH_CHOICES,
+    TRANSPORT_CHOICES,
+    auth_index,
+    kind_from_indexes,
+    transport_index,
+)
 
 log = logging.getLogger(__name__)
 
@@ -358,9 +365,25 @@ class ConnectionDialog(QDialog):
         self._proxy_group.setChecked(False)
         proxy_form = QFormLayout(self._proxy_group)
 
+        self._proxy_mode = QComboBox()
+        self._proxy_mode.addItem("Default proxy (Tools > Network && Proxy)", "default")
+        self._proxy_mode.addItem("Custom proxy for this profile", "custom")
+        proxy_form.addRow("Use:", self._proxy_mode)
+
+        self._proxy_default_hint = QLabel()
+        self._proxy_default_hint.setWordWrap(True)
+        self._proxy_default_hint.setProperty("role", "muted")
+        proxy_form.addRow("", self._proxy_default_hint)
+
         self._proxy_type = QComboBox()
-        self._proxy_type.addItems(["SOCKS5", "SOCKS4", "HTTP CONNECT"])
+        for label, _value in TRANSPORT_CHOICES:
+            self._proxy_type.addItem(label)
         proxy_form.addRow("Type:", self._proxy_type)
+
+        self._proxy_auth = QComboBox()
+        for label, _value in AUTH_CHOICES:
+            self._proxy_auth.addItem(label)
+        proxy_form.addRow("Authentication:", self._proxy_auth)
 
         self._proxy_host = QLineEdit()
         self._proxy_host.setPlaceholderText("proxy hostname or IP")
@@ -388,6 +411,10 @@ class ConnectionDialog(QDialog):
         proxy_form.addRow("ProxyCommand:", self._proxy_command)
 
         layout.addWidget(self._proxy_group)
+        self._proxy_mode.currentIndexChanged.connect(self._update_proxy_fields)
+        self._proxy_type.currentIndexChanged.connect(self._update_proxy_fields)
+        self._proxy_group.toggled.connect(self._update_proxy_fields)
+        self._reset_proxy_fields()
 
         # Buttons
         buttons = QDialogButtonBox(
@@ -707,22 +734,65 @@ class ConnectionDialog(QDialog):
         # IMAP
         self._imap_ssl.setChecked(p.imap_ssl)
 
-        if p.proxy_type != "none" or p.proxy_command:
+        mode = getattr(p, "proxy_mode", "custom")
+        self._reset_proxy_fields()
+        if mode == "default":
             self._proxy_group.setChecked(True)
-            type_map = {"socks5": 0, "socks4": 1, "http": 2}
-            self._proxy_type.setCurrentIndex(type_map.get(p.proxy_type, 0))
+            self._proxy_mode.setCurrentIndex(0)
+        elif mode == "custom" and (p.proxy_type != "none" or p.proxy_command):
+            self._proxy_group.setChecked(True)
+            self._proxy_mode.setCurrentIndex(1)
+            self._proxy_type.setCurrentIndex(transport_index(p.proxy_type))
+            self._proxy_auth.setCurrentIndex(auth_index(p.proxy_type))
             self._proxy_host.setText(p.proxy_host)
-            self._proxy_port.setValue(p.proxy_port)
+            self._proxy_port.setValue(p.proxy_port or 1080)
             self._proxy_username.setText(p.proxy_username)
             self._store_proxy_pw.setChecked(p.store_proxy_password)
             self._proxy_command.setText(p.proxy_command)
         else:
             self._proxy_group.setChecked(False)
-            self._proxy_host.clear()
-            self._proxy_port.setValue(1080)
-            self._proxy_username.clear()
-            self._store_proxy_pw.setChecked(False)
-            self._proxy_command.clear()
+        self._update_proxy_fields()
+
+    def _reset_proxy_fields(self) -> None:
+        """Back to a fresh profile: the default proxy when one is configured."""
+        from core import proxy_settings
+
+        self._proxy_type.setCurrentIndex(0)
+        self._proxy_auth.setCurrentIndex(0)
+        self._proxy_host.clear()
+        self._proxy_port.setValue(1080)
+        self._proxy_username.clear()
+        self._proxy_password.clear()
+        self._store_proxy_pw.setChecked(False)
+        self._proxy_command.clear()
+        defaults = proxy_settings.load()
+        self._proxy_mode.setCurrentIndex(0)
+        self._proxy_group.setChecked(defaults.configured and self._proxy_group.isEnabled())
+        if defaults.pac_url:
+            hint = f"PAC: {defaults.pac_url}"
+        elif defaults.proxy_type != "none":
+            hint = f"{defaults.proxy_type.upper()} {defaults.host}:{defaults.port}"
+        else:
+            hint = "No default proxy is configured yet (Tools > Network & Proxy)."
+        self._proxy_default_hint.setText(hint)
+        self._update_proxy_fields()
+
+    def _update_proxy_fields(self) -> None:
+        """Custom fields apply only to a custom proxy; auth only to HTTP(S)."""
+        custom = self._proxy_mode.currentIndex() == 1
+        transport = TRANSPORT_CHOICES[self._proxy_type.currentIndex()][1]
+        self._proxy_default_hint.setVisible(not custom)
+        self._proxy_type.setEnabled(custom)
+        self._proxy_auth.setEnabled(custom and transport in ("http", "https"))
+        for widget in (
+            self._proxy_host,
+            self._proxy_port,
+            self._proxy_username,
+            self._proxy_password,
+            self._store_proxy_pw,
+            self._proxy_command,
+        ):
+            widget.setEnabled(custom)
 
     def _clear_fields(self) -> None:
         self._loaded_profile_name = None
@@ -737,13 +807,7 @@ class ConnectionDialog(QDialog):
         self._key_passphrase.clear()
         self._store_password.setChecked(False)
         self._auth_password.setChecked(True)
-        self._proxy_group.setChecked(False)
-        self._proxy_host.clear()
-        self._proxy_port.setValue(1080)
-        self._proxy_username.clear()
-        self._proxy_password.clear()
-        self._store_proxy_pw.setChecked(False)
-        self._proxy_command.clear()
+        self._reset_proxy_fields()
         self._simple_password.clear()
         self._simple_store_pw.setChecked(False)
         # Protocol-specific
@@ -788,10 +852,17 @@ class ConnectionDialog(QDialog):
 
         proxy_type = "none"
         proxy_command = ""
+        proxy_mode = "none"
         if self._proxy_group.isChecked() and self._proxy_group.isEnabled():
-            proxy_map = {0: "socks5", 1: "socks4", 2: "http"}
-            proxy_type = proxy_map.get(self._proxy_type.currentIndex(), "socks5")
-            proxy_command = self._proxy_command.text().strip()
+            if self._proxy_mode.currentIndex() == 0:
+                proxy_mode = "default"
+            else:
+                proxy_mode = "custom"
+                proxy_type = kind_from_indexes(
+                    self._proxy_type.currentIndex(), self._proxy_auth.currentIndex()
+                )
+                proxy_command = self._proxy_command.text().strip()
+        custom_proxy = proxy_mode == "custom"
 
         proto = self._selected_protocol()
         host = self._host.text().strip()
@@ -843,11 +914,12 @@ class ConnectionDialog(QDialog):
             auth_type=auth_type,
             key_file=self._key_file.text().strip(),
             store_password=store_pw,
+            proxy_mode=proxy_mode,
             proxy_type=proxy_type,
-            proxy_host=self._proxy_host.text().strip(),
+            proxy_host=self._proxy_host.text().strip() if custom_proxy else "",
             proxy_port=self._proxy_port.value(),
-            proxy_username=self._proxy_username.text().strip(),
-            store_proxy_password=self._store_proxy_pw.isChecked(),
+            proxy_username=self._proxy_username.text().strip() if custom_proxy else "",
+            store_proxy_password=self._store_proxy_pw.isChecked() and custom_proxy,
             proxy_command=proxy_command,
             address_family=address_family,
             # Protocol-specific
@@ -1025,7 +1097,12 @@ class ConnectionDialog(QDialog):
                 QMessageBox.warning(self, "Validation", "Username is required.")
                 return False
 
-        if self._proxy_group.isChecked() and not proxy_host and not proxy_command:
+        if (
+            self._proxy_group.isChecked()
+            and self._proxy_mode.currentIndex() == 1
+            and not proxy_host
+            and not proxy_command
+        ):
             QMessageBox.warning(
                 self,
                 "Validation",

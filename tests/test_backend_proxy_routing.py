@@ -458,10 +458,24 @@ class SvnProxyTest(_ProxyCase):
         session.close()
         self.assertFalse(os.path.exists(config_dir))
 
-    def test_http_remote_with_socks_proxy_fails_closed(self) -> None:
+    def test_http_remote_with_socks_proxy_goes_through_the_loopback_shim(self) -> None:
+        from core import proxy_http
+
         socks = self.route("svn.internal", 443)
-        with self.assertRaises(proxy.ProxyUnsupportedError):
-            self._make("https://svn.internal/repo", socks_kwargs(socks))
+        self.addCleanup(proxy_http.close_all_shims)
+        session, calls = self._make(
+            "https://svn.internal/repo", socks_kwargs(socks, proxy_password="pw")
+        )
+        argv, _env = calls[0]
+        servers = os.path.join(argv[argv.index("--config-dir") + 1], "servers")
+        text = open(servers).read()
+        # The svn client only ever sees the shim: no SOCKS host, no secret.
+        self.assertIn("http-proxy-host = 127.0.0.1", text)
+        self.assertNotIn(str(socks.port), text)
+        self.assertNotIn("pw", text)
+        self.assertNotIn("http-proxy-password", text)
+        port = int(text.split("http-proxy-port = ")[1].split()[0])
+        self.assertIn(port, proxy._LIVE_SHIM_PORTS)
 
     def test_svn_ssh_goes_through_a_tunnel_keeping_the_host_key_identity(self) -> None:
         socks = self.route("svn.internal", 22)
@@ -475,6 +489,34 @@ class SvnProxyTest(_ProxyCase):
         session, calls = self._make("file:///srv/repo", socks_kwargs(socks))
         self.assertIsNone(session._tunnel)
         self.assertEqual(socks.connects, [])
+
+
+# ---------------------------------------------------------------------------
+# S3 (botocore speaks HTTP proxies only; SOCKS goes through the shim)
+# ---------------------------------------------------------------------------
+
+
+class S3SocksViaShimTest(_ProxyCase):
+    def test_socks_proxy_reaches_the_endpoint_through_the_shim(self) -> None:
+        from core import proxy_http
+        from core.s3_client import S3Session
+        from tests.proxy_http_testkit import OriginHttpServer
+
+        origin = OriginHttpServer()
+        socks = self.socks({("s3.internal", 9000): ("127.0.0.1", origin.port)})
+        self.addCleanup(proxy_http.close_all_shims)
+        session = S3Session(
+            bucket="bucket-one",
+            endpoint="http://s3.internal:9000",
+            access_key="k",
+            secret_key="s",
+            region="us-east-1",
+            **socks_kwargs(socks),
+        )
+        # The bucket probe crossed the SOCKS proxy to the requested name.
+        self.assertIn(("s3.internal", 9000), socks.connects)
+        self.assertTrue(any(m == "HEAD" for m, _p, _b in origin.requests))
+        session.disconnect()
 
 
 # ---------------------------------------------------------------------------
@@ -660,27 +702,19 @@ class FailClosedTest(unittest.TestCase):
         with self.assertRaises(proxy.ProxyUnsupportedError):
             wmi_client.WMISession("h", "u", "p", **_KW)
 
-    def test_nfs_refuses_before_mounting(self) -> None:
+    def test_nfs_v3_refuses_before_mounting(self) -> None:
         from core import nfs_client
 
         with mock.patch.object(nfs_client.subprocess, "run") as run:
             with self.assertRaises(proxy.ProxyUnsupportedError):
-                nfs_client.NfsSession("h", "/export", **_KW)
-        run.assert_not_called()
-
-    def test_iscsi_refuses_before_logging_in(self) -> None:
-        from core import iscsi_client
-
-        with mock.patch.object(iscsi_client.subprocess, "run") as run:
-            with self.assertRaises(proxy.ProxyUnsupportedError):
-                iscsi_client.IscsiSession("1.2.3.4", "iqn.x", **_KW)
+                nfs_client.NfsSession("h", "/export", version=3, **_KW)
         run.assert_not_called()
 
     def test_error_is_an_oserror_with_the_remedy(self) -> None:
         from core import nfs_client
 
         with self.assertRaises(OSError) as ctx:
-            nfs_client.NfsSession("h", "/export", **_KW)
+            nfs_client.NfsSession("h", "/export", version=3, **_KW)
         self.assertIn("proxy", str(ctx.exception).lower())
         self.assertIn("remove", str(ctx.exception).lower())
 

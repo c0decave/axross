@@ -7236,47 +7236,33 @@ def test_imap_via_http_connect_proxy():
             s.disconnect()
 
 
-@_label("Proxy 21d.12 S3 via SOCKS5: known botocore limitation")
-def test_s3_via_socks5_proxy_documents_limitation():
-    """boto3's ``Config(proxies={'https': 'socks5h://...'})`` does NOT
-    work — botocore unconditionally prefixes ``http://`` to whatever
-    URL it receives, producing ``http://socks5h://...`` which is then
-    parsed as an invalid HTTP proxy URL. This is a known botocore
-    issue, not an axross bug.
-
-    For S3 over SOCKS in production, use either:
-      * A SOCKS-to-HTTP relay sitting between axross and the proxy
-        (e.g. delegate, polipo, srelay), or
-      * The HTTP-CONNECT path (test 21d.13) — that one works.
-
-    This test pins the failure mode so we notice if botocore ever
-    fixes the issue.
-    """
+@requires_lab
+@_label("Proxy 21d.12 S3 via SOCKS5 (loopback HTTP shim)")
+def test_s3_via_socks5_proxy():
+    """botocore only speaks HTTP proxies, so SOCKS is fronted by the
+    loopback shim in ``core.proxy_http`` (it dials the target through the
+    SOCKS proxy). This used to be a documented limitation."""
     from core.s3_client import S3Session
 
     with _ssrf_opt_in():
-        try:
-            S3Session(
-                bucket=S3_BUCKET,
-                endpoint=S3_ENDPOINT,
-                access_key=S3_ACCESS_KEY,
-                secret_key=S3_SECRET_KEY,
-                region="us-east-1",
-                proxy_type="socks5",
-                proxy_host=SOCKS_PROXY_HOST,
-                proxy_port=SOCKS_PROXY_PORT,
-            )
-        except OSError as exc:
-            msg = str(exc).lower()
-            # botocore composed an http://socks5h://... URL — that's
-            # the symptom of the known limitation.
-            assert "socks" in msg and "http" in msg, f"unexpected error shape: {exc}"
-            return
-        raise AssertionError(
-            "expected botocore to fail on socks5 proxy URL — has it "
-            "been fixed upstream? Update this test to a happy-path "
-            "assertion if so."
+        s = S3Session(
+            bucket=S3_BUCKET,
+            endpoint=S3_ENDPOINT,
+            access_key=S3_ACCESS_KEY,
+            secret_key=S3_SECRET_KEY,
+            region="us-east-1",
+            proxy_type="socks5",
+            proxy_host=SOCKS_PROXY_HOST,
+            proxy_port=SOCKS_PROXY_PORT,
         )
+        try:
+            with s.open_write("/_via_socks.txt") as f:
+                f.write(b"hello via socks")
+            with s.open_read("/_via_socks.txt") as f:
+                assert f.read() == b"hello via socks"
+            s.remove("/_via_socks.txt")
+        finally:
+            s.disconnect()
 
 
 @requires_lab

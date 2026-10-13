@@ -161,12 +161,13 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
     when you genuinely need to proxy through a private LAN. In
     `paranoid` mode, that private-proxy override is ignored.
 
-19. **Explicit SOCKS5 / HTTP-CONNECT support.** Proxy-capable
-    backends route through `core.proxy` — SSH/SCP, Telnet,
-    Cisco-Telnet, FTP/FTPS, IMAP, POP3, NNTP, WebDAV, SMB/DFS-N,
-    Gopher, PJL, WinRM and supported cloud transports. Backends that
-    cannot honour SOCKS/HTTP proxy settings emit a warning instead of
-    silently going direct.
+19. **Explicit proxy support.** SOCKS4/5, HTTP CONNECT and HTTPS
+    proxies with Basic / NTLM / Negotiate authentication, a global
+    default with bypass list and PAC, and a "Test proxy" check.
+    Proxy-capable backends route through `core.proxy` — SSH/SCP, Telnet,
+    FTP/FTPS, IMAP, POP3, NNTP, WebDAV, SMB/DFS-N, S3, SVN, databases,
+    NFSv4 / iSCSI (loopback tunnel) and the cloud transports. Backends
+    that cannot be proxied fail closed instead of silently going direct.
     See [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md).
 
 20. **Backend-agnostic primitives.** Universal trash, atomic writes
@@ -255,7 +256,7 @@ Full table of extras + system tools per protocol:
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |
 | [docs/OPSEC.md](docs/OPSEC.md) | Threat model + per-finding analysis of what the client reveals to servers. |
-| [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md) | SOCKS5 / SOCKS4 / HTTP-CONNECT per protocol. |
+| [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md) | SOCKS4/5, HTTP(S) CONNECT, NTLM/Negotiate, default proxy, bypass, PAC — per protocol. |
 | [OAUTH_SETUP.md](OAUTH_SETUP.md) | OneDrive / SharePoint / Google Drive / Dropbox app registration recipes. |
 | [docs/MULTI_SYSTEM.md](docs/MULTI_SYSTEM.md) · [MULTI_SYSTEM_de.md](docs/MULTI_SYSTEM_de.md) · [MULTI_SYSTEM_es.md](docs/MULTI_SYSTEM_es.md) | Cross-host workflow verbs — `where_was_i`, `compare_file`, `federated_search`, `dashboard`, `resumable_copy`, … |
 | [docs/DAILY_DRIVER.md](docs/DAILY_DRIVER.md) · [DAILY_DRIVER_de.md](docs/DAILY_DRIVER_de.md) · [DAILY_DRIVER_es.md](docs/DAILY_DRIVER_es.md) | Production tarpit + adaptive chunk-sizing primitives that sit under the multi-system verbs. |

@@ -29,6 +29,7 @@ _PROTOCOLS_HONOURING_PROFILE_PROXY = frozenset(
         "sftp",
         "scp",
         "webdav",
+        "s3",
         "telnet",
         "cisco-telnet",
         "ftp",
@@ -51,6 +52,10 @@ _PROTOCOLS_HONOURING_PROFILE_PROXY = frozenset(
         "winrm",
         "svn",
         "tftp",
+        # kernel-mounted: reached through a loopback tunnel (NFSv4 only; the
+        # backend itself refuses NFSv3 behind a proxy)
+        "nfs",
+        "iscsi",
     }
 )
 
@@ -62,7 +67,6 @@ _PROTOCOLS_HONOURING_KWARG_PROXY = frozenset(
 )
 
 _PROTOCOLS_PARTIAL_PROFILE_PROXY = {
-    "s3": "S3 supports HTTP CONNECT proxies only; botocore rejects SOCKS proxy URLs.",
     # exchange honours it but only with autodiscover=False — the
     # backend itself raises a clear error in the autodiscover-on case
     # when constructed directly.
@@ -77,8 +81,6 @@ _PROTOCOLS_PARTIAL_PROFILE_PROXY = {
 # closed (``ProxyUnsupportedError``). Removing the proxy from the profile
 # is the explicit opt-out.
 _PROTOCOLS_PROXY_REFUSED = {
-    "nfs": "NFS is mounted by the kernel; user-space SOCKS/HTTP proxies cannot see it.",
-    "iscsi": "iSCSI is handled by the kernel initiator; proxy at the OS/network layer instead.",
     "rsh": (
         "rsh needs a reverse stderr connection and a privileged source port; "
         "no forward proxy can provide that."
@@ -125,6 +127,37 @@ def _profile_label(profile: "ConnectionProfile") -> str:
     port = f":{profile.port}" if profile.port else ""
     target = f"{profile.protocol}://{user}{profile.host}{port}"
     return f"{profile.name} ({target})" if profile.name else target
+
+
+def effective_profile(profile: "ConnectionProfile") -> "ConnectionProfile":
+    """The profile with its proxy resolved for this connection.
+
+    ``custom`` profiles are returned untouched. ``default`` / ``none``
+    profiles come back as a copy whose ``proxy_*`` fields hold the proxy
+    chosen by :mod:`core.proxy_settings` (the global default, a PAC
+    answer, the bypass list), so every backend, the session key and
+    ``_proxy_kwargs`` keep reading plain profile fields.
+    """
+    mode = getattr(profile, "proxy_mode", "custom") or "custom"
+    if mode == "custom":
+        return profile
+    import dataclasses
+
+    from core import proxy_settings
+
+    res = proxy_settings.resolve_for_profile(profile)
+    cfg = res.config
+    resolved = dataclasses.replace(
+        profile,
+        proxy_mode="custom",
+        proxy_type=cfg.proxy_type if cfg else "none",
+        proxy_host=cfg.host if cfg else "",
+        proxy_port=cfg.port if cfg else 0,
+        proxy_username=cfg.username if cfg else "",
+        store_proxy_password=False,
+    )
+    resolved._proxy_password_override = cfg.password if cfg else ""
+    return resolved
 
 
 def _proxy_kind(profile: "ConnectionProfile") -> str:
@@ -194,16 +227,7 @@ def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
     if proto in _PROTOCOLS_HONOURING_PROFILE_PROXY or proto in _PROTOCOLS_HONOURING_KWARG_PROXY:
         return
     if proto == "s3":
-        if _proxy_kind(profile) == "http":
-            return
-        log.warning(
-            "Profile %r configures a %s proxy, but S3 proxy support is "
-            "limited: %s See docs/PROXY_SUPPORT.md.",
-            profile.name,
-            profile.proxy_type,
-            _PROTOCOLS_PARTIAL_PROFILE_PROXY["s3"],
-        )
-        return
+        return  # every proxy kind: HTTP-only botocore is fronted by the shim
     if proto in _PROTOCOLS_PARTIAL_PROFILE_PROXY:
         log.warning(
             "Profile %r configures a %s proxy, but %s proxy support is "
@@ -248,6 +272,7 @@ class ConnectionManager:
         self._profile_resolver = resolver
 
     def _session_key(self, profile: ConnectionProfile) -> tuple[str, ...]:
+        profile = effective_profile(profile)
         return (
             profile.protocol,
             profile.username,
@@ -315,7 +340,10 @@ class ConnectionManager:
 
         Routes to the appropriate backend based on profile.protocol.
         """
-        key = self._session_key(profile)
+        # Resolve default / PAC / bypass once; everything below, including
+        # the backends, sees a plain profile.
+        resolved = effective_profile(profile)
+        key = self._session_key(resolved)
 
         # Reuse existing active session
         if key in self._sessions:
@@ -335,7 +363,7 @@ class ConnectionManager:
                 self._ref_counts.pop(key, None)
 
         # Create new session based on protocol
-        session = self._create_session(profile, password, key_passphrase, on_unknown_host)
+        session = self._create_session(resolved, password, key_passphrase, on_unknown_host)
 
         self._sessions[key] = session
         self._ref_counts[key] = 1
@@ -523,6 +551,7 @@ class ConnectionManager:
                 export_path=profile.nfs_export,
                 port=profile.port,
                 version=profile.nfs_version,
+                **proxy_kw,
             )
 
         if proto == "azure_blob":
@@ -582,6 +611,7 @@ class ConnectionManager:
                 username=profile.username,
                 password=password,
                 mount_point=profile.iscsi_mount_point,
+                **proxy_kw,
             )
             if not session.connected:
                 session.connect()

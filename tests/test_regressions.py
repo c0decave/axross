@@ -945,13 +945,13 @@ class ConnectionManagerRegressionTests(unittest.TestCase):
         self.assertIs(mgr._profile_resolver, resolver)
 
     def test_unsupported_network_protocols_fail_closed_with_a_proxy(self) -> None:
-        # Kernel mounts / DCOM / rsh touch the network but cannot use a
-        # user-space proxy: connecting would silently go around it, so
-        # the guard raises instead of merely warning.
+        # DCOM / rsh touch the network but cannot use a user-space proxy:
+        # connecting would silently go around it, so the guard raises
+        # instead of merely warning. (NFSv4 / iSCSI are tunnelled now.)
         from core.connection_manager import _warn_unsupported_proxy
         from core.proxy import ProxyUnsupportedError
 
-        for proto in ("nfs", "iscsi"):
+        for proto in ("rsh", "wmi"):
             with self.subTest(proto=proto):
                 prof = ConnectionProfile(
                     name="c",

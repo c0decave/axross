@@ -214,6 +214,15 @@ def open_url(url: str, **kwargs):
     # components win on conflict — explicit URL is the most-specific
     # signal).
     proxy_kwargs = {k: kwargs.pop(k) for k in _PROXY_KWARG_NAMES if k in kwargs}
+    if "proxy_type" not in proxy_kwargs:
+        # No proxy named: the application default (Tools > Network & Proxy)
+        # applies, subject to its bypass list / PAC. An explicit
+        # ``proxy_type="none"`` stays a direct connection.
+        from core import proxy_settings as _ps
+
+        proxy_kwargs = _ps.default_proxy_kwargs(
+            parts.hostname or "", parts.port or info.default_port or None, info.protocol_id
+        )
     proxy_type = (proxy_kwargs.get("proxy_type", "none") or "none").lower()
     if proxy_type != "none" and not proxy_kwargs.get("proxy_host", ""):
         raise ValueError(

@@ -205,7 +205,8 @@ class SvnFsSession:
           ``HostKeyAlias``).
         * ``http(s)://``: only HTTP proxies exist in the svn client; the
           settings go into a private ``servers`` file so the proxy
-          password never lands in argv. SOCKS fails closed.
+          password never lands in argv. SOCKS, TLS-to-the-proxy and NTLM
+          proxies are fronted by the loopback shim (``effective_http_proxy``).
         * ``file://``: local, nothing to proxy.
         """
         from core import proxy as proxy_mod
@@ -217,14 +218,7 @@ class SvnFsSession:
         parts = urllib.parse.urlsplit(url)
         scheme = parts.scheme.lower()
         if scheme in ("http", "https"):
-            if cfg.proxy_type != "http":
-                proxy_mod.refuse_unsupported_proxy(
-                    "SVN over HTTP(S)",
-                    cfg.proxy_type,
-                    cfg.host,
-                    "The svn client only supports HTTP proxies, not SOCKS.",
-                )
-            self._write_servers_file(cfg)
+            self._write_servers_file(proxy_mod.effective_http_proxy(cfg))
             return
         if scheme not in ("svn", "svn+ssh"):
             return
@@ -246,7 +240,7 @@ class SvnFsSession:
 
         from core.proxy import _assert_proxy_host_not_private, _validate_proxy_port
 
-        _assert_proxy_host_not_private(cfg.host)
+        _assert_proxy_host_not_private(cfg.host, cfg.port)
         self._config_dir = tempfile.mkdtemp(prefix="axross-svn-")  # 0700
         lines = [
             "[global]",

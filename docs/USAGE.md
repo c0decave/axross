@@ -40,13 +40,14 @@ JSON itself never carries plaintext credentials.
   browser consent page may use browser or system proxy settings.
   See [OAUTH_SETUP.md](../OAUTH_SETUP.md) for the per-provider app
   registration recipe.
-- **Proxy support.** Per-profile SOCKS5 / SOCKS4 / HTTP-CONNECT for
-  backends with a real transport hook. SOCKS5 resolves hostnames
-  server-side (no DNS leak). SOCKS4 behaviour depends on the transport:
-  raw-socket backends can use SOCKS4a for remote hostname resolution,
-  while HTTP SDK stacks may resolve locally. Use SOCKS5 when DNS-leak
-  avoidance matters. Backends without clean SOCKS/HTTP support warn
-  instead of silently ignoring proxy fields.
+- **Proxy support.** SOCKS4/4a, SOCKS5, HTTP CONNECT and HTTPS proxies
+  (TLS to the proxy), with Basic, NTLM and Negotiate authentication,
+  per profile or as one global default (*Tools → Network & Proxy…*) with
+  a bypass list and a PAC script. SOCKS5 resolves hostnames at the proxy
+  (no DNS leak); SOCKS4 sends host names as SOCKS4a. A "Test proxy"
+  button reports which stage fails, and each pane shows its route.
+  Backends that cannot be proxied fail closed instead of going direct.
+  See [PROXY_SUPPORT.md](PROXY_SUPPORT.md).
 - **OpSec overrides.** Profile fields control SSH keepalive, SMB
   workstation name, Telnet NAWS, rsync metadata stripping. See
   [OPSEC.md](OPSEC.md) for the threat model.
@@ -264,7 +265,7 @@ saved profile; ``open_url()`` accepts them as kwargs:
 b = axross.open_url(
     "sftp://alice@gateway.example.com/",
     password="hunter2",
-    proxy_type="socks5",          # "socks5" / "socks4" / "http"
+    proxy_type="socks5",          # "socks5" / "socks4" / "http" / "https" (+ "+ntlm" ...)
     proxy_host="proxy.example.com",
     proxy_port=1080,
     proxy_username="puser",       # optional
@@ -274,13 +275,17 @@ b = axross.open_url(
 
 When `proxy_type` is not `"none"`, `proxy_host` and a non-zero
 `proxy_port` are required. Half-configured proxies fail closed instead
-of falling back to direct traffic.
+of falling back to direct traffic. Without any `proxy_*` keyword,
+`open_url` uses the default proxy from *Tools → Network & Proxy…* (its
+bypass list and PAC script apply); a PAC script that cannot be evaluated
+raises `ProxyResolutionError` rather than connecting directly.
 
 Supported for: sftp, scp, ftp/ftps, smb/dfsn, webdav, rsync,
 telnet, cisco-telnet, imap, pop3, nntp, gopher, pjl, adb-tcp,
-azure_blob/files, onedrive, sharepoint, gdrive, dropbox, winrm, and
-S3 over HTTP CONNECT. SOCKS for S3 is rejected with a warning because
-botocore does not reliably accept SOCKS proxy URLs. Rsync uses
+azure_blob/files, onedrive, sharepoint, gdrive, dropbox, winrm, s3,
+svn, postgres, redis, mongodb, ldap, git, and (NFSv4 / iSCSI through a
+loopback tunnel). HTTP-only libraries (botocore, svn) are fronted by a
+loopback shim, so SOCKS, HTTPS and NTLM work for them too. Rsync uses
 OpenBSD `nc`; `proxy_username` can be passed, but `proxy_password`
 is rejected because `nc` has no safe non-interactive password flag.
 Requests-based SDK sessions controlled by Axross ignore process-level

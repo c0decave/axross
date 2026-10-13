@@ -263,9 +263,30 @@ class GDriveSession:
         # Apply the same SSRF guard the SOCKS / HTTP-CONNECT path uses
         # — keeps a hostile profile from making us proxy via metadata
         # endpoints or RFC1918 addresses.
-        from core.proxy import _assert_proxy_host_not_private
+        from core.proxy import (
+            ProxyConfig,
+            _assert_proxy_host_not_private,
+            effective_http_proxy,
+            parse_proxy_type,
+        )
 
-        _assert_proxy_host_not_private(phost)
+        _assert_proxy_host_not_private(phost, int(getattr(self, "_proxy_port", 0) or 0))
+        transport, _auth = parse_proxy_type(ptype)
+        if transport == "https" or _auth not in ("", "basic"):
+            # httplib2 cannot do TLS-to-the-proxy or NTLM: use the loopback shim.
+            eff = effective_http_proxy(
+                ProxyConfig(
+                    ptype,
+                    phost,
+                    int(getattr(self, "_proxy_port", 0) or 0),
+                    getattr(self, "_proxy_username", "") or "",
+                    getattr(self, "_proxy_password", "") or "",
+                )
+            )
+            ptype, phost = "http", eff.host
+            self._proxy_port, self._proxy_username, self._proxy_password = eff.port, "", ""
+        else:
+            ptype = transport
         try:
             import httplib2
             from google_auth_httplib2 import AuthorizedHttp

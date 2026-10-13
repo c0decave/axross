@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.credentials import (
@@ -27,6 +27,8 @@ MAX_PROFILES_FILE_BYTES = 4 * 1024 * 1024
 
 
 import re as _re  # noqa: E402 — local alias kept near regex constants below
+
+from core.proxy import is_valid_proxy_type  # noqa: E402
 
 # Allowlisted character set for USB serials. Real-world Android
 # vendors use either uppercase alphanumerics (e.g. ``ABCD1234EF``)
@@ -124,7 +126,11 @@ class ConnectionProfile:
     store_password: bool = False
 
     # Proxy settings
-    proxy_type: str = "none"  # "none", "socks4", "socks5", "http"
+    # custom: the fields below (proxy_type "none" = direct); default: the
+    # application default (Tools > Network & Proxy); none: always direct.
+    proxy_mode: str = "custom"
+    # "none", "socks4", "socks5", "http", "https", optionally "+ntlm" etc.
+    proxy_type: str = "none"
     proxy_host: str = ""
     proxy_port: int = 0
     proxy_username: str = ""
@@ -132,6 +138,9 @@ class ConnectionProfile:
 
     # SSH ProxyCommand (alternative to SOCKS/HTTP proxy)
     proxy_command: str = ""  # e.g. "ssh -W %h:%p jumphost"
+    # Set only on the transient copy ConnectionManager resolves for a
+    # connection: the password of the proxy that was chosen for it.
+    _proxy_password_override: str | None = field(default=None, repr=False, compare=False)
 
     # Address family preference
     address_family: str = "auto"  # "auto", "ipv4", "ipv6"
@@ -274,6 +283,8 @@ class ConnectionProfile:
 
     def get_proxy_password(self) -> str | None:
         """Retrieve proxy password from keyring."""
+        if self._proxy_password_override is not None:
+            return self._proxy_password_override
         if self.store_proxy_password:
             return get_proxy_password(self.name)
         return None
@@ -300,6 +311,8 @@ class ConnectionProfile:
             d["key_file"] = self.key_file
 
         # Proxy (only if configured)
+        if self.proxy_mode != "custom":
+            d["proxy_mode"] = self.proxy_mode
         if self.proxy_type != "none":
             d["proxy_type"] = self.proxy_type
             d["proxy_host"] = self.proxy_host
@@ -457,9 +470,12 @@ class ConnectionProfile:
         if auth_type not in {"password", "key", "agent"}:
             auth_type = "password"
 
-        proxy_type = _string("proxy_type", "none")
-        if proxy_type not in {"none", "socks4", "socks5", "http"}:
+        proxy_type = _string("proxy_type", "none").lower()
+        if not is_valid_proxy_type(proxy_type):
             proxy_type = "none"
+        proxy_mode = _string("proxy_mode", "custom")
+        if proxy_mode not in {"custom", "default", "none"}:
+            proxy_mode = "custom"
 
         address_family = _string("address_family", "auto")
         if address_family not in {"auto", "ipv4", "ipv6"}:
@@ -478,6 +494,7 @@ class ConnectionProfile:
             auth_type=auth_type,
             key_file=_string("key_file"),
             store_password=_boolean("store_password"),
+            proxy_mode=proxy_mode,
             proxy_type=proxy_type,
             proxy_host=_string("proxy_host"),
             proxy_port=_int_in_range("proxy_port", 0, 0, 65535),

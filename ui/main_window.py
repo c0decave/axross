@@ -420,6 +420,8 @@ class MainWindow(QMainWindow):
         diag_action.triggered.connect(self._run_active_pane_diagnostics)
         recovery_action = tools_menu.addAction(tr("&Recovery Scan…"))
         recovery_action.triggered.connect(self._run_recovery_scan)
+        network_action = tools_menu.addAction(tr("&Network && Proxy…"))
+        network_action.triggered.connect(self._show_network_proxy)
         tools_menu.addSeparator()
         self._paranoid_action = tools_menu.addAction(tr("&Paranoid Security Mode"))
         self._paranoid_action.setCheckable(True)
@@ -1123,6 +1125,7 @@ class MainWindow(QMainWindow):
         self._panes.append(pane)
         if profile is not None:
             self._pane_profiles[pane] = profile
+            self._refresh_proxy_indicator(pane)
             self._pane_passwords[pane] = password
             self._pane_key_passphrases[pane] = key_passphrase
 
@@ -2847,6 +2850,33 @@ class MainWindow(QMainWindow):
             # Fall back to local pane
             pane = self._add_pane_to_splitter(splitter, LocalFS())
             return pane
+
+    def _show_network_proxy(self) -> None:
+        from ui.network_proxy_dialog import NetworkProxyDialog
+
+        if NetworkProxyDialog(self._profile_manager, parent=self).exec():
+            for pane in list(self._panes):
+                self._refresh_proxy_indicator(pane)
+
+    def _refresh_proxy_indicator(self, pane) -> None:
+        """Show (or clear) the pane's proxy route; never contains a secret."""
+        profile = self._pane_profiles.get(pane)
+        if profile is None:
+            pane.set_proxy_info("", "")
+            return
+        from core import proxy_settings
+
+        try:
+            res = proxy_settings.resolve_for_profile(profile)
+        except Exception as exc:  # noqa: BLE001 - e.g. an unreachable PAC file
+            pane.set_proxy_info("Proxy: ?", f"Proxy could not be resolved: {exc}")
+            return
+        if res.config is None:
+            pane.set_proxy_info("", res.description)
+        else:
+            cfg = res.config
+            label = f"via {cfg.proxy_type.upper()} {cfg.host}:{cfg.port}"
+            pane.set_proxy_info(label, res.description)
 
     def _on_connect(self) -> None:
         from ui.connection_dialog import ConnectionDialog

@@ -735,6 +735,12 @@ class FilePaneWidget(QWidget):
 
         status_layout.addStretch()
 
+        # Which proxy carries this pane's connection (empty = direct).
+        self._proxy_label = QLabel()
+        self._proxy_label.setProperty("role", "muted")
+        self._proxy_label.hide()
+        status_layout.addWidget(self._proxy_label)
+
         self._disk_label = QLabel()
         self._disk_label.setProperty("role", "muted")
         status_layout.addWidget(self._disk_label)
@@ -1293,6 +1299,12 @@ class FilePaneWidget(QWidget):
 
     def set_show_hidden(self, show: bool) -> None:
         self._proxy.show_hidden = show
+
+    def set_proxy_info(self, text: str, tooltip: str = "") -> None:
+        """Show the proxy route in the status bar; ``""`` hides it."""
+        self._proxy_label.setText(text)
+        self._proxy_label.setToolTip(tooltip)
+        self._proxy_label.setVisible(bool(text))
 
     def set_backend(self, backend: FileBackend) -> None:
         self._backend = backend

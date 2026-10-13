@@ -152,18 +152,6 @@ class S3Session:
         self._anonymous = not access_key and not secret_key
 
         proxy_type = (proxy_type or "none").lower()
-        if proxy_host and proxy_type in {"socks4", "socks5"}:
-            log.warning(
-                "S3 proxy configuration uses %s, but botocore does not "
-                "support SOCKS proxy URLs reliably. Use HTTP CONNECT or a "
-                "local SOCKS-to-HTTP relay.",
-                proxy_type,
-            )
-            raise OSError(
-                "S3 SOCKS proxy support is not available with botocore. "
-                "Use proxy_type='http' for HTTP CONNECT or a local "
-                "SOCKS-to-HTTP relay."
-            )
 
         kwargs: dict = {
             "service_name": "s3",
@@ -174,15 +162,27 @@ class S3Session:
         # Plus optional per-profile proxy via botocore's `proxies`
         # config field (accepts {'http': '...', 'https': '...'} as
         # produced by ``core.proxy.build_requests_proxies``).
-        from core.proxy import build_requests_proxies
-
-        proxies = build_requests_proxies(
-            proxy_type,
-            proxy_host,
-            int(proxy_port or 0),
-            proxy_username,
-            proxy_password,
+        from core.proxy import (
+            ProxyConfig,
+            build_requests_proxies,
+            effective_http_proxy,
         )
+
+        proxies: dict[str, str] = {}
+        s3_proxy = ProxyConfig(
+            proxy_type, proxy_host, int(proxy_port or 0), proxy_username, proxy_password
+        )
+        if s3_proxy.enabled:
+            # botocore only understands plain HTTP proxies: SOCKS, TLS to the
+            # proxy and NTLM / Negotiate go through the loopback shim.
+            http_cfg = effective_http_proxy(s3_proxy)
+            proxies = build_requests_proxies(
+                "http",
+                http_cfg.host,
+                http_cfg.port,
+                http_cfg.username,
+                http_cfg.password,
+            )
         base_kwargs: dict = {"user_agent": HTTP_USER_AGENT}
         if proxies:
             base_kwargs["proxies"] = dict(proxies)

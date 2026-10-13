@@ -72,13 +72,31 @@ def _resolve_ips(host: str) -> list[ipaddress._BaseAddress]:
     return out
 
 
-def _assert_proxy_host_not_private(host: str) -> None:
+# Loopback ports of this process's own :class:`core.proxy_http.LocalProxyShim`
+# instances. The shim is how HTTP-only libraries reach NTLM / HTTPS / SOCKS
+# proxies; its loopback address is not a user-supplied proxy host, so the
+# deny-list must not refuse it. The shim's *upstream* is guarded when the
+# shim is created.
+_LIVE_SHIM_PORTS: set[int] = set()
+_SHIM_PORTS_LOCK = threading.Lock()
+
+
+def _register_shim_port(port: int, live: bool) -> None:
+    with _SHIM_PORTS_LOCK:
+        (_LIVE_SHIM_PORTS.add if live else _LIVE_SHIM_PORTS.discard)(port)
+
+
+def _assert_proxy_host_not_private(host: str, port: int | None = None) -> None:
     """Raise :class:`ConnectionError` if the proxy host is in a
     deny-by-default range. Callers can opt in with
     ``AXROSS_ALLOW_PRIVATE_PROXY=1``.
     """
     from core.security_mode import current_policy
 
+    if port is not None and host in ("127.0.0.1", "localhost"):
+        with _SHIM_PORTS_LOCK:
+            if port in _LIVE_SHIM_PORTS:
+                return
     if os.environ.get("AXROSS_ALLOW_PRIVATE_PROXY") == "1" and current_policy().allow_private_proxy:
         return
     ips = _resolve_ips(host)
@@ -100,22 +118,103 @@ def _assert_proxy_host_not_private(host: str) -> None:
                 )
 
 
+_PROXY_TRANSPORTS = ("socks4", "socks5", "http", "https")
+_PROXY_AUTH_SCHEMES = ("basic", "ntlm", "negotiate", "kerberos")
+
+
+def parse_proxy_type(proxy_type: str) -> tuple[str, str]:
+    """Split ``"https+ntlm"`` into ``("https", "ntlm")``.
+
+    The proxy kind stays one string (``socks4``, ``socks5``, ``http``,
+    ``https``, optionally ``+basic`` / ``+ntlm`` / ``+negotiate`` /
+    ``+kerberos`` on the HTTP kinds) so profiles, scripts and every backend
+    constructor keep the same five ``proxy_*`` fields.
+    """
+    base, plus, auth = (proxy_type or "").lower().partition("+")
+    if base not in _PROXY_TRANSPORTS:
+        raise ValueError(f"Unknown proxy type: {proxy_type}")
+    if plus and not auth:
+        raise ValueError(f"Unknown proxy type: {proxy_type}")
+    if auth and auth not in _PROXY_AUTH_SCHEMES:
+        raise ValueError(f"Unknown proxy authentication scheme: {auth!r}")
+    if auth and base.startswith("socks"):
+        raise ValueError("SOCKS proxies authenticate with username/password only")
+    return base, auth
+
+
+def compose_proxy_type(transport: str, auth: str = "") -> str:
+    """Inverse of :func:`parse_proxy_type`: ``("https", "ntlm")`` ->
+    ``"https+ntlm"``. Raises ``ValueError`` for combinations that do not
+    exist (an auth scheme on SOCKS, an unknown transport)."""
+    kind = f"{transport}+{auth}" if auth else transport
+    parse_proxy_type(kind)
+    return kind
+
+
+def is_valid_proxy_type(proxy_type: str) -> bool:
+    """``True`` for ``none`` and every kind :func:`parse_proxy_type` accepts."""
+    if (proxy_type or "none").lower() == "none":
+        return True
+    try:
+        parse_proxy_type(proxy_type)
+    except ValueError:
+        return False
+    return True
+
+
+def default_proxy_ca_file() -> str:
+    """CA bundle that verifies an HTTPS proxy's certificate when the
+    config carries none: ``AXROSS_PROXY_CA_FILE``, else the setting in
+    Tools > Network & Proxy, else the system store (empty string)."""
+    env = os.environ.get("AXROSS_PROXY_CA_FILE", "")
+    if env:
+        return env
+    try:
+        from core import proxy_settings
+
+        return proxy_settings.load().ca_file
+    except Exception:  # noqa: BLE001 - settings are optional here
+        return ""
+
+
 @dataclass
 class ProxyConfig:
     """Proxy configuration."""
 
-    proxy_type: str  # "none", "socks4", "socks5", "http"
+    proxy_type: str  # "none", "socks4", "socks5", "http", "https" (+ "+ntlm" ...)
     host: str = ""
     port: int = 0
     username: str = ""
     password: str = ""
+    ca_file: str = ""  # pinned CA for an HTTPS proxy's certificate
 
     def __post_init__(self) -> None:
         self.proxy_type = (self.proxy_type or "none").lower()
+        if self.proxy_type != "none" and self.transport == "https" and not self.ca_file:
+            self.ca_file = default_proxy_ca_file()
 
     @property
     def enabled(self) -> bool:
         return _proxy_enabled_or_raise(self.proxy_type, self.host)
+
+    @property
+    def transport(self) -> str:
+        """``socks4`` / ``socks5`` / ``http`` / ``https`` (``none`` stays)."""
+        if self.proxy_type == "none":
+            return "none"
+        return self.proxy_type.partition("+")[0]
+
+    @property
+    def auth_scheme(self) -> str:
+        """``""`` (Basic when a username is set), ``basic``, ``ntlm``,
+        ``negotiate`` or ``kerberos``."""
+        return self.proxy_type.partition("+")[2]
+
+    @property
+    def needs_shim(self) -> bool:
+        """``True`` when an HTTP-only library cannot use this proxy
+        directly (TLS to the proxy, NTLM / Negotiate, or SOCKS)."""
+        return self.transport != "http" or self.auth_scheme not in ("", "basic")
 
 
 def _proxy_enabled_or_raise(proxy_type: str, host: str) -> bool:
@@ -256,16 +355,19 @@ def create_proxy_socket(
         _validate_proxy_port(proxy.port),
         proxy.username,
         proxy.password,
+        proxy.ca_file,
     )
     # SSRF guard: refuse to proxy through a deny-listed private /
     # metadata address unless the user has explicitly opted in.
-    _assert_proxy_host_not_private(proxy.host)
-    if proxy.proxy_type in ("socks4", "socks5"):
+    _assert_proxy_host_not_private(proxy.host, proxy.port)
+    transport, auth = parse_proxy_type(proxy.proxy_type)
+    if transport in ("socks4", "socks5"):
         return _create_socks_socket(proxy, target_host, target_port, timeout, family)
-    elif proxy.proxy_type == "http":
+    if transport == "http" and auth in ("", "basic"):
         return _create_http_connect_socket(proxy, target_host, target_port, timeout, family)
-    else:
-        raise ValueError(f"Unknown proxy type: {proxy.proxy_type}")
+    from core.proxy_http import open_connect_tunnel
+
+    return open_connect_tunnel(proxy, target_host, target_port, timeout, family)
 
 
 def _create_socks_socket(
@@ -425,22 +527,6 @@ def _create_http_connect_socket(
             if not chunk:
                 break
             response += chunk
-
-        if b"\r\n\r\n" not in response:
-            sock.close()
-            raise ConnectionError("HTTP CONNECT returned an incomplete or oversized header")
-
-        response_text = response.decode("ascii", errors="replace")
-        status_line = response_text.split("\r\n")[0]
-        status_parts = status_line.split(" ", 2)
-
-        if len(status_parts) < 2 or status_parts[1] != "200":
-            sock.close()
-            raise ConnectionError(f"HTTP CONNECT failed: {status_line}")
-
-        log.debug("HTTP CONNECT established: %s", status_line)
-        return sock
-
     except (socket.timeout, OSError) as e:
         sock.close()
         log.warning(
@@ -452,6 +538,26 @@ def _create_http_connect_socket(
         )
         raise ConnectionError(f"HTTP CONNECT failed: {e}") from e
 
+    if b"\r\n\r\n" not in response:
+        sock.close()
+        raise ConnectionError("HTTP CONNECT returned an incomplete or oversized header")
+
+    status_line = response.decode("ascii", errors="replace").split("\r\n")[0]
+    status_parts = status_line.split(" ", 2)
+    status = status_parts[1] if len(status_parts) >= 2 else ""
+    if status == "200":
+        log.debug("HTTP CONNECT established: %s", status_line)
+        return sock
+
+    sock.close()
+    if status == "407":
+        from core.proxy_http import ProxyAuthError
+
+        if proxy.username:
+            raise ProxyAuthError("proxy rejected the username / password (407)")
+        raise ProxyAuthError("proxy requires authentication (407); set a username and password")
+    raise ConnectionError(f"HTTP CONNECT failed: {status_line}")
+
 
 def build_requests_proxies(
     proxy_type: str,
@@ -459,6 +565,7 @@ def build_requests_proxies(
     port: int,
     username: str = "",
     password: str = "",
+    ca_file: str = "",
 ) -> dict[str, str]:
     """Build a ``requests``-style proxies dict from ProxyConfig fields.
 
@@ -480,15 +587,22 @@ def build_requests_proxies(
         return {}
     _validate_proxy_url_host(host)
     port = _validate_proxy_port(port)
-    _assert_proxy_host_not_private(host)
-    if proxy_type == "http":
+    _assert_proxy_host_not_private(host, port)
+    transport, auth = parse_proxy_type(proxy_type)
+    if transport == "https" or auth not in ("", "basic"):
+        # TLS to the proxy, NTLM and Negotiate are not something requests /
+        # urllib3 can do: they talk to a loopback shim that does.
+        from core.proxy_http import shim_for
+
+        shim = shim_for(ProxyConfig(proxy_type, host, port, username, password, ca_file))
+        return {"http": shim.url, "https": shim.url}
+    if transport == "http":
         scheme = "http"
-    elif proxy_type == "socks4":
-        scheme = "socks4"
-    elif proxy_type == "socks5":
-        scheme = "socks5h"  # 'h' = remote DNS via the proxy (safer)
+    elif transport == "socks4":
+        # "socks4a": the proxy resolves host names, like create_proxy_socket.
+        scheme = "socks4a"
     else:
-        raise ValueError(f"Unknown proxy type: {proxy_type}")
+        scheme = "socks5h"  # 'h' = remote DNS via the proxy (safer)
 
     # Password without username is meaningless (no auth identity).
     # Refuse it loudly rather than silently emit a credential-free URL
@@ -541,6 +655,7 @@ def apply_session_proxy(session, profile_or_config) -> None:
             cfg.port,
             cfg.username,
             cfg.password,
+            cfg.ca_file,
         )
     else:
         # ConnectionProfile-like (has proxy_host, proxy_port, proxy_*).
@@ -610,17 +725,40 @@ def proxy_config_from_kwargs(kwargs: dict) -> "ProxyConfig | None":
         port=int(kwargs.get("proxy_port") or 0),
         username=kwargs.get("proxy_username") or "",
         password=kwargs.get("proxy_password") or "",
+        ca_file=kwargs.get("proxy_ca_file") or "",
     )
 
 
-def _peer_is_same_user(peer: tuple) -> bool:
-    """True when the loopback client at *peer* belongs to our uid.
+def effective_http_proxy(proxy: "ProxyConfig") -> "ProxyConfig":
+    """An HTTP proxy config any HTTP-only library can use.
+
+    A plain ``http`` proxy (Basic auth) is returned unchanged. Everything
+    else (SOCKS, TLS to the proxy, NTLM / Negotiate) is fronted by the
+    loopback :class:`core.proxy_http.LocalProxyShim`: the returned config
+    points at it and carries no credentials, because the shim holds them.
+    """
+    if not proxy.needs_shim:
+        return proxy
+    from core.proxy_http import shim_for
+
+    shim = shim_for(proxy)
+    return ProxyConfig("http", shim.host, shim.port)
+
+
+def _peer_is_same_user(peer: tuple, root_ok: bool = False, server: tuple | None = None) -> bool:
+    """True when the loopback client at *peer* belongs to our uid
+    (or, with *root_ok*, to root: kernel mounts and the iSCSI daemon).
 
     A loopback listener is reachable by every local account; without
     this check another user on the host could ride the tunnel (and the
     proxy credentials behind it). Reads ``/proc/net/tcp{,6}``; where
     that is unavailable (non-Linux) there is nothing to compare, so the
     peer is accepted.
+
+    The client socket is identified by its full address pair: a source
+    port can appear on several rows at once (a ``TIME_WAIT`` leftover is
+    reported with uid 0), so *server* -- the accepted socket's own
+    address -- selects the right one, and ``TIME_WAIT`` rows never count.
     """
     if not os.path.exists("/proc/net/tcp"):
         return True
@@ -629,8 +767,28 @@ def _peer_is_same_user(peer: tuple) -> bool:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return False
+    want_remote = None
+    if server is not None:
+        try:
+            want_remote = (ipaddress.ip_address(server[0]), int(server[1]))
+        except ValueError:
+            return False
     uid = os.getuid()
-    for table, want_v6 in (("/proc/net/tcp", False), ("/proc/net/tcp6", True)):
+
+    def decode(field: str, v6: bool):
+        addr, prt = field.rsplit(":", 1)
+        raw = bytes.fromhex(addr)
+        if v6:
+            # /proc stores IPv6 as four little-endian 32-bit words.
+            raw = b"".join(raw[i : i + 4][::-1] for i in range(0, 16, 4))
+            parsed = ipaddress.IPv6Address(raw)
+            if parsed.ipv4_mapped is not None:
+                parsed = parsed.ipv4_mapped
+        else:
+            parsed = ipaddress.IPv4Address(raw[::-1])
+        return parsed, int(prt, 16)
+
+    for table, v6 in (("/proc/net/tcp", False), ("/proc/net/tcp6", True)):
         try:
             with open(table, encoding="ascii") as fh:
                 rows = fh.read().splitlines()[1:]
@@ -638,22 +796,19 @@ def _peer_is_same_user(peer: tuple) -> bool:
             continue
         for row in rows:
             fields = row.split()
-            if len(fields) < 8:
+            if len(fields) < 8 or fields[3] == "06":  # 06 = TIME_WAIT
                 continue
-            local_addr, local_port = fields[1].rsplit(":", 1)
-            if int(local_port, 16) != port:
+            try:
+                local = decode(fields[1], v6)
+                remote = decode(fields[2], v6)
+            except ValueError:
                 continue
-            raw = bytes.fromhex(local_addr)
-            if want_v6:
-                # /proc stores IPv6 as four little-endian 32-bit words.
-                raw = b"".join(raw[i : i + 4][::-1] for i in range(0, 16, 4))
-                row_ip = ipaddress.IPv6Address(raw)
-                if row_ip.ipv4_mapped is not None:
-                    row_ip = row_ip.ipv4_mapped
-            else:
-                row_ip = ipaddress.IPv4Address(raw[::-1])
-            if row_ip == ip:
-                return int(fields[7]) == uid
+            if local != (ip, port):
+                continue
+            if want_remote is not None and remote != want_remote:
+                continue
+            owner = int(fields[7])
+            return owner == uid or (root_ok and owner == 0)
     return False
 
 
@@ -675,9 +830,11 @@ class LocalTunnel:
         target_port: int,
         timeout: float = 10.0,
         max_connections: int = 64,
+        allow_root_peers: bool = False,
     ) -> None:
         if not proxy.enabled:
             raise ValueError("LocalTunnel requires an enabled proxy config")
+        self._allow_root_peers = allow_root_peers
         self._proxy = proxy
         self._target = (target_host, int(target_port))
         self._timeout = timeout
@@ -730,7 +887,7 @@ class LocalTunnel:
                 client, peer = self._listener.accept()
             except OSError:
                 return
-            if not _peer_is_same_user(peer):
+            if not _peer_is_same_user(peer, self._allow_root_peers, client.getsockname()[:2]):
                 log.warning("proxy tunnel: dropped connection from foreign local user %s", peer)
                 client.close()
                 continue
@@ -807,7 +964,7 @@ def create_udp_proxy_socket(proxy: "ProxyConfig", timeout: float = 10.0) -> sock
     """
     if not proxy.enabled:
         raise ValueError("create_udp_proxy_socket requires an enabled proxy config")
-    if proxy.proxy_type != "socks5":
+    if proxy.transport != "socks5":
         raise ConnectionError(
             f"{proxy.proxy_type} proxies cannot carry UDP; use a SOCKS5 proxy or remove the proxy."
         )
@@ -867,8 +1024,13 @@ def build_urllib3_proxy_manager(proxy: "ProxyConfig"):
     from urllib.parse import quote
 
     _validate_proxy_url_host(proxy.host)
-    _assert_proxy_host_not_private(proxy.host)
+    _assert_proxy_host_not_private(proxy.host, proxy.port)
     port = _validate_proxy_port(proxy.port)
+    if proxy.transport != "socks4" and proxy.transport != "socks5" and proxy.needs_shim:
+        import urllib3
+
+        shim = effective_http_proxy(proxy)
+        return urllib3.ProxyManager(f"http://{shim.host}:{shim.port}")
     auth = ""
     if proxy.username:
         auth = quote(proxy.username, safe="")
@@ -876,13 +1038,13 @@ def build_urllib3_proxy_manager(proxy: "ProxyConfig"):
             auth += ":" + quote(proxy.password, safe="")
         auth += "@"
     host = f"[{proxy.host}]" if _is_ipv6_literal(proxy.host) else proxy.host
-    if proxy.proxy_type == "http":
+    if proxy.transport == "http":
         import urllib3
 
         return urllib3.ProxyManager(f"http://{auth}{host}:{port}")
     from urllib3.contrib.socks import SOCKSProxyManager
 
-    scheme = "socks5h" if proxy.proxy_type == "socks5" else "socks4a"
+    scheme = "socks5h" if proxy.transport == "socks5" else "socks4a"
     return SOCKSProxyManager(f"{scheme}://{auth}{host}:{port}")
 
 
@@ -915,7 +1077,7 @@ def patched_module_udp_socket(module, proxy: "ProxyConfig | None"):
     if proxy is None:
         yield
         return
-    if proxy.proxy_type != "socks5":
+    if proxy.transport != "socks5":
         raise ConnectionError(
             f"{proxy.proxy_type} proxies cannot carry UDP; use a SOCKS5 proxy or remove the proxy."
         )
@@ -1001,6 +1163,7 @@ def patched_create_connection(profile_or_config):
         _validate_proxy_port(proxy_cfg.port),
         proxy_cfg.username,
         proxy_cfg.password,
+        proxy_cfg.ca_file,
     )
 
     with _CREATE_CONNECTION_LOCK:

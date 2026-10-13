@@ -103,14 +103,38 @@ def _resolve_nc_with_proxy_support() -> str:
 
 
 def _nc_proxy_scheme(proxy_type: str) -> str:
-    proxy_type = (proxy_type or "none").lower()
-    if proxy_type == "socks5":
+    from core.proxy import parse_proxy_type
+
+    transport, _auth = parse_proxy_type(proxy_type)
+    if transport == "socks5":
         return "5"
-    if proxy_type == "socks4":
+    if transport == "socks4":
         return "4"
-    if proxy_type == "http":
+    if transport == "http":
         return "connect"
     raise ValueError(f"Unknown proxy_type: {proxy_type}")
+
+
+def _nc_effective_proxy(proxy):
+    """The proxy OpenBSD nc can actually use.
+
+    nc speaks plain SOCKS / HTTP CONNECT and can pass a username but never
+    a password. A password, TLS to the proxy, or NTLM / Negotiate are
+    handled by the loopback shim instead; nc then dials the shim without
+    credentials and the shim authenticates upstream.
+    """
+    from core.proxy import ProxyConfig
+    from core.proxy_http import shim_for
+
+    needs_shim = (
+        bool(proxy.password)
+        or proxy.transport == "https"
+        or proxy.auth_scheme not in ("", "basic")
+    )
+    if not needs_shim:
+        return proxy
+    shim = shim_for(proxy)
+    return ProxyConfig("http", shim.host, shim.port)
 
 
 def _nc_proxy_address(proxy) -> str:
@@ -127,7 +151,7 @@ def _nc_proxy_address(proxy) -> str:
 
     host = proxy.host
     _validate_proxy_url_host(host)
-    _assert_proxy_host_not_private(host)
+    _assert_proxy_host_not_private(host, proxy.port)
     port = _validate_proxy_port(proxy.port)
     try:
         _socket.inet_pton(_socket.AF_INET6, host)
@@ -195,6 +219,7 @@ def _build_rsync_connect_prog(proxy, daemon_port: int) -> str:
     profile's override) so each session gets the correct value.
     """
     nc = _resolve_nc_with_proxy_support()
+    proxy = _nc_effective_proxy(proxy)
     scheme = _nc_proxy_scheme(proxy.proxy_type)
     proxy_addr = _nc_proxy_address(proxy)
     auth_args = _nc_proxy_auth_args(proxy, nc)
@@ -211,6 +236,7 @@ def _build_ssh_proxy_command(proxy) -> str:
     target host and port — ssh substitutes them at dial time.
     """
     nc = _resolve_nc_with_proxy_support()
+    proxy = _nc_effective_proxy(proxy)
     scheme = _nc_proxy_scheme(proxy.proxy_type)
     proxy_addr = _nc_proxy_address(proxy)
     auth_args = _nc_proxy_auth_args(proxy, nc)
