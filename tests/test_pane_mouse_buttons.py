@@ -42,6 +42,17 @@ class PaneMouseButtonsTest(unittest.TestCase):
         self.pane.navigate(str(self.root))
         self.app.processEvents()
 
+    def _settle(self) -> None:
+        """Navigation from the UI loads in the background: wait for it."""
+        import time
+
+        end = time.time() + 3
+        while time.time() < end:
+            self.app.processEvents()
+            if not self.pane.is_loading:
+                return
+            time.sleep(0.002)
+
     def _row_pos(self, name: str):
         proxy = self.pane._proxy
         for row in range(proxy.rowCount()):
@@ -55,7 +66,7 @@ class PaneMouseButtonsTest(unittest.TestCase):
         from PyQt6.QtTest import QTest
 
         QTest.mouseClick(self.pane._table.viewport(), button, Qt.KeyboardModifier.NoModifier, pos)
-        self.app.processEvents()
+        self._settle()
 
     def test_back_button_goes_back_in_history(self) -> None:
         from PyQt6.QtCore import Qt
@@ -89,7 +100,7 @@ class PaneMouseButtonsTest(unittest.TestCase):
         self.pane.navigate(str(self.root / "sub"))
         no_mods = Qt.KeyboardModifier.NoModifier
         QTest.mouseClick(self.pane._status, Qt.MouseButton.BackButton, no_mods, QPoint(2, 2))
-        self.app.processEvents()
+        self._settle()
         self.assertEqual(self.pane.current_path, str(self.root))
 
     def test_wheel_click_opens_the_directory_under_the_mouse(self) -> None:

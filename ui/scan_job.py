@@ -40,6 +40,9 @@ class ScanJob(QObject):
     started = pyqtSignal()
     progress = pyqtSignal(str)
     finished = pyqtSignal(str, object, bool)
+    # Emitted by the worker thread when it ends (queued to the UI thread), so
+    # a short job is reported at once instead of at the next poll tick.
+    _wake = pyqtSignal()
 
     def __init__(
         self,
@@ -57,6 +60,8 @@ class ScanJob(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._poll)
+        self._wake.connect(self._poll)
+        self._abandoned = False
 
     @property
     def running(self) -> bool:
@@ -66,10 +71,16 @@ class ScanJob(QObject):
     def cancelling(self) -> bool:
         return self._cancel.is_set()
 
-    def start(self, work: Work) -> bool:
-        """Start *work*; ``False`` when a job is already running."""
-        if self.running and not self._cancel.is_set():
+    def start(self, work: Work, *, replace: bool = False) -> bool:
+        """Start *work*; ``False`` when a job is already running.
+
+        With ``replace=True`` a running job is superseded instead: it is told
+        to stop, its result is dropped and *work* starts in its place."""
+        if replace:
+            self.abandon()
+        elif self.running and not self._cancel.is_set():
             return False
+        self._abandoned = False
         cancel = threading.Event()
         state: dict = {"scanned": 0, "indexed": 0, "path": "", "result": None}
         self._cancel, self._state = cancel, state
@@ -82,6 +93,11 @@ class ScanJob(QObject):
                 state["result"] = ("done", work(cancel.is_set, report))
             except Exception as exc:  # noqa: BLE001 — handed to the UI thread
                 state["result"] = ("error", exc)
+            try:
+                if self._state is state:  # not superseded meanwhile
+                    self._wake.emit()
+            except RuntimeError:  # the owner is already gone
+                pass
 
         self._thread = threading.Thread(target=run, name="scan-job", daemon=True)
         self.started.emit()
@@ -96,11 +112,14 @@ class ScanJob(QObject):
 
     def abandon(self) -> None:
         """Stop the job and drop its result (the owner is going away)."""
+        self._abandoned = True
         self._cancel.set()
         self._timer.stop()
 
     def _poll(self) -> None:
         state = self._state
+        if not state or self._abandoned:
+            return
         result = state.get("result")
         if result is None:
             if self._cancel.is_set():

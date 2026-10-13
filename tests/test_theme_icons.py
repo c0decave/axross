@@ -210,7 +210,14 @@ class MainWindowIconTest(_QtCase):
 
     def test_open_file_lists_repaint_with_the_theme(self) -> None:
         pane = self.win._panes[0]
+        import time
+
         from PyQt6.QtCore import Qt
+
+        end = time.time() + 3  # the start pane loads its folder in the background
+        while pane.is_loading and time.time() < end:
+            self.app.processEvents()
+            time.sleep(0.002)
 
         self.win._apply_theme("hacker")
         model = pane._model

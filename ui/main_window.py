@@ -1105,7 +1105,7 @@ class MainWindow(QMainWindow):
         password="",
         key_passphrase="",
     ) -> FilePaneWidget:
-        pane = FilePaneWidget(backend)
+        pane = FilePaneWidget(backend, async_initial_load=True)
         pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
         pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
         pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
@@ -1370,7 +1370,7 @@ class MainWindow(QMainWindow):
         """Factory hook for layout_presets.apply_preset — returns a
         fresh FilePaneWidget on LocalFS, fully wired into the active-
         pane / drop-target machinery just like a manual split would."""
-        pane = FilePaneWidget(LocalFS())
+        pane = FilePaneWidget(LocalFS(), async_initial_load=True)
         pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
         pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
         pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
@@ -1984,7 +1984,7 @@ class MainWindow(QMainWindow):
         """Navigate ``pane`` to the directory holding ``full_path``."""
         parent = full_path.rsplit("/", 1)[0] or "/"
         try:
-            pane.navigate(parent)
+            pane.navigate_async(parent)
         except OSError as exc:
             log.debug("compare: could not reveal %s: %s", full_path, exc)
 
@@ -2104,7 +2104,7 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            pane.navigate(pane.backend.parent(path))
+            pane.navigate_async(pane.backend.parent(path))
         except OSError as exc:
             QMessageBox.warning(
                 self,
@@ -2144,7 +2144,7 @@ class MainWindow(QMainWindow):
             return
         target = path if is_dir else pane.backend.parent(path)
         try:
-            pane.navigate(target)
+            pane.navigate_async(target)
         except OSError as exc:
             QMessageBox.warning(
                 self,
@@ -2730,7 +2730,7 @@ class MainWindow(QMainWindow):
             # Local pane
             pane = self._add_pane_to_splitter(splitter, LocalFS())
             try:
-                pane.navigate(path)
+                pane.navigate_async(path)
             except Exception:
                 log.warning(
                     "Session restore: failed to navigate local pane to %s", path, exc_info=True
@@ -2832,7 +2832,7 @@ class MainWindow(QMainWindow):
                 self._terminal_dock.add_ssh_session(session.name, session.transport)
             self._add_to_recent(profile.name)
             try:
-                pane.navigate(path)
+                pane.navigate_async(path)
             except Exception:
                 log.warning(
                     "Session restore: failed to navigate to %s on %s",
@@ -3417,7 +3417,7 @@ class MainWindow(QMainWindow):
                 )
                 pane.set_backend(session)
                 try:
-                    pane.navigate(previous_path)
+                    pane.navigate_async(previous_path)
                 except Exception:
                     log.warning(
                         "Auto-reconnect: failed to navigate to %s", previous_path, exc_info=True
@@ -3534,14 +3534,14 @@ class MainWindow(QMainWindow):
         # For local bookmarks, just navigate
         if bookmark.backend_name == "Local":
             if isinstance(self._active_pane.backend, LocalFS):
-                self._active_pane.navigate(bookmark.path)
+                self._active_pane.navigate_async(bookmark.path)
             else:
                 # Create a local pane for it
                 pane = self._add_pane_to_splitter(self._root_splitter, LocalFS())
-                pane.navigate(bookmark.path)
+                pane.navigate_async(bookmark.path)
         else:
             if self._active_pane.backend.name == bookmark.backend_name:
-                self._active_pane.navigate(bookmark.path)
+                self._active_pane.navigate_async(bookmark.path)
                 return
 
             # profile_name missing — typically an older bookmark
@@ -3577,7 +3577,7 @@ class MainWindow(QMainWindow):
             # to the bookmarked path after the session opens.
             self._quick_connect_profile(
                 profile,
-                post_connect=lambda pane: pane.navigate(bookmark.path),
+                post_connect=lambda pane: pane.navigate_async(bookmark.path),
             )
 
     def _manage_bookmarks(self) -> None:

@@ -138,6 +138,12 @@ native protocol doesn't support them.
   Bookmarks menu shows them as hover submenus), reordered by drag &
   drop or Move Up / Down in the right-click menu, and given an icon
   from the built-in SVG set plus a colour.
+- **Folders load in the background**: opening a folder, going up /
+  back / forward, refreshing or typing a path keeps the current
+  listing usable; the status line shows *Loading …* with a Cancel
+  button (Esc works too), and a new click replaces a load that is
+  still running. A failed or cancelled load leaves you where you
+  were. Auto-refresh updates quietly and never interrupts you.
 - **File list**: hovering a name shows it in full; dragging from
   empty space draws a selection box (Ctrl adds); the divider right of
   *Name* moves space between *Name* and the next column, double-click

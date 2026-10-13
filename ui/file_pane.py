@@ -45,6 +45,7 @@ from core.redaction import redact_url
 from models.file_item import FileItem
 from models.file_table_model import COL_NAME, FileSortProxyModel, FileTableModel
 from ui.layout_utils import detect_drop_zone
+from ui.scan_job import ScanJob
 
 
 def _is_safe_leaf_name(name: str) -> bool:
@@ -179,6 +180,13 @@ def _classify_local_file_is_binary(backend, path: str, name: str) -> bool:
 
 def _escape_dialog_lines(lines) -> str:
     return "\n".join(escape(str(line)) for line in lines)
+
+
+_UNSET = object()  # "no precomputed value" marker
+
+
+def _shorten_path(path: str, limit: int = 60) -> str:
+    return path if len(path) <= limit else "…" + path[-(limit - 1) :]
 
 
 # Buttons the pane handles itself: the two side buttons walk the history,
@@ -426,6 +434,8 @@ class FilePaneWidget(QWidget):
 
     path_changed = pyqtSignal(str)
     file_activated = pyqtSignal(str)  # full path of activated file
+    # (path, ok) when a background load ends; ok is False for failures and cancels.
+    navigation_finished = pyqtSignal(str, bool)
     transfer_requested = pyqtSignal(list)  # list of full paths to transfer (copy)
     move_requested = pyqtSignal(list)  # list of full paths to move
     # paths, target pane, source pane id, is_move
@@ -448,13 +458,23 @@ class FilePaneWidget(QWidget):
     # on a different thread than the emitter).
     _watch_event = pyqtSignal()
 
-    def __init__(self, backend: FileBackend, parent: QWidget | None = None):
+    def __init__(
+        self,
+        backend: FileBackend,
+        parent: QWidget | None = None,
+        async_initial_load: bool = False,
+    ):
         super().__init__(parent)
         self._backend = backend
         self._current_path = backend.home()
         self._loading = False
         self._history: list[str] = []
         self._history_pos: int = 0
+        # Background folder loads (see navigate_async).
+        self._nav_job = ScanJob(self, interval_ms=100)
+        self._nav_job.finished.connect(self._on_nav_finished)
+        self._nav_lock = threading.Lock()  # one listing per pane at a time
+        self._nav_ctx: dict = {}
         self._history_navigating = False  # suppress history push during back/forward
         # Auto-refresh via core.watch — one watcher at a time, scoped
         # to the currently displayed directory. Toggleable per-pane.
@@ -483,7 +503,10 @@ class FilePaneWidget(QWidget):
         self._watch_event.connect(self._watch_event_slot)
         self.destroyed.connect(lambda *_: self._mark_destroyed())
 
-        self.navigate(self._current_path)
+        if async_initial_load:
+            self.navigate_async(self._current_path)
+        else:
+            self.navigate(self._current_path)
 
     @property
     def backend(self) -> FileBackend:
@@ -591,7 +614,7 @@ class FilePaneWidget(QWidget):
         self._btn_refresh = QPushButton("\u21bb")
         self._btn_refresh.setFixedWidth(30)
         self._btn_refresh.setToolTip("Refresh")
-        self._btn_refresh.clicked.connect(self.refresh)
+        self._btn_refresh.clicked.connect(lambda _c=False: self.refresh_async())
         path_bar.addWidget(self._btn_refresh)
 
         # Auto-refresh toggle. Default ON; backends that are expensive
@@ -703,6 +726,13 @@ class FilePaneWidget(QWidget):
         self._status = QLabel()
         status_layout.addWidget(self._status)
 
+        # Shown only while a folder loads in the background.
+        self._cancel_nav_btn = QPushButton("Cancel")
+        self._cancel_nav_btn.setToolTip("Stop loading this folder (Esc)")
+        self._cancel_nav_btn.clicked.connect(self.cancel_navigation)
+        self._cancel_nav_btn.hide()
+        status_layout.addWidget(self._cancel_nav_btn)
+
         status_layout.addStretch()
 
         self._disk_label = QLabel()
@@ -728,66 +758,159 @@ class FilePaneWidget(QWidget):
         self._drop_overlay = _DropOverlay(self)
         self._drop_overlay.hide()
 
+    def _fetch_listing(self, path: str) -> tuple[str, list]:
+        """Backend part of a navigation: normalised path + listing (with the
+        ".." row). Touches no widget, so it may run on a worker thread."""
+        path = self._backend.normalize(path)
+        items = self._backend.list_dir(path)
+        # Prepend ".." entry for navigating up (except at root)
+        parent = self._backend.parent(path)
+        if parent != path:
+            items.insert(0, FileItem(name="..", is_dir=True))
+        return path, items
+
+    def _read_disk_usage(self, path: str):
+        """``(total, used, free)`` or ``None``; safe on a worker thread."""
+        try:
+            return self._backend.disk_usage(path)
+        except Exception as e:  # noqa: BLE001 — usage is a nicety
+            log.debug("Disk usage unavailable for %s on %s: %s", path, self._backend.name, e)
+            return None
+
+    def _apply_listing(self, path: str, items: list, history="push", usage=_UNSET) -> None:
+        """UI part of a navigation. *history* is ``"push"`` (record the path),
+        ``"keep"`` (refresh: leave the history alone) or an int (back / forward:
+        move to that position)."""
+        self._model.set_items(items)
+        if history == "push":
+            if not self._history or path != self._history[self._history_pos]:
+                # Truncate forward history and append
+                self._history = self._history[: self._history_pos + 1]
+                self._history.append(path)
+                self._history_pos = len(self._history) - 1
+        elif isinstance(history, int):
+            self._history_pos = history
+        self._current_path = path
+        self._path_edit.setText(path)
+        real_count = sum(1 for i in items if i.name != "..")
+        self._status.setText(f"{real_count} items")
+        self.path_changed.emit(path)
+        log.debug("Navigated to %s", path)
+        if usage is _UNSET:
+            self._update_disk_usage()
+        else:
+            self._show_disk_usage(usage)
+        # Switch the auto-refresh watcher to the new path. We
+        # start AFTER the successful navigation so a transient
+        # OSError above doesn't leave a stale watcher attached.
+        self._start_watcher()
+        # Opportunistic crash-recovery sweep — only the directory
+        # we just landed in, only files older than the conservative
+        # default age. Reuse the listing we already fetched so a
+        # remote backend doesn't pay for a second list_dir.
+        # Wrapped so a backend that doesn't support remove() (e.g.
+        # read-only mount) can't break navigation.
+        try:
+            from core import atomic_recovery as AR
+
+            removed = AR.sweep_orphans(
+                self._backend,
+                path,
+                prefetched_entries=items,
+            )
+            if removed:
+                log.info(
+                    "atomic_recovery: removed %d orphan(s) under %s",
+                    removed,
+                    path,
+                )
+        except Exception as exc:  # noqa: BLE001 — never block navigate
+            log.debug("atomic_recovery sweep skipped for %s: %s", path, exc)
+
     def navigate(self, path: str) -> None:
+        """Load *path* and wait for it (programmatic callers and tests).
+        The UI itself uses :meth:`navigate_async`."""
         self._progress_bar.show()
         self._status.setText("Loading...")
         QApplication.processEvents()
 
         try:
-            path = self._backend.normalize(path)
-            items = self._backend.list_dir(path)
-
-            # Prepend ".." entry for navigating up (except at root)
-            parent = self._backend.parent(path)
-            if parent != path:
-                items.insert(0, FileItem(name="..", is_dir=True))
-
-            self._model.set_items(items)
+            path, items = self._fetch_listing(path)
             # Track history (skip during back/forward and refresh)
-            if not self._history_navigating:
-                if not self._history or path != self._history[self._history_pos]:
-                    # Truncate forward history and append
-                    self._history = self._history[: self._history_pos + 1]
-                    self._history.append(path)
-                    self._history_pos = len(self._history) - 1
-            self._current_path = path
-            self._path_edit.setText(path)
-            real_count = sum(1 for i in items if i.name != "..")
-            self._status.setText(f"{real_count} items")
-            self.path_changed.emit(path)
-            log.debug("Navigated to %s", path)
-            self._update_disk_usage()
-            # Switch the auto-refresh watcher to the new path. We
-            # start AFTER the successful navigation so a transient
-            # OSError above doesn't leave a stale watcher attached.
-            self._start_watcher()
-            # Opportunistic crash-recovery sweep — only the directory
-            # we just landed in, only files older than the conservative
-            # default age. Reuse the listing we already fetched so a
-            # remote backend doesn't pay for a second list_dir.
-            # Wrapped so a backend that doesn't support remove() (e.g.
-            # read-only mount) can't break navigation.
-            try:
-                from core import atomic_recovery as AR
-
-                removed = AR.sweep_orphans(
-                    self._backend,
-                    path,
-                    prefetched_entries=items,
-                )
-                if removed:
-                    log.info(
-                        "atomic_recovery: removed %d orphan(s) under %s",
-                        removed,
-                        path,
-                    )
-            except Exception as exc:  # noqa: BLE001 — never block navigate
-                log.debug("atomic_recovery sweep skipped for %s: %s", path, exc)
+            self._apply_listing(path, items, "keep" if self._history_navigating else "push")
         except OSError as e:
             log.error("Navigation failed: %s", e)
             self._status.setText(f"Error: {e}")
         finally:
             self._progress_bar.hide()
+
+    # --- background loading -------------------------------------------------
+    @property
+    def is_loading(self) -> bool:
+        return bool(self._nav_ctx)
+
+    def navigate_async(self, path: str, history="push", quiet: bool = False) -> None:
+        """Load *path* on a worker thread. The current listing stays shown
+        and usable; a status line with a Cancel button reports the load
+        (``quiet=True`` for background refreshes: no busy UI). A new call
+        supersedes a running one; its late result is dropped. The folder
+        changes only once the listing arrived: a failure or cancel leaves
+        the pane where it was."""
+        self._status_before = self._status.text()
+        self._nav_ctx = {"path": path, "history": history, "quiet": quiet}
+        if not quiet:
+            self._progress_bar.show()
+            self._cancel_nav_btn.show()
+            self._status.setText(f"Loading {_shorten_path(path)}…")
+
+        def work(cancel, progress):
+            # One listing at a time on this backend: a superseded load that is
+            # still inside list_dir finishes before the next one starts.
+            with self._nav_lock:
+                if cancel():
+                    return None
+                real, items = self._fetch_listing(path)
+                return real, items, self._read_disk_usage(real)
+
+        self._nav_job.start(work, replace=True)
+
+    def refresh_async(self, quiet: bool = False) -> None:
+        """Reload the current folder in the background; history untouched."""
+        self.navigate_async(self._current_path, history="keep", quiet=quiet)
+
+    def cancel_navigation(self) -> None:
+        """Stop a running background load (the pane stays where it was)."""
+        if not self._nav_ctx:
+            return
+        ctx = self._nav_ctx
+        self._nav_job.abandon()
+        self._end_loading()
+        if not ctx["quiet"]:
+            self._status.setText(f"Cancelled — still in {_shorten_path(self._current_path)}")
+        self.navigation_finished.emit(ctx["path"], False)
+
+    def _end_loading(self) -> None:
+        self._nav_ctx = {}
+        self._progress_bar.hide()
+        self._cancel_nav_btn.hide()
+
+    def _on_nav_finished(self, kind: str, value, cancelled: bool) -> None:
+        ctx = self._nav_ctx
+        if not ctx or self._shutting_down:
+            return
+        self._end_loading()
+        if kind == "error":
+            log.error("Navigation failed: %s", value)
+            if not ctx["quiet"]:
+                self._status.setText(f"Error: {value}")
+            self.navigation_finished.emit(ctx["path"], False)
+            return
+        if value is None:  # the worker saw the cancel flag first
+            self.navigation_finished.emit(ctx["path"], False)
+            return
+        path, items, usage = value
+        self._apply_listing(path, items, ctx["history"], usage)
+        self.navigation_finished.emit(path, True)
 
     def refresh(self) -> None:
         self._history_navigating = True
@@ -879,7 +1002,9 @@ class FilePaneWidget(QWidget):
         tests can patch this attribute and so subclasses can override."""
         if self._shutting_down:
             return
-        self.refresh()
+        if self.is_loading:
+            return  # a user navigation / refresh is already fetching fresh data
+        self.refresh_async(quiet=True)
 
     def shutdown(self) -> None:
         """Stop background resources owned by this pane.
@@ -890,6 +1015,7 @@ class FilePaneWidget(QWidget):
         threads cannot outlive the widget they report into.
         """
         self._shutting_down = True
+        self._nav_job.abandon()
         if self._watch_debounce is not None:
             try:
                 self._watch_debounce.stop()
@@ -927,38 +1053,15 @@ class FilePaneWidget(QWidget):
     def _go_back(self) -> None:
         """Navigate to the previous path in history (Alt+Left)."""
         if self._history_pos > 0:
-            old_pos = self._history_pos
-            self._history_pos -= 1
-            self._history_navigating = True
-            try:
-                self.navigate(self._history[self._history_pos])
-            except Exception:
-                log.warning(
-                    "History back navigation failed for %s",
-                    self._history[self._history_pos],
-                    exc_info=True,
-                )
-                self._history_pos = old_pos
-            finally:
-                self._history_navigating = False
+            pos = self._history_pos - 1
+            # The position moves only once the folder has loaded.
+            self.navigate_async(self._history[pos], history=pos)
 
     def _go_forward(self) -> None:
         """Navigate to the next path in history (Alt+Right)."""
         if self._history_pos < len(self._history) - 1:
-            old_pos = self._history_pos
-            self._history_pos += 1
-            self._history_navigating = True
-            try:
-                self.navigate(self._history[self._history_pos])
-            except Exception:
-                log.warning(
-                    "History forward navigation failed for %s",
-                    self._history[self._history_pos],
-                    exc_info=True,
-                )
-                self._history_pos = old_pos
-            finally:
-                self._history_navigating = False
+            pos = self._history_pos + 1
+            self.navigate_async(self._history[pos], history=pos)
 
     def _view_selected(self) -> None:
         """Open selected file read-only (F3) — routes to the best
@@ -1197,7 +1300,7 @@ class FilePaneWidget(QWidget):
         self._history = []
         self._history_pos = 0
         self.update_header_color()
-        self.navigate(self._current_path)
+        self.navigate_async(self._current_path)
 
     def get_session_type(self) -> str:
         """Return 'local', 'remote', or 'root' based on the backend type."""
@@ -1307,29 +1410,27 @@ class FilePaneWidget(QWidget):
 
     def _update_disk_usage(self) -> None:
         """Update disk usage display in status bar."""
-        try:
-            total, used, free = self._backend.disk_usage(self._current_path)
-            if total > 0:
+        self._show_disk_usage(self._read_disk_usage(self._current_path))
 
-                def _fmt(b: int) -> str:
-                    for unit in ("B", "KB", "MB", "GB", "TB"):
-                        if abs(b) < 1024:
-                            return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
-                        b /= 1024
-                    return f"{b:.1f} PB"
-
-                pct = int((used / total) * 100) if total else 0
-                self._disk_label.setText(f"Free: {_fmt(free)} / {_fmt(total)} ({pct}% used)")
-            else:
-                self._disk_label.setText("")
-        except Exception as e:
-            log.debug(
-                "Disk usage unavailable for %s on %s: %s",
-                self._current_path,
-                self._backend.name,
-                e,
-            )
+    def _show_disk_usage(self, usage) -> None:
+        """Render ``(total, used, free)`` (``None`` = unavailable)."""
+        if not usage:
             self._disk_label.setText("")
+            return
+        total, used, free = usage
+        if total <= 0:
+            self._disk_label.setText("")
+            return
+
+        def _fmt(b: float) -> str:
+            for unit in ("B", "KB", "MB", "GB", "TB"):
+                if abs(b) < 1024:
+                    return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
+                b /= 1024
+            return f"{b:.1f} PB"
+
+        pct = int((used / total) * 100) if total else 0
+        self._disk_label.setText(f"Free: {_fmt(free)} / {_fmt(total)} ({pct}% used)")
 
     # --- Filter ---
 
@@ -1519,15 +1620,15 @@ class FilePaneWidget(QWidget):
     def _go_up(self) -> None:
         parent = self._backend.parent(self._current_path)
         if parent != self._current_path:
-            self.navigate(parent)
+            self.navigate_async(parent)
 
     def _go_home(self) -> None:
-        self.navigate(self._backend.home())
+        self.navigate_async(self._backend.home())
 
     def _on_path_entered(self) -> None:
         path = self._path_edit.text().strip()
         if path:
-            self.navigate(path)
+            self.navigate_async(path)
 
     def _on_double_click(self, index: QModelIndex) -> None:
         source_idx = self._proxy.mapToSource(index)
@@ -1535,16 +1636,16 @@ class FilePaneWidget(QWidget):
         if not item:
             return
         if item.name == "..":
-            self.navigate(self._backend.parent(self._current_path))
+            self.navigate_async(self._backend.parent(self._current_path))
             return
         full_path = self._safe_item_path(item)
         if full_path is None:
             return
         if item.is_dir:
-            self.navigate(full_path)
+            self.navigate_async(full_path)
         elif item.is_link and self._link_points_to_directory(full_path):
             # Symlink pointing to a directory — navigate into it
-            self.navigate(full_path)
+            self.navigate_async(full_path)
         else:
             # Supported archives open in the non-modal preview dock
             # (Task A4) BEFORE the binary/hex branch — otherwise a .zip
@@ -2363,9 +2464,7 @@ class FilePaneWidget(QWidget):
                 return
             dialog = PropertiesDialog(self._backend, path, items[0], parent=self)
         else:
-            dialog = PropertiesDialog(
-                self._backend, self._current_path, items, parent=self
-            )
+            dialog = PropertiesDialog(self._backend, self._current_path, items, parent=self)
         if dialog.exec():
             # The permissions tab may have written a new mode.
             self.refresh()
@@ -3387,7 +3486,7 @@ class FilePaneWidget(QWidget):
 
             # --- Navigation ---
             if key == Qt.Key.Key_R and ctrl:
-                self.refresh()
+                self.refresh_async()
                 return True
             if key == Qt.Key.Key_Backspace and no_mods:
                 self._go_up()
@@ -3401,7 +3500,10 @@ class FilePaneWidget(QWidget):
 
             # --- Selection ---
             if key == Qt.Key.Key_Escape and no_mods:
-                self._table.clearSelection()
+                if self.is_loading:
+                    self.cancel_navigation()  # Esc stops a running load first
+                else:
+                    self._table.clearSelection()
                 return True
             if key == Qt.Key.Key_A and ctrl_shift:
                 self._invert_selection()
