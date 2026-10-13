@@ -7,9 +7,10 @@ import tempfile
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QKeySequence
+from PyQt6.QtGui import QColor, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
     QInputDialog,
     QLineEdit,
     QMainWindow,
@@ -31,6 +32,8 @@ from core.ssh_client import SSHSession, UnknownHostKeyError
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
 from ui import themes
+from ui.bookmark_edit_dialog import BookmarkEditDialog
+from ui.close_corner import add_close_corner
 from ui.file_pane import FilePaneWidget
 from ui.layout_utils import (
     equal_split_sizes,
@@ -312,6 +315,10 @@ class MainWindow(QMainWindow):
         self._monochrome_action.setChecked(False)
         self._monochrome_action.toggled.connect(self._toggle_monochrome_icons)
 
+        open_limit_action = view_menu.addAction(tr("Open &Size Limit…"))
+        open_limit_action.setToolTip("Largest file the text / hex viewers will open")
+        open_limit_action.triggered.connect(self._choose_open_limit)
+
         view_menu.addSeparator()
 
         zoom_in_action = view_menu.addAction(tr("Zoom &In"))
@@ -446,6 +453,14 @@ class MainWindow(QMainWindow):
         shell_btn.setShortcut(QKeySequence("Ctrl+Shift+T"))
         shell_btn.triggered.connect(self._open_shell_pane)
 
+        # Same toggle as View > Panels > Bookmark Sidebar. No shortcut of
+        # its own: F12 belongs to the dock's toggleViewAction and a second
+        # owner would make the key ambiguous.
+        self._bookmarks_btn = toolbar.addAction(tr("Bookmarks"))
+        self._bookmarks_btn.setToolTip("Show / hide the bookmark sidebar (F12)")
+        self._bookmarks_btn.setCheckable(True)
+        self._bookmarks_btn.triggered.connect(self._toggle_bookmark_sidebar)
+
         toolbar.addSeparator()
 
         split_h_btn = toolbar.addAction(tr("Split Horizontal"))
@@ -507,6 +522,7 @@ class MainWindow(QMainWindow):
             (quick_btn, "quick-connect"),
             (manager_btn, "connection-manager"),
             (shell_btn, "shell"),
+            (self._bookmarks_btn, "bookmark"),
             (split_h_btn, "split-h"),
             (split_v_btn, "split-v"),
             (close_btn, "close-pane"),
@@ -517,7 +533,15 @@ class MainWindow(QMainWindow):
             (move_btn, "move-right"),
             (refresh_btn, "refresh"),
         ):
+            # Remembered on the action so a theme / monochrome switch can
+            # re-icon the bar without matching on translated labels.
+            act.setProperty("axIcon", icon_name)
             act.setIcon(_ico(icon_name))
+
+    def _toggle_bookmark_sidebar(self, checked: bool) -> None:
+        sidebar = getattr(self, "_bookmark_sidebar", None)
+        if sidebar is not None:
+            sidebar.setVisible(checked)
 
     def _install_dock_titlebar(self, dock, title: str, icon_name: str) -> None:
         """Swap out Qt's default QDockWidget title bar for our custom
@@ -548,6 +572,11 @@ class MainWindow(QMainWindow):
         self._bookmark_sidebar.navigate_requested.connect(
             self._navigate_bookmark,
         )
+        # Edits made in the sidebar (reorder, groups, colours) refresh the menu.
+        self._bookmark_sidebar.changed.connect(self._populate_bookmarks_menu)
+        # Keep the toolbar button's checked state in step with the dock,
+        # however it was toggled (F12, menu, the dock's own X).
+        self._bookmark_sidebar.visibilityChanged.connect(self._bookmarks_btn.setChecked)
         self.addDockWidget(
             Qt.DockWidgetArea.LeftDockWidgetArea,
             self._bookmark_sidebar,
@@ -776,8 +805,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 title,
-                "Teil-Extraktion wird für dieses Format (7z/RAR) nicht "
-                "unterstützt — bitte 'Alles extrahieren' verwenden.",
+                "Partial extraction is not supported for this format (7z/RAR) — "
+                "please use 'Extract All'.",
             )
             return
         QMessageBox.warning(
@@ -824,7 +853,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Extract Selection",
-                "Keine Auswahl — bitte Dateien/Ordner im Baum auswählen.",
+                "Nothing selected — please select files or folders in the tree.",
             )
             return
         parent = os.path.dirname(archive_path)
@@ -886,8 +915,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Open Member",
-                "Einzeldatei-Vorschau wird für dieses Format (7z/RAR) nicht "
-                "unterstützt — bitte 'Alles extrahieren' verwenden.",
+                "Single-file preview is not supported for this format (7z/RAR) — "
+                "please use 'Extract All'.",
             )
             return None
         except (ARCH.RarUnavailable, ARCH.UnsafeArchive) as exc:
@@ -3145,6 +3174,7 @@ class MainWindow(QMainWindow):
         dlg.setWindowTitle(f"All Profiles ({len(profiles)})")
         dlg.resize(600, 480)
         layout = QVBoxLayout(dlg)
+        add_close_corner(dlg)
 
         editor = QPlainTextEdit()
         editor.setPlainText(text)
@@ -3164,6 +3194,7 @@ class MainWindow(QMainWindow):
         dlg.setWindowTitle(title)
         dlg.resize(720, 520)
         layout = QVBoxLayout(dlg)
+        add_close_corner(dlg)
         editor = QPlainTextEdit()
         editor.setReadOnly(True)
         editor.setPlainText(text)
@@ -3404,26 +3435,44 @@ class MainWindow(QMainWindow):
     # --- Bookmarks ---
 
     def _on_bookmark_request(self, path: str, backend_name: str) -> None:
-        name, ok = QInputDialog.getText(
-            self, "Add Bookmark", "Bookmark name:", text=path.rsplit("/", 1)[-1] or path
+        profile_name = ""
+        sender = self.sender()
+        if isinstance(sender, FilePaneWidget) and sender in self._pane_profiles:
+            profile_name = self._pane_profiles[sender].name
+        draft = Bookmark(
+            name=path.rsplit("/", 1)[-1] or path,
+            path=path,
+            backend_name=backend_name,
+            profile_name=profile_name,
         )
-        if ok and name:
-            profile_name = ""
-            sender = self.sender()
-            if isinstance(sender, FilePaneWidget) and sender in self._pane_profiles:
-                profile_name = self._pane_profiles[sender].name
-
-            bm = Bookmark(
-                name=name, path=path, backend_name=backend_name, profile_name=profile_name
-            )
-            self._bookmark_manager.add(bm)
-            self._rebuild_bookmarks_menu()
+        dialog = BookmarkEditDialog(
+            draft,
+            parent=self,
+            groups=self._bookmark_manager.groups(),
+            current_group=None,
+            new=True,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        bookmark = dialog.result_bookmark()
+        if not bookmark.name:
+            return
+        self._bookmark_manager.add(bookmark, group=dialog.result_group())
+        self._rebuild_bookmarks_menu()
 
     def _show_bookmarks_popup(self) -> None:
         """Show the bookmarks menu as a popup at the current cursor position."""
         self._bookmarks_menu.popup(self.cursor().pos())
 
     def _rebuild_bookmarks_menu(self) -> None:
+        self._populate_bookmarks_menu()
+        # Also refresh the sidebar panel so it reflects the same
+        # add / edit / delete that just hit the menu.
+        sidebar = getattr(self, "_bookmark_sidebar", None)
+        if sidebar is not None:
+            sidebar.rebuild()
+
+    def _populate_bookmarks_menu(self) -> None:
         self._bookmarks_menu.clear()
 
         add_action = self._bookmarks_menu.addAction(tr("Add Current Directory"))
@@ -3437,37 +3486,40 @@ class MainWindow(QMainWindow):
         manage_action = self._bookmarks_menu.addAction(tr("Manage Bookmarks..."))
         manage_action.triggered.connect(self._manage_bookmarks)
 
-        bookmarks = self._bookmark_manager.all()
-        if bookmarks:
+        nodes = self._bookmark_manager.tree()
+        if nodes:
             self._bookmarks_menu.addSeparator()
-            from ui.icon_provider import icon as _bm_icon
+            self._add_bookmark_nodes(self._bookmarks_menu, nodes)
 
-            for i, bm in enumerate(bookmarks):
-                # QAction text is rendered via Qt's AutoText, which
-                # flips to Rich-Text the moment it sees ``<tag>``
-                # markup. A hostile bookmark name like
-                # ``<u>fake</u>`` would then render with an
-                # underline — visual spoofing. Strip ``<`` / ``>``
-                # entirely so no HTML tag can form, and double
-                # ``&`` so Qt's mnemonic-shortcut parser treats
-                # it as a literal character instead of an
-                # underscore-next-letter trigger.
-                def _safe_label_part(text: str) -> str:
-                    text = text.replace("<", "").replace(">", "")
-                    return text.replace("&", "&&")
+    def _add_bookmark_nodes(self, menu: QMenu, nodes: list) -> None:
+        """Fill *menu* with the bookmark tree; groups become submenus,
+        which Qt opens on hover."""
+        from core.bookmarks import BookmarkGroup
+        from ui.icon_provider import icon as _bm_icon
 
-                label = f"{_safe_label_part(bm.name)}  [{_safe_label_part(bm.backend_name)}]"
-                action = self._bookmarks_menu.addAction(
-                    _bm_icon(bm.icon_name or "bookmark"),
-                    label,
-                )
-                action.triggered.connect(lambda checked, b=bm: self._navigate_bookmark(b))
+        # QAction text is rendered via Qt's AutoText, which flips to
+        # Rich-Text the moment it sees ``<tag>`` markup. A hostile name
+        # like ``<u>fake</u>`` would then render with an underline —
+        # visual spoofing. Strip ``<`` / ``>`` entirely so no HTML tag can
+        # form, and double ``&`` so Qt's mnemonic parser treats it as a
+        # literal character instead of an underscore-next-letter trigger.
+        def _safe(text: str) -> str:
+            return text.replace("<", "").replace(">", "").replace("&", "&&")
 
-        # Also refresh the sidebar panel so it reflects the same
-        # add / edit / delete that just hit the menu.
-        sidebar = getattr(self, "_bookmark_sidebar", None)
-        if sidebar is not None:
-            sidebar.rebuild()
+        for node in nodes:
+            if isinstance(node, BookmarkGroup):
+                group_icon = _bm_icon(node.icon_name or "folder", 32, node.color)
+                sub = menu.addMenu(group_icon, _safe(node.name))
+                if node.children:
+                    self._add_bookmark_nodes(sub, node.children)
+                else:
+                    sub.addAction(tr("(empty)")).setEnabled(False)
+                continue
+            action = menu.addAction(
+                _bm_icon(node.icon_name or "bookmark", 32, node.color),
+                f"{_safe(node.name)}  [{_safe(node.backend_name)}]",
+            )
+            action.triggered.connect(lambda checked, b=node: self._navigate_bookmark(b))
 
     def _bookmark_active_dir(self) -> None:
         if self._active_pane:
@@ -3541,6 +3593,7 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("Manage Bookmarks")
         dialog.setMinimumWidth(500)
         layout = QVBoxLayout(dialog)
+        add_close_corner(dialog)
 
         lst = QListWidget()
         lst.addItems(names)
@@ -3777,7 +3830,7 @@ class MainWindow(QMainWindow):
 
         scheme = themes.system_scheme()
         resolved = themes.resolve(theme, scheme)
-        tokens = themes.tokens_for(resolved)
+        tokens = themes.palette_tokens_for(resolved)
         if not hasattr(self, "_base_style_name"):
             # Remember what the desktop gave us so classic can restore it.
             self._base_style_name = app.style().objectName()
@@ -3797,11 +3850,26 @@ class MainWindow(QMainWindow):
 
         # Re-apply pane border styles on top of the theme
         self._refresh_pane_styles()
+        self._refresh_icons()
         log.info("Theme changed to: %s", theme)
 
     def _on_system_scheme_changed(self, *_args) -> None:
         if self._current_theme == "modern":
             self._apply_theme("modern")
+
+    def _choose_open_limit(self) -> None:
+        from core import open_limits as _ol
+
+        value, ok = QInputDialog.getInt(
+            self,
+            "Open Size Limit",
+            "Largest file the text / hex viewers open (MB):",
+            _ol.max_open_mb(),
+            _ol.MIN_MAX_OPEN_MB,
+            _ol.MAX_MAX_OPEN_MB,
+        )
+        if ok:
+            _ol.set_max_open_mb(value)
 
     def _toggle_compact_mode(self, checked: bool) -> None:
         self._compact_mode = checked
@@ -3817,46 +3885,50 @@ class MainWindow(QMainWindow):
         from ui.icon_provider import set_monochrome as _set_mono
 
         _set_mono(checked)
+        self._refresh_icons()
+        log.info("Monochrome icons: %s", "on" if checked else "off")
+
+    def _icon_tint(self) -> str | None:
+        """Colour for every icon under the current theme: the Hacker /
+        Amber accent, or in monochrome mode the palette's text colour
+        (``currentColor`` would rasterise black), else ``None`` for the
+        regular per-icon palette."""
+        from ui.icon_provider import is_monochrome as _is_mono
+
+        resolved = themes.resolve(self._current_theme, themes.system_scheme())
+        tint = themes.icon_tint_for(resolved)
+        if tint is None and _is_mono():
+            app = QApplication.instance()
+            if app is not None:
+                tint = app.palette().color(QPalette.ColorRole.WindowText).name()
+        return tint
+
+    def _refresh_icons(self) -> None:
+        """Re-rasterise every icon surface after a theme or monochrome
+        change: toolbar, dock title bars, bookmark sidebar + menu and
+        the file lists (their rows ask the provider on each paint)."""
+        from ui.icon_provider import set_tint as _set_tint
+
+        _set_tint(self._icon_tint())
         self._rebuild_toolbar_icons()
         self._rebuild_dock_titlebars()
         if hasattr(self, "_bookmark_sidebar"):
             self._bookmark_sidebar.rebuild()
-        self._rebuild_bookmarks_menu()
-        log.info("Monochrome icons: %s", "on" if checked else "off")
+        if hasattr(self, "_bookmarks_menu"):
+            self._rebuild_bookmarks_menu()
+        for pane in self._panes:
+            pane._table.viewport().update()
 
     def _rebuild_toolbar_icons(self) -> None:
-        """Re-apply icons to every QAction on the Main toolbar after
-        a monochrome toggle. Walks the actions in the order
-        ``_setup_toolbar`` built them."""
-        from PyQt6.QtWidgets import QToolBar
-
+        """Re-apply icons to the Main toolbar's actions (those carrying
+        an ``axIcon`` property, set in ``_setup_toolbar``)."""
         from ui.icon_provider import icon as _ico
 
-        toolbar = None
         for tb in self.findChildren(QToolBar):
-            if any(a.text() == "Quick Connect" for a in tb.actions()):
-                toolbar = tb
-                break
-        if toolbar is None:
-            return
-        text_to_icon = {
-            "Quick Connect": "quick-connect",
-            "Connection Manager": "connection-manager",
-            "Shell": "shell",
-            "Split Horizontal": "split-h",
-            "Split Vertical": "split-v",
-            "Close Pane": "close-pane",
-            "Toggle Layout": "toggle-layout",
-            "Equalize Panes": "equalize",
-            "Extract Pane": "extract-pane",
-            "Copy to Target": "copy-right",
-            "Move to Target": "move-right",
-            "Refresh": "refresh",
-        }
-        for action in toolbar.actions():
-            icon_name = text_to_icon.get(action.text())
-            if icon_name:
-                action.setIcon(_ico(icon_name))
+            for action in tb.actions():
+                icon_name = action.property("axIcon")
+                if icon_name:
+                    action.setIcon(_ico(str(icon_name)))
 
     def _rebuild_dock_titlebars(self) -> None:
         """Re-install the dock title bars so their icons re-rasterise

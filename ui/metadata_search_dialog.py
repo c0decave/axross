@@ -41,6 +41,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core import metadata_index as MX
+from ui.close_corner import add_close_corner
+from ui.scan_job import BusyStrip, ScanJob
 
 log = logging.getLogger("ui.metadata_search_dialog")
 
@@ -81,6 +83,9 @@ class MetadataSearchDialog(QDialog):
         self._active_pane = active_pane
         self.setWindowTitle("Find in Index")
         self.resize(880, 560)
+        # The walk can take minutes: it runs in a thread (progress, Cancel, Esc).
+        self._job = ScanJob(self)
+        self._job.finished.connect(self._on_index_finished)
         self._build_ui()
         self._update_status()
 
@@ -89,6 +94,7 @@ class MetadataSearchDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        add_close_corner(self)
 
         criteria = QGroupBox("Criteria", self)
         form = QFormLayout(criteria)
@@ -155,6 +161,14 @@ class MetadataSearchDialog(QDialog):
         self._table.doubleClicked.connect(self._on_row_activated)
         root.addWidget(self._table, stretch=1)
 
+        # One status line at the bottom while an index run is going.
+        self._strip = BusyStrip(self._job, self)
+        self._busy_bar = self._strip.bar
+        self._progress_label = self._strip.label
+        self._cancel_btn = self._strip.cancel_button
+        self._job.started.connect(lambda: self._index_btn.setEnabled(False))
+        root.addWidget(self._strip)
+
         close_btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Close,
             self,
@@ -211,6 +225,8 @@ class MetadataSearchDialog(QDialog):
         backend = pane.backend
         path = pane.current_path
         bid = _backend_id_for(backend)
+        if self._job.running and not self._job.cancelling:
+            return  # an index run is already going
         reply = QMessageBox.question(
             self,
             "Index Pane",
@@ -221,30 +237,34 @@ class MetadataSearchDialog(QDialog):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        # Single push + single pop discipline (see file_pane._show_checksum).
-        error: Exception | None = None
-        added = 0
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            try:
-                added = MX.index_dir(backend, path, backend_id=bid)
-            except Exception as exc:  # noqa: BLE001 — surface to user
-                error = exc
-        finally:
-            QApplication.restoreOverrideCursor()
-        if error is not None:
-            QMessageBox.warning(
-                self,
-                "Index",
-                f"Indexing failed:\n{error}",
+        self._index_root = path
+        self._job.start(
+            lambda cancel, progress: MX.index_dir(
+                backend, path, backend_id=bid, cancel=cancel, progress=progress
             )
-            return
-        QMessageBox.information(
-            self,
-            "Index",
-            f"Indexed {added} entries under {path}.",
         )
+
+    def _on_index_finished(self, kind: str, value, cancelled: bool) -> None:
+        self._index_btn.setEnabled(self._active_pane is not None)
+        path = self._index_root
+        if kind == "error":
+            QMessageBox.warning(self, "Index", f"Indexing failed:\n{value}")
+            return
+        if cancelled:
+            text = f"Cancelled — {value} entries indexed so far under {path}."
+        else:
+            text = f"Indexed {value} entries under {path}."
+        QMessageBox.information(self, "Index", text)
         self._update_status()
+
+    def reject(self) -> None:
+        # Esc, Close and the window's own close must stop a running index.
+        self._job.abandon()
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        self._job.abandon()
+        super().closeEvent(event)
 
     def _update_status(self, found: int | None = None) -> None:
         try:

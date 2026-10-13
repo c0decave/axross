@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from html import escape
+
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
-from PyQt6.QtWidgets import QFileIconProvider
 
 from models.file_item import FileItem
+from ui.icon_provider import entry_icon
 
 COLUMNS = ("Name", "Size", "Modified", "Permissions", "Owner")
 COL_NAME, COL_SIZE, COL_MODIFIED, COL_PERMS, COL_OWNER = range(5)
@@ -15,7 +17,6 @@ class FileTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items: list[FileItem] = []
-        self._icon_provider = QFileIconProvider()
 
     def set_items(self, items: list[FileItem]) -> None:
         self.beginResetModel()
@@ -55,10 +56,14 @@ class FileTableModel(QAbstractTableModel):
                     owner += f":{item.group}"
                 return owner
 
+        if role == Qt.ItemDataRole.ToolTipRole and col == COL_NAME and item.name != "..":
+            # Tooltips are always rendered as rich text: escape the name so
+            # markup inside a hostile file name is shown literally, and keep
+            # long names on one line (no wrapping in the middle of a name).
+            return f"<p style='white-space:pre'>{escape(item.name)}</p>"
+
         if role == Qt.ItemDataRole.DecorationRole and col == COL_NAME:
-            if item.is_dir:
-                return self._icon_provider.icon(QFileIconProvider.IconType.Folder)
-            return self._icon_provider.icon(QFileIconProvider.IconType.File)
+            return entry_icon(item.is_dir)
 
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if col == COL_SIZE:

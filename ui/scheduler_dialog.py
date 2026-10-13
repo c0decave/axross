@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.scheduler import Job, JobStore, next_run_at
+from ui.close_corner import add_close_corner
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ class SchedulerDialog(QDialog):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        add_close_corner(self)
 
         self._table = QTableWidget(0, len(COLUMNS), self)
         self._table.setHorizontalHeaderLabels(list(COLUMNS))

@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import trash as T
+from ui.close_corner import add_close_corner
 
 log = logging.getLogger("ui.trash_browser")
 
@@ -54,6 +55,7 @@ class TrashBrowserDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        add_close_corner(self)
 
         self._info = QLabel("")
         root.addWidget(self._info)

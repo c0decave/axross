@@ -755,9 +755,68 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
     return css
 
 
+# Icon colour of the tinted themes — the foreground colour of the
+# matching stylesheet above (HACKER_THEME / AMBER_THEME).
+_ICON_TINTS = {"hacker": "#00ff41", "amber": "#ff8c00"}
+
+
+def icon_tint_for(resolved: str) -> str | None:
+    """Single icon colour for a resolved theme id, ``None`` when the
+    theme keeps the regular per-icon palette."""
+    return _ICON_TINTS.get(resolved)
+
+
 def tokens_for(resolved: str) -> dict[str, str] | None:
     """Palette tokens of a resolved modern id, ``None`` for classic ids."""
     return _MODERN_VARIANTS.get(resolved)
+
+
+# Palette tokens of the classic dark-family themes. Their stylesheets name
+# only some widgets (QTableView, QLineEdit, ...); everything else (tree and
+# list views with alternating rows, spin boxes, check boxes, tab widgets)
+# falls back to the PALETTE, which on a light desktop is white - green text
+# on a white alternate row in Hacker mode. Giving these themes a matching
+# palette makes the unnamed widgets follow the theme too.
+_CLASSIC_PALETTE_TOKENS: dict[str, dict[str, str]] = {
+    "classic": {
+        "bg": "#1e1e2e",
+        "text": "#cdd6f4",
+        "surface": "#1e1e2e",
+        "surface_alt": "#181825",
+        "selection": "#45475a",
+        "selection_text": "#cdd6f4",
+        "accent_text_on_surface": "#89b4fa",
+        "text_muted": "#a6adc8",
+    },
+    "hacker": {
+        "bg": "#0a0a0a",
+        "text": "#00ff41",
+        "surface": "#0a0a0a",
+        "surface_alt": "#0d0d0d",
+        "selection": "#004400",
+        "selection_text": "#00ff41",
+        "accent_text_on_surface": "#00ff41",
+        "text_muted": "#00aa2c",
+    },
+    "amber": {
+        "bg": "#0a0a0a",
+        "text": "#ff8c00",
+        "surface": "#0a0a0a",
+        "surface_alt": "#0d0d0d",
+        "selection": "#442200",
+        "selection_text": "#ffaa00",
+        "accent_text_on_surface": "#ffaa00",
+        "text_muted": "#cc7000",
+    },
+}
+_CLASSIC_PALETTE_TOKENS["dark"] = _CLASSIC_PALETTE_TOKENS["classic"]
+
+
+def palette_tokens_for(resolved: str) -> dict[str, str] | None:
+    """Tokens for the application QPalette of a resolved theme id: the
+    modern tokens, the dark-family tokens above, ``None`` for the
+    light / native theme (it keeps the desktop palette)."""
+    return _MODERN_VARIANTS.get(resolved) or _CLASSIC_PALETTE_TOKENS.get(resolved)
 
 
 def qpalette_for(tokens: dict[str, str]):

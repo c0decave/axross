@@ -243,7 +243,14 @@ def _row_to_entry(row) -> CasEntry:
 # ---------------------------------------------------------------------------
 
 
-def _walk_files(backend, root: str, *, depth: int = 0, counter: list | None = None):
+def _walk_files(
+    backend,
+    root: str,
+    *,
+    depth: int = 0,
+    counter: list | None = None,
+    cancel=None,
+):
     """Depth-first walk yielding absolute file paths under *root*.
 
     Capped at :data:`MAX_WALK_DEPTH` and :data:`MAX_WALK_ENTRIES` —
@@ -254,9 +261,14 @@ def _walk_files(backend, root: str, *, depth: int = 0, counter: list | None = No
     *counter* is a single-element list passed by reference so the
     recursive calls can share a running total. The top-level caller
     passes ``None`` and gets a fresh one.
+
+    *cancel* is an optional zero-argument callable polled between
+    entries; once it returns true the walk ends quietly.
     """
     if counter is None:
         counter = [0]
+    if cancel is not None and cancel():
+        return
     if depth > MAX_WALK_DEPTH:
         log.warning(
             "cas walk: depth %d exceeds MAX_WALK_DEPTH=%d at %s — "
@@ -272,6 +284,8 @@ def _walk_files(backend, root: str, *, depth: int = 0, counter: list | None = No
         log.warning("cas walk: list_dir(%s) failed: %s", root, exc)
         return
     for it in entries:
+        if cancel is not None and cancel():
+            return
         if counter[0] >= MAX_WALK_ENTRIES:
             log.warning(
                 "cas walk: reached MAX_WALK_ENTRIES=%d — aborting",
@@ -306,45 +320,75 @@ def _walk_files(backend, root: str, *, depth: int = 0, counter: list | None = No
                 full,
                 depth=depth + 1,
                 counter=counter,
+                cancel=cancel,
             )
         else:
             yield full, int(getattr(it, "size", 0) or 0)
 
 
-def rebuild(backend, root: str, *, backend_id: str, algorithm: str = "sha256", db_path=None) -> int:
+def rebuild(
+    backend,
+    root: str,
+    *,
+    backend_id: str,
+    algorithm: str = "sha256",
+    db_path=None,
+    cancel=None,
+    progress=None,
+) -> int:
     """Walk *root* on *backend* and (re)populate the index for that tree.
 
     Old rows for paths we didn't visit are **not** pruned — rebuilds
     are additive. Call :func:`prune_missing` to clean up after a
     rebuild if you also deleted files.
 
+    *cancel* (zero-argument callable) is polled between files; when it
+    returns true the run stops and the rows indexed so far are kept.
+    *progress* is called as ``progress(scanned, indexed, path)`` after
+    every file; an exception in it never aborts the rebuild.
+
     Returns the number of rows upserted.
     """
     count = 0
-    for path, size in _walk_files(backend, root):
-        try:
-            raw = backend.checksum(path, algorithm=algorithm)
-        except (OSError, NotImplementedError) as exc:
-            log.debug("cas: skip %s — checksum failed: %s", path, exc)
-            continue
-        if not raw:
-            continue
-        algo, value = _split_prefix(raw)
-        # If the backend returned a different algo than requested
-        # (e.g. S3 ETag for MD5) we still index it — callers querying
-        # by that algo will find it.
-        try:
-            upsert(db_path, backend_id, path, algo, value, size)
-        except ValueError as exc:
-            log.warning(
-                "cas.rebuild: rejecting %s@%s: %s",
-                backend_id,
-                path[:80],
-                exc,
-            )
-            continue
-        count += 1
+    scanned = 0
+    for path, size in _walk_files(backend, root, cancel=cancel):
+        if cancel is not None and cancel():
+            break
+        scanned += 1
+        if _index_one(backend, backend_id, path, size, algorithm, db_path):
+            count += 1
+        if progress is not None:
+            try:
+                progress(scanned, count, path)
+            except Exception as exc:  # noqa: BLE001 — a UI callback must not kill the run
+                log.debug("cas.rebuild: progress callback failed: %s", exc)
     return count
+
+
+def _index_one(backend, backend_id: str, path: str, size: int, algorithm: str, db_path) -> bool:
+    """Hash and index one file; ``False`` when it was skipped."""
+    try:
+        raw = backend.checksum(path, algorithm=algorithm)
+    except (OSError, NotImplementedError) as exc:
+        log.debug("cas: skip %s — checksum failed: %s", path, exc)
+        return False
+    if not raw:
+        return False
+    algo, value = _split_prefix(raw)
+    # If the backend returned a different algo than requested
+    # (e.g. S3 ETag for MD5) we still index it — callers querying
+    # by that algo will find it.
+    try:
+        upsert(db_path, backend_id, path, algo, value, size)
+    except ValueError as exc:
+        log.warning(
+            "cas.rebuild: rejecting %s@%s: %s",
+            backend_id,
+            path[:80],
+            exc,
+        )
+        return False
+    return True
 
 
 def prune_missing(backend, root: str, *, backend_id: str, db_path=None) -> int:

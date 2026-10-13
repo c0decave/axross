@@ -33,6 +33,7 @@ silent blank.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 
 from PyQt6.QtCore import QByteArray, Qt
@@ -131,6 +132,9 @@ _TOOL_ICONS = {
     ),
     "move-right": _svg(
         '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+    ),
+    "x": _svg(
+        '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
     ),
     "refresh": _svg(
         '<polyline points="23 4 23 10 17 10"/>'
@@ -326,7 +330,162 @@ _BOOKMARK_ICONS = {
 
 
 # Final merged table — all icons share the same lookup + render path.
-ICONS: dict[str, str] = {**_TOOL_ICONS, **_BOOKMARK_ICONS}
+# Emoji-style icons, hand-drawn in the same line style as the rest so they
+# follow tints and per-bookmark colours. (Real emoji characters are
+# deliberately NOT used: they render differently on every platform and
+# ignore the theme.)
+_EMOJI_ICONS = {
+    "smile": _svg(
+        '<circle cx="12" cy="12" r="10"/>'
+        '<path d="M8 14s1.5 2 4 2 4-2 4-2"/>'
+        '<line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>',
+    ),
+    "sad": _svg(
+        '<circle cx="12" cy="12" r="10"/>'
+        '<path d="M16 16s-1.5-2-4-2-4 2-4 2"/>'
+        '<line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>',
+    ),
+    "sun": _svg(
+        '<circle cx="12" cy="12" r="5"/>'
+        '<line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>'
+        '<line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>'
+        '<line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>'
+        '<line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>'
+        '<line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>'
+        '<line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+    ),
+    "moon": _svg('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'),
+    "coffee": _svg(
+        '<path d="M18 8h1a4 4 0 0 1 0 8h-1"/>'
+        '<path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/>'
+        '<line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/>'
+        '<line x1="14" y1="1" x2="14" y2="4"/>',
+    ),
+    "gift": _svg(
+        '<polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/>'
+        '<line x1="12" y1="22" x2="12" y2="7"/>'
+        '<path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/>'
+        '<path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>',
+    ),
+    "award": _svg(
+        '<circle cx="12" cy="8" r="7"/>'
+        '<polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>',
+    ),
+    "anchor": _svg(
+        '<circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/>'
+        '<path d="M5 12H2a10 10 0 0 0 20 0h-3"/>',
+    ),
+    "bell": _svg(
+        '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>'
+        '<path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+    ),
+    "camera": _svg(
+        '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3'
+        'h4a2 2 0 0 1 2 2z"/>'
+        '<circle cx="12" cy="13" r="4"/>',
+    ),
+    "book": _svg(
+        '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>'
+        '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+    ),
+    "headphones": _svg(
+        '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/>'
+        '<path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/>'
+        '<path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>',
+    ),
+    "gamepad": _svg(
+        '<rect x="2" y="6" width="20" height="12" rx="3"/>'
+        '<line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/>'
+        '<line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/>',
+    ),
+    "umbrella": _svg(
+        '<path d="M23 12a11.05 11.05 0 0 0-22 0z"/><path d="M18 19a3 3 0 0 1-6 0v-7"/>',
+    ),
+    "droplet": _svg('<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>'),
+    "leaf": _svg(
+        '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 '
+        '0 5.5-4.78 10-10 10z"/>'
+        '<path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>',
+    ),
+    "flame": _svg(
+        '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 '
+        "2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3"
+        'a2.5 2.5 0 0 0 2.5 2.5z"/>',
+    ),
+    "rocket": _svg(
+        '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91'
+        'a2.18 2.18 0 0 0-2.91-.09z"/>'
+        '<path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 '
+        '7.5-6 11a22.35 22.35 0 0 1-4 2z"/>'
+        '<path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>'
+        '<path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+    ),
+    "bug": _svg(
+        '<path d="M8 2l1.88 1.88"/><path d="M14.12 3.88L16 2"/>'
+        '<path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/>'
+        '<path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/>'
+        '<path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/>'
+        '<path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/>'
+        '<path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
+    ),
+    "skull": _svg(
+        '<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>'
+        '<path d="M8 20v2h8v-2"/><path d="M12.5 17l-.5-1-.5 1h1z"/>'
+        '<path d="M16 20a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20"/>',
+    ),
+    "ghost": _svg(
+        '<path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/>'
+        '<line x1="9" y1="10" x2="9.01" y2="10"/><line x1="15" y1="10" x2="15.01" y2="10"/>',
+    ),
+    "paw": _svg(
+        '<circle cx="5" cy="11" r="2"/><circle cx="9" cy="6" r="2"/>'
+        '<circle cx="15" cy="6" r="2"/><circle cx="19" cy="11" r="2"/>'
+        '<path d="M12 12c-3 0-6 3-6 6 0 2 2 3 4 2.5 1.2-.3 2.8-.3 4 0 2 .5 4-.5 '
+        '4-2.5 0-3-3-6-6-6z"/>',
+    ),
+    "gem": _svg(
+        '<path d="M6 3h12l4 6-10 13L2 9z"/><path d="M11 3L8 9l4 13 4-13-3-6"/>'
+        '<line x1="2" y1="9" x2="22" y2="9"/>',
+    ),
+    "crown": _svg('<path d="M3 19l-1-12 5 5 5-8 5 8 5-5-1 12z"/>'),
+    "trophy": _svg(
+        '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>'
+        '<line x1="4" y1="22" x2="20" y2="22"/>'
+        '<path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>'
+        '<path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>'
+        '<path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>',
+    ),
+    "target": _svg(
+        '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/>'
+        '<circle cx="12" cy="12" r="2"/>',
+    ),
+    "compass": _svg(
+        '<circle cx="12" cy="12" r="10"/>'
+        '<polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
+    ),
+    "map-pin": _svg(
+        '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
+    ),
+}
+
+# Terminal-style glyphs for the tinted (Hacker / Amber) themes: the
+# folder carries a prompt, the file a few "digital rain" dots. They are
+# not user-pickable, so they stay out of ``available_icons``.
+_THEME_ICONS = {
+    "folder-matrix": _svg(
+        '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+        '<polyline points="7 11 10 14 7 17"/><line x1="12" y1="17" x2="17" y2="17"/>',
+    ),
+    "file-matrix": _svg(
+        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+        '<polyline points="14 2 14 8 20 8"/>'
+        '<line x1="8" y1="12" x2="16" y2="12" stroke-dasharray="0.1 3.4"/>'
+        '<line x1="8" y1="16" x2="16" y2="16" stroke-dasharray="0.1 3.4"/>'
+        '<line x1="8" y1="20" x2="12" y2="20" stroke-dasharray="0.1 3.4"/>',
+    ),
+}
+
+ICONS: dict[str, str] = {**_TOOL_ICONS, **_BOOKMARK_ICONS, **_EMOJI_ICONS, **_THEME_ICONS}
 
 
 # --------------------------------------------------------------------------
@@ -361,6 +520,7 @@ _ICON_COLORS: dict[str, str | None] = {
     "copy-right": "#3498db",  # blue
     "move-right": "#27ae60",  # green arrow
     "refresh": "#16a085",  # teal
+    "x": "#95a5a6",  # neutral grey close cross
     # Markers — warm accents.
     "bookmark": "#4a90e2",  # blue
     "star": "#f39c12",  # gold
@@ -405,9 +565,65 @@ _ICON_COLORS: dict[str, str | None] = {
     "plus": "#27ae60",  # green
     "edit": "#f39c12",  # gold
     "trash": "#e74c3c",  # red
+    # Emoji set.
+    "smile": "#f1c40f",
+    "sad": "#5dade2",
+    "sun": "#f39c12",
+    "moon": "#9fa8da",
+    "coffee": "#a1887f",
+    "gift": "#ec407a",
+    "award": "#f1c40f",
+    "anchor": "#2980b9",
+    "bell": "#f39c12",
+    "camera": "#7f8c8d",
+    "book": "#8d6e63",
+    "headphones": "#9b59b6",
+    "gamepad": "#6c5ce7",
+    "umbrella": "#3498db",
+    "droplet": "#3498db",
+    "leaf": "#2ecc71",
+    "flame": "#e67e22",
+    "rocket": "#e74c3c",
+    "bug": "#27ae60",
+    "skull": "#bdc3c7",
+    "ghost": "#bdc3c7",
+    "paw": "#d35400",
+    "gem": "#1abc9c",
+    "crown": "#f1c40f",
+    "trophy": "#f39c12",
+    "target": "#e74c3c",
+    "compass": "#16a085",
+    "map-pin": "#e74c3c",
     # Fallback placeholder.
     "unknown": "#888888",
 }
+
+
+# Colours offered for per-bookmark / per-group tinting (name, #rrggbb).
+BOOKMARK_COLORS: tuple[tuple[str, str], ...] = (
+    ("Red", "#e74c3c"),
+    ("Orange", "#e67e22"),
+    ("Yellow", "#f1c40f"),
+    ("Green", "#2ecc71"),
+    ("Teal", "#1abc9c"),
+    ("Cyan", "#00bcd4"),
+    ("Blue", "#3498db"),
+    ("Indigo", "#6c5ce7"),
+    ("Purple", "#9b59b6"),
+    ("Pink", "#ec407a"),
+    ("Brown", "#8d6e63"),
+    ("Grey", "#95a5a6"),
+)
+
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def _valid_color(value: object) -> str | None:
+    """``#rrggbb`` (lower-cased) or ``None``. The value is spliced into
+    SVG source, so anything else is dropped."""
+    if isinstance(value, str) and _HEX_COLOR.fullmatch(value):
+        return value.lower()
+    return None
 
 
 # Monochrome mode — module-level so both the icon() factory and the
@@ -435,13 +651,44 @@ def is_monochrome() -> bool:
     return _monochrome
 
 
+# Theme tint — a single colour that overrides every other colour choice
+# (per-name palette AND monochrome). The Hacker and Amber themes set it
+# so toolbar, sidebar, dock and file-list icons all read as one colour.
+# In monochrome mode on a themed palette the window sets it to the
+# palette's text colour, because ``currentColor`` renders black in a
+# pixmap (QSvgRenderer has no widget palette to resolve it against).
+_tint: str | None = None
+
+
+def set_tint(colour: str | None) -> None:
+    """Colour every icon with *colour* (``None`` restores the default).
+    Clears the render cache when the value changes."""
+    global _tint
+    if colour == _tint:
+        return
+    _tint = colour or None
+    _render_icon.cache_clear()
+
+
+def get_tint() -> str | None:
+    return _tint
+
+
+def entry_icon(is_dir: bool, size: int = 32) -> QIcon:
+    """Icon for a file-list row: our own folder / file glyph (never the
+    desktop's system icon, which ignores the theme). Under a tint the
+    terminal-style variant is used."""
+    base = "folder" if is_dir else "file"
+    return _render_icon(f"{base}-matrix" if _tint else base, size)
+
+
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
 
 
 @lru_cache(maxsize=512)
-def _render_icon(name: str, size: int = 32) -> QIcon:
+def _render_icon(name: str, size: int = 32, color: str | None = None) -> QIcon:
     """Render the named SVG into a QIcon. Cached by (name, size) so
     repeated toolbar / sidebar builds don't re-parse the XML.
 
@@ -456,7 +703,13 @@ def _render_icon(name: str, size: int = 32) -> QIcon:
     ``icon()`` call re-rasterises fresh.
     """
     svg_src = ICONS.get(name) or ICONS["unknown"]
-    if not _monochrome:
+    if color:
+        # An explicit per-bookmark colour beats the theme tint: telling
+        # entries apart is the point of choosing one.
+        svg_src = svg_src.replace('stroke="currentColor"', f'stroke="{color}"')
+    elif _tint:
+        svg_src = svg_src.replace('stroke="currentColor"', f'stroke="{_tint}"')
+    elif not _monochrome:
         colour = _ICON_COLORS.get(name)
         if colour:
             # Every SVG string uses ``stroke="currentColor"`` from
@@ -477,12 +730,13 @@ def _render_icon(name: str, size: int = 32) -> QIcon:
     return QIcon(pixmap)
 
 
-def icon(name: str, size: int = 32) -> QIcon:
+def icon(name: str, size: int = 32, color: str | None = None) -> QIcon:
     """Return a QIcon for *name*. Unknown names resolve to the
     ``unknown`` placeholder so missing entries land on screen as a
-    visible question mark instead of a silent blank.
+    visible question mark instead of a silent blank. *color* is an
+    optional ``#rrggbb`` override; invalid values are ignored.
     """
-    return _render_icon(name, size)
+    return _render_icon(name, size, _valid_color(color))
 
 
 def available_icons() -> list[str]:
@@ -497,6 +751,7 @@ def available_icons() -> list[str]:
         if name == "unknown":
             continue
         out.append(name)
+    out.extend(_EMOJI_ICONS)
     return out
 
 
@@ -505,7 +760,7 @@ def bookmark_icon_names() -> list[str]:
     data categories, misc). Excludes toolbar-verb icons like
     ``split-h`` which wouldn't make semantic sense as a bookmark
     label."""
-    return [n for n in _BOOKMARK_ICONS if n != "unknown"]
+    return [n for n in _BOOKMARK_ICONS if n != "unknown"] + list(_EMOJI_ICONS)
 
 
 def has_icon(name: str) -> bool:
@@ -513,11 +768,15 @@ def has_icon(name: str) -> bool:
 
 
 __all__ = [
+    "BOOKMARK_COLORS",
     "ICONS",
     "available_icons",
     "bookmark_icon_names",
+    "entry_icon",
+    "get_tint",
     "has_icon",
     "icon",
     "is_monochrome",
     "set_monochrome",
+    "set_tint",
 ]

@@ -43,6 +43,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core import cas as CAS
+from ui.close_corner import add_close_corner
+from ui.scan_job import BusyStrip, ScanJob
 
 log = logging.getLogger("ui.cas_dialog")
 
@@ -123,6 +125,10 @@ class CasDuplicatesDialog(QDialog):
         self._active_pane = active_pane
         self.setWindowTitle("Duplicate Finder")
         self.resize(900, 600)
+        # Background rebuild: the walk + hashing can take minutes, so it runs
+        # in a thread while the dialog stays live (progress, Cancel, Esc).
+        self._job = ScanJob(self)
+        self._job.finished.connect(self._on_rebuild_finished)
         self._build_ui()
         self._reload()
 
@@ -131,6 +137,7 @@ class CasDuplicatesDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        add_close_corner(self)
 
         intro = QLabel(
             "Indexed files grouped by content hash — every row in a group "
@@ -157,8 +164,7 @@ class CasDuplicatesDialog(QDialog):
 
         self._delete_btn = QPushButton("Delete selected copies…", self)
         self._delete_btn.setToolTip(
-            "Remove the selected duplicates. At least one copy of every "
-            "group is always kept."
+            "Remove the selected duplicates. At least one copy of every group is always kept."
         )
         self._delete_btn.clicked.connect(self._delete_selected)
         btn_row.addWidget(self._delete_btn)
@@ -196,6 +202,14 @@ class CasDuplicatesDialog(QDialog):
         self._tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self._tree.itemDoubleClicked.connect(self._on_double_click)
         root.addWidget(self._tree, stretch=1)
+
+        # One status line at the bottom while a scan runs.
+        self._strip = BusyStrip(self._job, self)
+        self._busy_bar = self._strip.bar
+        self._progress_label = self._strip.label
+        self._cancel_btn = self._strip.cancel_button
+        self._job.started.connect(lambda: self._rebuild_btn.setEnabled(False))
+        root.addWidget(self._strip)
 
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         close.rejected.connect(self.reject)
@@ -263,6 +277,8 @@ class CasDuplicatesDialog(QDialog):
         backend = pane.backend
         path = pane.current_path
         bid = _backend_id_for(backend)
+        if self._job.running and not self._job.cancelling:
+            return  # a scan is already running
         reply = QMessageBox.question(
             self,
             "Rebuild CAS",
@@ -273,30 +289,35 @@ class CasDuplicatesDialog(QDialog):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        # Single push + single pop discipline (see file_pane._show_checksum).
-        error: Exception | None = None
-        added = 0
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            try:
-                added = CAS.rebuild(backend, path, backend_id=bid)
-            except Exception as exc:  # noqa: BLE001 — surface to user
-                error = exc
-        finally:
-            QApplication.restoreOverrideCursor()
-        if error is not None:
-            QMessageBox.warning(
-                self,
-                "Rebuild CAS",
-                f"Rebuild failed:\n{error}",
+        self._rebuild_root = path
+        self._job.start(
+            lambda cancel, progress: CAS.rebuild(
+                backend, path, backend_id=bid, cancel=cancel, progress=progress
             )
-            return
-        QMessageBox.information(
-            self,
-            "Rebuild CAS",
-            f"Indexed {added} file(s) under {path}.",
         )
+
+    def _on_rebuild_finished(self, kind: str, value, cancelled: bool) -> None:
+        self._rebuild_btn.setEnabled(self._active_pane is not None)
+        path = self._rebuild_root
+        if kind == "error":
+            QMessageBox.warning(self, "Rebuild CAS", f"Rebuild failed:\n{value}")
+            return
+        if cancelled:
+            text = f"Cancelled — {value} file(s) indexed so far under {path}."
+        else:
+            text = f"Indexed {value} file(s) under {path}."
+        QMessageBox.information(self, "Rebuild CAS", text)
         self._reload()
+
+    def reject(self) -> None:
+        # Esc, the Close button and the window's own close all land here or
+        # in closeEvent; a running scan must not outlive the dialog.
+        self._job.abandon()
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        self._job.abandon()
+        super().closeEvent(event)
 
     def _selected_kind_payload(self):
         item = self._tree.currentItem()

@@ -28,19 +28,26 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
+from ui.close_corner import make_close_corner
+
 if TYPE_CHECKING:
     from core.backend import FileBackend
 
 log = logging.getLogger(__name__)
 
-MAX_HEX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit for hex editor
+# Default cap, kept for importers; the effective limit is the user
+# setting (core.open_limits), read at every open.
+MAX_HEX_FILE_SIZE = DEFAULT_MAX_OPEN_MB * 1024 * 1024
 
 
 class HexEditorReadLimitError(OSError):
     """Raised when a backend returns more data than the hex editor cap."""
 
 
-def _read_capped(handle, cap: int = MAX_HEX_FILE_SIZE) -> bytes:
+def _read_capped(handle, cap: int | None = None) -> bytes:
+    if cap is None:
+        cap = max_open_bytes()
     data = handle.read(cap + 1)
     if isinstance(data, str):
         data = data.encode("utf-8", errors="replace")
@@ -451,6 +458,7 @@ class HexEditorDialog(QDialog):
         self._size_label.setProperty("role", "muted")
         info.addStretch()
         info.addWidget(self._size_label)
+        info.addWidget(make_close_corner(self, self._on_close))
         layout.addLayout(info)
 
         # Hex view + scrollbar
@@ -557,11 +565,12 @@ class HexEditorDialog(QDialog):
     def _load_file(self) -> None:
         try:
             stat = self._backend.stat(self._file_path)
-            if stat.size > MAX_HEX_FILE_SIZE:
+            if stat.size > max_open_bytes():
                 QMessageBox.warning(
                     self,
                     "File Too Large",
-                    f"File is {stat.size_human} — only files under 10 MB supported in hex editor.",
+                    f"File is {stat.size_human} — only files up to {describe_limit()} "
+                    "are opened (change it under View → Open Size Limit…).",
                 )
                 self.reject()
                 return
@@ -686,6 +695,19 @@ class HexEditorDialog(QDialog):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         self.accept()
+
+    def reject(self) -> None:
+        # Esc must not throw away edits silently either.
+        if self._hex_widget.is_modified:
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                "Discard changes?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        super().reject()
 
     def closeEvent(self, event) -> None:
         if self._hex_widget.is_modified:

@@ -7,7 +7,19 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, QMimeData, QModelIndex, QPoint, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent,
+    QItemSelection,
+    QItemSelectionModel,
+    QMimeData,
+    QModelIndex,
+    QPoint,
+    QRect,
+    Qt,
+    QTimer,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QDrag, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -21,12 +33,14 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QRubberBand,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from core.i18n import tr
+from core.open_limits import describe_limit, max_open_bytes
 from core.redaction import redact_url
 from models.file_item import FileItem
 from models.file_table_model import COL_NAME, FileSortProxyModel, FileTableModel
@@ -167,12 +181,135 @@ def _escape_dialog_lines(lines) -> str:
     return "\n".join(escape(str(line)) for line in lines)
 
 
+# Buttons the pane handles itself: the two side buttons walk the history,
+# the wheel click opens the row under the pointer.
+_EXTRA_MOUSE_BUTTONS = (
+    Qt.MouseButton.BackButton,
+    Qt.MouseButton.ForwardButton,
+    Qt.MouseButton.MiddleButton,
+)
+
+
 class _DragTableView(QTableView):
     """QTableView subclass that delegates drag initiation and drop handling to the parent pane."""
 
     def __init__(self, pane: FilePaneWidget, parent=None):
         super().__init__(parent or pane)
         self._pane = pane
+        self._band: QRubberBand | None = None
+        self._band_origin: QPoint | None = None
+        self._band_base: QItemSelection | None = None
+        self._band_pending = False
+
+    def mousePressEvent(self, event) -> None:
+        pos = event.position().toPoint()
+        if self._pane._handle_extra_mouse_button(event.button(), pos):
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(pos)
+            ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            if not index.isValid():
+                # Empty space: keep the default (clears the selection unless
+                # Ctrl is held) and start a selection box that follows the mouse.
+                super().mousePressEvent(event)
+                self._start_band(pos, ctrl)
+                return
+            if index.column() != 0:
+                # A row outside the Name column (Size, Modified, ...): a click
+                # selects the row as usual, a drag beyond the drag distance
+                # draws the box, so long lists can be box-selected too. A drag
+                # that starts on the name stays a file drag.
+                super().mousePressEvent(event)
+                self._start_band(pos, ctrl, needs_drag_distance=True)
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._band_origin is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint()
+            if self._band_pending:
+                origin = self._band_origin - self._scroll_offset()
+                if (pos - origin).manhattanLength() < QApplication.startDragDistance():
+                    event.accept()  # still a click; Qt must not start a file drag either
+                    return
+                self._band_pending = False
+            self._update_band(pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._band_origin is not None and event.button() == Qt.MouseButton.LeftButton:
+            was_click = self._band_pending  # never dragged far enough: a plain click
+            self._end_band()
+            if not was_click:
+                event.accept()
+                return
+        # The press already acted; the matching release must not reach
+        # the selection logic either.
+        if event.button() in _EXTRA_MOUSE_BUTTONS:
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    # --- selection box ----------------------------------------------------
+    def _scroll_offset(self) -> QPoint:
+        return QPoint(self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+
+    def _start_band(self, pos: QPoint, additive: bool, needs_drag_distance: bool = False) -> None:
+        self._band_origin = pos + self._scroll_offset()  # content coordinates
+        self._band_pending = needs_drag_distance
+        self._band_base = QItemSelection(self.selectionModel().selection()) if additive else None
+        if self._band is None:
+            self._band = QRubberBand(QRubberBand.Shape.Rectangle, self.viewport())
+
+    def _update_band(self, pos: QPoint) -> None:
+        viewport = self.viewport()
+        # Dragging past the top / bottom edge scrolls the list.
+        if pos.y() < 0:
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - 20)
+        elif pos.y() > viewport.height():
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() + 20)
+        origin = self._band_origin - self._scroll_offset()
+        rect = QRect(origin, pos).normalized().intersected(viewport.rect())
+        self._band.setGeometry(rect)
+        self._band.show()
+        self._select_rows_in(rect)
+
+    def _select_rows_in(self, rect: QRect) -> None:
+        model = self.model()
+        count = model.rowCount()
+        selection = QItemSelection()
+        if self._band_base is not None:
+            selection.merge(self._band_base, QItemSelectionModel.SelectionFlag.Select)
+        first = self.rowAt(rect.top())
+        last = self.rowAt(rect.bottom())
+        if last < 0:
+            last = count - 1
+        last_col = model.columnCount() - 1
+        if first >= 0:
+            for row in range(first, last + 1):
+                # ".." is navigation, not something to copy or delete.
+                if model.data(model.index(row, 0)) == "..":
+                    continue
+                selection.select(model.index(row, 0), model.index(row, last_col))
+        self.selectionModel().select(
+            selection,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+    def _end_band(self) -> None:
+        self._band_origin = None
+        self._band_pending = False
+        self._band_base = None
+        if self._band is not None:
+            self._band.hide()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._pane._fit_name_column()
 
     def startDrag(self, supportedActions) -> None:
         self._pane._start_drag()
@@ -277,6 +414,11 @@ class _DropOverlay(QWidget):
         elif self._zone == "bottom":
             painter.drawRect(0, h // 2, w, h // 2)
         painter.end()
+
+
+_MIN_COLUMN_WIDTH = 60
+# Size, Modified, Permissions, Owner
+_DEFAULT_COLUMN_WIDTHS = {1: 90, 2: 150, 3: 110, 4: 150}
 
 
 class FilePaneWidget(QWidget):
@@ -524,14 +666,20 @@ class FilePaneWidget(QWidget):
         self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
         self._table.setDropIndicatorShown(True)
 
-        # Column sizing — fully interactive so the user can drag
-        # any divider. The right-most section still stretches to
-        # absorb leftover width so there's no empty gap on resize.
+        # Column sizing — every divider is draggable. Name takes whatever
+        # width the other columns leave, so the columns always fill the
+        # pane (no empty tail); dragging the divider right of Name moves
+        # space between Name and the next visible column. Double-click on
+        # a divider fits that column to its content.
         header = self._table.horizontalHeader()
         header.setSectionsMovable(True)
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(_MIN_COLUMN_WIDTH)
+        self._fitting = False
         for col in range(self._model.columnCount()):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            if col != 0:
+                header.resizeSection(col, _DEFAULT_COLUMN_WIDTHS.get(col, 100))
         # Apply persisted prefs (widths + hidden columns) and wire
         # up the right-click "show/hide column" menu and the
         # save-on-resize hook. ``_apply_column_prefs`` handles bad /
@@ -539,6 +687,7 @@ class FilePaneWidget(QWidget):
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._show_header_menu)
         header.sectionResized.connect(self._on_section_resized)
+        header.sectionMoved.connect(self._on_section_moved)
         self._apply_column_prefs()
 
         self._table.verticalHeader().setVisible(False)
@@ -1342,6 +1491,31 @@ class FilePaneWidget(QWidget):
 
     # --- Slots ---
 
+    def _handle_extra_mouse_button(self, button, pos) -> bool:
+        """Side buttons and wheel click. *pos* is in table-viewport
+        coordinates. Returns True when the button was consumed."""
+        if button == Qt.MouseButton.BackButton:
+            self._go_back()
+            return True
+        if button == Qt.MouseButton.ForwardButton:
+            self._go_forward()
+            return True
+        if button == Qt.MouseButton.MiddleButton:
+            index = self._table.indexAt(pos)
+            if index.isValid():
+                self._on_double_click(index)
+            return True
+        return False
+
+    def mousePressEvent(self, event) -> None:
+        # Side buttons anywhere on the pane (path bar, status line, ...);
+        # the table handles its own area. Everything else is unchanged.
+        if event.button() in (Qt.MouseButton.BackButton, Qt.MouseButton.ForwardButton):
+            self._handle_extra_mouse_button(event.button(), event.position().toPoint())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def _go_up(self) -> None:
         parent = self._backend.parent(self._current_path)
         if parent != self._current_path:
@@ -1393,6 +1567,13 @@ class FilePaneWidget(QWidget):
                 self._open_hex_editor(full_path)
             elif self._is_editable_file(item.name, item.size):
                 self._open_editor(full_path)
+            elif item.size > max_open_bytes():
+                QMessageBox.information(
+                    self,
+                    "File Too Large",
+                    f"{item.name} is {item.size_human}; files up to {describe_limit()} "
+                    "are opened. Raise the limit under View → Open Size Limit….",
+                )
             else:
                 self.file_activated.emit(full_path)
 
@@ -1595,8 +1776,8 @@ class FilePaneWidget(QWidget):
 
     def _is_editable_file(self, name: str, size: int) -> bool:
         """Check if a file should be opened in the text/hex editor."""
-        # Limit: 10 MB for hex, 1 MB for text
-        if size > 10 * 1024 * 1024:
+        # One user-configurable limit (View → Open Size Limit…) for every viewer.
+        if size > max_open_bytes():
             return False
 
         lower = name.lower()
@@ -1610,8 +1791,9 @@ class FilePaneWidget(QWidget):
         if "." not in name and lower in self._TEXT_FILENAMES:
             return True
 
-        # Unknown extension — try to open as text if small enough
-        return size <= 1 * 1024 * 1024
+        # Unknown extension: binaries were routed to the hex editor before
+        # we get here, so anything within the limit may open as text.
+        return True
 
     def _open_editor(self, path: str, read_only: bool = False) -> None:
         from ui.text_editor import TextEditorDialog
@@ -2414,11 +2596,17 @@ class FilePaneWidget(QWidget):
         self._column_prefs = prefs
         header = self._table.horizontalHeader()
         n = self._model.columnCount()
-        for col in range(n):
-            width = prefs.widths.get(col)
-            if width and width > 10:
-                header.resizeSection(col, int(width))
-            self._table.setColumnHidden(col, col in prefs.hidden)
+        self._fitting = True
+        try:
+            self._restore_column_order(prefs.order)
+            for col in range(n):
+                width = prefs.widths.get(col)
+                if col != 0 and width and width > 10:
+                    header.resizeSection(col, int(width))
+                self._table.setColumnHidden(col, col in prefs.hidden)
+        finally:
+            self._fitting = False
+        self._fit_name_column()
 
     def _save_column_prefs(self) -> None:
         """Persist this pane's column prefs without losing changes
@@ -2461,16 +2649,82 @@ class FilePaneWidget(QWidget):
             return
         on_disk.widths.update(local.widths)
         on_disk.hidden = set(local.hidden)
+        on_disk.order = list(local.order)
 
-    def _on_section_resized(self, idx: int, _old: int, new: int) -> None:
-        if getattr(self, "_column_prefs", None) is None:
+    def _restore_column_order(self, order: list[int]) -> None:
+        """Apply a saved visual order; anything that is not a permutation of
+        the current columns (old file, hand edit) is ignored."""
+        header = self._table.horizontalHeader()
+        if sorted(order) != list(range(header.count())):
+            return
+        for visual, logical in enumerate(order):
+            header.moveSection(header.visualIndex(logical), visual)
+
+    def _on_section_moved(self, _logical: int, _old: int, _new: int) -> None:
+        if self._fitting or getattr(self, "_column_prefs", None) is None:
+            return
+        header = self._table.horizontalHeader()
+        self._column_prefs.order = [header.logicalIndex(v) for v in range(header.count())]
+        self._save_column_prefs()
+
+    def _visible_columns(self) -> list[int]:
+        return [c for c in range(self._model.columnCount()) if not self._table.isColumnHidden(c)]
+
+    def _fit_name_column(self) -> None:
+        """Give Name exactly the width the other visible columns leave."""
+        if self._fitting or getattr(self, "_table", None) is None:
+            return
+        header = self._table.horizontalHeader()
+        viewport = self._table.viewport().width()
+        if viewport <= 0 or self._table.isColumnHidden(0):
+            return
+        others = sum(header.sectionSize(c) for c in self._visible_columns() if c != 0)
+        target = max(header.minimumSectionSize(), viewport - others)
+        if header.sectionSize(0) != target:
+            self._fitting = True
+            try:
+                header.resizeSection(0, target)
+            finally:
+                self._fitting = False
+
+    def _next_visible_after_name(self) -> int | None:
+        header = self._table.horizontalHeader()
+        for visual in range(header.visualIndex(0) + 1, header.count()):
+            logical = header.logicalIndex(visual)
+            if not self._table.isColumnHidden(logical):
+                return logical
+        return None
+
+    def _name_divider_dragged(self, old: int, new: int) -> None:
+        """The user dragged the divider right of Name: the neighbour pays
+        (or receives) the difference so the columns keep filling the pane."""
+        header = self._table.horizontalHeader()
+        neighbour = self._next_visible_after_name()
+        if neighbour is not None and new != old:
+            width = max(header.minimumSectionSize(), header.sectionSize(neighbour) - (new - old))
+            self._fitting = True
+            try:
+                header.resizeSection(neighbour, width)
+            finally:
+                self._fitting = False
+            self._column_prefs.widths[neighbour] = int(width)
+            self._save_column_prefs()
+        self._fit_name_column()
+
+    def _on_section_resized(self, idx: int, old: int, new: int) -> None:
+        if self._fitting or getattr(self, "_column_prefs", None) is None:
+            return
+        # Name's width is derived from the others; the drag handler below
+        # turns a drag on its divider into a move of the neighbour's.
+        if idx == 0:
+            self._name_divider_dragged(old, new)
             return
         # Tiny / negative widths happen during programmatic moves —
         # ignore them so we don't persist garbage.
-        if new < 10:
-            return
-        self._column_prefs.widths[int(idx)] = int(new)
-        self._save_column_prefs()
+        if new >= 10:
+            self._column_prefs.widths[int(idx)] = int(new)
+            self._save_column_prefs()
+        self._fit_name_column()
 
     def _show_header_menu(self, pos) -> None:
         """Right-click on the header opens a checkbox list of columns
@@ -2518,6 +2772,7 @@ class FilePaneWidget(QWidget):
         else:
             self._column_prefs.hidden.add(col)
         self._save_column_prefs()
+        self._fit_name_column()
 
     # ------------------------------------------------------------------
     # FUSE mount integration (Phase 6a)

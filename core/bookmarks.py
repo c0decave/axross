@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -38,25 +39,41 @@ def _bookmarks_file() -> Path:
     return _config_dir() / "bookmarks.json"
 
 
-def _sanitize_icon_name(value: object) -> str:
+_KEEP = object()
+
+
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+# Hostile files could nest groups until the interpreter's recursion limit
+# is hit; real trees are a handful of levels deep.
+_MAX_DEPTH = 16
+_GROUP_ICON_DEFAULT = "folder"
+
+
+def _sanitize_icon_name(value: object, default: str = "bookmark") -> str:
     """Coerce an icon_name read from JSON into a safe string.
 
     A hostile bookmarks.json (manually edited or cloud-sync
     compromise) could otherwise plant CR/LF / NUL in what the UI
     renders as a tooltip. Keep the allowlist tight:
-    ``[A-Za-z0-9_-]`` only, bounded length, empty fallback.
+    ``[A-Za-z0-9_-]`` only, bounded length, *default* as fallback.
 
     Does NOT check that the name exists in the icon provider —
     that decision belongs to the renderer (which substitutes the
     ``unknown`` placeholder for unknown names). Decoupling keeps
     this module free of a UI-layer import.
     """
-    import re as _re
-
     if not isinstance(value, str):
-        return "bookmark"
-    cleaned = _re.sub(r"[^A-Za-z0-9_-]", "", value)[:64]
-    return cleaned or "bookmark"
+        return default
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "", value)[:64]
+    return cleaned or default
+
+
+def _sanitize_color(value: object) -> str:
+    """``#rrggbb`` or empty (= the icon's own colour). Anything else is
+    dropped: the value ends up inside an SVG source string."""
+    if isinstance(value, str) and _HEX_COLOR.fullmatch(value):
+        return value.lower()
+    return ""
 
 
 @dataclass
@@ -67,6 +84,8 @@ class Bookmark:
     bookmark icon set (``computer``, ``server``, ``code``, ``router``,
     etc.). Unknown names render as the ``unknown`` placeholder so a
     typo or a legacy bookmark entry never crashes the sidebar.
+    ``color`` is an optional ``#rrggbb`` that recolours the icon so
+    related bookmarks are recognisable at a glance.
     """
 
     name: str
@@ -74,15 +93,120 @@ class Bookmark:
     backend_name: str = "Local"  # "Local" or "user@host"
     profile_name: str = ""  # connection profile name (empty = local)
     icon_name: str = "bookmark"
+    color: str = ""
+
+
+@dataclass(eq=False)
+class BookmarkGroup:
+    """A folder of bookmarks (and further groups) in the sidebar.
+
+    Compared by identity: two groups with the same name are different
+    folders, and the manager locates nodes by identity.
+    """
+
+    name: str
+    icon_name: str = _GROUP_ICON_DEFAULT
+    color: str = ""
+    expanded: bool = True
+    children: list = field(default_factory=list)
+
+
+Node = Bookmark | BookmarkGroup
+
+
+def _index_by_identity(nodes: list, node: object) -> int:
+    for i, candidate in enumerate(nodes):
+        if candidate is node:
+            return i
+    raise KeyError(node)
 
 
 class BookmarkManager:
-    """Manages saved directory bookmarks."""
+    """Manages saved directory bookmarks, organised as a tree of groups.
+
+    ``all()`` / ``remove(index)`` / ``update(index, ...)`` keep their
+    flat, index-based meaning (bookmarks only, in tree order), so
+    scripts written against the old flat list keep working.
+    """
 
     def __init__(self):
-        self._bookmarks: list[Bookmark] = []
+        self._root: list[Node] = []
         self.load()
 
+    # ------------------------------------------------------------------
+    # Tree access
+    # ------------------------------------------------------------------
+    @property
+    def _bookmarks(self) -> list[Bookmark]:
+        """Flat bookmarks in tree order (read-only view)."""
+        return self.all()
+
+    def tree(self) -> list[Node]:
+        """Top-level nodes. The nodes are live objects; mutate them only
+        through the manager so the change is persisted."""
+        return list(self._root)
+
+    def all(self) -> list[Bookmark]:
+        out: list[Bookmark] = []
+
+        def walk(nodes: list) -> None:
+            for node in nodes:
+                if isinstance(node, BookmarkGroup):
+                    walk(node.children)
+                else:
+                    out.append(node)
+
+        walk(self._root)
+        return out
+
+    def groups(self) -> list[tuple[int, BookmarkGroup]]:
+        """Every group as ``(depth, group)`` in display order."""
+        out: list[tuple[int, BookmarkGroup]] = []
+
+        def walk(nodes: list, depth: int) -> None:
+            for node in nodes:
+                if isinstance(node, BookmarkGroup):
+                    out.append((depth, node))
+                    walk(node.children, depth + 1)
+
+        walk(self._root, 0)
+        return out
+
+    def for_backend(self, backend_name: str) -> list[Bookmark]:
+        return [b for b in self.all() if b.backend_name == backend_name]
+
+    def _siblings(self, parent: BookmarkGroup | None) -> list:
+        return self._root if parent is None else parent.children
+
+    def parent_of(self, node: Node) -> BookmarkGroup | None:
+        """The group holding *node*, ``None`` for the top level.
+        Raises ``KeyError`` when the node is not in the tree."""
+        try:
+            _index_by_identity(self._root, node)
+            return None
+        except KeyError:
+            pass
+        for _depth, group in self.groups():
+            try:
+                _index_by_identity(group.children, node)
+                return group
+            except KeyError:
+                continue
+        raise KeyError(node)
+
+    @staticmethod
+    def _contains(group: BookmarkGroup, node: object) -> bool:
+        """True when *node* is *group* or lies anywhere below it."""
+        if group is node:
+            return True
+        return any(
+            isinstance(child, BookmarkGroup) and BookmarkManager._contains(child, node)
+            for child in group.children
+        )
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
     def load(self) -> None:
         bf = _bookmarks_file()
         if not bf.exists():
@@ -91,35 +215,77 @@ class BookmarkManager:
             data = json.loads(bf.read_text(encoding="utf-8"))
             if not isinstance(data, list):
                 raise TypeError("Bookmarks JSON must be a list")
-            self._bookmarks = [
-                Bookmark(
-                    name=item["name"],
-                    path=item["path"],
-                    backend_name=item.get("backend_name", "Local"),
-                    profile_name=item.get("profile_name", ""),
-                    icon_name=_sanitize_icon_name(
-                        item.get("icon_name", "bookmark"),
-                    ),
-                )
-                for item in data
-                if (
-                    isinstance(item, dict)
-                    and isinstance(item.get("name"), str)
-                    and isinstance(item.get("path"), str)
-                    and isinstance(item.get("backend_name", "Local"), str)
-                    and isinstance(item.get("profile_name", ""), str)
-                )
-            ]
-            log.info("Loaded %d bookmarks", len(self._bookmarks))
+            self._root = self._load_nodes(data, 0)
+            log.info("Loaded %d bookmarks", len(self.all()))
         except (json.JSONDecodeError, OSError, TypeError) as e:
             log.error("Failed to load bookmarks: %s", e)
+
+    @classmethod
+    def _load_nodes(cls, data: list, depth: int) -> list[Node]:
+        nodes: list[Node] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "group":
+                name = item.get("name")
+                children = item.get("children", [])
+                if not isinstance(name, str) or depth >= _MAX_DEPTH:
+                    continue
+                if not isinstance(children, list):
+                    children = []
+                nodes.append(
+                    BookmarkGroup(
+                        name=name,
+                        icon_name=_sanitize_icon_name(item.get("icon_name"), _GROUP_ICON_DEFAULT),
+                        color=_sanitize_color(item.get("color")),
+                        expanded=item.get("expanded", True) is not False,
+                        children=cls._load_nodes(children, depth + 1),
+                    )
+                )
+                continue
+            if (
+                isinstance(item.get("name"), str)
+                and isinstance(item.get("path"), str)
+                and isinstance(item.get("backend_name", "Local"), str)
+                and isinstance(item.get("profile_name", ""), str)
+            ):
+                nodes.append(
+                    Bookmark(
+                        name=item["name"],
+                        path=item["path"],
+                        backend_name=item.get("backend_name", "Local"),
+                        profile_name=item.get("profile_name", ""),
+                        icon_name=_sanitize_icon_name(item.get("icon_name", "bookmark")),
+                        color=_sanitize_color(item.get("color")),
+                    )
+                )
+        return nodes
+
+    @classmethod
+    def _dump_nodes(cls, nodes: list) -> list[dict]:
+        out: list[dict] = []
+        for node in nodes:
+            if isinstance(node, BookmarkGroup):
+                out.append(
+                    {
+                        "type": "group",
+                        "name": node.name,
+                        "icon_name": node.icon_name,
+                        "color": node.color,
+                        "expanded": node.expanded,
+                        "children": cls._dump_nodes(node.children),
+                    }
+                )
+            else:
+                out.append(asdict(node))
+        return out
 
     def save(self) -> None:
         bf = _bookmarks_file()
         target_dir = bf.parent
         target_dir.mkdir(parents=True, exist_ok=True)
         try:
-            data = [asdict(b) for b in self._bookmarks]
+            data = self._dump_nodes(self._root)
             try:
                 os.chmod(target_dir, 0o700)
             except OSError:
@@ -152,41 +318,151 @@ class BookmarkManager:
         except OSError as e:
             log.error("Failed to save bookmarks: %s", e)
 
-    def add(self, bookmark: Bookmark) -> None:
-        # Avoid duplicates
-        for existing in self._bookmarks:
+    # ------------------------------------------------------------------
+    # Mutation
+    # ------------------------------------------------------------------
+    def add(self, bookmark: Bookmark, group: BookmarkGroup | None = None) -> None:
+        # Avoid duplicates (across the whole tree)
+        for existing in self.all():
             if existing.path == bookmark.path and existing.backend_name == bookmark.backend_name:
                 log.debug(
                     "Skipping duplicate bookmark for %s on %s", bookmark.path, bookmark.backend_name
                 )
                 return
-        self._bookmarks.append(bookmark)
+        bookmark.icon_name = _sanitize_icon_name(bookmark.icon_name)
+        bookmark.color = _sanitize_color(bookmark.color)
+        self._siblings(group).append(bookmark)
         self.save()
         log.info("Added bookmark: %s -> %s", bookmark.name, bookmark.path)
 
     def remove(self, index: int) -> None:
-        if 0 <= index < len(self._bookmarks):
-            removed = self._bookmarks.pop(index)
-            self.save()
-            log.info("Removed bookmark: %s", removed.name)
+        """Remove the bookmark at flat *index* (see :meth:`all`)."""
+        flat = self.all()
+        if 0 <= index < len(flat):
+            self.remove_node(flat[index])
 
-    def all(self) -> list[Bookmark]:
-        return list(self._bookmarks)
-
-    def for_backend(self, backend_name: str) -> list[Bookmark]:
-        return [b for b in self._bookmarks if b.backend_name == backend_name]
+    def remove_node(self, node: Bookmark) -> None:
+        """Remove a bookmark by identity."""
+        parent = self.parent_of(node)
+        siblings = self._siblings(parent)
+        siblings.pop(_index_by_identity(siblings, node))
+        self.save()
+        log.info("Removed bookmark: %s", getattr(node, "name", "?"))
 
     def update(self, index: int, bookmark: Bookmark) -> None:
-        """Replace the bookmark at *index* with the new one + persist.
+        """Replace the bookmark at flat *index* with the new one + persist.
         Used by the edit dialog to change name / path / icon in
         place without creating a duplicate entry.
         """
-        if not (0 <= index < len(self._bookmarks)):
+        flat = self.all()
+        if not (0 <= index < len(flat)):
             raise IndexError(
-                f"bookmark index {index} out of range (have {len(self._bookmarks)})",
+                f"bookmark index {index} out of range (have {len(flat)})",
             )
-        # Normalise icon_name the same way load() does.
-        bookmark.icon_name = _sanitize_icon_name(bookmark.icon_name)
-        self._bookmarks[index] = bookmark
-        self.save()
+        self.update_bookmark(flat[index], bookmark)
         log.info("Updated bookmark #%d: %s → %s", index, bookmark.name, bookmark.path)
+
+    def update_bookmark(
+        self, old: Bookmark, new: Bookmark, *, group: BookmarkGroup | None | object = _KEEP
+    ) -> None:
+        """Replace *old* by *new* in place (same position). With
+        ``group=`` the bookmark also moves to the end of that group
+        (``None`` = top level)."""
+        parent = self.parent_of(old)
+        # Normalise the same way load() does.
+        new.icon_name = _sanitize_icon_name(new.icon_name)
+        new.color = _sanitize_color(new.color)
+        siblings = self._siblings(parent)
+        siblings[_index_by_identity(siblings, old)] = new
+        if group is not _KEEP and group is not parent:
+            siblings.pop(_index_by_identity(siblings, new))
+            self._siblings(group).append(new)
+        self.save()
+
+    def add_group(
+        self,
+        name: str,
+        icon_name: str = _GROUP_ICON_DEFAULT,
+        color: str = "",
+        parent: BookmarkGroup | None = None,
+    ) -> BookmarkGroup:
+        group = BookmarkGroup(
+            name=name,
+            icon_name=_sanitize_icon_name(icon_name, _GROUP_ICON_DEFAULT),
+            color=_sanitize_color(color),
+        )
+        self._siblings(parent).append(group)
+        self.save()
+        return group
+
+    def update_group(
+        self,
+        group: BookmarkGroup,
+        *,
+        name: str | None = None,
+        icon_name: str | None = None,
+        color: str | None = None,
+    ) -> None:
+        self.parent_of(group)  # KeyError when the group is not in the tree
+        if name is not None:
+            group.name = name
+        if icon_name is not None:
+            group.icon_name = _sanitize_icon_name(icon_name, _GROUP_ICON_DEFAULT)
+        if color is not None:
+            group.color = _sanitize_color(color)
+        self.save()
+
+    def set_expanded(self, group: BookmarkGroup, expanded: bool) -> None:
+        if group.expanded == bool(expanded):
+            return
+        group.expanded = bool(expanded)
+        self.save()
+
+    def remove_group(self, group: BookmarkGroup) -> None:
+        """Delete the group only: its children take its place in the
+        parent, in order. Nothing inside is lost."""
+        parent = self.parent_of(group)
+        siblings = self._siblings(parent)
+        pos = _index_by_identity(siblings, group)
+        siblings[pos : pos + 1] = group.children
+        group.children = []
+        self.save()
+
+    def move(self, node: Node, parent: BookmarkGroup | None, index: int | None = None) -> None:
+        """Move *node* into *parent* (``None`` = top level) at *index*.
+
+        *index* counts positions in the destination list as it is BEFORE
+        the move (what a drop indicator shows); moving within one list
+        past the node's own slot is compensated. ``None`` appends.
+        Raises ``ValueError`` when a group would land inside itself."""
+        old_parent = self.parent_of(node)  # KeyError for unknown nodes
+        if isinstance(node, BookmarkGroup) and parent is not None and self._contains(node, parent):
+            raise ValueError("a group cannot be moved into itself or its descendants")
+        old_siblings = self._siblings(old_parent)
+        old_pos = _index_by_identity(old_siblings, node)
+        old_siblings.pop(old_pos)
+        dest = self._siblings(parent)
+        if index is None:
+            index = len(dest)
+        elif old_parent is parent and old_pos < index:
+            index -= 1
+        dest.insert(max(0, min(index, len(dest))), node)
+        self.save()
+
+    def move_by(self, node: Node, delta: int) -> bool:
+        """Shift *node* by *delta* places inside its parent (clamped).
+        Returns whether anything moved."""
+        parent = self.parent_of(node)
+        siblings = self._siblings(parent)
+        pos = _index_by_identity(siblings, node)
+        target = max(0, min(pos + delta, len(siblings) - 1))
+        if target == pos:
+            return False
+        siblings.insert(target, siblings.pop(pos))
+        self.save()
+        return True
+
+    def move_to_top(self, node: Node) -> bool:
+        parent = self.parent_of(node)
+        siblings = self._siblings(parent)
+        return self.move_by(node, -_index_by_identity(siblings, node))

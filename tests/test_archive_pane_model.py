@@ -276,7 +276,7 @@ def test_extract_selected_signal_emits_member_list(tmp_path):
         sel.SelectionFlag.ClearAndSelect | sel.SelectionFlag.Rows,
     )
 
-    # Trigger the "Auswahl extrahieren" button.
+    # Trigger the "Extract Selected" button.
     w._btn_selected.click()
 
     assert len(received) == 1

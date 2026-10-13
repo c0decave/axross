@@ -17,19 +17,26 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
+from ui.close_corner import make_close_corner
+
 if TYPE_CHECKING:
     from core.backend import FileBackend
 
 log = logging.getLogger(__name__)
 
-MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB limit
+# Default cap, kept for importers; the effective limit is the user
+# setting (core.open_limits), read at every open.
+MAX_FILE_SIZE = DEFAULT_MAX_OPEN_MB * 1024 * 1024
 
 
 class EditorReadLimitError(OSError):
     """Raised when a backend returns more data than the editor cap."""
 
 
-def _read_capped(handle, cap: int = MAX_FILE_SIZE) -> bytes:
+def _read_capped(handle, cap: int | None = None) -> bytes:
+    if cap is None:
+        cap = max_open_bytes()
     data = handle.read(cap + 1)
     if isinstance(data, str):
         data = data.encode("utf-8", errors="replace")
@@ -77,6 +84,7 @@ class TextEditorDialog(QDialog):
         self._size_label.setProperty("role", "muted")
         info.addStretch()
         info.addWidget(self._size_label)
+        info.addWidget(make_close_corner(self, self._on_close))
         layout.addLayout(info)
 
         # Editor
@@ -129,11 +137,12 @@ class TextEditorDialog(QDialog):
         try:
             # Check size first
             stat = self._backend.stat(self._file_path)
-            if stat.size > MAX_FILE_SIZE:
+            if stat.size > max_open_bytes():
                 QMessageBox.warning(
                     self,
                     "File Too Large",
-                    f"File is {stat.size_human} — only files under 1 MB are supported.",
+                    f"File is {stat.size_human} — only files up to {describe_limit()} "
+                    "are opened (change it under View → Open Size Limit…).",
                 )
                 self.reject()
                 return
@@ -244,6 +253,12 @@ class TextEditorDialog(QDialog):
         if not self._confirm_discard_changes("You have unsaved changes. Discard them?"):
             return
         self.accept()
+
+    def reject(self) -> None:
+        # Esc must not throw away edits silently either.
+        if not self._confirm_discard_changes("You have unsaved changes. Discard them?"):
+            return
+        super().reject()
 
     def closeEvent(self, event) -> None:
         if not self._confirm_discard_changes("You have unsaved changes. Discard them?"):

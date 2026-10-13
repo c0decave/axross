@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import previews as P
+from ui.close_corner import add_close_corner
 
 log = logging.getLogger("ui.image_viewer")
 
@@ -68,6 +69,7 @@ class ImageViewerDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        add_close_corner(self)
 
         self._label = QLabel("", alignment=Qt.AlignmentFlag.AlignCenter)
         self._label.setBackgroundRole(self._label.backgroundRole())

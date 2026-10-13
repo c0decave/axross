@@ -234,10 +234,18 @@ def index_dir(
     backend_id: str,
     recursive: bool = True,
     db_path=None,
+    cancel=None,
+    progress=None,
     _depth: int = 0,
     _counter: list | None = None,
+    _done: list | None = None,
 ) -> int:
     """Walk *root* on *backend* and index every entry we find.
+
+    *cancel* (zero-argument callable) is polled between entries; once it
+    returns true the walk stops and what was indexed so far is kept.
+    *progress* is called as ``progress(scanned, indexed, path)`` after
+    each entry; an exception in it never aborts the walk.
 
     Capped at :data:`MAX_WALK_DEPTH` and :data:`MAX_WALK_ENTRIES` to
     defeat hostile backends that return fake symlink loops or
@@ -249,6 +257,10 @@ def index_dir(
     """
     if _counter is None:
         _counter = [0]
+    if _done is None:
+        _done = [0]
+    if cancel is not None and cancel():
+        return 0
     if _depth > MAX_WALK_DEPTH:
         log.warning(
             "metadata_index: depth %d exceeds MAX_WALK_DEPTH=%d at %s — "
@@ -265,6 +277,8 @@ def index_dir(
         log.warning("metadata_index: list_dir(%s) failed: %s", root, exc)
         return 0
     for it in entries:
+        if cancel is not None and cancel():
+            return count
         if _counter[0] >= MAX_WALK_ENTRIES:
             log.warning(
                 "metadata_index: reached MAX_WALK_ENTRIES=%d — aborting",
@@ -295,6 +309,12 @@ def index_dir(
             continue
         _index_item(db_path, backend_id, full, it)
         count += 1
+        _done[0] += 1
+        if progress is not None:
+            try:
+                progress(_counter[0], _done[0], full)
+            except Exception as exc:  # noqa: BLE001 — a UI callback must not kill the walk
+                log.debug("metadata_index: progress callback failed: %s", exc)
         if recursive and bool(getattr(it, "is_dir", False)):
             count += index_dir(
                 backend,
@@ -302,8 +322,11 @@ def index_dir(
                 backend_id=backend_id,
                 recursive=True,
                 db_path=db_path,
+                cancel=cancel,
+                progress=progress,
                 _depth=_depth + 1,
                 _counter=_counter,
+                _done=_done,
             )
     return count
 

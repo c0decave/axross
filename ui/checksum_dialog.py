@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ui.close_corner import add_close_corner
+
 
 class ChecksumDialog(QDialog):
     """Show *value* as a selectable monospace string with a Copy button."""
@@ -34,6 +36,7 @@ class ChecksumDialog(QDialog):
 
     def _build_ui(self, path: str, algo: str, value: str, source: str) -> None:
         root = QVBoxLayout(self)
+        add_close_corner(self)
 
         path_label = QLabel(path)
         path_label.setProperty("role", "muted")

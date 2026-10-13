@@ -1005,9 +1005,8 @@ class BundledScriptsTests(unittest.TestCase):
                 from core.bookmarks import BookmarkManager
 
                 mgr = BookmarkManager()
-                while mgr._bookmarks:  # noqa: SLF001
-                    mgr._bookmarks.pop()  # noqa: SLF001
-                mgr.save()
+                while mgr.all():
+                    mgr.remove(0)
                 imported = ns["import_json"](json_path)
                 self.assertEqual(imported, 2)
                 names = sorted(b.name for b in s.list_bookmarks())

@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.dashboard import DashboardSnapshot, HostRow
+from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
 
 log = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class DiskUsageDialog(QDialog):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        add_close_corner(self)
 
         self._table = QTableWidget(0, len(COLUMNS), self)
         self._table.setHorizontalHeaderLabels(list(COLUMNS))

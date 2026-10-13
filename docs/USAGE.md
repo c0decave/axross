@@ -131,14 +131,27 @@ native protocol doesn't support them.
   refresh on backend changes.
 - **Live filter** types into the path bar to filter the listing in
   real time.
-- **Bookmarks** bar (left dock) for one-click navigation; F8
-  bookmarks the current path, F12 toggles the dock.
+- **Bookmarks** (left dock, or the toolbar's bookmark button) for
+  one-click navigation; F8 bookmarks the current path (name, icon,
+  colour and group are chosen in the dialog), F12 toggles the dock.
+  Bookmarks can be grouped (groups nest and fold on click; the
+  Bookmarks menu shows them as hover submenus), reordered by drag &
+  drop or Move Up / Down in the right-click menu, and given an icon
+  from the built-in SVG set plus a colour.
+- **File list**: hovering a name shows it in full; dragging from
+  empty space draws a selection box (Ctrl adds); the divider right of
+  *Name* moves space between *Name* and the next column, double-click
+  on a divider fits the column; the back / forward mouse buttons walk
+  the folder history and a wheel click opens the row under the pointer.
 
 ## Editors and viewers
 
-- **Text editor** (built-in) — for files < 1 MB, with conflict
-  detection on save.
-- **Hex editor** — read-only; useful for triage on remote files.
+- **Text editor** (built-in) — with conflict detection on save and
+  a close button in the top-right corner.
+- **Hex editor** — useful for triage on remote files.
+- **Open size limit** — the text / hex viewers read the whole file,
+  so there is a cap: 32 MB by default, changeable under
+  *View → Open Size Limit…* (1–4096 MB, stored in `settings.json`).
 - **Image viewer** — F3 / double-click, MIME-allow-listed, size-
   capped to keep Qt's allocator happy.
 - **SSH terminal** — tabbed dock next to the transfer queue. Local
@@ -356,6 +369,7 @@ Full reference: **[docs/MCP.md](MCP.md)** (EN) · [MCP_de.md](MCP_de.md) (DE) ·
 - `~/.config/axross/bookmarks.json` — bookmark bar contents.
 - `~/.config/axross/session.json` — pane layout at last close.
 - `~/.config/axross/column_prefs.json` — per-pane column widths.
+- `~/.config/axross/settings.json` — small preferences (open size limit).
 - `~/.config/axross/<provider>_token.json` — OAuth refresh tokens (`0o600`).
 - `~/.local/state/axross/logs/axross.log` — rotating log file (5 MB, 3 backups).
 

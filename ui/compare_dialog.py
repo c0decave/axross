@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 
 from core.sync import POLICIES, ConflictPolicy, plan_sync, summarize_plan
 from core.tree_compare import ComparedEntry, Status, summarize
+from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
 
 log = logging.getLogger(__name__)
@@ -152,6 +153,7 @@ class CompareDialog(QDialog):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        add_close_corner(self)
 
         top = QHBoxLayout()
         self._filter_box = QComboBox(self)

@@ -23,6 +23,13 @@ log = logging.getLogger("ui.column_prefs")
 
 DEFAULT_PATH = Path.home() / ".config" / "axross" / "column_prefs.json"
 
+# Schema 2: the Name column stretches and is never persisted. Files
+# without a version were written while the LAST column (Owner) stretched,
+# and every window resize stored the stretched width (988 px seen in
+# the wild), which then pinned Owner at half the window on next start.
+VERSION = 2
+_LEGACY_STRETCH_COLUMNS = (0, 4)
+
 
 # In-process lock around load+modify+save. Multiple FilePane instances
 # in the same app could otherwise race on read-modify-write and lose
@@ -55,6 +62,8 @@ class ColumnPrefs:
 
     widths: dict[int, int] = field(default_factory=dict)
     hidden: set[int] = field(default_factory=set)
+    #: Logical column indices in visual (left-to-right) order; empty = default.
+    order: list[int] = field(default_factory=list)
 
 
 def load(path: Path | None = None) -> ColumnPrefs:
@@ -87,7 +96,16 @@ def load(path: Path | None = None) -> ColumnPrefs:
                 hidden.add(int(h))
             except (TypeError, ValueError):
                 continue
-    return ColumnPrefs(widths=widths, hidden=hidden)
+    if raw.get("version") != VERSION:
+        for col in _LEGACY_STRETCH_COLUMNS:
+            widths.pop(col, None)
+    order_raw = raw.get("order", [])
+    order: list[int] = []
+    if isinstance(order_raw, list) and all(
+        isinstance(v, int) and not isinstance(v, bool) for v in order_raw
+    ):
+        order = list(order_raw)
+    return ColumnPrefs(widths=widths, hidden=hidden, order=order)
 
 
 def save(prefs: ColumnPrefs, path: Path | None = None) -> None:
@@ -96,8 +114,10 @@ def save(prefs: ColumnPrefs, path: Path | None = None) -> None:
     p = path or DEFAULT_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "version": VERSION,
         "widths": {str(k): int(v) for k, v in prefs.widths.items()},
         "hidden": sorted(int(h) for h in prefs.hidden),
+        "order": [int(c) for c in prefs.order],
     }
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -124,4 +144,4 @@ def update(mutator, path: Path | None = None) -> ColumnPrefs:
         return prefs
 
 
-__all__ = ["ColumnPrefs", "DEFAULT_PATH", "load", "save", "update"]
+__all__ = ["ColumnPrefs", "DEFAULT_PATH", "VERSION", "load", "save", "update"]

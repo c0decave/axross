@@ -309,13 +309,13 @@ class ArchivePaneWidget(QWidget):
     Signals
     -------
     extract_all()
-        "Alles extrahieren" was triggered — extract the whole archive.
+        "Extract All" was triggered — extract the whole archive.
     extract_selected(list)
-        "Auswahl extrahieren" was triggered — payload is the list of
+        "Extract Selected" was triggered — payload is the list of
         member names from the current selection (see
         :func:`selected_member_names`).
     extract_to()
-        "Nach…" was triggered — extract somewhere the user picks.
+        "Extract To…" was triggered — extract somewhere the user picks.
     open_member(str)
         A file row was double-clicked — payload is the member name.
 
@@ -368,15 +368,15 @@ class ArchivePaneWidget(QWidget):
         layout.addWidget(self._tree, stretch=1)
 
         btn_row = QHBoxLayout()
-        self._btn_all = QPushButton("Alles extrahieren")
+        self._btn_all = QPushButton("Extract All")
         self._btn_all.clicked.connect(self.extract_all.emit)
         btn_row.addWidget(self._btn_all)
 
-        self._btn_selected = QPushButton("Auswahl extrahieren")
+        self._btn_selected = QPushButton("Extract Selected")
         self._btn_selected.clicked.connect(self._emit_extract_selected)
         btn_row.addWidget(self._btn_selected)
 
-        self._btn_to = QPushButton("Nach…")
+        self._btn_to = QPushButton("Extract To…")
         self._btn_to.clicked.connect(self.extract_to.emit)
         btn_row.addWidget(self._btn_to)
 
@@ -407,7 +407,7 @@ class ArchivePaneWidget(QWidget):
             return
         except UnsafeArchive as exc:
             # Refused / hostile archive — show a safe message, no traceback.
-            self.load_error = f"Archiv abgelehnt: {exc}"
+            self.load_error = f"Archive rejected: {exc}"
             self._set_empty_model()
             self._header_label.setText(basename)
             self._status_label.setText(self.load_error)
@@ -416,7 +416,7 @@ class ArchivePaneWidget(QWidget):
         except Exception as exc:  # noqa: BLE001 — last-resort safety net
             # Any other failure (corrupt file, OSError, format-library
             # quirk). Never crash the pane; show a generic safe message.
-            self.load_error = f"Archiv konnte nicht gelesen werden: {exc}"
+            self.load_error = f"Archive could not be read: {exc}"
             self._set_empty_model()
             self._header_label.setText(basename)
             self._status_label.setText(self.load_error)

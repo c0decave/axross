@@ -23,7 +23,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-MAX_TEXT_RENDER = 4 * 1024 * 1024  # 4 MiB — beyond this we hex-dump
+from core.open_limits import DEFAULT_MAX_OPEN_MB, max_open_bytes
+
+# Default cap, kept for importers; text above the user's open-size limit
+# (core.open_limits) is hex-dumped instead.
+from ui.close_corner import add_close_corner
+
+MAX_TEXT_RENDER = DEFAULT_MAX_OPEN_MB * 1024 * 1024
 
 
 def _looks_like_text(data: bytes, sample: int = 4096) -> bool:
@@ -46,7 +52,7 @@ def _is_text_renderable(data: bytes) -> bool:
     (b) it's small enough to safely paste into QPlainTextEdit. A
     256-MiB log without a NUL byte should still go to the hex
     dump rather than spawn millions of replacement chars."""
-    return _looks_like_text(data) and len(data) <= MAX_TEXT_RENDER
+    return _looks_like_text(data) and len(data) <= max_open_bytes()
 
 
 def _hex_dump(data: bytes, max_bytes: int = 256 * 1024) -> str:
@@ -82,6 +88,7 @@ class ElevatedViewerDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        add_close_corner(self)
 
         kind = "text" if self._is_text else "binary"
         info = QLabel(

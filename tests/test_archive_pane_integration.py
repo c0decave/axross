@@ -120,7 +120,7 @@ def test_extract_selected_empty_shows_info(window, sample_zip, monkeypatch):
 
 def test_extract_selected_notimplemented_shows_info(window, monkeypatch, tmp_path):
     """A 7z/RAR partial-extract NotImplementedError surfaces as an info
-    message (use 'Alles extrahieren'), never an unhandled exception."""
+    message (use 'Extract All'), never an unhandled exception."""
     # Build a real .zip but force extract_members to raise
     # NotImplementedError, simulating the 7z/RAR partial path without
     # needing the optional codecs installed.

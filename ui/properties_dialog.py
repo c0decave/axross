@@ -48,6 +48,8 @@ if TYPE_CHECKING:
     from core.backend import FileBackend
     from models.file_item import FileItem
 
+from ui.close_corner import add_close_corner
+
 log = logging.getLogger(__name__)
 
 #: Rendered for every value the backend could not supply.
@@ -181,6 +183,7 @@ class PropertiesDialog(QDialog):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        add_close_corner(self)
         self._tabs = QTabWidget(self)
         layout.addWidget(self._tabs)
 
