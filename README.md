@@ -17,6 +17,34 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 ---
 
+## Screenshots
+
+![Connect to Server dialog in the Modern theme, protocol list open](docs/screenshots/modern-connect-dialog.png)
+
+*Modern theme (the default).* **File → Connection Manager…** (`Ctrl+Shift+N`) with the protocol list
+open: every backend sits in one list, and a backend whose optional
+dependency is missing names the extra that installs it — here MTP,
+Subversion, iSCSI and rsh/rcp (`pip install axross[mtp]` …). Behind the
+dialog: the bookmarks sidebar and two panes, the green **TARGET** and the
+blue **SOURCE**.
+
+![Five local panes in Amber Mode](docs/screenshots/amber-five-panes.png)
+
+*Amber Mode.* Five panes in one window — `/proc`, `/media`, `/efi/grub`,
+`/` and `/boot/grub`. The blue **SOURCE** pane and the green **TARGET**
+pane set the direction for copy (F5) and move (F6), here `/boot/grub` →
+`/efi/grub`. Every pane has its own path bar, live filter, permissions
+and owner columns, an item count and the free space of its file system.
+
+![Two panes and the bookmarks sidebar in Hacker Mode](docs/screenshots/hacker-dual-pane.png)
+
+*Hacker Mode.* The classic two-pane layout with the bookmarks sidebar:
+`/` as **TARGET** on the left, `/proc` as **SOURCE** on the right.
+Symlinks such as `bin`, `lib`, `lib64` and `sbin` show their own
+`lrwxrwxrwx` mode. Themes are switched under **View → Theme**.
+
+---
+
 ## 22 highlights
 
 1. **30+ protocols, one consistent UI.** SFTP/SCP, FTP/FTPS, SMB/CIFS,

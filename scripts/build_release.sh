@@ -299,10 +299,20 @@ done
 
 # ---- 9c. Stale identity strings (file content) --------------------- #
 # Fixed-string search (-F) so we don't accidentally match more than
-# we mean. The scrub list is what the user asked to keep out of
-# public artefacts.
-IDENTITY_TERMS=(
-)
+# we mean. The terms themselves must not be published, so they live in
+# an untracked file, one per line ('#' comments allowed):
+# $AXROSS_IDENTITY_TERMS_FILE, default .release-identity-terms at the
+# repo root. Without it the release refuses (fail closed).
+IDENTITY_TERMS_FILE="${AXROSS_IDENTITY_TERMS_FILE:-$REPO_ROOT/.release-identity-terms}"
+[ -f "$IDENTITY_TERMS_FILE" ] || die 2 "identity terms file missing: $IDENTITY_TERMS_FILE"
+IDENTITY_TERMS=()
+while IFS= read -r term || [ -n "$term" ]; do
+    term="${term%%#*}"
+    term="${term#"${term%%[![:space:]]*}"}"
+    term="${term%"${term##*[![:space:]]}"}"
+    [ -n "$term" ] && IDENTITY_TERMS+=("$term")
+done < "$IDENTITY_TERMS_FILE"
+[ "${#IDENTITY_TERMS[@]}" -gt 0 ] || die 2 "identity terms file is empty: $IDENTITY_TERMS_FILE"
 
 for f in "${FILES[@]}"; do
     # Don't scan binary files (grep -I) and skip the release script

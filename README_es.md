@@ -18,6 +18,35 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 ---
 
+## Capturas de pantalla
+
+![Diálogo Connect to Server en el tema Modern, con la lista de protocolos abierta](docs/screenshots/modern-connect-dialog.png)
+
+*Tema Modern (el predeterminado).* **File → Connection Manager…** (`Ctrl+Shift+N`) con la lista de
+protocolos abierta: todos los backends están en una sola lista, y un
+backend al que le falta su dependencia opcional indica el extra que la
+instala — aquí MTP, Subversion, iSCSI y rsh/rcp
+(`pip install axross[mtp]` …). Detrás del diálogo: la barra lateral de
+bookmarks y dos paneles, el **TARGET** verde y el **SOURCE** azul.
+
+![Cinco paneles locales en Amber Mode](docs/screenshots/amber-five-panes.png)
+
+*Amber Mode.* Cinco paneles en una ventana — `/proc`, `/media`,
+`/efi/grub`, `/` y `/boot/grub`. El panel **SOURCE** azul y el
+**TARGET** verde fijan la dirección de copy (F5) y move (F6), aquí
+`/boot/grub` → `/efi/grub`. Cada panel tiene su propia barra de ruta,
+filtro en vivo, columnas de permissions y owner, el número de entradas y
+el espacio libre de su sistema de archivos.
+
+![Dos paneles y la barra de bookmarks en Hacker Mode](docs/screenshots/hacker-dual-pane.png)
+
+*Hacker Mode.* El diseño clásico de dos paneles con la barra de
+bookmarks: `/` como **TARGET** a la izquierda, `/proc` como **SOURCE** a
+la derecha. Los symlinks como `bin`, `lib`, `lib64` y `sbin` muestran su
+propio mode `lrwxrwxrwx`. El tema se cambia en **View → Theme**.
+
+---
+
 ## 22 puntos fuertes
 
 1. **Más de 30 protocolos, una UI consistente.** SFTP/SCP, FTP/FTPS,

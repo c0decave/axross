@@ -630,7 +630,7 @@ def init_registry() -> None:
     register(
         BackendInfo(
             protocol_id="s3",
-            display_name="S3-kompatibel",
+            display_name="S3-compatible",
             module="core.s3_client",
             class_name="S3Session",
             default_port=443,
