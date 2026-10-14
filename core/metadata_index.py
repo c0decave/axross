@@ -142,6 +142,17 @@ def _row_to_entry(row) -> MetaEntry:
 # ---------------------------------------------------------------------------
 
 
+_UPSERT_SQL = (
+    "INSERT INTO metadata(backend_id, path, name, size, is_dir, "
+    "extension, modified, indexed_at) "
+    "VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
+    "ON CONFLICT(backend_id, path) DO UPDATE SET "
+    "name=excluded.name, size=excluded.size, "
+    "is_dir=excluded.is_dir, extension=excluded.extension, "
+    "modified=excluded.modified, indexed_at=excluded.indexed_at"
+)
+
+
 def upsert(
     db_path,
     backend_id: str,
@@ -158,6 +169,21 @@ def upsert(
     NUL bytes, bidi override chars, absurdly long strings. See
     :mod:`core.remote_name`.
     """
+    row = _checked_row(backend_id, path, name=name, size=size, is_dir=is_dir, modified=modified)
+    with _connect(db_path) as conn:
+        conn.execute(_UPSERT_SQL, row)
+
+
+def _checked_row(
+    backend_id: str,
+    path: str,
+    *,
+    name: str,
+    size: int,
+    is_dir: bool,
+    modified: datetime | None = None,
+) -> tuple:
+    """Validate one metadata row; raises ValueError for anything refused."""
     from core.remote_name import (
         MAX_REMOTE_PATH_BYTES,
         validate_remote_name,
@@ -172,26 +198,40 @@ def upsert(
     validate_remote_name(backend_id, max_bytes=256)
     when = datetime.now().isoformat(timespec="seconds")
     mod_iso = modified.isoformat(timespec="seconds") if modified else None
-    with _connect(db_path) as conn:
-        conn.execute(
-            "INSERT INTO metadata(backend_id, path, name, size, is_dir, "
-            "extension, modified, indexed_at) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(backend_id, path) DO UPDATE SET "
-            "name=excluded.name, size=excluded.size, "
-            "is_dir=excluded.is_dir, extension=excluded.extension, "
-            "modified=excluded.modified, indexed_at=excluded.indexed_at",
-            (
-                backend_id,
-                path,
-                name,
-                int(size),
-                1 if is_dir else 0,
-                _extension(name),
-                mod_iso,
-                when,
-            ),
-        )
+    return (
+        backend_id,
+        path,
+        name,
+        int(size),
+        1 if is_dir else 0,
+        _extension(name),
+        mod_iso,
+        when,
+    )
+
+
+class _BatchWriter:
+    """Rows of one walk, written in one transaction per batch: a connection,
+    schema script and commit per entry was most of the indexing time. The
+    walk flushes in ``finally``, so an interrupted walk loses nothing."""
+
+    BATCH = 500
+
+    def __init__(self, db_path) -> None:
+        self._db_path = db_path
+        self._rows: list[tuple] = []
+
+    def add(self, row: tuple) -> None:
+        self._rows.append(row)
+        if len(self._rows) >= self.BATCH:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._rows:
+            return
+        rows, self._rows = self._rows, []
+        with _connect(self._db_path) as conn:
+            conn.executemany(_UPSERT_SQL, rows)
 
 
 def remove(db_path, backend_id: str, path: str) -> int:
@@ -203,17 +243,18 @@ def remove(db_path, backend_id: str, path: str) -> int:
         return cur.rowcount
 
 
-def _index_item(db_path, backend_id: str, path: str, item) -> None:
+def _index_item(writer: _BatchWriter, backend_id: str, path: str, item) -> None:
     name = getattr(item, "name", "") or posixpath.basename(path)
     try:
-        upsert(
-            db_path,
-            backend_id,
-            path,
-            name=name,
-            size=int(getattr(item, "size", 0) or 0),
-            is_dir=bool(getattr(item, "is_dir", False)),
-            modified=getattr(item, "modified", None),
+        writer.add(
+            _checked_row(
+                backend_id,
+                path,
+                name=name,
+                size=int(getattr(item, "size", 0) or 0),
+                is_dir=bool(getattr(item, "is_dir", False)),
+                modified=getattr(item, "modified", None),
+            )
         )
     except ValueError as exc:
         # Backend returned a name/path we refuse to index (NUL byte,
@@ -239,6 +280,7 @@ def index_dir(
     _depth: int = 0,
     _counter: list | None = None,
     _done: list | None = None,
+    _writer: _BatchWriter | None = None,
 ) -> int:
     """Walk *root* on *backend* and index every entry we find.
 
@@ -255,6 +297,24 @@ def index_dir(
     list_dir failures on sub-paths are logged and skipped; we don't
     let one inaccessible folder abort the whole walk.
     """
+    if _writer is None:
+        writer = _BatchWriter(db_path)
+        try:
+            return index_dir(
+                backend,
+                root,
+                backend_id=backend_id,
+                recursive=recursive,
+                db_path=db_path,
+                cancel=cancel,
+                progress=progress,
+                _depth=_depth,
+                _counter=_counter,
+                _done=_done,
+                _writer=writer,
+            )
+        finally:
+            writer.flush()
     if _counter is None:
         _counter = [0]
     if _done is None:
@@ -307,7 +367,7 @@ def index_dir(
         except Exception as exc:
             log.warning("metadata_index: join(%s, %s) failed: %s", root, name, exc)
             continue
-        _index_item(db_path, backend_id, full, it)
+        _index_item(_writer, backend_id, full, it)
         count += 1
         _done[0] += 1
         if progress is not None:
@@ -327,6 +387,7 @@ def index_dir(
                 _depth=_depth + 1,
                 _counter=_counter,
                 _done=_done,
+                _writer=_writer,
             )
     return count
 

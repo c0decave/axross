@@ -20,7 +20,7 @@ scheme (HTTP kinds only).
 | Kind | Meaning |
 |---|---|
 | `socks4` | SOCKS4. Host names are sent as SOCKS4a; a server that only speaks plain SOCKS4 (e.g. Dante) needs an IPv4 address as target |
-| `socks5` | SOCKS5 (host names resolved at the proxy), optional username/password |
+| `socks5` | SOCKS5 (host names resolved at the proxy), optional username/password. Exception: a profile that pins the address family (IPv4 / IPv6) resolves the target locally to pick that family |
 | `http` | HTTP CONNECT; Basic when a username is set |
 | `https` | HTTP CONNECT over **TLS to the proxy**; certificate verified against `ca_file`, else the system store |
 | `http+basic` / `+ntlm` / `+negotiate` / `+kerberos` | explicit scheme; `https+…` likewise |
@@ -32,7 +32,8 @@ prebuilt binaries do not bundle; without them the error says so.
 ## Default proxy, bypass list, PAC
 
 *Tools → Network & Proxy…* stores one default (`~/.config/axross/proxy.json`,
-mode 0600; the password lives in the keyring entry `__default_proxy__`):
+mode 0600; the password lives in the keyring entry `__default_proxy__`,
+or -- without *Save password in keyring* -- in memory until axross exits):
 kind, endpoint, credentials, CA file, a **bypass list** and an optional
 **PAC** location.
 
@@ -44,22 +45,32 @@ Each profile chooses how it uses it (`proxy_mode`):
 | `default` | the default above: bypass list first, then PAC if set, else the fixed endpoint |
 | `none` | always direct, even when a default exists |
 
+A ProxyCommand (SSH jump host) belongs to `custom`; `default` and `none`
+ignore one left on the profile.
+
 Profiles that exist before the upgrade stay `custom`, i.e. they do **not**
 silently inherit the default. *Use for all profiles…* switches every
-proxy-capable profile to `default` in one step.
+proxy-capable profile to `default` in one step, except profiles that
+reach their host through a ProxyCommand.
 
 - **Bypass entries**: `host`, `.domain` / `*.domain` (the domain and its
   subdomains), IP literals, CIDR blocks, `<local>`, `*`, each optionally
-  `:port`. A host name is never resolved to test a CIDR (that would be a
-  DNS lookup outside the proxy).
+  `:port`. An entry with a port matches only that port; a profile without
+  a port is judged by its protocol's default port. A host name is never
+  resolved to test a CIDR (that would be a DNS lookup outside the proxy).
 - **PAC** (`http(s)` URL or file): evaluated by a restricted interpreter
-  (`core/pac.py`) -- no `eval`, no I/O, step / depth / string limits, the
-  usual helper functions. Results are cached for 300 s, and the last good
+  (`core/pac.py`) -- no `eval`, no file or network access of its own,
+  step / depth / string limits (64 KiB per string, however it is built),
+  the usual helper functions. As in browsers, `dnsResolve`, `isInNet` and
+  `isResolvable` look the name up with the local resolver. Results are cached for 300 s, and the last good
   script is kept when a refresh fails. A script that cannot be fetched or
   evaluated **fails the connection closed**; it never falls back to
   direct. For PAC results the authentication scheme comes from the
   default's kind (`http+ntlm` makes a PAC `PROXY` entry authenticate with
-  NTLM).
+  NTLM). The default's credentials go to a proxy the PAC names only when
+  the PAC is a local file or an `https` URL, or when it names the
+  configured proxy itself: a PAC fetched over plain `http` can be rewritten
+  on the way, and must not be able to point the password at another host.
 - **Test proxy** opens a real tunnel to a target you name and reports the
   stage that failed (`config`, `proxy`, `tls`, `auth`, `tunnel`).
 - Each pane shows its route (`via SOCKS5 host:port`; tooltip: why, never a
@@ -293,8 +304,11 @@ the proxy and points the kernel at it:
   127.0.0.1:/export`. The session shows the real server name.
 - **iSCSI**: `iscsiadm -m node -o new` for the tunnel portal, then login.
   After login the session's current portal is verified; a target that
-  redirects the login to another address would bypass the proxy, so the
-  session is logged out and the connect fails.
+  redirects the login to another address is logged out and the connect
+  fails. open-iscsi follows the redirect itself, so by the time axross
+  sees it the initiator has already logged in to the redirected address
+  directly -- the check stops the session from being used, it cannot
+  prevent that one direct login.
 - The tunnel peer is the kernel (uid 0), so these two tunnels also accept
   root-owned peers; every other tunnel stays same-uid only.
 - **NFSv3 fails closed**: it negotiates mountd, portmap and statd on

@@ -16,6 +16,10 @@ backend they live on. This dialog wraps two operations:
 * **Find Duplicates** — group rows by ``(algorithm, value)`` where
   count >= 2 and render each group's files. Each group also gets
   an ``ax-cas://<algo>:<hex>`` URL the user can copy.
+* **Move Selected to Trash** — only the selected copies, and only after
+  :func:`core.cas.delete_duplicates` re-checked on the live backend that
+  each still holds the indexed content and that a genuine other copy
+  survives. Removal goes to the axross trash, so it can be undone.
 
 A "Rebuild" run is the only way fresh data lands in the index; a
 "Find" run is a SELECT and free.
@@ -27,7 +31,7 @@ import logging
 from dataclasses import dataclass, field
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QGuiApplication
+from PyQt6.QtGui import QFont, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -35,6 +39,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTreeWidget,
@@ -47,6 +52,8 @@ from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
 
 log = logging.getLogger("ui.cas_dialog")
+
+COL_NAME, COL_FOLDER, COL_SIZE, COL_BACKEND, COL_HASH = range(5)
 
 
 @dataclass(frozen=True)
@@ -107,6 +114,15 @@ def _format_size(n: int) -> str:
     return f"{n:.0f} PiB"
 
 
+def _split_path(path: str) -> tuple[str, str]:
+    """``(folder, name)`` of an index path — local or remote, ``/`` or ``\\``."""
+    trimmed = path.rstrip("/\\") or path
+    cut = max(trimmed.rfind("/"), trimmed.rfind("\\"))
+    if cut < 0:
+        return "", trimmed
+    return trimmed[:cut] or trimmed[: cut + 1], trimmed[cut + 1 :]
+
+
 def _backend_id_for(backend) -> str:
     """Same shape as the metadata-search dialog — ``<class>:<name>``
     or just ``<class>`` when the backend has no display name."""
@@ -120,15 +136,23 @@ class CasDuplicatesDialog(QDialog):
 
     open_requested = pyqtSignal(str, str)  # backend_id, path
 
-    def __init__(self, active_pane=None, parent=None) -> None:
+    def __init__(self, active_pane=None, parent=None, backends=None) -> None:
+        """*backends* are the connected backends of every open pane; a copy
+        on one of them can be verified as the survivor of a deletion."""
         super().__init__(parent)
         self._active_pane = active_pane
+        self._backends: dict = {}
+        for backend in [getattr(active_pane, "backend", None), *(backends or [])]:
+            if backend is not None:
+                self._backends.setdefault(_backend_id_for(backend), backend)
         self.setWindowTitle("Duplicate Finder")
-        self.resize(900, 600)
-        # Background rebuild: the walk + hashing can take minutes, so it runs
-        # in a thread while the dialog stays live (progress, Cancel, Esc).
-        self._job = ScanJob(self)
-        self._job.finished.connect(self._on_rebuild_finished)
+        self.resize(1000, 600)
+        # Background work: the rebuild walk + hashing and the verified delete
+        # can take minutes, so they run in a thread while the dialog stays
+        # live (progress, Cancel, Esc). One job at a time, told apart by kind.
+        self._job_kind = "rebuild"
+        self._job = ScanJob(self, formatter=self._format_progress)
+        self._job.finished.connect(self._on_job_finished)
         self._build_ui()
         self._reload()
 
@@ -162,9 +186,11 @@ class CasDuplicatesDialog(QDialog):
         self._copy_btn.clicked.connect(self._copy_url)
         btn_row.addWidget(self._copy_btn)
 
-        self._delete_btn = QPushButton("Delete selected copies…", self)
+        self._delete_btn = QPushButton("Move Selected to Trash…", self)
         self._delete_btn.setToolTip(
-            "Remove the selected duplicates. At least one copy of every group is always kept."
+            "Move the selected copies to the axross trash (restorable via Show Trash). "
+            "Each file is re-checked first, and at least one verified copy of every "
+            "group is always kept."
         )
         self._delete_btn.clicked.connect(self._delete_selected)
         btn_row.addWidget(self._delete_btn)
@@ -185,17 +211,31 @@ class CasDuplicatesDialog(QDialog):
         # grouping obvious without us having to draw alternating
         # backgrounds in a flat table.
         self._tree = QTreeWidget(self)
-        self._tree.setColumnCount(4)
-        self._tree.setHeaderLabels(["Algo / Path", "Size", "Backend", "Hash / —"])
+        self._tree.setColumnCount(5)
+        self._tree.setHeaderLabels(["Name", "Folder", "Size", "Backend", "Hash"])
         font = self._tree.font()
         # Monospace is much nicer for hashes.
         font.setStyleHint(QFont.StyleHint.Monospace)
         self._tree.setFont(font)
+        # The file name gets its own column: inside one long path column it
+        # sat at the end and was the first thing elided. Whatever still has
+        # to be shortened keeps both ends; the tooltip holds the full path.
+        self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         header = self._tree.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(COL_FOLDER, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_SIZE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_BACKEND, QHeaderView.ResizeMode.ResizeToContents)
+        # A full sha256 is 64 characters and used to take the room the
+        # names needed; it is in the tooltip and in "Copy ax-cas URL".
+        header.setSectionResizeMode(COL_HASH, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(COL_HASH, 140)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_context_menu)
+        delete_key = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), self._tree)
+        delete_key.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete_key.activated.connect(self._delete_selected)
         # Removing duplicates is inherently a multi-row action, and the
         # default single-selection tree made "delete the copies I don't
         # want" a one-at-a-time affair.
@@ -247,27 +287,31 @@ class CasDuplicatesDialog(QDialog):
                     self._groups.append(list(group))
                     parent = QTreeWidgetItem(self._tree)
                     head = group[0]
-                    parent.setText(0, f"[{head.algorithm}] {len(group)} copies")
-                    parent.setText(1, _format_size(head.size))
-                    parent.setText(2, "—")
-                    parent.setText(3, head.value)
+                    parent.setText(COL_NAME, f"[{head.algorithm}] {len(group)} copies")
+                    parent.setText(COL_SIZE, _format_size(head.size))
+                    parent.setText(COL_HASH, head.value)
+                    parent.setToolTip(COL_HASH, f"{head.algorithm}:{head.value}")
                     parent.setData(
-                        0, Qt.ItemDataRole.UserRole, ("group", head.algorithm, head.value)
+                        COL_NAME, Qt.ItemDataRole.UserRole, ("group", head.algorithm, head.value)
                     )
                     for entry in group:
+                        folder, name = _split_path(entry.path)
                         child = QTreeWidgetItem(parent)
-                        child.setText(0, entry.path)
-                        child.setText(1, _format_size(entry.size))
-                        child.setText(2, entry.backend_id)
-                        child.setText(3, "")
-                        child.setData(
-                            0,
-                            Qt.ItemDataRole.UserRole,
-                            ("entry", entry),
-                        )
+                        child.setText(COL_NAME, name)
+                        child.setText(COL_FOLDER, folder)
+                        child.setText(COL_SIZE, _format_size(entry.size))
+                        child.setText(COL_BACKEND, entry.backend_id)
+                        for col in (COL_NAME, COL_FOLDER):
+                            child.setToolTip(col, entry.path)
+                        child.setData(COL_NAME, Qt.ItemDataRole.UserRole, ("entry", entry))
                     parent.setExpanded(True)
         finally:
             QApplication.restoreOverrideCursor()
+        self._tree.resizeColumnToContents(COL_NAME)
+        # Wide enough for the names, but never so wide the folder vanishes.
+        cap = max(200, self._tree.viewport().width() // 2)
+        if self._tree.columnWidth(COL_NAME) > cap:
+            self._tree.setColumnWidth(COL_NAME, cap)
         self._status.setText(f"{total_groups} duplicate group(s) covering {total_files} file(s)")
 
     def _do_rebuild_active(self) -> None:
@@ -290,11 +334,30 @@ class CasDuplicatesDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
         self._rebuild_root = path
+        self._job_kind = "rebuild"
         self._job.start(
             lambda cancel, progress: CAS.rebuild(
                 backend, path, backend_id=bid, cancel=cancel, progress=progress
             )
         )
+
+    def _format_progress(self, state: dict) -> str:
+        from ui.scan_job import shorten
+
+        if self._job_kind == "delete":
+            return f"Checking and moving to trash… {state['indexed']} moved — " + shorten(
+                state["path"]
+            )
+        return (
+            f"Working… {state['indexed']} indexed, {state['scanned']} scanned"
+            f" — {shorten(state['path'])}"
+        )
+
+    def _on_job_finished(self, kind: str, value, cancelled: bool) -> None:
+        if self._job_kind == "delete":
+            self._on_delete_finished(kind, value, cancelled)
+        else:
+            self._on_rebuild_finished(kind, value, cancelled)
 
     def _on_rebuild_finished(self, kind: str, value, cancelled: bool) -> None:
         self._rebuild_btn.setEnabled(self._active_pane is not None)
@@ -323,7 +386,7 @@ class CasDuplicatesDialog(QDialog):
         item = self._tree.currentItem()
         if item is None:
             return None, None
-        data = item.data(0, Qt.ItemDataRole.UserRole)
+        data = item.data(COL_NAME, Qt.ItemDataRole.UserRole)
         if not data:
             return None, None
         return data[0], data[1:]
@@ -332,16 +395,18 @@ class CasDuplicatesDialog(QDialog):
         """Every ``CasEntry`` row currently selected in the tree."""
         entries = []
         for item in self._tree.selectedItems():
-            data = item.data(0, Qt.ItemDataRole.UserRole)
+            data = item.data(COL_NAME, Qt.ItemDataRole.UserRole)
             if data and data[0] == "entry":
                 entries.append(data[1])
         return entries
 
     def _delete_selected(self) -> None:
+        if self._job.running:
+            return  # one background job at a time
         selected = self.selected_entries()
         if not selected:
             QMessageBox.information(
-                self, "Delete duplicates", "Select the file rows you want to remove."
+                self, "Move to Trash", "Select the file rows you want to remove."
             )
             return
 
@@ -352,75 +417,176 @@ class CasDuplicatesDialog(QDialog):
                 self,
                 "Every copy selected",
                 f"{len(plan.refused_groups)} group(s) had ALL their copies selected. "
-                "Deleting those would erase the content entirely, so they were "
+                "Removing those would erase the content entirely, so they were "
                 "left alone — deselect at least one copy per group to proceed.",
             )
         if not plan.deletable:
             return
 
-        pane = self._active_pane
-        backend = getattr(pane, "backend", None) if pane is not None else None
-        if backend is None:
-            QMessageBox.information(
-                self,
-                "No backend",
-                "Deleting needs an active pane whose backend holds the files.",
-            )
-            return
-
-        # Only touch entries that belong to the backend we actually
-        # hold. The index spans hosts that may not be connected, and
-        # deleting on the wrong one is unrecoverable.
-        bid = _backend_id_for(backend)
-        mine = [e for e in plan.deletable if e.backend_id == bid]
+        # Only backends we actually hold: the index spans hosts that may
+        # not be connected, and those copies can neither be removed nor
+        # re-checked from here.
+        mine = [e for e in plan.deletable if e.backend_id in self._backends]
         others = len(plan.deletable) - len(mine)
         if not mine:
             QMessageBox.information(
                 self,
                 "Not reachable from here",
-                "The selected copies live on backends other than the active "
-                "pane's. Open a pane on that host and delete from there.",
+                "The selected copies live on backends that are not open in any "
+                "pane. Open a pane on that host and try again.",
             )
             return
 
+        hosts = sorted({e.backend_id for e in mine})
         confirm = QMessageBox.question(
             self,
-            "Delete duplicates",
-            f"Delete {len(mine)} file(s) from {bid}?\n"
-            f"{plan.survivors} copy/copies will remain."
+            "Move to Trash",
+            f"Move {len(mine)} file(s) on {', '.join(hosts)} to the axross trash?\n"
+            f"{plan.survivors} indexed copy/copies will remain.\n\n"
+            "Each file is re-checked first: it is only moved if it still holds "
+            "the indexed content and another verified copy remains. Trashed "
+            "files can be restored via Show Trash."
             + (
-                f"\n\n{others} selected copy/copies live elsewhere and are skipped."
+                f"\n\n{others} selected copy/copies live on backends that are not "
+                "open and are skipped."
                 if others
                 else ""
-            )
-            + "\n\nThis cannot be undone.",
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        removed, errors = 0, []
-        for entry in mine:
-            try:
-                backend.remove(entry.path)
-            except OSError as exc:
-                errors.append(f"{entry.path}: {exc}")
-                continue
-            removed += 1
-            try:
-                CAS.remove(None, entry.backend_id, entry.path)
-            except Exception as exc:  # noqa: BLE001 — index drift must not mask success
-                log.warning("CAS index cleanup failed for %s: %s", entry.path, exc)
-
-        if errors:
-            QMessageBox.warning(
-                self,
-                "Some deletions failed",
-                f"{removed} removed, {len(errors)} failed:\n" + "\n".join(errors[:10]),
+        groups = list(getattr(self, "_groups", []))
+        backends = dict(self._backends)
+        self._job_kind = "delete"
+        self._job.start(
+            lambda cancel, progress: CAS.delete_duplicates(
+                mine,
+                groups,
+                backends,
+                cancel=cancel,
+                progress=lambda done, moved, path: progress(done, moved, path),
             )
-        self._status.setText(f"Deleted {removed} duplicate(s)")
+        )
+
+    def _on_delete_finished(self, kind: str, value, cancelled: bool) -> None:
+        self._rebuild_btn.setEnabled(self._active_pane is not None)
+        if kind == "error":
+            QMessageBox.warning(self, "Move to Trash", f"Failed:\n{value}")
+            self._reload()
+            return
+        outcome = value
+        lines = [f"{len(outcome.removed)} file(s) moved to the axross trash."]
+        if cancelled:
+            lines.append("Cancelled before every file was handled.")
+        if outcome.refused or outcome.failed:
+            lines.append("")
+            lines += [f"Kept {e.path}: {why}" for e, why in outcome.refused[:10]]
+            lines += [f"Failed {e.path}: {why}" for e, why in outcome.failed[:10]]
+            hidden = len(outcome.refused) + len(outcome.failed) - 20
+            if hidden > 0:
+                lines.append(f"… and {hidden} more")
+            QMessageBox.warning(self, "Move to Trash", "\n".join(lines))
+        else:
+            QMessageBox.information(self, "Move to Trash", "\n".join(lines))
+        self._status.setText(f"Moved {len(outcome.removed)} duplicate(s) to trash")
         self._reload()
+
+    # ------------------------------------------------------------------
+    # Context menu
+    # ------------------------------------------------------------------
+    def _show_context_menu(self, pos) -> None:
+        item = self._tree.itemAt(pos)
+        if item is not None and not item.isSelected():
+            self._tree.setCurrentItem(item)
+        self.build_context_menu(item).exec(self._tree.viewport().mapToGlobal(pos))
+
+    def build_context_menu(self, item) -> QMenu:
+        """The right-click menu for *item* (a file row, a group row or None)."""
+        menu = QMenu(self)
+        data = item.data(COL_NAME, Qt.ItemDataRole.UserRole) if item is not None else None
+        kind = data[0] if data else None
+
+        if kind == "entry":
+            entry = data[1]
+            menu.addAction(
+                "Open Containing Folder",
+                lambda: self.open_requested.emit(entry.backend_id, entry.path),
+            )
+            menu.addAction("Keep This Copy, Select the Others", lambda: self._keep_only(item))
+            menu.addSeparator()
+            menu.addAction("Copy Path", lambda: self._to_clipboard(entry.path))
+            menu.addAction("Copy File Name", lambda: self._to_clipboard(_split_path(entry.path)[1]))
+            menu.addAction(
+                "Copy ax-cas URL",
+                lambda: self._to_clipboard(CAS.cas_url(entry.algorithm, entry.value)),
+            )
+        elif kind == "group":
+            _kind, algo, value = data
+            menu.addAction("Select All but One", lambda: self._select_all_but_one([item]))
+            menu.addAction("Copy ax-cas URL", lambda: self._to_clipboard(CAS.cas_url(algo, value)))
+            menu.addAction("Copy All Paths", lambda: self._copy_group_paths(item))
+
+        if kind is not None:
+            menu.addSeparator()
+        menu.addAction(
+            "Select Duplicates in Every Group (keep one)",
+            lambda: self._select_all_but_one(
+                [self._tree.topLevelItem(i) for i in range(self._tree.topLevelItemCount())]
+            ),
+        )
+        menu.addAction("Clear Selection", self._tree.clearSelection)
+        menu.addSeparator()
+        has_files = bool(self.selected_entries())
+        trash = menu.addAction("Move Selected to Trash…", self._delete_selected)
+        trash.setEnabled(has_files and not self._job.running)
+        forget = menu.addAction("Remove Selected from Index", self._forget_selected)
+        forget.setEnabled(has_files and not self._job.running)
+        return menu
+
+    def _keep_only(self, keep) -> None:
+        group = keep.parent()
+        if group is None:
+            return
+        self._tree.clearSelection()
+        for i in range(group.childCount()):
+            child = group.child(i)
+            if child is not keep:
+                child.setSelected(True)
+
+    def _select_all_but_one(self, groups) -> None:
+        """Select every copy except the first of each group — the user
+        sees the result and can change it before removing anything."""
+        self._tree.clearSelection()
+        for group in groups:
+            for i in range(1, group.childCount()):
+                group.child(i).setSelected(True)
+
+    def _copy_group_paths(self, group) -> None:
+        paths = []
+        for i in range(group.childCount()):
+            data = group.child(i).data(COL_NAME, Qt.ItemDataRole.UserRole)
+            if data and data[0] == "entry":
+                paths.append(data[1].path)
+        self._to_clipboard("\n".join(paths))
+
+    def _to_clipboard(self, text: str) -> None:
+        QGuiApplication.clipboard().setText(text)
+        self._status.setText("Copied to clipboard")
+
+    def _forget_selected(self) -> None:
+        """Drop the selected rows from the index; the files stay untouched.
+        For stale rows — a rebuild brings back whatever still exists."""
+        forgotten = 0
+        for entry in self.selected_entries():
+            try:
+                forgotten += CAS.remove(None, entry.backend_id, entry.path)
+            except Exception as exc:  # noqa: BLE001 — report, keep going
+                log.warning("CAS index removal failed for %s: %s", entry.path, exc)
+        self._reload()
+        self._status.setText(f"Removed {forgotten} row(s) from the index")
 
     def _export(self) -> None:
         lines = ["algorithm\thash\tbackend\tpath\tsize"]
@@ -454,7 +620,7 @@ class CasDuplicatesDialog(QDialog):
         self._status.setText(f"Copied {url} to clipboard")
 
     def _on_double_click(self, item: QTreeWidgetItem, _col: int) -> None:
-        data = item.data(0, Qt.ItemDataRole.UserRole)
+        data = item.data(COL_NAME, Qt.ItemDataRole.UserRole)
         if not data or data[0] != "entry":
             return
         entry = data[1]

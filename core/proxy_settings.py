@@ -168,6 +168,17 @@ def get_password() -> str:
     return get_proxy_password(KEYRING_NAME) or ""
 
 
+# Password typed in the Network & Proxy dialog without "save in keyring":
+# held for this process only, so real connections use what "Test proxy"
+# used instead of silently connecting without it.
+_session_password = ""
+
+
+def set_session_password(password: str) -> None:
+    global _session_password
+    _session_password = password or ""
+
+
 def set_password(password: str) -> bool:
     from core.credentials import delete_proxy_password, store_proxy_password
 
@@ -205,7 +216,10 @@ def bypass_matches(host: str, patterns, port: int | None = None) -> bool:
         m = re.fullmatch(r"(.+):(\d{1,5})", pat)
         if m and not _is_ipv6(pat):
             pat, want_port = m.group(1), int(m.group(2))
-        if want_port is not None and port is not None and want_port != port:
+        # An entry bound to a port only matches that port. With the port
+        # unknown it cannot be shown to match, and a wrong match means
+        # direct traffic — so it does not.
+        if want_port is not None and want_port != port:
             continue
         pat = pat.strip("[]")
         if pat == "*":
@@ -360,8 +374,18 @@ def target_of(profile) -> tuple[str, int | None]:
         parts = urlsplit(url if "://" in url else f"https://{url}")
         if parts.hostname:
             return parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)
-    port = getattr(profile, "port", 0) or None
+    port = getattr(profile, "port", 0) or _default_port(proto)
     return getattr(profile, "host", "") or "", port
+
+
+def _default_port(protocol: str) -> int | None:
+    """The port a profile without one really connects to, so a port-bound
+    bypass entry can be judged."""
+    from core import backend_registry
+
+    backend_registry.ensure_initialized()
+    info = backend_registry.get(protocol)
+    return (info.default_port or None) if info is not None else None
 
 
 _PROTO_SCHEME = {"webdav": "https", "s3": "https", "sharepoint": "https", "ftps": "ftp"}
@@ -391,8 +415,19 @@ def resolve(
 
 
 def _default_config(d: ProxyDefaults, ptype: str, host: str, port: int) -> ProxyConfig:
-    password = get_password() if (d.store_password and d.username) else ""
+    password = ""
+    if d.username:
+        password = get_password() if d.store_password else _session_password
     return ProxyConfig(ptype, host, port, d.username, password, d.ca_file)
+
+
+def _same_host(a: str, b: str) -> bool:
+    return a.strip().rstrip(".").lower() == b.strip().rstrip(".").lower()
+
+
+def _pac_is_authentic(location: str) -> bool:
+    """A PAC fetched over plain http can be rewritten by anyone on the path."""
+    return urlsplit(location).scheme.lower() != "http"
 
 
 def _resolve_pac(d: ProxyDefaults, host: str, port: int | None, protocol: str) -> Resolution:
@@ -409,6 +444,16 @@ def _resolve_pac(d: ProxyDefaults, host: str, port: int | None, protocol: str) -
     if first.kind == "direct":
         return Resolution(None, "pac", url)
     cfg = _default_config(d, _with_auth(first.kind, d), first.host, first.port)
+    if cfg.username and not _pac_is_authentic(d.pac_url) and not _same_host(first.host, d.host):
+        # Whoever can rewrite a plain-http PAC could otherwise name their
+        # own proxy and collect the credentials. The configured proxy
+        # itself is still trusted with them.
+        log.warning(
+            "PAC (plain http) names %s, not the configured proxy; connecting "
+            "without the default proxy credentials",
+            first.host,
+        )
+        cfg = ProxyConfig(cfg.proxy_type, cfg.host, cfg.port, "", "", cfg.ca_file)
     return Resolution(cfg, "pac", url)
 
 
@@ -439,7 +484,8 @@ def adopt_default_proxy(profiles) -> list[str]:
     """Switch every profile whose protocol can use a proxy to the default
     one (``proxy_mode = "default"``). Returns the names that changed; the
     caller persists the profile store. Profiles that already follow the
-    default and protocols a proxy cannot carry are left alone."""
+    default, protocols a proxy cannot carry and profiles routed through a
+    ProxyCommand are left alone."""
     from core.connection_manager import proxy_unavailable_reason
 
     changed: list[str] = []
@@ -447,6 +493,11 @@ def adopt_default_proxy(profiles) -> list[str]:
         if proxy_unavailable_reason(profile.protocol):
             continue
         if getattr(profile, "proxy_mode", "custom") == "default":
+            continue
+        # A ProxyCommand (jump host) is deliberate per-host routing; the
+        # default proxy would replace it, and the host may only be
+        # reachable through that jump.
+        if getattr(profile, "proxy_command", ""):
             continue
         profile.proxy_mode = "default"
         changed.append(profile.name)

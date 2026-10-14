@@ -131,6 +131,10 @@ class NfsSession:
             stderr = e.stderr.strip() if e.stderr else str(e)
             raise OSError(f"Failed to mount NFS {source}: {stderr}") from e
 
+    def local_path(self, path: str) -> str:
+        """The mounted path on this machine (see core.storage_identity)."""
+        return self._full_path(path)
+
     def _full_path(self, path: str) -> str:
         """Convert virtual path to real mounted path."""
         clean = path.lstrip("/")

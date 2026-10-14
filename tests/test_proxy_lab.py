@@ -334,6 +334,36 @@ class ProtocolTest(_LabCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.text, "hello over http\n")
 
+    def test_git_urllib3_manager_through_every_kind(self) -> None:
+        # dulwich gets this pool manager; a plain http proxy with a user
+        # once received no Proxy-Authorization at all (urllib3 ignores
+        # userinfo in the proxy URL) and every fetch met a 407.
+        from core.proxy import build_urllib3_proxy_manager
+
+        for name in NAMED_PROXIES:
+            with self.subTest(proxy=name):
+                manager = build_urllib3_proxy_manager(self.cfg(name))
+                r = manager.request("GET", "http://http.lab/index.html", retries=False, timeout=20)
+                self.assertEqual((r.status, r.data), (200, b"hello over http\n"))
+
+    def test_shim_reauthenticates_every_request_on_a_kept_alive_session(self) -> None:
+        # squid keeps client connections alive. The shim relays raw bytes
+        # after the first, authenticated request, so a second request on
+        # the same connection used to reach squid without credentials.
+        import requests
+
+        from core.proxy import effective_http_proxy
+
+        shim = effective_http_proxy(self.cfg("https-basic"))
+        proxies = {"http": f"http://{shim.host}:{shim.port}"}
+        with requests.Session() as session:
+            session.trust_env = False
+            codes = [
+                session.get("http://http.lab/index.html", proxies=proxies, timeout=20).status_code
+                for _ in range(3)
+            ]
+        self.assertEqual(codes, [200, 200, 200])
+
     def test_http_without_a_proxy_cannot_resolve_the_lab(self) -> None:
         import requests
 

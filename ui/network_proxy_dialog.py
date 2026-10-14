@@ -325,6 +325,9 @@ class NetworkProxyDialog(QDialog):
             QMessageBox.warning(self, "Network & Proxy", str(exc))
             return
         typed = self._typed_password()
+        # Without the keyring the typed password lives for this session, so
+        # real connections use what "Test proxy" used.
+        proxy_settings.set_session_password("" if defaults.store_password else typed)
         if defaults.store_password and typed:
             if not proxy_settings.set_password(typed):
                 QMessageBox.warning(
@@ -343,7 +346,8 @@ class NetworkProxyDialog(QDialog):
             self,
             "Use for all profiles",
             "Switch every profile whose protocol can use a proxy to the default proxy?\n"
-            "Their own proxy settings are kept but no longer used.",
+            "Their own proxy settings are kept but no longer used. Profiles that "
+            "reach their host through a ProxyCommand (jump host) keep it.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:

@@ -506,10 +506,9 @@ class LocalProxyShim:
             self._track(upstream, True)
             upstream.settimeout(None)
             client.settimeout(None)
-            back = threading.Thread(target=self._pump, args=(upstream, client), daemon=True)
-            back.start()
-            self._pump(client, upstream)
-            back.join(timeout=5)
+            from core.proxy import relay_both
+
+            relay_both(client, upstream)
         except Exception as exc:  # noqa: BLE001 - never let a client kill the thread noisily
             log.debug("proxy shim: connection ended: %s", exc)
         finally:
@@ -640,10 +639,15 @@ class LocalProxyShim:
         sock = connect_to_proxy(cfg, self._timeout)
         try:
             if scheme in ("", "basic"):
+                # One request per upstream connection. The relay that follows
+                # is raw bytes, so a second request the client sent on a
+                # kept-alive connection would reach the proxy without the
+                # Proxy-Authorization header. With "close" the client opens
+                # a new connection, and that one is authenticated again;
+                # pipelined bytes are dropped for the same reason.
                 extra = [("Proxy-Authorization", _basic_value(cfg))] if scheme == "basic" else []
-                sock.sendall(request(extra, True))
-                if pipelined:
-                    sock.sendall(pipelined)
+                close = [("Connection", "close"), ("Proxy-Connection", "close")]
+                sock.sendall(request(extra + close, True))
                 return sock
             ctx = _spnego_context(cfg, scheme)
             name = _challenge_name(scheme)
@@ -679,21 +683,6 @@ class LocalProxyShim:
             with contextlib.suppress(OSError):
                 sock.close()
             raise
-
-    @staticmethod
-    def _pump(src: socket.socket, dst: socket.socket) -> None:
-        try:
-            while True:
-                data = src.recv(65536)
-                if not data:
-                    break
-                dst.sendall(data)
-        except OSError:
-            pass
-        finally:
-            for sock in (src, dst):
-                with contextlib.suppress(OSError):
-                    sock.shutdown(socket.SHUT_RDWR)
 
 
 def _serialize_status(resp: _Response) -> bytes:

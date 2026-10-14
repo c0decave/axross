@@ -6,11 +6,57 @@ import os
 import pwd
 import shutil
 import stat as stat_module
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import IO
 
 from models.file_item import FileItem
+
+# uid / gid -> name, cached. With the stock Arch nsswitch line
+# "group: files [SUCCESS=merge] systemd" every grp.getgrgid also asks
+# systemd-userdb (~0.56 ms), and a listing called it once per entry.
+# The TTL lets a renamed user or group show up without a restart.
+NAME_CACHE_TTL = 60.0
+NAME_CACHE_MAX = 1024
+_owner_cache: dict[int, tuple[float, str]] = {}
+_group_cache: dict[int, tuple[float, str]] = {}
+_name_lock = threading.Lock()
+
+
+def _cached_name(cache: dict, ident: int, lookup) -> str:
+    now = time.monotonic()
+    with _name_lock:
+        hit = cache.get(ident)
+        if hit is not None and now - hit[0] < NAME_CACHE_TTL:
+            return hit[1]
+    try:
+        name = lookup(ident)
+    except (KeyError, OverflowError, TypeError):
+        name = str(ident)
+    with _name_lock:
+        if len(cache) >= NAME_CACHE_MAX:
+            cache.clear()
+        cache[ident] = (now, name)
+    return name
+
+
+def owner_name(uid: int) -> str:
+    """User name for *uid*, or the number when it has none."""
+    return _cached_name(_owner_cache, uid, lambda i: pwd.getpwuid(i).pw_name)
+
+
+def group_name(gid: int) -> str:
+    """Group name for *gid*, or the number when it has none."""
+    return _cached_name(_group_cache, gid, lambda i: grp.getgrgid(i).gr_name)
+
+
+def clear_name_cache() -> None:
+    with _name_lock:
+        _owner_cache.clear()
+        _group_cache.clear()
+
 
 log = logging.getLogger(__name__)
 
@@ -139,6 +185,16 @@ class LocalFS:
         """Server-side copy via shutil.copy2 (preserves timestamps)."""
         shutil.copy2(src, dst)
 
+    def local_path(self, path: str) -> str:
+        """The path on this machine's filesystem (see core.storage_identity)."""
+        return os.path.abspath(path)
+
+    def same_file(self, a: str, b: str) -> bool:
+        """True when *a* and *b* name one file — hardlink, bind mount or a
+        path through a symlink. The duplicate finder needs this to tell a
+        second copy from a second name for the same bytes."""
+        return os.path.samefile(a, b)
+
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Stream-hash the file. No native shortcut on a plain mount."""
         import hashlib
@@ -166,15 +222,8 @@ class LocalFS:
             except OSError:
                 pass
 
-        try:
-            owner = pwd.getpwuid(st.st_uid).pw_name
-        except (KeyError, AttributeError):
-            owner = str(getattr(st, "st_uid", ""))
-
-        try:
-            group = grp.getgrgid(st.st_gid).gr_name
-        except (KeyError, AttributeError):
-            group = str(getattr(st, "st_gid", ""))
+        owner = owner_name(st.st_uid) if hasattr(st, "st_uid") else ""
+        group = group_name(st.st_gid) if hasattr(st, "st_gid") else ""
 
         accessed = datetime.fromtimestamp(st.st_atime) if getattr(st, "st_atime", 0) else None
         created = None

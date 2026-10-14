@@ -442,10 +442,17 @@ class SSHSession:
         self.sftp.rename(src, dst)
 
     def open_read(self, path: str) -> IO[bytes]:
-        return self.sftp.open(path, "rb")
+        # Pipelined, bounded read-ahead: see core.sftp_io.
+        from core.sftp_io import open_read_ahead
+
+        return open_read_ahead(lambda: self.sftp.open(path, "rb"))
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        return self.sftp.open(path, "ab" if append else "wb")
+        # WRITEs go out without waiting for each answer (one round trip per
+        # 32 KiB otherwise); every answer is still checked: core.sftp_io.
+        from core.sftp_io import PipelinedWriter
+
+        return PipelinedWriter(self.sftp.open(path, "ab" if append else "wb"), append=append)
 
     def normalize(self, path: str) -> str:
         try:

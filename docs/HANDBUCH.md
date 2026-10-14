@@ -409,8 +409,20 @@ auf jedem Backend liegen kann.
 Lokaler SQLite-Index der `(backend_id, path) → checksum`-Mapping
 hält, gespeist beim Checksum-Berechnen. Features:
 
-- **Duplicate Finder** (View-Menü → "CAS Duplicates…"): Gruppiert
+- **Duplicate Finder** (View-Menü → "Duplicate Finder…"): Gruppiert
   Dateien mit identischem Inhalts-Hash über alle Backends hinweg.
+  "Rebuild from Active Pane" indexiert den Ordner des aktiven Panes;
+  ein erneuter Rebuild hasht nur Dateien, deren Größe oder Änderungszeit
+  sich geändert hat. Symlinks und der axross-Trash werden nicht indexiert.
+  Rechtsklick: Ordner öffnen, "Keep This Copy, Select the Others",
+  "Select All but One", Pfad / Name / URL kopieren, aus dem Index
+  entfernen. "Move Selected to Trash…" (auch Entf) verschiebt nur die
+  markierten Kopien in den axross-Trash (wiederherstellbar über
+  "Show Trash…") und prüft vorher live nach: Die Datei muss noch den
+  indexierten Inhalt haben, und eine *echte* andere Kopie muss bleiben —
+  kein Symlink, kein Hardlink, kein anderer Pfad zur selben Datei und
+  nicht dieselbe Datei über ein zweites Backend (z. B. SMB und SFTP auf
+  dasselbe NAS). Was sich nicht belegen lässt, bleibt liegen, mit Grund.
 - **`ax-cas://`-URLs**: Eine stabile URL-Form die eine Datei über
   ihren Hash statt über einen Pfad referenziert. Die URL lässt sich
   kopieren und in einem anderen Pane öffnen.

@@ -11,10 +11,8 @@ No extra Python packages required -- only the system tools:
 from __future__ import annotations
 
 import glob
-import grp
 import logging
 import os
-import pwd
 import re
 import shutil
 import stat as stat_module
@@ -25,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+from core.local_fs import group_name, owner_name
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -410,6 +409,10 @@ class IscsiSession:
     # ------------------------------------------------------------------
     # Internal helpers -- path mapping
     # ------------------------------------------------------------------
+
+    def local_path(self, path: str) -> str:
+        """The mounted path on this machine (see core.storage_identity)."""
+        return self._real(path)
 
     def _real(self, path: str) -> str:
         """Map a virtual path (``/``, ``/foo/bar``) to the mounted filesystem."""
@@ -981,15 +984,8 @@ class IscsiSession:
             except OSError:
                 pass
 
-        try:
-            owner = pwd.getpwuid(st.st_uid).pw_name
-        except (KeyError, AttributeError):
-            owner = str(getattr(st, "st_uid", ""))
-
-        try:
-            group = grp.getgrgid(st.st_gid).gr_name
-        except (KeyError, AttributeError):
-            group = str(getattr(st, "st_gid", ""))
+        owner = owner_name(st.st_uid) if hasattr(st, "st_uid") else ""
+        group = group_name(st.st_gid) if hasattr(st, "st_gid") else ""
 
         accessed = datetime.fromtimestamp(st.st_atime) if getattr(st, "st_atime", 0) else None
         birth = getattr(st, "st_birthtime", 0)

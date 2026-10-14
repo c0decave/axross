@@ -862,6 +862,10 @@ class ConnectionDialog(QDialog):
                     self._proxy_type.currentIndex(), self._proxy_auth.currentIndex()
                 )
                 proxy_command = self._proxy_command.text().strip()
+                if proxy_command and not self._proxy_host.text().strip():
+                    # ProxyCommand alone: a proxy kind without a host would
+                    # make the connection refuse to start.
+                    proxy_type = "none"
         custom_proxy = proxy_mode == "custom"
 
         proto = self._selected_protocol()

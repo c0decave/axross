@@ -2084,8 +2084,15 @@ class MainWindow(QMainWindow):
         """Open the CAS duplicate-finder. The active pane is wired in
         so the rebuild button has a backend + path to walk."""
         from ui.cas_dialog import CasDuplicatesDialog
+        from ui.disk_usage_dialog import collect_backends
 
-        dlg = CasDuplicatesDialog(active_pane=self._active_pane, parent=self)
+        # Every open pane's backend, so a copy on another host can be
+        # re-verified as the survivor before a duplicate is trashed.
+        dlg = CasDuplicatesDialog(
+            active_pane=self._active_pane,
+            parent=self,
+            backends=collect_backends(self._panes),
+        )
         dlg.open_requested.connect(self._on_cas_open)
         dlg.open()
 

@@ -510,8 +510,29 @@ def _str(v) -> str:
     if isinstance(v, str):
         return v
     if isinstance(v, list):
-        return ",".join(_str(x) for x in v)
+        return _join(v, ",")
     raise PacError("cannot convert value to a string")
+
+
+def _cap(s: str) -> str:
+    """Every string a script builds goes through here: growth by doubling
+    (``s += s``, ``s.replace(x, s)``) reaches gigabytes in thirty steps."""
+    if len(s) > MAX_STRING:
+        raise PacError("string too long")
+    return s
+
+
+def _join(items: list, sep: str) -> str:
+    """``Array.join`` that stops before, not after, building an oversized string."""
+    parts: list[str] = []
+    total = 0
+    for x in items:
+        part = _str(x)
+        total += len(part) + (len(sep) if parts else 0)
+        if total > MAX_STRING:
+            raise PacError("string too long")
+        parts.append(part)
+    return sep.join(parts)
 
 
 def _int(v) -> int:
@@ -673,10 +694,7 @@ class _Interpreter:
                 or isinstance(a, list)
                 or isinstance(b, list)
             ):
-                out = _str(a) + _str(b)
-                if len(out) > MAX_STRING:
-                    raise PacError("string too long")
-                return out
+                return _cap(_str(a) + _str(b))
             return _num(a) + _num(b)
         if op in ("-", "*", "/", "%"):
             x, y = _num(a), _num(b)
@@ -709,7 +727,7 @@ class _Interpreter:
             if op != "=":
                 cur = env.get(name)
                 value = (
-                    _str(cur) + _str(value)
+                    _cap(_str(cur) + _str(value))
                     if op == "+=" and (isinstance(cur, str) or isinstance(value, str))
                     else (_num(cur) + _num(value) if op == "+=" else _num(cur) - _num(value))
                 )
@@ -779,7 +797,7 @@ class _Interpreter:
             if name == "split":
                 return s.split(_str(args[0])) if args and _str(args[0]) else list(s)
             if name == "replace":
-                return s.replace(_str(args[0]), _str(args[1]), 1)
+                return _cap(s.replace(_str(args[0]), _str(args[1]), 1))
             if name == "startsWith":
                 return s.startswith(_str(args[0]))
             if name == "endsWith":
@@ -788,7 +806,7 @@ class _Interpreter:
                 return s.strip()
         elif isinstance(base, list):
             if name == "join":
-                return (_str(args[0]) if args else ",").join(_str(x) for x in base)
+                return _join(base, _str(args[0]) if args else ",")
             if name == "indexOf":
                 for i, x in enumerate(base):
                     if _strict_eq(x, args[0]):
@@ -948,7 +966,12 @@ class PacScript:
         my_ip: Callable[[], str] | None = None,
         now: Callable[[], time.struct_time] | None = None,
     ) -> None:
-        program = _Parser(_tokenize(source)).program()
+        try:
+            program = _Parser(_tokenize(source)).program()
+        except RecursionError as exc:
+            raise PacError("PAC script nests too deeply") from exc
+        except IndexError as exc:  # the parser ran past the last token
+            raise PacError("PAC script ends unexpectedly") from exc
         self._functions: dict[str, tuple[list[str], list]] = {}
         self._globals_init: list = []
         for st in program:
@@ -980,6 +1003,7 @@ class PacScript:
             KeyError,
             TypeError,
             ZeroDivisionError,
+            MemoryError,
         ) as exc:
             # Whatever the script provoked, it is "no answer", never a crash.
             raise PacError(f"PAC script failed: {exc}") from exc

@@ -915,10 +915,7 @@ class LocalTunnel:
             client.settimeout(None)
             self._track(client, True)
             self._track(upstream, True)
-            back = threading.Thread(target=self._pump, args=(upstream, client), daemon=True)
-            back.start()
-            self._pump(client, upstream)
-            back.join(timeout=5)
+            relay_both(client, upstream)
         finally:
             for sock in (client, upstream):
                 if sock is not None:
@@ -927,20 +924,39 @@ class LocalTunnel:
                         sock.close()
             self._slots.release()
 
-    @staticmethod
-    def _pump(src: socket.socket, dst: socket.socket) -> None:
-        try:
-            while True:
-                data = src.recv(65536)
-                if not data:
-                    break
-                dst.sendall(data)
-        except OSError:
-            pass
-        finally:
-            for sock in (src, dst):
-                with contextlib.suppress(OSError):
-                    sock.shutdown(socket.SHUT_RDWR)
+
+def _pump_half(src: socket.socket, dst: socket.socket) -> None:
+    """Copy *src* to *dst* until *src* ends.
+
+    A clean end of stream is passed on as a half-close (``SHUT_WR`` on
+    *dst*) so the reply still flowing the other way arrives — a client
+    that sends its request and closes its write side waits for exactly
+    that. Only an error tears both sockets down."""
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data:
+                break
+            dst.sendall(data)
+    except OSError:
+        for sock in (src, dst):
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+        return
+    with contextlib.suppress(OSError):
+        dst.shutdown(socket.SHUT_WR)
+
+
+def relay_both(client: socket.socket, upstream: socket.socket) -> None:
+    """Relay both directions until both have ended.
+
+    No deadline on the second direction: a half-closed connection is
+    held exactly as long as an idle open one would be, and the owner
+    (tunnel or shim) closes every tracked socket when it shuts down."""
+    back = threading.Thread(target=_pump_half, args=(upstream, client), daemon=True)
+    back.start()
+    _pump_half(client, upstream)
+    back.join()
 
 
 def open_tunnel(
@@ -1041,7 +1057,15 @@ def build_urllib3_proxy_manager(proxy: "ProxyConfig"):
     if proxy.transport == "http":
         import urllib3
 
-        return urllib3.ProxyManager(f"http://{auth}{host}:{port}")
+        # urllib3 ignores userinfo in a ProxyManager URL: the credentials
+        # have to travel as a Proxy-Authorization header, or every request
+        # meets a 407.
+        headers = (
+            urllib3.make_headers(proxy_basic_auth=f"{proxy.username}:{proxy.password}")
+            if proxy.username
+            else None
+        )
+        return urllib3.ProxyManager(f"http://{host}:{port}", proxy_headers=headers)
     from urllib3.contrib.socks import SOCKSProxyManager
 
     scheme = "socks5h" if proxy.transport == "socks5" else "socks4a"

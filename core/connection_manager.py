@@ -155,6 +155,10 @@ def effective_profile(profile: "ConnectionProfile") -> "ConnectionProfile":
         proxy_port=cfg.port if cfg else 0,
         proxy_username=cfg.username if cfg else "",
         store_proxy_password=False,
+        # A ProxyCommand belongs to a custom proxy. Left in place it would
+        # route SSH through a jump host while the profile claims the
+        # default proxy, or "none" (direct).
+        proxy_command="",
     )
     resolved._proxy_password_override = cfg.password if cfg else ""
     return resolved
