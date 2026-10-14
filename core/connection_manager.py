@@ -9,13 +9,38 @@ from typing import TYPE_CHECKING
 
 from core.backend_registry import load_backend_class
 from core.profiles import ConnectionProfile
-from core.scp_client import SCPSession
-from core.ssh_client import SSHSession, UnknownHostKeyError
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
+    from core.ssh_client import UnknownHostKeyError
 
 log = logging.getLogger(__name__)
+
+# SSH / SCP sessions pull in paramiko (~0.13 s, a third of the GUI start)
+# but a fresh window shows a local pane. They are imported on first use;
+# the names stay module attributes so callers and tests that patch
+# ``core.connection_manager.SSHSession`` keep working.
+_LAZY_SESSIONS = {
+    "SSHSession": ("core.ssh_client", "SSHSession"),
+    "SCPSession": ("core.scp_client", "SCPSession"),
+    "UnknownHostKeyError": ("core.ssh_client", "UnknownHostKeyError"),
+}
+
+
+def __getattr__(name: str):
+    target = _LAZY_SESSIONS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    value = getattr(importlib.import_module(target[0]), target[1])
+    globals()[name] = value
+    return value
+
+
+def _session_class(name: str):
+    """The class bound to *name* here — a test's patch if one is active."""
+    return globals()[name] if name in globals() else __getattr__(name)
 
 
 # Which protocols actually consume the ``ProxyConfig`` on the profile.
@@ -455,7 +480,7 @@ class ConnectionManager:
         require_protocol_allowed(proto)
 
         if proto == "sftp":
-            session = SSHSession(profile)
+            session = _session_class("SSHSession")(profile)
             session.connect(
                 password=password,
                 key_passphrase=key_passphrase,
@@ -465,7 +490,7 @@ class ConnectionManager:
             return session
 
         if proto == "scp":
-            session = SCPSession(profile)
+            session = _session_class("SCPSession")(profile)
             session.connect(
                 password=password,
                 key_passphrase=key_passphrase,

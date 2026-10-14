@@ -189,6 +189,25 @@ def _exists_true(backend, path: str) -> bool:
     return backend.exists(path) is True
 
 
+# Writers that buffer locally and replace the object in ONE commit at close:
+# s3transfer aborts a failed multipart upload (tasks.py, abort_multipart_
+# upload cleanup), Azure Blob commits its block list as the last step. A
+# failed upload therefore leaves the old object untouched. Deliberately
+# narrower than atomic_io._NATIVE_ATOMIC_PROTOCOLS: Azure Files writes ranges
+# as it goes, IMAP "overwrites" by appending a new message.
+_COMMIT_ON_CLOSE_PROTOCOLS = frozenset({"s3", "azure_blob"})
+
+
+def _commits_on_close(backend) -> bool:
+    from core import backend_registry
+
+    name = type(backend).__name__
+    return any(
+        info.class_name == name and info.protocol_id in _COMMIT_ON_CLOSE_PROTOCOLS
+        for info in backend_registry.all_backends()
+    )
+
+
 def _snapshot_direct_destination(backend, dst: str):
     """Return ``(existed, snapshot)`` before an unsafe direct write.
 
@@ -206,6 +225,10 @@ def _snapshot_direct_destination(backend, dst: str):
         ) from exc
     if not existed:
         return False, None
+    if _commits_on_close(backend):
+        # Nothing is replaced before the writer's close succeeds, so a
+        # failed upload leaves the old object — no copy needed.
+        return True, None
     if not hasattr(backend, "open_read"):
         raise OSError(
             f"Cannot safely overwrite existing destination without read-back support: {dst}"

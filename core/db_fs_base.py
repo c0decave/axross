@@ -52,6 +52,16 @@ class _RowAdapter:
     def _db_list(self, parent: str) -> Iterable[dict]:
         raise NotImplementedError
 
+    # Metadata-only variants for list_dir / stat / is_dir / exists: a row
+    # may carry ``size`` instead of ``content`` so the database does not
+    # ship every file body just to have its length taken. The defaults
+    # return the full rows, which _row_to_item handles as before.
+    def _db_get_meta(self, path: str) -> dict | None:
+        return self._db_get(path)
+
+    def _db_list_meta(self, parent: str) -> Iterable[dict]:
+        return self._db_list(parent)
+
     def _db_insert(self, row: dict) -> None:
         raise NotImplementedError
 
@@ -153,11 +163,11 @@ class DbFsBackend(_RowAdapter):
         # equals "/" is treated as an empty directory; deeper paths
         # require a real row.
         if path != "/":
-            row = self._db_get(path)
+            row = self._db_get_meta(path)
             if row is None or not row.get("is_dir"):
                 raise OSError(f"Not a directory: {path}")
         items: list[FileItem] = []
-        for row in self._db_list(path):
+        for row in self._db_list_meta(path):
             items.append(self._row_to_item(row))
         return items
 
@@ -172,7 +182,7 @@ class DbFsBackend(_RowAdapter):
                 modified=datetime.fromtimestamp(0),
                 permissions=0o755,
             )
-        row = self._db_get(path)
+        row = self._db_get_meta(path)
         if row is None:
             raise OSError(f"No such path: {path}")
         return self._row_to_item(row)
@@ -181,14 +191,14 @@ class DbFsBackend(_RowAdapter):
         path = self.normalize(path)
         if path == "/":
             return True
-        row = self._db_get(path)
+        row = self._db_get_meta(path)
         return bool(row and row.get("is_dir"))
 
     def exists(self, path: str) -> bool:
         path = self.normalize(path)
         if path == "/":
             return True
-        return self._db_get(path) is not None
+        return self._db_get_meta(path) is not None
 
     def open_read(self, path: str) -> IO[bytes]:
         path = self.normalize(path)
@@ -359,8 +369,11 @@ class DbFsBackend(_RowAdapter):
     def _row_to_item(self, row: dict) -> FileItem:
         path = row["path"]
         is_dir = bool(row.get("is_dir"))
-        content = row.get("content")
-        size = 0 if is_dir or content is None else len(content)
+        if "size" in row:
+            size = 0 if is_dir else int(row["size"] or 0)
+        else:
+            content = row.get("content")
+            size = 0 if is_dir or content is None else len(content)
         mtime = row.get("mtime")
         if isinstance(mtime, str):
             try:

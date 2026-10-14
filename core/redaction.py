@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 SENSITIVE_KEYS = frozenset(
@@ -61,8 +62,18 @@ _URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>'\"]+", re.IGNORECASE)
 _TRAILING_URL_PUNCT = ".,;)"
 
 
+# Every pattern above needs whitespace, ':' or '=' to match (the URL one
+# through '://'); text without any of them cannot change.
+_NEEDS_SCAN_RE = re.compile(r"[\s:=]")
+
+
 def _is_sensitive_key(key: object) -> bool:
-    text = str(key).strip().lower().replace("-", "_")
+    return _is_sensitive_key_text(str(key))
+
+
+@lru_cache(maxsize=4096)
+def _is_sensitive_key_text(key: str) -> bool:
+    text = key.strip().lower().replace("-", "_")
     compact = re.sub(r"[^a-z0-9]", "", text)
     return (
         text in SENSITIVE_KEYS
@@ -104,6 +115,8 @@ def _redact_assignment(match: re.Match[str]) -> str:
 
 def redact_text(value: str) -> str:
     """Best-effort redaction for human log strings."""
+    if not _NEEDS_SCAN_RE.search(value):
+        return value
     text = _AUTH_TOKEN_RE.sub(lambda m: f"{m.group(1)} <redacted>", value)
     text = _GENERIC_AUTH_HEADER_RE.sub("Authorization: <redacted>", text)
     urls: list[str] = []
@@ -128,6 +141,16 @@ def redact_text(value: str) -> str:
 
 def redact(value):
     """Recursively redact common secret shapes while preserving structure."""
+    # Exact-type fast paths for the common shapes; the generic checks
+    # below give the same result for them, only slower (ABC isinstance).
+    cls = type(value)
+    if cls is str:
+        return redact_text(value)
+    if cls is dict:
+        return {
+            key: "<redacted>" if _is_sensitive_key(key) else redact(item)
+            for key, item in value.items()
+        }
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, bytes):

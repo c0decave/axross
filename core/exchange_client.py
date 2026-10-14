@@ -90,6 +90,21 @@ except ImportError:  # pragma: no cover — optional dep
     EXCHANGELIB_AVAILABLE = False
 
 
+# What a folder listing shows (id and changekey always come along). All
+# simple fields, so exchangelib answers with FindItem alone; without
+# .only() it fetched every field - MIME content, body and attachments of
+# every message - through GetItem.
+LISTING_FIELDS = (
+    "subject",
+    "size",
+    "datetime_received",
+    "datetime_sent",
+    "last_modified_time",
+    "has_attachments",
+)
+# Attachment listing / stat: the attachments plus the times _msg_mtime reads.
+ATTACHMENT_FIELDS = ("attachments", "datetime_received", "datetime_sent", "last_modified_time")
+
 # Cap on a single message read — mailbox attachments can hit hundreds
 # of MiB and we'd rather refuse than OOM on a one-line "show me that
 # file" click.
@@ -521,7 +536,7 @@ class ExchangeSession:
         if not parts[-1].endswith(".eml"):
             try:
                 folder = self._resolve_folder(parts[:-1])
-                self._fetch_message(folder, parts[-1])
+                self._fetch_message(folder, parts[-1], only=LISTING_FIELDS)
                 return FileItem(name=parts[-1], is_dir=True)
             except OSError as exc:
                 if not _is_not_found(exc):
@@ -529,7 +544,7 @@ class ExchangeSession:
         # Message file (.eml) lookup.
         if parts[-1].endswith(".eml"):
             folder = self._resolve_folder(parts[:-1])
-            msg = self._fetch_message(folder, head)
+            msg = self._fetch_message(folder, head, only=LISTING_FIELDS)
             return FileItem(
                 name=parts[-1],
                 size=self._estimate_size(msg),
@@ -539,7 +554,7 @@ class ExchangeSession:
         # Attachment within a message.
         if len(parts) >= 3:
             folder = self._resolve_folder(parts[:-2])
-            msg = self._fetch_message(folder, parts[-2])
+            msg = self._fetch_message(folder, parts[-2], only=ATTACHMENT_FIELDS)
             for att in getattr(msg, "attachments", None) or []:
                 if _sanitize(getattr(att, "name", "")) == parts[-1]:
                     return FileItem(
@@ -970,7 +985,7 @@ class ExchangeSession:
 
     def _list_messages(self, folder) -> list[FileItem]:
         try:
-            messages = list(folder.all())
+            messages = list(folder.all().only(*LISTING_FIELDS))
         except Exception as exc:  # noqa: BLE001
             raise OSError(f"Exchange list messages: {exc}") from exc
         out: list[FileItem] = []
@@ -993,7 +1008,7 @@ class ExchangeSession:
         return out
 
     def _list_attachments(self, folder, msg_seg: str) -> list[FileItem]:
-        msg = self._fetch_message(folder, msg_seg)
+        msg = self._fetch_message(folder, msg_seg, only=ATTACHMENT_FIELDS)
         atts = list(getattr(msg, "attachments", None) or [])
         out: list[FileItem] = []
         for att in atts:
@@ -1038,10 +1053,16 @@ class ExchangeSession:
         # target wasn't in all_atts — fall back to the sanitised name.
         return _sanitize(getattr(target, "name", "")) or "attachment"
 
-    def _fetch_message(self, folder, msg_seg: str):
+    def _fetch_message(self, folder, msg_seg: str, only: tuple[str, ...] | None = None):
+        """The message *msg_seg* names. ``only`` limits the fetched fields
+        (id/changekey always come along); None fetches every field, which
+        callers reading MIME content or moving the item need."""
         msg_id, _ = _parse_msg_segment(msg_seg)
         try:
-            for msg in folder.filter(id=msg_id):
+            query = folder.filter(id=msg_id)
+            if only is not None:
+                query = query.only(*only)
+            for msg in query:
                 return msg
         except Exception as exc:  # noqa: BLE001
             raise OSError(f"Exchange fetch_message({msg_id}): {exc}") from exc

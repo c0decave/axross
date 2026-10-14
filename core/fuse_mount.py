@@ -204,6 +204,20 @@ class _WriteSession:
     errored: bool = False
 
 
+@dataclass
+class _ReadSession:
+    """Per-open-file state for read-only opens: one backend handle,
+    opened on the first read and kept until release. ``pos`` is where
+    the next read() on ``handle`` continues; sequential kernel reads
+    use it as is, others seek (or reopen when the handle cannot)."""
+
+    path: str
+    full: str
+    handle: object | None = None
+    pos: int = 0
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
 class BackendFuseFS(Operations):  # type: ignore[misc]
     """fusepy adapter that proxies into a FileBackend.
 
@@ -247,6 +261,8 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         # fh → _WriteSession for per-open write buffering. Only
         # populated on writeable mounts.
         self._writes: dict[int, _WriteSession] = {}
+        # fh → _ReadSession for read-only opens.
+        self._reads: dict[int, _ReadSession] = {}
         self._fh_counter = 1_000_000
         self._fh_lock = threading.Lock()
 
@@ -315,47 +331,131 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             session.tmp.seek(offset)
             return session.tmp.read(size)
         full = _to_backend_path(path, self.root)
+        reader = self._reads.get(fh)
+        if reader is not None:
+            with reader.lock:
+                try:
+                    return self._session_read(reader, size, offset)
+                except FuseOSError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # Drop the handle and answer this one read the way
+                    # every read was answered before: a fresh open.
+                    log.debug("FUSE read(%s) on held handle failed: %s", full, exc)
+                    self._drop_read_handle(reader)
+            return self._read_once(full, size, offset)
+        return self._read_once(full, size, offset)
+
+    def _open_for_read(self, full: str):
         try:
-            handle = self.backend.open_read(full)
+            return self.backend.open_read(full)
         except OSError as exc:
             log.debug("open_read(%s) failed: %s", full, exc)
             raise FuseOSError(errno.EIO)
+
+    @staticmethod
+    def _close_quietly(handle) -> None:
         try:
-            # Some backends support seek() via the returned IO
-            # handle; others don't. Prefer seek when available.
+            handle.close()
+        except Exception:
+            pass
+
+    def _refresh_readers(self, path: str) -> None:
+        """After a commit to *path*, open read fhs on it reopen on their
+        next read, so they see the new content as a per-read open did."""
+        for reader in list(self._reads.values()):
+            if reader.path == path:
+                with reader.lock:
+                    self._drop_read_handle(reader)
+
+    def _drop_read_handle(self, reader: _ReadSession) -> None:
+        handle, reader.handle, reader.pos = reader.handle, None, 0
+        if handle is not None:
+            self._close_quietly(handle)
+
+    def _position(self, handle, full: str, offset: int) -> bool:
+        """Move a handle at position 0 to *offset*. Returns False when
+        the handle has no working seek() and the read+discard fallback
+        ran instead (capped at MAX_FALLBACK_DISCARD: beyond that the
+        network cost is ridiculous, so EIO makes the kernel stop)."""
+        if hasattr(handle, "seek"):
+            try:
+                handle.seek(offset)
+                return True
+            except Exception:
+                pass
+        if offset:
+            if offset > MAX_FALLBACK_DISCARD:
+                log.warning(
+                    "FUSE read: offset %d exceeds fallback cap %d for %s — returning EIO",
+                    offset,
+                    MAX_FALLBACK_DISCARD,
+                    full,
+                )
+                raise FuseOSError(errno.EIO)
+            discarded = 0
+            while discarded < offset:
+                chunk = handle.read(min(64 * 1024, offset - discarded))
+                if not chunk:
+                    break
+                discarded += len(chunk)
+        return False
+
+    def _session_read(self, reader: _ReadSession, size: int, offset: int) -> bytes:
+        handle = reader.handle
+        if handle is not None and offset != reader.pos:
+            moved = False
             if hasattr(handle, "seek"):
                 try:
                     handle.seek(offset)
-                    return handle.read(size)
+                    moved = True
                 except Exception:
                     pass
-            # Fallback: read+discard up to offset, then return
-            # the requested slice. Capped — beyond MAX_FALLBACK_
-            # DISCARD bytes the network cost is ridiculous, and
-            # an LLM / FUSE client iterating a large file by
-            # random offset would cause hundreds of MiB of waste
-            # per call.
-            if offset:
-                if offset > MAX_FALLBACK_DISCARD:
-                    log.warning(
-                        "FUSE read: offset %d exceeds fallback cap %d for %s — returning EIO",
-                        offset,
-                        MAX_FALLBACK_DISCARD,
-                        full,
-                    )
-                    raise FuseOSError(errno.EIO)
-                discarded = 0
-                while discarded < offset:
-                    chunk = handle.read(min(64 * 1024, offset - discarded))
+            if moved:
+                reader.pos = offset
+            elif offset > reader.pos and offset - reader.pos <= MAX_FALLBACK_DISCARD:
+                # Forward on a handle without seek: skip from here, not
+                # from the start of the file.
+                gap = offset - reader.pos
+                while gap:
+                    chunk = handle.read(min(64 * 1024, gap))
                     if not chunk:
                         break
-                    discarded += len(chunk)
+                    gap -= len(chunk)
+                reader.pos = offset - gap
+                if gap:  # EOF before offset — same answer as a fresh open
+                    return b""
+            else:
+                self._drop_read_handle(reader)
+                handle = None
+        if handle is None:
+            handle = self._open_for_read(reader.full)
+            try:
+                self._position(handle, reader.full, offset)
+            except BaseException:
+                self._close_quietly(handle)
+                raise
+            reader.handle, reader.pos = handle, offset
+        data = handle.read(size)
+        reader.pos += len(data)
+        return data
+
+    def _read_once(self, full: str, size: int, offset: int) -> bytes:
+        """One read on a handle opened for just this call."""
+        handle = self._open_for_read(full)
+        try:
+            if self._position(handle, full, offset):
+                try:
+                    return handle.read(size)
+                except Exception as exc:  # noqa: BLE001
+                    # Seek worked, so the handle is no longer at 0: a
+                    # discard fallback here would return the bytes at
+                    # 2 * offset. Report the failure instead.
+                    log.debug("FUSE read(%s) after seek failed: %s", full, exc)
+                    raise FuseOSError(errno.EIO)
             return handle.read(size)
         finally:
-            try:
-                handle.close()
-            except Exception:
-                pass
+            self._close_quietly(handle)
 
     # ---- mutation ------------------------------------------------------
     def _alloc_write_fh(self, session: _WriteSession) -> int:
@@ -420,7 +520,12 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         # Read-only mount or read-only open: no buffering needed.
         wanted_write = flags & (os.O_WRONLY | os.O_RDWR)
         if not self.writeable or not wanted_write:
-            return 0
+            reader = _ReadSession(path=path, full=_to_backend_path(path, self.root))
+            with self._fh_lock:
+                fh = self._fh_counter
+                self._fh_counter += 1
+                self._reads[fh] = reader
+            return fh
         # Streaming mode: cleanly accept only full-truncate opens.
         # O_TRUNC means "blow away existing content and start fresh"
         # — the same contract as create(). Non-truncate opens want
@@ -582,6 +687,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             buf.close()
         self._stat.invalidate_all()
         self._listing.invalidate_all()
+        self._refresh_readers(path)
 
     def flush(self, path, fh):
         # Kernel may call flush() as part of close. The real flush
@@ -590,6 +696,11 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         return 0
 
     def release(self, path, fh):
+        reader = self._reads.pop(fh, None)
+        if reader is not None:
+            with reader.lock:
+                self._drop_read_handle(reader)
+            return 0
         session = self._writes.pop(fh, None)
         if session is None:
             return 0
@@ -640,6 +751,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     raise FuseOSError(errno.EIO)
                 self._stat.invalidate_all()
                 self._listing.invalidate_all()
+                self._refresh_readers(session.path)
             finally:
                 session.stream_handle = None
             return 0
@@ -664,6 +776,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     raise FuseOSError(errno.EIO)
                 self._stat.invalidate_all()
                 self._listing.invalidate_all()
+                self._refresh_readers(path)
         finally:
             # Always clean up the temp file, even on EIO.
             try:
@@ -687,6 +800,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             raise FuseOSError(errno.EIO)
         self._stat.invalidate_all()
         self._listing.invalidate_all()
+        self._refresh_readers(path)
 
     def mkdir(self, path, mode):
         if not self.writeable:
@@ -741,6 +855,8 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 raise FuseOSError(errno.EIO)
         self._stat.invalidate_all()
         self._listing.invalidate_all()
+        self._refresh_readers(old)
+        self._refresh_readers(new)
 
 
 # --------------------------------------------------------------------------

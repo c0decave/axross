@@ -5,7 +5,10 @@ from __future__ import annotations
 import io
 import logging
 import posixpath
+import select
+import socket
 import tempfile
+import time
 from datetime import datetime
 from ftplib import FTP, FTP_TLS, error_perm  # nosec B402
 from typing import IO
@@ -18,6 +21,12 @@ log = logging.getLogger(__name__)
 
 # FTP/FTPS protocol support is intentional; Bandit B402/B321 is suppressed
 # only at the exact import/call sites that need ftplib.
+
+
+# A control connection verified (NOOP or login) this recently is used
+# without another NOOP, unless its socket is readable - a server-side
+# close ("421" + FIN) makes it readable and sends us down the NOOP path.
+LIVENESS_WINDOW = 10.0
 
 
 class _SpooledWriter:
@@ -404,10 +413,31 @@ class FtpSession:
         return f"{self._username}@{self._host} ({proto})"
 
     def _ensure_connected(self) -> FTP:
+        if self._ftp is not None and self._recently_verified():
+            return self._ftp
         if self._ftp is None or not self.connected:
             self._connect()
         assert self._ftp is not None
+        self._verified_at = time.monotonic()
         return self._ftp
+
+    def _recently_verified(self) -> bool:
+        """True when the last NOOP/login is recent and nothing is waiting
+        on the control socket. Anything unexpected answers False, so the
+        NOOP check runs as it always did."""
+        verified_at = getattr(self, "_verified_at", None)
+        if verified_at is None or time.monotonic() - verified_at > LIVENESS_WINDOW:
+            return False
+        sock = getattr(self._ftp, "sock", None)
+        if not isinstance(sock, socket.socket):
+            return False
+        try:
+            if getattr(sock, "pending", lambda: 0)():  # TLS bytes already buffered
+                return False
+            readable, _, _ = select.select([sock], [], [], 0)
+        except (OSError, ValueError):
+            return False
+        return not readable
 
     def list_dir(self, path: str) -> list[FileItem]:
         ftp = self._ensure_connected()

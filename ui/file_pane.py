@@ -185,6 +185,13 @@ def _escape_dialog_lines(lines) -> str:
 _UNSET = object()  # "no precomputed value" marker
 
 
+def _set_style(widget: QWidget, css: str) -> None:
+    """``setStyleSheet`` only when the text changes: Qt re-polishes on every
+    call, and every click re-applied the same three sheets to every pane."""
+    if widget.styleSheet() != css:
+        widget.setStyleSheet(css)
+
+
 def _shorten_path(path: str, limit: int = 60) -> str:
     return path if len(path) <= limit else "…" + path[-(limit - 1) :]
 
@@ -668,6 +675,8 @@ class FilePaneWidget(QWidget):
         self._model = FileTableModel(self)
         self._proxy = FileSortProxyModel(self)
         self._proxy.setSourceModel(self._model)
+        self._proxy.setFilterKeyColumn(0)  # Filter on name column
+        self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._proxy.setSortRole(Qt.ItemDataRole.DisplayRole)
 
         self._table = _DragTableView(self)
@@ -808,8 +817,9 @@ class FilePaneWidget(QWidget):
             self._show_disk_usage(usage)
         # Switch the auto-refresh watcher to the new path. We
         # start AFTER the successful navigation so a transient
-        # OSError above doesn't leave a stale watcher attached.
-        self._start_watcher()
+        # OSError above doesn't leave a stale watcher attached. It starts
+        # from this listing instead of listing the folder again.
+        self._start_watcher(self._raw_listing(self._backend, path, items))
         # Opportunistic crash-recovery sweep — only the directory
         # we just landed in, only files older than the conservative
         # default age. Reuse the listing we already fetched so a
@@ -884,6 +894,19 @@ class FilePaneWidget(QWidget):
         """Reload the current folder in the background; history untouched."""
         self.navigate_async(self._current_path, history="keep", quiet=quiet)
 
+    def refresh_after_change(self, quiet: bool = False) -> None:
+        """Show the current folder again after an operation changed it,
+        loading in the background instead of blocking the GUI thread.
+
+        A running navigation to another folder is left alone - the pane is
+        leaving this one, and the synchronous refresh did not cut it off
+        either. A load of this folder is replaced: it may have started
+        before the change."""
+        ctx = self._nav_ctx
+        if ctx and ctx["path"] != self._current_path:
+            return
+        self.refresh_async(quiet=quiet)
+
     def cancel_navigation(self) -> None:
         """Stop a running background load (the pane stays where it was)."""
         if not self._nav_ctx:
@@ -935,8 +958,18 @@ class FilePaneWidget(QWidget):
         else:
             self._stop_watcher()
 
-    def _start_watcher(self) -> None:
+    @staticmethod
+    def _raw_listing(backend, path: str, items: list) -> list:
+        """*items* without the ".." row that _fetch_listing put in front."""
+        if items and items[0].name == ".." and backend.parent(path) != path:
+            return items[1:]
+        return items
+
+    def _start_watcher(self, listing: list | None = None) -> None:
         """Start a watcher for ``self._current_path`` when needed.
+
+        *listing* is the backend's listing of that path, if one was just
+        fetched; the watcher then starts without listing it again.
 
         Skips the (expensive) restart when the existing watcher is
         already pointing at the current path — refresh() goes through
@@ -958,6 +991,7 @@ class FilePaneWidget(QWidget):
                 self._current_path,
                 self._on_backend_change,
                 interval=2.0,
+                initial_entries=listing,
             )
             self._watched_path = self._current_path
             log.debug("Watcher started for %s", self._current_path)
@@ -1213,20 +1247,49 @@ class FilePaneWidget(QWidget):
             self._table.setCurrentIndex(next_idx)
 
     def _invert_selection(self) -> None:
-        """Invert selection on all items except '..' (Ctrl+Shift+A)."""
+        """Invert selection on all items except '..' (Ctrl+Shift+A).
+
+        Same result as toggling row by row — a row counts as selected when
+        its first cell is; it ends up fully deselected, every other row
+        fully selected, and '..' keeps whatever it had — but applied as one
+        selection: one select() per row made 20 000 rows take ~40 s.
+        """
+        proxy = self._proxy
+        rows = proxy.rowCount()
         sel = self._table.selectionModel()
-        sel.blockSignals(True)
-        for row in range(self._proxy.rowCount()):
-            source_idx = self._proxy.mapToSource(self._proxy.index(row, 0))
-            item = self._model.get_item(source_idx.row())
+        current = sel.selection()
+        selected = [False] * rows
+        for rng in current:
+            if rng.left() <= 0 <= rng.right():
+                for r in range(rng.top(), rng.bottom() + 1):
+                    selected[r] = True
+        last_col = max(proxy.columnCount() - 1, 0)
+        final = QItemSelection()
+        dotdot_rows = []
+        run_start = None
+        for row in range(rows):
+            item = self._model.get_item(proxy.mapToSource(proxy.index(row, 0)).row())
+            take = not selected[row]
             if item and item.name == "..":
-                continue
-            row_idx = self._proxy.index(row, 0)
-            if sel.isSelected(row_idx):
-                sel.select(row_idx, sel.SelectionFlag.Deselect | sel.SelectionFlag.Rows)
-            else:
-                sel.select(row_idx, sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
-        sel.blockSignals(False)
+                dotdot_rows.append(row)
+                take = False
+            if take and run_start is None:
+                run_start = row
+            elif not take and run_start is not None:
+                final.select(proxy.index(run_start, 0), proxy.index(row - 1, last_col))
+                run_start = None
+        if run_start is not None:
+            final.select(proxy.index(run_start, 0), proxy.index(rows - 1, last_col))
+        for row in dotdot_rows:  # '..' keeps its cells exactly as they were
+            for rng in current:
+                if rng.top() <= row <= rng.bottom():
+                    final.select(proxy.index(row, rng.left()), proxy.index(row, rng.right()))
+        sel.blockSignals(True)
+        try:
+            sel.clearSelection()
+            sel.select(final, sel.SelectionFlag.Select)
+        finally:
+            sel.blockSignals(False)
         self.selection_changed.emit()
 
     def _copy_paths_to_clipboard(self) -> None:
@@ -1381,9 +1444,10 @@ class FilePaneWidget(QWidget):
         self._header_label.setText(
             f"<b>{escape(self._backend.name)}</b> <small>[{type_label}]</small>"
         )
-        self._header_label.setStyleSheet(
+        _set_style(
+            self._header_label,
             f"QLabel {{ background-color: {bg}; color: {fg}; "
-            f"padding: 2px 6px; border-radius: 3px; }}"
+            f"padding: 2px 6px; border-radius: 3px; }}",
         )
 
     def set_pane_role(self, role: str, theme: str = "default") -> None:
@@ -1398,23 +1462,26 @@ class FilePaneWidget(QWidget):
             "": "#555555",  # Gray
         }
         color = border_colors.get(role, border_colors[""])
-        self._border_frame.setStyleSheet(
-            f"QFrame#axPaneBorder {{ border: 3px solid {color}; border-radius: 4px; }}"
+        _set_style(
+            self._border_frame,
+            f"QFrame#axPaneBorder {{ border: 3px solid {color}; border-radius: 4px; }}",
         )
 
         # Role badge
         if role == "source":
             self._role_label.setText("SOURCE")
-            self._role_label.setStyleSheet(
+            _set_style(
+                self._role_label,
                 "QLabel { font-size: 10px; font-weight: bold; padding: 1px 6px; "
-                "border-radius: 3px; background-color: #4a90d9; color: white; }"
+                "border-radius: 3px; background-color: #4a90d9; color: white; }",
             )
             self._role_label.show()
         elif role == "target":
             self._role_label.setText("TARGET")
-            self._role_label.setStyleSheet(
+            _set_style(
+                self._role_label,
                 "QLabel { font-size: 10px; font-weight: bold; padding: 1px 6px; "
-                "border-radius: 3px; background-color: #58a55c; color: white; }"
+                "border-radius: 3px; background-color: #58a55c; color: white; }",
             )
             self._role_label.show()
         else:
@@ -1447,9 +1514,9 @@ class FilePaneWidget(QWidget):
     # --- Filter ---
 
     def _on_filter_changed(self, text: str) -> None:
+        # Key column and case sensitivity are set once in _setup_ui:
+        # setting them here re-filtered every row a second time per key.
         self._proxy.setFilterFixedString(text)
-        self._proxy.setFilterKeyColumn(0)  # Filter on name column
-        self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     # --- Bookmark ---
 
@@ -1914,7 +1981,7 @@ class FilePaneWidget(QWidget):
         dialog = TextEditorDialog(self._backend, path, parent=self, read_only=read_only)
         dialog.exec()
         if not read_only:
-            self.refresh()
+            self.refresh_after_change()
 
     def _open_hex_editor(self, path: str, read_only: bool = False) -> None:
         from ui.hex_editor import HexEditorDialog
@@ -1922,7 +1989,7 @@ class FilePaneWidget(QWidget):
         dialog = HexEditorDialog(self._backend, path, parent=self, read_only=read_only)
         dialog.exec()
         if not read_only:
-            self.refresh()
+            self.refresh_after_change()
 
     def _link_points_to_directory(self, path: str) -> bool:
         try:
@@ -2185,7 +2252,7 @@ class FilePaneWidget(QWidget):
                     return
                 self._backend.mkdir(path)
                 log.info("Created folder: %s", path)
-                self.refresh()
+                self.refresh_after_change()
             except OSError as e:
                 log.error("Failed to create folder: %s", e)
                 QMessageBox.warning(
@@ -2228,7 +2295,7 @@ class FilePaneWidget(QWidget):
             with self._backend.open_write(path) as fh:
                 fh.write(b"")
             log.info("Created empty file: %s", path)
-            self.refresh()
+            self.refresh_after_change()
         except OSError as e:
             log.error("Failed to create file: %s", e)
             QMessageBox.warning(
@@ -2273,7 +2340,7 @@ class FilePaneWidget(QWidget):
         try:
             self._backend.symlink(target, link_path)
             log.info("Created symlink: %s → %s", link_path, target)
-            self.refresh()
+            self.refresh_after_change()
         except OSError as e:
             log.error("Failed to create symlink: %s", e)
             QMessageBox.warning(
@@ -2318,7 +2385,7 @@ class FilePaneWidget(QWidget):
         try:
             self._backend.hardlink(target, link_path)
             log.info("Created hardlink: %s → %s", link_path, target)
-            self.refresh()
+            self.refresh_after_change()
         except OSError as e:
             log.error("Failed to create hardlink: %s", e)
             QMessageBox.warning(
@@ -2360,7 +2427,7 @@ class FilePaneWidget(QWidget):
 
                 server_side_move(self._backend, old_path, new_path)
                 log.info("Renamed %s -> %s", old_path, new_path)
-                self.refresh()
+                self.refresh_after_change()
             except OSError as e:
                 log.error("Rename failed: %s", e)
 
@@ -2372,7 +2439,7 @@ class FilePaneWidget(QWidget):
             return
         dialog = BatchRenameDialog(self._backend, self._current_path, items, parent=self)
         if dialog.exec():
-            self.refresh()
+            self.refresh_after_change()
 
     def _delete_selected(self) -> None:
         items = self.selected_file_items()
@@ -2438,7 +2505,7 @@ class FilePaneWidget(QWidget):
                     "Delete Errors",
                     f"{len(errors)} item(s) failed:\n" + _escape_dialog_lines(errors[:10]),
                 )
-            self.refresh()
+            self.refresh_after_change()
 
     def _show_permissions(self) -> None:
         """Chmod-only editor. Kept as a separate entry point for callers
@@ -2455,7 +2522,7 @@ class FilePaneWidget(QWidget):
             return
         dialog = PermissionsDialog(self._backend, path, item, parent=self)
         if dialog.exec():
-            self.refresh()
+            self.refresh_after_change()
 
     def _show_properties(self) -> None:
         """Properties for the selection.
@@ -2479,7 +2546,7 @@ class FilePaneWidget(QWidget):
             dialog = PropertiesDialog(self._backend, self._current_path, items, parent=self)
         if dialog.exec():
             # The permissions tab may have written a new mode.
-            self.refresh()
+            self.refresh_after_change()
 
     def _calculate_dir_size(self) -> None:
         """Calculate total size of selected directories."""
@@ -2990,7 +3057,7 @@ class FilePaneWidget(QWidget):
                 f"Could not create xlink:\n{exc}",
             )
             return
-        self.refresh()
+        self.refresh_after_change()
 
     def _show_versions(self, item) -> None:
         """Open the snapshot/versions browser for a single file."""
@@ -3000,7 +3067,7 @@ class FilePaneWidget(QWidget):
         if full_path is None:
             return
         dlg = SnapshotBrowserDialog(self._backend, full_path, parent=self)
-        dlg.finished.connect(lambda _code: self.refresh())
+        dlg.finished.connect(lambda _code: self.refresh_after_change())
         dlg.open()
 
     def _elevated_io_available(self) -> bool:
@@ -3130,7 +3197,7 @@ class FilePaneWidget(QWidget):
                 "Trash Errors",
                 f"{len(errors)} item(s) failed:\n" + _escape_dialog_lines(errors[:10]),
             )
-        self.refresh()
+        self.refresh_after_change()
 
     def _show_trash_browser(self) -> None:
         """Open a dialog listing ``core.trash`` entries for the current
@@ -3138,7 +3205,7 @@ class FilePaneWidget(QWidget):
         from ui.trash_browser import TrashBrowserDialog
 
         dlg = TrashBrowserDialog(self._backend, parent=self)
-        dlg.finished.connect(lambda _code: self.refresh())
+        dlg.finished.connect(lambda _code: self.refresh_after_change())
         dlg.open()
 
     def _open_archive_preview(self, path: str) -> None:
@@ -3264,7 +3331,7 @@ class FilePaneWidget(QWidget):
                 target_dir,
                 state["count"],
             )
-            self.refresh()
+            self.refresh_after_change()
             QMessageBox.information(
                 self,
                 "Extract Archive",
@@ -3343,7 +3410,7 @@ class FilePaneWidget(QWidget):
             "Original plaintext is still in place — delete it manually "
             "when you've verified the encrypted copy decrypts cleanly.",
         )
-        self.refresh()
+        self.refresh_after_change()
 
     def _decrypt_selected_file(self, item) -> None:
         """Decrypt a ``.axenc`` file in place (writes the original
@@ -3404,7 +3471,7 @@ class FilePaneWidget(QWidget):
             )
             return
         log.info("Decrypted %s -> %s", src_path, dst_path)
-        self.refresh()
+        self.refresh_after_change()
 
     def _show_link_target(self) -> None:
         items = self.selected_file_items()

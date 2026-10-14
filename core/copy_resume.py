@@ -257,6 +257,49 @@ def _read_segment(backend, path: str, offset: int, length: int) -> bytes:
             log.debug("copy_resume: close raised: %s", exc)
 
 
+class _SourceReader:
+    """Reads the segments still to copy through ONE source handle.
+
+    Opening the source again for every segment and seeking (or draining) to
+    its offset moved a 64 MiB file 16 times with 4 MiB segments on a backend
+    that downloads on open. Here the handle stays open and a segment that
+    starts where the previous one ended is read straight on; anything else
+    falls back to :func:`_read_segment`. Each segment is still a single
+    ``read(length)``, so short reads are detected exactly as before.
+    """
+
+    def __init__(self, backend, path: str) -> None:
+        self._backend = backend
+        self._path = path
+        self._handle = None
+        self._pos: int | None = None
+
+    def read(self, offset: int, length: int) -> bytes:
+        if hasattr(self._backend, "open_read_range"):
+            return _read_segment(self._backend, self._path, offset, length)
+        if self._handle is None:
+            self._handle = self._backend.open_read(self._path)
+            self._pos = 0
+        if self._pos != offset:
+            try:
+                self._handle.seek(offset)
+                self._pos = offset
+            except (AttributeError, OSError, ValueError):
+                self.close()
+                return _read_segment(self._backend, self._path, offset, length)
+        data = self._handle.read(length)
+        self._pos = offset + len(data)
+        return data
+
+    def close(self) -> None:
+        handle, self._handle, self._pos = self._handle, None, None
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("copy_resume: close raised: %s", exc)
+
+
 def _verify_segment_bytes(
     backend,
     path: str,
@@ -579,11 +622,12 @@ def resumable_copy(
 
     bytes_done = bytes_skipped
     transferred = 0
+    source = _SourceReader(src_backend, src_path)
     try:
         for seg in manifest.segments:
             if seg.done:
                 continue
-            data = _read_segment(src_backend, src_path, seg.offset, seg.length)
+            data = source.read(seg.offset, seg.length)
             if len(data) != seg.length:
                 raise OSError(
                     f"resumable_copy: short read at offset {seg.offset} "
@@ -606,6 +650,7 @@ def resumable_copy(
                 except Exception as exc:  # noqa: BLE001
                     log.warning("resumable_copy: progress raised: %s", exc)
     finally:
+        source.close()
         try:
             dst_handle.close()
         except Exception as exc:  # noqa: BLE001

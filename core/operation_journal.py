@@ -76,15 +76,25 @@ def append_event(event: JournalEvent, *, journal_path: Path | None = None) -> No
     path = _target_path(journal_path)
     payload = redact(asdict(event))
     line = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    data = (line + "\n").encode("utf-8")
     with _LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
         try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
-        with os.fdopen(fd, "a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
+            fd = os.open(path, flags, 0o600)
+        except FileNotFoundError:
+            # Create the directory only when it is missing, not per event.
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, flags, 0o600)
+        try:
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+        finally:
+            os.close(fd)
     log_event(
         log,
         logging.INFO if event.status not in {"error", "cancelled"} else logging.WARNING,

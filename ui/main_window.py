@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QPalette
@@ -28,7 +30,6 @@ from core.connection_manager import ConnectionManager
 from core.i18n import tr
 from core.local_fs import LocalFS
 from core.profiles import ConnectionProfile, ProfileManager
-from core.ssh_client import SSHSession, UnknownHostKeyError
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
 from ui import themes
@@ -51,7 +52,19 @@ from ui.themes import (  # noqa: F401  (theme constants stay importable from her
 )
 from ui.transfer_dock import TransferDock
 
+if TYPE_CHECKING:
+    from core.ssh_client import UnknownHostKeyError
+
 log = logging.getLogger(__name__)
+
+
+def _is_ssh_session(backend) -> bool:
+    """``isinstance(backend, SSHSession)`` without importing paramiko at
+    start-up (~0.13 s): until core.ssh_client is loaded no SSH session can
+    exist."""
+    mod = sys.modules.get("core.ssh_client")
+    return mod is not None and isinstance(backend, mod.SSHSession)
+
 
 RECONNECT_INTERVAL_MS = 30_000  # 30 seconds
 MAX_UI_STATE_BYTES = 1024 * 1024
@@ -832,7 +845,7 @@ class MainWindow(QMainWindow):
                 if not PV._is_local_backend(pane.backend):
                     continue
                 if os.path.realpath(pane.current_path) == target:
-                    pane.refresh()
+                    pane.refresh_after_change()
             except Exception as exc:  # noqa: BLE001 — never block on a pane
                 log.debug("Post-extract pane refresh skipped: %s", exc)
 
@@ -1209,7 +1222,7 @@ class MainWindow(QMainWindow):
         seen: set[str] = set()
         for pane in self._panes:
             backend = pane.backend
-            if isinstance(backend, SSHSession) and backend.transport and backend.connected:
+            if _is_ssh_session(backend) and backend.transport and backend.connected:
                 label = backend.name
                 if label not in seen:
                     seen.add(label)
@@ -1464,10 +1477,10 @@ class MainWindow(QMainWindow):
         self._pane_key_passphrases.pop(pane, None)
 
         # Remove SSH terminal option only when no other pane uses the same session label.
-        if isinstance(pane.backend, SSHSession):
+        if _is_ssh_session(pane.backend):
             still_used = any(
                 other is not pane
-                and isinstance(other.backend, SSHSession)
+                and _is_ssh_session(other.backend)
                 and other.backend.name == pane.backend.name
                 for other in self._panes
             )
@@ -1669,7 +1682,7 @@ class MainWindow(QMainWindow):
     def _toggle_hidden(self, show: bool) -> None:
         for pane in self._panes:
             pane.set_show_hidden(show)
-            pane.refresh()
+            pane.refresh_after_change()
 
     # ------------------------------------------------------------------
     # Scheduled jobs
@@ -1909,7 +1922,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Undo failed", str(exc))
             return
         if pane is not None:
-            pane.refresh()
+            pane.refresh_after_change()
         self.statusBar().showMessage(f"Undone: {plan.reason}", 5000)
 
     def _undo_source_backend(self, plan, by_label: dict):
@@ -2070,7 +2083,7 @@ class MainWindow(QMainWindow):
                 "Some deletions failed",
                 f"{removed} removed, {len(errors)} failed:\n" + "\n".join(errors[:10]),
             )
-        pane.refresh()
+        pane.refresh_after_change()
 
     def _open_disk_usage(self) -> None:
         """Capacity table over every open connection. The probing and
@@ -2164,7 +2177,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_active(self) -> None:
         if self._active_pane:
-            self._active_pane.refresh()
+            self._active_pane.refresh_async()
 
     @staticmethod
     def _profile_label(profile: ConnectionProfile) -> str:
@@ -2626,7 +2639,7 @@ class MainWindow(QMainWindow):
                 profile = self._pane_profiles.pop(last, None)
                 self._pane_passwords.pop(last, None)
                 self._pane_key_passphrases.pop(last, None)
-                if isinstance(last.backend, SSHSession):
+                if _is_ssh_session(last.backend):
                     self._terminal_dock.remove_ssh_session(last.backend.name)
                 if profile:
                     self._connection_manager.release(profile)
@@ -3372,27 +3385,22 @@ class MainWindow(QMainWindow):
         self._transfer_target_panes.add(target)
         if move:
             self._transfer_target_panes.add(source)
-        try:
-            from core.destructive_preview import preview_transfer
-
-            preview = preview_transfer(
-                source.backend,
-                target.backend,
-                selected,
-                target.current_path,
-                operation="move" if move else "copy",
-            )
-            log.info("Transfer preview: %s", preview.summary())
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Transfer preview failed: %s", exc)
-
-        self._transfer_manager.transfer_files(
+        # The summary comes from the jobs just created. A separate preview
+        # walk (stat + exists per entry, on the GUI thread) only fed this
+        # log line; every job is in the operation journal as well.
+        jobs = self._transfer_manager.transfer_files(
             source_backend=source.backend,
             dest_backend=target.backend,
             source_paths=selected,
             dest_dir=target.current_path,
             direction=direction,
             move=move,
+        )
+        log.info(
+            "Transfer enqueued: %s: %d file(s), %d byte(s)",
+            "move" if move else "copy",
+            len(jobs),
+            sum(j.total_bytes for j in jobs),
         )
 
         action = "Move" if move else "Copy"
@@ -3415,13 +3423,13 @@ class MainWindow(QMainWindow):
         """Perform a single debounced refresh of all target panes."""
         for pane in list(self._transfer_target_panes):
             if pane in self._panes:
-                pane.refresh()
+                pane.refresh_after_change(quiet=True)
 
     def _on_all_transfers_finished(self) -> None:
         """All transfers complete — final refresh and clear tracking."""
         for pane in list(self._transfer_target_panes):
             if pane in self._panes:
-                pane.refresh()
+                pane.refresh_after_change(quiet=True)
         self._transfer_target_panes.clear()
 
     # --- Auto-reconnect ---
@@ -3433,7 +3441,7 @@ class MainWindow(QMainWindow):
                 continue
 
             backend = pane.backend
-            if not isinstance(backend, SSHSession):
+            if not _is_ssh_session(backend):
                 continue
 
             if backend.connected:

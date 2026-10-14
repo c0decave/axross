@@ -23,7 +23,9 @@ log = logging.getLogger(__name__)
 
 PROGRESS_INTERVAL = 0.1  # Minimum seconds between progress signals
 SPEED_WINDOW = 3.0  # Seconds for rolling speed average
-CHUNK_SIZE = 64 * 1024  # 64KB read/write chunks
+# 1 MiB per read/write: protocols that do one synchronous request per call
+# (SMB via smbclient, ...) paid a round trip per 64 KiB before.
+CHUNK_SIZE = 1024 * 1024
 
 
 class TransferDirection(Enum):

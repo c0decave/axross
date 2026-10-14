@@ -2,13 +2,36 @@ from __future__ import annotations
 
 from html import escape
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PyQt6.QtCore import (
+    QAbstractItemModel,
+    QAbstractTableModel,
+    QModelIndex,
+    QSortFilterProxyModel,
+    Qt,
+)
 
 from models.file_item import FileItem
 from ui.icon_provider import entry_icon
 
 COLUMNS = ("Name", "Size", "Modified", "Permissions", "Owner")
 COL_NAME, COL_SIZE, COL_MODIFIED, COL_PERMS, COL_OWNER = range(5)
+
+_COLUMN_KEY = {
+    COL_NAME: lambda it: it.name.lower(),
+    COL_SIZE: lambda it: it.size,
+    COL_MODIFIED: lambda it: it.modified,
+    COL_PERMS: lambda it: it.permissions,
+    COL_OWNER: lambda it: it.owner,
+}
+
+
+def _sort_key(column: int):
+    """ ".." first, then directories, then the column value — ascending.
+    Descending is the same key reversed, which (stable on both sides) is
+    exactly what QSortFilterProxyModel did with the former lessThan:
+    files before directories and ".." last."""
+    value = _COLUMN_KEY.get(column, lambda it: 0)
+    return lambda it: (it.name != "..", not it.is_dir, value(it))
 
 
 class FileTableModel(QAbstractTableModel):
@@ -17,11 +40,48 @@ class FileTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items: list[FileItem] = []
+        self._listing: list[FileItem] = []  # order as listed, for "unsorted"
+        self._sort_spec: tuple[int, Qt.SortOrder] | None = None
 
     def set_items(self, items: list[FileItem]) -> None:
         self.beginResetModel()
-        self._items = list(items)
+        self._listing = list(items)
+        self._items = self._sorted(self._listing)
         self.endResetModel()
+
+    def _sorted(self, items: list[FileItem]) -> list[FileItem]:
+        if self._sort_spec is None:
+            return list(items)
+        column, order = self._sort_spec
+        if not 0 <= column < len(COLUMNS):
+            # Qt: no valid sort column means the source (listing) order,
+            # reversed for descending (measured against the former proxy).
+            if order == Qt.SortOrder.DescendingOrder:
+                return self._listing[::-1]
+            return list(self._listing)
+        return sorted(items, key=_sort_key(column), reverse=order == Qt.SortOrder.DescendingOrder)
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        """Sort in Python's ``sorted`` — one key per row instead of a Python
+        ``lessThan`` call per comparison (~275 000 for 20 000 rows)."""
+        self._sort_spec = (column, order)
+        hint = QAbstractItemModel.LayoutChangeHint.VerticalSortHint
+        self.layoutAboutToBeChanged.emit([], hint)
+        # From the current order, like QSortFilterProxyModel's stable sort of
+        # its current mapping: ties keep the order of the previous sort; only
+        # a new listing (set_items) starts from the listing order.
+        old_row = {id(item): row for row, item in enumerate(self._items)}
+        new_items = self._sorted(self._items)
+        new_row_of_old = [0] * len(new_items)
+        for row, item in enumerate(new_items):
+            new_row_of_old[old_row[id(item)]] = row
+        self._items = new_items
+        persistent = self.persistentIndexList()
+        self.changePersistentIndexList(
+            persistent,
+            [self.index(new_row_of_old[i.row()], i.column()) for i in persistent],
+        )
+        self.layoutChanged.emit([], hint)
 
     def get_item(self, row: int) -> FileItem | None:
         if 0 <= row < len(self._items):
@@ -79,16 +139,19 @@ class FileTableModel(QAbstractTableModel):
                 return COLUMNS[section]
         return None
 
+    # QAbstractTableModel.flags depends only on index validity, so both
+    # answers are constants; building them per call (several enum ORs) was
+    # most of the cost of selectedRows() on large listings.
+    _VALID_FLAGS = (
+        Qt.ItemFlag.ItemIsSelectable
+        | Qt.ItemFlag.ItemIsEnabled
+        | Qt.ItemFlag.ItemNeverHasChildren
+        | Qt.ItemFlag.ItemIsDragEnabled
+    )
+    _INVALID_FLAGS = Qt.ItemFlag.ItemIsDropEnabled
+
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
-        base_flags = super().flags(index)
-        if index.isValid():
-            return (
-                base_flags
-                | Qt.ItemFlag.ItemIsDragEnabled
-                | Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-            )
-        return base_flags | Qt.ItemFlag.ItemIsDropEnabled
+        return self._VALID_FLAGS if index.isValid() else self._INVALID_FLAGS
 
     def supportedDropActions(self) -> Qt.DropAction:
         return Qt.DropAction.CopyAction | Qt.DropAction.MoveAction
@@ -129,37 +192,11 @@ class FileSortProxyModel(QSortFilterProxyModel):
             return regex.match(item.name).hasMatch()
         return True
 
-    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        """The source model sorts (see FileTableModel.sort); the proxy keeps
+        its source order and only filters."""
         model = self.sourceModel()
-        if not isinstance(model, FileTableModel):
-            return super().lessThan(left, right)
-
-        left_item = model.get_item(left.row())
-        right_item = model.get_item(right.row())
-
-        if left_item is None or right_item is None:
-            return False
-
-        # ".." always sorts first
-        if left_item.name == "..":
-            return True
-        if right_item.name == "..":
-            return False
-
-        # Directories always come before files
-        if left_item.is_dir != right_item.is_dir:
-            return left_item.is_dir
-
-        col = left.column()
-        if col == COL_NAME:
-            return left_item.name.lower() < right_item.name.lower()
-        if col == COL_SIZE:
-            return left_item.size < right_item.size
-        if col == COL_MODIFIED:
-            return left_item.modified < right_item.modified
-        if col == COL_PERMS:
-            return left_item.permissions < right_item.permissions
-        if col == COL_OWNER:
-            return left_item.owner < right_item.owner
-
-        return False
+        if isinstance(model, FileTableModel):
+            model.sort(column, order)
+            return
+        super().sort(column, order)

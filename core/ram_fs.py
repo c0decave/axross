@@ -202,6 +202,9 @@ class RamFsSession:
         self._lock = threading.RLock()
         # Path → _Entry. Always normalised: leading ``/``, no ``..``.
         self._tree: dict[str, _Entry] = {"/": _Entry(is_dir=True, mode=0o755)}
+        # Sum of all file sizes in _tree, kept in step by every mutation
+        # (summing the tree per write made n writes cost O(n^2)).
+        self._used_bytes = 0
         log.info(
             "RamFsSession opened: label=%s, max=%d B, system-reserve=%d B",
             label,
@@ -224,7 +227,7 @@ class RamFsSession:
     @property
     def size_bytes(self) -> int:
         with self._lock:
-            return sum(len(e.data) for e in self._tree.values() if not e.is_dir)
+            return self._used_bytes
 
     @property
     def max_bytes(self) -> int:
@@ -234,6 +237,7 @@ class RamFsSession:
         with self._lock:
             self._tree.clear()
             self._tree["/"] = _Entry(is_dir=True, mode=0o755)
+            self._used_bytes = 0
         log.info("RamFsSession closed: %s — all bytes discarded", self._label)
 
     def close(self) -> None:
@@ -441,8 +445,12 @@ class RamFsSession:
                         f"RamFS({self._label}): directory not empty: {path}",
                     )
                 for c in children:
-                    self._tree.pop(c, None)
-            self._tree.pop(path, None)
+                    self._forget(self._tree.pop(c, None))
+            self._forget(self._tree.pop(path, None))
+
+    def _forget(self, entry: _Entry | None) -> None:
+        if entry is not None and not entry.is_dir:
+            self._used_bytes -= len(entry.data)
 
     def rename(self, src: str, dst: str) -> None:
         src = self.normalize(src)
@@ -511,6 +519,7 @@ class RamFsSession:
             delta = len(data) - old_size
             self._check_capacity(delta)
             self._tree[path] = _Entry(is_dir=False, data=bytes(data), mode=0o644)
+            self._used_bytes += delta
 
 
 # ---------------------------------------------------------------------------

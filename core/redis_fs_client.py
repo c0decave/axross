@@ -191,6 +191,52 @@ class RedisFsSession(DbFsBackend):
     def _db_get(self, path: str) -> dict | None:
         with self._lock:
             meta = self._client.hgetall(_NS_META + path)
+        row = self._meta_fields(path, meta)
+        if row is None:
+            return None
+        content = None
+        if not row["is_dir"]:
+            content = self._client.get(_NS_DATA + path)
+        row["content"] = bytes(content) if content is not None else None
+        return row
+
+    # STRLEN answers the length without sending the value; a missing data
+    # key gives 0, the size a missing content had before.
+    def _db_get_meta(self, path: str) -> dict | None:
+        with self._lock:
+            meta = self._client.hgetall(_NS_META + path)
+        row = self._meta_fields(path, meta)
+        if row is not None:
+            row["size"] = 0 if row["is_dir"] else int(self._client.strlen(_NS_DATA + path))
+        return row
+
+    def _db_list_meta(self, parent: str) -> Iterable[dict]:
+        # One pipelined round trip for all children instead of a GET and
+        # an HGETALL per child.
+        with self._lock:
+            children = self._client.smembers(_NS_KIDS + parent)
+        paths = [
+            raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+            for raw in sorted(children or [])
+        ]
+        if not paths:
+            return []
+        pipe = self._client.pipeline()
+        for child_path in paths:
+            pipe.hgetall(_NS_META + child_path)
+            pipe.strlen(_NS_DATA + child_path)
+        replies = pipe.execute()
+        rows = []
+        for i, child_path in enumerate(paths):
+            row = self._meta_fields(child_path, replies[2 * i])
+            if row is not None:
+                row["size"] = 0 if row["is_dir"] else int(replies[2 * i + 1])
+                rows.append(row)
+        return rows
+
+    @staticmethod
+    def _meta_fields(path: str, meta) -> dict | None:
+        """The row fields stored in the meta hash (no content / size)."""
         if not meta:
             return None
 
@@ -204,9 +250,6 @@ class RedisFsSession(DbFsBackend):
             mtime = datetime.fromisoformat(mtime_raw) if mtime_raw else None
         except ValueError:
             mtime = None
-        content = None
-        if not is_dir:
-            content = self._client.get(_NS_DATA + path)
         return {
             "path": path,
             "parent": (get("parent") or b"/").decode("utf-8", "replace"),
@@ -215,7 +258,6 @@ class RedisFsSession(DbFsBackend):
             if (get("mode") or b"").startswith(b"0o")
             else int(get("mode") or b"420"),
             "mtime": mtime,
-            "content": bytes(content) if content is not None else None,
         }
 
     def _db_list(self, parent: str) -> Iterable[dict]:

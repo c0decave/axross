@@ -106,10 +106,18 @@ class PollingWatcher(Watcher):
     callers watching huge trees should register a push watcher.
     """
 
-    def __init__(self, backend, path, callback, interval: float = 2.0) -> None:
+    def __init__(
+        self, backend, path, callback, interval: float = 2.0, initial_entries=None
+    ) -> None:
+        """*initial_entries*: a ``list_dir`` result the caller already holds
+        for *path*; it becomes the first snapshot, sparing a second listing
+        (on the GUI thread, after every navigation). A change made after
+        that listing is reported on the first tick."""
         super().__init__(backend, path, callback)
         self._interval = max(0.2, interval)
-        self._initial: _Snapshot | None = None
+        self._initial: _Snapshot | None = (
+            None if initial_entries is None else self._snapshot_of(initial_entries)
+        )
         self._tick_cond = threading.Condition()
         self._tick_state = WatchTickState()
 
@@ -158,12 +166,16 @@ class PollingWatcher(Watcher):
             return self._tick_state.completed_at_least(target)
 
     def _snapshot(self) -> _Snapshot:
-        entries: dict[str, tuple[int, str, bool]] = {}
         try:
             items = self._backend.list_dir(self._path)
         except OSError as exc:
             log.debug("PollingWatcher: list_dir(%s) failed: %s", self._path, exc)
             return _Snapshot(entries={})
+        return self._snapshot_of(items)
+
+    @staticmethod
+    def _snapshot_of(items) -> _Snapshot:
+        entries: dict[str, tuple[int, str, bool]] = {}
         for it in items:
             name = getattr(it, "name", None)
             if not name:
@@ -253,7 +265,12 @@ def _resolve_protocol_id(backend) -> str:
 
 
 def watch(
-    backend, path: str, callback: EventCallback, interval: float = 2.0, force_polling: bool = False
+    backend,
+    path: str,
+    callback: EventCallback,
+    interval: float = 2.0,
+    force_polling: bool = False,
+    initial_entries=None,
 ) -> Watcher:
     """Start watching *path* on *backend*. Returns a running
     :class:`Watcher` — call ``.stop()`` when done.
@@ -271,7 +288,7 @@ def watch(
             w.start()
             return w
 
-    w = PollingWatcher(backend, path, callback, interval=interval)
+    w = PollingWatcher(backend, path, callback, interval=interval, initial_entries=initial_entries)
     w.start()
     return w
 

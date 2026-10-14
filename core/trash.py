@@ -256,6 +256,13 @@ def list_trash(backend, root: str | None = None) -> list[TrashEntry]:
 
     out: list[TrashEntry] = []
     known_ids: set[str] = set()
+    # Data objects the listing already shows as plain entries need no
+    # exists() round trip. Symlinks (the backend decides whether exists()
+    # follows them) and names missing here (case-insensitive servers)
+    # still ask, as before.
+    plain_names = {
+        getattr(it, "name", "") for it in items if not getattr(it, "is_link", False)
+    }
     for it in items:
         name = getattr(it, "name", "") or ""
         if not name.endswith(META_SUFFIX):
@@ -274,7 +281,7 @@ def list_trash(backend, root: str | None = None) -> list[TrashEntry]:
         meta = _read_meta(backend, meta_file)
         if meta is None:
             continue
-        if not backend.exists(data_file):
+        if trash_id not in plain_names and not backend.exists(data_file):
             log.warning("list_trash: sidecar %s without data — skipped", meta_file)
             continue
         raw_when = meta.get("trashed_at") or ""

@@ -14,7 +14,7 @@ import socket
 import stat as stat_module
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import IO
 
 from core.client_identity import SMB_CLIENT_NAME
@@ -122,6 +122,11 @@ def _patched_gethostname(name: str):
             yield
         finally:
             socket.gethostname = original  # type: ignore[assignment]
+
+
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_FILE_ATTRIBUTE_READONLY = 0x01  # smbprotocol FileAttributes, MS-FSCC 2.6
+_FILE_ATTRIBUTE_DIRECTORY = 0x10
 
 
 class SmbSession:
@@ -269,6 +274,13 @@ class SmbSession:
         try:
             for entry in smbclient.scandir(unc):
                 if entry.name in (".", ".."):
+                    continue
+                # The directory query already carries attributes, size and
+                # times; entry.stat() costs one extra SMB call per entry.
+                # Symlinks still need it: their target decides type and size.
+                item = None if entry.is_symlink() else self._dir_info_to_item(entry)
+                if item is not None:
+                    items.append(item)
                     continue
                 try:
                     st = entry.stat()
@@ -505,9 +517,42 @@ class SmbSession:
         return (0, 0, 0)
 
     @staticmethod
-    def _stat_to_item(name: str, st) -> FileItem:
+    def _modified(us: int) -> datetime:
+        """Local naive mtime from whole microseconds since the epoch.
+
+        Listing and stat both go through here with the microseconds floored,
+        as smbprotocol floors FILETIME for directory entries; rounding a
+        float in one path and flooring in the other made them disagree by
+        a microsecond."""
+        return datetime.fromtimestamp(us / 1_000_000) if us else datetime.fromtimestamp(0)
+
+    @classmethod
+    def _dir_info_to_item(cls, entry) -> FileItem | None:
+        """FileItem from the directory query of a non-symlink entry — the
+        same fields smbclient's stat() would compute (st_mode from the
+        attributes, end_of_file, last_write_time). None when unusable."""
+        info = entry.smb_info
+        written = info.last_write_time
+        if getattr(written, "tzinfo", None) is None:
+            return None  # datetime.max placeholder for an out-of-range FILETIME
+        attrs = int(info.file_attributes)
+        is_dir = bool(attrs & _FILE_ATTRIBUTE_DIRECTORY)
+        mode = 0o444 if attrs & _FILE_ATTRIBUTE_READONLY else 0o666
+        if is_dir:
+            mode |= 0o111
+        us = (written - _EPOCH_UTC) // timedelta(microseconds=1)
+        return FileItem(
+            name=entry.name,
+            size=int(info.end_of_file) if not is_dir else 0,
+            modified=cls._modified(us),
+            permissions=mode & 0o777,
+            is_dir=is_dir,
+        )
+
+    @classmethod
+    def _stat_to_item(cls, name: str, st) -> FileItem:
         is_dir = stat_module.S_ISDIR(st.st_mode)
-        modified = datetime.fromtimestamp(st.st_mtime) if st.st_mtime else datetime.fromtimestamp(0)
+        modified = cls._modified(st.st_mtime_ns // 1000)
         return FileItem(
             name=name,
             size=st.st_size if not is_dir else 0,

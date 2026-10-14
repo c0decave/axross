@@ -40,9 +40,37 @@ def _safe_basename(name: str) -> str:
         raise ValueError(f"Unsafe remote filename: {name!r}") from exc
 
 
+class _DestListings:
+    """Destination folder listings for one enqueue batch.
+
+    The auto-resume probe looks for leftover partials next to each target
+    file; listing the folder once per *file* made a 1 000-file folder copy
+    list it 1 001 times. Each folder is listed at most once here, and not
+    at all when this batch just created it. A failed listing counts as "no
+    partials", which is what the per-file probe concluded from it too.
+    """
+
+    def __init__(self, backend: FileBackend) -> None:
+        self._backend = backend
+        self._listings: dict[str, list] = {}
+
+    def created(self, folder: str) -> None:
+        self._listings[folder] = []
+
+    def entries(self, folder: str) -> list:
+        if folder not in self._listings:
+            try:
+                self._listings[folder] = list(self._backend.list_dir(folder))
+            except Exception as exc:  # noqa: BLE001 - same as the probe's catch-all
+                log.debug("auto-resume probe of %s failed (%s) — will start fresh", folder, exc)
+                self._listings[folder] = []
+        return self._listings[folder]
+
+
 def _probe_resumable_temp(
     backend: FileBackend,
     dest_path: str,
+    listings: _DestListings | None = None,
 ) -> tuple[str, int] | None:
     """Look for an existing partial ``.axross-tmp.*`` sibling of
     *dest_path* on the backend. Returns ``(temp_path, size)`` if a
@@ -61,7 +89,8 @@ def _probe_resumable_temp(
         # ``.{filename}.part-{job_id}``. The job_id differs on each
         # run; we match by prefix so any prior partial counts.
         temp_prefix = f".{filename}.part-"
-        for item in backend.list_dir(parent):
+        entries = listings.entries(parent) if listings is not None else backend.list_dir(parent)
+        for item in entries:
             name = getattr(item, "name", "") or ""
             if not name.startswith(temp_prefix):
                 continue
@@ -179,14 +208,25 @@ class TransferManager(QObject):
         dest_path: str,
         direction: TransferDirection = TransferDirection.DOWNLOAD,
         move: bool = False,
+        *,
+        size: int | None = None,
+        dest_listing: _DestListings | None = None,
     ) -> TransferJob:
-        """Enqueue a single file transfer."""
+        """Enqueue a single file transfer.
+
+        *size* is the source size when the caller already has it from a
+        listing (0 or None: ask the backend). *dest_listing* shares
+        destination listings across one batch (see _DestListings).
+        """
         # Get file size for progress
-        try:
-            stat = source_backend.stat(source_path)
-            total_bytes = stat.size
-        except OSError:
-            total_bytes = 0
+        if size:
+            total_bytes = size
+        else:
+            try:
+                stat = source_backend.stat(source_path)
+                total_bytes = stat.size
+            except OSError:
+                total_bytes = 0
 
         # Determine filename
         sep = source_backend.separator()
@@ -203,7 +243,7 @@ class TransferManager(QObject):
         auto_resume = False
         resume_temp_path = ""
         if use_temp:
-            probe = _probe_resumable_temp(dest_backend, dest_path)
+            probe = _probe_resumable_temp(dest_backend, dest_path, dest_listing)
             if probe is not None:
                 tmp_path, tmp_size = probe
                 # Only treat as resumable if the partial is non-empty
@@ -277,6 +317,7 @@ class TransferManager(QObject):
     ) -> list[TransferJob]:
         """Enqueue multiple file transfers to a destination directory."""
         jobs = []
+        dest_listing = _DestListings(dest_backend)
         for src_path in source_paths:
             sep = source_backend.separator()
             filename = src_path.rsplit(sep, 1)[-1] if sep in src_path else src_path
@@ -300,6 +341,7 @@ class TransferManager(QObject):
                         dest_path,
                         direction,
                         move=move,
+                        dest_listing=dest_listing,
                     )
                     jobs.extend(sub_jobs)
                     continue
@@ -313,6 +355,7 @@ class TransferManager(QObject):
                 dest_path,
                 direction,
                 move=move,
+                dest_listing=dest_listing,
             )
             jobs.append(job)
 
@@ -326,9 +369,12 @@ class TransferManager(QObject):
         dest_dir: str,
         direction: TransferDirection,
         move: bool = False,
+        dest_listing: _DestListings | None = None,
     ) -> list[TransferJob]:
         """Recursively transfer a directory."""
         jobs = []
+        if dest_listing is None:
+            dest_listing = _DestListings(dest_backend)
 
         # Create destination directory
         try:
@@ -337,6 +383,7 @@ class TransferManager(QObject):
                     raise OSError(f"destination exists and is not a directory: {dest_dir}")
             else:
                 dest_backend.mkdir(dest_dir)
+                dest_listing.created(dest_dir)
         except OSError as e:
             log.error("Failed to create directory %s: %s", dest_dir, e)
             self.directory_error.emit(dest_dir, f"mkdir failed: {e}")
@@ -379,6 +426,7 @@ class TransferManager(QObject):
                     dst_path,
                     direction,
                     move=move,
+                    dest_listing=dest_listing,
                 )
                 jobs.extend(sub_jobs)
             else:
@@ -389,6 +437,8 @@ class TransferManager(QObject):
                     dst_path,
                     direction,
                     move=move,
+                    size=int(getattr(item, "size", 0) or 0),
+                    dest_listing=dest_listing,
                 )
                 jobs.append(job)
 

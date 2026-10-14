@@ -237,6 +237,40 @@ class PostgresFsSession(DbFsBackend):
                 if d is not None:
                     yield d
 
+    @staticmethod
+    def _meta_row_dict(row) -> dict | None:
+        if row is None:
+            return None
+        path, parent, is_dir, mode, mtime, size = row
+        return {
+            "path": path,
+            "parent": parent,
+            "is_dir": bool(is_dir),
+            "mode": int(mode),
+            "mtime": mtime,
+            "size": size or 0,
+        }
+
+    # octet_length() is computed by the server: the body is not sent.
+    def _db_get_meta(self, path: str) -> dict | None:
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT path, parent, is_dir, mode, mtime, octet_length(content) "
+                "FROM axross_files WHERE path = %s",
+                (path,),
+            )
+            return self._meta_row_dict(cur.fetchone())
+
+    def _db_list_meta(self, parent: str) -> Iterable[dict]:
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT path, parent, is_dir, mode, mtime, octet_length(content) "
+                "FROM axross_files WHERE parent = %s ORDER BY path",
+                (parent,),
+            )
+            rows = cur.fetchall()
+        return [self._meta_row_dict(row) for row in rows]
+
     def _db_insert(self, row: dict) -> None:
         with self._lock, self._conn.cursor() as cur:
             cur.execute(

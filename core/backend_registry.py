@@ -5,7 +5,8 @@ from __future__ import annotations
 import importlib
 import logging
 import shutil
-from dataclasses import dataclass, field
+import threading
+from dataclasses import InitVar, dataclass, field
 from enum import Enum, auto
 
 log = logging.getLogger(__name__)
@@ -435,9 +436,24 @@ class BackendInfo:
     class_name: str  # e.g. "FtpSession"
     default_port: int = 0
     required_extra: str | None = None  # pip extra name, e.g. "smb"
-    available: bool = True
+    # A bool, or an _ImportProbe that is evaluated when ``available`` is
+    # first read (see the property below the class).
+    available: InitVar[object] = True
     capabilities: BackendCapabilities = field(default_factory=BackendCapabilities)
     credential_kind: CredentialKind = CredentialKind.PASSWORD
+    _availability: object = field(init=False, repr=False, compare=False, default=True)
+
+    def __post_init__(self, available) -> None:
+        object.__setattr__(self, "_availability", available)
+
+
+def _available(self: BackendInfo) -> bool:
+    """Whether the backend's dependencies are installed (and importable)."""
+    probe = self._availability
+    return probe() if isinstance(probe, _ImportProbe) else bool(probe)
+
+
+BackendInfo.available = property(_available)  # type: ignore[assignment]
 
 
 # Global registry
@@ -495,13 +511,43 @@ def load_backend_class(protocol_id: str):
     return getattr(mod, info.class_name)
 
 
-def _check_available(import_probe: str) -> bool:
-    """Check if a Python package is importable."""
-    try:
-        __import__(import_probe)
-        return True
-    except ImportError:
-        return False
+class _ImportProbe:
+    """Deferred "is this package importable?" check.
+
+    Importing an optional SDK only to learn that it is installed cost most
+    of the GUI start (0.7-0.9 s of ~1 s). The probe still imports — an
+    installed but broken package stays unavailable — but only when
+    ``available`` is first read (the connection dialog, a connect). There
+    is deliberately no background warm-up: importing packages with internal
+    import cycles from two threads at once can hand one of them a
+    half-initialised module. The answer is computed once; anything other
+    than ImportError propagates and is not cached, as the eager check did.
+    """
+
+    def __init__(self, module: str) -> None:
+        self.module = module
+        self._result: bool | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def resolved(self) -> bool:
+        return self._result is not None
+
+    def __call__(self) -> bool:
+        if self._result is None:
+            with self._lock:
+                if self._result is None:
+                    try:
+                        __import__(self.module)
+                        self._result = True
+                    except ImportError:
+                        self._result = False
+        return self._result
+
+
+def _check_available(import_probe: str) -> _ImportProbe:
+    """Availability of a Python package, checked when first needed."""
+    return _ImportProbe(import_probe)
 
 
 def _check_command_available(*commands: str) -> bool:
@@ -1098,5 +1144,5 @@ def init_registry() -> None:
         )
     )
 
-    installed = [b.protocol_id for b in _registry.values() if b.available]
-    log.info("Backend registry initialized: %s", ", ".join(installed))
+    # Availability is resolved lazily, on first read (see _ImportProbe).
+    log.info("Backend registry initialized: %d backends", len(_registry))

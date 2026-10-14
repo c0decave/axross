@@ -217,6 +217,44 @@ class SqliteFsSession(DbFsBackend):
                 if d is not None:
                     yield d
 
+    # Byte length without reading the body: length() of a BLOB comes from
+    # its header; NULL stays NULL (size 0 like a missing content).
+    _META_COLUMNS = (
+        "path, parent, is_dir, mode, mtime, "
+        "CASE typeof(content) WHEN 'blob' THEN length(content) "
+        "WHEN 'null' THEN NULL ELSE length(CAST(content AS BLOB)) END AS size"
+    )
+
+    @staticmethod
+    def _meta_row_dict(row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "path": row["path"],
+            "parent": row["parent"],
+            "is_dir": bool(row["is_dir"]),
+            "mode": int(row["mode"]),
+            "mtime": row["mtime"],
+            "size": row["size"] or 0,
+        }
+
+    def _db_get_meta(self, path: str) -> dict | None:
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT {self._META_COLUMNS} FROM axross_files WHERE path = ?",  # nosec B608 - constant columns
+                (path,),
+            )
+            return self._meta_row_dict(cur.fetchone())
+
+    def _db_list_meta(self, parent: str) -> Iterable[dict]:
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT {self._META_COLUMNS} FROM axross_files WHERE parent = ? ORDER BY path",  # nosec B608
+                (parent,),
+            )
+            rows = cur.fetchall()
+        return [self._meta_row_dict(row) for row in rows]
+
     def _db_insert(self, row: dict) -> None:
         mtime = row.get("mtime")
         if isinstance(mtime, datetime):

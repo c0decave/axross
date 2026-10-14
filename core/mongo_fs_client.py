@@ -204,6 +204,54 @@ class MongoFsSession(DbFsBackend):
                 "content": f.read(),
             }
 
+    # GridFS keeps each file's length in its files document, so metadata
+    # needs no read of the chunks. The listing used to report size 0 for
+    # every file (content None); it now shows the stored length.
+    def _db_get_meta(self, path: str) -> dict | None:
+        with self._lock:
+            dir_doc = self._dirs.find_one({"path": path})
+            if dir_doc is not None:
+                return {
+                    "path": path,
+                    "parent": dir_doc["parent"],
+                    "is_dir": True,
+                    "mode": dir_doc.get("mode", 0o755),
+                    "mtime": dir_doc.get("mtime"),
+                    "size": 0,
+                }
+            f = self._fs.find_one({"filename": path})
+            if f is None:
+                return None
+            return {
+                "path": path,
+                "parent": f.metadata.get("parent", "/") if f.metadata else "/",
+                "is_dir": False,
+                "mode": f.metadata.get("mode", 0o644) if f.metadata else 0o644,
+                "mtime": f.upload_date,
+                "size": f.length,
+            }
+
+    def _db_list_meta(self, parent: str) -> Iterable[dict]:
+        with self._lock:
+            for d in self._dirs.find({"parent": parent}):
+                yield {
+                    "path": d["path"],
+                    "parent": parent,
+                    "is_dir": True,
+                    "mode": d.get("mode", 0o755),
+                    "mtime": d.get("mtime"),
+                    "size": 0,
+                }
+            for f in self._fs.find({"metadata.parent": parent}):
+                yield {
+                    "path": f.filename,
+                    "parent": parent,
+                    "is_dir": False,
+                    "mode": (f.metadata or {}).get("mode", 0o644),
+                    "mtime": f.upload_date,
+                    "size": f.length,
+                }
+
     def _db_list(self, parent: str) -> Iterable[dict]:
         with self._lock:
             for d in self._dirs.find({"parent": parent}):

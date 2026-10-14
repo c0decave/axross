@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDockWidget,
@@ -45,6 +45,13 @@ class TransferDock(QDockWidget):
         self._setup_ui()
 
         # Connect manager signals
+        # The overall bar walks every job; recompute it once per burst of
+        # signals instead of once per signal (10 000 queued files spent
+        # ~14 s of GUI time here).
+        self._overall_timer = QTimer(self)
+        self._overall_timer.setSingleShot(True)
+        self._overall_timer.setInterval(50)
+        self._overall_timer.timeout.connect(self._update_overall)
         self._manager.job_added.connect(self._on_job_added)
         self._manager.job_updated.connect(self._on_job_updated)
         self._manager.job_finished.connect(self._on_job_updated)
@@ -105,19 +112,23 @@ class TransferDock(QDockWidget):
 
     def _on_job_added(self, job: TransferJob) -> None:
         self._model.add_job(job)
-        self._update_overall()
+        self._schedule_overall()
         self.activity.emit()
 
     def _on_job_updated(self, job_id: str) -> None:
         self._model.update_job(job_id)
-        self._update_overall()
+        self._schedule_overall()
         self.activity.emit()
 
     def _on_job_error(self, job_id: str, error: str) -> None:
         self._model.update_job(job_id)
-        self._update_overall()
+        self._schedule_overall()
         log.warning("Transfer error: %s: %s", job_id, error)
         self.activity.emit()
+
+    def _schedule_overall(self) -> None:
+        if not self._overall_timer.isActive():
+            self._overall_timer.start()
 
     def _update_overall(self) -> None:
         jobs = self._manager.all_jobs()

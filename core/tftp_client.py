@@ -303,29 +303,47 @@ class TftpSession:
         """Best-effort: ask the server for the file's ``tsize`` via
         the OACK option. Many tftpd daemons honour this; some don't.
         Returns 0 when unavailable.
+
+        tftpy passes every received packet to the packet hook, the OACK
+        included, so a server that reports ``tsize`` answers before any
+        data block and the transfer is abandoned there. Without tsize
+        the file is downloaded and measured, as before.
         """
+        import tftpy.TftpPacketTypes as packets
+
+        class _SizeKnown(Exception):
+            def __init__(self, size: int) -> None:
+                self.size = size
+
+        def _hook(pkt) -> None:
+            if isinstance(pkt, packets.TftpPacketOACK):
+                raw = pkt.options.get("tsize")
+                try:
+                    size = int(raw)
+                except (TypeError, ValueError):
+                    return
+                if size >= 0:
+                    raise _SizeKnown(size)
+
         try:
             client = tftpy.TftpClient(  # type: ignore[union-attr]
                 self._host,
                 self._port,
                 options={"tsize": "0"},
             )
-            # tftpy doesn't expose the OACK directly; the cleanest
-            # cheap probe is to download into /dev/null and read the
-            # size off the context. We cap reads at 1 byte's worth
-            # of blocks to abort fast if the server doesn't honour
-            # tsize and just streams.
             with tempfile.NamedTemporaryFile(delete=True) as tmp, self._udp_scope():
                 client.download(
                     name,
                     tmp.name,
+                    packethook=_hook,
                     timeout=self._timeout,
                     retries=1,
                 )
-                # If we got here, the full transfer happened (server
-                # didn't honour tsize as a probe-only). Use stat.
+                # The server sent data without a usable tsize: measure.
                 tmp.seek(0, io.SEEK_END)
                 return tmp.tell()
+        except _SizeKnown as known:
+            return known.size
         except Exception as exc:  # noqa: BLE001
             log.debug("TFTP probe(%r) failed: %s", name, exc)
             return 0

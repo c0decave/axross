@@ -429,11 +429,33 @@ class AzureBlobSession:
             except Exception as e:
                 raise OSError(f"Cannot remove {path}: {e}") from e
 
+    # Blob Batch: at most 256 sub-requests per batch request.
+    _DELETE_BATCH = 256
+
     def _remove_prefix(self, prefix: str) -> None:
-        """Delete all blobs under a prefix."""
-        blobs = self._container.list_blobs(name_starts_with=prefix)
-        for blob in blobs:
-            self._container.delete_blob(blob.name)
+        """Delete all blobs under a prefix, up to 256 per request."""
+        chunk: list[str] = []
+        for blob in self._container.list_blobs(name_starts_with=prefix):
+            chunk.append(blob.name)
+            if len(chunk) == self._DELETE_BATCH:
+                self._delete_chunk(chunk)
+                chunk = []
+        if chunk:
+            self._delete_chunk(chunk)
+
+    def _delete_chunk(self, names: list[str]) -> None:
+        from azure.storage.blob import PartialBatchErrorException
+
+        try:
+            self._container.delete_blobs(*names)
+        except PartialBatchErrorException:
+            raise  # single blobs failed: same outcome as a failing delete_blob
+        except Exception as exc:  # noqa: BLE001
+            # The batch call itself was refused (no batch support on this
+            # account / emulator): delete one by one, as before.
+            log.debug("Azure batch delete unavailable (%s); deleting one by one", exc)
+            for name in names:
+                self._container.delete_blob(name)
 
     def rename(self, src: str, dst: str) -> None:
         """Azure Blob doesn't support rename -- copy + delete."""

@@ -636,7 +636,17 @@ def _is_selected(member_name: str, requested_norm: set[str]) -> bool:
     norm = _norm_member(member_name)
     if norm in requested_norm:
         return True
-    return any(norm.startswith(req + "/") for req in requested_norm)
+    return any(prefix in requested_norm for prefix in _slash_prefixes(norm))
+
+
+def _slash_prefixes(norm: str):
+    """Every ``p`` with ``norm.startswith(p + "/")``: the text before each
+    ``/``. Walking these is O(depth) instead of comparing against every
+    requested (or every archive) name."""
+    pos = norm.find("/")
+    while pos >= 0:
+        yield norm[:pos]
+        pos = norm.find("/", pos + 1)
 
 
 def _resolve_selection(
@@ -654,12 +664,11 @@ def _resolve_selection(
     """
     norm_all = {_norm_member(n) for n in all_member_names}
     requested_norm = {_norm_member(m) for m in members}
+    ancestors = {prefix for other in norm_all for prefix in _slash_prefixes(other)}
 
     def _matches(req_norm: str) -> bool:
         # Exact member OR a directory with at least one descendant.
-        return req_norm in norm_all or any(
-            other.startswith(req_norm + "/") for other in norm_all
-        )
+        return req_norm in norm_all or req_norm in ancestors
 
     missing = [m for m in members if not _matches(_norm_member(m))]
     if missing:

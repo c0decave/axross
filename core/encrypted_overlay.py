@@ -377,7 +377,18 @@ def _read_exact(stream: IO[bytes], want: int) -> bytes | None:
     connections) short-read mid-stream even when more bytes are
     coming, and the decoder's safety invariants depend on the
     chunk header arriving intact."""
-    buf = b""
+    if want <= 0:
+        return b""
+    first = stream.read(want)
+    if not first:
+        return None
+    if isinstance(first, str):
+        first = first.encode("utf-8", errors="replace")
+    if len(first) >= want:
+        return bytes(first)  # no copy for bytes; bytearray/memoryview -> bytes as before
+    # A bytearray grows in place; ``bytes +=`` re-copied everything read
+    # so far on every short read.
+    buf = bytearray(first)
     while len(buf) < want:
         got = stream.read(want - len(buf))
         if not got:
@@ -385,7 +396,7 @@ def _read_exact(stream: IO[bytes], want: int) -> bytes | None:
         if isinstance(got, str):
             got = got.encode("utf-8", errors="replace")
         buf += got
-    return buf
+    return bytes(buf)
 
 
 def is_streaming_blob(raw: bytes) -> bool:

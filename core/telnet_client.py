@@ -390,6 +390,10 @@ class _TelnetTransport:
 # ---------------------------------------------------------------------------
 # Layer 2: Shell Session
 # ---------------------------------------------------------------------------
+class CommandFailed(OSError):
+    """The command ran and exited non-zero: the connection is fine."""
+
+
 class _ShellSession:
     """Manages shell interaction over a telnet transport."""
 
@@ -666,7 +670,7 @@ class _ShellSession:
         """Execute and raise OSError if exit code is non-zero."""
         output, code = self.execute(cmd, timeout=timeout)
         if code != 0:
-            raise OSError(f"Command failed (exit {code}): {cmd[:80]}\n{output[:500]}")
+            raise CommandFailed(f"Command failed (exit {code}): {cmd[:80]}\n{output[:500]}")
         return output
 
     def execute_streaming(self, cmd: str, timeout: float = TRANSFER_TIMEOUT) -> tuple[str, int]:
@@ -1190,6 +1194,9 @@ class TelnetSession:
         shell = self._ensure_connected()
         try:
             return shell.execute_checked(cmd, timeout=timeout)
+        except CommandFailed:
+            # The shell answered; reconnecting would only run it again.
+            raise
         except (OSError, TimeoutError):
             # Force reconnect and retry once
             log.debug("Telnet: command failed, reconnecting and retrying")

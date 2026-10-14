@@ -21,6 +21,8 @@ def log_event(
     ``event=...`` / ``operation_id=...`` while the human log dock remains
     readable.
     """
+    if not logger.isEnabledFor(level):
+        return
     clean = redact(fields)
     parts = [f"event={event}"]
     for key in sorted(clean):
