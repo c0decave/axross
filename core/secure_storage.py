@@ -21,6 +21,8 @@ import tempfile
 import time
 import uuid
 
+from core import posix_compat
+
 log = logging.getLogger(__name__)
 
 _FILE_MODE = 0o600
@@ -77,7 +79,7 @@ def write_secret_file(path: str, data: str | bytes) -> None:
     fd, tmp_path = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=parent or None)
     try:
         try:
-            os.fchmod(fd, _FILE_MODE)
+            posix_compat.fchmod_private(fd, _FILE_MODE)
         except OSError as exc:
             # Windows has no fchmod — fall back to chmod on the path.
             log.debug("fchmod unavailable on %s: %s", tmp_path, exc)

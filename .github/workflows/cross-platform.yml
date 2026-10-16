@@ -6,7 +6,7 @@ name: Cross-platform
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "ci/**" ]
     tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]

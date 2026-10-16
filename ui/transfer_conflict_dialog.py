@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from core.transfer_conflicts import ConflictAction, TransferConflict
+from ui.close_corner import add_close_corner
 from ui.format_utils import format_size
 
 
@@ -105,6 +106,7 @@ class TransferConflictDialog(QDialog):
         cancel.clicked.connect(self.reject)
         row.addWidget(cancel)
         layout.addLayout(row)
+        add_close_corner(self)
 
     def _choose(self, action: ConflictAction) -> None:
         # isHidden, not isVisible: the box counts while the dialog is up.

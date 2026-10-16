@@ -231,9 +231,13 @@ cuyo protocolo nativo no las soporta.
 
 Click derecho → **Show Metadata…**, **Remove Metadata…** o **Export
 Metadata…** actúa sobre los ficheros y carpetas seleccionados o, sin
-selección, sobre la propia carpeta. La ventana de metadata lista
-fichero, grupo, campo y valor, con filtro, *Copy* (filas seleccionadas
-como texto), *Export…* (JSON o CSV) y *Remove Metadata*. Las carpetas se
+selección, sobre la propia carpeta. La ventana de metadata muestra una
+fila por fichero con sus campos uno tras otro como `key: value`; doble
+clic o clic derecho → *Properties…* abre todos los campos de ese fichero,
+agrupados y uno por línea, y clic derecho → *Remove Metadata* limpia solo
+los ficheros seleccionados. Tiene filtro, *Copy* (los campos de los
+ficheros seleccionados como texto), *Export…* (JSON o CSV) y *Remove
+Metadata* para todos los ficheros listados. Las carpetas se
 leen sin bajar; *Include subfolders* entra en las subcarpetas (como
 máximo 5000 ficheros, profundidad 8, las carpetas symlink no se siguen).
 Leer y eliminar corren en segundo plano con progreso y *Cancel*. En los

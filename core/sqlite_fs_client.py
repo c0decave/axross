@@ -34,6 +34,7 @@ import threading
 from datetime import datetime
 from typing import Iterable
 
+from core import posix_compat
 from core.db_fs_base import DbFsBackend
 
 log = logging.getLogger(__name__)
@@ -320,9 +321,7 @@ class SqliteFsSession(DbFsBackend):
         # Report the SQLite file's size as "used"; total/free come
         # from the host FS.
         try:
-            st = os.statvfs(self._db_path)
-            free = st.f_bavail * st.f_frsize
-            total = st.f_blocks * st.f_frsize
+            total, _used, free = posix_compat.disk_usage(self._db_path)
             db_size = os.path.getsize(self._db_path)
             return (total, db_size, free)
         except OSError:

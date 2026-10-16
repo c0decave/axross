@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.i18n import tr
+from ui.close_corner import add_close_corner
 
 #: Largest guide file read from docs/ (the real ones are ~10 KB).
 MAX_GUIDE_BYTES = 1024 * 1024
@@ -178,6 +179,7 @@ class ScriptingGuideDialog(QDialog):
         layout.addLayout(find_row)
         layout.addWidget(self.tabs, 1)
         layout.addWidget(buttons)
+        add_close_corner(self)
 
     def _current_view(self) -> QTextBrowser:
         return self.api if self.tabs.currentIndex() == 1 else self.guide

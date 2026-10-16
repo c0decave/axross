@@ -47,6 +47,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from core import posix_compat
 from security.resume_freshness import coerce_mtime_epoch, manifest_predates_source
 
 log = logging.getLogger(__name__)
@@ -199,7 +200,8 @@ def _private_manifest_dir() -> Path:
         raise OSError(f"copy_resume: refusing symlinked resume directory {local_dir}")
     if not stat.S_ISDIR(st.st_mode):
         raise OSError(f"copy_resume: resume directory {local_dir} is not a directory")
-    if st.st_uid != os.geteuid():
+    uid = posix_compat.effective_uid()
+    if uid is not None and st.st_uid != uid:
         raise OSError(
             f"copy_resume: resume directory {local_dir} is not owned by the current user"
         )
@@ -222,7 +224,7 @@ def _save_manifest(manifest: _Manifest, path: Path) -> None:
     )
     try:
         try:
-            os.fchmod(fd, 0o600)
+            posix_compat.fchmod_private(fd, 0o600)
         except OSError:
             pass
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

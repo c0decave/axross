@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from core.backend_registry import all_backends, init_registry
 from core.profiles import ConnectionProfile, ProfileManager
 from core.ssh_client import SSHSession, UnknownHostKeyError
+from ui.close_corner import add_close_corner
 from ui.network_proxy_dialog import (
     AUTH_CHOICES,
     TRANSPORT_CHOICES,
@@ -101,6 +102,7 @@ class ConnectionDialog(QDialog):
                 self._profile_combo.setCurrentText(profile.name)
             if self._loaded_profile_name != profile.name:
                 self._load_profile(profile)
+        add_close_corner(self)
 
     @property
     def result_profile(self) -> ConnectionProfile | None:

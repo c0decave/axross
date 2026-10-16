@@ -34,6 +34,7 @@ from core.local_fs import LocalFS
 from core.profiles import ConnectionProfile, ProfileManager
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
+from core import posix_compat
 from ui import themes
 from ui.bookmark_edit_dialog import BookmarkEditDialog
 from ui.close_corner import add_close_corner
@@ -179,7 +180,7 @@ def _write_private_text(path: Path | str, text: str) -> None:
     )
     try:
         try:
-            os.fchmod(fd, 0o600)
+            posix_compat.fchmod_private(fd, 0o600)
         except OSError:
             pass
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -4065,6 +4066,7 @@ class MainWindow(QMainWindow):
         dlg.setWindowTitle("Paste SSH Config")
         dlg.resize(520, 380)
         layout = QVBoxLayout(dlg)
+        add_close_corner(dlg)
 
         text_edit = QPlainTextEdit()
         text_edit.setPlaceholderText(

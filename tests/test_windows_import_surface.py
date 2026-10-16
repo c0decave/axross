@@ -71,8 +71,11 @@ def test_happy_a_listing_has_no_owner_names_without_a_user_database(tmp_path):
 
 
 def test_sad_a_local_terminal_without_a_pty_says_why():
+    # Neither a pty nor pywinpty: on Windows CI pywinpty is installed and the
+    # shell would start, which tests/test_terminal_winpty.py covers.
     r = _run_without_unix_modules(
         """
+        sys.modules["winpty"] = None
         from ui.terminal_widget import LocalTerminalSession
         try:
             LocalTerminalSession().start()

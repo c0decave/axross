@@ -1,5 +1,6 @@
-"""The metadata UI: the metadata dialog (table, filter, copy, export,
-remove, recursive folders, cancel), the settings dialog, the side panel in
+"""The metadata UI: the metadata dialog (one row per file with its fields
+as key: value, Properties on double-click or right-click, filter, copy,
+export, remove, recursive folders, cancel), the settings dialog, the side panel in
 the image and media viewers (toggled with I), the pane's context menu and,
 end to end through the real MainWindow offscreen, folder -> Show Metadata
 (recursive) -> Export -> Remove -> Ctrl+Z."""
@@ -21,6 +22,7 @@ from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox  # noqa: E402
 
+from core import metadata_formats as MF  # noqa: E402
 from core import metadata_tools as MT  # noqa: E402
 from core import open_limits as OL  # noqa: E402
 from core import security_mode  # noqa: E402
@@ -52,7 +54,7 @@ def isolated(tmp_path, monkeypatch):
     yield
     security_mode.set_policy(previous)
     for w in QApplication.topLevelWidgets():
-        if isinstance(w, MD.MetadataDialog):
+        if isinstance(w, (MD.MetadataDialog, MD.MetadataDetailsDialog)):
             w.close()
     APP.processEvents()
 
@@ -83,7 +85,8 @@ def _dialog(backend, targets, **kw) -> MD.MetadataDialog:
 def test_happy_dialog_lists_a_folder_and_goes_recursive(tree):
     dlg = _dialog(LocalFS(), [(str(tree), True)])
     assert dlg.file_names() == ["a.jpg", "b.png"]
-    assert dlg.row_count() > 10
+    assert dlg.row_count() == 2  # one row per file
+    assert dlg.field_count() > 10
     assert dlg.recursive_box.isVisible()
     dlg.recursive_box.setChecked(True)
     assert wait_until(lambda: dlg.idle and "c.docx" in dlg.file_names())
@@ -102,23 +105,57 @@ def test_edge_a_long_path_keeps_the_file_name_visible(tree):
     assert str(tree / "a.jpg") in cell.toolTip()
 
 
+def test_happy_one_row_per_file_lists_its_fields_as_key_value(tree):
+    dlg = _dialog(LocalFS(), [(str(tree / "a.jpg"), False)])
+    assert dlg.row_count() == 1
+    summary = dlg.table.item(0, 1).text()
+    assert "Make: SECRETMAKE · Model: SECRETMODEL" in summary
+    assert "\n" not in summary
+
+
+def test_edge_the_metadata_column_is_cut_at_the_end(tree):
+    # The path is cut in the middle (its name stays visible); the field
+    # list is cut at the end, so its first fields stay readable.
+    from PyQt6.QtWidgets import QStyleOptionViewItem
+
+    dlg = _dialog(LocalFS(), [(str(tree / "a.jpg"), False)])
+    option = QStyleOptionViewItem()
+    dlg.table.itemDelegateForColumn(1).initStyleOption(option, dlg.table.model().index(0, 1))
+    assert option.textElideMode == Qt.TextElideMode.ElideRight
+
+
 def test_sad_the_file_tooltip_does_not_hide_the_kept_hint(tree):
     dlg = _dialog(LocalFS(), [(str(tree), True)])
-    kept = [r for r in range(dlg.table.rowCount()) if dlg.table.item(r, 2).text() == "Orientation"]
-    assert kept
-    assert "Kept" in dlg.table.item(kept[0], 2).toolTip()
-    assert "Kept" in dlg.table.item(kept[0], 0).toolTip()
+    tip = dlg.table.item(0, 0).toolTip()
+    assert str(tree / "a.jpg") in tip
+    assert "kept" in tip.lower()
+
+
+def test_edge_a_long_value_is_cut_in_the_row_and_whole_in_properties(tmp_path):
+    long_value = "x" * 500
+    report = MT.MetadataReport(
+        path=str(tmp_path / "f.jpg"), name="f.jpg", kind="image",
+        fields=[MF.Field("EXIF", "Long", long_value), MF.Field("EXIF", "Short", "ok")],
+    )
+    line = MD.summary_line(report)
+    assert len(line) < 200 and "Short: ok" in line
+    details = MD.MetadataDetailsDialog(report)
+    assert long_value in details.view.toPlainText()
+    details.close()
 
 
 def test_happy_filter_copy_and_export(tree, tmp_path, monkeypatch):
-    dlg = _dialog(LocalFS(), [(str(tree / "a.jpg"), False)])
-    total = dlg.row_count()
+    dlg = _dialog(LocalFS(), [(str(tree), True)])
+    dlg.filter_edit.setText("ducky")  # a field only a.jpg has
+    assert [Path(r[0]).name for r in dlg.visible_rows()] == ["a.jpg"]
     dlg.filter_edit.setText("GPS")
-    visible = dlg.visible_rows()
-    assert 0 < len(visible) < total and all("GPS" in " ".join(r) for r in visible)
+    assert len(dlg.visible_rows()) == 2
     dlg.table.selectAll()
     dlg.copy_selection()
-    assert "GPS" in QApplication.clipboard().text()
+    lines = QApplication.clipboard().text().splitlines()
+    assert lines and all("GPS" in line for line in lines)  # the matching fields
+    assert {line.split("\t")[0] for line in lines} == {str(tree / "a.jpg"), str(tree / "b.png")}
+    dlg.filter_edit.clear()
     out = tmp_path / "export.json"
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         lambda *a, **k: (str(out), "JSON (*.json)"))
@@ -138,6 +175,88 @@ def test_happy_remove_from_the_dialog_cleans_and_signals(tree):
     assert K.MARK in K.plain(tree / "trip" / "c.docx")  # not recursive
     assert "2" in dlg.status_label.text()
     assert wait_until(lambda: dlg.idle and dlg.removable_count() == 0)
+
+
+def _row_of(dlg, name: str) -> int:
+    rows = range(dlg.table.rowCount())
+    return next(r for r in rows if Path(dlg.table.item(r, 0).text()).name == name)
+
+
+def test_happy_double_click_opens_the_properties_of_that_file(tree):
+    dlg = _dialog(LocalFS(), [(str(tree), True)])
+    row = _row_of(dlg, "b.png")
+    rect = dlg.table.visualRect(dlg.table.model().index(row, 1))
+    # A real double-click starts with a press; the view only reports a
+    # double-click on the index that press hit.
+    QTest.mouseClick(dlg.table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    QTest.mouseDClick(dlg.table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    assert wait_until(lambda: dlg.details_dialogs)
+    details = dlg.details_dialogs[-1]
+    assert details.isVisible() and details.path == str(tree / "b.png")
+    text = details.view.toPlainText()
+    for f in dlg.reports()[row].fields:
+        assert f.group in text and f.name in text and f.value in text
+    # one line per field, grouped: never the whole set on one line
+    assert text.count("\n") >= len(dlg.reports()[row].fields)
+    assert "Orientation" in details.kept_names()
+    assert details.close_corner is not None
+
+
+def test_happy_right_click_properties_and_remove_for_the_selection(tree):
+    dlg = _dialog(LocalFS(), [(str(tree), True)])
+    dlg.table.selectRow(_row_of(dlg, "a.jpg"))
+    menu = dlg.build_context_menu()
+    actions = {a.text(): a for a in menu.actions() if a.text()}
+    assert {"Properties…", "Copy", "Remove Metadata"} <= set(actions)
+    actions["Properties…"].trigger()
+    assert dlg.details_dialogs[-1].path == str(tree / "a.jpg")
+    changed = []
+    dlg.changed.connect(lambda: changed.append(True))
+    actions["Remove Metadata"].trigger()
+    assert wait_until(lambda: dlg.idle and changed)
+    assert K.MARK not in (tree / "a.jpg").read_bytes()
+    assert K.MARK in (tree / "b.png").read_bytes()  # not selected, not touched
+    # the open Properties follow the new state of their file
+    assert wait_until(lambda: dlg.details_dialogs[-1].report.removable == 0)
+
+
+def test_sad_without_a_selection_the_file_actions_are_disabled(tree):
+    dlg = _dialog(LocalFS(), [(str(tree), True)])
+    dlg.table.clearSelection()
+    actions = {a.text(): a for a in dlg.build_context_menu().actions() if a.text()}
+    assert not actions["Properties…"].isEnabled()
+    assert not actions["Remove Metadata"].isEnabled()
+
+
+def test_sad_properties_remove_is_off_when_nothing_is_removable(tmp_path):
+    bare = K.write(tmp_path / "bare.jpg", K.jpeg_bytes(orientation=None, everything=False))
+    dlg = _dialog(LocalFS(), [(str(bare), False)])
+    dlg.open_details(0)
+    details = dlg.details_dialogs[-1]
+    assert not details.remove_button.isEnabled()
+    assert "version: 1.01" in dlg.table.item(0, 1).text()
+
+
+def test_edge_properties_show_markup_as_text(tmp_path):
+    report = MT.MetadataReport(
+        path=str(tmp_path / "f.jpg"), name="f.jpg", kind="image",
+        fields=[MF.Field("XMP", "<b>name</b>", '<img src="https://x.invalid/a.png">&amp;')],
+    )
+    details = MD.MetadataDetailsDialog(report)
+    text = details.view.toPlainText()
+    assert "<b>name</b>" in text and '<img src="https://x.invalid/a.png">&amp;' in text
+    details.close()
+
+
+def test_edge_a_file_that_could_not_be_read_shows_its_error(tmp_path):
+    report = MT.MetadataReport(
+        path=str(tmp_path / "f.jpg"), name="f.jpg", kind="image", error="truncated EXIF"
+    )
+    assert MD.summary_line(report).startswith("Error: truncated EXIF")
+    details = MD.MetadataDetailsDialog(report)
+    assert "truncated EXIF" in details.view.toPlainText()
+    assert details.remove_button.isEnabled()  # a readable kind may still be cleaned
+    details.close()
 
 
 def test_happy_remove_action_on_files_runs_without_asking(tree, monkeypatch):

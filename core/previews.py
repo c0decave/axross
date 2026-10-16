@@ -530,6 +530,26 @@ def svg_refusal(data: bytes) -> str | None:
     return None
 
 
+def _svg_options(qtsvg):
+    """The QSvgRenderer options: Tiny 1.2 features only, every animation
+    kind off - or ``None`` on a Qt without options (before 6.7).
+
+    The animation kinds are named one by one, never as the combined
+    DisableAnimations value: Qt 6.10.0 segfaults in QSvgRenderer.load()
+    for every document when the options carry that value (0xF0), while
+    the same kinds named singly load (measured on the 0.10.24 bundle).
+    PyQt6 exposes the QFlags as a plain Enum: combine by value."""
+    option = getattr(qtsvg, "Option", None)
+    if option is None:
+        return None
+    value = 0
+    for name in ("Tiny12FeaturesOnly", "DisableSMILAnimations", "DisableCSSAnimations"):
+        member = getattr(option, name, None)
+        if member is not None:
+            value |= member.value
+    return option(value)
+
+
 def _render_svg(abs_path: str, edge: int):
     """Render the SVG at *abs_path* to a QImage whose longer side is *edge*."""
     try:
@@ -554,12 +574,9 @@ def _render_svg(abs_path: str, edge: int):
     try:
         from PyQt6.QtSvg import QtSvg
 
-        # PyQt6 exposes the QFlags as a plain Enum: combine by value.
-        renderer.setOptions(
-            QtSvg.Option(
-                QtSvg.Option.Tiny12FeaturesOnly.value | QtSvg.Option.DisableAnimations.value
-            )
-        )
+        options = _svg_options(QtSvg)
+        if options is not None:
+            renderer.setOptions(options)
     except (ImportError, AttributeError, TypeError, ValueError) as exc:
         # Qt < 6.7 has no options; the gate above still applies.
         log.debug("QSvgRenderer.setOptions unavailable: %s", exc)

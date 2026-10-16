@@ -4,8 +4,9 @@ Usage: python scripts/bundle_smoke.py DIST_DIR
 
 Finds ``axross-slim`` / ``axross-full`` (``.exe`` on Windows) in DIST_DIR,
 then checks that it answers ``--version`` and that ``--script`` runs a
-script which lists a folder through the axross API and writes a marker
-file. The binary runs with its own HOME (and USERPROFILE / APPDATA), so a
+script which lists a folder through the axross API, renders an SVG
+thumbnail (the 0.10.24 bundle's Qt 6.10.0 crashed on the first one) and
+writes a marker file. The binary runs with its own HOME (and USERPROFILE / APPDATA), so a
 smoke run never touches a real configuration. Exit status 0 means both
 checks passed.
 """
@@ -19,11 +20,31 @@ import tempfile
 from pathlib import Path
 
 TIMEOUT = 180
+_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">'
+    '<rect width="200" height="100" fill="#00ff00"/></svg>'
+)
 _SCRIPT = """\
 from pathlib import Path
-names = sorted(i.name for i in axross.localfs().list_dir({folder!r}))
-Path({marker!r}).write_text("listed " + ",".join(names), encoding="utf-8")
+from core import previews
+fs = axross.localfs()
+names = sorted(i.name for i in fs.list_dir({folder!r}) if i.name.endswith(".txt"))
+thumb = previews.thumbnail(fs, {svg!r}, edge=64, use_cache=False, allow_svg=True)
+Path({marker!r}).write_text(
+    "listed " + ",".join(names) + "; svg %dx%d" % (thumb.width, thumb.height),
+    encoding="utf-8",
+)
 """
+EXPECTED_MARKER = "listed a.txt; svg 64x32"
+
+
+def marker_problem(text: str) -> str | None:
+    """What is wrong with the marker the smoke script wrote, or ``None``."""
+    if text == EXPECTED_MARKER:
+        return None
+    if text.startswith("listed ") and "svg" not in text:
+        return f"script marker is {text!r}: no SVG thumbnail rendered"
+    return f"script marker is {text!r}, expected {EXPECTED_MARKER!r}"
 
 
 def find_binary(dist: Path) -> Path:
@@ -58,9 +79,13 @@ def smoke(dist: Path) -> list[str]:
         home.mkdir()
         folder.mkdir()
         (folder / "a.txt").write_text("a", encoding="utf-8")
+        svg = folder / "a.svg"
+        svg.write_text(_SVG, encoding="utf-8")
         marker = work / "marker.txt"
         script = work / "smoke_script.py"
-        script.write_text(_SCRIPT.format(folder=str(folder), marker=str(marker)), encoding="utf-8")
+        script.write_text(
+            _SCRIPT.format(folder=str(folder), svg=str(svg), marker=str(marker)), encoding="utf-8"
+        )
         env = _env(home)
         problems = []
         r = subprocess.run(
@@ -78,8 +103,9 @@ def smoke(dist: Path) -> list[str]:
         if r.returncode != 0:
             problems.append(f"--script exited {r.returncode}: {(r.stdout + r.stderr)[-500:]}")
         text = marker.read_text(encoding="utf-8") if marker.exists() else ""
-        if text != "listed a.txt":
-            problems.append(f"script marker is {text!r}, expected 'listed a.txt'")
+        problem = marker_problem(text)
+        if problem is not None:
+            problems.append(problem)
     return problems
 
 

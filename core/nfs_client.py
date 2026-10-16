@@ -19,6 +19,7 @@ import tempfile
 from datetime import datetime
 from typing import IO
 
+from core import posix_compat
 from core.backend import SessionLifecycle
 from core.path_policy import confined_path
 from core.subprocess_env import clean_child_env
@@ -118,7 +119,7 @@ class NfsSession(SessionLifecycle):
 
     def _run(self, cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
         """Run a command, prepending sudo if not root."""
-        if os.geteuid() != 0:
+        if posix_compat.effective_uid() != 0:
             cmd = ["sudo", "-n"] + cmd
         log.debug("Running: %s", " ".join(cmd))
         return subprocess.run(

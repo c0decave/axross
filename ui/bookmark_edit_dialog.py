@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.bookmarks import Bookmark, BookmarkGroup
+from ui.close_corner import add_close_corner
 from ui.icon_provider import BOOKMARK_COLORS, bookmark_icon_names, icon
 
 
@@ -171,6 +172,7 @@ class BookmarkEditDialog(QDialog):
         )
         self.resize(540, 420)
         self._build_ui()
+        add_close_corner(self)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -275,6 +277,7 @@ class GroupEditDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         root.addWidget(btns)
+        add_close_corner(self)
 
     def result(self) -> tuple[str, str, str]:
         """``(name, icon_name, color)``; an empty name keeps the old one

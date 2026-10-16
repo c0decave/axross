@@ -41,6 +41,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core import posix_compat
 from security.trail_walk_caps import budget_exhausted as _dir_budget_exhausted
 from security.trail_walk_caps import compute_dir_budget as _compute_dir_budget
 
@@ -584,7 +585,7 @@ def export_trail_jsonl(trail_name: str, dst_path: str | os.PathLike[str]) -> int
     )
     try:
         try:
-            os.fchmod(fd, 0o600)
+            posix_compat.fchmod_private(fd, 0o600)
         except OSError as exc:
             log.debug("trail export: cannot chmod tmpfile: %s", exc)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

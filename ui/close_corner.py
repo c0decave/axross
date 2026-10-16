@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QEvent, QObject, QSize
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
 
 from ui.icon_provider import icon
@@ -30,19 +30,51 @@ def make_close_corner(parent: QWidget, handler: Callable[[], None]) -> QToolButt
     return btn
 
 
-def add_close_corner(dialog: QDialog) -> QToolButton | None:
-    """Put the [x] in a slim row at the top of *dialog*'s vertical layout.
+_CORNER_MARGIN = 4
 
-    It calls ``dialog.reject`` (looked up when clicked, so a dialog that
-    overrides ``reject`` to stop a running job gets that behaviour). Dialogs
-    without a ``QVBoxLayout`` are left alone; calling it twice is harmless.
+
+class _KeepInCorner(QObject):
+    """Keeps an overlaid [x] at the dialog's top-right through resizes."""
+
+    def __init__(self, dialog: QDialog, button: QToolButton) -> None:
+        super().__init__(dialog)
+        self._button = button
+        dialog.installEventFilter(self)
+        self.place(dialog)
+
+    def place(self, dialog: QDialog) -> None:
+        size = self._button.sizeHint()
+        self._button.setGeometry(
+            dialog.width() - size.width() - _CORNER_MARGIN,
+            _CORNER_MARGIN,
+            size.width(),
+            size.height(),
+        )
+        self._button.raise_()
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self.place(watched)
+        return False
+
+
+def add_close_corner(dialog: QDialog) -> QToolButton | None:
+    """Put the [x] at the top right of *dialog*.
+
+    With a ``QVBoxLayout`` it gets a slim row of its own above the content;
+    any other dialog gets it laid over its top-right corner and kept there
+    on resize. It calls ``dialog.reject`` (looked up when clicked, so a
+    dialog that overrides ``reject`` to stop a running job gets that
+    behaviour). Calling it twice is harmless.
     """
     existing = dialog.findChild(QToolButton, "axCloseCorner")
     if existing is not None:
         return existing
     layout = dialog.layout()
     if not isinstance(layout, QVBoxLayout):
-        return None
+        btn = make_close_corner(dialog, lambda: dialog.reject())
+        _KeepInCorner(dialog, btn)
+        return btn
     row = QHBoxLayout()
     row.setContentsMargins(0, 0, 0, 0)
     row.addStretch(1)

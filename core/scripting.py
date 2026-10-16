@@ -32,6 +32,8 @@ from urllib.parse import unquote as _unquote
 from urllib.parse import urlsplit as _urlsplit
 from urllib.parse import urlunsplit as _urlunsplit
 
+from core import posix_compat
+
 if _TYPE_CHECKING:  # names of the type hints only; nothing here is imported at run time
     import os
     from collections.abc import Callable, Iterable
@@ -2713,7 +2715,7 @@ def save_script(name: str, source: str) -> str:
         text=False,
     )
     try:
-        os.fchmod(fd, 0o600)
+        posix_compat.fchmod_private(fd, 0o600)
         os.write(fd, encoded)
         os.fsync(fd)
     finally:

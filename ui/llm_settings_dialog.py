@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 
 from core import llm_profiles as LP
 from core.i18n import tr
+from ui.close_corner import add_close_corner
 
 
 class _ModelFetcher(QObject):
@@ -158,6 +159,7 @@ class LLMSettingsDialog(QDialog):
             self.profile_list.setCurrentRow(0)
         else:
             self._show_row(-1)
+        add_close_corner(self)
 
     # -- list --------------------------------------------------------------
     def _label(self, p: LP.LLMProfile) -> str:

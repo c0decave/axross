@@ -250,9 +250,13 @@ native protocol doesn't support them.
 
 Right-click → **Show Metadata…**, **Remove Metadata…** or **Export
 Metadata…** acts on the selected files and folders, or on the folder
-itself when nothing is selected. The metadata window lists file, group,
-field and value; it has a filter, *Copy* (selected rows as text),
-*Export…* (JSON or CSV) and *Remove Metadata*. Folders are read flat;
+itself when nothing is selected. The metadata window shows one row per
+file with its fields one after another as `key: value`; a double-click
+or right-click → *Properties…* opens every field of that file, grouped
+and one per line, and right-click → *Remove Metadata* cleans only the
+selected files. It has a filter, *Copy* (the fields of the selected
+files as text), *Export…* (JSON or CSV) and *Remove Metadata* for every
+file listed. Folders are read flat;
 tick *Include subfolders* to go deeper (at most 5000 files, depth 8,
 symlinked folders not followed). Reading and removing run in the
 background with progress and *Cancel*. In the image and media viewers

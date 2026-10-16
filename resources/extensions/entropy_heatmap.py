@@ -100,6 +100,9 @@ def activate(api):
             if more:
                 text += f"\nOnly the first {MAX_BYTES // (1024 * 1024)} MiB were measured."
             layout.addWidget(QLabel(text))
+            from ui.close_corner import add_close_corner
+
+            add_close_corner(dialog)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             dialog.show()
 

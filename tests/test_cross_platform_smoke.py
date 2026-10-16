@@ -33,6 +33,10 @@ def _isolated_env(home: Path) -> dict:
         XDG_STATE_HOME=str(home / ".local" / "state"),
         QT_QPA_PLATFORM="offscreen",
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        # On Windows Qt logs to the debugger, not stderr: a qFatal there
+        # left a bare exit code 0xC0000409 and nothing to read.
+        QT_FORCE_STDERR_LOGGING="1",
+        PYTHONFAULTHANDLER="1",
     )
     return env
 
@@ -61,21 +65,28 @@ def test_happy_the_main_window_opens_and_closes(tmp_path):
         tmp_path,
         """
         import time
+        def step(name):
+            print("step:", name, flush=True)
+        step("QApplication")
         from PyQt6.QtWidgets import QApplication
         app = QApplication([])
+        step("import ui.main_window")
         from ui.main_window import MainWindow
+        step("MainWindow()")
         win = MainWindow()
+        step("show")
         win.show()
         end = time.monotonic() + 1.0
         while time.monotonic() < end:
             app.processEvents()
         assert win.isVisible() and win._panes, "no pane"
+        step("close")
         win.close()
         app.processEvents()
         print("window ok")
         """,
     )
-    assert r.returncode == 0, r.stderr[-3000:]
+    assert r.returncode == 0, f"exit {r.returncode:#x}\n{r.stdout[-1500:]}\n{r.stderr[-3000:]}"
     assert "window ok" in r.stdout
 
 

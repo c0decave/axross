@@ -6,7 +6,9 @@
   and docs/screenshots holds no image that none of them shows.
 - A screenshot carries no metadata chunk (text, EXIF, time, ICC profile):
   only the pixels and their density.
-- pyproject names no operating system that no CI job runs on.
+- pyproject names no operating system that no CI job runs on, and names
+  (with the description and the language READMEs' binaries item) all three
+  the release builds for: Linux, macOS and Windows.
 """
 
 from __future__ import annotations
@@ -103,6 +105,26 @@ def test_happy_every_screenshot_is_metadata_free():
     assert pngs
     for png in pngs:
         assert set(png_chunks(png.read_bytes())) <= _PNG_CHUNKS_ALLOWED, png.name
+
+
+RELEASE_OSES = ("Linux", "macOS", "Windows")
+
+
+def test_happy_pyproject_names_every_os_a_release_is_built_for():
+    meta = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    classifiers = set(meta["project"]["classifiers"])
+    for trove in ("POSIX :: Linux", "MacOS", "Microsoft :: Windows"):
+        assert f"Operating System :: {trove}" in classifiers, trove
+    for name in RELEASE_OSES:
+        assert name in meta["project"]["description"], name
+
+
+@pytest.mark.parametrize("name", LANGUAGE_READMES)
+def test_happy_the_binaries_item_names_every_release_os(name):
+    text = (ROOT / name).read_text(encoding="utf-8")
+    item = next(p for p in text.split("\n\n") if "`axross-slim`" in p and "22." in p)
+    for os_name in RELEASE_OSES:
+        assert os_name in item, (name, os_name)
 
 
 # --- sad ------------------------------------------------------------------

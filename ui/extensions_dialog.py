@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 
 from core import extensions as EX
 from core.i18n import tr
+from ui.close_corner import add_close_corner
 
 _COLUMNS = ("On", "Name", "Version", "Source", "Description", "Status")
 
@@ -73,6 +74,7 @@ class ExtensionsDialog(QDialog):
         buttons.addWidget(box)
         layout.addLayout(buttons)
         self.refresh()
+        add_close_corner(self)
 
     # -- table ----------------------------------------------------------------
     def refresh(self) -> None:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "axross"
-description = "A multi-protocol file manager, scripting surface, and MCP server built with PyQt6"
+description = "A multi-protocol file manager, scripting surface, and MCP server built with PyQt6, for Linux, macOS and Windows"
 readme = { file = "README_PYPI.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 dynamic = ["version"]
@@ -27,6 +27,8 @@ classifiers = [
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: End Users/Desktop",
     "Intended Audience :: System Administrators",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",

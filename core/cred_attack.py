@@ -88,6 +88,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from core import posix_compat
 from core.profiles import ConnectionProfile
 from core.security_mode import current_policy, require_protocol_allowed
 
@@ -782,7 +783,7 @@ class _ResumeState:
             )
             try:
                 try:
-                    os.fchmod(fd, 0o600)
+                    posix_compat.fchmod_private(fd, 0o600)
                 except OSError:
                     pass
                 with os.fdopen(fd, "wb") as fh:

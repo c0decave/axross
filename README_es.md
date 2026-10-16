@@ -262,8 +262,9 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 22. **Headless y GUI desde la misma fuente.** Gestor PyQt6, servidor
     MCP stdio/HTTP, o el ejecutador `axross --script <fichero>`.
-    Binarios Linux de un solo archivo (`axross-full`, `axross-slim`)
-    en la página de releases; el AppImage y la imagen `Dockerfile.mcp`
+    Binarios de un solo archivo en la página de releases: Linux
+    (`axross-full`, `axross-slim`), macOS en Apple silicon y Windows x64
+    (`axross-slim`); el AppImage y la imagen `Dockerfile.mcp`
     se construyen desde el código ([docs/PACKAGING.md](docs/PACKAGING.md)),
     y esa imagen excluye PyQt6 explícitamente para mantenerse libre de
     copyleft.

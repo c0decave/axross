@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from core import proxy_settings
 from core.proxy import compose_proxy_type, parse_proxy_type
+from ui.close_corner import add_close_corner
 
 log = logging.getLogger(__name__)
 
@@ -222,6 +223,7 @@ class NetworkProxyDialog(QDialog):
         self._pac.textChanged.connect(self._update_enabled)
         self._load()
         self._update_enabled()
+        add_close_corner(self)
 
     # -- load / collect ------------------------------------------------
     def _load(self) -> None:

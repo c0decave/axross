@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+from core import posix_compat
 from core.backend import SessionLifecycle
 from core.local_fs import group_name, owner_name
 from core.path_policy import confined_path
@@ -447,7 +448,7 @@ class IscsiSession(SessionLifecycle):
 
     @staticmethod
     def _is_root() -> bool:
-        return os.geteuid() == 0
+        return posix_compat.effective_uid() == 0
 
     def _run_privileged(
         self,

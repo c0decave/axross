@@ -221,9 +221,13 @@ native Protokoll sie nicht kennt.
 
 Rechtsklick → **Show Metadata…**, **Remove Metadata…** oder **Export
 Metadata…** wirkt auf die ausgewählten Dateien und Ordner, ohne Auswahl
-auf den Ordner selbst. Das Metadata-Fenster zeigt Datei, Gruppe, Feld
-und Wert, mit Filter, *Copy* (ausgewählte Zeilen als Text), *Export…*
-(JSON oder CSV) und *Remove Metadata*. Ordner werden flach gelesen;
+auf den Ordner selbst. Das Metadata-Fenster zeigt je Datei eine Zeile,
+ihre Felder hintereinander als `key: value`; Doppelklick oder Rechtsklick
+→ *Properties…* öffnet alle Felder dieser Datei, gruppiert und eins pro
+Zeile, Rechtsklick → *Remove Metadata* bereinigt nur die ausgewählten
+Dateien. Dazu Filter, *Copy* (die Felder der ausgewählten Dateien als
+Text), *Export…* (JSON oder CSV) und *Remove Metadata* für alle
+gelisteten Dateien. Ordner werden flach gelesen;
 *Include subfolders* geht tiefer (höchstens 5000 Dateien, Tiefe 8,
 Symlink-Ordner werden nicht verfolgt). Lesen und Entfernen laufen im
 Hintergrund mit Fortschritt und *Cancel*. In Bild- und Media-Viewer

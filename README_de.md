@@ -256,8 +256,9 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 22. **Headless und GUI aus derselben Quelle.** PyQt6-Dateimanager,
     MCP-stdio/HTTP-Server, oder `axross --script <datei>`-CLI-
-    Runner. Single-File-Binaries für Linux (`axross-full`,
-    `axross-slim`) auf der Release-Page; AppImage und das
+    Runner. Single-File-Binaries auf der Release-Page: Linux
+    (`axross-full`, `axross-slim`), macOS auf Apple Silicon und Windows
+    x64 (`axross-slim`); AppImage und das
     `Dockerfile.mcp`-Image baut man aus dem Source
     ([docs/PACKAGING.md](docs/PACKAGING.md)), und dieses Image schließt
     PyQt6 explizit aus, um copyleft-frei zu bleiben.

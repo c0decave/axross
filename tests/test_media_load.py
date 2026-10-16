@@ -116,6 +116,19 @@ def test_happy_svg_thumbnail_when_allowed(tmp_path):
     assert result.mime == "image/svg+xml"
 
 
+def test_happy_svg_options_name_each_animation_kind(tmp_path):
+    # Qt 6.10.0 (the one in the 0.10.24 bundle) segfaults in
+    # QSvgRenderer.load() for every SVG when the options carry the combined
+    # DisableAnimations value (0xF0); the same kinds named one by one load.
+    from PyQt6.QtSvg import QtSvg
+
+    opts = P._svg_options(QtSvg)
+    O = QtSvg.Option
+    assert opts.value == (
+        O.Tiny12FeaturesOnly.value | O.DisableSMILAnimations.value | O.DisableCSSAnimations.value
+    )
+
+
 def test_sad_the_pane_thumbnail_still_refuses_svg_by_default(tmp_path):
     p = tmp_path / "a.svg"
     p.write_bytes(SVG_OK)
@@ -154,6 +167,26 @@ def test_edge_the_svg_gate_accepts_internal_references_and_embedded_rasters():
         b'<use xlink:href="#g"/><image href="data:image/png;base64,AAAA"/></svg>'
     )
     assert P.svg_refusal(body) is None
+
+
+def test_sad_svg_options_never_carry_the_combined_animation_value():
+    from PyQt6.QtSvg import QtSvg
+
+    combined = QtSvg.Option.DisableAnimations.value
+    single = QtSvg.Option.DisableSMILAnimations.value | QtSvg.Option.DisableCSSAnimations.value
+    assert P._svg_options(QtSvg).value & combined & ~single == 0
+
+
+def test_edge_svg_options_on_a_qt_without_animation_options():
+    import enum
+    import types
+
+    class Option(enum.Enum):  # Qt 6.7: no animation options yet
+        NoOption = 0
+        Tiny12FeaturesOnly = 1
+
+    assert P._svg_options(types.SimpleNamespace(Option=Option)).value == 1
+    assert P._svg_options(types.SimpleNamespace()) is None  # Qt < 6.7
 
 
 def test_edge_the_svg_gate_refuses_utf16_and_oversized_input(tmp_path):

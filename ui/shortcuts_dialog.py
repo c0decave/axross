@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.i18n import tr
+from ui.close_corner import add_close_corner
 
 #: (section, keys, description). Keys use QKeySequence's portable text.
 SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
@@ -157,6 +158,7 @@ class ShortcutsDialog(QDialog):
         layout.addWidget(self.empty_hint)
         layout.addWidget(buttons)
         self.tree.setFocus()
+        add_close_corner(self)
 
     def _apply_filter(self, text: str) -> None:
         words = text.lower().split()

@@ -128,25 +128,41 @@ class HelperTest(_Qt):
         self.assertIs(first, second)
         self.assertEqual(len(self._corner(dlg)), 1)
 
-    def test_a_dialog_without_a_vertical_layout_is_left_alone(self) -> None:
-        from PyQt6.QtWidgets import QDialog, QHBoxLayout
+    def test_a_dialog_without_a_vertical_layout_gets_it_over_the_corner(self) -> None:
+        # It used to be left without one; on a window manager without title
+        # buttons such a dialog had no visible close control at all.
+        from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel
 
         from ui.close_corner import add_close_corner
 
         dlg = QDialog()
-        QHBoxLayout(dlg)
+        QHBoxLayout(dlg).addWidget(QLabel("content"))
         self.addCleanup(dlg.deleteLater)
-        self.assertIsNone(add_close_corner(dlg))
-        self.assertEqual(len(self._corner(dlg)), 0)
+        btn = add_close_corner(dlg)
+        self.assertIsNotNone(btn)
+        for width in (500, 820):
+            dlg.resize(width, 300)
+            dlg.show()
+            self.app.processEvents()
+            pos = btn.mapTo(dlg, btn.rect().topLeft())
+            self.assertGreater(pos.x(), width * 0.8, width)
+            self.assertLess(pos.y(), 40)
+        self.assertEqual(len(self._corner(dlg)), 1)
 
-    def test_a_dialog_without_any_layout_is_left_alone(self) -> None:
+    def test_a_dialog_without_any_layout_gets_it_over_the_corner(self) -> None:
         from PyQt6.QtWidgets import QDialog
 
         from ui.close_corner import add_close_corner
 
         dlg = QDialog()
         self.addCleanup(dlg.deleteLater)
-        self.assertIsNone(add_close_corner(dlg))
+        btn = add_close_corner(dlg)
+        dlg.resize(400, 200)
+        dlg.show()
+        self.app.processEvents()
+        self.assertGreater(btn.mapTo(dlg, btn.rect().topLeft()).x(), 400 * 0.8)
+        btn.click()
+        self.assertEqual(dlg.result(), QDialog.DialogCode.Rejected)
 
 
 class RealDialogTest(_Qt):
@@ -232,3 +248,77 @@ class RealDialogTest(_Qt):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+_QT_PROMPTS = {"QMessageBox", "QInputDialog", "QProgressDialog", "QFileDialog", "QColorDialog"}
+
+
+def _dialogs_and_corners(path: Path) -> tuple[int, int]:
+    """(QDialog subclasses + bare ``QDialog(...)`` windows, add_close_corner calls)."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    dialogs = corners = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            bases = {ast.unparse(b).split(".")[-1] for b in node.bases}
+            if "QDialog" in bases:
+                dialogs += 1
+        elif isinstance(node, ast.Call):
+            name = ast.unparse(node.func).split(".")[-1]
+            if name == "QDialog":
+                dialogs += 1
+            elif name in ("add_close_corner", "make_close_corner"):
+                corners += 1
+    return dialogs, corners
+
+
+class EveryDialogHasTheCornerTest(_Qt):
+    """Every window the application opens as a QDialog - viewers, managers,
+    editors, settings, the ad-hoc ones in main_window and the bundled
+    extensions' - has the [x]. Found missing in 17 places (2026-10-16):
+    Scripting Guide, Shortcuts, Extensions, Connection, Network Proxy, Pack,
+    Permissions, Batch Rename, Bookmark and Group Edit, Create XLink, LLM and
+    Metadata Settings, Transfer Conflict, Paste SSH Config, the entropy
+    heatmap. Qt's own prompts (QMessageBox, QInputDialog, ...) keep their
+    buttons."""
+
+    def test_sad_no_module_opens_a_dialog_without_the_corner(self) -> None:
+        missing = []
+        for path in sorted(
+            [*(ROOT / "ui").glob("*.py"), *(ROOT / "resources" / "extensions").glob("*.py")]
+        ):
+            if path.name == "close_corner.py":
+                continue
+            dialogs, corners = _dialogs_and_corners(path)
+            if corners < dialogs:
+                missing.append(
+                    f"{path.relative_to(ROOT)}: {dialogs} dialog(s), {corners} corner(s)"
+                )
+        self.assertEqual(missing, [])
+
+    def test_happy_the_viewer_dialogs_have_it_once_built(self) -> None:
+        from PyQt6.QtWidgets import QToolButton
+
+        from ui.scripting_guide import ScriptingGuideDialog
+        from ui.shortcuts_dialog import ShortcutsDialog
+
+        for dlg in (ShortcutsDialog(), ScriptingGuideDialog()):
+            self.addCleanup(dlg.deleteLater)
+            found = dlg.findChildren(QToolButton, "axCloseCorner")
+            self.assertEqual(len(found), 1, type(dlg).__name__)
+
+    def test_edge_the_counter_sees_classes_bare_dialogs_and_calls(self) -> None:
+        import tempfile
+
+        src = (
+            "class A(QDialog):\n    pass\n"
+            "class B(QtWidgets.QDialog):\n    pass\n"
+            "class C(QMessageBox):\n    pass\n"
+            "d = QDialog(parent)\n"
+            "add_close_corner(d)\n"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+            fh.write(src)
+        self.addCleanup(lambda: Path(fh.name).unlink())
+        self.assertEqual(_dialogs_and_corners(Path(fh.name)), (3, 1))

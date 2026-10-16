@@ -28,6 +28,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.close_corner import add_close_corner
+
 if TYPE_CHECKING:
     from core.backend import FileBackend
     from models.file_item import FileItem
@@ -214,6 +216,7 @@ class PermissionsDialog(QDialog):
         buttons.accepted.connect(self._apply)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        add_close_corner(self)
 
     def _apply(self) -> None:
         error = self._widget.apply()

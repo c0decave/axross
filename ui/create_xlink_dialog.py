@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import xlink as XL
+from ui.close_corner import add_close_corner
 
 
 class CreateXlinkDialog(QDialog):
@@ -30,6 +31,7 @@ class CreateXlinkDialog(QDialog):
         self.setWindowTitle("Create XLink")
         self.resize(560, 220)
         self._build_ui(default_name)
+        add_close_corner(self)
 
     def _build_ui(self, default_name: str) -> None:
         root = QVBoxLayout(self)

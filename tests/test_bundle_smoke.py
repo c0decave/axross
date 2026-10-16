@@ -61,6 +61,17 @@ def test_sad_a_binary_that_fails_fails_the_smoke(tmp_path):
     assert "--version" in r.stdout + r.stderr
 
 
+def test_sad_a_script_that_renders_no_svg_fails():
+    # The 0.10.24 bundle listed folders fine and crashed on the first SVG
+    # thumbnail (Qt 6.10.0 and the combined DisableAnimations option).
+    sys.path.insert(0, str(SMOKE.parent))
+    import bundle_smoke
+
+    assert bundle_smoke.marker_problem(bundle_smoke.EXPECTED_MARKER) is None
+    problem = bundle_smoke.marker_problem("listed a.txt")
+    assert problem is not None and "svg" in problem.lower()
+
+
 def test_sad_a_script_that_writes_no_marker_fails(tmp_path):
     # --version works, --script does nothing.
     _fake_binary(tmp_path / "dist", "exit 0")

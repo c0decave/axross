@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from core.secure_storage import keep_unreadable_copy
+from core import posix_compat
 from security.visit_history_atomicity import (
     assert_lock_held as _assert_lock_held,
 )
@@ -244,7 +245,7 @@ def _save(visits: dict[str, HostVisit]) -> None:
     )
     try:
         try:
-            os.fchmod(fd, 0o600)
+            posix_compat.fchmod_private(fd, 0o600)
         except OSError as exc:
             log.debug("visit_history: cannot chmod tmpfile: %s", exc)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

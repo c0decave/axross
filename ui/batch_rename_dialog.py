@@ -25,6 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.close_corner import add_close_corner
+
 if TYPE_CHECKING:
     from core.backend import FileBackend
     from models.file_item import FileItem
@@ -57,6 +59,7 @@ class BatchRenameDialog(QDialog):
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
         self._setup_ui()
+        add_close_corner(self)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
