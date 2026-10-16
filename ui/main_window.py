@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QByteArray, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
@@ -37,6 +37,7 @@ from core.transfer_worker import TransferDirection
 from ui import themes
 from ui.bookmark_edit_dialog import BookmarkEditDialog
 from ui.close_corner import add_close_corner
+from ui.disconnected_pane import KIND_PANE, KIND_TERMINAL, DisconnectedPanePlaceholder
 from ui.file_pane import FilePaneWidget
 from ui.layout_utils import (
     equal_split_sizes,
@@ -85,7 +86,15 @@ def _read_json_file(path: Path | str, *, max_bytes: int = MAX_UI_STATE_BYTES):
 
 #: Real layouts are a few splitters deep; the rebuild recurses per level.
 MAX_SESSION_DEPTH = 32
+#: Splitters plus panes. Real layouts hold a dozen; every terminal entry
+#: starts a shell, so a hostile file must not ask for thousands.
+MAX_SESSION_NODES = 128
 MAX_RESTORED_WINDOW_PX = 100_000
+#: Base64 of QMainWindow.saveGeometry / saveState: a few hundred bytes.
+MAX_SAVED_WINDOW_STATE_CHARS = 64 * 1024
+#: window key of the File > "Restore Layout on Start" switch (default on).
+RESTORE_ON_START_KEY = "restore_layout_on_start"
+_SESSION_NODE_TYPES = ("splitter", "pane", "terminal")
 
 
 def _session_problem(data) -> str:
@@ -99,15 +108,24 @@ def _session_problem(data) -> str:
     if not isinstance(data.get("window", {}), dict):
         return "The window settings are not an object."
     stack = [(data.get("splitter", {}), 1)]
+    nodes = 0
     while stack:
         node, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_SESSION_NODES:
+            return f"The layout holds more than {MAX_SESSION_NODES} entries."
         if not isinstance(node, dict):
             return "A layout entry is not an object."
         if depth > MAX_SESSION_DEPTH:
             return f"The layout is nested deeper than {MAX_SESSION_DEPTH} levels."
-        if node.get("type", "splitter") == "pane":
+        kind = node.get("type", "splitter")
+        if kind not in _SESSION_NODE_TYPES:
+            return f"A layout entry has an unknown type: {str(kind)[:40]!r}."
+        if kind in ("pane", "terminal"):
             if not isinstance(node.get("path", "/"), str):
                 return "A pane path is not text."
+            if not isinstance(node.get("cwd", ""), (str, type(None))):
+                return "A terminal folder is not text."
             if not isinstance(node.get("profile", ""), (str, type(None))):
                 return "A pane profile name is not text."
             continue
@@ -116,6 +134,35 @@ def _session_problem(data) -> str:
             return "A splitter's children are not a list."
         stack.extend((child, depth + 1) for child in children)
     return ""
+
+
+def _decode_window_state(value) -> bytes | None:
+    """The bytes of a saved window geometry / dock state, or None when the
+    entry is missing, too large or not base64."""
+    if not isinstance(value, str) or not value or len(value) > MAX_SAVED_WINDOW_STATE_CHARS:
+        return None
+    import base64
+    import binascii
+
+    try:
+        return base64.b64decode(value.encode("ascii"), validate=True)
+    except (ValueError, binascii.Error):
+        return None
+
+
+def _defer_while_alive(widgets, fn) -> None:
+    """Run *fn* on the next event-loop pass unless one of *widgets* was
+    deleted meanwhile. PyQt6's singleShot has no context-object form, and a
+    closure on a deleted splitter raised RuntimeError from inside Qt, which
+    aborts the process (seen when a window was deleted right after a split)."""
+    from PyQt6 import sip
+
+    def run() -> None:
+        if any(sip.isdeleted(w) for w in widgets):
+            return
+        fn()
+
+    QTimer.singleShot(0, run)
 
 
 def _write_private_text(path: Path | str, text: str) -> None:
@@ -170,6 +217,8 @@ class MainWindow(QMainWindow):
 
         self._panes: list[FilePaneWidget] = []
         self._terminal_panes: list[TerminalPaneWidget] = []
+        # Remote panes of a restored layout, waiting for Reconnect.
+        self._pane_placeholders: list[DisconnectedPanePlaceholder] = []
         self._pane_profiles: dict[FilePaneWidget, ConnectionProfile] = {}
         self._pane_passwords: dict[FilePaneWidget, str] = {}
         self._pane_key_passphrases: dict[FilePaneWidget, str] = {}
@@ -233,12 +282,10 @@ class MainWindow(QMainWindow):
                 hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
         except (AttributeError, ImportError):  # Qt < 6.5: no signal
             pass
-        # Auto-load persistent visual settings (monochrome-icon
-        # toggle) from session.json. Deliberately a narrow loader
-        # — the full pane layout stays behind a manual "Restore
-        # Last Session" so a fresh app start doesn't surprise the
-        # user with yesterday's connection attempts. But preferences
-        # like "I prefer monochrome icons" should stick.
+        # Persistent visual settings (theme, monochrome icons, the
+        # "Restore Layout on Start" switch) from session.json. The pane
+        # layout itself is rebuilt by restore_layout_on_start, which
+        # main.py calls after construction - and which never connects.
         self._load_persistent_visual_settings()
 
         # Show hidden files by default
@@ -307,6 +354,18 @@ class MainWindow(QMainWindow):
         restore_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
         restore_action.triggered.connect(self._restore_session)
 
+        # On by default; persisted in session.json window.restore_layout_on_start.
+        # ``triggered`` (the user's click), not ``toggled``: loading the
+        # stored value must not write the file back.
+        self._restore_on_start_action = file_menu.addAction(tr("Restore &Layout on Start"))
+        self._restore_on_start_action.setCheckable(True)
+        self._restore_on_start_action.setChecked(True)
+        self._restore_on_start_action.setToolTip(
+            "Open the panes, terminals and docks of the last session on start. "
+            "Remote panes come back disconnected, with a Reconnect button."
+        )
+        self._restore_on_start_action.triggered.connect(self._set_restore_on_start)
+
         file_menu.addSeparator()
 
         recheck_keyring_action = file_menu.addAction(tr("Re-&detect System Keyring"))
@@ -369,6 +428,8 @@ class MainWindow(QMainWindow):
         cycle_back = layout_menu.addAction(tr("Cycle Previous"))
         cycle_back.setShortcut("Ctrl+Alt+Shift+L")
         cycle_back.triggered.connect(lambda: self.cycle_layout_preset(forward=False))
+
+        self._build_pane_activation_menu(view_menu.addMenu(tr("Activate &Pane")))
 
         view_menu.addSeparator()
 
@@ -562,6 +623,7 @@ class MainWindow(QMainWindow):
 
     def _setup_toolbar(self) -> None:
         toolbar = self.addToolBar("Main")
+        toolbar.setObjectName("axMainToolbar")  # saveState / restoreState key
         toolbar.setMovable(False)
 
         quick_btn = toolbar.addAction(tr("Quick Connect"))
@@ -831,6 +893,8 @@ class MainWindow(QMainWindow):
 
     def _setup_transfer_dock(self) -> None:
         self._transfer_dock = TransferDock(self._transfer_manager, self)
+        # saveState / restoreState find a dock by its object name.
+        self._transfer_dock.setObjectName("axTransferDock")
         self._install_dock_titlebar(
             self._transfer_dock,
             "Transfers",
@@ -840,6 +904,7 @@ class MainWindow(QMainWindow):
 
     def _setup_terminal_dock(self) -> None:
         self._terminal_dock = TerminalDock(self)
+        self._terminal_dock.setObjectName("axTerminalDock")
         self._install_dock_titlebar(
             self._terminal_dock,
             "Terminal",
@@ -851,6 +916,7 @@ class MainWindow(QMainWindow):
 
     def _setup_log_dock(self) -> None:
         self._log_dock = LogDock(self)
+        self._log_dock.setObjectName("axLogDock")
         self._install_dock_titlebar(
             self._log_dock,
             "Log",
@@ -864,6 +930,7 @@ class MainWindow(QMainWindow):
         from ui.repl_widget import ConsoleDock
 
         self._console_dock = ConsoleDock(self)
+        self._console_dock.setObjectName("axConsoleDock")
         self._install_dock_titlebar(
             self._console_dock,
             "Console",
@@ -1043,6 +1110,7 @@ class MainWindow(QMainWindow):
 
         if self._archive_dock is None:
             dock = QDockWidget(self)
+            dock.setObjectName("axArchiveDock")  # saveState names every dock
             dock.setAllowedAreas(
                 Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
             )
@@ -1735,7 +1803,7 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        QTimer.singleShot(0, _apply_equal_split)
+        _defer_while_alive((new_splitter, parent_splitter), _apply_equal_split)
         log.info("Opened terminal pane: %s", label)
 
     def _close_terminal_pane(self, term_pane: TerminalPaneWidget) -> None:
@@ -1745,10 +1813,15 @@ class MainWindow(QMainWindow):
 
         term_pane.shutdown()
         self._terminal_panes.remove(term_pane)
+        self._remove_from_splitter(term_pane)
+        log.info("Closed terminal pane: %s", term_pane.session_label)
 
-        parent = term_pane.parent()
-        term_pane.setParent(None)
-        term_pane.deleteLater()
+    def _remove_from_splitter(self, widget: QWidget) -> None:
+        """Take *widget* out of its splitter and delete it; a nested
+        splitter left with one child is replaced by that child."""
+        parent = widget.parent()
+        widget.setParent(None)
+        widget.deleteLater()
 
         # Clean up single-child splitter
         if isinstance(parent, QSplitter) and parent.count() == 1 and parent != self._root_splitter:
@@ -1760,7 +1833,74 @@ class MainWindow(QMainWindow):
                 remaining.show()
                 parent.deleteLater()
 
-        log.info("Closed terminal pane: %s", term_pane.session_label)
+    # --- Disconnected placeholders of a restored layout ---
+
+    def _make_placeholder(
+        self, splitter: QSplitter, kind: str, profile_name: str, path: str = ""
+    ) -> DisconnectedPanePlaceholder:
+        """A remote pane of a restored layout, in its place, not connected."""
+        known = self._profile_manager.get(profile_name) is not None
+        placeholder = DisconnectedPanePlaceholder(kind, profile_name, path, profile_known=known)
+        placeholder.reconnect_requested.connect(
+            lambda ph=placeholder: self._reconnect_placeholder(ph)
+        )
+        placeholder.close_requested.connect(lambda ph=placeholder: self._close_placeholder(ph))
+        splitter.addWidget(placeholder)
+        self._pane_placeholders.append(placeholder)
+        return placeholder
+
+    def _close_placeholder(self, placeholder: DisconnectedPanePlaceholder) -> None:
+        if placeholder not in self._pane_placeholders:
+            return
+        self._pane_placeholders.remove(placeholder)
+        self._remove_from_splitter(placeholder)
+
+    def _reconnect_placeholder(self, placeholder: DisconnectedPanePlaceholder) -> None:
+        """Reconnect: connect the profile exactly as opening it does - Quick
+        Connect for a file pane, the profile terminal for a terminal - and
+        put the result where the placeholder is."""
+        if placeholder not in self._pane_placeholders:
+            return
+        name = placeholder.profile_name
+        profile = self._profile_manager.get(name)
+        if profile is None:
+            message = f"The profile '{name}' no longer exists."
+            placeholder.set_note(message)
+            self.statusBar().showMessage(message, 5000)
+            return
+        if placeholder.kind == KIND_TERMINAL:
+            self._swap_placeholder(placeholder, self._preset_make_terminal_pane(name))
+            return
+        self._quick_connect_profile(
+            profile,
+            post_connect=lambda pane, ph=placeholder: self._land_reconnected_pane(ph, pane),
+        )
+
+    def _land_reconnected_pane(
+        self, placeholder: DisconnectedPanePlaceholder, pane: FilePaneWidget
+    ) -> None:
+        """post_connect of a Reconnect: the new pane takes the placeholder's
+        place and opens the saved folder. A placeholder closed meanwhile
+        leaves the pane where Quick Connect put it."""
+        if placeholder not in self._pane_placeholders:
+            return
+        self._swap_placeholder(placeholder, pane)
+        if placeholder.path:
+            pane.navigate_async(placeholder.path)
+
+    def _swap_placeholder(self, placeholder: DisconnectedPanePlaceholder, widget: QWidget) -> None:
+        self._pane_placeholders.remove(placeholder)
+        splitter = placeholder.parent()
+        if widget.parent() is not None:
+            widget.setParent(None)  # Quick Connect put it into the root splitter
+        if isinstance(splitter, QSplitter):
+            # The new widget inherits the slot's geometry and visibility;
+            # the placeholder leaves the splitter.
+            splitter.replaceWidget(splitter.indexOf(placeholder), widget)
+        else:
+            self._root_splitter.addWidget(widget)
+        widget.show()
+        placeholder.deleteLater()
 
     @staticmethod
     def _splitter_extent(widget: QWidget, orientation: Qt.Orientation) -> int:
@@ -1797,7 +1937,7 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        QTimer.singleShot(0, _apply_equal_split)
+        _defer_while_alive((new_splitter, parent_splitter), _apply_equal_split)
 
     def _close_active_pane(self) -> None:
         if self._active_pane:
@@ -1835,12 +1975,15 @@ class MainWindow(QMainWindow):
         self._panes.append(pane)
         return pane
 
-    def _preset_make_terminal_pane(self, profile_name: str) -> "TerminalPaneWidget":
-        """Factory hook for layout_presets — returns a TerminalPaneWidget.
-        ``profile_name`` is "local" for a local shell or a saved
-        connection profile name for an SSH/Telnet session."""
+    def _preset_make_terminal_pane(
+        self, profile_name: str, cwd: str | None = None
+    ) -> "TerminalPaneWidget":
+        """Factory hook for layout_presets and the session restore — returns
+        a TerminalPaneWidget. ``profile_name`` is "local" for a local shell
+        (started in *cwd* when given) or a saved connection profile name
+        for an SSH/Telnet session, which connects as the pane starts."""
         if profile_name == "local":
-            term = TerminalPaneWidget(label="Local Shell")
+            term = TerminalPaneWidget(label="Local Shell", cwd=cwd)
         else:
             profile = self._profile_manager.get(profile_name)
             term = TerminalPaneWidget(
@@ -1848,6 +1991,9 @@ class MainWindow(QMainWindow):
                 profile=profile,
                 connection_manager=self._connection_manager,
             )
+        # As _embed_terminal_pane does: without it the pane's close button
+        # did nothing and its shell ran until the window closed.
+        term.close_requested.connect(lambda tp=term: self._close_terminal_pane(tp))
         self._terminal_panes.append(term)
         return term
 
@@ -1879,8 +2025,11 @@ class MainWindow(QMainWindow):
                 term.close()
             except Exception:  # noqa: BLE001
                 pass
+        for placeholder in list(self._pane_placeholders):
+            placeholder.close()  # holds nothing; setCentralWidget deletes it
         self._panes.clear()
         self._terminal_panes.clear()
+        self._pane_placeholders.clear()
         self._pane_profiles.clear()
         self._pane_passwords.clear()
         self._pane_key_passphrases.clear()
@@ -1895,6 +2044,35 @@ class MainWindow(QMainWindow):
         if len(self._panes) >= 2:
             self._target_pane = self._panes[1]
         self._refresh_pane_styles()
+
+    def _build_pane_activation_menu(self, menu) -> None:
+        """On Click, or after resting the mouse 1, 2 or 3 s in a pane."""
+        from PyQt6.QtGui import QActionGroup
+
+        from core import pane_activation as PA
+
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current = PA.activation()
+        choices = [(PA.CLICK, tr("On Click"))] + [
+            (n, tr("After {n} s in the Pane").format(n=n)) for n in PA.HOVER_SECONDS
+        ]
+        self._pane_activation_actions = {}
+        for value, label in choices:
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(value == current)
+            group.addAction(action)
+            action.triggered.connect(lambda _checked=False, v=value: self._set_pane_activation(v))
+            self._pane_activation_actions[value] = action
+
+    def _set_pane_activation(self, value) -> None:
+        from core import pane_activation as PA
+
+        try:
+            PA.set_activation(value)
+        except (OSError, ValueError) as exc:
+            log.warning("Could not store the pane activation: %s", exc)
 
     def apply_layout_preset(self, name: str) -> None:
         """Public entry point — set the central layout from a named
@@ -2066,7 +2244,7 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        QTimer.singleShot(0, _apply_equal_split)
+        _defer_while_alive((new_splitter, target_parent), _apply_equal_split)
 
         # Clean up empty parent splitters left behind
         if isinstance(source_parent, QSplitter) and source_parent != self._root_splitter:
@@ -3154,11 +3332,12 @@ class MainWindow(QMainWindow):
 
     def _load_persistent_visual_settings(self) -> None:
         """Read the subset of session.json that represents user
-        preferences which should persist across launches even
-        without an explicit "Restore Session". Today: monochrome
-        icons. Keeps _restore_session for everything stateful
-        (open panes, active connections) so a fresh start doesn't
-        auto-reconnect to anything.
+        preferences: theme, monochrome icons and the "Restore Layout on
+        Start" switch. The layout itself is restore_layout_on_start's job.
+
+        Guarantee kept from before the layout came back on start: a fresh
+        start never connects to anything. Remote panes of the restored
+        layout are placeholders until the user clicks Reconnect.
         """
         try:
             if not self._SESSION_FILE.exists():
@@ -3176,6 +3355,9 @@ class MainWindow(QMainWindow):
             return
         if win.get("ui_theme"):
             self._apply_theme(win["ui_theme"])
+        # Only a stored False switches it off; anything else is the default.
+        if win.get(RESTORE_ON_START_KEY) is False and hasattr(self, "_restore_on_start_action"):
+            self._restore_on_start_action.setChecked(False)
         mono = bool(win.get("monochrome_icons", False))
         if mono and hasattr(self, "_monochrome_action"):
             # setChecked fires the toggle handler → icons
@@ -3204,6 +3386,11 @@ class MainWindow(QMainWindow):
                 "ui_theme": self._current_theme,
                 "compact": self._compact_mode,
                 "monochrome_icons": _is_mono(),
+                RESTORE_ON_START_KEY: self._restore_on_start_action.isChecked(),
+                # Base64 of Qt's own formats: window geometry and the dock
+                # layout (which docks are open, where, and how large).
+                "geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
+                "dock_state": bytes(self.saveState().toBase64()).decode("ascii"),
             }
         )
         session["splitter"] = self._serialize_splitter(self._root_splitter)
@@ -3218,22 +3405,53 @@ class MainWindow(QMainWindow):
             log.warning("Could not save session: %s", e)
 
     def _serialize_splitter(self, splitter: QSplitter) -> dict:
-        """Recursively serialize a splitter tree to JSON-friendly dict."""
+        """Recursively serialize a splitter tree to JSON-friendly dict.
+
+        File panes, terminal panes and disconnected placeholders are
+        written; anything else is left out together with its size, so the
+        sizes still match the children on restore."""
         children = []
+        sizes = []
+        all_sizes = splitter.sizes()
         for i in range(splitter.count()):
             child = splitter.widget(i)
             if isinstance(child, QSplitter):
-                children.append(self._serialize_splitter(child))
+                entry = self._serialize_splitter(child)
             elif isinstance(child, FilePaneWidget):
-                children.append(self._serialize_pane(child))
+                entry = self._serialize_pane(child)
+            elif isinstance(child, TerminalPaneWidget):
+                entry = self._serialize_terminal(child)
+            elif isinstance(child, DisconnectedPanePlaceholder):
+                entry = child.serialize()
+            else:
+                entry = None
+            if entry is None:
+                continue
+            children.append(entry)
+            sizes.append(all_sizes[i] if i < len(all_sizes) else 0)
         return {
             "type": "splitter",
             "orientation": "horizontal"
             if splitter.orientation() == Qt.Orientation.Horizontal
             else "vertical",
-            "sizes": splitter.sizes(),
+            "sizes": sizes,
             "children": children,
         }
+
+    @staticmethod
+    def _serialize_terminal(term: TerminalPaneWidget) -> dict | None:
+        """A local shell with its folder, or the profile of a remote one. A
+        shell on a transport without a profile cannot be opened again and
+        is left out."""
+        if term.is_local:
+            entry: dict = {"type": "terminal", "local": True}
+            cwd = term.working_directory()
+            if cwd:
+                entry["cwd"] = cwd
+            return entry
+        if term.profile is not None:
+            return {"type": "terminal", "profile": term.profile.name}
+        return None
 
     def _serialize_pane(self, pane: FilePaneWidget) -> dict:
         """Serialize a single pane's state."""
@@ -3253,7 +3471,9 @@ class MainWindow(QMainWindow):
         return entry
 
     def _restore_session(self) -> None:
-        """Restore panes and layout from the saved session file."""
+        """File > Restore Last Session: rebuild the saved layout now. Asked
+        for by the user, so remote file panes connect (prompting for what
+        they need) and problems are reported in a dialog."""
         try:
             data = _read_json_file(self._SESSION_FILE)
         except (OSError, ValueError) as e:
@@ -3275,70 +3495,146 @@ class MainWindow(QMainWindow):
             )
             return
 
-        splitter_data = data.get("splitter", {})
-        if not splitter_data.get("children"):
+        if not data.get("splitter", {}).get("children"):
             QMessageBox.information(
                 self,
                 "Restore Session",
                 "Saved session is empty.",
             )
             return
+        self._apply_session(data, connect_remote=True)
+
+    def restore_layout_on_start(self) -> bool:
+        """Rebuild the last session's layout as the application starts
+        (main.py calls it before the window is shown). True when a layout
+        was restored.
+
+        Never connects and never asks: remote file panes and profile
+        terminals come back as DisconnectedPanePlaceholder with a
+        Reconnect button; local panes and local shells come back as they
+        were. Switched off (File > Restore Layout on Start), or with a
+        missing, unreadable or invalid session.json, the default layout
+        stays and the reason goes to the log only."""
+        if not self._restore_on_start_action.isChecked():
+            log.info("Layout restore on start is switched off")
+            return False
+        try:
+            data = _read_json_file(self._SESSION_FILE)
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError) as exc:
+            log.warning("Layout not restored: cannot read %s: %s", self._SESSION_FILE, exc)
+            return False
+        problem = _session_problem(data)
+        if problem:
+            log.warning("Layout not restored from %s: %s", self._SESSION_FILE, problem)
+            return False
+        if not data.get("splitter", {}).get("children"):
+            return False
+        try:
+            self._apply_session(data, connect_remote=False)
+        except Exception:  # noqa: BLE001 - a bad layout must not stop the start
+            log.exception("Layout restore failed; starting with the default layout")
+            self._reset_to_default_layout()
+            return False
+        return True
+
+    def _reset_to_default_layout(self) -> None:
+        """One local pane in a fresh root splitter, whatever was there."""
+        self._preset_tear_down_existing()
+        self._setup_central()
+        self._refresh_after_preset()
+
+    def _set_restore_on_start(self, checked: bool) -> None:
+        """File > Restore Layout on Start: stored at once, not only on close."""
+        try:
+            previous = _read_json_file(self._SESSION_FILE)
+        except (OSError, ValueError):
+            previous = None
+        session = previous if isinstance(previous, dict) else {}
+        window = session.get("window")
+        if not isinstance(window, dict):
+            window = {}
+        window[RESTORE_ON_START_KEY] = bool(checked)
+        session["window"] = window
+        try:
+            _write_private_text(self._SESSION_FILE, json.dumps(session, indent=2))
+        except OSError as exc:
+            log.warning("Could not store the layout restore switch: %s", exc)
+
+    def _tear_down_for_restore(self) -> None:
+        """Close every pane, terminal and placeholder before a rebuild."""
+        # Terminal panes first: clearing the splitters below would delete a
+        # nested one with its splitter while it stayed listed and its shell
+        # ran on, and closeEvent then failed on the dead widget.
+        for term in list(self._terminal_panes):
+            self._close_terminal_pane(term)
+        for placeholder in list(self._pane_placeholders):
+            self._close_placeholder(placeholder)
+
+        # Close all existing panes
+        for pane in list(self._panes):
+            if len(self._panes) > 1:
+                self._close_pane(pane)
+
+        # Remove the last remaining pane manually (including SSH terminal cleanup)
+        if self._panes:
+            last = self._panes[0]
+            profile = self._pane_profiles.pop(last, None)
+            self._pane_passwords.pop(last, None)
+            self._pane_key_passphrases.pop(last, None)
+            if _is_ssh_session(last.backend):
+                self._terminal_dock.remove_ssh_session(last.backend.name)
+            if profile:
+                self._connection_manager.release(profile)
+            self._panes.remove(last)
+            last.setParent(None)
+            last.deleteLater()
+            self._active_pane = None
+            self._target_pane = None
+
+        # Clear root splitter
+        while self._root_splitter.count() > 0:
+            w = self._root_splitter.widget(0)
+            w.setParent(None)
+
+    def _apply_session(self, data: dict, *, connect_remote: bool) -> None:
+        """Replace the layout and window state with a validated session
+        (see _session_problem). *connect_remote* False: remote panes become
+        placeholders instead of connecting."""
+        splitter_data = data.get("splitter", {})
 
         # Pause reconnect timer to avoid race conditions during restore
         self._reconnect_timer.stop()
-
         try:
-            # Terminal panes are not part of a saved session. Close them
-            # properly first: clearing the splitters below would delete a
-            # nested one with its splitter while it stayed listed and its
-            # shell ran on, and closeEvent then failed on the dead widget.
-            for term in list(self._terminal_panes):
-                self._close_terminal_pane(term)
-
-            # Close all existing panes
-            for pane in list(self._panes):
-                if len(self._panes) > 1:
-                    self._close_pane(pane)
-
-            # Remove the last remaining pane manually (including SSH terminal cleanup)
-            if self._panes:
-                last = self._panes[0]
-                profile = self._pane_profiles.pop(last, None)
-                self._pane_passwords.pop(last, None)
-                self._pane_key_passphrases.pop(last, None)
-                if _is_ssh_session(last.backend):
-                    self._terminal_dock.remove_ssh_session(last.backend.name)
-                if profile:
-                    self._connection_manager.release(profile)
-                self._panes.remove(last)
-                last.setParent(None)
-                last.deleteLater()
-                self._active_pane = None
-                self._target_pane = None
-
-            # Clear root splitter
-            while self._root_splitter.count() > 0:
-                w = self._root_splitter.widget(0)
-                w.setParent(None)
-
+            self._tear_down_for_restore()
             # Rebuild from saved layout
-            active_pane, target_pane = self._restore_splitter(self._root_splitter, splitter_data)
+            active_pane, target_pane = self._restore_splitter(
+                self._root_splitter, splitter_data, connect_remote=connect_remote
+            )
         finally:
             # Always restart reconnect timer
             self._reconnect_timer.start()
 
-        # Restore window size
         win = data.get("window", {})
-        width, height = win.get("width"), win.get("height")
-        if (
-            isinstance(width, int)
-            and isinstance(height, int)
-            and not isinstance(width, bool)
-            and not isinstance(height, bool)
-            and 0 < width <= MAX_RESTORED_WINDOW_PX
-            and 0 < height <= MAX_RESTORED_WINDOW_PX
-        ):
-            self.resize(width, height)
+        # Window geometry and dock layout in Qt's own format; restoreGeometry
+        # and restoreState refuse data they cannot parse. Without them
+        # (sessions of 0.10.10 and older) the saved size is used.
+        geometry = _decode_window_state(win.get("geometry"))
+        if geometry is None or not self.restoreGeometry(QByteArray(geometry)):
+            width, height = win.get("width"), win.get("height")
+            if (
+                isinstance(width, int)
+                and isinstance(height, int)
+                and not isinstance(width, bool)
+                and not isinstance(height, bool)
+                and 0 < width <= MAX_RESTORED_WINDOW_PX
+                and 0 < height <= MAX_RESTORED_WINDOW_PX
+            ):
+                self.resize(width, height)
+        dock_state = _decode_window_state(win.get("dock_state"))
+        if dock_state is not None and not self.restoreState(QByteArray(dock_state)):
+            log.info("Session restore: the saved dock layout was not usable")
         self._compact_action.setChecked(bool(win.get("compact", False)))
         # ``theme`` is the pre-modern key and is deliberately ignored:
         # the modern theme became the default for everyone, and the old
@@ -3360,10 +3656,10 @@ class MainWindow(QMainWindow):
         elif self._panes:
             self._active_pane = self._panes[0]
 
-        if target_pane and target_pane in self._panes:
+        if target_pane and target_pane in self._panes and target_pane is not self._active_pane:
             self._target_pane = target_pane
         elif len(self._panes) > 1:
-            self._target_pane = self._panes[1]
+            self._target_pane = next(p for p in self._panes if p is not self._active_pane)
 
         # Force all panes visible (Qt may hide widgets during reparenting)
         for pane in self._panes:
@@ -3371,10 +3667,15 @@ class MainWindow(QMainWindow):
         self._root_splitter.show()
 
         self._refresh_pane_styles()
-        log.info("Session restored (%d panes)", len(self._panes))
+        log.info(
+            "Session restored (%d panes, %d terminals, %d disconnected)",
+            len(self._panes),
+            len(self._terminal_panes),
+            len(self._pane_placeholders),
+        )
 
     def _restore_splitter(
-        self, splitter: QSplitter, data: dict
+        self, splitter: QSplitter, data: dict, *, connect_remote: bool = True
     ) -> tuple[FilePaneWidget | None, FilePaneWidget | None]:
         """Recursively restore a splitter tree from serialized data.
 
@@ -3390,21 +3691,31 @@ class MainWindow(QMainWindow):
             splitter.setOrientation(Qt.Orientation.Horizontal)
 
         for child in data.get("children", []):
-            if child.get("type") == "splitter":
+            kind = child.get("type", "splitter")
+            if kind == "splitter":
                 child_splitter = QSplitter()
                 splitter.addWidget(child_splitter)
-                a, t = self._restore_splitter(child_splitter, child)
+                a, t = self._restore_splitter(
+                    child_splitter, child, connect_remote=connect_remote
+                )
+                if child_splitter.count() == 0:
+                    # Nothing restorable inside: no empty splitter on screen.
+                    child_splitter.setParent(None)
+                    child_splitter.deleteLater()
+                    continue
                 if a:
                     active_pane = a
                 if t:
                     target_pane = t
-            elif child.get("type") == "pane":
-                pane = self._restore_pane(splitter, child)
+            elif kind == "pane":
+                pane = self._restore_pane(splitter, child, connect_remote=connect_remote)
                 if pane:
                     if child.get("active"):
                         active_pane = pane
                     if child.get("target"):
                         target_pane = pane
+            elif kind == "terminal":
+                self._restore_terminal(splitter, child, connect_remote=connect_remote)
 
         # Restore splitter sizes, ensuring no pane gets 0 pixels
         sizes = sanitize_splitter_sizes(data.get("sizes"), splitter.count())
@@ -3419,13 +3730,38 @@ class MainWindow(QMainWindow):
 
         return active_pane, target_pane
 
-    def _restore_pane(self, splitter: QSplitter, data: dict) -> FilePaneWidget | None:
-        """Restore a single pane from serialized data."""
+    @staticmethod
+    def _existing_local_folder(path) -> str:
+        """*path* when it is a local folder, else the home folder: a folder
+        removed since the session was saved is no error worth a dialog."""
+        if isinstance(path, str) and path and os.path.isdir(path):
+            return path
+        return str(Path.home())
+
+    def _restore_terminal(self, splitter: QSplitter, data: dict, *, connect_remote: bool) -> None:
+        """A local shell (fresh, in its saved folder or home), or a profile
+        terminal: a placeholder unless *connect_remote*."""
+        profile_name = data.get("profile")
+        if data.get("local") or not profile_name:
+            cwd = self._existing_local_folder(data.get("cwd"))
+            splitter.addWidget(self._preset_make_terminal_pane("local", cwd=cwd))
+            return
+        if not connect_remote:
+            self._make_placeholder(splitter, KIND_TERMINAL, profile_name)
+            return
+        splitter.addWidget(self._preset_make_terminal_pane(profile_name))
+
+    def _restore_pane(
+        self, splitter: QSplitter, data: dict, *, connect_remote: bool = True
+    ) -> FilePaneWidget | None:
+        """Restore a single pane from serialized data. A remote pane connects
+        only with *connect_remote*; else it becomes a placeholder (None)."""
         path = data.get("path", "/")
         profile_name = data.get("profile")
 
         if data.get("local") or not profile_name:
             # Local pane
+            path = self._existing_local_folder(path)
             pane = self._add_pane_to_splitter(splitter, LocalFS())
             try:
                 pane.navigate_async(path)
@@ -3434,6 +3770,10 @@ class MainWindow(QMainWindow):
                     "Session restore: failed to navigate local pane to %s", path, exc_info=True
                 )
             return pane
+
+        if not connect_remote:
+            self._make_placeholder(splitter, KIND_PANE, profile_name, path)
+            return None
 
         # Remote pane — try to reconnect
         profile = self._profile_manager.get(profile_name)

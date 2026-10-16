@@ -7,6 +7,17 @@
 **One UI for 30+ file, cloud, network, legacy, database, scripting,
 and MCP workflows.**
 
+- **30+ protocols in one window** — SFTP, SMB, S3, WebDAV, cloud drives, IMAP, Git, databases and more.
+- **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
+- **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
+- **Built-in Python scripting** — REPL, Scripts dock and 32 ready-made scripts on one `axross.*` API.
+- **LLM-ready via MCP** — an agent drives axross over stdio or HTTP, read-only unless you allow writes.
+- **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
+- **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
+- **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
+- **Resumable transfers** — survive Ctrl-C and VPN drops, resume from the last verified segment.
+- **Install in one line** — `pip install axross`, or a single-file binary from the release page.
+
 Axross is a multi-protocol file manager and security toolkit built
 with Python and PyQt6. It gives you a split-pane desktop UI, a
 headless MCP server mode for LLM agents, and a public `axross.*`

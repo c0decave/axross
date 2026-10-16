@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -77,8 +78,13 @@ class MetadataBatchTest(_Tree):
     def test_sad_a_crash_mid_walk_keeps_the_rows_written_so_far(self) -> None:
         calls = []
         real = LocalFS.list_dir
+        walker = threading.get_ident()
 
         def flaky(fs, path):
+            # Count only this walk: a thread an earlier test left running
+            # lists through LocalFS too, and once took the fourth call.
+            if threading.get_ident() != walker or not str(path).startswith(str(self.root)):
+                return real(fs, path)
             calls.append(path)
             if len(calls) == 4:
                 raise RuntimeError("backend exploded")

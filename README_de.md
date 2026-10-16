@@ -7,6 +7,17 @@
 **Eine UI, 30+ Protokolle, ein eingebetteter Python-REPL, und eine
 MCP-Tool-Oberfläche, mit der ein LLM das Ganze fernsteuern kann.**
 
+- **30+ Protokolle in einem Fenster** — SFTP, SMB, S3, WebDAV, Cloud-Drives, IMAP, Git, Datenbanken und mehr.
+- **Kopieren zwischen beliebigen Backends** — S3 → SFTP, WebDAV → SMB, direkt, ohne Umweg über die lokale Platte.
+- **Multi-Pane-Layout im Commander-Stil** — beliebig viele Split-Panes, Layout-Presets, Drag & Drop.
+- **Eingebautes Python-Scripting** — REPL, Scripts-Dock und 32 fertige Scripts auf einer `axross.*`-API.
+- **Bereit für LLMs via MCP** — ein Agent steuert axross über stdio oder HTTP, read-only, bis du Schreiben erlaubst.
+- **Duplikate finden, Metadaten entfernen** — Duplicate Finder per Content-Hash, EXIF/GPS raus vor dem Teilen.
+- **Verschlüsselung ohne Klartext auf der Platte** — `.axenc`-Overlay auf jedem Backend, entschlüsselt nur in den RAM.
+- **Sicher per Default** — Preview vor Delete/Move, Operation-Journal, `paranoid` Mode, Proxies mit SSRF-Guard.
+- **Resumable Transfers** — überstehen Ctrl-C und VPN-Abbrüche, weiter ab dem letzten verifizierten Segment.
+- **Installation in einer Zeile** — `pip install axross` oder ein Single-File-Binary von der Release-Page.
+
 Axross ist ein Multi-Protokoll-Dateimanager und Security-Toolkit auf
 Basis von Python und PyQt6. SFTP, SMB, S3, WebDAV, Cloud-Drives, IMAP,
 Usenet, Cisco IOS, Drucker-FS, BSD r-services — alle in derselben
@@ -19,34 +30,49 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 ## Screenshots
 
-![Connect-to-Server-Dialog im Modern-Theme mit offener Protokoll-Liste](docs/screenshots/modern-connect-dialog.png)
+![Local-, SFTP-, FTP- und WebDAV-Pane in einem Fenster](docs/screenshots/remote-panes.png)
 
-*Modern-Theme (der Default).* **File → Connection Manager…** (`Ctrl+Shift+N`) mit offener
-Protokoll-Liste: alle Backends stehen in einer Liste, und ein Backend,
-dessen optionale Dependency fehlt, nennt das Extra, das sie installiert —
-hier MTP, Subversion, iSCSI und rsh/rcp (`pip install axross[mtp]` …).
-Hinter dem Dialog: die Bookmarks-Sidebar und zwei Panes, das grüne
-**TARGET** und das blaue **SOURCE**.
+*Ein Fenster, vier Dateisysteme.* Ein lokaler Ordner und ein SFTP-Share nebeneinander in der Thumbnail-Ansicht, darunter ein FTP-Webroot und ein WebDAV-Ordner. Jedes Pane nennt seine Verbindung; das blaue **SOURCE** und das grüne **TARGET** legen die Richtung für Copy (F5) und Move (F6) fest.
 
-![Fünf lokale Panes im Amber Mode](docs/screenshots/amber-five-panes.png)
+![Upload von einem lokalen Pane nach SFTP mit dem Transfers-Dock](docs/screenshots/remote-transfer.png)
 
-*Amber Mode.* Fünf Panes in einem Fenster — `/proc`, `/media`,
-`/efi/grub`, `/` und `/boot/grub`. Das blaue **SOURCE**- und das grüne
-**TARGET**-Pane legen die Richtung für Copy (F5) und Move (F6) fest, hier
-`/boot/grub` → `/efi/grub`. Jedes Pane hat eigene Pfadleiste,
-Live-Filter, Spalten für Permissions und Owner, die Anzahl der Einträge
-und den freien Platz seines Dateisystems.
+*Upload nach SFTP.* Vier Fotos vom lokalen Pane auf das NAS kopiert; das Transfers-Dock zeigt jede Datei mit Richtung, Größe und Status.
 
-![Zwei Panes und die Bookmarks-Sidebar im Hacker Mode](docs/screenshots/hacker-dual-pane.png)
+![Vier File-Panes und zwei lokale Terminals im Hacker Mode](docs/screenshots/quad-files-shells.png)
 
-*Hacker Mode.* Das klassische Zwei-Pane-Layout mit Bookmarks-Sidebar:
-links `/` als **TARGET**, rechts `/proc` als **SOURCE**. Symlinks wie
-`bin`, `lib`, `lib64` und `sbin` zeigen ihren eigenen Mode
-`lrwxrwxrwx`. Das Theme wechselt man unter **View → Theme**.
+*Hacker Mode.* Vier File-Panes und zwei lokale Terminals in einem Layout. Terminals sitzen im Splitter neben den File-Panes; die Presets `dev-shells`, `triage` und `shells-quad` ordnen sie an.
+
+![Das Layout-Preset quad-files im Amber Mode](docs/screenshots/quad-files.png)
+
+*Amber Mode.* Das Layout-Preset `quad-files`: vier Panes, jedes mit eigener Pfadleiste, Filter, Spalten für Permissions und Owner. `Ctrl+Alt+L` wechselt durch die Presets.
+
+![Das Scripts-Dock mit einem eigenen Script](docs/screenshots/scripts-panel.png)
+
+*Scripts-Dock.* Eigene Scripts neben den read-only Beispielen, geschrieben gegen die `axross.*`-API; sie laufen im Dock oder in der Console.
+
+![Der Duplicate Finder mit zwei Gruppen](docs/screenshots/duplicate-finder.png)
+
+*Duplicate Finder.* Identische Dateien per Content-Hash, gruppiert; die älteste Kopie jeder Gruppe steht fett.
+
+![Metadaten eines Fotos mit EXIF- und GPS-Daten](docs/screenshots/metadata.png)
+
+*Metadaten.* EXIF-Felder und GPS-Position eines Fotos; **Remove Metadata** entfernt sie vor dem Teilen — in place oder als bereinigte Kopie (**Tools → Metadata Settings…**).
+
+![Das Analysis-Dock erklärt eine CSV-Datei](docs/screenshots/analysis.png)
+
+*Analysis-Dock.* Das optionale Extra `sift` erklärt die gewählte Datei — hier eine CSV, ganz ohne LLM.
+
+![Zwei Panes in der Thumbnail-Ansicht, helles Theme](docs/screenshots/thumbnails.png)
+
+*Modern-Light-Theme.* Zwei Panes in der Thumbnail-Ansicht.
+
+![Das Log-Dock nach Copy und Move](docs/screenshots/log-dock.png)
+
+*Log-Dock.* Jedes Copy und Move wird mit seinem Integrity-Check (sha256) und einem Eintrag im Operation-Journal protokolliert.
 
 ---
 
-## 22 Highlights
+## 23 Highlights
 
 1. **30+ Protokolle, eine konsistente UI.** SFTP/SCP, FTP/FTPS,
    SMB/CIFS, WebDAV, S3-kompatibel, Rsync, NFS, Azure Blob/Files,
@@ -230,9 +256,17 @@ links `/` als **TARGET**, rechts `/proc` als **SOURCE**. Symlinks wie
 
 22. **Headless und GUI aus derselben Quelle.** PyQt6-Dateimanager,
     MCP-stdio/HTTP-Server, oder `axross --script <datei>`-CLI-
-    Runner. AppImage + Docker-Images auf der Release-Page; das
-    `Dockerfile.mcp`-Image schließt PyQt6 explizit aus, um
-    copyleft-frei zu bleiben.
+    Runner. Single-File-Binaries für Linux (`axross-full`,
+    `axross-slim`) auf der Release-Page; AppImage und das
+    `Dockerfile.mcp`-Image baut man aus dem Source
+    ([docs/PACKAGING.md](docs/PACKAGING.md)), und dieses Image schließt
+    PyQt6 explizit aus, um copyleft-frei zu bleiben.
+
+23. **Extensions.** Python-Plugins fügen Einträge im Extensions-Menü,
+    Rechtsklick-Aktionen und Panels hinzu (**Extensions → Manage
+    Extensions…**). Jede Extension startet ausgeschaltet, sie zu finden
+    führt sie nie aus, und der `paranoid` Mode lädt keine. Fünf
+    mitgelieferte Beispiele. Siehe [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 ---
 

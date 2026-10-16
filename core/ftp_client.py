@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import functools
 import io
 import logging
@@ -12,7 +13,7 @@ import select
 import socket
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from ftplib import FTP, FTP_TLS, error_perm  # nosec B402
 from ftplib import Error as _FtpLibError  # nosec B402
 from typing import IO
@@ -48,9 +49,98 @@ _FTP_PROTOCOL_ERRORS = (_FtpLibError, EOFError)
 # anchors the name, which may itself contain spaces; a symlink's name is
 # followed by " -> target".
 _UNIX_LIST_LINE = re.compile(
-    r"^(?P<type>[-bcdlps])[-rwxsStTl]{9}\S*\s+\d+\s+\S+\s+(?:\S+\s+)?\d+\s+"
-    r"\w{3}\s+\d{1,2}\s+(?:\d{1,2}:\d{2}|\d{4}) (?P<rest>.*)$"
+    r"^(?P<type>[-bcdlps])(?P<mode>[-rwxsStTl]{9})\S*\s+\d+\s+(?P<owner>\S+)\s+"
+    r"(?:(?P<group>\S+)\s+)?(?P<size>\d+)\s+(?P<month>\w{3})\s+(?P<day>\d{1,2})\s+"
+    r"(?P<when>\d{1,2}:\d{2}|\d{4}) (?P<rest>.*)$"
 )
+
+_LIST_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1
+    )
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class _ListEntry:
+    """One parsed Unix-style LIST line."""
+
+    kind: str  # "-", "d", "l", ...
+    mode: int  # permission bits, 0o7777 at most
+    owner: str
+    group: str
+    size: int
+    modified: datetime | None  # UTC; None when the date cannot be read
+    rest: str  # the name, for a link "name -> target"
+
+
+def _list_mode(chars: str) -> int:
+    """Permission bits of the nine ``rwx`` characters of an ``ls -l`` line."""
+    mode = 0
+    for i, (special, exec_bit) in enumerate(((0o4000, 0o100), (0o2000, 0o010), (0o1000, 0o001))):
+        r, w, x = chars[3 * i : 3 * i + 3]
+        if r == "r":
+            mode |= exec_bit << 2
+        if w == "w":
+            mode |= exec_bit << 1
+        if x in "xst":
+            mode |= exec_bit
+        if x in "sStT":
+            mode |= special
+    return mode
+
+
+def _list_date(month: str, day: str, when: str, now: datetime) -> datetime | None:
+    """The date of a LIST line, read as UTC like MDTM.
+
+    ``Mon DD HH:MM`` leaves out the year of a date within the last six
+    months; one that would lie ahead of ``now`` is from last year.
+    """
+    number = _LIST_MONTHS.get(month.lower())
+    if number is None:
+        return None
+    try:
+        if ":" in when:
+            hour, minute = (int(x) for x in when.split(":"))
+            value = datetime(now.year, number, int(day), hour, minute, tzinfo=timezone.utc)
+            if value > now + timedelta(days=1):
+                value = value.replace(year=now.year - 1)
+            return value
+        return datetime(int(when), number, int(day), tzinfo=timezone.utc)
+    except ValueError:  # Feb 30, 25:61, Feb 29 moved into a common year
+        return None
+
+
+def _parse_unix_list_details(
+    lines: list[str], now: datetime | None = None
+) -> list[_ListEntry] | None:
+    """Every entry of a Unix-style LIST with its mode, owner, size and date.
+
+    None when a line is neither a ``total`` line nor Unix-style (a DOS
+    or other listing that cannot say what is a symbolic link).
+    """
+    now = now or datetime.now(timezone.utc)
+    entries: list[_ListEntry] = []
+    for line in lines:
+        line = line.rstrip("\r")
+        if not line.strip() or line.startswith("total "):
+            continue
+        m = _UNIX_LIST_LINE.match(line)
+        if m is None:
+            return None
+        entries.append(
+            _ListEntry(
+                kind=m.group("type"),
+                mode=_list_mode(m.group("mode")),
+                owner=m.group("owner"),
+                group=m.group("group") or "",
+                size=int(m.group("size")),
+                modified=_list_date(m.group("month"), m.group("day"), m.group("when"), now),
+                rest=m.group("rest"),
+            )
+        )
+    return entries
 
 
 def _parse_unix_list(lines: list[str]) -> list[tuple[str, str]] | None:
@@ -59,19 +149,25 @@ def _parse_unix_list(lines: list[str]) -> list[tuple[str, str]] | None:
     None when a line is neither a ``total`` line nor Unix-style (a DOS
     or other listing that cannot say what is a symbolic link).
     """
-    entries: list[tuple[str, str]] = []
-    for line in lines:
-        line = line.rstrip("\r")
-        if not line.strip() or line.startswith("total "):
-            continue
-        m = _UNIX_LIST_LINE.match(line)
-        if m is None:
-            return None
-        entries.append((m.group("type"), m.group("rest")))
-    return entries
+    details = _parse_unix_list_details(lines)
+    return None if details is None else [(e.kind, e.rest) for e in details]
 
 
-def _unix_entry(entries: list[tuple[str, str]] | None, name: str) -> tuple[str, str] | None:
+def _entry_detail(details: list[_ListEntry] | None, name: str) -> _ListEntry | None:
+    """The LIST entry of ``name``, or None when it is missing or ambiguous."""
+    if details is None:
+        return None
+    found = [
+        e
+        for e in details
+        if (e.rest.startswith(name + " -> ") if e.kind == "l" else e.rest == name)
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def _unix_entry(
+    entries: list[_ListEntry] | list[tuple[str, str]] | None, name: str
+) -> tuple[str, str] | None:
     """``(type char, link target)`` of ``name`` in a parsed LIST, or None.
 
     None also when the listing is missing or names the entry ambiguously
@@ -80,7 +176,7 @@ def _unix_entry(entries: list[tuple[str, str]] | None, name: str) -> tuple[str, 
     if entries is None:
         return None
     found: set[tuple[str, str]] = set()
-    for kind, rest in entries:
+    for kind, rest in ((e.kind, e.rest) if isinstance(e, _ListEntry) else e for e in entries):
         if kind == "l":
             if rest.startswith(name + " -> "):
                 found.add(("l", rest[len(name) + 4 :]))
@@ -601,19 +697,41 @@ class FtpSession(SessionLifecycle):
         except error_perm as e:
             raise OSError(f"Cannot list {path}: {e}") from e
 
-        # The stat fallback probes directories with CWD, which follows a
-        # symbolic link; only LIST says which entries are links.
-        listing = self._unix_listing(ftp, path) if names else None
+        # A Unix-style LIST line carries type, mode, owner, size and date,
+        # so an entry it names needs no probe of its own; only a regular
+        # file asks MDTM for its exact UTC time. Without a readable LIST
+        # every entry is probed with stat(), whose CWD follows a symbolic
+        # link - LIST is also the only source that says which are links.
+        details = self._unix_listing(ftp, path) if names else None
         for full_path in names:
             entry_name = posixpath.basename(full_path) or full_path
             if entry_name in (".", ".."):
                 continue
-            link = _unix_entry(listing, entry_name)
-            is_link = link is not None and link[0] == "l"
-            try:
-                stat_path = (
-                    posixpath.join(path, entry_name) if not full_path.startswith("/") else full_path
+            stat_path = (
+                posixpath.join(path, entry_name) if not full_path.startswith("/") else full_path
+            )
+            detail = _entry_detail(details, entry_name)
+            if detail is not None and detail.kind in ("-", "d"):
+                modified = self._mdtm(ftp, stat_path) if detail.kind == "-" else None
+                items.append(
+                    FileItem(
+                        name=entry_name,
+                        size=detail.size,
+                        modified=modified or detail.modified or datetime.fromtimestamp(0),
+                        permissions=detail.mode,
+                        is_dir=detail.kind == "d",
+                        owner=detail.owner,
+                        group=detail.group,
+                    )
                 )
+                continue
+            is_link = detail is not None and detail.kind == "l"
+            extra = (
+                {"permissions": detail.mode, "owner": detail.owner, "group": detail.group}
+                if detail is not None
+                else {}
+            )
+            try:
                 item = self.stat(stat_path)
                 items.append(
                     FileItem(
@@ -622,15 +740,16 @@ class FtpSession(SessionLifecycle):
                         modified=item.modified,
                         is_dir=item.is_dir and not is_link,
                         is_link=is_link,
-                        link_target=link[1] if is_link else "",
+                        link_target=detail.rest[len(entry_name) + 4 :] if is_link else "",
+                        **extra,
                     )
                 )
             except OSError:
-                items.append(FileItem(name=entry_name, is_link=is_link))
+                items.append(FileItem(name=entry_name, is_link=is_link, **extra))
 
         return items
 
-    def _unix_listing(self, ftp: FTP, path: str) -> list[tuple[str, str]] | None:
+    def _unix_listing(self, ftp: FTP, path: str) -> list[_ListEntry] | None:
         """Parsed Unix-style ``LIST`` of directory ``path``, or None when
         the server refuses it or answers in a format without link types."""
         lines: list[str] = []
@@ -638,7 +757,17 @@ class FtpSession(SessionLifecycle):
             ftp.retrlines(f"LIST {path}", lines.append)
         except error_perm:
             return None
-        return _parse_unix_list(lines)
+        return _parse_unix_list_details(lines)
+
+    @staticmethod
+    def _mdtm(ftp: FTP, path: str) -> datetime | None:
+        """``MDTM`` of ``path`` as an aware UTC datetime, None when refused."""
+        try:
+            ts = ftp.sendcmd(f"MDTM {path}").split(None, 1)[-1]
+            # RFC 3659 2.3 / 3: MDTM times are UTC.
+            return datetime.strptime(ts[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        except Exception:  # noqa: BLE001 - a refused or malformed reply is "no time"
+            return None
 
     def _entry_kind(self, ftp: FTP, path: str) -> str | None:
         """``"link"``, ``"dir"`` or None (unknown) for an entry that CWD
@@ -695,14 +824,7 @@ class FtpSession(SessionLifecycle):
         except Exception:
             pass
 
-        try:
-            mdtm_resp = ftp.sendcmd(f"MDTM {path}")
-            # Response: "213 YYYYMMDDHHMMSS"
-            ts = mdtm_resp.split(None, 1)[-1]
-            # RFC 3659 2.3 / 3: MDTM times are UTC.
-            modified = datetime.strptime(ts[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-        except Exception:
-            pass
+        modified = self._mdtm(ftp, path) or modified
 
         # Check if directory
         try:

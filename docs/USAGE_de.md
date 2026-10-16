@@ -62,10 +62,44 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   **Strg+Shift+V**, schließen mit **Strg+W**.
 - Aktives Pane bekommt blauen Rahmen; das **Ziel**-Pane (Kopierziel)
   bekommt einen grünen. Letztes fokussiertes Pane wird Ziel.
+- Ein Pane wird aktiv, wenn die Maus 1 s darin ruht.
+  **View → Activate Pane** stellt 1, 2 oder 3 s ein, oder **On Click**.
+  Der Tastaturfokus folgt nur aus der Dateiliste eines anderen Panes,
+  nie aus einem Textfeld.
 - **Alt+Links / Alt+Rechts** durchschreiten Pane-Historie;
   **Strg+Tab** zykliert.
 - Drag-and-Drop zwischen Panes startet einen Transfer (lokal↔remote,
   remote↔remote, cross-Protokoll).
+
+### Das Layout kommt beim Start zurück
+
+Beim Beenden speichert axross das Layout in `session.json`; der
+nächste Start baut es automatisch wieder auf:
+
+- den Splitter-Baum mit seinen Größen, die Window-Geometry, das
+  Dock-Layout (welche Docks offen sind und wo) und das Theme;
+- lokale Panes auf ihren Ordnern — ein inzwischen gelöschter Ordner
+  öffnet stattdessen den Home-Ordner, ohne Dialog;
+- lokale Terminal-Panes als frische Shell an derselben Stelle, im
+  Ordner, in dem die alte Shell stand (Home, wenn er fehlt).
+
+**Ein Start verbindet nie.** Ein Pane oder Terminal eines gespeicherten
+Connection-Profils kommt als Placeholder zurück, *Not connected —
+&lt;Profil&gt;*, mit einem **Reconnect**-Button. Bei einem File-Pane
+verbindet Reconnect genau wie das Öffnen des Profils über Quick Connect
+(Passwort-Prompt, Host-Key-Prüfung) und setzt das Pane an die Stelle
+des Placeholders, auf seinen gespeicherten Ordner. Bei einem Terminal
+öffnet es das Terminal des Profils wie ein Layout-Preset (gespeichertes
+Passwort, kein Prompt). Der Restore führt keine Scripts und keine
+Extensions aus, und der Paranoid Security Mode bleibt unberührt.
+
+**File > Restore Layout on Start** (standardmäßig an) schaltet das ab;
+die Wahl landet sofort in `session.json`, und ein Start zeigt dann das
+Default-Layout mit einem Pane. Eine fehlende, unlesbare oder ungültige
+`session.json` startet ebenfalls mit dem Default-Layout; der Grund steht
+im Log. **File > Restore Last Session** (**Strg+Shift+R**) baut das
+gespeicherte Layout weiterhin auf Wunsch auf, und dort verbinden
+Remote-Panes.
 
 ## Transfers
 
@@ -358,7 +392,9 @@ Volle Referenz: **[docs/MCP_de.md](MCP_de.md)** (DE) · [MCP.md](MCP.md) (EN) ·
 
 - `~/.config/axross/profiles.json` — Verbindungsprofile (`0o600`).
 - `~/.config/axross/bookmarks.json` — Bookmark-Bar.
-- `~/.config/axross/session.json` — Pane-Layout beim letzten Beenden.
+- `~/.config/axross/session.json` — Pane-Layout, Window-Geometry und
+  Dock-Layout beim letzten Beenden; beim Start wiederhergestellt,
+  außer File > Restore Layout on Start ist aus.
 - `~/.config/axross/column_prefs.json` — Pro-Pane-Spaltenbreiten.
 - `~/.config/axross/<provider>_token.json` — OAuth-Refresh-Tokens (`0o600`).
 - `~/.local/state/axross/logs/axross.log` — rotierendes Logfile (5 MB, 3 Backups).

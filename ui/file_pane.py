@@ -193,6 +193,15 @@ def _set_style(widget: QWidget, css: str) -> None:
         widget.setStyleSheet(css)
 
 
+def _size_text(b: float) -> str:
+    """Bytes as B / KB / MB / GB / TB / PB, one decimal above bytes."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(b) < 1024:
+            return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+
 def _shorten_path(path: str, limit: int = 60) -> str:
     return path if len(path) <= limit else "…" + path[-(limit - 1) :]
 
@@ -335,6 +344,12 @@ class _DragTableView(QTableView):
         super().resizeEvent(event)
         self._pane._fit_name_column()
 
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        # A theme or font change changes how wide every text is.
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._pane._content_widths_changed()
+
     def startDrag(self, supportedActions) -> None:
         self._pane._start_drag()
 
@@ -476,6 +491,11 @@ class _DropOverlay(QWidget):
 _MIN_COLUMN_WIDTH = 60
 # Size, Modified, Permissions, Owner
 _DEFAULT_COLUMN_WIDTHS = {1: 90, 2: 150, 3: 110, 4: 150}
+# How many rows the content-width measurement reads, and how many of the
+# longest texts per column it measures exactly. A listing larger than
+# _MEASURE_ROWS is judged by its first rows in the current sort order.
+_MEASURE_ROWS = 5000
+_MEASURE_LONGEST = 8
 
 
 class FilePaneWidget(QWidget):
@@ -743,6 +763,18 @@ class FilePaneWidget(QWidget):
         # A new listing resets the model, which drops the selection without a
         # selectionChanged: say so, or a listener keeps the old folder's file.
         self._proxy.modelReset.connect(lambda: self.selection_changed.emit())
+        # What a column needs depends on what it shows: measure again, once,
+        # after the listing changes (see _content_width).
+        self._content_widths: dict[int, int] = {}
+        self._content_fit_pending = False
+        for signal in (
+            self._proxy.modelReset,
+            self._proxy.layoutChanged,
+            self._proxy.rowsInserted,
+            self._proxy.rowsRemoved,
+            self._proxy.dataChanged,
+        ):
+            signal.connect(self._content_widths_changed)
 
         # Enable drag & drop on the table
         self._table.setDragEnabled(True)
@@ -795,6 +827,19 @@ class FilePaneWidget(QWidget):
         self._cancel_nav_btn.clicked.connect(self.cancel_navigation)
         self._cancel_nav_btn.hide()
         status_layout.addWidget(self._cancel_nav_btn)
+
+        # Shown only while Calculate Size walks in the background.
+        self._cancel_size_btn = QPushButton(tr("Cancel"))
+        self._cancel_size_btn.setToolTip(tr("Stop calculating the size"))
+        self._cancel_size_btn.clicked.connect(self._cancel_dir_size)
+        self._cancel_size_btn.hide()
+        status_layout.addWidget(self._cancel_size_btn)
+        self._size_job: ScanJob | None = None
+        # View > Activate Pane: resting the mouse here makes this the active
+        # pane after the configured delay (core.pane_activation).
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.timeout.connect(self._activate_by_hover)
 
         status_layout.addStretch()
 
@@ -1120,6 +1165,9 @@ class FilePaneWidget(QWidget):
         """
         self._shutting_down = True
         self._nav_job.abandon()
+        self._hover_timer.stop()
+        if getattr(self, "_size_job", None) is not None:
+            self._size_job.abandon()
         if getattr(self, "_pack_job", None) is not None:
             self._pack_job.abandon()  # the pack stops and removes its temp file
         if getattr(self, "_thumbs", None) is not None:
@@ -3027,57 +3075,93 @@ class FilePaneWidget(QWidget):
             self.refresh_after_change()
 
     def _calculate_dir_size(self) -> None:
-        """Calculate total size of selected directories."""
+        """Total size of the selected folders, walked in the background.
+
+        The walk (core.tree_size) runs on a ScanJob: the window stays live,
+        the status line counts folders and files, Cancel stops it, and the
+        result comes as a message when it is done.
+        """
+        from core.tree_size import tree_size
+
         items = self.selected_file_items()
         dirs = [i for i in items if i.is_dir]
         if not dirs:
             return
-
-        # Resolved before the event loop runs below: a folder load
-        # finishing there moves _current_path (see _rename_selected).
+        # Resolved now: a folder load finishing during the walk moves
+        # _current_path (see _rename_selected).
         targets = []
         for item in dirs:
             dir_path = self._safe_item_path(item)
             if dir_path is not None:
                 targets.append((item.name, dir_path))
+        if not targets:
+            return
+        if self._size_job is not None and self._size_job.running:
+            self.status_message(tr("A size calculation is still running in this pane."))
+            return
+        backend = self._backend
 
-        self._status.setText("Calculating sizes...")
+        def work(cancelled, report):
+            results, folders, files = [], 0, 0
+            for name, path in targets:
+                if cancelled():
+                    break
+                base_folders, base_files = folders, files
+                r = tree_size(
+                    backend,
+                    path,
+                    cancel=cancelled,
+                    progress=lambda f, n, where: report(base_folders + f, base_files + n, where),
+                )
+                folders, files = folders + r.folders, files + r.files
+                results.append((name, r))
+            return results
+
+        if self._size_job is None:
+            self._size_job = ScanJob(
+                self,
+                formatter=lambda st: tr("Calculating size… {folders} folders, {files} files")
+                .format(folders=st["scanned"], files=st["indexed"])
+                + f" — {_shorten_path(st['path'])}",
+            )
+            self._size_job.progress.connect(self._status.setText)
+            self._size_job.finished.connect(self._on_dir_size_finished)
+        self._status.setText(tr("Calculating size…"))
         self._progress_bar.show()
-        QApplication.processEvents()
+        self._cancel_size_btn.show()
+        self._size_job.start(work)
 
-        results = []
-        for name, dir_path in targets:
-            results.append((name, self._recursive_size(dir_path)))
+    def _cancel_dir_size(self) -> None:
+        if self._size_job is not None:
+            self._size_job.cancel()
 
-        self._progress_bar.hide()
-
-        msg_parts = []
-        for name, size in results:
-
-            def _fmt(b: int) -> str:
-                for unit in ("B", "KB", "MB", "GB", "TB"):
-                    if abs(b) < 1024:
-                        return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
-                    b /= 1024
-                return f"{b:.1f} PB"
-
-            msg_parts.append(f"{name}: {_fmt(size)}")
-
-        QMessageBox.information(self, "Directory Size", "\n".join(msg_parts))
+    def _on_dir_size_finished(self, kind: str, value, cancelled: bool) -> None:
+        self._cancel_size_btn.hide()
+        if not self.is_loading:
+            self._progress_bar.hide()
+        if cancelled:
+            self._status.setText(tr("Size calculation cancelled"))
+            return
         self._status.setText(f"{self._model.rowCount()} items")
-
-    def _recursive_size(self, path: str) -> int:
-        total = 0
-        try:
-            for item in self._backend.list_dir(path):
-                child = self._backend.join(path, item.name)
-                if item.is_dir and not item.is_link:
-                    total += self._recursive_size(child)
-                else:
-                    total += item.size
-        except OSError as e:
-            log.warning("Could not calculate recursive size for %s: %s", path, e)
-        return total
+        if kind == "error":
+            QMessageBox.warning(self, "Directory Size", f"Could not calculate the size:\n{value}")
+            return
+        lines = []
+        for name, r in value:
+            line = f"{name}: {_size_text(r.bytes)}"
+            notes = []
+            if r.unreadable:
+                notes.append(
+                    tr("1 folder could not be read")
+                    if r.unreadable == 1
+                    else tr("{n} folders could not be read").format(n=r.unreadable)
+                )
+            if r.depth_capped:
+                notes.append(tr("depth limit reached"))
+            if notes:
+                line += f" ({', '.join(notes)})"
+            lines.append(line)
+        QMessageBox.information(self, "Directory Size", "\n".join(lines))
 
     # Known checksum-string prefixes that the backends return. Keeping
     # this as an explicit allowlist (rather than a "looks like
@@ -3330,22 +3414,103 @@ class FilePaneWidget(QWidget):
     def _visible_columns(self) -> list[int]:
         return [c for c in range(self._model.columnCount()) if not self._table.isColumnHidden(c)]
 
+    def _content_widths_changed(self, *_args) -> None:
+        """The listing (or its font) changed: forget the measured widths
+        and refit once the burst of model signals is over."""
+        self._content_widths = {}
+        if not self._content_fit_pending:
+            self._content_fit_pending = True
+            QTimer.singleShot(0, self._deferred_content_fit)
+
+    def _deferred_content_fit(self) -> None:
+        self._content_fit_pending = False
+        if getattr(self, "_table", None) is not None:
+            self._fit_name_column()
+
+    def _content_width(self, col: int) -> int:
+        """Width column *col* needs for its longest text, icon and padding.
+
+        Reads up to _MEASURE_ROWS rows, picks the _MEASURE_LONGEST longest
+        texts and asks the view for their exact size - a proportional font
+        makes the longest string not always the widest. Cached until the
+        listing changes.
+        """
+        cached = self._content_widths.get(col)
+        if cached is not None:
+            return cached
+        rows = min(self._proxy.rowCount(), _MEASURE_ROWS)
+        lengths = []
+        for row in range(rows):
+            index = self._proxy.index(row, col)
+            text = index.data(Qt.ItemDataRole.DisplayRole)
+            lengths.append((len(text) if isinstance(text, str) else 0, row))
+        lengths.sort(reverse=True)
+        width = 0
+        for _length, row in lengths[:_MEASURE_LONGEST]:
+            width = max(width, self._table.sizeHintForIndex(self._proxy.index(row, col)).width())
+        self._content_widths[col] = width
+        return width
+
+    def _preferred_width(self, col: int) -> int:
+        """The width the user gave column *col*, else its default."""
+        prefs = getattr(self, "_column_prefs", None)
+        stored = prefs.widths.get(col) if prefs is not None else None
+        if stored and stored > 10:
+            return int(stored)
+        return _DEFAULT_COLUMN_WIDTHS.get(col, 100)
+
+    def _column_floor(self, col: int) -> int:
+        """Narrowest *col* may get to make room for a name: its own content
+        and its header label stay whole."""
+        header = self._table.horizontalHeader()
+        return max(
+            header.minimumSectionSize(), self._content_width(col), header.sectionSizeHint(col)
+        )
+
     def _fit_name_column(self) -> None:
-        """Give Name exactly the width the other visible columns leave."""
+        """Lay the columns out across the viewport, Name first.
+
+        Every other visible column gets its preferred width while the name
+        fits in what is left. A name that does not fit takes the slack of
+        the others - each gives up at most what its own content does not
+        use, in proportion to that slack - and only then is it cut. None of
+        this is a user choice, so nothing here writes column prefs.
+        """
         if self._fitting or getattr(self, "_table", None) is None:
             return
         header = self._table.horizontalHeader()
         viewport = self._table.viewport().width()
         if viewport <= 0 or self._table.isColumnHidden(0):
             return
-        others = sum(header.sectionSize(c) for c in self._visible_columns() if c != 0)
-        target = max(header.minimumSectionSize(), viewport - others)
-        if header.sectionSize(0) != target:
-            self._fitting = True
-            try:
+        others = [c for c in self._visible_columns() if c != 0]
+        widths = {c: self._preferred_width(c) for c in others}
+        missing = self._content_width(0) - (viewport - sum(widths.values()))
+        # Hidden, the viewport has no real width yet: nothing to make room in.
+        if missing > 0 and others and self._table.isVisible():
+            slack = {c: max(0, widths[c] - self._column_floor(c)) for c in others}
+            total = sum(slack.values())
+            take = min(missing, total)
+            if take > 0:
+                given = {c: take * slack[c] // total for c in others}
+                rest = take - sum(given.values())
+                for c in sorted(others, key=lambda c: slack[c] - given[c], reverse=True):
+                    if rest <= 0:
+                        break
+                    if given[c] < slack[c]:
+                        given[c] += 1
+                        rest -= 1
+                for c in others:
+                    widths[c] -= given[c]
+        target = max(header.minimumSectionSize(), viewport - sum(widths.values()))
+        self._fitting = True
+        try:
+            for c in others:
+                if header.sectionSize(c) != widths[c]:
+                    header.resizeSection(c, widths[c])
+            if header.sectionSize(0) != target:
                 header.resizeSection(0, target)
-            finally:
-                self._fitting = False
+        finally:
+            self._fitting = False
 
     def _next_visible_after_name(self) -> int | None:
         header = self._table.horizontalHeader()
@@ -3992,6 +4157,37 @@ class FilePaneWidget(QWidget):
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
         self.pane_focused.emit()
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        from core import pane_activation as PA
+
+        delay = PA.activation_delay_ms()
+        if delay is not None and not getattr(self, "_shutting_down", False):
+            self._hover_timer.start(delay)
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self._hover_timer.stop()
+
+    def _activate_by_hover(self) -> None:
+        """The mouse rested here: become the active pane. Keyboard focus
+        follows only from another pane's file list - typing in a text field
+        must not land in a pane the mouse merely crossed."""
+        self.pane_focused.emit()
+        focused = QApplication.focusWidget()
+        if focused is None or self.isAncestorOf(focused):
+            return
+        if not isinstance(focused, QAbstractItemView) and not isinstance(
+            focused.parent(), QAbstractItemView
+        ):
+            return
+        owner = focused.parent()
+        while owner is not None and not isinstance(owner, FilePaneWidget):
+            owner = owner.parent()
+        if owner is not None:
+            view = self._thumbs if self.view_mode == "thumbnails" else self._table
+            view.setFocus()
 
     def _key_views(self) -> tuple:
         views = (self._table, self._table.viewport())

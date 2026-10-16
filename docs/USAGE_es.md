@@ -66,10 +66,45 @@ JSON de perfil mismo nunca lleva credenciales en plano.
 - El panel activo lleva borde azul; el panel **destino** (donde
   aterrizan las copias) lleva borde verde. El último panel
   enfocado se vuelve destino.
+- Un panel se vuelve activo cuando el ratón descansa en él 1 s.
+  **View → Activate Pane** fija 1, 2 o 3 s, u **On Click**. El foco del
+  teclado solo sigue desde la lista de archivos de otro panel, nunca
+  desde un campo de texto.
 - **Alt+Izq / Alt+Der** recorren la historia de panels;
   **Ctrl+Tab** cicla.
 - Drag-and-drop entre panels inicia una transferencia (funciona
   para local↔remoto, remoto↔remoto, cross-protocolo).
+
+### El layout vuelve al arrancar
+
+Al cerrar, axross guarda el layout en `session.json`; el siguiente
+arranque lo reconstruye automáticamente:
+
+- el árbol de splitters con sus tamaños, la geometry de la ventana, el
+  layout de los docks (cuáles están abiertos y dónde) y el theme;
+- los panels locales en sus carpetas — una carpeta borrada desde
+  entonces abre la carpeta home, sin diálogo;
+- los panels de terminal locales como una shell nueva en el mismo
+  sitio, en la carpeta donde estaba la shell anterior (home si ya no
+  existe).
+
+**Un arranque nunca conecta.** Un panel o terminal de un profile de
+conexión guardado vuelve como placeholder, *Not connected —
+&lt;profile&gt;*, con un botón **Reconnect**. En un panel de archivos,
+Reconnect conecta igual que abrir el profile desde Quick Connect
+(prompt de password, comprobación de host key) y pone el panel donde
+estaba el placeholder, en su carpeta guardada. En un terminal abre el
+terminal del profile como lo hace un layout preset (password guardado,
+sin prompt). El restore no ejecuta scripts ni extensions, y el
+Paranoid Security Mode no cambia.
+
+**File > Restore Layout on Start** (activado por defecto) lo desactiva;
+la elección se guarda en `session.json` al momento y un arranque
+muestra entonces el layout por defecto con un solo panel. Un
+`session.json` ausente, ilegible o inválido también arranca con el
+layout por defecto; el motivo queda en el log. **File > Restore Last
+Session** (**Ctrl+Shift+R**) sigue reconstruyendo el layout guardado
+a petición, y ahí los panels remotos sí conectan.
 
 ## Transferencias
 
@@ -371,7 +406,9 @@ Referencia completa: **[docs/MCP_es.md](MCP_es.md)** (ES) · [MCP.md](MCP.md) (E
 
 - `~/.config/axross/profiles.json` — perfiles de conexión (`0o600`).
 - `~/.config/axross/bookmarks.json` — barra de marcadores.
-- `~/.config/axross/session.json` — layout de panels al cierre.
+- `~/.config/axross/session.json` — layout de panels, geometry de la
+  ventana y layout de docks al cierre; se restaura al arrancar salvo
+  que File > Restore Layout on Start esté desactivado.
 - `~/.config/axross/column_prefs.json` — anchos de columna por panel.
 - `~/.config/axross/<provider>_token.json` — refresh tokens OAuth (`0o600`).
 - `~/.local/state/axross/logs/axross.log` — log rotativo (5 MB, 3 backups).

@@ -55,10 +55,9 @@ def test_happy_manifest_matches_sha256sum_and_verifies(tmp_path) -> None:
     (tmp_path / "b.txt").write_bytes(b"bee")
     (tmp_path / "a.bin").write_bytes(b"\x00" * 3_000_000)
     text = CM.manifest_text(FS, str(tmp_path), ["b.txt", "a.bin"])
-    expected = (
-        f"{hashlib.sha256(b'\x00' * 3_000_000).hexdigest()}  a.bin\n"
-        f"{hashlib.sha256(b'bee').hexdigest()}  b.txt\n"
-    )
+    # No backslash inside the f-string: Python 3.10 and 3.11 refuse it.
+    zeros = hashlib.sha256(b"\x00" * 3_000_000).hexdigest()
+    expected = f"{zeros}  a.bin\n{hashlib.sha256(b'bee').hexdigest()}  b.txt\n"
     assert text == expected
     assert CM.verify(FS, str(tmp_path), text) == {
         "ok": ["a.bin", "b.txt"],

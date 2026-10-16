@@ -48,6 +48,53 @@ def setup_logging(debug: bool = False) -> None:
         root.addHandler(console)
 
 
+CRASH_FILE_NAME = "crash.log"
+CRASH_FILE_MAX_BYTES = 1024 * 1024
+# faulthandler writes to this file's descriptor at the moment of a fatal
+# signal, so it stays open for the life of the process.
+_crash_file = None
+
+
+def enable_crash_traces() -> Path | None:
+    """Have a segfault or abort write every thread's Python stack to
+    <log dir>/crash.log, after a header with version and platform.
+
+    A crash in Qt ends the process without a Python traceback, and the
+    regular log stops at whatever ran last. The file is private (0600),
+    appended to, and moved to crash.log.1 once it passes 1 MiB. Returns
+    its path, or None when it cannot be opened - a start never fails
+    over its crash log.
+    """
+    global _crash_file
+    import faulthandler
+    import platform
+    import time
+
+    from axross._version import __version__
+
+    path = LOG_DIR / CRASH_FILE_NAME
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > CRASH_FILE_MAX_BYTES:
+            path.replace(path.with_name(CRASH_FILE_NAME + ".1"))
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(path, 0o600)
+        handle = os.fdopen(fd, "a", encoding="utf-8")
+        handle.write(
+            f"--- axross {__version__}, pid {os.getpid()}, started "
+            f"{time.strftime('%Y-%m-%d %H:%M:%S %z')}, {sys.platform} "
+            f"({platform.platform()}), Python {platform.python_version()} ---\n"
+        )
+        handle.flush()
+        faulthandler.enable(file=handle, all_threads=True)
+    except OSError:
+        return None
+    if _crash_file is not None and _crash_file is not handle:
+        _crash_file.close()
+    _crash_file = handle
+    return path
+
+
 def _load_app_icon():
     """Build a multi-resolution :class:`PyQt6.QtGui.QIcon` from the
     constellation PNGs that ship under ``resources/logo/``. We attach
@@ -232,6 +279,11 @@ def main() -> int:
 
     setup_logging(args.debug)
     log = logging.getLogger("axross")
+    crash_log = enable_crash_traces()
+    if crash_log is not None:
+        log.info("Crash traces go to %s", crash_log)
+        if args.debug:
+            print(f"axross: a crash writes every thread's stack to {crash_log}", file=sys.stderr)
 
     # Interface language, before any window is built. Precedence and the
     # reasoning behind it live in core.i18n: a deliberate locale
@@ -449,6 +501,10 @@ def main() -> int:
     window = MainWindow()
     if not _icon.isNull():
         window.setWindowIcon(_icon)
+    # The last session's layout, before the first paint (File > Restore
+    # Layout on Start switches it off). It never connects: remote panes
+    # come back as placeholders with a Reconnect button.
+    window.restore_layout_on_start()
     window.show()
 
     log.info("Application ready")

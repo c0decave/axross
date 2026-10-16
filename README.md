@@ -7,6 +7,17 @@
 **One UI, 30+ protocols, an embedded Python REPL, and an MCP tool
 surface so an LLM can drive the whole thing.**
 
+- **30+ protocols in one window** — SFTP, SMB, S3, WebDAV, cloud drives, IMAP, Git, databases and more.
+- **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
+- **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
+- **Built-in Python scripting** — REPL, Scripts dock and 32 ready-made scripts on one `axross.*` API.
+- **LLM-ready via MCP** — an agent drives axross over stdio or HTTP, read-only unless you allow writes.
+- **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
+- **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
+- **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
+- **Resumable transfers** — survive Ctrl-C and VPN drops, resume from the last verified segment.
+- **Install in one line** — `pip install axross`, or a single-file binary from the release page.
+
 Axross is a multi-protocol file manager and security toolkit built
 with Python and PyQt6. SFTP, SMB, S3, WebDAV, Cloud drives, IMAP,
 Usenet, Cisco IOS, printer-FS, BSD r-services — all in the same
@@ -19,33 +30,49 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 ## Screenshots
 
-![Connect to Server dialog in the Modern theme, protocol list open](docs/screenshots/modern-connect-dialog.png)
+![Local, SFTP, FTP and WebDAV panes in one window](docs/screenshots/remote-panes.png)
 
-*Modern theme (the default).* **File → Connection Manager…** (`Ctrl+Shift+N`) with the protocol list
-open: every backend sits in one list, and a backend whose optional
-dependency is missing names the extra that installs it — here MTP,
-Subversion, iSCSI and rsh/rcp (`pip install axross[mtp]` …). Behind the
-dialog: the bookmarks sidebar and two panes, the green **TARGET** and the
-blue **SOURCE**.
+*One window, four file systems.* A local folder and an SFTP share side by side in the thumbnail view, an FTP web root and a WebDAV folder below. Every pane names its connection; the blue **SOURCE** and the green **TARGET** set the direction for copy (F5) and move (F6).
 
-![Five local panes in Amber Mode](docs/screenshots/amber-five-panes.png)
+![Upload from a local pane to SFTP with the Transfers dock](docs/screenshots/remote-transfer.png)
 
-*Amber Mode.* Five panes in one window — `/proc`, `/media`, `/efi/grub`,
-`/` and `/boot/grub`. The blue **SOURCE** pane and the green **TARGET**
-pane set the direction for copy (F5) and move (F6), here `/boot/grub` →
-`/efi/grub`. Every pane has its own path bar, live filter, permissions
-and owner columns, an item count and the free space of its file system.
+*Upload to SFTP.* Four photos copied from the local pane to the NAS; the Transfers dock lists each file with its direction, size and status.
 
-![Two panes and the bookmarks sidebar in Hacker Mode](docs/screenshots/hacker-dual-pane.png)
+![Four file panes and two local terminals in Hacker Mode](docs/screenshots/quad-files-shells.png)
 
-*Hacker Mode.* The classic two-pane layout with the bookmarks sidebar:
-`/` as **TARGET** on the left, `/proc` as **SOURCE** on the right.
-Symlinks such as `bin`, `lib`, `lib64` and `sbin` show their own
-`lrwxrwxrwx` mode. Themes are switched under **View → Theme**.
+*Hacker Mode.* Four file panes and two local terminals in one layout. Terminals sit in the splitter next to file panes; the presets `dev-shells`, `triage` and `shells-quad` place them for you.
+
+![The quad-files layout preset in Amber Mode](docs/screenshots/quad-files.png)
+
+*Amber Mode.* The `quad-files` layout preset: four panes, each with its own path bar, filter, permissions and owner columns. `Ctrl+Alt+L` cycles through the presets.
+
+![The Scripts dock with a user script](docs/screenshots/scripts-panel.png)
+
+*Scripts dock.* Your own scripts next to the read-only examples, written against the `axross.*` API; run them in the dock or in the Console.
+
+![The Duplicate Finder with two groups](docs/screenshots/duplicate-finder.png)
+
+*Duplicate Finder.* Identical files by content hash, grouped; the oldest copy of each group is shown in bold.
+
+![Metadata of a photo with EXIF and GPS data](docs/screenshots/metadata.png)
+
+*Metadata.* EXIF fields and the GPS position of a photo; **Remove Metadata** strips them before you share it — in place, or as a cleaned copy (**Tools → Metadata Settings…**).
+
+![The Analysis dock explaining a CSV file](docs/screenshots/analysis.png)
+
+*Analysis dock.* The optional `sift` extra explains the selected file — here a CSV, without any LLM.
+
+![Two panes in the thumbnail view, light theme](docs/screenshots/thumbnails.png)
+
+*Modern light theme.* Two panes in the thumbnail view.
+
+![The Log dock after a copy and a move](docs/screenshots/log-dock.png)
+
+*Log dock.* Every copy and move is logged with its integrity check (sha256) and an entry in the operation journal.
 
 ---
 
-## 22 highlights
+## 23 highlights
 
 1. **30+ protocols, one consistent UI.** SFTP/SCP, FTP/FTPS, SMB/CIFS,
    WebDAV, S3-compatible, Rsync, NFS, Azure Blob/Files, OneDrive,
@@ -221,8 +248,16 @@ Symlinks such as `bin`, `lib`, `lib64` and `sbin` show their own
 
 22. **Headless and GUI from the same source.** PyQt6 file manager,
     MCP stdio/HTTP server, or `axross --script <file>` CLI runner.
-    AppImage + Docker images on the release page; the `Dockerfile.mcp`
-    image specifically excludes PyQt6 to stay copyleft-free.
+    Single-file Linux binaries (`axross-full`, `axross-slim`) on the
+    release page; AppImage and the `Dockerfile.mcp` image build from
+    the source ([docs/PACKAGING.md](docs/PACKAGING.md)), and that image
+    specifically excludes PyQt6 to stay copyleft-free.
+
+23. **Extensions.** Python plugins add Extensions-menu entries, right-click
+    actions and panels (**Extensions → Manage Extensions…**). Every
+    extension starts switched off, finding one never runs it, and
+    `paranoid` mode loads none. Five bundled examples. See
+    [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 ---
 

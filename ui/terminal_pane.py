@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -44,11 +45,14 @@ class TerminalPaneWidget(QWidget):
         profile: ConnectionProfile | None = None,
         connection_manager: ConnectionManager | None = None,
         parent: QWidget | None = None,
+        cwd: str | None = None,
     ):
         super().__init__(parent)
         self._transport = transport
         self._label_text = label
         self._profile = profile
+        # Working folder of a local shell (None: the application's own).
+        self._cwd = cwd
         self._connection_manager = connection_manager
         self._session: LocalTerminalSession | SSHTerminalSession | None = None
         # ConnectionManager references this pane holds; shutdown gives
@@ -61,6 +65,30 @@ class TerminalPaneWidget(QWidget):
     @property
     def session_label(self) -> str:
         return self._label_text
+
+    @property
+    def profile(self) -> ConnectionProfile | None:
+        return self._profile
+
+    @property
+    def is_local(self) -> bool:
+        """A local shell: neither a profile nor a transport behind it."""
+        return self._profile is None and self._transport is None
+
+    def working_directory(self) -> str | None:
+        """The folder a local shell is in now, when that is cheap to know:
+        its /proc entry on Linux, else the folder it was started in. None
+        for a remote shell, or when neither is known."""
+        if not self.is_local:
+            return None
+        session = self._session
+        pid = getattr(session, "_pid", None)
+        if session is not None and session.is_active and pid:
+            try:
+                return os.readlink(f"/proc/{pid}/cwd")
+            except OSError:
+                pass
+        return self._cwd
 
     def _setup_ui(self) -> None:
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -222,7 +250,7 @@ class TerminalPaneWidget(QWidget):
                     suppress_history=suppress,
                 )
             else:
-                self._session = LocalTerminalSession()
+                self._session = LocalTerminalSession(cwd=self._cwd)
             self._session.start()
             self._read_timer.start()
             log.info("Terminal pane started: %s", self._label_text)

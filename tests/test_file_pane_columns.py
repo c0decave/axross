@@ -73,7 +73,7 @@ class ColumnOrderPrefsTest(unittest.TestCase):
             self.assertEqual(CP.load(p).order, [], bad)
 
 
-class PaneColumnLayoutTest(unittest.TestCase):
+class _PaneTestBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         try:
@@ -116,6 +116,8 @@ class PaneColumnLayoutTest(unittest.TestCase):
         pane.show()
         self.app.processEvents()
 
+
+class PaneColumnLayoutTest(_PaneTestBase):
     def test_name_takes_all_free_width_on_a_wide_pane(self) -> None:
         pane, _ = self._pane()
         self._show(pane, 2000)
@@ -309,6 +311,99 @@ class PaneColumnLayoutTest(unittest.TestCase):
         pane, _ = self._pane()
         self._show(pane, 420)
         self.assertGreaterEqual(self._widths(pane)[0], 60)
+
+
+class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
+    """A long file name was cut while Owner, Permissions and Modified kept
+    their full default widths (500 px together) around much shorter text:
+    Name only ever got what they left. The other columns now give up their
+    slack - never more - before a name is cut."""
+
+    LONG = "holiday-photos-2026-summer-lake-and-mountains.jpg"
+
+    def _items(self, pane, names):
+        from datetime import datetime
+
+        from models.file_item import FileItem
+
+        pane._model.set_items(
+            [
+                FileItem(name=n, size=12, modified=datetime(2026, 1, 1), owner="al", group="al")
+                for n in names
+            ]
+        )
+        self.app.processEvents()
+
+    def _name_need(self, pane) -> int:
+        return pane._table.sizeHintForColumn(0)
+
+    def _floor(self, pane, col: int) -> int:
+        h = pane._table.horizontalHeader()
+        return max(
+            h.minimumSectionSize(),
+            pane._table.sizeHintForColumn(col),
+            h.sectionSizeHint(col),
+        )
+
+    # --- happy --------------------------------------------------------------
+
+    def test_happy_a_long_name_takes_the_slack_of_the_other_columns(self) -> None:
+        pane, _ = self._pane()
+        self._items(pane, [self.LONG, "a.txt"])
+        self._show(pane, 760)
+        w = self._widths(pane)
+        self.assertGreaterEqual(w[0], self._name_need(pane), w)
+        self.assertLess(w[4], 150, w)  # Owner gave up space for the name
+        self.assertEqual(sum(w), pane._table.viewport().width())
+
+    def test_happy_the_columns_grow_back_once_the_name_fits(self) -> None:
+        pane, _ = self._pane()
+        self._items(pane, [self.LONG])
+        self._show(pane, 760)
+        self._show(pane, 2000)
+        w = self._widths(pane)
+        self.assertEqual(w[1:], [90, 150, 110, 150], w)  # the defaults again
+
+    # --- sad ----------------------------------------------------------------
+
+    def test_sad_no_column_is_squeezed_below_its_own_content(self) -> None:
+        pane, _ = self._pane()
+        self._items(pane, [self.LONG * 3])
+        self._show(pane, 640)
+        w = self._widths(pane)
+        for col in range(1, 5):
+            self.assertGreaterEqual(w[col], self._floor(pane, col), (col, w))
+        self.assertEqual(sum(w), pane._table.viewport().width())
+
+    def test_sad_making_room_for_a_name_never_writes_prefs(self) -> None:
+        pane, path = self._pane()
+        self._items(pane, [self.LONG])
+        self._show(pane, 700)
+        self._show(pane, 1400)
+        self.assertFalse(path.exists(), path.read_text() if path.exists() else "")
+
+    # --- edge ---------------------------------------------------------------
+
+    def test_edge_a_longer_name_arriving_later_refits(self) -> None:
+        pane, _ = self._pane()
+        self._items(pane, ["a.txt"])
+        self._show(pane, 760)
+        self._items(pane, [self.LONG])
+        self._show(pane, 760)
+        self.assertGreaterEqual(self._widths(pane)[0], self._name_need(pane))
+
+    def test_edge_a_pane_not_yet_shown_keeps_its_stored_widths(self) -> None:
+        # Before it is shown a pane has no real width; making room for a
+        # name there cut a stored width (test_hardening_regressions caught it).
+        pane, _ = self._pane({"version": CP.VERSION, "widths": {"1": 222}, "hidden": []})
+        self._items(pane, [self.LONG * 2])
+        self.assertEqual(self._widths(pane)[1], 222)
+
+    def test_edge_short_names_leave_the_stored_widths_alone(self) -> None:
+        pane, _ = self._pane({"version": CP.VERSION, "widths": {"4": 220}, "hidden": []})
+        self._items(pane, ["a.txt", "b.txt"])
+        self._show(pane, 900)
+        self.assertEqual(self._widths(pane)[4], 220)
 
 
 if __name__ == "__main__":

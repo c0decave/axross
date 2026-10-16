@@ -28,8 +28,6 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
-    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
@@ -55,6 +53,9 @@ dependencies = [
     # >=12.3.0 clears 35 advisories that Pillow 10.x/11.x are subject
     # to (PYSEC-2023-175 through PYSEC-2026-3496).
     "Pillow>=12.3.0",
+    # The local terminal on Windows (ConPTY); POSIX uses the pty module.
+    # 3.1 is the version whose PtyProcess API ui/terminal_widget.py follows.
+    'pywinpty>=3.1; sys_platform == "win32"',
 ]
 
 [project.urls]

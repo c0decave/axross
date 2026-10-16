@@ -71,7 +71,8 @@ class TransferModel(QAbstractTableModel):
                     arrow = "\u2191"
                 else:
                     arrow = "\u2193"
-                return f"{arrow}\u2700" if job.move else arrow  # ✀ scissors for move
+                # Words, not a symbol: U+2700 scissors is in almost no font.
+                return f"{arrow} move" if job.move else arrow
             if col == COL_SIZE:
                 return self._format_size(job.total_bytes)
             if col == COL_PROGRESS:

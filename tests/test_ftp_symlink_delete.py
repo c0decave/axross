@@ -38,12 +38,16 @@ class _DirFtpServer:
     (a server that lists symlinks as directories).
     ``list_style``: ``"unix"`` prints ``ls -l`` lines; ``"dos"`` prints
     IIS-style lines that carry no link information.
+    ``mdtm``: answer ``MDTM`` for regular files in UTC, as vsftpd does.
     """
 
-    def __init__(self, root: Path, mlsd: str = "none", list_style: str = "unix") -> None:
+    def __init__(
+        self, root: Path, mlsd: str = "none", list_style: str = "unix", mdtm: bool = False
+    ) -> None:
         self.root = root
         self.mlsd = mlsd
         self.list_style = list_style
+        self.mdtm = mdtm
         self.commands: list[str] = []
         self._lsock = socket.create_server(("127.0.0.1", 0))
         self.port = self._lsock.getsockname()[1]
@@ -184,6 +188,12 @@ class _DirFtpServer:
                     conn.sendall(f"213 {os.path.getsize(real)}\r\n".encode())
                 else:
                     conn.sendall(b"550 no\r\n")
+            elif verb == "MDTM" and self.mdtm:
+                if os.path.isfile(real):
+                    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime(os.stat(real).st_mtime))
+                    conn.sendall(f"213 {stamp}\r\n".encode())
+                else:
+                    conn.sendall(b"550 not a plain file\r\n")
             elif verb == "DELE":
                 try:
                     os.unlink(real)  # removes the link, never its target

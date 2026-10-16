@@ -37,6 +37,9 @@ from tests import metadata_testkit as K  # noqa: E402
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(OL, "SETTINGS_PATH", tmp_path / "settings.json")
     monkeypatch.setenv("AXROSS_OPERATION_JOURNAL", str(tmp_path / "ops.jsonl"))
+    # LocalFS keeps an in-place original in <home>/.axross-trash.
+    (tmp_path / "home").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     from core import security_mode
 
     previous = security_mode.current_policy().name
@@ -131,6 +134,18 @@ def test_edge_report_dict_round_trip(tmp_path):
 # ---------------------------------------------------------------------------
 # Removing - in place
 # ---------------------------------------------------------------------------
+
+
+def test_edge_an_in_place_removal_trashes_into_the_test_home_only(tmp_path):
+    """The kept original goes to <home>/.axross-trash; without its own HOME a
+    test run filled the runner's real trash, and a later test that expects
+    an empty recovery scan saw these entries."""
+    fs = LocalFS()
+    f = K.write(tmp_path / "photo.jpg", K.jpeg_bytes())
+    result = MT.remove_metadata(fs, str(f), mode=MT.MODE_IN_PLACE)
+    assert result.status == "cleaned", result.error
+    assert Path(fs.home()).is_relative_to(tmp_path)
+    assert (Path(fs.home()) / T.TRASH_DIRNAME / result.trash_id).exists()
 
 
 def test_happy_in_place_keeps_the_original_and_ctrl_z_restores_it(tmp_path):

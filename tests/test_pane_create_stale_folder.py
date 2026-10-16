@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -127,32 +128,23 @@ class CreateDuringFolderLoadTest(_Base):
 
 
 class DirSizeDuringFolderLoadTest(_Base):
-    """Calculate Size pumps the event loop before it walks; a folder load
-    finishing in that pump must not make it measure another folder."""
+    """Calculate Size measures the folder that was selected when it started;
+    a folder load finishing while the size is walked in the background must
+    not make it measure another folder."""
 
     def run_size(self, *, load_finishes: bool):
-        import ui.file_pane as FP
-
         self.select("b")
         gate = self.fs.hold(str(self.root / "b"))
         if load_finishes:
             self.pane.navigate_async(str(self.root / "b"))
-        else:
-            gate.set()
-        real = FP.QApplication.processEvents
-
-        def pump(*args, **kwargs):
-            if not gate.is_set():
-                gate.set()
-                self.assertTrue(self.settle())
-            return real(*args, **kwargs)
-
-        with mock.patch.object(FP.QApplication, "processEvents", side_effect=pump), mock.patch(
-            "ui.file_pane.QMessageBox.information"
-        ) as info:
+        with mock.patch("ui.file_pane.QMessageBox.information") as info:
             self.pane._calculate_dir_size()
-        gate.set()
-        self.assertTrue(self.settle())
+            gate.set()  # the load (if any) and the walk both go on now
+            self.assertTrue(self.settle())
+            end = time.time() + 5
+            while not info.called and time.time() < end:
+                self.app.processEvents()
+                time.sleep(0.005)
         return info.call_args[0][2]
 
     def test_happy_size_of_the_selected_folder(self) -> None:

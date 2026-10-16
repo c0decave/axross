@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import grp
 import logging
 import os
-import pwd
 import shutil
 import stat as stat_module
 import threading
@@ -14,6 +12,12 @@ from typing import IO
 
 from core.backend import SessionLifecycle
 from models.file_item import FileItem
+
+try:
+    import grp
+    import pwd
+except ImportError:  # Windows: no user database, st_uid/st_gid say nothing
+    grp = pwd = None  # type: ignore[assignment]
 
 # uid / gid -> name, cached. With the stock Arch nsswitch line
 # "group: files [SUCCESS=merge] systemd" every grp.getgrgid also asks
@@ -44,12 +48,16 @@ def _cached_name(cache: dict, ident: int, lookup) -> str:
 
 
 def owner_name(uid: int) -> str:
-    """User name for *uid*, or the number when it has none."""
+    """User name for *uid*, or the number when it has none ("" on Windows)."""
+    if pwd is None:
+        return ""
     return _cached_name(_owner_cache, uid, lambda i: pwd.getpwuid(i).pw_name)
 
 
 def group_name(gid: int) -> str:
-    """Group name for *gid*, or the number when it has none."""
+    """Group name for *gid*, or the number when it has none ("" on Windows)."""
+    if grp is None:
+        return ""
     return _cached_name(_group_cache, gid, lambda i: grp.getgrgid(i).gr_name)
 
 

@@ -32,6 +32,8 @@ from PyInstaller.utils.hooks import (
 # Spec files run with SPECPATH pointing at their own dir.
 PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+from bundle_options import exe_options  # noqa: E402
 
 FLAVOR = os.environ.get("AXROSS_BUNDLE_FLAVOR", "full")
 if FLAVOR not in ("full", "slim"):
@@ -295,14 +297,9 @@ exe = EXE(
     name=f"axross-{FLAVOR}",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
-    upx=True,           # shrink the binary ~30-40% — harmless on ELF
-    upx_exclude=[       # Qt plugins break under UPX; exclude them
-        "libQt6*.so*",
-        "libicu*.so*",
-    ],
     runtime_tmpdir=None,
-    console=False,      # GUI app — no console window
+    # strip / upx / upx_exclude / console differ per OS: scripts/bundle_options.py
+    **exe_options(sys.platform),
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

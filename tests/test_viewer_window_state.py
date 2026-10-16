@@ -21,6 +21,11 @@ from PyQt6.QtCore import QRect, QSize, Qt, QTimer  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLayout  # noqa: E402
 
+# Imported before any test patches i18n.SETTINGS_FILE: ui.viewer_window
+# imports ui.main_window lazily, and MainWindow._SESSION_FILE is taken from
+# i18n.SETTINGS_FILE when the class is built. Run alone, this file built it
+# inside a test's monkeypatch and froze that test's temp path.
+import ui.main_window  # noqa: E402,F401
 from core import (
     i18n,  # noqa: E402
     security_mode,  # noqa: E402

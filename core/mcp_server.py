@@ -1420,7 +1420,6 @@ def _build_tools(
             """Hash one file, append a record, emit progress. Keeps
             the inner loop concise whether we took the tree branch or
             the single-file branch."""
-            nonlocal truncated
             if size > max_file_bytes:
                 entries.append(
                     {
@@ -2152,7 +2151,6 @@ def _build_tools(
             truncated = False
 
             def _copy_one(src_file: str, dst_file: str, size: int) -> None:
-                nonlocal truncated
                 try:
                     safe_src_file = _write_path(src_file, backend)
                     safe_dst_file = _write_path(dst_file, backend)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import pty
 import select
 import signal
 import struct
@@ -281,6 +280,8 @@ class LocalTerminalSession:
         self._master_fd: int | None = None
         self._pid: int | None = None
         self._running = False
+        # Windows: a winpty.PtyProcess (ConPTY) in place of the pty pair.
+        self._winpty = None
 
     @property
     def is_active(self) -> bool:
@@ -288,6 +289,11 @@ class LocalTerminalSession:
 
     def start(self) -> None:
         """Start a local shell."""
+        try:
+            import pty
+        except ImportError:  # Windows has no pty module
+            self._start_winpty()
+            return
         pid, master_fd = pty.fork()
         if pid == 0:
             from core.subprocess_env import clean_child_env
@@ -314,11 +320,34 @@ class LocalTerminalSession:
             self._running = True
             log.info("Local terminal started (PID %d)", pid)
 
+    def _start_winpty(self) -> None:
+        """Start ``COMSPEC`` in a ConPTY through pywinpty (Windows)."""
+        try:
+            from winpty import PtyProcess
+        except ImportError as exc:
+            raise OSError(
+                "A local terminal needs a POSIX pty or, on Windows, pywinpty (pip install pywinpty)"
+            ) from exc
+        from core.subprocess_env import clean_child_env
+
+        shell = os.environ.get("COMSPEC", "cmd.exe")
+        self._winpty = PtyProcess.spawn(
+            [shell], cwd=self._cwd or None, env=clean_child_env(TERM="xterm")
+        )
+        self._pid = getattr(self._winpty, "pid", None)
+        self._running = True
+        log.info("Local terminal started (ConPTY, PID %s)", self._pid)
+
     def write(self, data: bytes) -> None:
+        if self._winpty is not None:
+            self._winpty.write(data.decode("utf-8", "replace"))
+            return
         if self._master_fd is not None:
             os.write(self._master_fd, data)
 
     def read(self, size: int = 4096) -> bytes:
+        if self._winpty is not None:
+            return self._read_winpty(size)
         if self._master_fd is None:
             return b""
         try:
@@ -330,7 +359,22 @@ class LocalTerminalSession:
             log.debug("Local terminal read ended: %s", e)
         return b""
 
+    def _read_winpty(self, size: int) -> bytes:
+        # fileno() is a socket that pywinpty's reader thread feeds; select
+        # waits on sockets on Windows too, so the read never blocks.
+        try:
+            r, _, _ = select.select([self._winpty.fileno()], [], [], 0.05)
+            if r:
+                return self._winpty.read(size).encode("utf-8")
+        except (EOFError, OSError, ValueError) as e:
+            self._running = False
+            log.debug("Local terminal read ended: %s", e)
+        return b""
+
     def resize(self, rows: int, cols: int) -> None:
+        if self._winpty is not None:
+            self._winpty.setwinsize(rows, cols)
+            return
         if self._master_fd is not None:
             winsize = struct.pack("HHHH", rows, cols, 0, 0)
             import fcntl
@@ -352,6 +396,14 @@ class LocalTerminalSession:
         # — the shell exits in ms — and escalate to SIGKILL if it does
         # not.
         self._running = False
+        if self._winpty is not None:
+            proc, self._winpty, self._pid = self._winpty, None, None
+            try:
+                proc.close(force=True)
+            except (OSError, EOFError):
+                pass
+            log.info("Local terminal closed")
+            return
         if self._master_fd is not None:
             try:
                 os.close(self._master_fd)

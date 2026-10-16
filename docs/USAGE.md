@@ -58,10 +58,44 @@ JSON itself never carries plaintext credentials.
   **Ctrl+Shift+V**, close with **Ctrl+W**.
 - Active pane gets a blue border; the **target** pane (where copies
   land) gets a green border. Last-focused pane becomes target.
+- A pane becomes the active one when the mouse rests in it for 1 s.
+  **View → Activate Pane** sets 1, 2 or 3 s, or **On Click**. Keyboard
+  focus follows only from another pane's file list, never out of a text
+  field.
 - **Alt+Left / Alt+Right** walk through pane history; **Ctrl+Tab**
   cycles.
 - Drag-and-drop between panes initiates a transfer (works for
   local↔remote, remote↔remote, cross-protocol).
+
+### The layout comes back on start
+
+Closing axross saves the layout to `session.json`; the next start
+rebuilds it automatically:
+
+- the splitter tree with its sizes, the window geometry, the dock
+  layout (which docks are open and where) and the theme;
+- local panes on their folders — a folder deleted since then opens
+  the home folder instead, without a dialog;
+- local terminal panes as a fresh shell in the same place, in the
+  folder the old shell was in (home when that folder is gone).
+
+**A start never connects.** A pane or terminal of a saved connection
+profile comes back as a placeholder, *Not connected — &lt;profile&gt;*,
+with a **Reconnect** button. For a file pane, Reconnect connects
+exactly like opening the profile from Quick Connect (password prompt,
+host-key check) and puts the pane where the placeholder was, on its
+saved folder. For a terminal it opens the profile's terminal the way a
+layout preset does (stored password, no prompt). The restore runs no
+scripts and no extensions, and Paranoid Security Mode is unchanged by
+it.
+
+**File > Restore Layout on Start** (on by default) switches this off;
+the choice is stored in `session.json` at once and a start then shows
+the default single pane. A missing, unreadable or invalid
+`session.json` also starts with the default layout; the reason is in
+the log. **File > Restore Last Session** (**Ctrl+Shift+R**) still
+rebuilds the saved layout on demand, and there remote file panes do
+connect.
 
 ## Transfers
 
@@ -471,7 +505,9 @@ Full reference: **[docs/MCP.md](MCP.md)** (EN) · [MCP_de.md](MCP_de.md) (DE) ·
 
 - `~/.config/axross/profiles.json` — connection profiles (`0o600`).
 - `~/.config/axross/bookmarks.json` — bookmark bar contents.
-- `~/.config/axross/session.json` — pane layout at last close.
+- `~/.config/axross/session.json` — pane layout, window geometry and
+  dock layout at last close; restored on start unless File > Restore
+  Layout on Start is off.
 - `~/.config/axross/column_prefs.json` — per-pane column widths.
 - `~/.config/axross/settings.json` — small preferences (open size limit).
 - `~/.config/axross/<provider>_token.json` — OAuth refresh tokens (`0o600`).
