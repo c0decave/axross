@@ -1,10 +1,13 @@
 {
   "generated_for": {
+    "mcp_allow_exec": true,
     "mcp_allow_scripts": true,
     "mcp_tools": [
+      "agent",
       "archive",
       "crypto",
       "duplicates",
+      "exec",
       "extensions",
       "filetype",
       "index",
@@ -16,6 +19,12 @@
     "mcp_write": true
   },
   "groups": {
+    "agent": {
+      "description": "Hand a task to the user's own LLM (the active profile of the axross GUI): it works with the read-only tools inside the MCP root and answers; it can change nothing.",
+      "tools": [
+        "agent_run"
+      ]
+    },
     "archive": {
       "description": "List an archive's members; extract it into a fresh folder (mutating).",
       "tools": [
@@ -53,6 +62,14 @@
         "duplicates_scans",
         "duplicates_groups",
         "duplicates_dedupe"
+      ]
+    },
+    "exec": {
+      "description": "Run commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, WinRM (PowerShell) and Cisco (show commands only); only with --mcp-allow-exec (mutating), refused in the paranoid security mode and on production profiles.",
+      "tools": [
+        "remote_exec",
+        "remote_script",
+        "exec_backends"
       ]
     },
     "extensions": {
@@ -203,12 +220,21 @@
       ]
     },
     {
-      "description": "Read up to max_bytes (default 4 MiB) from a file. Returns base64-encoded bytes. Set ``truncated=true`` when the file exceeds the cap.",
+      "description": "Read up to max_bytes (default 4 MiB) from a file. Returns {content_b64, size, truncated} - or with encoding='text' {text, size, truncated, replaced}: UTF-8, undecodable bytes replaced (replaced=true). truncated=true when the file exceeds the cap.",
       "group": "core",
       "input_schema": {
         "properties": {
           "backend": {
             "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "encoding": {
+            "default": "base64",
+            "description": "base64 (exact bytes) or text (UTF-8, for text files).",
+            "enum": [
+              "base64",
+              "text"
+            ],
             "type": "string"
           },
           "max_bytes": {
@@ -529,7 +555,7 @@
       ]
     },
     {
-      "description": "Overwrite a file with base64-encoded bytes.",
+      "description": "Overwrite a file with content (UTF-8 text) or content_b64 (base64 bytes) - exactly one of them. Returns {size}.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -537,7 +563,12 @@
             "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
             "type": "string"
           },
+          "content": {
+            "description": "The new content as UTF-8 text.",
+            "type": "string"
+          },
           "content_b64": {
+            "description": "The new content as base64 bytes.",
             "type": "string"
           },
           "path": {
@@ -545,8 +576,7 @@
           }
         },
         "required": [
-          "path",
-          "content_b64"
+          "path"
         ],
         "type": "object"
       },
@@ -2028,6 +2058,217 @@
       ],
       "timeout_class": "quick",
       "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Run one command on a remote host (backend = an id from exec_backends) and return {returncode, stdout, stderr, truncated_stdout, truncated_stderr}. A non-zero exit is a result, not an error. Telnet and ADB deliver stderr inside stdout. Cisco: show commands only. WinRM: PowerShell.",
+      "group": "exec",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "command": {
+            "description": "The command line.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the command (names [A-Za-z_][A-Za-z0-9_]*).",
+            "type": "object"
+          },
+          "max_output": {
+            "default": 1048576,
+            "description": "Bytes of stdout kept (stderr: at most 1 MiB); truncated_* tells when output was cut.",
+            "maximum": 16777216,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "stdin": {
+            "description": "Text fed to the command's stdin (not on WinRM/Cisco).",
+            "type": "string"
+          },
+          "timeout": {
+            "default": 60,
+            "description": "Seconds before the command is given up.",
+            "maximum": 3600,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "remote_exec",
+      "required_flags": [
+        "--mcp-tools exec",
+        "--mcp-allow-exec"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Run a script on a remote host: POSIX hosts get it on stdin of sh, bash, python3 or perl with args after it; WinRM hosts run it as PowerShell. Same result as remote_exec.",
+      "group": "exec",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "description": "Script arguments.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the command (names [A-Za-z_][A-Za-z0-9_]*).",
+            "type": "object"
+          },
+          "interpreter": {
+            "description": "sh by default; powershell on WinRM.",
+            "enum": [
+              "bash",
+              "perl",
+              "powershell",
+              "python3",
+              "sh"
+            ],
+            "type": "string"
+          },
+          "max_output": {
+            "default": 1048576,
+            "description": "Bytes of stdout kept (stderr: at most 1 MiB); truncated_* tells when output was cut.",
+            "maximum": 16777216,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "script": {
+            "description": "The script text.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeout": {
+            "default": 60,
+            "description": "Seconds before the command is given up.",
+            "maximum": 3600,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "script"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "remote_script",
+      "required_flags": [
+        "--mcp-tools exec",
+        "--mcp-allow-exec"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "List the backends that can run commands: {backend, class, kind} with kind posix-shell, powershell or ios-show. Open more with remote_open.",
+      "group": "exec",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "exec_backends",
+      "required_flags": [
+        "--mcp-tools exec",
+        "--mcp-allow-exec"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Hand a task to the user's own LLM (the active LLM profile of the axross GUI, or 'profile'). It works with axross' read-only tools inside the MCP root - plus the read-only tools of 'groups' - and returns {answer, stopped, calls, profile, model}. It cannot change files or run commands. Use it to keep file content on the user's machine, e.g. to summarise documents with a local model.",
+      "group": "agent",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "description": "Extra tool groups the model may use (read-only tools only).",
+            "items": {
+              "enum": [
+                "metadata",
+                "duplicates",
+                "packer",
+                "archive",
+                "index",
+                "filetype",
+                "remote",
+                "extensions"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_steps": {
+            "default": 10,
+            "description": "Most model requests for this task.",
+            "maximum": 30,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "profile": {
+            "description": "An LLM profile name; default: the active one.",
+            "type": "string"
+          },
+          "task": {
+            "description": "What the local model should do, in plain language.",
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "agent_run",
+      "required_flags": [
+        "--mcp-tools agent"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
       "transports": [
         "stdio",
         "http"

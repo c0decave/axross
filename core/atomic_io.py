@@ -19,8 +19,13 @@ supports:
   destination is backed up, the temp is moved into place, and the
   backup is restored on commit failure.
 
-The decision is read from :class:`BackendCapabilities`, so new
-backends get a sensible default without touching this module.
+* **Backends without rename** (TFTP): there is no temp-file route, so
+  the write goes straight to the target - not atomic, because the
+  protocol offers nothing that is. Read from the registry's
+  ``can_rename``, so a new backend gets this without touching this
+  module.
+
+Unknown backend classes take the temp-file route.
 """
 
 from __future__ import annotations
@@ -74,6 +79,17 @@ def _is_native_atomic(backend) -> bool:
         if info.class_name == class_name:
             return info.protocol_id in _NATIVE_ATOMIC_PROTOCOLS
     # Unknown backend: assume we need rename-safety
+    return False
+
+
+def _cannot_rename(backend) -> bool:
+    """Whether the registry says this backend class has no rename (TFTP):
+    there is no temp-file route, a single open_write is all the protocol
+    offers - the transfer engine writes such backends directly too."""
+    class_name = type(backend).__name__
+    for info in backend_registry.all_backends():
+        if info.class_name == class_name:
+            return not info.capabilities.can_rename
     return False
 
 
@@ -161,11 +177,11 @@ def atomic_write(backend, path: str, data: bytes) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         log.debug("atomic_write: journal start failed: %s", exc)
-    if _is_native_atomic(backend):
+    if _is_native_atomic(backend) or _cannot_rename(backend):
         try:
             with backend.open_write(path) as f:
                 f.write(data)
-            log.debug("atomic_write: native atomic path for %s", path)
+            log.debug("atomic_write: direct write for %s", path)
             _finish_journal(
                 op_id,
                 "atomic_write",
@@ -251,7 +267,7 @@ def atomic_write_stream(
     successful chunk write.
     """
     bytes_done = 0
-    if _is_native_atomic(backend):
+    if _is_native_atomic(backend) or _cannot_rename(backend):
         with backend.open_write(path) as f:
             while True:
                 chunk = reader.read(chunk_size)

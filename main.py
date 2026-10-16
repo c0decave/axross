@@ -225,6 +225,14 @@ def main() -> int:
         "--mcp-write). stdio only: refused together with --mcp-http.",
     )
     parser.add_argument(
+        "--mcp-allow-exec",
+        action="store_true",
+        help="Serve the exec group (remote_exec, remote_script, exec_backends): "
+        "commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, "
+        "WinRM and Cisco (show only). Needs --mcp-tools exec (or all); its own "
+        "opt-in, separate from --mcp-write. Refused in the paranoid security mode.",
+    )
+    parser.add_argument(
         "--mcp-tools",
         action="append",
         default=None,
@@ -232,19 +240,20 @@ def main() -> int:
         help="Add optional MCP capability groups on top of the file tools; "
         "repeatable or comma-separated, also via AXROSS_MCP_TOOLS. Groups: "
         "metadata, duplicates, packer, archive, crypto, index, filetype, "
-        "transfer, remote, extensions; 'all' is every group. Mutating tools "
-        "of a group additionally need --mcp-write. Default: no group (the "
-        "file tools only).",
+        "transfer, remote, exec, extensions; 'all' is every group. Mutating tools "
+        "of a group additionally need --mcp-write (exec: --mcp-allow-exec). "
+        "Default: no group (the file tools only).",
     )
     parser.add_argument(
         "--mcp-list-tools",
         action="store_true",
         help="Print a JSON manifest of the MCP tools that --mcp-server with the "
-        "same --mcp-tools / --mcp-write / --mcp-allow-scripts flags (and their "
-        "AXROSS_MCP_* variables) would serve - name, group, read-only or "
-        "mutating, required flags, input schema, timeout class, description - "
-        "and exit without starting a server. docs/mcp-tools.json is this "
-        "output for '--mcp-tools all --mcp-write --mcp-allow-scripts'.",
+        "same --mcp-tools / --mcp-write / --mcp-allow-scripts / --mcp-allow-exec "
+        "flags (and their AXROSS_MCP_* variables) would serve - name, group, "
+        "read-only or mutating, required flags, input schema, timeout class, "
+        "description - and exit without starting a server. docs/mcp-tools.json "
+        "is this output for '--mcp-tools all --mcp-write --mcp-allow-scripts "
+        "--mcp-allow-exec'.",
     )
     parser.add_argument(
         "--mcp-root",
@@ -340,6 +349,12 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
+        if args.mcp_allow_exec and not current_policy().allow_remote_exec:
+            print(
+                "Security mode 'paranoid' blocks MCP remote command execution.",
+                file=sys.stderr,
+            )
+            return 2
         if args.mcp_allow_scripts and args.mcp_http:
             # The HTTP transport never wires the script tools. Accepting
             # the flag there would let an operator believe scripts are
@@ -368,12 +383,14 @@ def main() -> int:
                 root=_resolve_mcp_root(backend, args.mcp_root),
                 allow_scripts=args.mcp_allow_scripts,
                 tool_groups=tool_groups,
+                allow_exec=args.mcp_allow_exec,
             )
             manifest = MG.tool_manifest(
                 tools,
                 groups=tool_groups,
                 allow_write=allow_write,
                 allow_scripts=args.mcp_allow_scripts,
+                allow_exec=args.mcp_allow_exec,
             )
             sys.stdout.write(MG.manifest_json(manifest))
             return 0
@@ -435,6 +452,7 @@ def main() -> int:
                     key_file=args.mcp_key,
                     ca_file=args.mcp_ca,
                     tool_groups=tool_groups,
+                    allow_exec=args.mcp_allow_exec,
                 )
             )
             return 0
@@ -445,6 +463,7 @@ def main() -> int:
                 allow_scripts=args.mcp_allow_scripts,
                 root=root,
                 tool_groups=tool_groups,
+                allow_exec=args.mcp_allow_exec,
             )
         )
 

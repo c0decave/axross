@@ -311,6 +311,7 @@ class MainWindow(QMainWindow):
         self._setup_scripts_dock()
         self._setup_bookmark_sidebar()
         self._setup_analysis_dock()
+        self._setup_agent_dock()
         self._setup_status_bar()
         # Arm the recurring-job tick. Failure here must never stop the
         # window from opening — a broken schedule file should cost the
@@ -1049,6 +1050,28 @@ class MainWindow(QMainWindow):
         self._analysis_dock.settings_requested.connect(self._show_llm_profiles)
         self._populate_dock_view_menu()
 
+    def _setup_agent_dock(self) -> None:
+        from ui.agent_dock import AgentDock
+
+        self._agent_dock = AgentDock(self, root_provider=self._agent_root)
+        self._install_dock_titlebar(self._agent_dock, "Agent", "bot")
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._agent_dock)
+        self._agent_dock.hide()
+        self._agent_dock.settings_requested.connect(self._show_llm_profiles)
+        self._agent_dock.visibilityChanged.connect(
+            lambda visible: visible and self._agent_dock.refresh_profiles()
+        )
+        self._populate_dock_view_menu()
+
+    def _agent_root(self) -> str:
+        """The agent's folder: the active pane's, when it shows local files."""
+        from core.local_fs import LocalFS
+
+        pane = getattr(self, "_active_pane", None)
+        if pane is not None and isinstance(pane.backend, LocalFS) and pane.current_path:
+            return pane.current_path
+        return os.path.expanduser("~")
+
     def _show_llm_profiles(self) -> None:
         from ui.llm_settings_dialog import LLMSettingsDialog
 
@@ -1057,9 +1080,9 @@ class MainWindow(QMainWindow):
             dialog.exec()
         finally:
             dialog.deleteLater()  # a child of the window: gone once closed
-        dock = getattr(self, "_analysis_dock", None)
-        if dock is not None:
-            dock.refresh_profiles()
+        for dock in (getattr(self, "_analysis_dock", None), getattr(self, "_agent_dock", None)):
+            if dock is not None:
+                dock.refresh_profiles()
 
     def _on_analysis_visibility(self, visible: bool) -> None:
         if visible:
@@ -1600,6 +1623,11 @@ class MainWindow(QMainWindow):
             analysis_toggle.setText("&Analysis")
             analysis_toggle.setShortcut(QKeySequence("Ctrl+Shift+I"))
             self._dock_view_menu.addAction(analysis_toggle)
+        agent = getattr(self, "_agent_dock", None)
+        if agent is not None:
+            agent_toggle = agent.toggleViewAction()
+            agent_toggle.setText("A&gent")
+            self._dock_view_menu.addAction(agent_toggle)
         if getattr(self, "_archive_dock", None) is not None:
             self._register_archive_dock_view_action()
 
@@ -5349,6 +5377,8 @@ and an MCP server.</p>
         self._terminal_dock.shutdown()
         if getattr(self, "_analysis_dock", None) is not None:
             self._analysis_dock.shutdown()
+        if getattr(self, "_agent_dock", None) is not None:
+            self._agent_dock.shutdown()
         self._transfer_manager.shutdown()
         self._connection_manager.disconnect_all()
         self._cleanup_archive_tempdirs()

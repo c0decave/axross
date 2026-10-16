@@ -94,6 +94,12 @@ def _safe_show_subcmd(name: str) -> str:
     return cleaned.replace("-", " ").strip()
 
 
+#: IOS output modifiers that only filter what a show command prints.
+_FILTER_MODIFIERS = ("begin", "exclude", "include", "section", "count")
+#: IOS output modifiers that write the output to a file on the device.
+_WRITING_MODIFIERS = ("redirect", "tee", "append")
+
+
 class CiscoTelnetSession(SessionLifecycle):
     """Read-only IOS / IOS-XE / IOS-XR FileBackend via Telnet."""
 
@@ -265,6 +271,42 @@ class CiscoTelnetSession(SessionLifecycle):
                 "second IOS command on the same line)"
             )
         return self._send_show(f"show {command}")
+
+    def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = 30.0,
+        stdin: bytes | None = None,
+        stdout_cap: int = 1024 * 1024,
+        stderr_cap: int = 64 * 1024,
+        env: dict[str, str] | None = None,
+    ) -> "ExecResult":
+        """Run a ``show`` command - the same shape as ``SSHSession.exec``,
+        but nothing that changes the device: every other command, stdin
+        and env are refused."""
+        from core.exec_util import capped
+
+        if stdin is not None or env:
+            raise OSError("Cisco exec: no stdin and no environment on an IOS line")
+        line = cmd.strip()
+        if "\r" in line or "\n" in line or not re.match(r"(?i)show\s+\S", line):
+            raise OSError("Cisco exec runs show commands only (nothing that changes the device)")
+        # IOS output modifiers 'redirect', 'tee' and 'append' (abbreviated
+        # too) write the output to flash; only the filters stay read-only.
+        modifiers = [(part.split() or [""])[0].lower() for part in line.split("|")[1:]]
+        if ">" in line or any(
+            not word
+            or any(w.startswith(word) for w in _WRITING_MODIFIERS)
+            or not any(w.startswith(word) for w in _FILTER_MODIFIERS)
+            for word in modifiers
+        ):
+            raise OSError(
+                "Cisco exec is read-only: after '|' only the filters "
+                f"{', '.join(_FILTER_MODIFIERS)} are allowed (no redirect, tee, append or '>')"
+            )
+        out = self.show(line.split(None, 1)[1])
+        return capped(0, out.encode("utf-8", "replace"), b"", stdout_cap, stderr_cap)
 
     def save_running_config(self) -> str:
         """``write memory`` — persist the running-config to NVRAM as

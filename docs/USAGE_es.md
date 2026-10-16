@@ -402,15 +402,43 @@ axross --mcp-server --mcp-write                      # añade tools de escritura
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP, loopback
 ```
 
-17 herramientas (`list_dir`, `stat`, `read_file`, `checksum`,
-`search`, `walk`, `grep`, `list_versions`, `open_version_read`,
-`preview` + 7 herramientas de escritura cuando `--mcp-write`),
-endpoints `resources/*`, log forwarding por
+Las herramientas de ficheros de solo lectura (`list_dir`, `stat`,
+`read_file`, `checksum`, `search`, `walk`, `grep`, …), las de escritura
+con `--mcp-write`, los grupos de capacidades de `--mcp-tools`
+(`axross --mcp-list-tools` imprime cada herramienta que sirve un
+conjunto de flags), endpoints `resources/*`, log forwarding por
 `notifications/message`, timeouts por herramienta, rate limits
 token-bucket por sesión, sesiones HTTP con streaming SSE de
 progreso, multi-backend routing opcional.
 
 Referencia completa: **[docs/MCP_es.md](MCP_es.md)** (ES) · [MCP.md](MCP.md) (EN) · [MCP_de.md](MCP_de.md) (DE).
+Para clientes LLM: [LLM_GUIDE.md](LLM_GUIDE.md) (en inglés).
+
+## Dock Agent — un LLM local trabaja con axross
+
+View > Panels > Agent abre un chat con el perfil LLM activo (los
+perfiles del dock Analysis: LM Studio, Ollama, vLLM, llama.cpp o
+cualquier servidor compatible con OpenAI; LLM… los gestiona). El modelo
+trabaja con las mismas herramientas que el servidor MCP, en la carpeta
+mostrada arriba (la del panel activo, si muestra ficheros locales):
+
+- **Leer** — las herramientas de ficheros, más los grupos marcados en
+  la lista (metadata, filetype y archive por defecto).
+- **Cambios** — solo con *Allow changes to files* marcado, y entonces
+  cada cambio (escribir, borrar, renombrar, empaquetar, …) espera un Sí
+  en un diálogo que muestra la herramienta y sus argumentos; las
+  passphrases van enmascaradas.
+- **Comandos remotos** — solo con *Allow remote commands* marcado (no
+  en el security mode paranoid), preguntados uno a uno igual.
+- Un perfil cuyo servidor no está en esta máquina ni en su red pregunta
+  antes, porque lo que leen las herramientas se envía allí.
+- Stop termina la ejecución tras el paso actual; New conversation
+  olvida el historial. Cambiar la carpeta o una casilla empieza una
+  conversación nueva.
+
+Un cliente MCP puede pasar una tarea al mismo modelo local con
+`--mcp-tools agent` (`agent_run`); ese modelo solo puede leer
+([MCP_es.md](MCP_es.md) §9.9).
 
 ## Ficheros de configuración
 

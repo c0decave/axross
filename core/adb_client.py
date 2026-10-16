@@ -708,6 +708,57 @@ class AdbSession(SessionLifecycle):
             raise ValueError("ADB shell(cmd): refusing CR/LF (would smuggle a second shell line)")
         return self._shell(cmd)
 
+    def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = 30.0,
+        stdin: bytes | None = None,
+        stdout_cap: int = 1024 * 1024,
+        stderr_cap: int = 64 * 1024,
+        env: dict[str, str] | None = None,
+    ) -> "ExecResult":
+        """Run *cmd* on the device - same shape as ``SSHSession.exec``.
+
+        The adb shell stream carries no exit status, so the command
+        reports it in a trailer line with a per-call tag; stdout and
+        stderr arrive mixed in ``stdout``. *stdin* goes to a temporary
+        file under /data/local/tmp that the command reads.
+        """
+        import secrets
+
+        from core.exec_util import capped, sh_env_prefix
+
+        if "\r" in cmd or "\n" in cmd:
+            raise OSError("ADB exec: refusing CR/LF in the command (run a script file instead)")
+        prefix = sh_env_prefix(env, "ADB exec")
+        if "\r" in prefix or "\n" in prefix:
+            raise OSError("ADB exec: refusing CR/LF in an env value")
+        tag = f"__AXROSS_RC_{secrets.token_hex(8)}__"
+        # Its own sh: 'exit' must not skip the status trailer, and a
+        # trailing comment must not swallow it.
+        line = f"sh -c {shlex.quote(prefix + cmd)}"
+        tmp = None
+        if stdin is not None:
+            tmp = f"/data/local/tmp/.axross-stdin-{secrets.token_hex(6)}"
+            with self.open_write(tmp) as fh:
+                fh.write(stdin)
+            line = f"{line} < {shlex.quote(tmp)}"
+        try:
+            raw = self._shell(f"{line}; echo {tag} $?")
+        finally:
+            if tmp is not None:
+                try:
+                    self.remove(tmp)
+                except OSError as exc:
+                    log.warning("ADB exec: could not remove %s: %s", tmp, exc)
+        marker = raw.rfind(tag + " ")
+        status = raw[marker + len(tag) + 1 :].strip() if marker >= 0 else ""
+        if marker < 0 or not status.isdigit():
+            raise OSError("ADB exec: output ended without the exit status (connection cut?)")
+        out = raw[:marker].encode("utf-8", "surrogateescape")
+        return capped(int(status), out, b"", stdout_cap, stderr_cap)
+
     def install_apk(
         self, local_apk_path: str, *, replace: bool = True, grant_permissions: bool = False
     ) -> str:

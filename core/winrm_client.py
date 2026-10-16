@@ -585,6 +585,33 @@ class WinRMSession(SessionLifecycle):
             truncated_stderr=len(err) > stderr_cap,
         )
 
+    def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = 30.0,
+        stdin: bytes | None = None,
+        stdout_cap: int = 1024 * 1024,
+        stderr_cap: int = 64 * 1024,
+        env: dict[str, str] | None = None,
+    ) -> "ExecResult":
+        """Run *cmd* in PowerShell - same shape as ``SSHSession.exec``.
+
+        WinRM has no stdin channel for a command: *stdin* is refused (put
+        the data into the script). *env* becomes ``$env:`` assignments in
+        front of the command. The time limit is the session's operation
+        timeout.
+        """
+        from core.exec_util import checked_env
+
+        if stdin is not None:
+            raise OSError("WinRM exec: stdin is not supported; put the data into the script")
+        prefix = "".join(
+            f"$env:{k} = '{str(v).replace(chr(39), chr(39) * 2)}'; "
+            for k, v in checked_env(env, "WinRM exec").items()
+        )
+        return self.ps(prefix + cmd, stdout_cap=stdout_cap, stderr_cap=stderr_cap)
+
     def cim_query(self, wql: str, *, namespace: str = "root\\cimv2") -> list[dict]:
         """Run a WQL (WMI Query Language) query via PowerShell's
         ``Get-CimInstance -Query`` and return the result rows as

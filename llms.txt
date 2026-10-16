@@ -1,0 +1,14 @@
+# axross
+
+> A multi-protocol file manager (SFTP, SMB, S3, WebDAV, FTP, cloud drives, databases, devices and more) with a headless MCP server and a Python scripting API (`axross.*`), so an LLM agent can browse, transfer, inspect and change files, and run commands on remote hosts, within limits the operator sets with start flags.
+
+## Start here
+
+- [LLM guide](docs/LLM_GUIDE.md): how to drive axross correctly - flags, first calls, paths and backends, errors, long jobs, remote commands, scripts, do and don't, and the full tool catalog.
+- [Tool manifest](docs/mcp-tools.json): every MCP tool with its JSON schema, required flags, transports and timeout, as `axross --mcp-list-tools` prints it.
+
+## Reference
+
+- [MCP server](docs/MCP.md): transports, security hardening, error codes, capability groups.
+- [Scripting](docs/SCRIPTING.md): the REPL, the Scripts dock and scripts a machine runs.
+- [Scripting reference](docs/SCRIPTING_REFERENCE.md): every `axross.*` function with signature and docstring.

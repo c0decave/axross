@@ -17,6 +17,7 @@ class SecurityPolicy:
     allow_scripts: bool = True
     allow_private_proxy: bool = True
     allow_legacy_protocols: bool = True
+    allow_remote_exec: bool = True
 
 
 NORMAL = SecurityPolicy("normal")
@@ -27,6 +28,7 @@ PARANOID = SecurityPolicy(
     allow_scripts=False,
     allow_private_proxy=False,
     allow_legacy_protocols=False,
+    allow_remote_exec=False,
 )
 
 LEGACY_PROTOCOLS = frozenset(

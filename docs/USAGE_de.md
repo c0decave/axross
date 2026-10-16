@@ -389,14 +389,43 @@ axross --mcp-server --mcp-write                      # Schreib-Tools (auf Root g
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP-Loopback
 ```
 
-17 Tools (`list_dir`, `stat`, `read_file`, `checksum`, `search`,
-`walk`, `grep`, `list_versions`, `open_version_read`, `preview` +
-7 Schreib-Tools bei `--mcp-write`), `resources/*`-Endpoints,
+Die Read-only-Datei-Tools (`list_dir`, `stat`, `read_file`,
+`checksum`, `search`, `walk`, `grep`, …), die Schreib-Tools bei
+`--mcp-write`, die Capability-Gruppen von `--mcp-tools`
+(`axross --mcp-list-tools` gibt jedes Tool aus, das ein Satz Flags
+anbietet), `resources/*`-Endpoints,
 `notifications/message`-Log-Forwarding, Per-Tool-Timeouts,
 Per-Session-Token-Bucket-Rate-Limits, HTTP-Sessions mit SSE-Progress,
 optional Multi-Backend-Routing.
 
 Volle Referenz: **[docs/MCP_de.md](MCP_de.md)** (DE) · [MCP.md](MCP.md) (EN) · [MCP_es.md](MCP_es.md) (ES).
+Für LLM-Clients: [LLM_GUIDE.md](LLM_GUIDE.md) (englisch).
+
+## Agent-Dock — ein lokales LLM arbeitet mit axross
+
+View > Panels > Agent öffnet einen Chat mit dem aktiven LLM-Profil (die
+Profile des Analyse-Docks: LM Studio, Ollama, vLLM, llama.cpp oder ein
+anderer OpenAI-kompatibler Server; LLM… verwaltet sie). Das Modell
+arbeitet mit denselben Tools wie der MCP-Server, im oben angezeigten
+Ordner (dem des aktiven Panes, wenn es lokale Dateien zeigt):
+
+- **Lesen** — die Datei-Tools, dazu die in der Liste angehakten Gruppen
+  (per Default metadata, filetype und archive).
+- **Änderungen** — nur mit Haken bei *Allow changes to files*, und dann
+  wartet jede einzelne Änderung (schreiben, löschen, umbenennen,
+  packen, …) auf Ja in einem Dialog, der Tool und Argumente zeigt;
+  Passphrasen sind maskiert.
+- **Remote-Befehle** — nur mit Haken bei *Allow remote commands* (nicht
+  im Security-Mode paranoid), ebenso einzeln gefragt.
+- Ein Profil, dessen Server nicht auf diesem Rechner oder in seinem
+  Netz liegt, fragt vorher, weil das Gelesene dorthin geht.
+- Stop beendet den Lauf nach dem aktuellen Schritt; New conversation
+  vergisst den Verlauf. Ein anderer Ordner oder Haken startet einen
+  neuen Verlauf.
+
+Ein MCP-Client kann dem gleichen lokalen Modell mit `--mcp-tools agent`
+(`agent_run`) eine Aufgabe übergeben; dieses Modell kann nur lesen
+([MCP_de.md](MCP_de.md) §9.9).
 
 ## Konfigurationsdateien
 

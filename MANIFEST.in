@@ -3,6 +3,7 @@ include dev-requirements.txt
 include OAUTH_SETUP.md SECURITY.md CONTRIBUTING.md THIRD_PARTY_LICENSES.md
 recursive-include docs *.md
 include docs/mcp-tools.json
+include llms.txt
 prune docs/plans
 exclude docs/HANDOFF.md docs/BACKLOG.md docs/SECURITY-REVIEW-2026-10.md
 # setuptools ships every tests/test*.py by default; these are internal-only.

@@ -186,9 +186,14 @@ def test_happy_groups_reach_the_http_config():
 
 def test_happy_every_group_has_a_builder_and_all_builds():
     assert set(G._BUILDERS) == set(G.GROUPS)
-    tools = M._build_tools(LocalFS(), allow_write=True, root="/tmp", tool_groups=frozenset(G.GROUPS))
+    tools = M._build_tools(
+        LocalFS(), allow_write=True, root="/tmp", tool_groups=frozenset(G.GROUPS), allow_exec=True
+    )
     groups = {t.group for t in tools}
     assert set(G.GROUPS) <= groups
+    # exec needs its own flag, also under "all"
+    without = M._build_tools(LocalFS(), allow_write=True, root="/tmp", tool_groups=frozenset(G.GROUPS))
+    assert set(G.GROUPS) - {t.group for t in without} == {"exec"}
     names = [t.name for t in tools]
     assert len(names) == len(set(names)), "tool names must be unique"
 

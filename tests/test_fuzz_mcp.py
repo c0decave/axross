@@ -224,6 +224,10 @@ def test_sad_group_tools_answer_every_malformed_call(tmp_path, monkeypatch):
 
     monkeypatch.setattr(credentials, "_keyring_checked", True)
     monkeypatch.setattr(credentials, "_keyring_usable", False)
+    from core import llm_profiles
+
+    # agent_run finds no LLM profile: no fuzzed call reaches a model.
+    monkeypatch.setattr(llm_profiles, "SETTINGS_FILE", tmp_path / "no-llm.json")
     outside = tmp_path  # a private parent: only this test writes here
     (tmp_path / "root" / "sub").mkdir(parents=True)
     (tmp_path / "root" / "a.txt").write_text("hello\n")
@@ -264,6 +268,7 @@ def test_sad_group_tools_answer_every_malformed_call(tmp_path, monkeypatch):
         "list_backends": {},
         "extensions_list": {},
         "extensions_info": {"ext_id": "bundled:nope"},
+        "agent_run": {"task": "summarise a.txt", "groups": ["filetype"]},
     }
     assert set(names) <= set(base), sorted(set(names) - set(base))
     shaped = {

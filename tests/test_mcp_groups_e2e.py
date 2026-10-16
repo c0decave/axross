@@ -1,5 +1,6 @@
 """End to end: the real ``axross --mcp-server --mcp-tools all --mcp-write
---mcp-root <tmp>`` as a subprocess, over stdio and over HTTP on loopback.
+--mcp-root <tmp> --mcp-allow-exec`` as a subprocess, over stdio and over
+HTTP on loopback.
 
 Each run drives initialize -> tools/list -> one call per capability group
 -> tasks/start of a long pack + tasks/cancel, and checks what landed on
@@ -75,7 +76,7 @@ class _Stdio:
     def __init__(self, home: Path, root: Path) -> None:
         self.proc = subprocess.Popen(
             [sys.executable, str(REPO / "main.py"), "--mcp-server", "--mcp-tools", "all",
-             "--mcp-write", "--mcp-root", str(root)],
+             "--mcp-write", "--mcp-root", str(root), "--mcp-allow-exec"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, env=_child_env(home), cwd=REPO,
         )
@@ -118,7 +119,8 @@ class _Http:
             self.port = s.getsockname()[1]
         self.proc = subprocess.Popen(
             [sys.executable, str(REPO / "main.py"), "--mcp-server", "--mcp-http",
-             f"127.0.0.1:{self.port}", "--mcp-tools", "all", "--mcp-write", "--mcp-root", str(root)],
+             f"127.0.0.1:{self.port}", "--mcp-tools", "all", "--mcp-write", "--mcp-root", str(root),
+             "--mcp-allow-exec"],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=_child_env(home), cwd=REPO,
         )
@@ -171,7 +173,8 @@ def _drive(client, root: Path) -> None:
     expected = {
         "metadata_read", "metadata_remove", "duplicates_scan", "duplicates_dedupe", "pack",
         "archive_extract", "encrypt", "decrypt", "index_build", "file_type", "transfer_copy",
-        "remote_open", "list_backends", "extensions_list", "write_file",
+        "remote_open", "list_backends", "extensions_list", "write_file", "remote_exec",
+        "remote_script", "exec_backends", "agent_run",
     }
     assert expected <= names
     assert {"script_run"}.isdisjoint(names)  # not requested
@@ -209,6 +212,14 @@ def _drive(client, root: Path) -> None:
     assert copied["copied"] == 1
     back = _call(client, "read_file", {"backend": bid, "path": "/b.txt"})
     assert base64.b64decode(back["content_b64"]) == b"twin\n"
+    # exec: no backend here has a remote shell (the lab run covers real
+    # ones), so the group answers with an empty list and a clear refusal.
+    assert _call(client, "exec_backends", {}) == {"backends": []}
+    refused = client.rpc("tools/call", {"name": "remote_exec", "arguments": {"backend": bid, "command": "id"}})
+    assert "no remote shell" in refused["error"]["message"]
+    # agent: the child has no LLM profile, so the hand-off says how to get one
+    refused = client.rpc("tools/call", {"name": "agent_run", "arguments": {"task": "summarise"}})
+    assert "LLM profile" in refused["error"]["message"]
     # extensions
     exts = _call(client, "extensions_list", {})
     assert exts["runnable_over_mcp"] is False and exts["extensions"]
@@ -284,7 +295,7 @@ def test_edge_every_group_is_exercised_by_the_driver():
         tools = {
             t.name for t in __import__("core.mcp_server", fromlist=["_build_tools"])._build_tools(
                 __import__("core.local_fs", fromlist=["LocalFS"]).LocalFS(), allow_write=True,
-                root=tempfile.gettempdir(), tool_groups=frozenset({group}),
+                root=tempfile.gettempdir(), tool_groups=frozenset({group}), allow_exec=True,
             ) if t.group == group
         }
         assert any(f'"{name}"' in source for name in tools), group

@@ -53,6 +53,8 @@ GROUPS: tuple[str, ...] = (
     "filetype",
     "transfer",
     "remote",
+    "exec",
+    "agent",
     "extensions",
 )
 ALL = "all"
@@ -75,6 +77,11 @@ GROUP_DESCRIPTIONS: dict[str, str] = {
     "(mutating).",
     "remote": "List saved connection profiles (no secrets), open one as an extra backend "
     "that every tool can address with its backend argument, close it again.",
+    "agent": "Hand a task to the user's own LLM (the active profile of the axross GUI): it "
+    "works with the read-only tools inside the MCP root and answers; it can change nothing.",
+    "exec": "Run commands and scripts on remote hosts over SSH, SCP, Telnet, rsh, ADB, "
+    "WinRM (PowerShell) and Cisco (show commands only); only with --mcp-allow-exec "
+    "(mutating), refused in the paranoid security mode and on production profiles.",
     "extensions": "List installed extensions and whether they are enabled (read-only: "
     "extensions are GUI plugins).",
 }
@@ -165,6 +172,10 @@ class GroupEnv:
     backend_by_id: Callable[[Any], Any] | None = None
     #: The ``remote`` group's registry of opened profiles (None without it).
     remote: RemoteRegistry | None = None
+    #: ``--mcp-allow-exec`` (and the security mode allows it).
+    allow_exec: bool = False
+    #: ``all_backends()`` - every addressable backend by id.
+    all_backends: Callable[[], dict] | None = None
 
 
 def _tool(
@@ -2179,6 +2190,290 @@ def _build_extensions(env: GroupEnv) -> list:
 
 
 # ---------------------------------------------------------------------------
+# exec
+# ---------------------------------------------------------------------------
+
+#: How a script reaches each POSIX interpreter: on stdin, arguments after it.
+_POSIX_INTERPRETERS = {
+    "sh": "sh -s --",
+    "bash": "bash -s --",
+    "python3": "python3 -",
+    "perl": "perl -",
+}
+_MAX_EXEC_OUTPUT = 16 * 1024 * 1024
+
+
+def _exec_kind(backend) -> str | None:
+    """posix-shell, powershell (WinRM), ios-show (Cisco) or None."""
+    if not callable(getattr(backend, "exec", None)):
+        return None
+    name = type(backend).__name__
+    if name == "WinRMSession":
+        return "powershell"
+    if name == "CiscoTelnetSession":
+        return "ios-show"
+    return "posix-shell"
+
+
+def _exec_result(result) -> dict:
+    return {
+        "returncode": int(result.returncode),
+        "stdout": result.stdout.decode("utf-8", "replace"),
+        "stderr": result.stderr.decode("utf-8", "replace"),
+        "truncated_stdout": bool(result.truncated_stdout),
+        "truncated_stderr": bool(result.truncated_stderr),
+    }
+
+
+def _build_exec(env: GroupEnv) -> list:
+    import hashlib
+    import shlex
+
+    def target(args):
+        backend = env.resolve_backend(args)
+        kind = _exec_kind(backend)
+        if kind is None:
+            raise ValueError(
+                f"backend {args.get('backend') or 'default'!r} ({type(backend).__name__}) has no "
+                "remote shell; call exec_backends for the ones that do"
+            )
+        if env.remote is not None:
+            env.remote.refuse_production(backend)
+        return backend, kind
+
+    def common(args):
+        timeout = _int_arg(args, "timeout", 60, 1, 3600)
+        cap = _int_arg(args, "max_output", 1024 * 1024, 1, _MAX_EXEC_OUTPUT)
+        variables = args.get("env") or {}
+        if not isinstance(variables, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in variables.items()
+        ):
+            raise ValueError("env must be an object of string values")
+        return timeout, cap, variables or None
+
+    def run(tool, args, backend, kind, command, stdin, timeout, cap, variables):
+        sent = command
+        if kind == "posix-shell" and variables:
+            # Exported in the command line: SSH's env requests are dropped
+            # by sshd unless AcceptEnv names the variable.
+            from core.exec_util import sh_env_prefix
+
+            try:
+                sent = sh_env_prefix(variables, tool) + command
+            except OSError as exc:
+                raise ValueError(str(exc)) from None
+            variables = None
+        fields = {
+            "backend": args.get("backend") or "default",
+            "class": type(backend).__name__,
+            "command_sha256": hashlib.sha256(command.encode()).hexdigest()[:16],
+            "command_len": len(command),
+            "stdin_len": len(stdin) if stdin is not None else 0,
+        }
+        return _audited(
+            env,
+            tool,
+            fields,
+            lambda: backend.exec(
+                sent,
+                timeout=timeout,
+                stdin=stdin,
+                stdout_cap=cap,
+                stderr_cap=min(cap, 1024 * 1024),
+                env=variables,
+            ),
+            lambda r: {**fields, "returncode": r.returncode},
+        )
+
+    def _remote_exec(args, ctx):
+        backend, kind = target(args)
+        command = _str_arg(args, "command")
+        stdin = args.get("stdin")
+        if stdin is not None and not isinstance(stdin, str):
+            raise ValueError("stdin must be a string")
+        timeout, cap, variables = common(args)
+        data = stdin.encode("utf-8") if stdin is not None else None
+        return _exec_result(run("remote_exec", args, backend, kind, command, data, timeout, cap, variables))
+
+    def _remote_script(args, ctx):
+        backend, kind = target(args)
+        script = _str_arg(args, "script")
+        interpreter = args.get("interpreter") or ("powershell" if kind == "powershell" else "sh")
+        extra = args.get("args") or []
+        if not isinstance(extra, list) or not all(isinstance(a, str) for a in extra):
+            raise ValueError("args must be a list of strings")
+        timeout, cap, variables = common(args)
+        if kind == "ios-show":
+            raise ValueError("a Cisco device runs single show commands only; use remote_exec")
+        if kind == "powershell":
+            if interpreter != "powershell":
+                raise ValueError("a WinRM host runs PowerShell scripts only (interpreter=powershell)")
+            if extra:
+                raise ValueError("PowerShell scripts take no args here; put the values into the script")
+            return _exec_result(
+                run("remote_script", args, backend, kind, script, None, timeout, cap, variables)
+            )
+        if interpreter not in _POSIX_INTERPRETERS:
+            raise ValueError(
+                f"interpreter must be one of {sorted(_POSIX_INTERPRETERS)} on a POSIX shell"
+            )
+        command = " ".join([_POSIX_INTERPRETERS[interpreter], *map(shlex.quote, extra)])
+        return _exec_result(
+            run("remote_script", args, backend, kind, command, script.encode("utf-8"), timeout, cap, variables)
+        )
+
+    def _exec_backends(args, ctx):
+        found = []
+        for bid, backend in sorted((env.all_backends() if env.all_backends else {}).items()):
+            kind = _exec_kind(backend)
+            if kind is not None:
+                found.append({"backend": bid, "class": type(backend).__name__, "kind": kind})
+        return {"backends": found}
+
+    env_prop = {
+        "type": "object",
+        "additionalProperties": {"type": "string"},
+        "description": "Environment variables for the command (names [A-Za-z_][A-Za-z0-9_]*).",
+    }
+    timeout_prop = _int_prop("Seconds before the command is given up.", minimum=1, maximum=3600, default=60)
+    cap_prop = _int_prop(
+        "Bytes of stdout kept (stderr: at most 1 MiB); truncated_* tells when output was cut.",
+        minimum=1,
+        maximum=_MAX_EXEC_OUTPUT,
+        default=1024 * 1024,
+    )
+    return [
+        _tool(
+            "remote_exec",
+            "Run one command on a remote host (backend = an id from exec_backends) and return "
+            "{returncode, stdout, stderr, truncated_stdout, truncated_stderr}. A non-zero exit is "
+            "a result, not an error. Telnet and ADB deliver stderr inside stdout. Cisco: show "
+            "commands only. WinRM: PowerShell.",
+            {
+                "command": {"type": "string", "minLength": 1, "description": "The command line."},
+                "stdin": {"type": "string", "description": "Text fed to the command's stdin (not on WinRM/Cisco)."},
+                "env": env_prop,
+                "timeout": timeout_prop,
+                "max_output": cap_prop,
+            },
+            _remote_exec,
+            group="exec",
+            required=("command",),
+            write=True,
+            timeout_class="long",
+        ),
+        _tool(
+            "remote_script",
+            "Run a script on a remote host: POSIX hosts get it on stdin of sh, bash, python3 or "
+            "perl with args after it; WinRM hosts run it as PowerShell. Same result as remote_exec.",
+            {
+                "script": {"type": "string", "minLength": 1, "description": "The script text."},
+                "interpreter": {
+                    "type": "string",
+                    "enum": sorted([*_POSIX_INTERPRETERS, "powershell"]),
+                    "description": "sh by default; powershell on WinRM.",
+                },
+                "args": {"type": "array", "items": {"type": "string"}, "description": "Script arguments."},
+                "env": env_prop,
+                "timeout": timeout_prop,
+                "max_output": cap_prop,
+            },
+            _remote_script,
+            group="exec",
+            required=("script",),
+            write=True,
+            timeout_class="long",
+        ),
+        _tool(
+            "exec_backends",
+            "List the backends that can run commands: {backend, class, kind} with kind "
+            "posix-shell, powershell or ios-show. Open more with remote_open.",
+            {},
+            _exec_backends,
+            group="exec",
+            accepts_backend=False,
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# agent
+# ---------------------------------------------------------------------------
+
+#: Groups agent_run may offer its model: those with read-only tools. The
+#: inner agent never gets a write, exec, script or agent tool.
+AGENT_GROUPS = ("metadata", "duplicates", "packer", "archive", "index", "filetype", "remote",
+                "extensions")
+
+
+def _build_agent(env: GroupEnv) -> list:
+    def _agent_run(args, ctx):
+        import os
+
+        from core import agent as A
+        from core import llm_profiles as LP
+
+        task = _str_arg(args, "task")
+        name = args.get("profile")
+        settings = LP.LLMSettings.load()
+        profile = settings.profile(name) if name else settings.active_profile()
+        if profile is None:
+            raise ValueError(
+                f"no LLM profile named {name!r}" if name else
+                "no LLM profile is active: set one up in the axross GUI (Agent dock: LLM…)"
+            )
+        groups = args.get("groups") or []
+        if not isinstance(groups, list) or not all(g in AGENT_GROUPS for g in groups):
+            raise ValueError(f"groups must be a list of {', '.join(AGENT_GROUPS)}")
+        max_steps = _int_arg(args, "max_steps", 10, 1, 30)
+        if profile.needs_consent():
+            raise PermissionError(
+                f"the LLM profile {profile.name!r} sends to {profile.host() or 'an unknown host'}, "
+                "which has no consent: confirm it once in the axross GUI"
+            )
+        config = A.AgentConfig(
+            profile=profile,
+            root=env.root or os.path.expanduser("~"),
+            api_key=LP.get_api_key(profile.name),
+            groups=frozenset(groups),
+            allow_write=False,
+            allow_exec=False,
+            max_steps=max_steps,
+        )
+        agent = A.Agent(config, cancel=ctx.cancel_event)
+        try:
+            result = agent.run(task)
+        except A.AgentError as exc:
+            raise OSError(str(exc)) from None
+        return {"answer": result.answer, "stopped": result.stopped, "calls": result.calls,
+                "profile": profile.name, "model": profile.model}
+
+    return [
+        _tool(
+            "agent_run",
+            "Hand a task to the user's own LLM (the active LLM profile of the axross GUI, or "
+            "'profile'). It works with axross' read-only tools inside the MCP root - plus the "
+            "read-only tools of 'groups' - and returns {answer, stopped, calls, profile, model}. "
+            "It cannot change files or run commands. Use it to keep file content on the user's "
+            "machine, e.g. to summarise documents with a local model.",
+            {
+                "task": {"type": "string", "minLength": 1, "maxLength": 20000,
+                         "description": "What the local model should do, in plain language."},
+                "profile": {"type": "string", "description": "An LLM profile name; default: the active one."},
+                "groups": {"type": "array", "items": {"type": "string", "enum": list(AGENT_GROUPS)},
+                           "description": "Extra tool groups the model may use (read-only tools only)."},
+                "max_steps": _int_prop("Most model requests for this task.", minimum=1, maximum=30, default=10),
+            },
+            _agent_run,
+            group="agent",
+            required=("task",),
+            accepts_backend=False,
+            timeout_class="long",
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
 
@@ -2192,6 +2487,8 @@ _BUILDERS: dict[str, Callable[[GroupEnv], list]] = {
     "filetype": _build_filetype,
     "transfer": _build_transfer,
     "remote": _build_remote,
+    "exec": _build_exec,
+    "agent": _build_agent,
     "extensions": _build_extensions,
 }
 
@@ -2204,10 +2501,15 @@ def build_group_tools(groups: Iterable[str], env: GroupEnv) -> list:
     for group in GROUPS:
         if group not in wanted:
             continue
+        if group == "exec" and not env.allow_exec:
+            continue  # off unless --mcp-allow-exec, also under "all"
         builder = _BUILDERS.get(group)
         if builder is None:
             raise GroupError(f"MCP tool group {group!r} has no tools in this build")
-        tools.extend(t for t in builder(env) if env.allow_write or not t.write)
+        # exec's tools are mutating but gated by their own flag, not --mcp-write
+        tools.extend(
+            t for t in builder(env) if env.allow_write or not t.write or t.group == "exec"
+        )
     return tools
 
 
@@ -2232,6 +2534,8 @@ def _required_flags(tool) -> list[str]:
         return list(_WRITE_FLAGS)
     if tool.group == "scripts":
         return ["--mcp-allow-scripts"]
+    if tool.group == "exec":
+        return ["--mcp-tools exec", "--mcp-allow-exec"]
     flags = [f"--mcp-tools {tool.group}"]
     if tool.write:
         flags += _WRITE_FLAGS
@@ -2239,7 +2543,7 @@ def _required_flags(tool) -> list[str]:
 
 
 def tool_manifest(
-    tools, *, groups: Iterable[str], allow_write: bool, allow_scripts: bool
+    tools, *, groups: Iterable[str], allow_write: bool, allow_scripts: bool, allow_exec: bool = False
 ) -> dict:
     """The manifest of *tools* (as built by ``_build_tools`` for these flags):
     everything a client needs to call each tool, and nothing about the
@@ -2256,6 +2560,7 @@ def tool_manifest(
             "mcp_tools": sorted(check_groups(groups)),
             "mcp_write": bool(allow_write),
             "mcp_allow_scripts": bool(allow_scripts),
+            "mcp_allow_exec": bool(allow_exec),
         },
         "timeout_classes": dict(TIMEOUT_CLASSES),
         "groups": {

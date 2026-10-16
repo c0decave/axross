@@ -1319,6 +1319,50 @@ class TelnetSession(SessionLifecycle):
 
     # --- FileBackend interface ---
 
+    def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = 30.0,
+        stdin: bytes | None = None,
+        stdout_cap: int = 1024 * 1024,
+        stderr_cap: int = 64 * 1024,
+        env: dict[str, str] | None = None,
+    ) -> "ExecResult":
+        """Run *cmd* in the login shell - same shape as ``SSHSession.exec``.
+
+        A terminal mixes the two streams: everything arrives in
+        ``stdout``, ``stderr`` stays empty. Telnet has no stdin channel
+        for one command, so *stdin* goes to a temporary file the command
+        reads (removed afterwards). The exit status is ``returncode``.
+        """
+        from core.exec_util import capped, sh_env_prefix
+
+        if self._shell is None:
+            raise OSError("Telnet exec: not connected")
+        prefix = sh_env_prefix(env, "Telnet exec")
+        # A subshell on lines of its own: 'exit' ends the command, not
+        # the session's login shell, exports stay in it, and a trailing
+        # comment cannot swallow the closing parenthesis.
+        line = f"(\n{prefix}{cmd}\n)"
+        tmp = None
+        if stdin is not None:
+            import secrets
+
+            tmp = f"/tmp/.axross-stdin-{secrets.token_hex(6)}"
+            with self.open_write(tmp) as fh:
+                fh.write(stdin)
+            line = f"{line} < {shlex.quote(tmp)}"
+        try:
+            out, code = self._shell.execute(line, timeout=timeout or CMD_TIMEOUT)
+        finally:
+            if tmp is not None:
+                try:
+                    self.remove(tmp)
+                except OSError as exc:
+                    log.warning("Telnet exec: could not remove %s: %s", tmp, exc)
+        return capped(code, out.encode("utf-8", "surrogateescape"), b"", stdout_cap, stderr_cap)
+
     @property
     def name(self) -> str:
         return f"{self._username}@{self._host} (Telnet)"

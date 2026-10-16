@@ -134,7 +134,13 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
    metadata, duplicates, packer, archive, crypto, index, filetype,
    transfer, remote (perfiles guardados como backends adicionales,
    credenciales solo del keyring, nunca un prompt) y extensions; sus
-   herramientas que modifican necesitan además `--mcp-write`.
+   herramientas que modifican necesitan además `--mcp-write`. El
+   grupo `exec` ejecuta comandos y scripts en hosts remotos (SSH,
+   Telnet, rsh, ADB, WinRM, Cisco `show`), solo con su propio
+   `--mcp-allow-exec`; `agent` pasa una tarea a tu propio LLM local,
+   que puede leer pero no cambia nada. El dock Agent (View > Panels) deja
+   que un LLM local trabaje con axross en la ventana y pregunta antes
+   de cada cambio.
    `axross --mcp-list-tools` imprime el manifiesto JSON de todas las
    herramientas ([docs/mcp-tools.json](docs/mcp-tools.json)). Ver
    [docs/MCP_es.md](docs/MCP_es.md).
@@ -324,6 +330,7 @@ Tabla completa de extras + herramientas de sistema por protocolo:
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + API `axross.*` + comandos slash + 32 scripts incluidos + tools MCP de scripting. |
 | [docs/SCRIPTING_REFERENCE.md](docs/SCRIPTING_REFERENCE.md) | Referencia auto-generada de cada función con firma + docstring completo. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | Referencia del servidor MCP — herramientas, sesiones, mTLS, rate limits, hardening. |
+| [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | Para agentes LLM (en inglés): cómo manejar axross por MCP y la API `axross.*` correctamente, con el catálogo de herramientas generado desde el manifiesto. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Manual completo en alemán (workflows, diálogos, atajos de teclado). |
 | [docs/OPSEC.md](docs/OPSEC.md) | Modelo de amenazas + análisis de qué revela el cliente al servidor. |
 | [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md) | SOCKS5 / SOCKS4 / HTTP-CONNECT por protocolo. |

@@ -45,6 +45,10 @@ axross --mcp-server --mcp-allow-scripts
 axross --mcp-server --mcp-tools metadata,filetype
 axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools all
 
+# Comandos y scripts en hosts remotos (§9.8): un opt-in propio que
+# 'all' no incluye; sin variable de entorno equivalente:
+axross --mcp-server --mcp-tools remote,exec --mcp-allow-exec
+
 # Imprimir el manifiesto de herramientas (JSON) para unos flags, sin arrancar nada:
 axross --mcp-list-tools --mcp-tools all --mcp-write
 ```
@@ -58,6 +62,11 @@ línea en stderr que enumera los grupos válidos.
 `paranoid`, y también junto con `--mcp-http` (exit 2): no se ofrece
 ejecución de scripts sobre un transporte de red. Lo que pueden
 alcanzar las herramientas de script está en §2.
+
+`--mcp-allow-exec` se rechaza (exit 2) en el security mode `paranoid`.
+A diferencia de las herramientas de script no ejecuta nada en el
+propio host del servidor, por eso se ofrece en ambos transportes; ver
+§9.8.
 
 Las peticiones llegan por stdin (JSON delimitado por líneas), las
 respuestas salen por stdout. Los logs solo por stderr. Cuando se
@@ -112,7 +121,7 @@ remotos, extensiones) es un grupo de capacidades, ver §9.
 |-----------------------|---------------------------------------------------------------------|
 | `list_dir(path)`      | Entradas del directorio.                                            |
 | `stat(path)`          | Nombre, tipo, tamaño, mtime.                                        |
-| `read_file(path, max_bytes=)` | Contenido en base64; tope de 4 MiB por defecto.             |
+| `read_file(path, max_bytes=, encoding=)` | Contenido en base64; tope de 4 MiB por defecto. `encoding="text"` devuelve `text` (UTF-8, `replaced=true` si se sustituyeron bytes no decodificables) — para modelos que no saben decodificar base64. |
 | `checksum(path, algorithm=)`  | `sha256` (por defecto), `sha1`, `md5` o `sha512`. Usa el hash nativo del backend solo si es del algoritmo pedido; si no, hace streaming por hashlib (emite progreso). |
 | `search(needle, ext, min_size, max_size)` | Índice de metadatos offline, acotado al backend activo y a la raíz MCP. |
 | `walk(path, max_depth, max_entries)`      | Listado recursivo acotado; emite `notifications/progress`. |
@@ -126,7 +135,7 @@ remotos, extensiones) es un grupo de capacidades, ver §9.
 
 | Nombre                            | Descripción                                                                |
 |-----------------------------------|----------------------------------------------------------------------------|
-| `write_file(path, content_b64)`   | Subida en base64.                                                          |
+| `write_file(path, content \| content_b64)` | Subida: `content` como texto UTF-8 o `content_b64` como bytes en base64, exactamente uno. |
 | `mkdir(path)`                     | Crear directorio.                                                          |
 | `remove(path, recursive=False)`   | Borrar.                                                                    |
 | `rename(src, dst)`                | Renombrar / mover.                                                         |
@@ -468,8 +477,12 @@ red-team que se pensó. Los tests de MCP están en
 | `tests/test_mcp_group_packer_archive.py` | Grupos `packer` y `archive`: zip-slip, la contraseña nunca en el log, cancelar no deja nada. |
 | `tests/test_mcp_group_crypto.py` | Grupo `crypto`: la passphrase nunca en respuestas, errores ni auditoría; nunca sobrescribir. |
 | `tests/test_mcp_group_remote_transfer.py` | Grupos `remote` y `transfer`: sin secretos en la lista, sin prompts, host keys, perfiles de producción, alcance por sesión, copia reanudable. |
+| `tests/test_exec_everywhere.py` | `exec()` de Telnet, rsh, ADB, WinRM y Cisco: el estado de salida como `returncode`, stdin por un fichero temporal, claves de env comprobadas y valores entrecomillados, límites de salida, Cisco solo `show`. |
+| `tests/test_mcp_group_exec.py` | Grupo `exec`: desactivado sin `--mcp-allow-exec` (también con `all`), rechazado en modo `paranoid`, backends sin shell rechazados, intérprete por backend, los perfiles de producción no ejecutan nada, auditoría sin comando, stdin ni salida. |
 | `tests/test_mcp_group_extensions.py` | Grupo `extensions`: listar nunca importa una extensión. |
 | `tests/test_mcp_manifest.py` | `--mcp-list-tools` y el `docs/mcp-tools.json` del repositorio siguen sincronizados con el código. |
+| `tests/test_mcp_protocol_matrix.py` | Cada protocolo registrado tiene una vía: `remote_open` alcanza cada protocolo de perfil (la contraseña guardada llega, se escriben y releen ficheros), el inicio de sesión en navegador y el modo `paranoid` se rechazan con su motivo, los backends solo por URL se abren con `axross.open_url`. |
+| `tests/test_mcp_docs_group_table.py` | La tabla del §9.2 de este fichero y de sus versiones inglesa y alemana lista exactamente las herramientas de grupo de `docs/mcp-tools.json`. |
 | `tests/test_mcp_groups_e2e.py` | El servidor real por stdio y HTTP con `--mcp-tools all`: una llamada por grupo, `tasks/start` + `tasks/cancel`. |
 | `tests/test_fuzz_mcp.py` | Peticiones hostiles contra el dispatcher, ambos transportes y cada herramienta de grupo. |
 
@@ -633,6 +646,9 @@ axross --mcp-server --mcp-root ~/photos --mcp-tools index,duplicates
 # Perfiles guardados como backends adicionales, copiar entre ellos y ~/data
 axross --mcp-server --mcp-write --mcp-root ~/data --mcp-tools remote,transfer
 
+# Comandos en los perfiles abiertos (SSH, Telnet, rsh, ADB, WinRM, Cisco)
+axross --mcp-server --mcp-tools remote,exec --mcp-allow-exec
+
 # Todo, por HTTP loopback
 axross --mcp-server --mcp-http 127.0.0.1:7331 --mcp-write --mcp-root ~/data --mcp-tools all
 # ... o con variables de entorno
@@ -643,7 +659,9 @@ AXROSS_MCP=1 AXROSS_MCP_WRITE=1 AXROSS_MCP_TOOLS=all axross --mcp-root ~/data
 
 Las herramientas de solo lectura de un grupo solo necesitan
 `--mcp-tools <grupo>`; las que modifican ni siquiera se registran sin
-`--mcp-write` (y `--mcp-write` se rechaza sin `--mcp-root`).
+`--mcp-write` (y `--mcp-write` se rechaza sin `--mcp-root`). El grupo
+`exec` es la excepción: sus herramientas necesitan `--mcp-allow-exec`
+en su lugar, y `all` deja fuera el grupo sin ese flag (§9.8).
 
 | Grupo | Herramienta | Tipo | Flags necesarios | Clase de timeout |
 |-------|-------------|------|------------------|------------------|
@@ -670,6 +688,10 @@ Las herramientas de solo lectura de un grupo solo necesitan
 | `remote` | `remote_open` | solo lectura | `--mcp-tools remote` | walk |
 | `remote` | `remote_close` | solo lectura | `--mcp-tools remote` | quick |
 | `remote` | `list_backends` | solo lectura | `--mcp-tools remote` | quick |
+| `exec` | `remote_exec` | modifica | `--mcp-tools exec` `--mcp-allow-exec` | long |
+| `exec` | `remote_script` | modifica | `--mcp-tools exec` `--mcp-allow-exec` | long |
+| `exec` | `exec_backends` | solo lectura | `--mcp-tools exec` `--mcp-allow-exec` | quick |
+| `agent` | `agent_run` | solo lectura | `--mcp-tools agent` | long |
 | `extensions` | `extensions_list` | solo lectura | `--mcp-tools extensions` | quick |
 | `extensions` | `extensions_info` | solo lectura | `--mcp-tools extensions` | quick |
 
@@ -719,6 +741,8 @@ Qué hace cada grupo:
   copia interrumpida sigue donde se quedó al llamarla de nuevo con los
   mismos argumentos.
 * **remote** — ver §9.5.
+* **exec** — ejecutar comandos y scripts en hosts remotos; ver §9.8.
+* **agent** — pasar una tarea al LLM propio del usuario; ver §9.9.
 * **extensions** — listar las extensiones instaladas, activadas o no.
   Ninguna puede ejecutarse por MCP: `activate(api)` de una extensión
   recibe la `ExtensionAPI` de Qt y solo puede añadir acciones de menú,
@@ -771,6 +795,8 @@ GUI y en el scripting sigue bloqueado aquí:
   `active: false`.
 * Las herramientas de script siguen rechazadas (`--mcp-allow-scripts`
   termina con exit 2).
+* El grupo `exec` sigue rechazado (`--mcp-allow-exec` termina con
+  exit 2).
 
 ### 9.5 Perfiles remotos
 
@@ -802,6 +828,12 @@ GUI y en el scripting sigue bloqueado aquí:
   podría dirigir el servidor a `sftp://localhost` con el agente SSH del
   usuario, o a un fichero local (`sqlite://`, `git+local://`), y rodear
   `--mcp-root`. Un perfil guardado es decisión del propio usuario.
+* Qué protocolos puede nombrar un perfil: todos los del diálogo de
+  conexión. Los diez backends solo por URL (`exchange`, `git`, `ldap`, `mongodb`, `postgres`, `redis`, `rsh`, `slp`, `sqlite`, `wmi`) no
+  tienen diálogo de conexión y por tanto tampoco perfil; por MCP solo
+  los alcanzan las herramientas de script (`--mcp-allow-scripts`,
+  stdio) con `axross.open_url`. `tests/test_mcp_protocol_matrix.py`
+  mantiene esa división contra el registro de backends.
 
 ### 9.6 Una llamada JSON-RPC por grupo
 
@@ -829,7 +861,8 @@ Un trabajo largo en segundo plano, cancelable en ambos transportes:
 ### 9.7 Manifiesto legible por máquina
 
 `axross --mcp-list-tools` acepta los mismos flags `--mcp-tools`,
-`--mcp-write` y `--mcp-allow-scripts` (y las variables `AXROSS_MCP_*`)
+`--mcp-write`, `--mcp-allow-scripts` y `--mcp-allow-exec` (y las
+variables `AXROSS_MCP_*`)
 que el servidor, no arranca nada e imprime JSON: por herramienta
 `name`, `group`, `mutating`, `required_flags`, `transports`,
 `timeout_class`, `timeout_seconds`, `description` e `input_schema`,
@@ -840,6 +873,93 @@ Cada schema indica tipos, campos obligatorios, enums, valores por
 defecto y límites, y las herramientas de grupo rechazan argumentos
 desconocidos (`additionalProperties: false`).
 [`mcp-tools.json`](mcp-tools.json) es el manifiesto para
-`--mcp-tools all --mcp-write --mcp-allow-scripts`;
+`--mcp-tools all --mcp-write --mcp-allow-scripts --mcp-allow-exec`;
 `tests/test_mcp_manifest.py` falla en cuanto deja de coincidir con el
-código.
+código. [LLM_GUIDE.md](LLM_GUIDE.md) es la guía breve para clientes LLM
+(en inglés); su catálogo de herramientas se genera desde este
+manifiesto.
+
+### 9.8 Comandos en hosts remotos (`exec`)
+
+`--mcp-tools exec --mcp-allow-exec` añade tres herramientas:
+
+* `exec_backends` lista cada backend que puede ejecutar comandos, como
+  `{backend, class, kind}`; `kind` es `posix-shell` (SSH, SCP, Telnet,
+  rsh, ADB), `powershell` (WinRM) o `ios-show` (Cisco Telnet). Abre
+  antes un perfil guardado con `remote_open` (grupo `remote`).
+* `remote_exec(backend, command, stdin?, env?, timeout?, max_output?)`
+  ejecuta un comando y devuelve `{returncode, stdout, stderr,
+  truncated_stdout, truncated_stderr}`. Un estado de salida distinto
+  de 0 es un resultado, no un error. Telnet y ADB no tienen un canal de
+  errores propio: su stderr llega dentro de `stdout`.
+* `remote_script(backend, script, interpreter?, args?, env?, …)` envía
+  el script por stdin a `sh -s --`, `bash -s --`, `python3 -` o
+  `perl -` (por defecto `sh`), con los `args` entrecomillados detrás.
+  Un host WinRM ejecuta el script como PowerShell
+  (`interpreter: "powershell"`, sin `args`); un dispositivo Cisco no
+  ejecuta scripts.
+
+Límites y protecciones:
+
+* **Opt-in propio.** `--mcp-allow-exec` existe solo como flag (sin
+  variable `AXROSS_MCP_*`), `--mcp-tools all` sin él no registra
+  ninguna de las tres herramientas, y `--mcp-write` no las habilita. El
+  security mode `paranoid` rechaza el flag (exit 2).
+* **Solo remoto.** Un backend sin shell remota — el sistema de ficheros
+  local, S3, WebDAV, … — se rechaza con "has no remote shell". Un
+  comando va solo a la shell del host al que está conectado un
+  backend, nunca a un proceso local del servidor (eso lo hacen las
+  herramientas de script, solo por stdio); por eso `exec` se ofrece
+  también por HTTP.
+* **Los perfiles de producción no ejecutan nada** (§9.5).
+* **Cisco: solo comandos `show`.** Todo lo demás (`configure`,
+  `reload`, `write memory`, una segunda línea) se rechaza antes de
+  enviarse, igual que los modificadores de salida que escriben en flash
+  (`| redirect`, `| tee`, `| append`, `>`); `| include`, `| exclude`,
+  `| begin`, `| section` y `| count` siguen permitidos.
+* **stdin** llega al comando por un fichero temporal en Telnet y ADB
+  (eliminado después) y directamente en SSH, SCP y rsh; WinRM y Cisco
+  lo rechazan.
+* Los nombres de **env** deben cumplir `[A-Za-z_][A-Za-z0-9_]*`; los
+  valores se entrecomillan para la shell remota (`export K='v'; ` o
+  `$env:K = 'v'; `).
+* **Acotado.** `timeout` 1–3600 s (por defecto 60), `max_output` hasta
+  16 MiB de stdout (por defecto 1 MiB), stderr como máximo 1 MiB; los
+  flags `truncated_*` indican cuándo se cortó la salida.
+* **Auditoría sin contenido.** Cada llamada registra `attempt` y `ok` o
+  `refused` con el backend, su clase, la longitud y los primeros 16
+  dígitos hexadecimales del SHA-256 del comando, la longitud de stdin y
+  el estado de salida — nunca el comando, su stdin ni su salida, que a
+  menudo llevan contraseñas.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"remote_open","arguments":{"profile":"web01"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remote_exec","arguments":{"backend":"profile:web01","command":"df -h /","timeout":30}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"remote_script","arguments":{"backend":"profile:web01","interpreter":"python3","script":"import sys; print(sys.argv[1:])","args":["a b","c"]}}}
+```
+
+### 9.9 Pasar una tarea al LLM local (`agent`)
+
+`--mcp-tools agent` añade `agent_run(task, profile?, groups?, max_steps?)`:
+el cliente - otro LLM - pasa una tarea al modelo propio del usuario, el
+perfil LLM activo de la GUI de axross (LM Studio, Ollama, vLLM,
+llama.cpp; cualquier servidor compatible con OpenAI) o el indicado.
+Ese modelo trabaja con las herramientas de ficheros de solo lectura de
+axross dentro de la raíz MCP, más las herramientas de solo lectura de
+los grupos indicados en `groups`, y la llamada devuelve
+`{answer, stopped, calls, profile, model}`.
+
+* **No cambia nada.** El agente interno no recibe ninguna herramienta
+  de escritura, exec, script ni agent: en un servidor sin interfaz
+  nadie podría confirmar un cambio. Los cambios con un modelo local
+  pasan por el dock Agent de la GUI, que pregunta antes de cada uno.
+* **El contenido se queda donde apunta el perfil.** Un perfil cuyo
+  servidor no está en esta máquina ni en su red (o se alcanza a través
+  de un proxy) necesita el consentimiento dado en la GUI; sin él la
+  llamada se rechaza antes de enviar nada.
+* **Acotado.** `max_steps` (1–30, por defecto 10) peticiones al modelo;
+  los resultados de las herramientas se recortan para el modelo; la
+  llamada corre en la clase de timeout `long`; `tasks/cancel` la
+  detiene tras la petición al modelo en curso.
+* La API key sale del keyring y no aparece en ningún resultado ni línea
+  de log.

@@ -1048,6 +1048,13 @@ def _refuse_configured_root(path: str, root: str, operation: str) -> None:
         )
 
 
+def _exec_allowed_by_policy() -> bool:
+    """The security mode's word on remote command execution (paranoid: no)."""
+    from core.security_mode import current_policy
+
+    return bool(current_policy().allow_remote_exec)
+
+
 def _build_tools(
     backend,
     *,
@@ -1057,6 +1064,7 @@ def _build_tools(
     backends: dict | None = None,
     allow_scripts: bool = False,
     tool_groups: frozenset[str] | None = None,
+    allow_exec: bool = False,
 ) -> list[_Tool]:
     """Build the catalogue. Write tools are added only when allowed.
 
@@ -1225,10 +1233,26 @@ def _build_tools(
         if not path:
             raise ValueError("read_file requires a path")
         path = _scope_path(path, backend)
+        encoding = args.get("encoding") or "base64"
+        if encoding not in ("base64", "text"):
+            raise ValueError("read_file: encoding must be 'base64' or 'text'")
         cap = int(args.get("max_bytes") or MAX_READ_BYTES)
         cap = max(0, min(cap, MAX_READ_BYTES))
         with backend.open_read(path) as fh:
             data, truncated = _read_capped_stream(fh, cap)
+        if encoding == "text":
+            import codecs
+
+            # A cut inside a multi-byte character is the cap, not a bad
+            # byte: final=False keeps that tail out of the text.
+            text = codecs.getincrementaldecoder("utf-8")("replace").decode(data, final=not truncated)
+            strict = codecs.getincrementaldecoder("utf-8")("strict")
+            try:
+                strict.decode(data, final=not truncated)
+                replaced = False
+            except UnicodeDecodeError:
+                replaced = True
+            return {"text": text, "size": len(data), "truncated": truncated, "replaced": replaced}
         return {
             "content_b64": base64.b64encode(data).decode("ascii"),
             "size": len(data),
@@ -1547,7 +1571,9 @@ def _build_tools(
             name="read_file",
             description=(
                 "Read up to max_bytes (default 4 MiB) from a file. Returns "
-                "base64-encoded bytes. Set ``truncated=true`` when the file "
+                "{content_b64, size, truncated} - or with encoding='text' "
+                "{text, size, truncated, replaced}: UTF-8, undecodable bytes "
+                "replaced (replaced=true). truncated=true when the file "
                 "exceeds the cap."
             ),
             schema={
@@ -1555,6 +1581,12 @@ def _build_tools(
                 "properties": {
                     "path": {"type": "string"},
                     "max_bytes": {"type": "integer", "minimum": 0},
+                    "encoding": {
+                        "type": "string",
+                        "enum": ["base64", "text"],
+                        "default": "base64",
+                        "description": "base64 (exact bytes) or text (UTF-8, for text files).",
+                    },
                 },
                 "required": ["path"],
             },
@@ -1959,8 +1991,11 @@ def _build_tools(
             backend = _resolve_backend(args)
             path = args.get("path")
             content_b64 = args.get("content_b64")
-            if not path or content_b64 is None:
-                raise ValueError("write_file requires path + content_b64")
+            content = args.get("content")
+            if not path or (content_b64 is None) == (content is None):
+                raise ValueError(
+                    "write_file requires path and exactly one of content (text) or content_b64"
+                )
             # Audit "attempt" BEFORE the backend call. A subsequent
             # process death between the write and the "ok" entry
             # still leaves a trace in the audit log — operators see
@@ -1970,7 +2005,12 @@ def _build_tools(
             try:
                 safe = _write_path(path, backend)
                 _refuse_root(safe, backend, "write_file")
-                data = base64.b64decode(content_b64, validate=True)
+                if content is not None:
+                    if not isinstance(content, str):
+                        raise ValueError("write_file: content must be a string")
+                    data = content.encode("utf-8")
+                else:
+                    data = base64.b64decode(content_b64, validate=True)
                 from core.atomic_io import atomic_write
 
                 atomic_write(backend, safe, data)
@@ -2408,14 +2448,18 @@ def _build_tools(
             [
                 _Tool(
                     name="write_file",
-                    description="Overwrite a file with base64-encoded bytes.",
+                    description=(
+                        "Overwrite a file with content (UTF-8 text) or content_b64 "
+                        "(base64 bytes) - exactly one of them. Returns {size}."
+                    ),
                     schema={
                         "type": "object",
                         "properties": {
                             "path": {"type": "string"},
-                            "content_b64": {"type": "string"},
+                            "content": {"type": "string", "description": "The new content as UTF-8 text."},
+                            "content_b64": {"type": "string", "description": "The new content as base64 bytes."},
                         },
-                        "required": ["path", "content_b64"],
+                        "required": ["path"],
                     },
                     handler=_write_file,
                     write=True,
@@ -2836,6 +2880,15 @@ def _build_tools(
                     allow_write=allow_write,
                     backend_by_id=_backend_by_id,
                     remote=remote_registry,
+                    allow_exec=bool(allow_exec) and _exec_allowed_by_policy(),
+                    all_backends=lambda: {
+                        **(backends or {"default": _default_backend}),
+                        **(
+                            {bid: o.backend for bid, o in remote_registry.entries()}
+                            if remote_registry is not None
+                            else {}
+                        ),
+                    },
                 ),
             )
         )
@@ -3945,6 +3998,8 @@ class ServerConfig:
     # Optional capability groups (``--mcp-tools``); see core.mcp_groups.
     # Empty keeps the plain file-tool surface.
     tool_groups: frozenset[str] = frozenset()
+    # Remote command execution (the exec group); its own opt-in, like scripts.
+    allow_exec: bool = False
     stdin: IO = field(default_factory=lambda: sys.stdin)
     stdout: IO = field(default_factory=lambda: sys.stdout)
     # Rate limit: token-bucket guarding tools/call only. Default on
@@ -3966,6 +4021,7 @@ def serve(config: ServerConfig) -> int:
         backends=config.backends,
         allow_scripts=config.allow_scripts,
         tool_groups=config.tool_groups,
+        allow_exec=config.allow_exec,
     )
     resources = _build_resources(config.backend, root=config.root)
     cancels = _CancelRegistry()

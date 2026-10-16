@@ -502,14 +502,41 @@ axross --mcp-server --mcp-write                      # add write tools (capped t
 axross --mcp-server --mcp-http 127.0.0.1:7331        # HTTP, loopback
 ```
 
-17 tools (`list_dir`, `stat`, `read_file`, `checksum`, `search`,
-`walk`, `grep`, `list_versions`, `open_version_read`, `preview` +
-7 write tools when `--mcp-write` is set), `resources/*` endpoints,
+The read-only file tools (`list_dir`, `stat`, `read_file`, `checksum`,
+`search`, `walk`, `grep`, …), the write tools when `--mcp-write` is
+set, the capability groups of `--mcp-tools` (`axross --mcp-list-tools`
+prints every tool a set of flags serves), `resources/*` endpoints,
 `notifications/message` log forwarding, per-tool timeouts,
 per-session token-bucket rate limits, HTTP sessions with SSE
 progress streaming, optional multi-backend routing.
 
 Full reference: **[docs/MCP.md](MCP.md)** (EN) · [MCP_de.md](MCP_de.md) (DE) · [MCP_es.md](MCP_es.md) (ES).
+For LLM clients: [LLM_GUIDE.md](LLM_GUIDE.md).
+
+## Agent dock — a local LLM works with axross
+
+View > Panels > Agent opens a chat with the active LLM profile (the
+profiles of the Analysis dock: LM Studio, Ollama, vLLM, llama.cpp or
+any OpenAI-compatible server; LLM… manages them). The model works with
+the same tools as the MCP server, in the folder shown at the top (the
+active pane's, when it shows local files):
+
+- **Reading** — the file tools, plus the groups ticked in the list
+  (metadata, file types and archives by default).
+- **Changes** — only with *Allow changes to files* ticked, and then
+  every single change (write, remove, rename, pack, …) waits for Yes in
+  a dialog that shows the tool and its arguments; passphrases are
+  masked.
+- **Remote commands** — only with *Allow remote commands* ticked (not
+  in the paranoid security mode), asked one by one the same way.
+- A profile whose server is not on this machine or its network asks
+  first, as what the tools read is sent there.
+- Stop ends the run after the current step; New conversation forgets
+  the history. Changing the folder or a box starts a new conversation.
+
+An MCP client can hand a task to the same local model with
+`--mcp-tools agent` (`agent_run`); that model can only read
+([MCP.md](MCP.md) §9.9).
 
 ## Configuration files
 

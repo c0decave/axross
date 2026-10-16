@@ -132,7 +132,12 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
    crypto, index, filetype, transfer, remote (gespeicherte Profile als
    weitere Backends, Credentials nur aus dem Keyring, nie ein Prompt)
    und extensions; ihre mutierenden Tools brauchen zusätzlich
-   `--mcp-write`. `axross --mcp-list-tools` gibt das JSON-Manifest
+   `--mcp-write`. Die Gruppe `exec` führt Befehle und Scripts auf
+   entfernten Hosts aus (SSH, Telnet, rsh, ADB, WinRM, Cisco `show`),
+   nur mit ihrem eigenen `--mcp-allow-exec`; `agent` übergibt eine
+   Aufgabe an das eigene lokale LLM, das lesen, aber nichts ändern
+   kann. Das Agent-Dock (View > Panels) lässt ein lokales LLM im Fenster
+   mit axross arbeiten und fragt vor jeder Änderung. `axross --mcp-list-tools` gibt das JSON-Manifest
    aller Tools aus ([docs/mcp-tools.json](docs/mcp-tools.json)). Siehe
    [docs/MCP_de.md](docs/MCP_de.md).
 
@@ -318,6 +323,7 @@ Vollständige Tabelle der Extras + System-Tools pro Protokoll:
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + `axross.*`-API + Slash-Commands + 32 mitgelieferte Skripte + MCP-Scripting-Tools. |
 | [docs/SCRIPTING_REFERENCE.md](docs/SCRIPTING_REFERENCE.md) | Auto-generierte Volldoku jeder Funktion mit Signatur + komplettem Docstring. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP-Server-Referenz — Tools, Sessions, mTLS, Rate-Limits, Hardening. |
+| [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | Für LLM-Agents (englisch): axross über MCP und die `axross.*`-API richtig bedienen, mit dem aus dem Manifest erzeugten Tool-Katalog. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Vollständiges deutsches Handbuch (Workflows, Dialog-Referenz, Tastenkürzel). |
 | [docs/OPSEC.md](docs/OPSEC.md) | Threat-Model + per-Finding-Analyse, was der Client an Server preisgibt. |
 | [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md) | SOCKS5 / SOCKS4 / HTTP-CONNECT pro Protokoll. |

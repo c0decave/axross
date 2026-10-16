@@ -222,10 +222,12 @@ class RshSession(SessionLifecycle):
     # Remote execution
     # ------------------------------------------------------------------
 
-    def _run_remote(self, command: str, *, stdin: bytes | None = None) -> bytes:
-        """Execute ``command`` on the remote via rsh; return stdout
-        bytes. Non-zero exit raises :class:`RshError` carrying the
-        captured stderr.
+    def _run_status(
+        self, command: str, *, stdin: bytes | None = None, timeout: float | None = None
+    ) -> tuple[int, bytes, bytes]:
+        """Execute ``command`` on the remote via rsh; return the remote
+        exit status, stdout and stderr. A failed connection or a cut
+        stream raises :class:`RshError`.
 
         The rsh protocol carries stdout and stderr but not the remote
         command's exit status (classic rsh exits 0 whenever the
@@ -251,7 +253,7 @@ class RshSession(SessionLifecycle):
                 argv,
                 input=stdin,
                 capture_output=True,
-                timeout=self._timeout,
+                timeout=timeout or self._timeout,
                 check=False,
                             env=clean_child_env(),
             )
@@ -271,11 +273,37 @@ class RshSession(SessionLifecycle):
                 f"rsh '{command[:60]}...' on {self._host}: output ended without the "
                 f"remote exit status (connection cut?): {err}"
             )
-        if int(status) != 0:
-            raise RshError(
-                f"rsh '{command[:60]}...' on {self._host} exited {int(status)}: {err}"
-            )
-        return out[:idx]
+        return int(status), out[:idx], proc.stderr or b""
+
+    def _run_remote(self, command: str, *, stdin: bytes | None = None) -> bytes:
+        """Like :meth:`_run_status`, but a non-zero exit raises
+        :class:`RshError` carrying the captured stderr; returns stdout."""
+        status, out, err = self._run_status(command, stdin=stdin)
+        if status != 0:
+            detail = err.decode("utf-8", "replace").strip()
+            raise RshError(f"rsh '{command[:60]}...' on {self._host} exited {status}: {detail}")
+        return out
+
+    def exec(
+        self,
+        cmd: str,
+        *,
+        timeout: float | None = 30.0,
+        stdin: bytes | None = None,
+        stdout_cap: int = 1024 * 1024,
+        stderr_cap: int = 64 * 1024,
+        env: dict[str, str] | None = None,
+    ) -> "ExecResult":
+        """Run *cmd* on the host - same shape as ``SSHSession.exec``;
+        the exit status is ``returncode``, stdin goes to the process."""
+        from core.exec_util import capped, sh_env_prefix
+
+        prefix = sh_env_prefix(env, "rsh exec")
+        # Its own sh: 'exit' must not skip the status trailer.
+        status, out, err = self._run_status(
+            f"sh -c {shlex.quote(prefix + cmd)}", stdin=stdin, timeout=timeout
+        )
+        return capped(status, out, err, stdout_cap, stderr_cap)
 
     # ------------------------------------------------------------------
     # Read surface

@@ -489,6 +489,8 @@ class HTTPServerConfig:
     backends: dict | None = None
     # Optional capability groups (``--mcp-tools``); see core.mcp_groups.
     tool_groups: frozenset[str] = frozenset()
+    # The exec group (--mcp-allow-exec); see core.mcp_groups.
+    allow_exec: bool = False
     # mTLS — all three required together.
     cert_file: str | None = None
     key_file: str | None = None
@@ -1052,6 +1054,7 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
         root=config.root,
         backends=config.backends,
         tool_groups=config.tool_groups,
+        allow_exec=config.allow_exec,
     )
     resources = _mcp._build_resources(config.backend, root=config.root)
     # One forwarder per server. Per-session demux happens inside

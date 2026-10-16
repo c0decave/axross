@@ -126,7 +126,12 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
    metadata, duplicates, packer, archive, crypto, index, filetype,
    transfer, remote (saved profiles as extra backends, credentials
    only from the keyring, never a prompt) and extensions; their
-   mutating tools also need `--mcp-write`. `axross --mcp-list-tools`
+   mutating tools also need `--mcp-write`. The `exec` group runs
+   commands and scripts on remote hosts (SSH, Telnet, rsh, ADB,
+   WinRM, Cisco `show`) only with its own `--mcp-allow-exec`; `agent`
+   hands a task to your own local LLM, which can read but change
+   nothing. The Agent dock (View > Panels) lets a local LLM work with
+   axross in the window, asking before every change. `axross --mcp-list-tools`
    prints the JSON manifest of every tool
    ([docs/mcp-tools.json](docs/mcp-tools.json)). See
    [docs/MCP.md](docs/MCP.md).
@@ -328,6 +333,7 @@ Full table of extras + system tools per protocol:
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + `axross.*` API + slash-commands + 32 bundled scripts + MCP scripting tools. |
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the five bundled examples. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
+| [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | For LLM agents: how to drive axross over MCP and the `axross.*` API correctly, with the tool catalog generated from the manifest. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |
 | [docs/OPSEC.md](docs/OPSEC.md) | Threat model + per-finding analysis of what the client reveals to servers. |
 | [docs/PROXY_SUPPORT.md](docs/PROXY_SUPPORT.md) | SOCKS4/5, HTTP(S) CONNECT, NTLM/Negotiate, default proxy, bypass, PAC — per protocol. |

@@ -1,7 +1,7 @@
 """``axross --mcp-list-tools`` prints a machine-readable manifest of the MCP
 tools a start with the same flags would serve, without starting a server;
 docs/mcp-tools.json is that manifest for ``--mcp-tools all --mcp-write
---mcp-allow-scripts`` and must stay in sync with the code."""
+--mcp-allow-scripts --mcp-allow-exec`` and must stay in sync with the code."""
 
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ from core import mcp_server as M
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMITTED = ROOT / "docs" / "mcp-tools.json"
-FULL_FLAGS = ("--mcp-tools", "all", "--mcp-write", "--mcp-allow-scripts")
+FULL_FLAGS = ("--mcp-tools", "all", "--mcp-write", "--mcp-allow-scripts", "--mcp-allow-exec")
 REGENERATE = (
     "python main.py --mcp-list-tools --mcp-tools all --mcp-write --mcp-allow-scripts "
-    "> docs/mcp-tools.json"
+    "--mcp-allow-exec > docs/mcp-tools.json"
 )
 
 
@@ -56,12 +56,14 @@ def _cli(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     )
 
 
-def _manifest(groups=G.GROUPS, write=True, scripts=True) -> dict:
+def _manifest(groups=G.GROUPS, write=True, scripts=True, exec_=True) -> dict:
     tools = M._build_tools(
         M.default_backend(), allow_write=write, root="/nonexistent-root",
-        allow_scripts=scripts, tool_groups=frozenset(groups),
+        allow_scripts=scripts, tool_groups=frozenset(groups), allow_exec=exec_,
     )
-    return G.tool_manifest(tools, groups=frozenset(groups), allow_write=write, allow_scripts=scripts)
+    return G.tool_manifest(
+        tools, groups=frozenset(groups), allow_write=write, allow_scripts=scripts, allow_exec=exec_
+    )
 
 
 # -- the manifest -------------------------------------------------------------------
@@ -71,7 +73,7 @@ def test_happy_manifest_describes_every_served_tool():
     manifest = _manifest()
     served = [t.name for t in M._build_tools(
         M.default_backend(), allow_write=True, root="/x", allow_scripts=True,
-        tool_groups=frozenset(G.GROUPS))]
+        tool_groups=frozenset(G.GROUPS), allow_exec=True)]
     assert [t["name"] for t in manifest["tools"]] == served
     for tool in manifest["tools"]:
         assert set(tool) == {
@@ -82,6 +84,7 @@ def test_happy_manifest_describes_every_served_tool():
         assert manifest["timeout_classes"][tool["timeout_class"]] == tool["timeout_seconds"]
     assert manifest["generated_for"] == {
         "mcp_tools": sorted(G.GROUPS), "mcp_write": True, "mcp_allow_scripts": True,
+        "mcp_allow_exec": True,
     }
 
 
@@ -95,6 +98,8 @@ def test_happy_required_flags_follow_group_and_mutation():
     assert tools["pack"]["required_flags"] == ["--mcp-tools packer", "--mcp-write", "--mcp-root DIR"]
     assert tools["pack"]["mutating"] is True and tools["pack_formats"]["mutating"] is False
     assert tools["list_backends"]["group"] == "remote"
+    assert tools["remote_exec"]["required_flags"] == ["--mcp-tools exec", "--mcp-allow-exec"]
+    assert tools["remote_exec"]["mutating"] is True and tools["exec_backends"]["group"] == "exec"
     assert tools["read_file"]["transports"] == ["stdio", "http"]
 
 
