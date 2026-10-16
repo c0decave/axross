@@ -185,6 +185,36 @@ def _resolve_mcp_root(backend, raw_root: str | None) -> str:
     return str(root.resolve(strict=False))
 
 
+def _gui_smoke_ms() -> int | None:
+    """AXROSS_SMOKE_GUI_MS: open the window, report, quit after that many ms.
+
+    For the bundle smoke (scripts/bundle_smoke.py --native): a CI run on
+    macOS and Windows starts the real window and sees it come up. None
+    when unset, -1 (after a message) when it is no number.
+    """
+    raw = os.environ.get("AXROSS_SMOKE_GUI_MS")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        print(f"AXROSS_SMOKE_GUI_MS must be a number of milliseconds, not {raw!r}", file=sys.stderr)
+        return -1
+    return value
+
+
+def _arm_gui_smoke(app, ms: int) -> None:
+    from PyQt6.QtCore import QTimer
+
+    def shown() -> None:
+        print(f"gui smoke: window shown on {app.platformName()}", flush=True)
+        QTimer.singleShot(ms, app.quit)
+
+    QTimer.singleShot(0, shown)  # runs once the event loop has painted the window
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Axross File Manager")
     from axross._version import __version__
@@ -496,6 +526,9 @@ def main() -> int:
 
     log.info("Starting Axross")
     _install_excepthook()
+    smoke_ms = _gui_smoke_ms()
+    if smoke_ms == -1:
+        return 2
 
     from core.backend_registry import init_registry
 
@@ -527,6 +560,8 @@ def main() -> int:
     window.show()
 
     log.info("Application ready")
+    if smoke_ms is not None:
+        _arm_gui_smoke(app, smoke_ms)
     return app.exec()
 
 

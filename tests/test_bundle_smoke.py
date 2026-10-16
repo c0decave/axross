@@ -88,3 +88,49 @@ def test_edge_an_empty_dist_names_what_is_missing(tmp_path):
     r = _smoke(tmp_path / "dist")
     assert r.returncode != 0
     assert "axross-slim" in r.stdout + r.stderr
+
+
+# --- --native: the real window ---------------------------------------------
+
+
+def _native(dist: Path) -> subprocess.CompletedProcess:
+    # No display on a CI Linux runner: the outer environment's offscreen
+    # stands in for the native platform, which --native never overrides.
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    return subprocess.run(
+        [sys.executable, str(SMOKE), "--native", str(dist)],
+        capture_output=True, text=True, timeout=300, env=env,
+    )
+
+
+def test_happy_native_opens_the_window(tmp_path):
+    _fake_binary(tmp_path / "dist", f'exec "{sys.executable}" "{ROOT / "main.py"}" "$@"')
+    r = _native(tmp_path / "dist")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "window shown on offscreen" in r.stdout and "smoke ok" in r.stdout
+
+
+def test_sad_native_reports_a_crash_on_the_way_to_the_window(tmp_path):
+    # What a crashing GUI start looks like: Qt aborts, no window line.
+    _fake_binary(tmp_path / "dist", 'echo "Cannot create window: no screens available" >&2; kill -ABRT $$')
+    r = _native(tmp_path / "dist")
+    assert r.returncode != 0
+    assert "no window" in r.stdout and "no screens available" in r.stdout
+
+
+def test_edge_the_newest_crash_report_of_the_binary_is_shown(tmp_path):
+    sys.path.insert(0, str(SMOKE.parent))
+    import bundle_smoke
+
+    reports = tmp_path / "DiagnosticReports"
+    reports.mkdir()
+    old = reports / "axross-slim-2026-10-01-090000.ips"
+    old.write_text("old crash")
+    os.utime(old, (1, 1))
+    other = reports / "Safari-2026-10-16-210000.ips"
+    other.write_text("not ours")
+    new = reports / "axross-slim-2026-10-16-213000.ips"
+    new.write_text('{"exception": {"type": "EXC_CRASH", "signal": "SIGABRT"}}')
+    text = bundle_smoke.crash_report("axross-slim", reports, since=2.0)
+    assert "SIGABRT" in text and "old crash" not in text and "not ours" not in text
+    assert bundle_smoke.crash_report("axross-slim", tmp_path / "missing", since=0) == ""
