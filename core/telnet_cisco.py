@@ -35,7 +35,10 @@ import logging
 import posixpath
 import re
 from datetime import datetime
-from typing import IO
+from typing import IO, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models.exec_result import ExecResult
 
 from core.backend import SessionLifecycle
 from models.file_item import FileItem

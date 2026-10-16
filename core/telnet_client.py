@@ -29,6 +29,7 @@ from security.protocol_line_split import split_lf_only_stream
 
 if TYPE_CHECKING:  # pragma: no cover — type-hint only, no runtime cost
     from core.proxy import ProxyConfig
+    from models.exec_result import ExecResult
 
 log = logging.getLogger(__name__)
 
