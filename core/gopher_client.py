@@ -28,6 +28,7 @@ import ssl
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -207,17 +208,33 @@ def _parse_menu(raw: bytes) -> list[dict]:
     return entries
 
 
+def _clean_component(text: str) -> str:
+    """*text* as one path component: separators replaced, NUL dropped."""
+    return text.replace("/", "_").replace("\\", "_").replace("\x00", "").strip()
+
+
 def _entry_to_filename(entry: dict) -> str:
     """Build a readable filename for a Gopher entry. The display
     string is the user-visible label; we keep it but sanitise it for
     filesystem-style paths and tack on a hint extension when the
     type is known."""
-    display = entry["display"].strip() or posixpath.basename(entry["selector"]) or entry["type"]
-    # Replace path-hostile chars.
-    safe = display.replace("/", "_").replace("\\", "_")
-    safe = safe.replace("\x00", "").strip()
+    # Every candidate goes through the same cleaning: the fallback used to
+    # be the RAW selector, so a display of only NUL bytes listed as
+    # "/nul.txt". "." and ".." would name the folder itself or its parent.
+    safe = ""
+    for candidate in (
+        entry["display"],
+        posixpath.basename(entry["selector"]),
+        entry["selector"],
+        entry["type"],
+    ):
+        safe = _clean_component(candidate)
+        if safe:
+            break
     if not safe:
-        safe = entry["selector"] or entry["type"]
+        safe = "item"
+    if safe in (".", ".."):
+        safe = "_" + safe
     if entry["type"] in _DIR_TYPES:
         return safe
     # File: append a type-hint extension only when the display name
@@ -261,7 +278,7 @@ def _disambiguate(entries: list[dict]) -> dict[int, str]:
 # ---------------------------------------------------------------------------
 
 
-class GopherSession:
+class GopherSession(SessionLifecycle):
     """Read-only Gopher backend implementing the FileBackend protocol.
 
     Path semantics:
@@ -648,11 +665,17 @@ class GopherSession:
             except Exception as exc:  # noqa: BLE001
                 log.debug("Gopher recursive_fetch: skip %s: %s", p, exc)
                 return
-            for e in entries:
+            # The names list_dir shows: info / error lines dropped,
+            # display strings sanitised and duplicates suffixed, so
+            # every returned path resolves back through open_read.
+            names = _disambiguate(entries)
+            for idx, e in enumerate(entries):
                 if len(out) >= max_files:
                     return
+                if idx not in names:
+                    continue
                 t = e.get("type") or ""
-                child_path = self.join(p, e.get("display") or e.get("selector") or "")
+                child_path = self.join(p, names[idx])
                 if on_visit is not None:
                     try:
                         on_visit(child_path, t)

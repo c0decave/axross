@@ -14,18 +14,23 @@ Uses only Python stdlib (imaplib, email).
 from __future__ import annotations
 
 import email
+import email.errors
 import email.header
 import email.policy
+import contextlib
 import email.utils
+import functools
 import imaplib
 import io
 import logging
 import posixpath
 import re
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import IO
 
+from core.backend import SessionLifecycle
+from core.session_lock import io_lock, liveness_check, serialized
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -51,6 +56,26 @@ def _sanitize_filename(name: str, max_len: int = 120) -> str:
     return name
 
 
+def _internaldate(text: str) -> datetime:
+    """``INTERNALDATE`` ("01-Jul-2026 11:00:00 +0200") as an aware datetime.
+
+    The zone is part of the value: dropping it left the server's wall
+    clock reading, which FileItem reads as THIS machine's local time.
+    Raises on an unparseable value, like the call it replaces."""
+    parts = email.utils.parsedate_tz(text)
+    if parts is None:
+        raise ValueError(f"unparseable INTERNALDATE: {text!r}")
+    when = datetime(*parts[:6])
+    if parts[9] is None:
+        return when
+    return when.replace(tzinfo=timezone(timedelta(seconds=parts[9])))
+
+
+# Socket timeout for every IMAP connection; the proxied ones get the
+# same value from _create_socket below.
+IMAP_TIMEOUT = 30.0
+
+
 class _ProxyIMAP4(imaplib.IMAP4):
     """IMAP4 subclass that builds its TCP socket through a SOCKS /
     HTTP proxy via :func:`core.proxy.create_proxy_socket`.
@@ -68,7 +93,7 @@ class _ProxyIMAP4(imaplib.IMAP4):
     def _create_socket(self, timeout=None):
         from core.proxy import create_proxy_socket
 
-        timeout = float(timeout) if timeout is not None else 30.0
+        timeout = float(timeout) if timeout is not None else IMAP_TIMEOUT
         return create_proxy_socket(
             self._axross_proxy,
             self.host,
@@ -89,7 +114,7 @@ class _ProxyIMAP4_SSL(imaplib.IMAP4_SSL):
     def _create_socket(self, timeout=None):
         from core.proxy import create_proxy_socket
 
-        timeout = float(timeout) if timeout is not None else 30.0
+        timeout = float(timeout) if timeout is not None else IMAP_TIMEOUT
         raw = create_proxy_socket(
             self._axross_proxy,
             self.host,
@@ -99,6 +124,37 @@ class _ProxyIMAP4_SSL(imaplib.IMAP4_SSL):
         # ssl_context is populated by IMAP4_SSL.__init__ (defaults to
         # ssl._create_stdlib_context() when None was passed in).
         return self.ssl_context.wrap_socket(raw, server_hostname=self.host)
+
+
+def _search_uids(raw: bytes | str) -> list[bytes]:
+    """The UIDs of a SEARCH answer, as ASCII digit tokens.
+
+    The tokens go back to the server in a FETCH command and into int();
+    anything else the server put there (non-ASCII bytes, words) is
+    skipped instead of raising UnicodeDecodeError / ValueError.
+    """
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8", "replace")
+    return [tok for tok in raw.split() if tok.isdigit()]  # bytes.isdigit(): ASCII only
+
+
+def _imap_errors_as_oserror(fn):
+    """Re-raise imaplib's protocol errors from ``fn`` as ``OSError``.
+
+    imaplib raises ``IMAP4.error`` for a tagged NO/BAD it does not expect
+    and ``IMAP4.abort`` for BYE, a dropped connection or a reply it cannot
+    parse - plain Exception subclasses. The backend contract is OSError,
+    which is what the pane, transfers and compare handle.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except imaplib.IMAP4.error as exc:
+            raise OSError(f"IMAP {fn.__name__}: {exc}") from exc
+
+    return wrapper
 
 
 def _expunge_one(imap, uid) -> tuple[str, list]:
@@ -132,11 +188,22 @@ def _decode_header(raw: str | bytes | None) -> str:
         return ""
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", errors="replace")
-    parts = email.header.decode_header(raw)
+    try:
+        parts = email.header.decode_header(raw)
+    except email.errors.HeaderParseError:
+        # A B-encoded word that is not base64 ("=?utf-8?B?S?="): show it
+        # as the server sent it.
+        return raw
     decoded: list[str] = []
     for fragment, charset in parts:
         if isinstance(fragment, bytes):
-            decoded.append(fragment.decode(charset or "utf-8", errors="replace"))
+            try:
+                decoded.append(fragment.decode(charset or "utf-8", errors="replace"))
+            except (LookupError, ValueError):  # unknown charset, NUL in its name
+                # A charset Python does not know ("=?x-bogus?Q?...?=") is
+                # the server's word, not ours: show the bytes as UTF-8,
+                # as pop3_client._decode_header does.
+                decoded.append(fragment.decode("utf-8", errors="replace"))
         else:
             decoded.append(fragment)
     return " ".join(decoded)
@@ -197,8 +264,15 @@ def _imap_utf7_decode(data: bytes) -> str:
                 pad = 4 - len(encoded) % 4
                 if pad < 4:
                     encoded += b"=" * pad
-                decoded_bytes = base64.b64decode(encoded)
-                result.append(decoded_bytes.decode("utf-16-be"))
+                try:
+                    decoded_bytes = base64.b64decode(encoded, validate=True)
+                    result.append(decoded_bytes.decode("utf-16-be"))
+                except ValueError:
+                    # binascii.Error / UnicodeDecodeError (both ValueError):
+                    # the server sent a shift sequence that is not modified
+                    # BASE64 of UTF-16. Keep it literally, like the
+                    # unterminated "&" above.
+                    result.append(data[i : j + 1].decode("ascii", "replace"))
             i = j + 1
         else:
             result.append(chr(data[i]))
@@ -220,10 +294,13 @@ class _SpooledWriter:
         imap: imaplib.IMAP4 | imaplib.IMAP4_SSL,
         mailbox: str,
         filename: str | None = None,
+        lock=None,
     ):
         self._imap = imap
         self._mailbox = mailbox
         self._filename = filename
+        # The session's I/O lock: APPEND runs on the shared handle.
+        self._lock = lock if lock is not None else contextlib.nullcontext()
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
 
@@ -239,6 +316,7 @@ class _SpooledWriter:
     def tell(self) -> int:
         return self._buf.tell()
 
+    @_imap_errors_as_oserror
     def close(self) -> None:
         if self._closed:
             return
@@ -256,7 +334,8 @@ class _SpooledWriter:
             message_bytes = raw_bytes
 
         mailbox_encoded = _imap_utf7_encode(self._mailbox).decode("ascii")
-        typ, data = self._imap.append(mailbox_encoded, None, None, message_bytes)
+        with self._lock:
+            typ, data = self._imap.append(mailbox_encoded, None, None, message_bytes)
         if typ != "OK":
             raise OSError(f"IMAP APPEND to {self._mailbox} failed: {data}")
         log.info("Appended %d bytes to mailbox %s", len(message_bytes), self._mailbox)
@@ -309,7 +388,7 @@ class _SpooledWriter:
             self.close()
 
 
-class ImapSession:
+class ImapSession(SessionLifecycle):
     """IMAP4 backend implementing the FileBackend protocol.
 
     Maps IMAP mailboxes to directories and email messages to files,
@@ -358,6 +437,10 @@ class ImapSession:
         # __new__-bypass pattern some unit tests use.
         proxy = getattr(self, "_proxy", None)
         proxy_active = proxy is not None and proxy.enabled
+        # A new connection starts in AUTH state: nothing is selected,
+        # whatever the previous connection had open.
+        self._selected_mailbox = None
+        self._selected_readonly = True
         try:
             if self._use_ssl:
                 from core.tls_context import client_tls_context
@@ -368,7 +451,9 @@ class ImapSession:
                         self._host, self._port, proxy, ssl_context=tls_ctx
                     )
                 else:
-                    self._imap = imaplib.IMAP4_SSL(self._host, self._port, ssl_context=tls_ctx)
+                    self._imap = imaplib.IMAP4_SSL(
+                        self._host, self._port, ssl_context=tls_ctx, timeout=IMAP_TIMEOUT
+                    )
             else:
                 # Credentials will traverse the wire in plaintext — this is
                 # occasionally legitimate (localhost, overlay VPN), but it
@@ -382,7 +467,7 @@ class ImapSession:
                 if proxy_active:
                     self._imap = _ProxyIMAP4(self._host, self._port, proxy)
                 else:
-                    self._imap = imaplib.IMAP4(self._host, self._port)
+                    self._imap = imaplib.IMAP4(self._host, self._port, timeout=IMAP_TIMEOUT)
 
             typ, data = self._imap.login(self._username, self._password)
             if typ != "OK":
@@ -569,6 +654,7 @@ class ImapSession:
         return f"{self._username}@{self._host} ({proto})"
 
     @property
+    @liveness_check
     def connected(self) -> bool:
         if self._imap is None:
             return False
@@ -581,6 +667,7 @@ class ImapSession:
     def close(self) -> None:
         self.disconnect()
 
+    @serialized
     def disconnect(self) -> None:
         """Close the IMAP connection."""
         if self._imap is not None:
@@ -598,6 +685,8 @@ class ImapSession:
             self._mailbox_cache = None
         log.info("Disconnected from %s", self._host)
 
+    @_imap_errors_as_oserror
+    @serialized
     def list_dir(self, path: str) -> list[FileItem]:
         """List directory contents at the given virtual path."""
         parsed = self._parse_path(path)
@@ -664,7 +753,7 @@ class ImapSession:
         if not uids_raw or not uids_raw.strip():
             return []
 
-        uid_list = uids_raw.split()
+        uid_list = _search_uids(uids_raw)
         items: list[FileItem] = []
 
         # Fetch envelopes in batches to avoid overly long commands
@@ -705,7 +794,7 @@ class ImapSession:
                 date_match = re.search(r'INTERNALDATE\s+"([^"]+)"', header_line)
                 if date_match:
                     try:
-                        modified = datetime(*email.utils.parsedate(date_match.group(1))[:6])
+                        modified = _internaldate(date_match.group(1))
                     except Exception:
                         pass
 
@@ -860,6 +949,8 @@ class ImapSession:
                 return response_part[1]
         raise OSError(f"No RFC822 body returned for UID {uid} in {mailbox!r}")
 
+    @_imap_errors_as_oserror
+    @serialized
     def stat(self, path: str) -> FileItem:
         """Return a FileItem for the given virtual path."""
         parsed = self._parse_path(path)
@@ -902,7 +993,7 @@ class ImapSession:
                         dm = re.search(r'INTERNALDATE\s+"([^"]+)"', line)
                         if dm:
                             try:
-                                modified = datetime(*email.utils.parsedate(dm.group(1))[:6])
+                                modified = _internaldate(dm.group(1))
                             except Exception:
                                 pass
                 return FileItem(name=leaf_name, size=size, modified=modified)
@@ -924,6 +1015,7 @@ class ImapSession:
 
         raise OSError(f"Invalid path: {path!r}")
 
+    @_imap_errors_as_oserror
     def is_dir(self, path: str) -> bool:
         """Check if the path refers to a directory-like entity."""
         parsed = self._parse_path(path)
@@ -951,6 +1043,8 @@ class ImapSession:
         except OSError:
             return False
 
+    @_imap_errors_as_oserror
+    @serialized
     def mkdir(self, path: str) -> None:
         """Create a new mailbox."""
         mailbox = self._virtual_path_to_mailbox(path)
@@ -962,6 +1056,8 @@ class ImapSession:
         self._mailbox_cache = None
         log.info("Created mailbox: %s", mailbox)
 
+    @_imap_errors_as_oserror
+    @serialized
     def remove(self, path: str, recursive: bool = False) -> None:
         """Delete a message or mailbox.
 
@@ -992,7 +1088,13 @@ class ImapSession:
             log.info("Deleted mailbox: %s", mailbox)
             return
 
-        if len(parsed) >= 2:
+        if len(parsed) >= 3:
+            # An attachment is part of its message: deleting it would
+            # mean rewriting the mail, and acting on the UID would
+            # delete the whole message.
+            raise OSError(f"Cannot remove a single attachment: {path!r}")
+
+        if len(parsed) == 2:
             mailbox, uid = parsed[0], parsed[1]
             if uid is None:
                 log.debug("Ignoring remove for non-UID path: %s", path)
@@ -1011,6 +1113,8 @@ class ImapSession:
 
         raise OSError(f"Cannot remove: {path!r}")
 
+    @_imap_errors_as_oserror
+    @serialized
     def rename(self, src: str, dst: str) -> None:
         """Rename a mailbox or move a message.
 
@@ -1044,8 +1148,11 @@ class ImapSession:
             log.info("Renamed mailbox %s -> %s", old_name, new_name)
             return
 
+        if len(src_parsed) >= 3:
+            raise OSError(f"Cannot rename or move a single attachment: {src!r}")
+
         # Move message: copy to new mailbox, then delete from old
-        if len(src_parsed) >= 2 and len(dst_parsed) >= 1:
+        if len(src_parsed) == 2 and len(dst_parsed) >= 1:
             src_mailbox, src_uid = src_parsed[0], src_parsed[1]
             if src_uid is None:
                 raise OSError(f"Cannot rename non-message path: {src!r}")
@@ -1081,6 +1188,8 @@ class ImapSession:
 
         raise OSError(f"Cannot rename {src!r} to {dst!r}")
 
+    @_imap_errors_as_oserror
+    @serialized
     def open_read(self, path: str) -> IO[bytes]:
         """Download an email (.eml) or an attachment."""
         parsed = self._parse_path(path)
@@ -1107,6 +1216,8 @@ class ImapSession:
 
         raise OSError(f"Cannot read: {path!r} is a directory")
 
+    @_imap_errors_as_oserror
+    @serialized
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         """Upload / append a message to a mailbox (IMAP APPEND).
 
@@ -1139,19 +1250,19 @@ class ImapSession:
                 typ, _ = imap.select(imap_enc, readonly=True)
                 if typ == "OK":
                     self._selected_mailbox = mailbox
-                    return _SpooledWriter(imap, mailbox)
+                    return _SpooledWriter(imap, mailbox, lock=io_lock(self))
             except Exception:
                 pass
             # Mailbox doesn't exist — treat as filename, write to INBOX
             filename = mailbox
             mailbox = "INBOX"
             log.info("IMAP write to root-level file %r — using mailbox INBOX", filename)
-            return _SpooledWriter(imap, mailbox, filename=filename)
+            return _SpooledWriter(imap, mailbox, filename=filename, lock=io_lock(self))
 
         if len(parts) == 2:
             filename = parts[1]
             # Pass filename so _SpooledWriter can wrap non-.eml data
-            return _SpooledWriter(imap, mailbox, filename=filename)
+            return _SpooledWriter(imap, mailbox, filename=filename, lock=io_lock(self))
 
         raise OSError(f"Cannot write to {path!r}: only message-level writes are supported")
 
@@ -1204,6 +1315,8 @@ class ImapSession:
     # IMAP-specific verbs (slice 4 of API_GAPS)
     # ------------------------------------------------------------------
 
+    @_imap_errors_as_oserror
+    @serialized
     def search(self, criteria: str = "ALL", *, mailbox: str = "INBOX") -> list[int]:
         """Run an IMAP SEARCH against ``mailbox`` and return the
         matching UIDs (NOT the message-sequence numbers — UIDs are
@@ -1240,9 +1353,10 @@ class ImapSession:
             raise OSError(f"IMAP SEARCH failed: {data}")
         if not data or data[0] is None:
             return []
-        raw = data[0].decode() if isinstance(data[0], bytes) else data[0]
-        return [int(u) for u in raw.split() if u.strip()]
+        return [int(u) for u in _search_uids(data[0])]
 
+    @_imap_errors_as_oserror
+    @serialized
     def fetch_flags(self, uid: int, *, mailbox: str = "INBOX") -> list[str]:
         """Return the flags currently set on a message (e.g.
         ``["\\Seen", "\\Answered"]``)."""
@@ -1257,6 +1371,8 @@ class ImapSession:
             return []
         return [f for f in m.group(1).split() if f]
 
+    @_imap_errors_as_oserror
+    @serialized
     def set_flags(
         self,
         uid: int,
@@ -1296,6 +1412,8 @@ class ImapSession:
         if typ != "OK":
             raise OSError(f"IMAP STORE {verb} failed: {data}")
 
+    @_imap_errors_as_oserror
+    @serialized
     def move(self, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
         """Move a message from ``src_mailbox`` to ``dst_mailbox`` by
         UID. Uses the IMAP MOVE extension (RFC 6851) when the server
@@ -1332,6 +1450,8 @@ class ImapSession:
         self.set_flags(uid, ["\\Deleted"], mailbox=src_mailbox, mode="add")
         _expunge_one(imap, str(int(uid)))
 
+    @_imap_errors_as_oserror
+    @serialized
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         """Return quota usage if the server supports IMAP QUOTA.
 

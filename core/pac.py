@@ -35,6 +35,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 MAX_STEPS = 200_000
+#: Wall-clock budget of one ``find()``. The step limit alone does not
+#: bound run time: a single step may split or join a MAX_STRING string,
+#: and 200 000 of those took minutes on the thread asking for a proxy.
+MAX_SECONDS = 2.0
 MAX_DEPTH = 40
 MAX_STRING = 1 << 16
 MAX_SOURCE = 1 << 20
@@ -85,7 +89,14 @@ def parse_result(text: object) -> list[PacDirective]:
             raise PacError(f"unknown PAC directive {word!r}")
         hostport = rest.strip()
         host, sep, port_s = hostport.rpartition(":")
-        if not sep or not host or not port_s.isdigit() or not (1 <= int(port_s) <= 65535):
+        # isascii(): str.isdigit() also accepts "²" (int() raises) and
+        # other scripts' digits (int() reads "٣" as 3); a port is ASCII.
+        if (
+            not sep
+            or not host
+            or not (port_s.isascii() and port_s.isdigit())
+            or not (1 <= int(port_s) <= 65535)
+        ):
             raise PacError(f"malformed PAC proxy {hostport!r} (expected host:port)")
         out.append(PacDirective(kind, host.strip("[]"), int(port_s)))
     if not out:
@@ -572,11 +583,14 @@ class _Interpreter:
         self.steps = 0
         self.depth = 0
         self.globals: dict = {}
+        self.deadline = time.monotonic() + MAX_SECONDS
 
     def tick(self) -> None:
         self.steps += 1
         if self.steps > MAX_STEPS:
             raise PacError("PAC script exceeded the step limit")
+        if time.monotonic() > self.deadline:
+            raise PacError(f"PAC script exceeded the time limit ({MAX_SECONDS:g} s)")
 
     # statements
     def run_block(self, body: list, env: dict) -> None:

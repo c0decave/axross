@@ -269,10 +269,10 @@ class ProtocolTest(_LabCase):
                     name,
                 )
                 session = self._connect(profile, password=proxy_lab.TARGET_PASSWORD)
-                names = {item.name for item in session.list_dir("~/data")}
+                names = {item.name for item in session.list_dir("/home/labuser/data")}
                 self.assertIn("readme.txt", names)
                 self.assertEqual(
-                    self._read(session, "~/data/readme.txt"),
+                    self._read(session, "/home/labuser/data/readme.txt"),
                     b"hello through the proxy\n",
                 )
 
@@ -289,7 +289,7 @@ class ProtocolTest(_LabCase):
         )
         session = self._connect(profile, password=proxy_lab.TARGET_PASSWORD)
         self.assertEqual(
-            self._read(session, "~/data/readme.txt"), b"hello through the proxy\n"
+            self._read(session, "/home/labuser/data/readme.txt"), b"hello through the proxy\n"
         )
 
     def test_http_through_socks4_by_address(self) -> None:
@@ -453,7 +453,7 @@ class DefaultProxyAndPacTest(_LabCase):
             store_password=True,
         )
         session = self._sftp()
-        self.assertIn("readme.txt", {i.name for i in session.list_dir("~/data")})
+        self.assertIn("readme.txt", {i.name for i in session.list_dir("/home/labuser/data")})
 
     def test_default_https_proxy_uses_the_configured_ca(self) -> None:
         spec = self.lab.proxy("https-basic")
@@ -466,7 +466,7 @@ class DefaultProxyAndPacTest(_LabCase):
         )
         with mock.patch.dict(os.environ, {"AXROSS_PROXY_CA_FILE": ""}):
             session = self._sftp()
-        self.assertTrue(session.list_dir("~/data"))
+        self.assertTrue(session.list_dir("/home/labuser/data"))
 
     def test_bypass_entry_sends_the_target_direct_and_it_fails_as_expected(self) -> None:
         spec = self.lab.proxy("socks5")
@@ -491,7 +491,7 @@ class DefaultProxyAndPacTest(_LabCase):
         self.addCleanup(server.shutdown)
         self._defaults(pac_url=f"http://127.0.0.1:{server.server_address[1]}/wpad.dat")
         session = self._sftp()
-        self.assertIn("readme.txt", {i.name for i in session.list_dir("~/data")})
+        self.assertIn("readme.txt", {i.name for i in session.list_dir("/home/labuser/data")})
 
     def test_pac_direct_answer_means_no_proxy(self) -> None:
         script = "function FindProxyForURL(url, host) { return 'DIRECT'; }"

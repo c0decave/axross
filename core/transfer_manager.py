@@ -10,15 +10,18 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from core import backend_registry
 from core.capability_contracts import contract_for_backend
 from core.path_policy import safe_join, safe_leaf
+from core.transfer_conflicts import IF_EXISTS_OVERWRITE
 from core.transfer_worker import (
     TransferDirection,
     TransferJob,
     TransferStatus,
     TransferWorker,
+    _backend_label,
 )
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
+    from core.transfer_conflicts import ConflictPlan
 
 log = logging.getLogger(__name__)
 
@@ -121,6 +124,30 @@ def _probe_resumable_temp(
     return None
 
 
+def _self_target_refusal(
+    source_backend: FileBackend,
+    source_path: str,
+    dest_backend: FileBackend,
+    dest_path: str,
+    *,
+    is_dir: bool,
+) -> str:
+    """Why copying *source_path* to *dest_path* must not start, or ``""``.
+
+    Onto itself, a move deletes the only copy once the copy "succeeded";
+    a folder copied into itself lists its own copy while making it and
+    recurses until the stack or the path length gives out.
+    """
+    from core.storage_identity import is_within, same_entry
+
+    if is_dir:
+        if is_within(source_backend, source_path, dest_backend, dest_path):
+            return f"cannot copy or move a folder into itself: {dest_path}"
+    elif same_entry(source_backend, source_path, dest_backend, dest_path):
+        return f"source and destination are the same: {dest_path}"
+    return ""
+
+
 def _should_use_temp_file(backend: FileBackend) -> bool:
     """Check if a backend benefits from the temp-file-then-rename pattern.
 
@@ -211,12 +238,15 @@ class TransferManager(QObject):
         *,
         size: int | None = None,
         dest_listing: _DestListings | None = None,
+        if_exists: str = IF_EXISTS_OVERWRITE,
     ) -> TransferJob:
         """Enqueue a single file transfer.
 
         *size* is the source size when the caller already has it from a
         listing (0 or None: ask the backend). *dest_listing* shares
         destination listings across one batch (see _DestListings).
+        *if_exists* is what the worker does with an existing destination
+        (see ``core.transfer_conflicts``).
         """
         # Get file size for progress
         if size:
@@ -275,6 +305,7 @@ class TransferManager(QObject):
             use_temp_file=use_temp,
             resume=auto_resume,
             temp_path=resume_temp_path,
+            if_exists=if_exists,
         )
 
         job.source_backend = source_backend
@@ -288,7 +319,11 @@ class TransferManager(QObject):
                 dest=dest_path,
                 backend=getattr(dest_backend, "name", type(dest_backend).__name__),
                 bytes_total=total_bytes,
-                details={"direction": direction.name, "temp_file": use_temp},
+                details={
+                    "direction": direction.name,
+                    "temp_file": use_temp,
+                    "source_backend": _backend_label(source_backend),
+                },
             )
         except Exception as exc:  # noqa: BLE001
             log.debug("operation journal start failed: %s", exc)
@@ -314,8 +349,16 @@ class TransferManager(QObject):
         dest_dir: str,
         direction: TransferDirection = TransferDirection.DOWNLOAD,
         move: bool = False,
+        *,
+        conflict_plan: ConflictPlan | None = None,
     ) -> list[TransferJob]:
-        """Enqueue multiple file transfers to a destination directory."""
+        """Enqueue multiple file transfers to a destination directory.
+
+        Without *conflict_plan* an existing destination file is replaced
+        (the scripting / compare semantics). With one, every name follows
+        the user's answer and every job refuses to replace a file the plan
+        did not allow it to replace.
+        """
         jobs = []
         dest_listing = _DestListings(dest_backend)
         for src_path in source_paths:
@@ -330,10 +373,29 @@ class TransferManager(QObject):
                 )
                 continue
             dest_path = safe_join(dest_backend, dest_dir, filename)
+            if_exists = IF_EXISTS_OVERWRITE
+            if conflict_plan is not None:
+                resolved = conflict_plan.resolve(dest_path)
+                if resolved is None:
+                    log.info("Transfer skipped (destination kept): %s", dest_path)
+                    continue
+                dest_path, if_exists = resolved
 
             # Check if source is a directory — if so, recurse
             try:
-                if source_backend.is_dir(src_path):
+                src_is_dir = source_backend.is_dir(src_path)
+                refusal = _self_target_refusal(
+                    source_backend, src_path, dest_backend, dest_path, is_dir=src_is_dir
+                )
+                if refusal:
+                    jobs.append(
+                        self._refused_job(
+                            source_backend, dest_backend, src_path, dest_path,
+                            direction, move, refusal,
+                        )
+                    )
+                    continue
+                if src_is_dir:
                     sub_jobs = self._transfer_directory(
                         source_backend,
                         dest_backend,
@@ -342,6 +404,7 @@ class TransferManager(QObject):
                         direction,
                         move=move,
                         dest_listing=dest_listing,
+                        conflict_plan=conflict_plan,
                     )
                     jobs.extend(sub_jobs)
                     continue
@@ -356,10 +419,46 @@ class TransferManager(QObject):
                 direction,
                 move=move,
                 dest_listing=dest_listing,
+                if_exists=if_exists,
             )
             jobs.append(job)
 
+        # A move of folders that hold no file queues no job, so no job
+        # finishes to trigger the cleanup: run it now, or the "move" would
+        # leave the source folders behind like a copy.
+        if move and self._active_count == 0 and self._queued_count == 0:
+            self._cleanup_move_dirs()
+
         return jobs
+
+    def _refused_job(
+        self,
+        source_backend: FileBackend,
+        dest_backend: FileBackend,
+        source_path: str,
+        dest_path: str,
+        direction: TransferDirection,
+        move: bool,
+        reason: str,
+    ) -> TransferJob:
+        """A job that never runs, so the refusal shows in the transfer list."""
+        sep = source_backend.separator()
+        job = TransferJob(
+            source_path=source_path,
+            dest_path=dest_path,
+            direction=direction,
+            filename=source_path.rsplit(sep, 1)[-1] if sep in source_path else source_path,
+            move=move,
+            status=TransferStatus.ERROR,
+            error_message=reason,
+        )
+        job.source_backend = source_backend
+        job.dest_backend = dest_backend
+        self._jobs[job.job_id] = job
+        log.warning("Transfer refused: %s -> %s: %s", source_path, dest_path, reason)
+        self.job_added.emit(job)
+        self.job_error.emit(job.job_id, reason)
+        return job
 
     def _transfer_directory(
         self,
@@ -370,6 +469,7 @@ class TransferManager(QObject):
         direction: TransferDirection,
         move: bool = False,
         dest_listing: _DestListings | None = None,
+        conflict_plan: ConflictPlan | None = None,
     ) -> list[TransferJob]:
         """Recursively transfer a directory."""
         jobs = []
@@ -417,6 +517,13 @@ class TransferManager(QObject):
                     exc,
                 )
                 continue
+            if_exists = IF_EXISTS_OVERWRITE
+            if conflict_plan is not None:
+                resolved = conflict_plan.resolve(dst_path)
+                if resolved is None:
+                    log.info("Transfer skipped (destination kept): %s", dst_path)
+                    continue
+                dst_path, if_exists = resolved
 
             if item.is_dir:
                 sub_jobs = self._transfer_directory(
@@ -427,6 +534,7 @@ class TransferManager(QObject):
                     direction,
                     move=move,
                     dest_listing=dest_listing,
+                    conflict_plan=conflict_plan,
                 )
                 jobs.extend(sub_jobs)
             else:
@@ -439,6 +547,7 @@ class TransferManager(QObject):
                     move=move,
                     size=int(getattr(item, "size", 0) or 0),
                     dest_listing=dest_listing,
+                    if_exists=if_exists,
                 )
                 jobs.append(job)
 
@@ -483,6 +592,7 @@ class TransferManager(QObject):
             temp_path=old_job.temp_path,
             move=old_job.move,
             use_temp_file=old_job.use_temp_file,
+            if_exists=old_job.if_exists,
         )
         new_job.source_backend = old_job.source_backend
         new_job.dest_backend = old_job.dest_backend
@@ -495,7 +605,11 @@ class TransferManager(QObject):
                 dest=new_job.dest_path,
                 backend=getattr(new_job.dest_backend, "name", type(new_job.dest_backend).__name__),
                 bytes_total=new_job.total_bytes,
-                details={"retry_of": job_id, "resume": True},
+                details={
+                    "retry_of": job_id,
+                    "resume": True,
+                    "source_backend": _backend_label(new_job.source_backend),
+                },
             )
         except Exception as exc:  # noqa: BLE001
             log.debug("operation journal retry start failed: %s", exc)
@@ -572,8 +686,11 @@ class TransferManager(QObject):
         """Remove empty source directories after a move operation (deepest first)."""
         if not self._dirs_to_remove_after_move:
             return
-        # Process in reverse order so deepest dirs are removed first
-        for backend, dir_path in reversed(self._dirs_to_remove_after_move):
+        # _transfer_directory records a folder after its subfolders
+        # (post-order), so the recorded order already is deepest first.
+        # Walking it reversed tried every parent while its subfolder still
+        # existed and kept the parent as "not empty".
+        for backend, dir_path in list(self._dirs_to_remove_after_move):
             try:
                 remaining = backend.list_dir(dir_path)
                 if not remaining:

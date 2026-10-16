@@ -54,8 +54,9 @@ def _ssh_lab_available() -> bool:
     short-circuit the whole module when the Docker SSH lab is not
     started — otherwise each `connect()` falls into a multi-second
     paramiko handshake timeout, multiplied by ~38 testcases, which
-    blows past the audit-gate per-suite timeout. Mocked SSH coverage
-    in `tests/test_hardening_regressions.py` and
+    blows past the audit-gate per-suite timeout. In-process SSH
+    coverage in `tests/test_fuzz_sftp.py` (SSHSession against a
+    paramiko server in the test process) and
     `tests/test_backend_regressions.py` protects production logic
     when the live lab is offline.
     """
@@ -69,8 +70,8 @@ def _ssh_lab_available() -> bool:
 
 if not _ssh_lab_available():
     pytest.skip(
-        "Docker SSH lab endpoints (10.99.0.10-12) unreachable; mocked "
-        "SSH coverage in test_hardening_regressions.py and "
+        "Docker SSH lab endpoints (10.99.0.10-12) unreachable; in-process "
+        "SSH coverage in test_fuzz_sftp.py and "
         "test_backend_regressions.py protects production logic when "
         "the live lab is offline. Start the lab with "
         "`cd tests/docker && docker compose up -d` to run these.",

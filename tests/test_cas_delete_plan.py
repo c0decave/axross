@@ -8,8 +8,9 @@ the content is gone from every location at once. A deduplicating tool
 that permits that is a data-destruction tool.
 
 ``plan_deletion`` is the guard. It never returns a plan that would empty
-a group, and it reports which groups it held back so the UI can say why
-rather than silently dropping rows from the user's selection.
+a group: when every copy is selected ("select all, delete"), the first copy
+by the survivor rule (the oldest) is kept and reported in ``auto_kept``, so
+the UI can say so. Groups of one are refused.
 """
 
 from __future__ import annotations
@@ -60,23 +61,26 @@ def test_happy_deleting_across_several_groups():
 # --------------------------------------------------------------------------
 
 
-def test_sad_selecting_every_copy_of_a_group_deletes_nothing_from_it():
-    """The whole point: this selection would erase the content
-    entirely, so the group is held back rather than partially applied."""
+def test_sad_selecting_every_copy_of_a_group_keeps_its_first_copy():
+    """This selection would erase the content entirely, so the first copy
+    by the survivor rule stays and only the others are planned."""
     group = [_e("/a"), _e("/b")]
     plan = plan_deletion(list(group), [group])
-    assert plan.deletable == []
-    assert plan.refused_groups == ["h1"]
+    assert [e.path for e in plan.deletable] == ["/b"]
+    assert [e.path for e in plan.auto_kept] == ["/a"]
+    assert plan.refused_groups == []
+    assert plan.survivors == 1
 
 
 def test_sad_a_fully_selected_group_does_not_block_the_others():
-    """One reckless selection must not cost the user the rest of their
+    """One select-all group must not cost the user the rest of their
     intended cleanup."""
     doomed = [_e("/a", "h1"), _e("/b", "h1")]
     fine = [_e("/c", "h2"), _e("/d", "h2")]
     plan = plan_deletion([*doomed, fine[0]], [doomed, fine])
-    assert [e.path for e in plan.deletable] == ["/c"]
-    assert plan.refused_groups == ["h1"]
+    assert [e.path for e in plan.deletable] == ["/b", "/c"]
+    assert [e.path for e in plan.auto_kept] == ["/a"]
+    assert plan.refused_groups == []
 
 
 def test_edge_a_lone_file_in_a_group_is_never_deletable():

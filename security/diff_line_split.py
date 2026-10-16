@@ -42,11 +42,10 @@ This module lifts the contract OUT of ``scripts/`` so:
   (:func:`added_line_has_internal_cr`) is a named predicate every
   scanner can apply for the inline ``current_file := "<unknown>"``
   pin without re-deriving the trailing-CRLF-artifact exclusion,
-* the contract has a focused test suite
-  (``tests/test_diff_line_split.py``) that exercises happy / edge /
-  sad cases independently of the end-to-end script tests, so a
-  regression at the line-splitting boundary surfaces at a unit-test
-  failure rather than waiting for an integration scenario.
+* the contract is small enough to be unit-tested (happy / edge / sad)
+  independently of the end-to-end script tests, so a regression at
+  the line-splitting boundary surfaces as a unit-test failure rather
+  than waiting for an integration scenario.
 
 The module is stdlib-only and has no side effects at import time —
 it is safe to import from any production scanner, any test, and any

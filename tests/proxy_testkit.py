@@ -9,6 +9,7 @@ from __future__ import annotations
 import socket
 import struct
 import threading
+from tests.socket_lifecycle import close_socket  # noqa: E402
 from contextlib import contextmanager
 from unittest import mock
 
@@ -57,12 +58,9 @@ class FakeSocks5Server:
     # -- lifecycle ---------------------------------------------------------
     def close(self) -> None:
         self._stop.set()
-        try:
-            self._listener.close()
-        except OSError:
-            pass
+        close_socket(self._listener)
         for relay in self._udp_relays:
-            relay.close()
+            close_socket(relay)
 
     def __enter__(self):
         return self
@@ -208,6 +206,37 @@ class FakeSocks5Server:
         out.close()
 
 
+class HostileUdpRelay(FakeSocks5Server):
+    """SOCKS5 server whose UDP relay answers the first relayed datagram
+    with ``self.datagrams``, sent to the client exactly as given (no SOCKS
+    UDP header added) - for malformed-relay tests."""
+
+    def __init__(self, datagrams: list[bytes] | None = None) -> None:
+        super().__init__()
+        self.datagrams: list[bytes] = list(datagrams or [])
+
+    def _udp_associate(self, client: socket.socket) -> None:
+        relay = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        relay.bind(("127.0.0.1", 0))
+        self._udp_relays.append(relay)
+        rport = relay.getsockname()[1]
+        client.sendall(
+            b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack("!H", rport)
+        )
+        relay.settimeout(3)
+        try:
+            _data, origin = relay.recvfrom(65535)
+        except OSError:
+            return
+        for datagram in self.datagrams:
+            relay.sendto(datagram, origin)
+        try:
+            client.settimeout(3)
+            client.recv(1)
+        except OSError:
+            pass
+
+
 class EchoServer:
     """TCP server that sends ``banner`` then echoes; records peer addresses."""
 
@@ -244,7 +273,7 @@ class EchoServer:
             conn.close()
 
     def close(self) -> None:
-        self._listener.close()
+        close_socket(self._listener)
 
 
 class UdpEchoServer:
@@ -264,7 +293,7 @@ class UdpEchoServer:
             self._sock.sendto(b"ECHO:" + data, addr)
 
     def close(self) -> None:
-        self._sock.close()
+        close_socket(self._sock)
 
 
 @contextmanager

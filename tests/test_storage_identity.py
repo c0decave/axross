@@ -70,7 +70,7 @@ class MountSourceTest(unittest.TestCase):
             mock.patch.object(SI, "_read_mountinfo", return_value=MOUNTINFO),
             mock.patch.object(SI.os, "stat", return_value=st),
         ):
-            self.assertEqual(SI.storage_host_of_local_path("~"), "localhost")
+            self.assertEqual(SI.storage_host_of_local_path("/home/x"), "localhost")
 
     def test_edge_a_local_fuse_device_is_localhost(self) -> None:
         self.assertEqual(self._source(55), "localhost")

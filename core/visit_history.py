@@ -36,6 +36,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.secure_storage import keep_unreadable_copy
 from security.visit_history_atomicity import (
     assert_lock_held as _assert_lock_held,
 )
@@ -168,30 +169,50 @@ def _sanitize_op_entry(d: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _load() -> dict[str, HostVisit]:
+def _read() -> tuple[dict[str, HostVisit], bool]:
+    """The stored visits, and whether the file was taken in completely
+    (a missing file is: it holds nothing)."""
     path = _history_file()
     if not path.exists():
-        return {}
+        return {}, True
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError covers JSONDecodeError and UnicodeDecodeError.
         log.warning("visit_history: cannot read %s: %s", path, exc)
-        return {}
+        return {}, False
     if not isinstance(raw, list):
         log.warning("visit_history: malformed file %s (expected list)", path)
-        return {}
+        return {}, False
     out: dict[str, HostVisit] = {}
+    complete = True
     for entry in raw:
         if not isinstance(entry, dict):
+            complete = False
             continue
         try:
             visit = HostVisit.from_dict(entry)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             log.debug("visit_history: skipping malformed entry: %s", exc)
+            complete = False
             continue
         if visit.protocol and visit.host:
             out[visit.key] = visit
-    return out
+        else:
+            complete = False
+    return out, complete
+
+
+def _load() -> dict[str, HostVisit]:
+    return _read()[0]
+
+
+def _keep_incomplete_file() -> None:
+    """Before ``_save`` replaces a file ``_read`` cannot take in completely,
+    keep a copy of it: what was loaded from it is all that would remain.
+    Raises OSError when that copy cannot be made, so the save does not run."""
+    if not _read()[1] and not keep_unreadable_copy(_history_file()):
+        raise OSError(f"not replacing the unreadable {_history_file()}: no copy could be kept")
 
 
 def _save(visits: dict[str, HostVisit]) -> None:
@@ -209,6 +230,7 @@ def _save(visits: dict[str, HostVisit]) -> None:
     except OSError as exc:
         log.debug("visit_history: cannot chmod %s: %s", path.parent, exc)
 
+    _keep_incomplete_file()
     items = sorted(visits.values(), key=lambda v: v.last_seen, reverse=True)
     if len(items) > MAX_HOSTS:
         items = items[:MAX_HOSTS]

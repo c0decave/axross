@@ -63,6 +63,18 @@ def _svg(*paths: str) -> str:
 # Icon category: tool actions (toolbar / menubar verbs).
 # Each entry is (name, svg-body-without-wrapper).
 _TOOL_ICONS = {
+    # File analysis: with / without an LLM.
+    "bot": _svg(
+        '<rect x="4" y="8" width="16" height="12" rx="2"/>'
+        '<path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.5"/>'
+        '<path d="M9 13v2M15 13v2M2 14h2M20 14h2"/>',
+    ),
+    "bot-off": _svg(
+        '<rect x="4" y="8" width="16" height="12" rx="2"/>'
+        '<path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.5"/>'
+        '<path d="M9 13v2M15 13v2M2 14h2M20 14h2"/>'
+        '<path d="M3 3l18 18"/>',
+    ),
     # Connection / session verbs.
     "quick-connect": _svg(
         # lightning bolt
@@ -140,6 +152,59 @@ _TOOL_ICONS = {
         '<polyline points="23 4 23 10 17 10"/>'
         '<polyline points="1 20 1 14 7 14"/>'
         '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+    ),
+    # Duplicate Finder: two identical documents, the second one marked "=".
+    "duplicates": _svg(
+        '<rect x="3" y="3" width="11" height="14" rx="1.5"/>'
+        '<rect x="10" y="7" width="11" height="14" rx="1.5"/>'
+        '<line x1="13" y1="12" x2="18" y2="12"/><line x1="13" y1="16" x2="18" y2="16"/>',
+    ),
+    # Four tiles, one with a mountain: the thumbnail view.
+    "thumbnails": _svg(
+        '<rect x="3" y="3" width="8" height="8" rx="1.5"/>'
+        '<rect x="13" y="3" width="8" height="8" rx="1.5"/>'
+        '<rect x="3" y="13" width="8" height="8" rx="1.5"/>'
+        '<rect x="13" y="13" width="8" height="8" rx="1.5"/>'
+        '<polyline points="4.5 9.5 6.5 7 9.5 9.5"/>',
+    ),
+    # A picture frame with a play triangle: the media viewer.
+    "media-view": _svg(
+        '<rect x="2" y="4" width="20" height="16" rx="2"/>'
+        '<polygon points="10 8.5 15.5 12 10 15.5 10 8.5"/>',
+    ),
+    # A magnifier over list lines: search the offline index.
+    "find-index": _svg(
+        '<line x1="3" y1="5" x2="13" y2="5"/><line x1="3" y1="9" x2="9" y2="9"/>'
+        '<line x1="3" y1="13" x2="7" y2="13"/>'
+        '<circle cx="15" cy="14" r="4"/><line x1="18" y1="17" x2="21" y2="20"/>',
+    ),
+    # Two columns with arrows between them: compare panes.
+    "compare": _svg(
+        '<rect x="2" y="3" width="7" height="18" rx="1.5"/>'
+        '<rect x="15" y="3" width="7" height="18" rx="1.5"/>'
+        '<polyline points="11 9 13 7 11 5"/><line x1="10" y1="7" x2="13" y2="7"/>'
+        '<polyline points="13 19 11 17 13 15"/><line x1="11" y1="17" x2="14" y2="17"/>',
+    ),
+    # A pie chart: disk usage.
+    "disk-usage": _svg(
+        '<path d="M21.2 15.9A10 10 0 1 1 8 2.8"/>'
+        '<path d="M22 12A10 10 0 0 0 12 2v10z"/>',
+    ),
+    # An "i" in a circle: show metadata.
+    "metadata": _svg(
+        '<circle cx="12" cy="12" r="10"/>'
+        '<line x1="12" y1="16" x2="12" y2="11"/><line x1="12" y1="7.5" x2="12" y2="7.5"/>',
+    ),
+    # A box with an arrow into it: pack.
+    "pack": _svg(
+        '<path d="M21 8v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8"/>'
+        '<rect x="2" y="4" width="20" height="4" rx="1"/>'
+        '<polyline points="9 13 12 16 15 13"/><line x1="12" y1="10" x2="12" y2="16"/>',
+    ),
+    # A puzzle piece: extensions.
+    "extensions": _svg(
+        '<path d="M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4'
+        'a2 2 0 1 0 0-4z"/>',
     ),
 }
 
@@ -520,6 +585,15 @@ _ICON_COLORS: dict[str, str | None] = {
     "copy-right": "#3498db",  # blue
     "move-right": "#27ae60",  # green arrow
     "refresh": "#16a085",  # teal
+    "duplicates": "#5dade2",  # light blue; had none and drew black on dark themes
+    "thumbnails": "#ec407a",  # pink, like a photo
+    "media-view": "#e67e22",  # orange play
+    "find-index": "#4a90e2",  # blue search
+    "compare": "#6c5ce7",  # indigo, between the layout violets and the copy blue
+    "disk-usage": "#f1c40f",  # yellow pie
+    "metadata": "#1abc9c",  # turquoise info
+    "pack": "#d35400",  # burnt orange box
+    "extensions": "#8e44ad",  # purple puzzle
     "x": "#95a5a6",  # neutral grey close cross
     # Markers — warm accents.
     "bookmark": "#4a90e2",  # blue

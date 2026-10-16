@@ -285,7 +285,7 @@ class ReplWidget(QPlainTextEdit):
             self._append(f"[startup script {path} unreadable: {exc}]\n")
             return
         self._append(f"[loading startup script {path}]\n")
-        self._run_source(src)
+        self._run_source(src, filename=str(path))
 
     # ------------------------------------------------------------------
     # Output helpers
@@ -334,14 +334,29 @@ class ReplWidget(QPlainTextEdit):
     # Statement execution
     # ------------------------------------------------------------------
 
-    def _run_source(self, source: str) -> bool:
+    def _run_source(self, source: str, *, filename: str | None = None) -> bool:
         """Feed ``source`` to the InteractiveConsole. Returns True
-        when the source needs more input (open block / unclosed string)."""
+        when the source needs more input (open block / unclosed string).
+
+        With ``filename`` the source is a whole script (``.run``,
+        startup.py), compiled in "exec" mode with that file name in its
+        tracebacks. ``runsource`` compiles ONE interactive statement: a
+        script of two statements failed there with "multiple statements
+        found while compiling a single statement"."""
         out_buf = io.StringIO()
         err_buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
-                more = self._console.runsource(source, "<repl>")
+                if filename is None:
+                    more = self._console.runsource(source, "<repl>")
+                else:
+                    more = False
+                    try:
+                        compiled = compile(source, filename, "exec")
+                    except (SyntaxError, ValueError, OverflowError):
+                        self._console.showsyntaxerror(filename)
+                    else:
+                        self._console.runcode(compiled)
         except SystemExit:
             self._append("\n[REPL: exit() requested]\n")
             return False
@@ -399,6 +414,51 @@ class ReplWidget(QPlainTextEdit):
         else:
             self._write_prompt(PROMPT_CONT)
         self.statement_executed.emit(line)
+
+    def run_saved_script(self, name: str) -> bool:
+        """Run saved script ``name`` as if ``.run <name>`` had been typed
+        (the Scripts dock's "Run in Console"). A half-typed line is put
+        back afterwards; an open block (``...`` prompt) is not interrupted.
+        Returns False when nothing ran."""
+        if self._buffer:
+            self._append(
+                f"\n[Run in Console: finish or clear (Ctrl-D) the open statement first; "
+                f"{name} did not run]\n"
+            )
+            self._write_prompt(PROMPT_CONT)
+            return False
+        pending = self._current_input()
+        self._replace_input(f".run {name}")
+        self._append("\n")
+        ran = self._run_saved(name)
+        self._write_prompt(PROMPT)
+        self._replace_input(pending)
+        self.statement_executed.emit(f".run {name}")
+        return ran
+
+    def _run_saved(self, name: str) -> bool:
+        """``.run <name>``: the saved script in the LIVE namespace, so the
+        variables it sets stay visible to later prompts."""
+        from core import scripting as _s
+        from core import security_mode
+
+        # Same gate as axross.run_script, startup.py and the Scripts
+        # dock: paranoid mode runs no saved script.
+        policy = security_mode.current_policy()
+        if not policy.allow_scripts:
+            self._append(
+                f"run refused: security mode '{policy.name}' blocks saved script execution\n"
+            )
+            return False
+        try:
+            src = _s.load_script(name)
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            self._append(f"run failed: {exc}\n")
+            return False
+        # Feed via the same _run_source path so stdout / errors
+        # render in the console buffer.
+        self._run_source(src, filename=os.path.join(_s.script_dir(), f"{name}.py"))
+        return True
 
     # ------------------------------------------------------------------
     # Slash commands — REPL-only shortcuts, no Python namespace impact
@@ -467,18 +527,7 @@ REPL slash commands (typed at the prompt; not Python):
             if not arg:
                 self._append("usage: .run <name>\n")
                 return True
-            from core import scripting as _s
-
-            try:
-                # Run inside the LIVE InteractiveConsole namespace so
-                # variables it sets become visible to subsequent prompts.
-                src = _s.load_script(arg)
-            except OSError as exc:
-                self._append(f"run failed: {exc}\n")
-                return True
-            # Feed via the same _run_source path so stdout / errors
-            # render in the console buffer.
-            self._run_source(src)
+            self._run_saved(arg)
             return True
         if cmd == "delete":
             if not arg:

@@ -118,6 +118,18 @@ def apply_preset(owner, name: str) -> None:
     log.info("Applying layout preset: %s", name)
     owner._preset_tear_down_existing()
     root = _build(PRESETS[name], owner)
+    if not isinstance(root, QSplitter):
+        # "single" is a bare pane; the window always keeps a root SPLITTER
+        # that new panes (connects, Extract Pane) are added to.
+        wrapper = QSplitter(Qt.Orientation.Horizontal)
+        wrapper.addWidget(root)
+        root = wrapper
+    # setCentralWidget deletes the previous central widget - the splitter
+    # owner._root_splitter pointed at. Without moving the reference every
+    # later connect, Extract Pane and the session save on close touched a
+    # deleted object ("wrapped C/C++ object of type QSplitter has been
+    # deleted").
+    owner._root_splitter = root
     owner.setCentralWidget(root)
     # Track which preset we're on so the cycle helper can rotate.
     owner._current_preset_name = name

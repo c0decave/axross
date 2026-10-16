@@ -31,8 +31,11 @@ multi-bucket S3 wrappers).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import shutil
 import uuid
 from datetime import datetime
 
@@ -120,7 +123,9 @@ def _read_meta(backend, meta_file: str) -> dict | None:
         return None
     try:
         parsed = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, RecursionError) as exc:
+        # ValueError covers UnicodeDecodeError; a sidecar nested deeper
+        # than the decoder's stack raises RecursionError.
         log.warning("Corrupt trash sidecar %s: %s", meta_file, exc)
         return None
     if not isinstance(parsed, dict):
@@ -152,7 +157,7 @@ def _finish_journal(op_id: str, operation: str, **fields) -> None:
 # ---------------------------------------------------------------------------
 
 
-def trash(backend, path: str, root: str | None = None) -> str:
+def trash(backend, path: str, root: str | None = None, *, journal: bool = True) -> str:
     """Move *path* into the trash and return its ``trash_id``.
 
     The returned id is a UUID4 without dashes. After the call, the
@@ -162,16 +167,25 @@ def trash(backend, path: str, root: str | None = None) -> str:
     The move is attempted via :meth:`FileBackend.rename`. If rename
     across directories isn't supported by the backend, OSError
     propagates — callers can fall back to a copy + delete themselves.
+
+    ``journal=False`` is for callers that journal the trashing as part
+    of an operation of their own (undoing a metadata removal): a second,
+    separate "trash" entry would be offered to the next Ctrl+Z.
     """
     op_id = ""
+    # Every event carries the label, not just the start: undo reads a
+    # bounded window of the journal, and a finish event whose start has
+    # scrolled out must still name the connection it belongs to.
+    label = getattr(backend, "name", "") or type(backend).__name__
     try:
         from core.operation_journal import start_operation
 
-        op_id = start_operation(
-            "trash",
-            source=path,
-            backend=getattr(backend, "name", type(backend).__name__),
-        )
+        if journal:
+            op_id = start_operation(
+                "trash",
+                source=path,
+                backend=label,
+            )
     except Exception as exc:  # noqa: BLE001
         log.debug("trash: journal start failed: %s", exc)
     trash_root = _resolve_root(backend, root)
@@ -181,6 +195,7 @@ def trash(backend, path: str, root: str | None = None) -> str:
         _finish_journal(
             op_id,
             "trash",
+            backend=label,
             status="error",
             source=path,
             error=str(exc),
@@ -190,7 +205,7 @@ def trash(backend, path: str, root: str | None = None) -> str:
     info = _stat_safely(backend, path)
     if info is None:
         err = f"trash: source does not exist: {path}"
-        _finish_journal(op_id, "trash", status="error", source=path, error=err)
+        _finish_journal(op_id, "trash", backend=label, status="error", source=path, error=err)
         raise OSError(err)
 
     trash_id = uuid.uuid4().hex
@@ -202,7 +217,7 @@ def trash(backend, path: str, root: str | None = None) -> str:
 
         server_side_move(backend, path, dst)
     except OSError as exc:
-        _finish_journal(op_id, "trash", status="error", source=path, dest=dst, error=str(exc))
+        _finish_journal(op_id, "trash", backend=label, status="error", source=path, dest=dst, error=str(exc))
         raise OSError(f"trash: move {path} -> {dst} failed: {exc}") from exc
 
     payload = {
@@ -229,13 +244,193 @@ def trash(backend, path: str, root: str | None = None) -> str:
                 "trash: sidecar write failed AND rollback failed; data is at %s with no metadata",
                 dst,
             )
-        _finish_journal(op_id, "trash", status="error", source=path, dest=dst, error=str(exc))
+        _finish_journal(op_id, "trash", backend=label, status="error", source=path, dest=dst, error=str(exc))
         raise OSError(f"trash: metadata write failed: {exc}") from exc
 
     _finish_journal(
-        op_id, "trash", status="done", source=path, dest=dst, details={"trash_id": trash_id}
+        op_id, "trash", backend=label, status="done", source=path, dest=dst, details={"trash_id": trash_id}
     )
     return trash_id
+
+
+def _is_local(backend) -> bool:
+    from core.local_fs import LocalFS
+
+    return isinstance(backend, LocalFS)
+
+
+def _sha256_of(backend, path: str) -> str:
+    digest = hashlib.sha256()
+    handle = open(path, "rb") if _is_local(backend) else backend.open_read(path)  # noqa: SIM115
+    try:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
+    finally:
+        handle.close()
+    return digest.hexdigest()
+
+
+def _remove_quietly(backend, path: str) -> None:
+    try:
+        if backend.exists(path):
+            backend.remove(path)
+    except OSError as exc:
+        log.warning("trash: could not remove %s: %s", path, exc)
+
+
+def trash_copy(
+    backend, path: str, *, local_source: str | None = None, root: str | None = None
+) -> str:
+    """Keep a copy of the file *path* in the trash and return its ``trash_id``.
+
+    Unlike :func:`trash`, *path* stays where it is: this is the backup a
+    caller takes right before it replaces the file atomically (removing a
+    file's metadata in place), so the path is never missing in between.
+    The entry lists and restores like any other; :func:`restore_over`
+    puts it back over the replacement.
+
+    On a local file system the copy is a hard link when the trash is on
+    the same file system - the original bytes then cost nothing, and the
+    atomic replace that follows leaves them with the trash alone. A
+    remote file is uploaded from *local_source* (the caller's bounded
+    local copy) when given, else streamed from the backend.
+
+    Not journaled: the caller records its own operation.
+    """
+    info = _stat_safely(backend, path)
+    if info is None or getattr(info, "is_dir", False):
+        raise OSError(f"trash_copy: not a file: {path}")
+    trash_root = _resolve_root(backend, root)
+    _ensure_trash_dir(backend, trash_root)
+    trash_id = uuid.uuid4().hex
+    dst = _data_path(backend, trash_root, trash_id)
+    meta = _meta_path(backend, trash_root, trash_id)
+    from core.atomic_io import atomic_write_stream
+
+    try:
+        if local_source is None and _is_local(backend):
+            try:
+                os.link(path, dst, follow_symlinks=False)
+            except OSError:
+                shutil.copyfile(path, dst, follow_symlinks=False)
+        elif local_source is not None:
+            with open(local_source, "rb") as src:
+                atomic_write_stream(backend, dst, src)
+        else:
+            with backend.open_read(path) as src:
+                atomic_write_stream(backend, dst, src)
+    except OSError as exc:
+        _remove_quietly(backend, dst)
+        raise OSError(f"trash_copy: cannot keep a copy of {path}: {exc}") from exc
+    payload = {
+        "trash_id": trash_id,
+        "original_path": path,
+        "trashed_at": datetime.now().isoformat(timespec="seconds"),
+        "size": int(getattr(info, "size", 0) or 0),
+        "is_dir": False,
+        "label": getattr(info, "name", "") or "",
+        "kept_copy": True,
+    }
+    try:
+        _write_meta(backend, meta, payload)
+    except OSError as exc:
+        _remove_quietly(backend, dst)
+        raise OSError(f"trash_copy: metadata write failed: {exc}") from exc
+    return trash_id
+
+
+def discard(backend, trash_id: str, root: str | None = None) -> None:
+    """Remove one trash entry for good (a kept copy that is not needed after
+    all, because the replacement it guarded never happened)."""
+    trash_root = _resolve_root(backend, root)
+    try:
+        data_file = _data_path(backend, trash_root, trash_id)
+        meta_file = _meta_path(backend, trash_root, trash_id)
+    except ValueError as exc:
+        raise OSError(f"discard: unsafe trash id {trash_id!r}: {exc}") from exc
+    _remove_quietly(backend, data_file)
+    _remove_quietly(backend, meta_file)
+
+
+def restore_over(
+    backend,
+    trash_id: str,
+    *,
+    target: str,
+    expected_sha256: str,
+    root: str | None = None,
+) -> str:
+    """Put the kept copy *trash_id* back at *target*, replacing what is there.
+
+    Only while *target* still holds exactly the content its replacement
+    wrote (``expected_sha256``): anything else means it was edited since,
+    and putting the original back would throw that edit away, so this
+    raises and leaves both the file and the trash entry alone. A target
+    that no longer exists is simply restored.
+
+    Locally the kept copy is renamed over the target (atomic, and the
+    original file - its inode and times - comes back as it was). On other
+    backends it is streamed through :func:`core.atomic_io.atomic_write_stream`.
+    """
+    trash_root = _resolve_root(backend, root)
+    try:
+        meta_file = _meta_path(backend, trash_root, trash_id)
+        data_file = _data_path(backend, trash_root, trash_id)
+    except ValueError as exc:
+        raise OSError(f"restore: unsafe trash id {trash_id!r}: {exc}") from exc
+    if not backend.exists(data_file):
+        raise OSError(f"restore: trash entry not found: {trash_id}")
+    from core.remote_name import MAX_REMOTE_PATH_BYTES, RemoteNameError, validate_remote_name
+
+    try:
+        validate_remote_name(target, max_bytes=MAX_REMOTE_PATH_BYTES, allow_separators=True)
+    except RemoteNameError as exc:
+        raise OSError(f"restore: unsafe target {target!r}: {exc}") from exc
+    if backend.exists(target):
+        if _sha256_of(backend, target) != expected_sha256:
+            raise OSError(
+                f"{target} was changed after its metadata was removed; putting the "
+                "original back would discard that change. The original is still in the trash."
+            )
+    if _is_local(backend):
+        os.replace(data_file, target)
+    else:
+        from core.atomic_io import atomic_write_stream
+
+        with backend.open_read(data_file) as src:
+            atomic_write_stream(backend, target, src)
+        _remove_quietly(backend, data_file)
+    _remove_quietly(backend, meta_file)
+    return target
+
+
+def _text(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _size(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not 0 <= value < 2**63:  # also NaN and infinity
+        return 0
+    return int(value)
+
+
+def _trashed_at(value) -> datetime:
+    """The sidecar's timestamp as naive local time, which is what trash()
+    writes; an aware one is converted so the listing can be sorted."""
+    if isinstance(value, str) and value:
+        try:
+            when = datetime.fromisoformat(value)
+        except ValueError:
+            return datetime.now()
+        if when.tzinfo is not None:
+            when = when.astimezone().replace(tzinfo=None)
+        return when
+    return datetime.now()
 
 
 def list_trash(backend, root: str | None = None) -> list[TrashEntry]:
@@ -284,19 +479,17 @@ def list_trash(backend, root: str | None = None) -> list[TrashEntry]:
         if trash_id not in plain_names and not backend.exists(data_file):
             log.warning("list_trash: sidecar %s without data — skipped", meta_file)
             continue
-        raw_when = meta.get("trashed_at") or ""
-        try:
-            when = datetime.fromisoformat(raw_when) if raw_when else datetime.now()
-        except (TypeError, ValueError):
-            when = datetime.now()
+        # A sidecar is data on the server, possibly written by someone
+        # else: a field of the wrong type is shown as empty instead of
+        # raising out of the listing and hiding every other entry.
         out.append(
             TrashEntry(
                 trash_id=trash_id,
-                original_path=str(meta.get("original_path", "")),
-                trashed_at=when,
-                size=int(meta.get("size", 0) or 0),
+                original_path=_text(meta.get("original_path")),
+                trashed_at=_trashed_at(meta.get("trashed_at")),
+                size=_size(meta.get("size")),
                 is_dir=bool(meta.get("is_dir", False)),
-                label=str(meta.get("label", "")),
+                label=_text(meta.get("label")),
             )
         )
         known_ids.add(trash_id)

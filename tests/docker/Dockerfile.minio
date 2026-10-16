@@ -1,10 +1,20 @@
-FROM minio/minio:latest
+# MinIO no longer publishes pullable images: docker.io/minio/minio and
+# quay.io/minio/minio both answer "requested access to the resource is
+# denied" / "unauthorized" for every tag (checked 2026-10-15). Bitnami's
+# frozen legacy build of the same server ships minio, mc and curl, which
+# is all the seeding entrypoint below needs. Pinned to its version tag
+# so a lab rebuild does not drift.
+FROM docker.io/bitnamilegacy/minio:2025.5.24
 
-ENV MINIO_ROOT_USER=minioadmin
-ENV MINIO_ROOT_PASSWORD=minioadmin123
+# The Bitnami image runs as uid 1001 and keeps its binaries outside
+# PATH; the lab entrypoint writes /data and calls `minio` / `mc`.
+USER root
+ENV PATH=/opt/bitnami/minio/bin:/opt/bitnami/minio-client/bin:$PATH \
+    MINIO_ROOT_USER=minioadmin \
+    MINIO_ROOT_PASSWORD=minioadmin123
 
 COPY minio-entrypoint.sh /usr/local/bin/minio-entrypoint.sh
-RUN chmod +x /usr/local/bin/minio-entrypoint.sh
+RUN chmod +x /usr/local/bin/minio-entrypoint.sh && mkdir -p /data
 
 EXPOSE 9000 9001
 ENTRYPOINT ["/usr/local/bin/minio-entrypoint.sh"]

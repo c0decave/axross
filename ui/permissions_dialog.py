@@ -178,7 +178,9 @@ class PermissionsWidget(QWidget):
         if not self.is_modified():
             return None
 
-        new_mode = self.selected_mode()
+        # The editor shows only the rwx bits; setuid / setgid / sticky are
+        # carried over, or changing one rwx bit would drop them as well.
+        new_mode = self.selected_mode() | (self._original_mode & 0o7000)
         try:
             self._backend.chmod(self._file_path, new_mode)
         except OSError as exc:

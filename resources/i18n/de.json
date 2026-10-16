@@ -39,7 +39,7 @@
   "Cycle Previous": "Voriges",
   "Dis&k Usage…": "&Speicherbelegung…",
   "E&xtract Pane to Root": "Fenster &herauslösen",
-  "Entpacken…": "Entpacken…",
+  "Extract…": "Entpacken…",
   "Equalize Panes": "Größen ausgleichen",
   "Extract Pane": "Fenster herauslösen",
   "Find Duplicate Files…": "Doppelte Dateien finden…",
@@ -76,7 +76,7 @@
   "Toggle &Layout (H/V)": "&Layout umschalten (H/V)",
   "Toggle Layout": "Layout umschalten",
   "Unmount FUSE": "FUSE aushängen",
-  "Vorschau": "Vorschau",
+  "Preview Archive": "Vorschau",
   "Zoom &In": "Ver&größern",
   "Zoom &Out": "Ver&kleinern",
   "Zoom &Reset": "Zoom &zurücksetzen"

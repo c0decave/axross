@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import previews as P
+from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
 
 log = logging.getLogger("ui.image_viewer")
@@ -60,7 +61,8 @@ class ImageViewerDialog(QDialog):
         self._original: QImage | None = None
 
         self.setWindowTitle("Image Viewer")
-        self.resize(900, 680)
+        VW.allow_maximize(self)
+        VW.restore_window_state(self, "image")
         self._build_ui()
         self._load_current()
 
@@ -81,7 +83,16 @@ class ImageViewerDialog(QDialog):
         self._scroll.setWidgetResizable(False)
         self._scroll.setWidget(self._label)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self._scroll, stretch=1)
+        # Metadata side panel, hidden until I (or the Info button) shows it.
+        from ui.metadata_dialog import MetadataPanel
+
+        body = QHBoxLayout()
+        body.addWidget(self._scroll, stretch=1)
+        self.metadata_panel = MetadataPanel(self)
+        self.metadata_panel.setVisible(False)
+        self.metadata_panel.removed.connect(self._on_metadata_removed)
+        body.addWidget(self.metadata_panel)
+        root.addLayout(body, stretch=1)
 
         bar = QHBoxLayout()
         prev_btn = QPushButton("◀ Prev")
@@ -120,6 +131,11 @@ class ImageViewerDialog(QDialog):
         rot_btn.setToolTip("Rotate 90° clockwise")
         bar.addWidget(rot_btn)
 
+        info_btn = QPushButton("Info")
+        info_btn.setToolTip("Show / hide the metadata (I)")
+        info_btn.clicked.connect(self.toggle_metadata)
+        bar.addWidget(info_btn)
+
         bar.addStretch(1)
 
         close_btn = QPushButton("Close")
@@ -143,16 +159,34 @@ class ImageViewerDialog(QDialog):
             (QKeySequence("0"), self._reset_zoom),
             (QKeySequence("f"), self._fit_window),
             (QKeySequence("r"), self._rotate_cw),
-            (QKeySequence("Escape"), self.reject),
+            (QKeySequence("i"), self.toggle_metadata),
+            (QKeySequence("Escape"), self._escape),
         ):
             sh = QShortcut(seq, self)
             sh.activated.connect(slot)
+        VW.install_window_keys(self, fullscreen=True)
+
+    # ------------------------------------------------------------------
+    # Window
+    # ------------------------------------------------------------------
+    def _escape(self) -> None:
+        """Escape leaves fullscreen first and closes the viewer second."""
+        if self.isFullScreen():
+            VW.leave_fullscreen(self)
+        else:
+            self.reject()
+
+    def done(self, result: int) -> None:  # noqa: D401 - Qt override
+        # Every close (button, Esc, title-bar [x]) ends here while visible.
+        VW.save_window_state(self, "image")
+        super().done(result)
 
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
     def _load_current(self) -> None:
         path = self._siblings[self._idx]
+        self.metadata_panel.set_target(self._backend, path)
         # Decode through core.previews so MAX_INPUT_SIZE / MAX_DIMENSION
         # gates apply. Trick: we want the full-res image, not a
         # thumbnail, so we set edge huge and disable cache.
@@ -248,6 +282,14 @@ class ImageViewerDialog(QDialog):
         h_ratio = viewport.height() / max(1, self._original.height())
         self._zoom = max(0.05, min(w_ratio, h_ratio))
         self._render()
+
+    def toggle_metadata(self) -> None:
+        self.metadata_panel.setVisible(not self.metadata_panel.isVisible())
+
+    def _on_metadata_removed(self, path: str) -> None:
+        # The pixels are the same; reloading shows the file as it is now.
+        if path == self._siblings[self._idx]:
+            self._load_current()
 
     def _rotate_cw(self) -> None:
         self._rotation = (self._rotation + 90) % 360

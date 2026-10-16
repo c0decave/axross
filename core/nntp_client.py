@@ -27,6 +27,7 @@ import re
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ def _sanitize(name: str, max_len: int = 80) -> str:
     return cleaned[:max_len]
 
 
-class NntpSession:
+class NntpSession(SessionLifecycle):
     """NNTP backend implementing the FileBackend protocol."""
 
     supports_symlinks = False
@@ -202,8 +203,12 @@ class NntpSession:
         return items
 
     def _ensure_group(self, group: str) -> tuple[int, int, int]:
+        """Make ``group`` the server's current group. Article numbers are
+        per group, so the cached GROUP answer only spares the round trip
+        when the server still has this group selected - another listing
+        or a scripting verb may have switched it since."""
         info = self._group_info_cache.get(group)
-        if info is not None:
+        if info is not None and self._client.current_group == group:
             return info
         info = self._client.select_group(group)
         self._group_info_cache[group] = info

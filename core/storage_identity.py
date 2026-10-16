@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import posixpath
 import socket
 
 # Filesystems whose files live on another machine; the mount source names it.
@@ -117,6 +118,110 @@ def _remote_host(backend) -> str | None:
     if not host:
         host = getattr(backend, "_host", None)
     return normalise_host(host) if isinstance(host, str) and host.strip() else None
+
+
+def _remote_port(backend):
+    profile = getattr(backend, "_profile", None)
+    port = getattr(profile, "port", None) if profile is not None else None
+    return port if port is not None else getattr(backend, "_port", None)
+
+
+def _same_view(backend_a, backend_b) -> bool:
+    """True when both backends provably show one namespace: the same
+    object, or two sessions of one kind to the same server and port."""
+    if backend_a is backend_b:
+        return True
+    if type(backend_a) is not type(backend_b):
+        return False
+    host = _remote_host(backend_a)
+    return (
+        host is not None
+        and host == _remote_host(backend_b)
+        and _remote_port(backend_a) == _remote_port(backend_b)
+    )
+
+
+def _norm_view_path(backend, path: str) -> str:
+    try:
+        sep = backend.separator() or "/"
+    except Exception:  # noqa: BLE001 - a backend without separator() is POSIX-like
+        sep = "/"
+    text = path.replace("\\", "/") if sep == "\\" else path
+    text = posixpath.normpath("/" + text.lstrip("/"))
+    return text if getattr(backend, "case_sensitive", True) else text.casefold()
+
+
+def _local_entry(path: str) -> str:
+    """The path with every folder resolved but the last component kept:
+    a symlink is its own entry, a symlinked folder is not."""
+    head, name = os.path.split(os.path.abspath(path))
+    return os.path.join(os.path.realpath(head), name)
+
+
+def _strict_local_path(backend, path: str) -> str | None:
+    local = _local_path(backend, path)
+    return local if isinstance(local, str) else None
+
+
+def same_entry(backend_a, path_a: str, backend_b, path_b: str) -> bool:
+    """True only when both name provably the same directory entry.
+
+    A transfer from one to the other would replace its own source, and a
+    move would then delete the only copy. ``False`` means "not proven",
+    not "different": two unrelated network sessions are never compared.
+    """
+    try:
+        return _same_entry(backend_a, path_a, backend_b, path_b)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _same_entry(backend_a, path_a: str, backend_b, path_b: str) -> bool:
+    local_a = _strict_local_path(backend_a, path_a)
+    local_b = _strict_local_path(backend_b, path_b)
+    if local_a and local_b:
+        entry_a, entry_b = _local_entry(local_a), _local_entry(local_b)
+        if entry_a == entry_b:
+            return True
+        # A case-insensitive filesystem (vfat, exfat, SMB mounts) shows
+        # File.txt and file.txt as one entry.
+        if (
+            os.path.dirname(entry_a) == os.path.dirname(entry_b)
+            and os.path.basename(entry_a).casefold() == os.path.basename(entry_b).casefold()
+        ):
+            try:
+                return os.path.samefile(local_a, local_b)
+            except OSError:
+                return False
+        return False
+    if local_a or local_b or not _same_view(backend_a, backend_b):
+        return False
+    return _norm_view_path(backend_a, path_a) == _norm_view_path(backend_b, path_b)
+
+
+def is_within(backend_a, root_a: str, backend_b, path_b: str) -> bool:
+    """True when ``path_b`` is provably ``root_a`` itself or lies below it.
+
+    Copying a folder to such a place lists the copy while it is being
+    made, which recurses until the path length or the stack gives out.
+    """
+    try:
+        return _is_within(backend_a, root_a, backend_b, path_b)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _is_within(backend_a, root_a: str, backend_b, path_b: str) -> bool:
+    local_a = _strict_local_path(backend_a, root_a)
+    local_b = _strict_local_path(backend_b, path_b)
+    if local_a and local_b:
+        root, target = os.path.realpath(local_a), os.path.realpath(local_b)
+        return target == root or target.startswith(root.rstrip(os.sep) + os.sep)
+    if local_a or local_b or not _same_view(backend_a, backend_b):
+        return False
+    root = _norm_view_path(backend_a, root_a)
+    target = _norm_view_path(backend_b, path_b)
+    return target == root or target.startswith(root.rstrip("/") + "/")
 
 
 def may_be_same_file(backend_a, path_a: str, backend_b, path_b: str) -> bool:

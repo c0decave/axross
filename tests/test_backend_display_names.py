@@ -15,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import backend_registry as R  # noqa: E402
 
 # German words that turn up in UI labels; none belongs in a protocol name.
-_GERMAN = re.compile(r"(?i)kompatibel|nur[ -]lesen|schreibgesch|freigabe|laufwerk|ordner|datei|flüchtig")
+_GERMAN = re.compile(
+    r"(?i)kompatibel|nur[ -]lesen|schreibgesch|freigabe|laufwerk|ordner|datei|flüchtig"
+)
 
 
 class DisplayNameTest(unittest.TestCase):

@@ -212,8 +212,9 @@ copy_resume: SFTP:src/dataset.tar.zst → SFTP:dst/dataset.tar.zst
 Divide la fuente en segmentos, escribe un manifest JSON tras cada
 segmento exitoso, en re-run sigue desde el primer segmento incompleto
 — tras verificar que los hashes guardados en destino concuerdan.
-Manifest por defecto en `/tmp/axross-resume/<safe-name>.json` (mode
-0o600); override con `manifest_path=…`.
+Manifest por defecto en
+`$XDG_STATE_HOME/axross/resume/<safe-name>.json` (por defecto
+`~/.local/state`, directorio mode 0o700, archivo mode 0o600); override con `manifest_path=…`.
 
 Verificación conservadora: cualquier mismatch en un segmento «done»
 descarta el manifest y reinicia desde byte 0. Mejor retransmitir que

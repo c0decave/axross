@@ -15,7 +15,9 @@ import time
 from datetime import datetime
 from typing import IO
 
+from core.answer_fields import as_size
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.path_policy import safe_leaf
 from models.file_item import FileItem
 
@@ -32,6 +34,41 @@ try:
 except ImportError:
     ShareServiceClient = None  # type: ignore[assignment,misc]
     ShareDirectoryClient = None  # type: ignore[assignment,misc]
+
+
+def _each_page_once(paged, what: str):
+    """The items of an SDK listing, page by page.
+
+    The SDK follows the server's NextMarker as long as there is one; a
+    marker it was already handed is a loop that never ends (and grows
+    the listing without bound), so it fails instead.
+    """
+    if not hasattr(paged, "by_page"):  # a plain iterable has no markers
+        yield from paged
+        return
+    pages = paged.by_page()
+    seen: set[str] = set()
+    for page in pages:
+        yield from page
+        token = pages.continuation_token
+        if token:
+            if token in seen:
+                raise OSError(f"{what}: the server repeats a paging marker")
+            seen.add(token)
+
+
+def _read_all_checked(stream, what: str) -> bytes:
+    """The whole download, or OSError when it is not the size announced.
+
+    The SDK fetches a blob in ranges and stitches whatever each range
+    answer carried, without checking its length: a server answering
+    short (or long) ranges produced a complete-looking, wrong file.
+    """
+    data = stream.readall()
+    expected = getattr(stream, "size", None)
+    if isinstance(expected, int) and len(data) != expected:
+        raise OSError(f"{what}: received {len(data)} bytes, the server announced {expected}")
+    return data
 
 
 def _axross_azure_transport_kwargs(
@@ -192,7 +229,7 @@ class _ShareSpooledWriter:
 # ---------------------------------------------------------------------------
 
 
-class AzureBlobSession:
+class AzureBlobSession(SessionLifecycle):
     """Azure Blob Storage backend implementing the FileBackend protocol.
 
     Uses BlobServiceClient from azure-storage-blob.  Treats the container
@@ -316,7 +353,10 @@ class AzureBlobSession:
         items: list[FileItem] = []
 
         try:
-            for item in self._container.walk_blobs(name_starts_with=prefix, delimiter="/"):
+            for item in _each_page_once(
+                self._container.walk_blobs(name_starts_with=prefix, delimiter="/"),
+                f"Cannot list {path}",
+            ):
                 # item can be BlobPrefix (virtual dir) or BlobProperties (file)
                 if hasattr(item, "prefix"):
                     # Virtual directory
@@ -327,13 +367,12 @@ class AzureBlobSession:
                     blob_name = item.name[len(prefix) :]
                     if not blob_name or blob_name.endswith("/"):
                         continue  # directory marker or prefix itself
+                    # Aware UTC from the SDK; FileItem converts it.
                     modified = item.last_modified or datetime.fromtimestamp(0)
-                    if hasattr(modified, "replace"):
-                        modified = modified.replace(tzinfo=None)
                     items.append(
                         FileItem(
                             name=blob_name,
-                            size=item.size or 0,
+                            size=as_size(item.size),
                             modified=modified,
                         )
                     )
@@ -354,11 +393,9 @@ class AzureBlobSession:
             blob_client = self._container.get_blob_client(key)
             props = blob_client.get_blob_properties()
             modified = props.last_modified or datetime.fromtimestamp(0)
-            if hasattr(modified, "replace"):
-                modified = modified.replace(tzinfo=None)
             return FileItem(
                 name=name,
-                size=props.size or 0,
+                size=as_size(props.size),
                 modified=modified,
             )
         except Exception:
@@ -366,10 +403,13 @@ class AzureBlobSession:
 
         # Check as virtual directory
         prefix = key.rstrip("/") + "/"
-        blobs = self._container.list_blobs(name_starts_with=prefix, results_per_page=1)
-        page = next(blobs.by_page(), [])
-        if list(page):
-            return FileItem(name=name, is_dir=True)
+        try:
+            blobs = self._container.list_blobs(name_starts_with=prefix, results_per_page=1)
+            page = next(blobs.by_page(), [])
+            if list(page):
+                return FileItem(name=name, is_dir=True)
+        except Exception as e:
+            raise OSError(f"Cannot stat {path}: {e}") from e
 
         raise OSError(f"Not found: {path}")
 
@@ -421,7 +461,12 @@ class AzureBlobSession:
                 except Exception as e:
                     raise OSError(f"Cannot remove {path}: {e}") from e
             else:
-                self._remove_prefix(key.rstrip("/") + "/")
+                try:
+                    self._remove_prefix(key.rstrip("/") + "/")
+                except OSError:
+                    raise
+                except Exception as e:
+                    raise OSError(f"Cannot remove {path}: {e}") from e
         else:
             try:
                 blob_client = self._container.get_blob_client(key)
@@ -435,7 +480,9 @@ class AzureBlobSession:
     def _remove_prefix(self, prefix: str) -> None:
         """Delete all blobs under a prefix, up to 256 per request."""
         chunk: list[str] = []
-        for blob in self._container.list_blobs(name_starts_with=prefix):
+        for blob in _each_page_once(
+            self._container.list_blobs(name_starts_with=prefix), f"Cannot list {prefix}"
+        ):
             chunk.append(blob.name)
             if len(chunk) == self._DELETE_BATCH:
                 self._delete_chunk(chunk)
@@ -448,8 +495,29 @@ class AzureBlobSession:
 
         try:
             self._container.delete_blobs(*names)
-        except PartialBatchErrorException:
-            raise  # single blobs failed: same outcome as a failing delete_blob
+        except PartialBatchErrorException as exc:
+            # Some sub-requests failed - or the whole batch was refused in
+            # the shape of one: Azurite answers ANY batch with a single
+            # "400 InvalidInput" part. The blobs whose part failed (all of
+            # them when the parts cannot be matched to the requests) are
+            # deleted one by one; a blob that fails alone too raises.
+            parts = list(getattr(exc, "parts", None) or [])
+            if len(parts) == len(names):
+                retry = [
+                    name
+                    for name, part in zip(names, parts)
+                    if not 200 <= int(getattr(part, "status_code", 0) or 0) < 300
+                ]
+            else:
+                retry = list(names)
+            log.debug(
+                "Azure batch delete: %d of %d blob(s) not deleted (%s); deleting them one by one",
+                len(retry),
+                len(names),
+                exc,
+            )
+            for name in retry:
+                self._container.delete_blob(name)
         except Exception as exc:  # noqa: BLE001
             # The batch call itself was refused (no batch support on this
             # account / emulator): delete one by one, as before.
@@ -465,7 +533,17 @@ class AzureBlobSession:
         if self.is_dir(src):
             old_prefix = src_key.rstrip("/") + "/"
             new_prefix = dst_key.rstrip("/") + "/"
-            blobs = self._container.list_blobs(name_starts_with=old_prefix)
+            try:
+                blobs = list(
+                    _each_page_once(
+                        self._container.list_blobs(name_starts_with=old_prefix),
+                        f"Cannot rename {src} -> {dst}",
+                    )
+                )
+            except OSError:
+                raise
+            except Exception as e:
+                raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
             for blob in blobs:
                 new_name = new_prefix + blob.name[len(old_prefix) :]
                 src_blob = self._container.get_blob_client(blob.name)
@@ -510,9 +588,11 @@ class AzureBlobSession:
         try:
             blob_client = self._container.get_blob_client(key)
             stream = blob_client.download_blob()
-            buf = io.BytesIO(stream.readall())
+            buf = io.BytesIO(_read_all_checked(stream, f"Cannot read {path}"))
             buf.seek(0)
             return buf
+        except OSError:
+            raise
         except Exception as e:
             raise OSError(f"Cannot read {path}: {e}") from e
 
@@ -579,22 +659,27 @@ class AzureBlobSession:
         ``snapshot_open_read`` or pass to ``snapshot_delete``)."""
         key = self._to_key(path)
         out: list[dict] = []
-        for blob in self._container.list_blobs(
-            name_starts_with=key,
-            include=["snapshots"],
-        ):
-            if blob.snapshot is None:
-                continue
-            if blob.name != key:
-                continue
-            out.append(
-                {
-                    "snapshot": blob.snapshot,
-                    "etag": blob.etag,
-                    "size": blob.size,
-                    "modified": blob.last_modified,
-                }
-            )
+        try:
+            for blob in _each_page_once(
+                self._container.list_blobs(name_starts_with=key, include=["snapshots"]),
+                f"Cannot list snapshots of {path}",
+            ):
+                if blob.snapshot is None:
+                    continue
+                if blob.name != key:
+                    continue
+                out.append(
+                    {
+                        "snapshot": blob.snapshot,
+                        "etag": blob.etag,
+                        "size": blob.size,
+                        "modified": blob.last_modified,
+                    }
+                )
+        except OSError:
+            raise
+        except Exception as e:
+            raise OSError(f"Cannot list snapshots of {path}: {e}") from e
         return out
 
     def snapshot_create(self, path: str, metadata: dict[str, str] | None = None) -> str:
@@ -610,10 +695,16 @@ class AzureBlobSession:
                 if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
                     raise ValueError("snapshot_create: CR/LF in metadata refused")
         key = self._to_key(path)
-        blob = self._container.get_blob_client(key)
-        result = blob.create_snapshot(metadata=metadata)
+        try:
+            blob = self._container.get_blob_client(key)
+            result = blob.create_snapshot(metadata=metadata)
+        except Exception as e:
+            raise OSError(f"Cannot snapshot {path}: {e}") from e
         # SDK returns a dict; ``snapshot`` is the timestamp ID.
-        return result["snapshot"] if isinstance(result, dict) else getattr(result, "snapshot", "")
+        snapshot = (
+            result.get("snapshot") if isinstance(result, dict) else getattr(result, "snapshot", "")
+        )
+        return snapshot if isinstance(snapshot, str) else ""
 
     def lease_acquire(
         self, path: str, *, duration_seconds: int = 60, proposed_lease_id: str | None = None
@@ -628,11 +719,14 @@ class AzureBlobSession:
         if duration_seconds != -1 and not (15 <= duration_seconds <= 60):
             raise ValueError("lease duration must be 15..60 seconds, or -1 for infinite")
         key = self._to_key(path)
-        blob = self._container.get_blob_client(key)
-        lease = blob.acquire_lease(
-            lease_duration=duration_seconds,
-            lease_id=proposed_lease_id,
-        )
+        try:
+            blob = self._container.get_blob_client(key)
+            lease = blob.acquire_lease(
+                lease_duration=duration_seconds,
+                lease_id=proposed_lease_id,
+            )
+        except Exception as e:
+            raise OSError(f"Cannot lease {path}: {e}") from e
         log.info(
             "Azure lease acquired: container=%s blob=%s id=%s duration=%s",
             self._container_name,
@@ -647,8 +741,11 @@ class AzureBlobSession:
         from azure.storage.blob import BlobLeaseClient
 
         key = self._to_key(path)
-        blob = self._container.get_blob_client(key)
-        BlobLeaseClient(blob, lease_id=lease_id).release()
+        try:
+            blob = self._container.get_blob_client(key)
+            BlobLeaseClient(blob, lease_id=lease_id).release()
+        except Exception as e:
+            raise OSError(f"Cannot release the lease on {path}: {e}") from e
         log.info(
             "Azure lease released: container=%s blob=%s id=%s",
             self._container_name,
@@ -668,8 +765,11 @@ class AzureBlobSession:
         if tier not in valid:
             raise ValueError(f"tier must be one of {sorted(valid)}, got {tier!r}")
         key = self._to_key(path)
-        blob = self._container.get_blob_client(key)
-        blob.set_standard_blob_tier(tier)
+        try:
+            blob = self._container.get_blob_client(key)
+            blob.set_standard_blob_tier(tier)
+        except Exception as e:
+            raise OSError(f"Cannot set the tier of {path}: {e}") from e
         log.info(
             "Azure tier_set: container=%s blob=%s tier=%s",
             self._container_name,
@@ -738,15 +838,16 @@ class AzureBlobSession:
     def list_versions(self, path: str) -> list:
         """List blob versions if the container has versioning enabled."""
         from datetime import datetime as _dt
+        from datetime import timezone as _tz
 
         from models.file_version import FileVersion
 
         key = self._to_key(path)
         out: list = []
         try:
-            blobs = self._container.list_blobs(
-                name_starts_with=key,
-                include=["versions"],
+            blobs = _each_page_once(
+                self._container.list_blobs(name_starts_with=key, include=["versions"]),
+                f"Cannot list versions of {path}",
             )
             entries = []
             for b in blobs:
@@ -755,7 +856,8 @@ class AzureBlobSession:
                 entries.append(b)
 
             def _ts(b):
-                return getattr(b, "last_modified", None) or _dt.min
+                # Aware like the SDK's dates: a naive fallback fails the sort.
+                return getattr(b, "last_modified", None) or _dt.min.replace(tzinfo=_tz.utc)
 
             entries.sort(key=_ts, reverse=True)
             for i, b in enumerate(entries):
@@ -785,7 +887,7 @@ class AzureBlobSession:
         try:
             blob = self._container.get_blob_client(key)
             stream = blob.download_blob(version_id=version_id)
-            return _io.BytesIO(stream.readall())
+            return _io.BytesIO(_read_all_checked(stream, f"Cannot read {path}@{version_id}"))
         except Exception as exc:
             raise OSError(f"Azure open_version_read failed: {exc}") from exc
 
@@ -833,7 +935,7 @@ class AzureBlobSession:
 # ---------------------------------------------------------------------------
 
 
-class AzureFilesSession:
+class AzureFilesSession(SessionLifecycle):
     """Azure Files backend implementing the FileBackend protocol.
 
     Uses ShareServiceClient from azure-storage-file-share.
@@ -948,7 +1050,13 @@ class AzureFilesSession:
 
         try:
             dir_client = self._share.get_directory_client(dir_path)
-            for item in dir_client.list_directories_and_files():
+            for item in _each_page_once(
+                dir_client.list_directories_and_files(), f"Cannot list {path}"
+            ):
+                if not isinstance(item.get("name"), str) or not item.get("name"):
+                    # An entry without a name cannot be shown or addressed.
+                    log.warning("Azure Files list_dir(%s): skipping an entry without a name", path)
+                    continue
                 if item.get("is_directory", False):
                     items.append(
                         FileItem(
@@ -957,13 +1065,12 @@ class AzureFilesSession:
                         )
                     )
                 else:
+                    # Aware UTC from the SDK; FileItem converts it.
                     last_modified = item.get("last_modified") or datetime.fromtimestamp(0)
-                    if hasattr(last_modified, "replace"):
-                        last_modified = last_modified.replace(tzinfo=None)
                     items.append(
                         FileItem(
                             name=item["name"],
-                            size=item.get("size", 0),
+                            size=as_size(item.get("size")),
                             modified=last_modified,
                         )
                     )
@@ -985,11 +1092,9 @@ class AzureFilesSession:
             file_client = self._share.get_directory_client(parent_dir).get_file_client(base_name)
             props = file_client.get_file_properties()
             modified = props.get("last_modified") or datetime.fromtimestamp(0)
-            if hasattr(modified, "replace"):
-                modified = modified.replace(tzinfo=None)
             return FileItem(
                 name=base_name,
-                size=props.get("size", 0) or props.get("content_length", 0),
+                size=as_size(props.get("size")) or as_size(props.get("content_length")),
                 modified=modified,
             )
         except Exception:
@@ -1000,8 +1105,6 @@ class AzureFilesSession:
             dir_client = self._share.get_directory_client(rel)
             props = dir_client.get_directory_properties()
             modified = props.get("last_modified") or datetime.fromtimestamp(0)
-            if hasattr(modified, "replace"):
-                modified = modified.replace(tzinfo=None)
             return FileItem(
                 name=base_name,
                 is_dir=True,
@@ -1062,7 +1165,12 @@ class AzureFilesSession:
 
         if self.is_dir(path):
             if recursive:
-                self._remove_dir_recursive(rel)
+                try:
+                    self._remove_dir_recursive(rel)
+                except OSError:
+                    raise
+                except Exception as e:
+                    raise OSError(f"Cannot remove {path}: {e}") from e
             else:
                 try:
                     dir_client = self._share.get_directory_client(rel)
@@ -1083,7 +1191,9 @@ class AzureFilesSession:
     def _remove_dir_recursive(self, dir_path: str) -> None:
         """Recursively remove all files and subdirectories."""
         dir_client = self._share.get_directory_client(dir_path)
-        for item in dir_client.list_directories_and_files():
+        for item in _each_page_once(
+            dir_client.list_directories_and_files(), f"Cannot list {dir_path}"
+        ):
             try:
                 name = safe_leaf(item["name"])
             except ValueError as exc:
@@ -1102,15 +1212,17 @@ class AzureFilesSession:
         src_rel = self._to_path(src)
         dst_rel = self._to_path(dst)
 
+        # ``new_name`` is a path inside the share: the SDK builds the
+        # target from its own share_name plus this value.
         try:
             if self.is_dir(src):
                 src_client = self._share.get_directory_client(src_rel)
-                src_client.rename_directory(self._share_name + "/" + dst_rel)
+                src_client.rename_directory(dst_rel)
             else:
                 parent_dir = posixpath.dirname(src_rel)
                 file_name = posixpath.basename(src_rel)
                 src_client = self._share.get_directory_client(parent_dir).get_file_client(file_name)
-                src_client.rename_file(self._share_name + "/" + dst_rel)
+                src_client.rename_file(dst_rel)
         except Exception as e:
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
 
@@ -1124,9 +1236,11 @@ class AzureFilesSession:
         try:
             file_client = self._share.get_directory_client(parent_dir).get_file_client(file_name)
             stream = file_client.download_file()
-            buf = io.BytesIO(stream.readall())
+            buf = io.BytesIO(_read_all_checked(stream, f"Cannot read {path}"))
             buf.seek(0)
             return buf
+        except OSError:
+            raise
         except Exception as e:
             raise OSError(f"Cannot read {path}: {e}") from e
 

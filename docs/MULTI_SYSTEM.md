@@ -222,8 +222,9 @@ copy_resume: SFTP:src/dataset.tar.zst → SFTP:dst/dataset.tar.zst
 Splits the source into segments, writes a JSON manifest after each
 segment completes, and on a re-run resumes from the first incomplete
 segment after verifying the destination's recorded hashes. Manifest
-lives next to a temp dir by default
-(`/tmp/axross-resume/<safe-name>.json`, mode 0o600); pass
+lives in a per-user directory by default
+(`$XDG_STATE_HOME/axross/resume/<safe-name>.json`, default
+`~/.local/state`, directory mode 0o700, file mode 0o600); pass
 `manifest_path=…` to override.
 
 The manifest stores `(segment, sha256)` pairs; the verification step

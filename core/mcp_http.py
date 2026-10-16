@@ -28,7 +28,9 @@ Transport shape
     for a previously established session. The stream relays
     ``notifications/progress`` and ``notifications/message`` frames
     queued during that session's tool calls. The connection stays
-    open until the client disconnects or the session is evicted.
+    open until the client disconnects, the session is deleted or
+    evicted, or a newer GET /messages for the same session takes
+    over: a session has at most one stream.
 
     Reconnect recovery: every event carries an ``id: N`` line with
     a session-scoped monotonic counter. A client that disconnected
@@ -41,7 +43,8 @@ Transport shape
 
 ``DELETE /messages``
     Explicitly terminate a session. The server drops the session
-    state (cancel registry, notification queue). Unknown ids are
+    state (cancel registry, notification queue) and ends its open
+    SSE stream. Unknown ids are
     answered with 404 so a double-delete doesn't loop.
 
 ``GET /health``
@@ -111,6 +114,14 @@ MAX_QUEUED_NOTIFICATIONS = 10_000
 # seconds with an empty comment frame so intermediate proxies that
 # close idle connections don't terminate a quiet-but-alive stream.
 SSE_KEEPALIVE_SECONDS = 15.0
+# How often an SSE stream looks up from its queue to see whether its
+# session was dropped / evicted or a newer stream took it over.
+SSE_WAKE_SECONDS = 0.25
+# How long a new SSE stream waits for the stream it supersedes to stop
+# taking events before it snapshots the replay ring. A stream that is
+# between two queue waits stops within SSE_WAKE_SECONDS; one blocked
+# in a write takes nothing more from the queue once it returns.
+SSE_TAKEOVER_WAIT_SECONDS = 4 * SSE_WAKE_SECONDS
 
 # Size of the per-session replay ring buffer. When an SSE client
 # reconnects with a ``Last-Event-ID`` header we walk this ring
@@ -290,6 +301,14 @@ class _HttpSession:
     # concurrent SSE reconnect never snapshots a ring that's in the
     # middle of being updated.
     replay_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Set when the session is dropped (DELETE) or evicted: its SSE
+    # stream ends instead of outliving the session.
+    closed: threading.Event = field(default_factory=threading.Event)
+    # The one live SSE stream as (stop, done) events. A new GET
+    # /messages for the session stops the previous stream, so one
+    # session never holds more than one streaming thread.
+    sse_stream: "tuple[threading.Event, threading.Event] | None" = None
+    sse_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def touch(self) -> None:
         self.last_seen = time.monotonic()
@@ -359,12 +378,18 @@ class _SessionRegistry:
         if self._log_forwarder is not None and sess.log_forwarder_registered:
             self._log_forwarder.unregister_session(sess.session_id)
             sess.log_forwarder_registered = False
+        # Profiles the session opened with remote_open (--mcp-tools
+        # remote) hold live connections; nobody can address them now.
+        from core.mcp_groups import RemoteRegistry
+
+        RemoteRegistry.close_session(sess.session_id)
 
     def drop(self, session_id: str) -> bool:
         with self._lock:
             sess = self._sessions.pop(session_id, None)
         if sess is None:
             return False
+        sess.closed.set()
         self._unregister_forwarder(sess)
         return True
 
@@ -381,6 +406,7 @@ class _SessionRegistry:
         # Unregister OUTSIDE the registry lock to keep lock ordering
         # consistent with the forwarder's own lock.
         for sess in dropped_sessions:
+            sess.closed.set()
             self._unregister_forwarder(sess)
         return [s.session_id for s in dropped_sessions]
 
@@ -461,6 +487,8 @@ class HTTPServerConfig:
     root: str | None = None
     # Multi-backend registry; see core.mcp_server.ServerConfig.backends.
     backends: dict | None = None
+    # Optional capability groups (``--mcp-tools``); see core.mcp_groups.
+    tool_groups: frozenset[str] = frozenset()
     # mTLS — all three required together.
     cert_file: str | None = None
     key_file: str | None = None
@@ -706,8 +734,11 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
             self._send_error(400, "truncated body: Content-Length mismatch")
             return
         try:
+            # ValueError covers JSONDecodeError, a body that is not
+            # UTF-8 and an integer above the digit limit;
+            # RecursionError is nesting deeper than the C stack.
             req = json.loads(body)
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
             self._send_error(400, f"invalid JSON: {exc}")
             return
         if not isinstance(req, dict):
@@ -838,6 +869,35 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
             )
             last_event_id = 0
 
+        # Take the session's stream slot. The previous stream (a
+        # reconnect after a blip, or a client opening streams in a
+        # loop) is stopped, and we wait until it has stopped pulling
+        # from the queue: an event it took in that window is still in
+        # the ring and goes out with our replay below.
+        stop, done = threading.Event(), threading.Event()
+        with sess.sse_lock:
+            previous, sess.sse_stream = sess.sse_stream, (stop, done)
+        if previous is not None:
+            previous[0].set()
+            previous[1].wait(SSE_TAKEOVER_WAIT_SECONDS)
+        try:
+            self._stream_sse(sess, sid, last_event_id, stop)
+        finally:
+            done.set()
+            with sess.sse_lock:
+                if sess.sse_stream == (stop, done):
+                    sess.sse_stream = None
+
+    def _stream_sse(
+        self,
+        sess: _HttpSession,
+        sid: str,
+        last_event_id: int,
+        stop: threading.Event,
+    ) -> None:
+        if sess.closed.is_set():
+            self._send_error(404, "unknown or expired session")
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -877,14 +937,22 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
             # updates ``lastEventId`` as the stream progresses.
             for ev in replay_events:
                 self._write_sse_event(ev)
-            while True:
+            keepalive_at = time.monotonic() + SSE_KEEPALIVE_SECONDS
+            while not (stop.is_set() or sess.closed.is_set()):
                 try:
-                    event = sess.queue.get(timeout=SSE_KEEPALIVE_SECONDS)
+                    event = sess.queue.get(timeout=SSE_WAKE_SECONDS)
                 except queue.Empty:
-                    self.wfile.write(b": keepalive\n\n")
-                    self.wfile.flush()
+                    if time.monotonic() >= keepalive_at:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                        keepalive_at = time.monotonic() + SSE_KEEPALIVE_SECONDS
                     continue
+                if stop.is_set() or sess.closed.is_set():
+                    # Superseded while waiting: the event stays in the
+                    # replay ring for the stream that took over.
+                    break
                 self._write_sse_event(event)
+            log.info("mcp-http SSE stream ended by the server (session=%s)", sid[:8])
         except (BrokenPipeError, ConnectionResetError):
             log.info("mcp-http SSE client disconnected (session=%s)", sid[:8])
         except Exception:  # noqa: BLE001
@@ -983,6 +1051,7 @@ def build_server(config: HTTPServerConfig) -> _ThreadingServer:
         backend_id=config.backend_id,
         root=config.root,
         backends=config.backends,
+        tool_groups=config.tool_groups,
     )
     resources = _mcp._build_resources(config.backend, root=config.root)
     # One forwarder per server. Per-session demux happens inside

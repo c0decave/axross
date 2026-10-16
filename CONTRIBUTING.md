@@ -23,8 +23,10 @@ merge.
 - New backends that follow the `FileBackend` protocol in `core/backend.py`.
 - UI / UX improvements (keyboard shortcuts, dialog ergonomics, accessibility).
 - MCP tool additions that compose cleanly with the existing surface.
-- Hardening tests (`tests/test_hardening_regressions.py`) that cover a real
-  attack class; generic "it doesn't crash" tests are lower priority.
+- Hardening tests that cover a real attack class (like
+  `tests/test_hardening_misc.py`, `tests/test_proxy_hardening.py` or the
+  hostile-server suites `tests/test_fuzz_*.py`); generic "it doesn't
+  crash" tests are lower priority.
 - Translation updates for README and user-facing messages.
 
 ## What's out of scope
@@ -60,7 +62,7 @@ Host suite (no Docker required):
 
 ```bash
 QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q \
-    tests/test_hardening_regressions.py tests/test_regressions.py \
+    tests/test_regressions.py \
     tests/test_new_features.py tests/test_backend_regressions.py \
     tests/test_pane_layout_regressions.py tests/test_e2e.py
 ```

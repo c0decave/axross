@@ -1,4 +1,4 @@
-FROM itsthenetwork/nfs-server-alpine:latest
+FROM docker.io/itsthenetwork/nfs-server-alpine:latest
 
 # itsthenetwork/nfs-server-alpine uses the kernel NFSv4 implementation
 # inside the container — far simpler and more robust than user-space

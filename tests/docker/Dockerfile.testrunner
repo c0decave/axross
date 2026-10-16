@@ -14,7 +14,18 @@
 # environment that could not exercise them. Deriving the list from
 # pyproject at build time makes that class of drift impossible.
 
-FROM python:3.12-slim
+# The rsh backend shells out to the system `rsh` client. Debian dropped
+# every rsh client after bullseye (trixie has neither rsh-client nor
+# rsh-redone-client), so the client comes from bullseye, now served by
+# archive.debian.org. rsh-redone-rsh links against libc only.
+FROM docker.io/library/debian:bullseye-slim AS rsh-client
+RUN printf 'deb http://archive.debian.org/debian bullseye main\n' > /etc/apt/sources.list \
+ && rm -f /etc/apt/sources.list.d/* \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get install -y --no-install-recommends rsh-redone-client \
+ && rm -rf /var/lib/apt/lists/*
+
+FROM docker.io/library/python:3.12-slim
 
 WORKDIR /app
 
@@ -52,21 +63,15 @@ ENV QT_QPA_PLATFORM=offscreen \
     PYTHONDONTWRITEBYTECODE=1
 
 # --- dependency layer -------------------------------------------------
-# Only pyproject.toml is copied here so that source-only edits reuse
-# this (slow) layer. Deps are read out of the same [project] tables the
-# published wheel uses, with every optional extra enabled.
+# Only pyproject.toml and the derivation script are copied here so that
+# source-only edits reuse this (slow) layer. Deps are read out of the
+# same [project] tables the published wheel uses, with every optional
+# extra enabled - except packages not published on PyPI (the sift extra):
+# pip cannot resolve those, and a squatted name would install a
+# stranger's package. See tests/docker/testrunner_requirements.py.
 COPY pyproject.toml ./
-RUN python - <<'PY' > /tmp/requirements.txt
-import tomllib
-meta = tomllib.load(open("pyproject.toml", "rb"))["project"]
-reqs = list(meta["dependencies"])
-for extra, pkgs in meta.get("optional-dependencies", {}).items():
-    reqs.extend(pkgs)
-# dict.fromkeys keeps first-seen order while dropping the duplicates
-# that the "all" extra shares with the per-backend extras.
-for req in dict.fromkeys(reqs):
-    print(req)
-PY
+COPY tests/docker/testrunner_requirements.py /tmp/testrunner_requirements.py
+RUN python /tmp/testrunner_requirements.py pyproject.toml > /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -78,6 +83,10 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 # multi-minute hang instead of a failure. A hard per-test cap makes the
 # suite terminate with a traceback pointing at the offender.
 RUN python -m pip install --no-cache-dir pytest pytest-timeout pip-audit ruff
+
+# The rsh client (see the rsh-client stage above); after the slow layers
+# so adding it does not invalidate their cache.
+COPY --from=rsh-client /usr/bin/rsh-redone-rsh /usr/local/bin/rsh
 
 # --- source layer -----------------------------------------------------
 COPY . /app/

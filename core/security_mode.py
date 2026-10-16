@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,16 @@ _CURRENT: SecurityPolicy | None = None
 
 
 def policy_from_name(name: str | None) -> SecurityPolicy:
-    return PARANOID if (name or "").strip().lower() == "paranoid" else NORMAL
+    """Map a mode name to its policy. Unset or empty means normal; a name
+    that is neither ``normal`` nor ``paranoid`` (``AXROSS_SECURITY_MODE=
+    paranoia``) fails closed to paranoid instead of silently dropping
+    every restriction the user asked for."""
+    text = (name or "").strip().lower()
+    if text in ("", "normal"):
+        return NORMAL
+    if text != "paranoid":
+        log.warning("Unknown security mode %r; using 'paranoid'", name)
+    return PARANOID
 
 
 def current_policy() -> SecurityPolicy:

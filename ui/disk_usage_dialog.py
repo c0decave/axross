@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 from core.dashboard import DashboardSnapshot, HostRow
 from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
+from ui.thread_lifetime import detach_running_thread
 
 log = logging.getLogger(__name__)
 
@@ -275,15 +276,17 @@ class DiskUsageDialog(QDialog):
             return
         self._thread.quit()
         if not self._thread.wait(5000):
-            # A late `done` must not reach a dialog that is on its way
-            # out: exec() returns, the last Python reference goes, and
-            # the slot would fire on a deleted C++ object.
-            if self._worker is not None:
-                try:
-                    self._worker.done.disconnect()
-                except TypeError:  # already disconnected
-                    pass
+            # Handed over rather than kept: this dialog is a child of the
+            # pane / the window, and destroying it with the thread still
+            # running aborts the process. A late `done` reaches nobody.
+            detach_running_thread(
+                self._thread,
+                *((self._worker.done,) if self._worker is not None else ()),
+                keep=(self._worker,),
+            )
             log.warning("disk usage: snapshot still running; not discarding the thread")
+            self._thread = None
+            self._worker = None
             return
         self._thread = None
         self._worker = None

@@ -36,6 +36,7 @@ import socket
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -73,6 +74,12 @@ _PATH_RE = re.compile(r"^[0-9A-Za-z._/\-]+$")
 # whitespace — it goes into the NAME="…" frame verbatim and would
 # otherwise let a hostile profile.json break out of the quoted field.
 _VOLUME_RE = re.compile(r"^[0-9A-Za-z]:?$")
+
+
+# The size a device declares in its FSUPLOAD answer line.
+_FSUPLOAD_SIZE_RE = re.compile(
+    rb"@PJL\s+FSUPLOAD[^\r\n]*?\bSIZE\s*=\s*([0-9]{1,12})", re.IGNORECASE
+)
 
 
 class PjlNotSupported(OSError):
@@ -126,7 +133,7 @@ def _recv_until(sock: socket.socket, terminator: bytes, max_bytes: int) -> bytes
 # ---------------------------------------------------------------------------
 
 
-class PjlSession:
+class PjlSession(SessionLifecycle):
     """PJL backend implementing the FileBackend protocol.
 
     Construction fails with :class:`PjlNotSupported` when the device
@@ -428,7 +435,18 @@ class PjlSession:
         # tail — silently corrupting binaries that happen to end in
         # those bytes. Use ``removesuffix`` so we strip only the exact
         # frame terminator (and only once).
-        return io.BytesIO(body.removesuffix(UEL))
+        body = body.removesuffix(UEL)
+        # _recv_until() returns what arrived when the device stalls or
+        # hangs up; the device's own "@PJL FSUPLOAD ... SIZE=N" line says
+        # how much had to arrive, so a cut-off transfer is not handed
+        # back as the whole file.
+        declared = _FSUPLOAD_SIZE_RE.search(blob)
+        if declared is not None and len(body) < int(declared.group(1)):
+            raise OSError(
+                f"PJL read({path}): transfer truncated - device declared "
+                f"{int(declared.group(1))} bytes, received {len(body)}"
+            )
+        return io.BytesIO(body)
 
     def readlink(self, path: str) -> str:
         raise OSError("PJL has no symlinks")

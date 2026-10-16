@@ -11,8 +11,7 @@ inline in the script. Lifting the policy into this module gives it:
 
 * A single canonical home outside `scripts/` (defense in depth — the
   script is one of two layers enforcing the rule).
-* A focused test surface (`tests/test_export_filename_policy.py`)
-  covering happy / edge / sad in isolation.
+* A focused unit that can be tested in isolation (happy / edge / sad).
 * Re-use for future callers (CI gate, secondary hook, audit tool)
   without re-implementing `endswith` logic.
 

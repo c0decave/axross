@@ -16,8 +16,11 @@ Design constraints (intentional):
   drown them in confirmations.
 * The Esc-to-cancel behaviour is implemented by the GUI layer; this
   module just exposes the gate (``arm_for_session`` + ``should_arm``)
-  and the per-call wrapper. Headless / REPL contexts get a stdin
-  prompt instead.
+  and the per-call wrapper. Headless / REPL contexts get a stderr
+  countdown instead (also in a Scripts dock run, whose output is live
+  and which Stop ends); where no human can watch it (no terminal, an MCP
+  script run, ``AXROSS_NONINTERACTIVE``) the gate refuses the
+  operation unless ``AXROSS_TARPIT_DISABLE=1`` is set.
 * The flag lives on the connection profile, not on the path. Path-level
   rules (e.g. "/etc is sacred") are out of scope here — they belong in
   ``core/path_policy.py``.
@@ -144,7 +147,22 @@ def _stdout_countdown(seconds: float, *, label: str, op_desc: str) -> bool:
     ``KeyboardInterrupt`` is captured here so callers can decide
     whether to abort. We re-raise so the caller's ``with`` block
     short-circuits.
+
+    A countdown nobody can interrupt protects nothing: when no human
+    can watch it (``core.ui_helpers.can_watch_countdown``) this raises
+    :class:`core.ui_helpers.NonInteractiveError` and the operation
+    never runs. ``AXROSS_TARPIT_DISABLE=1`` in the environment that
+    starts axross is the operator's opt-out for unattended runs.
     """
+    from core.ui_helpers import NonInteractiveError, can_watch_countdown
+
+    if not can_watch_countdown():
+        raise NonInteractiveError(
+            f"production profile {label}: {op_desc!r} needs a human to watch the "
+            "tarpit countdown, but this run is non-interactive. Set "
+            f"{ENV_DISABLE}=1 in the environment that starts axross to allow "
+            "unattended writes to production profiles."
+        )
     fh = sys.stderr
     try:
         fh.write("\n  ⚠ axross production tarpit\n")

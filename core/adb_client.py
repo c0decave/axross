@@ -49,6 +49,7 @@ import threading
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -351,7 +352,7 @@ class _AdbPushOnClose:
 # --------------------------------------------------------------------------
 
 
-class AdbSession:
+class AdbSession(SessionLifecycle):
     """Android device exposed as a FileBackend via ADB.
 
     Construct with TCP args (host + port) OR USB args
@@ -675,9 +676,11 @@ class AdbSession:
         first = out.split()[0]
         # Sanity: hex only, correct length for the algorithm.
         expected_len = {"sha256": 64, "sha1": 40, "md5": 32}[algorithm]
-        if len(first) != expected_len:
+        if len(first) != expected_len or not all(c in "0123456789abcdefABCDEF" for c in first):
             return ""
-        return first
+        # "<algo>:<hex>" like every other backend: the transfer worker
+        # compares the algorithm part before it compares digests.
+        return f"{algorithm}:{first.lower()}"
 
     def list_versions(self, path: str) -> list:
         return []

@@ -48,6 +48,7 @@ import threading
 from datetime import datetime
 from typing import IO, Any
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -165,7 +166,7 @@ class _Entry:
 # ---------------------------------------------------------------------------
 
 
-class RamFsSession:
+class RamFsSession(SessionLifecycle):
     """In-process RAM-backed FileBackend.
 
     Construction makes an empty tree with ``/`` as the root. The
@@ -518,7 +519,11 @@ class RamFsSession:
             old_size = len(old.data) if old and not old.is_dir else 0
             delta = len(data) - old_size
             self._check_capacity(delta)
-            self._tree[path] = _Entry(is_dir=False, data=bytes(data), mode=0o644)
+            # An overwrite keeps the file's mode, as on POSIX: atomic_write
+            # pre-creates its temp file with the target's mode for exactly
+            # that reason.
+            mode = old.mode if old is not None else 0o644
+            self._tree[path] = _Entry(is_dir=False, data=bytes(data), mode=mode)
             self._used_bytes += delta
 
 

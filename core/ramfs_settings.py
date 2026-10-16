@@ -51,7 +51,8 @@ class RamFsSettings:
             return cls()
         try:
             raw = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
+            # ValueError covers JSONDecodeError and UnicodeDecodeError.
             log.warning(
                 "RamFsSettings: cannot parse %s (%s) — using defaults",
                 SETTINGS_FILE,

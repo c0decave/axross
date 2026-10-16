@@ -29,10 +29,10 @@ Lifting the matcher here gives it:
 
 * A single canonical home outside ``scripts/`` (defense in depth — the
   script is one of two layers enforcing the rule).
-* A focused test surface (:mod:`tests.test_scan_exclude_paths`)
-  covering the four file-shaped entries individually plus the
-  directory-shaped entry, plus edge cases (empty path, exact match,
-  slash-suffix variants, unicode).
+* A focused unit that can be tested in isolation: the four
+  file-shaped entries individually plus the directory-shaped entry,
+  plus edge cases (empty path, exact match, slash-suffix variants,
+  unicode).
 * Re-use for future callers (CI gate, secondary hook, audit tool)
   without re-implementing the anchoring logic.
 

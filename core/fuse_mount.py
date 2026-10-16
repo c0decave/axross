@@ -476,6 +476,24 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             delete=False,
         )
 
+    def _may_exist(self, full: str) -> bool:
+        """False only when the backend says *full* is not there."""
+        try:
+            return self.backend.exists(full) is not False
+        except Exception:  # noqa: BLE001 - cannot rule it out
+            return True
+
+    @staticmethod
+    def _discard_tempfile(tmp) -> None:
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
     def _open_stream_session(self, path: str) -> _WriteSession:
         """Open a backend write handle and wrap it in a streaming
         session. Raises FuseOSError(EIO) on backend failure so the
@@ -552,8 +570,15 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                             break
                         tmp.write(chunk)
                 pre_fetched = True
-            except OSError:
-                pass
+            except OSError as exc:
+                if self._may_exist(full):
+                    # The buffer is empty or cut short, and release
+                    # would commit it over the file the read failed on.
+                    log.warning("open(%s) pre-fetch failed: %s — EIO", full, exc)
+                    self._discard_tempfile(tmp)
+                    raise FuseOSError(errno.EIO)
+                tmp.seek(0)
+                tmp.truncate()
         tmp.seek(0)
         # dirty only when truncate was requested (content really
         # differs) or we couldn't pre-fetch (new-file case). A
@@ -649,26 +674,29 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         buf = tempfile.NamedTemporaryFile(prefix=".axross-fuse-")
         try:
             try:
-                with self.backend.open_read(full) as src:
-                    remaining = length
-                    while remaining > 0:
-                        chunk = src.read(min(64 * 1024, remaining))
-                        if not chunk:
-                            break
-                        buf.write(chunk)
-                        remaining -= len(chunk)
+                if length > 0:
+                    with self.backend.open_read(full) as src:
+                        remaining = length
+                        while remaining > 0:
+                            chunk = src.read(min(64 * 1024, remaining))
+                            if not chunk:
+                                break
+                            buf.write(chunk)
+                            remaining -= len(chunk)
             except OSError as prefetch_exc:
                 # Missing file is the common case (truncate as part
-                # of open(O_CREAT|O_TRUNC)); a perm/network error is
-                # unusual enough to log so a user debugging "why is
-                # my file suddenly zero bytes?" has a breadcrumb.
-                log.info(
-                    "truncate(%s) pre-fetch failed (%s) — flushing "
-                    "a %d-byte buffer from what we could read",
-                    full,
-                    prefetch_exc,
-                    length,
-                )
+                # of open(O_CREAT|O_TRUNC)). For a file that is there,
+                # flushing what we could read would replace its first
+                # *length* bytes with zeros.
+                if self._may_exist(full):
+                    log.warning(
+                        "truncate(%s) pre-fetch failed (%s) — EIO",
+                        full,
+                        prefetch_exc,
+                    )
+                    raise FuseOSError(errno.EIO)
+                buf.seek(0)
+                buf.truncate()
             buf.truncate(length)
             buf.seek(0)
             try:

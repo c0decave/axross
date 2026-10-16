@@ -26,7 +26,12 @@ Security model
   - Uses ``setScaledSize`` so we don't fully decode before scaling.
   - Only allow-list common lossy/lossless raster MIMEs; SVG is
     excluded by default because it can contain script / external
-    references (XXE risk).
+    references (XXE risk). A caller may opt in with ``allow_svg=True``
+    (the media viewer); the source then has to pass :func:`svg_refusal`
+    (no DOCTYPE / entities, no scripts, no reference outside the file)
+    and is drawn by QtSvg's static Tiny-1.2 renderer.
+* :func:`decode_image` is the full-window variant of :func:`thumbnail`:
+  same gates, no cache, up to :data:`VIEWER_MAX_EDGE` px.
 * External open:
   - Rejects NUL bytes, absolute paths outside the given root, and
     non-existent paths.
@@ -48,6 +53,7 @@ import hashlib
 import io
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -106,10 +112,21 @@ PILLOW_FALLBACK_FORMATS = (
 # Default thumbnail edge length.
 DEFAULT_THUMBNAIL_EDGE = 256
 
+# Longest edge :func:`decode_image` produces by default (the media viewer's
+# full-window view). Larger pictures are scaled down while decoding.
+VIEWER_MAX_EDGE = 4096
+
+SVG_MIME = "image/svg+xml"
+
+# Largest SVG source the gate reads. SVG is text; anything beyond is not a
+# drawing anyone hand-made, and the XML parser should never see it.
+MAX_SVG_INPUT_SIZE = 8 * 1024 * 1024
+
 # MIME types we're willing to decode for previews. Anything else is
 # refused — even if Qt claims it can read it. Keep this small on
-# purpose. SVG is NOT here (script/XXE surface); we can revisit once
-# we're ready to run SVG through a sanitising parser.
+# purpose. SVG is NOT here (script/XXE surface): only callers that pass
+# ``allow_svg=True`` (the media viewer) get it, and then only through
+# :func:`svg_refusal` and QtSvg's restricted static renderer.
 ALLOWED_THUMBNAIL_MIMES: frozenset[str] = frozenset(
     {
         "image/png",
@@ -370,27 +387,16 @@ def _decode_with_pillow(abs_path: str, edge: int | None) -> bytes:
     return buf.getvalue()
 
 
-def thumbnail(
-    backend, path: str, *, edge: int = DEFAULT_THUMBNAIL_EDGE, use_cache: bool = True
-) -> ThumbnailResult:
-    """Produce a PNG-encoded thumbnail of *path* at roughly *edge* px.
+def _checked_source(backend, path: str, *, allow_svg: bool) -> tuple[str, os.stat_result, str]:
+    """The gates every decode passes first: security mode, local backend,
+    a non-empty regular file within the size cap, an allow-listed MIME.
 
-    The full security contract is enforced here: local-only,
-    size-bounded, dimension-bounded, allocation-limited, allow-listed
-    MIME. Returns the PNG bytes plus metadata.
-
-    Raises:
-      * :class:`PreviewNotAvailable` — remote backend, wrong MIME,
-        missing Qt imaging bindings.
-      * :class:`PreviewTooLarge` — file too big or dimension bomb.
-      * :class:`PreviewDecodeFailed` — decoder couldn't parse.
-    """
+    Returns ``(abs_path, stat, mime)``."""
     from core.security_mode import current_policy, require
 
     require("automatic previews", current_policy().allow_auto_preview)
     _require_local(backend)
     abs_path = _validate_local_path(path)
-    edge = max(16, min(int(edge), 2048))
 
     try:
         st = os.stat(abs_path)
@@ -404,27 +410,31 @@ def thumbnail(
         )
 
     mime = guess_mime(backend, abs_path)
-    if mime not in ALLOWED_THUMBNAIL_MIMES:
-        raise PreviewNotAvailable(f"MIME {mime!r} is not in the thumbnail allow-list")
-
-    cache_file: Path | None = None
-    if use_cache:
-        key = _cache_key(abs_path, st.st_mtime, st.st_size, edge)
-        cache_file = _cache_root() / (key + ".png")
-        hit = _load_cached(cache_file)
-        if hit is not None:
-            # Minimal metadata on cache-hit — we don't re-parse to
-            # extract dimensions because we trust our own cache.
-            return ThumbnailResult(
-                data=hit,
-                mime=mime,
-                width=edge,
-                height=edge,
-                from_cache=True,
+    if mime == SVG_MIME and allow_svg:
+        if st.st_size > MAX_SVG_INPUT_SIZE:
+            raise PreviewTooLarge(
+                f"SVG {abs_path} exceeds MAX_SVG_INPUT_SIZE ({st.st_size} > {MAX_SVG_INPUT_SIZE})"
             )
+    elif mime not in ALLOWED_THUMBNAIL_MIMES:
+        raise PreviewNotAvailable(f"MIME {mime!r} is not in the thumbnail allow-list")
+    return abs_path, st, mime
 
+
+def _png_bytes(image) -> bytes:
+    from PyQt6.QtCore import QBuffer, QIODevice
+
+    buf = QBuffer()
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    if not image.save(buf, "PNG"):
+        raise PreviewDecodeFailed("PNG encode of decoded image failed")
+    return bytes(buf.data())
+
+
+def _read_raster(abs_path: str, edge: int):
+    """Decode *abs_path* scaled to fit *edge*: ``(QImage, None)`` from Qt, or
+    ``(None, png_bytes)`` from the Pillow fallback."""
     try:
-        from PyQt6.QtCore import QBuffer, QIODevice, QSize
+        from PyQt6.QtCore import QSize
         from PyQt6.QtGui import QImage, QImageReader
     except ImportError as exc:  # pragma: no cover
         raise PreviewNotAvailable(f"PyQt6.QtGui unavailable: {exc}") from exc
@@ -472,27 +482,161 @@ def thumbnail(
         # Pillow fallback. The MAX_INPUT_SIZE gate already ran above;
         # _decode_with_pillow re-checks the dimension cap from the
         # header before fully decoding.
-        data = _decode_with_pillow(abs_path, edge)
-        # Parse dimensions back from the PNG we just produced so the
-        # ThumbnailResult contract (width/height) matches the Qt path.
+        return None, _decode_with_pillow(abs_path, edge)
+    return image, None
+
+
+# ---------------------------------------------------------------------------
+# SVG (media viewer only, behind allow_svg=True)
+# ---------------------------------------------------------------------------
+
+# Anything that makes the XML parser expand, include or fetch, or that
+# would run in a browser. QtSvg runs no scripts and fetches nothing from
+# the network, but the gate does not rely on that: it refuses first.
+_SVG_FORBIDDEN = (
+    b"<!doctype",
+    b"<!entity",
+    b"<?xml-stylesheet",
+    b"<script",
+    b"<foreignobject",
+    b"<iframe",
+    b"<object",
+    b"<embed",
+    b"@import",
+)
+_SVG_HREF = re.compile(rb"""href\s*=\s*(["'])\s*(.*?)\1""", re.S)
+_SVG_URL = re.compile(rb"""url\(\s*["']?\s*([^)"'\s]*)""")
+_SVG_DATA_IMAGE = (b"data:image/png", b"data:image/jpeg", b"data:image/gif", b"data:image/webp")
+
+
+def svg_refusal(data: bytes) -> str | None:
+    """Why *data* must not reach the SVG renderer, or ``None`` when it may.
+
+    Allowed: a UTF-8 document whose references all stay inside it
+    (``#id``) or embed a common raster as a ``data:`` URI."""
+    if b"\x00" in data:
+        return "SVG is not UTF-8 text"
+    lowered = data.lower()
+    for token in _SVG_FORBIDDEN:
+        if token in lowered:
+            return f"SVG contains {token.decode()!r}"
+    for match in _SVG_HREF.finditer(lowered):
+        ref = match.group(2).strip()
+        if not (ref.startswith(b"#") or ref.startswith(_SVG_DATA_IMAGE)):
+            return "SVG references something outside the file"
+    for match in _SVG_URL.finditer(lowered):
+        if not match.group(1).startswith(b"#"):
+            return "SVG references something outside the file"
+    return None
+
+
+def _render_svg(abs_path: str, edge: int):
+    """Render the SVG at *abs_path* to a QImage whose longer side is *edge*."""
+    try:
+        from PyQt6.QtCore import QByteArray, QRectF, Qt
+        from PyQt6.QtGui import QImage, QPainter
+        from PyQt6.QtSvg import QSvgRenderer
+    except ImportError as exc:  # pragma: no cover - QtSvg is part of the wheel
+        raise PreviewNotAvailable(f"PyQt6.QtSvg unavailable: {exc}") from exc
+
+    try:
+        with open(abs_path, "rb") as fh:
+            data = fh.read(MAX_SVG_INPUT_SIZE + 1)
+    except OSError as exc:
+        raise PreviewNotAvailable(f"cannot read {abs_path}: {exc}") from exc
+    if len(data) > MAX_SVG_INPUT_SIZE:
+        raise PreviewTooLarge(f"SVG {abs_path} exceeds MAX_SVG_INPUT_SIZE")
+    reason = svg_refusal(data)
+    if reason is not None:
+        raise PreviewNotAvailable(f"{abs_path}: {reason}")
+
+    renderer = QSvgRenderer()
+    try:
+        from PyQt6.QtSvg import QtSvg
+
+        # PyQt6 exposes the QFlags as a plain Enum: combine by value.
+        renderer.setOptions(
+            QtSvg.Option(
+                QtSvg.Option.Tiny12FeaturesOnly.value | QtSvg.Option.DisableAnimations.value
+            )
+        )
+    except (ImportError, AttributeError, TypeError, ValueError) as exc:
+        # Qt < 6.7 has no options; the gate above still applies.
+        log.debug("QSvgRenderer.setOptions unavailable: %s", exc)
+    if not renderer.load(QByteArray(data)) or not renderer.isValid():
+        raise PreviewDecodeFailed(f"{abs_path}: not a valid SVG")
+    size = renderer.defaultSize()
+    w, h = (size.width(), size.height()) if not size.isEmpty() else (edge, edge)
+    scale = edge / max(w, h)
+    out_w, out_h = max(1, round(w * scale)), max(1, round(h * scale))
+    image = QImage(out_w, out_h, QImage.Format.Format_ARGB32_Premultiplied)
+    if image.isNull():
+        raise PreviewTooLarge(f"{abs_path}: cannot allocate {out_w}x{out_h}")
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    try:
+        renderer.render(painter, QRectF(0, 0, out_w, out_h))
+    finally:
+        painter.end()
+    return image
+
+
+def thumbnail(
+    backend,
+    path: str,
+    *,
+    edge: int = DEFAULT_THUMBNAIL_EDGE,
+    use_cache: bool = True,
+    allow_svg: bool = False,
+) -> ThumbnailResult:
+    """Produce a PNG-encoded thumbnail of *path* at roughly *edge* px.
+
+    The full security contract is enforced here: local-only,
+    size-bounded, dimension-bounded, allocation-limited, allow-listed
+    MIME. Returns the PNG bytes plus metadata. ``allow_svg`` lets an SVG
+    through :func:`svg_refusal` to QtSvg (the media viewer opts in; the
+    pane does not).
+
+    Raises:
+      * :class:`PreviewNotAvailable` — remote backend, wrong MIME,
+        missing Qt imaging bindings.
+      * :class:`PreviewTooLarge` — file too big or dimension bomb.
+      * :class:`PreviewDecodeFailed` — decoder couldn't parse.
+    """
+    abs_path, st, mime = _checked_source(backend, path, allow_svg=allow_svg)
+    edge = max(16, min(int(edge), 2048))
+
+    cache_file: Path | None = None
+    if use_cache:
+        key = _cache_key(abs_path, st.st_mtime, st.st_size, edge)
+        cache_file = _cache_root() / (key + ".png")
+        hit = _load_cached(cache_file)
+        if hit is not None:
+            # Minimal metadata on cache-hit — we don't re-parse to
+            # extract dimensions because we trust our own cache.
+            return ThumbnailResult(
+                data=hit,
+                mime=mime,
+                width=edge,
+                height=edge,
+                from_cache=True,
+            )
+
+    if mime == SVG_MIME:
+        image, data = _render_svg(abs_path, edge), None
+    else:
+        image, data = _read_raster(abs_path, edge)
+    if data is not None:
+        from PyQt6.QtGui import QImage
+
+        # Parse dimensions back from the PNG the Pillow fallback produced
+        # so the ThumbnailResult contract (width/height) matches the Qt path.
         decoded = QImage.fromData(data, "PNG")
         out_w = decoded.width() if not decoded.isNull() else edge
         out_h = decoded.height() if not decoded.isNull() else edge
-        if cache_file is not None:
-            _store_cached(cache_file, data)
-        return ThumbnailResult(
-            data=data,
-            mime=mime,
-            width=out_w,
-            height=out_h,
-            from_cache=False,
-        )
-
-    buf = QBuffer()
-    buf.open(QIODevice.OpenModeFlag.WriteOnly)
-    if not image.save(buf, "PNG"):
-        raise PreviewDecodeFailed("PNG encode of decoded image failed")
-    data = bytes(buf.data())
+    else:
+        data = _png_bytes(image)
+        out_w, out_h = image.width(), image.height()
 
     if cache_file is not None:
         _store_cached(cache_file, data)
@@ -500,10 +644,37 @@ def thumbnail(
     return ThumbnailResult(
         data=data,
         mime=mime,
-        width=image.width(),
-        height=image.height(),
+        width=out_w,
+        height=out_h,
         from_cache=False,
     )
+
+
+def decode_image(
+    backend, path: str, *, max_edge: int = VIEWER_MAX_EDGE, allow_svg: bool = False
+):
+    """Decode *path* for a full-window view and return a ``QImage``.
+
+    The same gates as :func:`thumbnail` (security mode, local only, size,
+    dimensions, allocation limit, MIME allow-list), no cache, and an edge
+    up to *max_edge* instead of the thumbnail's 2048 px clamp; a larger
+    picture is scaled down while decoding.
+
+    Raises the same :class:`PreviewError` subclasses as :func:`thumbnail`.
+    """
+    abs_path, _st, mime = _checked_source(backend, path, allow_svg=allow_svg)
+    edge = max(16, min(int(max_edge), MAX_DIMENSION))
+    if mime == SVG_MIME:
+        return _render_svg(abs_path, edge)
+    image, data = _read_raster(abs_path, edge)
+    if image is not None:
+        return image
+    from PyQt6.QtGui import QImage
+
+    image = QImage.fromData(data, "PNG")
+    if image.isNull():
+        raise PreviewDecodeFailed(f"{abs_path}: decoded image could not be read back")
+    return image
 
 
 # ---------------------------------------------------------------------------
@@ -554,12 +725,17 @@ __all__ = [
     "DEFAULT_THUMBNAIL_EDGE",
     "MAX_DIMENSION",
     "MAX_INPUT_SIZE",
+    "MAX_SVG_INPUT_SIZE",
     "PreviewDecodeFailed",
     "PreviewError",
     "PreviewNotAvailable",
     "PreviewTooLarge",
+    "SVG_MIME",
     "ThumbnailResult",
+    "VIEWER_MAX_EDGE",
+    "decode_image",
     "guess_mime",
     "open_externally",
+    "svg_refusal",
     "thumbnail",
 ]

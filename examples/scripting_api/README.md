@@ -30,6 +30,7 @@ docker compose run --rm --no-deps \
 | `network_diagnostics.py` | TCP/HTTP/DNS/address helpers against a local test HTTP server |
 | `credential_testing.py` | Authorized credential-test dry-runs and oracle enumeration without network traffic |
 | `protocol_recipes.py` | SQLite query/tables plus protocol-specific recipes that need real services |
+| `metadata_workflows.py` | Read, export (JSON / CSV) and remove file metadata; a cleaned copy next to the original |
 | `docker_protocol_smoke.py` | Docker lab examples for FTP, WebDAV, IMAP, TFTP, LDAP, SNMP, SSH host-key, HTTP probes |
 
 The Docker module is opt-in because it talks to real network services.

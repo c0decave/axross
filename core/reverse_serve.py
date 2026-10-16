@@ -128,6 +128,17 @@ def _is_local_bind(bind: str) -> bool:
         return False
 
 
+def _loopback_authority(value: str) -> bool:
+    """True when a ``Host`` / ``Origin`` authority is a literal loopback
+    name (``127.0.0.1``, ``[::1]``, ``localhost``, with or without port)."""
+    host = (value or "").strip()
+    if host.startswith("["):
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:
+        host = host.split(":", 1)[0]
+    return bool(host) and _is_local_bind(host)
+
+
 def _backend_join(backend, *parts: str) -> str:
     if hasattr(backend, "join"):
         return backend.join(*parts)
@@ -227,6 +238,33 @@ class _BaseHandler(BaseHTTPRequestHandler):
         except OSError as exc:
             log.debug("reverse-server: cannot set socket timeout: %s", exc)
 
+    def parse_request(self) -> bool:
+        """Refuse DNS rebinding on loopback binds before any verb runs.
+
+        A loopback server needs no token, so the only thing keeping a web
+        page away from the backend is that it cannot forge ``Host``: after
+        a rebind the page's own hostname arrives there (and in ``Origin``).
+        Non-loopback binds require the bearer token instead and are served
+        under whatever name clients use.
+        """
+        if not super().parse_request():
+            return False
+        if not _is_local_bind(self.config.bind):
+            return True
+        host = self.headers.get("Host")
+        origin = self.headers.get("Origin")
+        refused = ""
+        if host is not None and not _loopback_authority(host):
+            refused = "Host header is not a loopback name"
+        elif origin is not None and not _loopback_authority(urlparse(origin).netloc):
+            refused = "cross-origin request refused"
+        if refused:
+            log.warning("reverse-server: %s (Host=%r Origin=%r)", refused, host, origin)
+            self.close_connection = True
+            self._send_simple(403, refused.encode("utf-8"))
+            return False
+        return True
+
     # --------------------------------- helpers ---------------------------
 
     def _is_authed(self) -> bool:
@@ -279,22 +317,81 @@ class _BaseHandler(BaseHTTPRequestHandler):
         Streamed in ``PUT_CHUNK`` chunks so a multi-GiB upload doesn't
         materialise in memory.
         """
-        if length < 0:
-            raise ValueError("missing Content-Length")
-        if length > MAX_BODY_BYTES:
-            raise ValueError(f"Content-Length {length} exceeds cap {MAX_BODY_BYTES}")
+        body = _RequestBody(self.rfile, length)
         moved = 0
-        while moved < length:
-            chunk = self.rfile.read(min(PUT_CHUNK, length - moved))
-            if not chunk:
-                break
+        while chunk := body.read(PUT_CHUNK):
             written = write_handle.write(chunk)
             if written is not None and int(written) != len(chunk):
                 raise OSError(f"short backend write: wrote {written} of {len(chunk)} bytes")
             moved += len(chunk)
-        if moved != length:
-            raise ValueError(f"short request body: received {moved} of {length} bytes")
         return moved
+
+    def _store_body(self, path: str, length: int) -> None:
+        """Store the request body at ``path``; a failed PUT keeps the old object.
+
+        Raises :class:`ValueError` when the client did not deliver the
+        body it announced and :class:`OSError` when the backend refused
+        it or failed to commit it.
+        """
+        from core.server_ops import _discard_or_close_writer, _supports_temp_destination
+
+        backend = self.config.backend
+        if _supports_temp_destination(backend):
+            # The body lands in a sibling temp file and replaces the old
+            # object (keeping its mode) only once every byte arrived. A
+            # direct open_write here truncated the old file on LocalFS
+            # before the first byte was read.
+            from core.atomic_io import atomic_write_stream
+
+            atomic_write_stream(
+                backend, path, _RequestBody(self.rfile, length), chunk_size=PUT_CHUNK
+            )
+            return
+        handle = backend.open_write(path)
+        completed = False
+        try:
+            self._stream_body_to(handle, length)
+            completed = True
+        finally:
+            # Buffered writers commit at close: an incomplete body is
+            # discarded, not committed, and a failed commit propagates.
+            _discard_or_close_writer(handle, completed=completed)
+
+
+class _RequestBody:
+    """``read(size)`` over exactly ``length`` request-body bytes.
+
+    A body that ends early, or a socket that fails while reading it,
+    raises :class:`ValueError`: either way the client did not deliver
+    what it announced, and nothing of it may be committed.
+    """
+
+    def __init__(self, rfile, length: int) -> None:
+        if length < 0:
+            raise ValueError("missing Content-Length")
+        if length > MAX_BODY_BYTES:
+            raise ValueError(f"Content-Length {length} exceeds cap {MAX_BODY_BYTES}")
+        self._rfile = rfile
+        self._length = length
+        self._received = 0
+
+    def read(self, size: int = -1) -> bytes:
+        left = self._length - self._received
+        if left <= 0:
+            return b""
+        want = min(left, PUT_CHUNK if size is None or size < 0 else size)
+        try:
+            chunk = self._rfile.read(want)
+        except OSError as exc:
+            raise ValueError(
+                f"request body unreadable after {self._received} of {self._length} bytes: {exc}"
+            ) from exc
+        if not chunk:
+            raise ValueError(
+                f"short request body: received {self._received} of {self._length} bytes"
+            )
+        self._received += len(chunk)
+        return chunk
 
 
 # ---------------------------------------------------------------------------
@@ -559,20 +656,14 @@ class _S3Handler(_BaseHandler):
             self._s3_error(400, "InvalidArgument", str(exc))
             return
         try:
-            handle = self.config.backend.open_write(path)
-        except OSError as exc:
-            self._s3_error(500, "InternalError", str(exc))
-            return
-        try:
-            self._stream_body_to(handle, length)
-        except (OSError, ValueError) as exc:
+            self._store_body(path, length)
+        except ValueError as exc:
             self._s3_error(400, "InvalidArgument", str(exc))
             return
-        finally:
-            try:
-                handle.close()
-            except Exception as exc:  # noqa: BLE001
-                log.debug("reverse-s3 close: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - any failed commit is a 500, never a 200
+            log.warning("reverse-s3 PUT %s failed: %s", path, exc)
+            self._s3_error(500, "InternalError", str(exc))
+            return
         # 200 with empty body is the S3 PUT response shape (with the
         # ETag header). We synthesise a fake ETag — restic / rclone
         # check it for non-emptiness, not validity.
@@ -784,20 +875,14 @@ class _DAVHandler(_BaseHandler):
             self._send_simple(400, str(exc).encode("utf-8"))
             return
         try:
-            handle = self.config.backend.open_write(path)
-        except OSError as exc:
-            self._send_simple(500, str(exc).encode("utf-8"))
-            return
-        try:
-            self._stream_body_to(handle, length)
-        except (OSError, ValueError) as exc:
+            self._store_body(path, length)
+        except ValueError as exc:
             self._send_simple(400, str(exc).encode("utf-8"))
             return
-        finally:
-            try:
-                handle.close()
-            except Exception as exc:  # noqa: BLE001
-                log.debug("reverse-dav close: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - any failed commit is a 500, never a 201
+            log.warning("reverse-dav PUT %s failed: %s", path, exc)
+            self._send_simple(500, str(exc).encode("utf-8"))
+            return
         self._send_simple(201)
 
     def do_DELETE(self) -> None:
@@ -864,6 +949,18 @@ class _DAVHandler(_BaseHandler):
         src_full = self._backend_path()
         if src_full is None:
             return
+        if self.headers.get("Overwrite", "T").strip().upper() == "F":
+            # RFC 4918 9.8.4 / 9.9.3: the client asked not to replace an
+            # existing destination. LocalFS rename/copy would do it
+            # silently, so check here rather than trust the backend.
+            try:
+                taken = self.config.backend.exists(dst_full)
+            except OSError as exc:
+                self._send_simple(409, str(exc).encode("utf-8"))
+                return
+            if taken:
+                self._send_simple(412, b"destination exists and Overwrite is F")
+                return
         try:
             if move:
                 self.config.backend.rename(src_full, dst_full)

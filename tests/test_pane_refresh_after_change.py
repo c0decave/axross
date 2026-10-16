@@ -81,3 +81,50 @@ class RefreshAfterChangeTest(_Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RefreshKeepsTheSelectionTest(_Base):
+    """A reload of the same folder - F5, an operation, the watcher - kept no
+    selection: the model reset dropped it, and the user's choice was gone
+    whenever a file appeared in the folder."""
+
+    def select(self, *names: str) -> None:
+        from PyQt6.QtCore import QItemSelectionModel
+
+        sel = self.pane._table.selectionModel()
+        sel.clearSelection()
+        for row in range(self.pane._proxy.rowCount()):
+            index = self.pane._proxy.index(row, 0)
+            if index.data() in names:
+                sel.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )
+                sel.setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
+
+    def selected(self) -> list[str]:
+        return sorted(i.name for i in self.pane.selected_file_items())
+
+    def test_happy_a_refresh_keeps_the_selected_files(self) -> None:
+        self.select("top.txt", "a")
+        (self.root / "new.txt").write_text("x")
+        self.pane.refresh_async(quiet=True)
+        self.assertTrue(self.settle())
+        self.assertIn("new.txt", self.names())
+        self.assertEqual(self.selected(), ["a", "top.txt"])
+        current = self.pane._table.selectionModel().currentIndex()
+        self.assertIn(current.data(), ("a", "top.txt"))
+
+    def test_sad_a_removed_file_leaves_the_selection(self) -> None:
+        self.select("top.txt", "a")
+        (self.root / "top.txt").unlink()
+        self.pane.refresh_async(quiet=True)
+        self.assertTrue(self.settle())
+        self.assertEqual(self.selected(), ["a"])
+
+    def test_edge_another_folder_starts_with_no_selection(self) -> None:
+        self.select("a")
+        self.pane.navigate_async(self.p("b"))
+        self.assertTrue(self.settle())
+        self.assertEqual(self.selected(), [])

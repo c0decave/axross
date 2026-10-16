@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import urlsplit
 
@@ -38,9 +38,20 @@ except ImportError:
     pymongo = None  # type: ignore[assignment]
 
 
+def _utc(value):
+    """BSON dates are UTC, but pymongo decodes them naive by default and
+    FileItem reads a naive value as local time: label them."""
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 class MongoFsSession(DbFsBackend):
     """MongoDB-backed FileBackend (GridFS for content, axross_dirs
     for the synthetic tree)."""
+
+    # gridfs.errors.GridFSError is a PyMongoError too.
+    _DRIVER_ERRORS = (pymongo.errors.PyMongoError,) if pymongo is not None else ()
 
     def __init__(
         self,
@@ -186,10 +197,10 @@ class MongoFsSession(DbFsBackend):
             if dir_doc is not None:
                 return {
                     "path": path,
-                    "parent": dir_doc["parent"],
+                    "parent": dir_doc.get("parent", "/"),
                     "is_dir": True,
                     "mode": dir_doc.get("mode", 0o755),
-                    "mtime": dir_doc.get("mtime"),
+                    "mtime": _utc(dir_doc.get("mtime")),
                     "content": None,
                 }
             f = self._fs.find_one({"filename": path})
@@ -200,7 +211,7 @@ class MongoFsSession(DbFsBackend):
                 "parent": f.metadata.get("parent", "/") if f.metadata else "/",
                 "is_dir": False,
                 "mode": f.metadata.get("mode", 0o644) if f.metadata else 0o644,
-                "mtime": f.upload_date,
+                "mtime": _utc(f.upload_date),
                 "content": f.read(),
             }
 
@@ -213,10 +224,10 @@ class MongoFsSession(DbFsBackend):
             if dir_doc is not None:
                 return {
                     "path": path,
-                    "parent": dir_doc["parent"],
+                    "parent": dir_doc.get("parent", "/"),
                     "is_dir": True,
                     "mode": dir_doc.get("mode", 0o755),
-                    "mtime": dir_doc.get("mtime"),
+                    "mtime": _utc(dir_doc.get("mtime")),
                     "size": 0,
                 }
             f = self._fs.find_one({"filename": path})
@@ -227,7 +238,7 @@ class MongoFsSession(DbFsBackend):
                 "parent": f.metadata.get("parent", "/") if f.metadata else "/",
                 "is_dir": False,
                 "mode": f.metadata.get("mode", 0o644) if f.metadata else 0o644,
-                "mtime": f.upload_date,
+                "mtime": _utc(f.upload_date),
                 "size": f.length,
             }
 
@@ -235,11 +246,11 @@ class MongoFsSession(DbFsBackend):
         with self._lock:
             for d in self._dirs.find({"parent": parent}):
                 yield {
-                    "path": d["path"],
+                    "path": d.get("path"),
                     "parent": parent,
                     "is_dir": True,
                     "mode": d.get("mode", 0o755),
-                    "mtime": d.get("mtime"),
+                    "mtime": _utc(d.get("mtime")),
                     "size": 0,
                 }
             for f in self._fs.find({"metadata.parent": parent}):
@@ -248,7 +259,7 @@ class MongoFsSession(DbFsBackend):
                     "parent": parent,
                     "is_dir": False,
                     "mode": (f.metadata or {}).get("mode", 0o644),
-                    "mtime": f.upload_date,
+                    "mtime": _utc(f.upload_date),
                     "size": f.length,
                 }
 
@@ -256,11 +267,11 @@ class MongoFsSession(DbFsBackend):
         with self._lock:
             for d in self._dirs.find({"parent": parent}):
                 yield {
-                    "path": d["path"],
+                    "path": d.get("path"),
                     "parent": parent,
                     "is_dir": True,
                     "mode": d.get("mode", 0o755),
-                    "mtime": d.get("mtime"),
+                    "mtime": _utc(d.get("mtime")),
                     "content": None,
                 }
             for f in self._fs.find({"metadata.parent": parent}):
@@ -269,7 +280,7 @@ class MongoFsSession(DbFsBackend):
                     "parent": parent,
                     "is_dir": False,
                     "mode": (f.metadata or {}).get("mode", 0o644),
-                    "mtime": f.upload_date,
+                    "mtime": _utc(f.upload_date),
                     "content": None,  # Lazy: read on demand via _db_get
                 }
 
@@ -285,15 +296,16 @@ class MongoFsSession(DbFsBackend):
                             "path": path,
                             "parent": parent,
                             "mode": int(row.get("mode") or 0o755),
-                            "mtime": row.get("mtime") or datetime.now(),
+                            "mtime": row.get("mtime") or datetime.now(timezone.utc),
                         }
                     },
                     upsert=True,
                 )
                 return
-            # Replace any prior version of the same filename.
-            for old in self._fs.find({"filename": path}):
-                self._fs.delete(old._id)
+            # Replace any prior version of the same filename - only
+            # once the new one is stored, so a failed put (connection
+            # drop, quota) leaves the previous content in place.
+            old_ids = [old._id for old in self._fs.find({"filename": path})]
             self._fs.put(
                 row.get("content") or b"",
                 filename=path,
@@ -302,6 +314,8 @@ class MongoFsSession(DbFsBackend):
                     "mode": int(row.get("mode") or 0o644),
                 },
             )
+            for old_id in old_ids:
+                self._fs.delete(old_id)
 
     def _db_update(self, path: str, **fields) -> None:
         with self._lock:
@@ -323,7 +337,9 @@ class MongoFsSession(DbFsBackend):
             while stack:
                 current = stack.pop()
                 for d in self._dirs.find({"parent": current}):
-                    stack.append(d["path"])
+                    child = d.get("path")
+                    if isinstance(child, str):  # a document without a path names nothing
+                        stack.append(child)
                 for f in self._fs.find({"metadata.parent": current}):
                     self._fs.delete(f._id)
                 self._dirs.delete_many({"parent": current})

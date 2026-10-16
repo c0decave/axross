@@ -93,6 +93,7 @@ REQUIRED_MODS=(
     "dns.resolver:DNS records (axross.dns_records / dns_reverse)"
     "puremagic:file-type detection (axross.magic_type)"
     "chardet:text-encoding detection (axross.text_encoding)"
+    "pypdf:PDF metadata removal (axross[metadata])"
 )
 
 # Extra modules per flavor. Slim drops cloud OAuth + Windows-protocol

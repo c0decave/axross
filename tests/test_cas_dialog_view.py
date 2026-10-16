@@ -170,7 +170,7 @@ class ContextMenuTest(_Base):
             "Copy ax-cas URL",
             "Move Selected to Trash…",
             "Remove Selected from Index",
-            "Select Duplicates in Every Group (keep one)",
+            "Mark All Duplicates (keep first)",
         ):
             self.assertIn(expected, names)
 
@@ -186,12 +186,14 @@ class ContextMenuTest(_Base):
         self._write("x1", b"other\n"), self._write("x2", b"other\n")
         dlg = self._dialog()
         menu = dlg.build_context_menu(None)
-        self._actions(menu)["Select Duplicates in Every Group (keep one)"].trigger()
+        self._actions(menu)["Mark All Duplicates (keep first)"].trigger()
         picked = dlg.selected_entries()
         self.assertEqual(len(picked), 3)  # 3-of-a-kind keeps 1, pair keeps 1
         from ui.cas_dialog import plan_deletion
 
-        self.assertEqual(plan_deletion(picked, dlg._groups).refused_groups, [])
+        plan = plan_deletion(picked, dlg._groups)
+        self.assertEqual(plan.refused_groups, [])
+        self.assertEqual(plan.auto_kept, [])  # the first of each group stays unselected
 
     def test_copy_path_and_file_name_land_on_the_clipboard(self) -> None:
         from PyQt6.QtGui import QGuiApplication

@@ -105,12 +105,9 @@ def _resolve_conflict(entry: ComparedEntry, policy: ConflictPolicy) -> Action | 
             left_newer = left.modified > right.modified
             right_newer = right.modified > left.modified
         except TypeError:
-            # LocalFS reports naive datetimes straight from the
-            # filesystem; S3, Azure and WebDAV report timezone-aware
-            # ones. Python refuses to order the two — and local against
-            # remote is precisely the pairing this feature exists for,
-            # so the crash sat on the main path. Normalising one side
-            # would be inventing an offset nobody reported, so this is a
+            # FileItem converts aware times to local wall clock time (its
+            # timestamp contract), so two FileItems always order. Anything
+            # else that reaches here without a comparable pair is a
             # conflict for the user, not a guess.
             return Conflict(
                 entry.rel_path,

@@ -4,11 +4,11 @@
 surface against the registered backends. Each is a single self-contained
 `.py` file under this directory.
 
-## Three ways to run
+## Ways to run
 
 ```bash
 # 1. one-shot from the source tree
-axross --script resources/scripts/du.py /etc
+axross --script resources/scripts/du.py
 
 # 2. one-shot from stdin (pipe a script in)
 axross --script - < resources/scripts/du.py
@@ -19,12 +19,13 @@ cp resources/scripts/du.py ~/.config/axross/scripts/
 #   .run du
 ```
 
-When the script needs arguments, `--script` forwards them after the
-script path:
+4. In the GUI: *View > Panels > Scripts* lists these under **Examples**;
+   **Copy to My Scripts** makes an editable copy you can **Run** (in its
+   own process) or **Run in Console**.
 
-```bash
-axross --script resources/scripts/dedupe.py ~/Downloads
-```
+`--script` takes no further arguments (argparse refuses them). Every
+script here defines functions and runs nothing on its own; call them
+from the REPL after `.run`, or add the call at the end of your copy.
 
 Inside the script, the curated API is reachable as `axross.*` —
 the same surface documented in [`docs/SCRIPTING_REFERENCE.md`](

@@ -1,4 +1,4 @@
-FROM osixia/openldap:1.5.0
+FROM docker.io/osixia/openldap:1.5.0
 
 # OpenLDAP server (osixia image — pre-configured init machinery) for
 # the axross LDAP-as-FS integration suite.

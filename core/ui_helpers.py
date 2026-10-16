@@ -4,7 +4,10 @@ Available as ``axross.message``, ``axross.confirm``, ``axross.toast``
 in the REPL, ``--script`` mode, and the MCP server. Each helper tries
 the running Qt application first; when there isn't one (headless
 script mode) it falls back to plain stdout / readline so scripts
-keep working in CI / cron contexts.
+keep working in CI / cron contexts. A confirmation that no human can
+answer (no Qt window, no terminal on stdin, or ``AXROSS_NONINTERACTIVE``
+set) raises :class:`NonInteractiveError` unless the script passed
+``assume_yes=True``.
 
 State icons live as inline SVG strings (rendered through Qt's
 QSvgRenderer when Qt is available, dumped to a tempfile otherwise).
@@ -24,6 +27,8 @@ Examples (REPL or --script)::
 from __future__ import annotations
 
 import logging
+import os
+import sys
 import threading
 from pathlib import Path
 from typing import Literal
@@ -96,6 +101,82 @@ def _qt_is_running() -> bool:
     return QApplication.instance() is not None
 
 
+# ---------------------------------------------------------------------------
+# Who can answer a prompt
+# ---------------------------------------------------------------------------
+
+#: Set to 1 / true / yes / on to declare a run unattended: confirmations
+#: and the headless production tarpit then fail closed instead of asking.
+#: The MCP ``script_run`` tool sets it for every child it starts.
+ENV_NONINTERACTIVE = "AXROSS_NONINTERACTIVE"
+#: Set by the Scripts dock for the runs it starts: their output is shown
+#: live and Stop ends them, so a human can watch a countdown and stop it -
+#: but cannot type an answer. ``AXROSS_NONINTERACTIVE`` overrides it.
+ENV_WATCHED = "AXROSS_WATCHED_RUN"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+class NonInteractiveError(PermissionError):
+    """A confirmation is needed, but no human can answer it.
+
+    Raised instead of guessing an answer: a closed stdin used to make
+    ``confirm(..., default_yes=True)`` approve on its own.
+    """
+
+
+def _forced_noninteractive() -> bool:
+    return os.environ.get(ENV_NONINTERACTIVE, "").strip().lower() in _TRUTHY
+
+
+def _stdin_is_terminal() -> bool:
+    """True when stdin is a terminal a human can type into."""
+    stdin = sys.stdin
+    if stdin is None:
+        return False
+    try:
+        return bool(stdin.isatty())
+    except (AttributeError, OSError, ValueError):  # replaced, closed or detached
+        return False
+
+
+def _noninteractive_reason() -> str | None:
+    """Why no human can answer, or ``None`` when one can."""
+    if _forced_noninteractive():
+        return f"{ENV_NONINTERACTIVE} is set"
+    if _qt_is_running():
+        if threading.current_thread() is threading.main_thread():
+            return None
+        return "a dialog cannot be shown from a worker thread"
+    if _stdin_is_terminal():
+        return None
+    return "there is no Qt window and stdin is not a terminal"
+
+
+def is_interactive() -> bool:
+    """True when a human can answer a prompt right now.
+
+    False when ``AXROSS_NONINTERACTIVE`` is set, when a Qt application
+    runs but the caller is off its GUI thread (a scheduled job), and
+    when there is no Qt application and stdin is not a terminal (an MCP
+    ``script_run`` child, the Scripts dock, cron, a pipe).
+    """
+    return _noninteractive_reason() is None
+
+
+def can_watch_countdown() -> bool:
+    """True when a human can watch a countdown and stop the run during it.
+
+    That is every interactive context, plus a run the Scripts dock
+    started (``AXROSS_WATCHED_RUN``): no terminal, but live output and a
+    Stop button. Never when ``AXROSS_NONINTERACTIVE`` is set.
+    """
+    if is_interactive():
+        return True
+    if _forced_noninteractive():
+        return False
+    return os.environ.get(ENV_WATCHED, "").strip().lower() in _TRUTHY
+
+
 def _level_pixmap(level: str, size: int = 48):
     """Build a QPixmap from the level's SVG payload. Returns ``None``
     when Qt isn't available (headless callers should fall back)."""
@@ -152,13 +233,31 @@ def message(text: str, *, title: str = "axross", level: Level = "info") -> None:
     box.exec()
 
 
-def confirm(text: str, *, title: str = "axross", default_yes: bool = False) -> bool:
+def confirm(
+    text: str, *, title: str = "axross", default_yes: bool = False, assume_yes: bool = False
+) -> bool:
     """Show a Yes/No dialog. Returns True on Yes, False on No / closed.
 
     Headless fallback (no Qt event loop): reads a single y/n from
     stdin so ``--script`` and REPL-without-GUI both work. The default
     answer is shown in upper-case in the prompt.
+
+    When no human can answer (see :func:`is_interactive`) it raises
+    :class:`NonInteractiveError` instead of guessing - whatever
+    ``default_yes`` says. ``assume_yes=True`` is the script's explicit
+    opt-in: then it returns True without asking. A human who can be
+    asked is always asked.
     """
+    reason = _noninteractive_reason()
+    if reason is not None:
+        if assume_yes:
+            log.warning("confirm %r answered yes without asking (assume_yes; %s)", text, reason)
+            return True
+        raise NonInteractiveError(
+            f"axross.confirm({text!r}) needs a human to answer, but this run is "
+            f"non-interactive ({reason}). Pass assume_yes=True to answer yes "
+            "without asking, or run the script where a human can answer."
+        )
     if not _qt_is_running():
         prompt = "Y/n" if default_yes else "y/N"
         try:

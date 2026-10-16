@@ -18,6 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parent.parent
 MODULES = (
     "cas_dialog",
+    "cas_history_dialog",
     "checksum_dialog",
     "metadata_search_dialog",
     "scheduler_dialog",
@@ -28,6 +29,7 @@ MODULES = (
     "compare_dialog",
     "disk_usage_dialog",
     "properties_dialog",
+    "media_viewer",
 )
 
 

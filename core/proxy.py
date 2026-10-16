@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import errno
 import ipaddress
 import logging
 import os
@@ -265,6 +266,23 @@ def _validate_endpoint_host(host: str, label: str) -> None:
         raise ConnectionError(f"{label} must not contain whitespace")
 
 
+def _ascii_target_host(host: str) -> str:
+    """The wire form of a target host: its IDNA (punycode) name.
+
+    A proxy is asked for the target by name (HTTP ``CONNECT`` line, SOCKS
+    domain field), and those carry ASCII only. ``bücher.example`` must go
+    out as ``xn--bcher-kva.example``, the name DNS knows.
+    """
+    if host.isascii():
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ConnectionError(
+            f"Target host {host!r} is not a valid internationalised domain name: {exc}"
+        ) from exc
+
+
 def _validate_proxy_url_host(host: str) -> None:
     """Validate a proxy host before embedding it in a URL authority."""
     _validate_endpoint_host(host, "Proxy host")
@@ -349,6 +367,7 @@ def create_proxy_socket(
         raise ValueError("create_proxy_socket requires an enabled proxy config")
     _validate_proxy_url_host(proxy.host)
     _validate_endpoint_host(target_host, "Target host")
+    target_host = _ascii_target_host(target_host)
     proxy = ProxyConfig(
         proxy.proxy_type,
         proxy.host,
@@ -971,6 +990,36 @@ def open_tunnel(
     return LocalTunnel(cfg, target_host, int(target_port), timeout=timeout).start()
 
 
+_RELAYED_UDP_SOCKET = None
+
+
+def _relayed_udp_socket_class():
+    """``socks.socksocket`` whose datagram reads fail as OSError.
+
+    PySocks unwraps the SOCKS5 UDP header with ``ord(frag)`` - TypeError
+    on a datagram shorter than three bytes - and raises
+    NotImplementedError for a fragment. A broken or hostile relay would
+    so crash SLP and TFTP past every OSError handler; this subclass
+    reports both as a malformed datagram (EBADMSG). Built on first use
+    because PySocks is imported lazily.
+    """
+    global _RELAYED_UDP_SOCKET
+    if _RELAYED_UDP_SOCKET is None:
+        import socks
+
+        class _RelayedUdpSocket(socks.socksocket):
+            def recvfrom(self, bufsize, flags=0):
+                try:
+                    return super().recvfrom(bufsize, flags)
+                except (TypeError, NotImplementedError) as exc:
+                    raise OSError(
+                        errno.EBADMSG, f"malformed SOCKS5 UDP datagram from the relay: {exc}"
+                    ) from exc
+
+        _RELAYED_UDP_SOCKET = _RelayedUdpSocket
+    return _RELAYED_UDP_SOCKET
+
+
 def create_udp_proxy_socket(proxy: "ProxyConfig", timeout: float = 10.0) -> socket.socket:
     """UDP socket relayed through a SOCKS5 proxy (UDP ASSOCIATE).
 
@@ -988,7 +1037,7 @@ def create_udp_proxy_socket(proxy: "ProxyConfig", timeout: float = 10.0) -> sock
 
     _validate_proxy_url_host(proxy.host)
     _assert_proxy_host_not_private(proxy.host)
-    s = socks.socksocket(socket.AF_INET, socket.SOCK_DGRAM)
+    s = _relayed_udp_socket_class()(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(timeout)
     s.set_proxy(
         socks.SOCKS5,

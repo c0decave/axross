@@ -65,6 +65,15 @@ JSON itself never carries plaintext credentials.
 
 ## Transfers
 
+Before a copy or move (F5, F6, drag & drop) is queued, axross checks
+the destination in the background and asks about every name that is
+already there: Overwrite, Overwrite if Newer, Skip, Rename
+(`name (1).ext`), each optionally for all remaining conflicts, or
+Cancel (nothing is copied). Folders merge; the names inside them are
+asked about. A skipped move keeps its source, and a file that appears
+at the destination after the prompt fails its job instead of being
+overwritten.
+
 Every cross-pane copy or move enters the transfer queue. The dock
 at the bottom shows progress, throughput, and ETA. Transfers run on
 worker threads and survive a refused dialog or a closed pane.
@@ -99,7 +108,8 @@ native protocol doesn't support them.
 | `core.snapshot_browser` | Uniform timeline view across S3, Dropbox, GDrive, OneDrive, Azure Blob. |
 | `core.metadata_index` | Offline SQLite search by name / ext / size / mtime. |
 | `core.previews` | Local image thumbnailer with strict MIME allow-list, size caps, and a Qt-allocation gate. F3 / double-click. |
-| `core.archive` | Safe extraction of zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Zip-slip / bomb / lying-metadata guards; `.7z` needs the `[archive]` extra. |
+| `core.archive` | Safe extraction of zip / tar / 7z and single compressed files (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Zip-slip / bomb / lying-metadata guards; `.7z` needs the `[archive]` extra, zstd Python 3.14 or that extra. |
+| `core.packer` | Right-click → **Pack**: zip, tar.gz / .zst / .xz / .bz2, 7z (optionally AES-256 with encrypted file names), or one file as .gz / .zst / .xz / .bz2 — from any backend, never overwriting (`name (2).zip`), never leaving a half-written archive. |
 | `core.elevated_io` | `pkexec`-gated local read for `/etc/shadow` etc. — Axross never holds the privilege itself. "Open as root…" context-menu entry. |
 | `core.fuse_mount` | FUSE mount any FileBackend. Read-only by default; `writeable=True` enables create / write / unlink / mkdir / rename. Optional `[fuse]` extra. |
 | `core.mcp_server` | Stdio-framed JSON-RPC MCP server exposing the configured backend as tools. `--mcp-write` adds mutating tools, capped to a path-traversal-safe root. |
@@ -114,6 +124,11 @@ native protocol doesn't support them.
 | New Hardlink… | Right-click | Same shape; cross-device hardlinks surface as `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Search the offline metadata index by name / ext / size. |
 | Duplicate Finder | View menu | Group rows by content hash, copy `ax-cas://…` URLs; move selected copies to the axross trash after a live re-check that a genuine other copy survives. |
+| View Media… / View Selected Media… | Right-click, View menu | Images, PDFs and videos of the folder (optionally recursive) or the selection as overview grid, click-through viewer or slideshow — see *Editors and viewers*. |
+| Show / Remove / Export Metadata… | Right-click | EXIF / GPS / XMP / IPTC, Office properties, PDF info, audio / video tags of the selection — or of the whole folder when nothing is selected (subfolders optional) — see *File metadata*. |
+| Identify File Type… | Right-click (selection) | One row per entry: the real type from the content (magic bytes via Qt's MIME database, puremagic, a built-in signature table), the MIME type, what the extension claims and a highlighted *mismatch* when they disagree, size, and for text the encoding and line endings. Reads at most 64 KiB per file through the backend, off the GUI thread, with a 15 s timeout per file — a dead remote gives a "timed out" row. Local files also show `file(1)`'s description when it is installed. Scripting: `axross.file_type(b, path)`. |
+| Open Terminal Here | Right-click (also on empty space) | Opens a shell in the terminal dock in the folder: a selected folder, otherwise the folder shown. Local panes get a local shell started in that folder; SFTP / SCP panes get a shell on the same SSH connection followed by `cd -- '<folder>'` (quoted with `shlex.quote`). Disabled, with the reason as tooltip, on protocols without a shell. |
+| Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
 | Move to Trash | Right-click | Universal recycle bin. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
@@ -138,7 +153,14 @@ native protocol doesn't support them.
   Bookmarks can be grouped (groups nest and fold on click; the
   Bookmarks menu shows them as hover submenus), reordered by drag &
   drop or Move Up / Down in the right-click menu, and given an icon
-  from the built-in SVG set plus a colour.
+  from the built-in SVG set plus a colour. Folders dragged from a pane
+  onto the dock (empty space, a group, or between entries) become
+  bookmarks there, remote ones with their connection profile. Files
+  and folders dropped *onto* a bookmark are moved into its folder (Ctrl
+  copies), through the same existing-name check as F5 / F6; a folder
+  that is gone or a remote that does not answer is reported and nothing
+  is queued, and a remote bookmark without an open connection connects
+  first, then transfers.
 - **Folders load in the background**: opening a folder, going up /
   back / forward, refreshing or typing a path keeps the current
   listing usable; the status line shows *Loading …* with a Cancel
@@ -161,10 +183,74 @@ native protocol doesn't support them.
   *View → Open Size Limit…* (1–4096 MB, stored in `settings.json`).
 - **Image viewer** — F3 / double-click, MIME-allow-listed, size-
   capped to keep Qt's allocator happy.
+- **Media viewer** — *View → View Media…* or right-click → *View
+  Media…* on the folder (*View Selected Media…* for a selection of
+  files and folders). Choose the types (images incl. SVG, PDFs,
+  videos via QtMultimedia), whether to include subfolders (depth
+  1–32; at most 5000 files, symlinked folders are not followed,
+  unreadable folders are skipped and counted) and how to start:
+  **Overview first** (thumbnail grid with filter, sort by name /
+  date / folder and a size slider; Enter or double-click opens an
+  item), **Start slideshow** or **Click through**. In the viewer:
+  Left / Right / PageUp / PageDown / Space step (stopping at the
+  first and last item; inside a PDF they turn pages, past the last
+  page to the next item), Home / End, F11 fullscreen, Ctrl+M
+  maximize / restore (the window remembers its last size, position
+  and maximized state for the next open), wheel or
+  `+` / `-` zoom, `F` fit, `1` 100 %, `R` rotate, `S` slideshow
+  (interval in seconds; the slideshow loops, a video plays to its
+  end), Esc back to the overview, Esc again closes. Works on every
+  backend: remote files are copied to a private temp directory up
+  to the *Open Size Limit* and removed afterwards; an item that is
+  too large, encrypted or broken shows the reason instead. SVG is
+  rendered only when it has no DOCTYPE/entities, scripts or
+  references outside the file. `paranoid` mode blocks the viewer.
+  `I` (or the *Info* button) shows the current item's metadata in a
+  side panel, with *Remove metadata* — in the image viewer too.
 - **SSH terminal** — tabbed dock next to the transfer queue. Local
   PTY (`pty.fork()`) and remote SSH-over-paramiko are both
   available; the SSH variant reuses the existing connection rather
   than dialling a new one.
+
+## File metadata
+
+Right-click → **Show Metadata…**, **Remove Metadata…** or **Export
+Metadata…** acts on the selected files and folders, or on the folder
+itself when nothing is selected. The metadata window lists file, group,
+field and value; it has a filter, *Copy* (selected rows as text),
+*Export…* (JSON or CSV) and *Remove Metadata*. Folders are read flat;
+tick *Include subfolders* to go deeper (at most 5000 files, depth 8,
+symlinked folders not followed). Reading and removing run in the
+background with progress and *Cancel*. In the image and media viewers
+`I` opens the same information as a side panel.
+
+| Kind | Read | Removed | Kept |
+|---|---|---|---|
+| JPEG, PNG, WebP, GIF | built in | EXIF (GPS, camera, serial numbers, times, author, software), embedded thumbnails, XMP, IPTC, comments, PNG text chunks, data after the image | EXIF orientation, ICC colour profile; the pixels are never re-encoded and are checked to be identical |
+| TIFF | built in | the same, through a lossless re-save | orientation, ICC profile; JPEG-compressed TIFF is refused |
+| docx / xlsx / pptx, odt / ods / odp | built in | `docProps/core.xml`, `app.xml`, `custom.xml`, ODF `meta.xml`, the zip comment | every other part, decompressing to the same bytes |
+| PDF | pypdf, else QtPdf | Info dictionary, XMP streams, PieceInfo, earlier revisions (full rewrite) | — needs the `[metadata]` extra (`pip install 'axross[metadata]'`) |
+| Audio / video | `ffprobe` | all tags and chapters, data streams (camera GPS tracks), the cover picture of audio files (`ffmpeg -c copy`, no re-encoding) | the streams |
+
+**How removal writes** — *Tools → Metadata Settings…*:
+
+- **In place** (default): the file is replaced atomically and its
+  original is kept in the axross trash. One run — a single file or a
+  whole folder — is one entry for *Edit → Undo Last Operation*
+  (`Ctrl+Z`), which puts every original back byte for byte, but only
+  while the file still holds what the removal wrote.
+- **Cleaned copy**: `name.clean.ext` next to the original
+  (`name.clean (1).ext` if that exists); nothing is overwritten.
+
+No confirmation is asked unless *Ask before removing metadata* is
+ticked there. Remote files go through a private temp copy bounded by
+the *Open Size Limit* and back through the backend's atomic write; a
+connection whose trash cannot be written gets a cleaned copy instead,
+and the result says so. A file that changes while it is being cleaned is
+left alone. In `paranoid` mode reading and removing work, except for
+audio / video: that would run ffprobe / ffmpeg on the file's contents.
+Scripts: `axross.metadata`, `axross.remove_metadata`,
+`axross.export_metadata` (see [SCRIPTING.md](SCRIPTING.md)).
 
 ## Transfers, terminal, log dock
 
@@ -254,6 +340,12 @@ Levels: ``"info"`` (blue), ``"success"`` (green), ``"warning"``
 (yellow), ``"error"`` (red). Each renders with a coloured SVG state
 icon; the bundled axross glyph is the dialog's window-icon.
 
+The headless ``confirm()`` prompt only asks when stdin is a terminal.
+Without a human — cron, a pipe, the Scripts dock's child process, an
+MCP ``script_run``, or ``AXROSS_NONINTERACTIVE=1`` — it raises
+``axross.NonInteractiveError`` instead of answering its default; pass
+``assume_yes=True`` to answer yes without asking there.
+
 ### Proxy support in scripts
 
 Both ``axross.open(profile_name)`` and ``axross.open_url(url, **kw)``
@@ -302,7 +394,7 @@ rsh/svn/git/wmi and the DB drivers without a clean socket hook.
 repository path, and `sftp+key://` / `sftp+agent://` select SSH auth
 mode.
 
-### Categories (84 public names)
+### Categories (every public name: `axross.api_schema()`)
 
 | Group | Verbs |
 |---|---|
@@ -317,8 +409,9 @@ mode.
 | Network helpers | ``ping`` / ``PingResult``, ``mac_lookup`` / ``OuiInfo``, ``whois`` / ``WhoisInfo``, ``time_skew`` / ``TimeSkew``, ``tcp_banner``, ``tls_cert`` / ``TlsCert``, ``ssh_hostkey`` / ``SshHostKey``, ``http_probe`` / ``HttpProbe`` |
 | SNMP | ``snmp_get``, ``snmp_walk``, ``snmp_set``, ``SnmpVar`` |
 | Cross-backend search | ``find_files``, ``grep`` / ``GrepHit``, ``diff_files`` |
-| UI helpers | ``message``, ``confirm``, ``toast`` (modal + toast with SVG state icons; stdout/stdin fallback when headless) |
-| Reference | ``help``, ``docs`` |
+| File metadata | ``metadata``, ``remove_metadata``, ``export_metadata`` |
+| UI helpers | ``message``, ``confirm``, ``toast`` (modal + toast with SVG state icons; stdout/stdin fallback when headless), ``is_interactive``, ``NonInteractiveError`` |
+| Reference | ``help``, ``docs``, ``api_schema`` (the API as JSON, for machines) |
 
 ## SSH / SCP terminal multiplexing
 

@@ -165,3 +165,51 @@ class FileBackend(Protocol):
         Raises :class:`OSError` on the underlying protocol failure.
         """
         ...
+
+
+#: Attribute a holder of a ConnectionManager reference puts on the session
+#: it hands out (``axross.open`` / ``axross.open_url``): a callable that
+#: gives that reference back. ``SessionLifecycle.__exit__`` calls it once.
+RELEASE_ATTR = "_axross_release"
+
+
+class SessionLifecycle:
+    """``close()`` and the ``with`` statement for a backend session.
+
+    Every backend session class inherits this, so a script can write::
+
+        with axross.open("backup-server") as b:
+            b.list_dir("/")
+
+    ``__enter__`` returns the session itself. ``__exit__`` ends it, also
+    when the block raised, and never swallows the exception. A session
+    handed out together with a ConnectionManager reference carries a
+    release callable under :data:`RELEASE_ATTR`; ``__exit__`` gives that
+    reference back, so the manager stops health-probing the session and
+    disconnects it once nobody else holds it. Any other session is
+    closed with ``close()``.
+
+    A class with its own ``close()`` keeps it. For the others this
+    ``close()`` calls ``disconnect()`` when the class has one and does
+    nothing otherwise (LocalFS holds no connection).
+    """
+
+    def close(self) -> None:
+        """End the session: ``disconnect()`` when the class has one."""
+        disconnect = getattr(self, "disconnect", None)
+        if callable(disconnect):
+            disconnect()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        try:
+            release = vars(self).pop(RELEASE_ATTR, None)
+        except TypeError:  # an instance without __dict__ carries no hook
+            release = None
+        if callable(release):
+            release()
+        else:
+            self.close()
+        return False

@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import stat
 import tempfile
+import time
+import uuid
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +111,47 @@ def write_secret_file(path: str, data: str | bytes) -> None:
         except OSError:
             pass
         raise
+
+
+def keep_unreadable_copy(path: str | os.PathLike) -> bool:
+    """Copy a store file its loader could not take in completely next to
+    it, as ``<name>.unreadable-<time>-<hex>`` (``0o600``), before a save
+    replaces it with only what is in memory.
+
+    Returns True when the copy was made or there is no file to keep, and
+    False when the copy could not be made: the caller must not save then,
+    or the file's content is lost.
+    """
+    src = os.fspath(path)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = f"{src}.unreadable-{stamp}-{uuid.uuid4().hex[:8]}"
+    try:
+        source = open(src, "rb")  # noqa: SIM115 - closed below
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        log.error("Could not keep a copy of the unreadable %s: %s", src, exc)
+        return False
+    with source:
+        try:
+            fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _FILE_MODE)
+        except OSError as exc:
+            log.error("Could not keep a copy of the unreadable %s: %s", src, exc)
+            return False
+        try:
+            with os.fdopen(fd, "wb") as dst:
+                shutil.copyfileobj(source, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+        except OSError as exc:
+            log.error("Could not keep a copy of the unreadable %s: %s", src, exc)
+            try:
+                os.unlink(backup)
+            except OSError:
+                pass
+            return False
+    log.warning("Kept the unreadable %s as %s", src, backup)
+    return True
 
 
 def file_mode(path: str) -> int:

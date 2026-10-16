@@ -52,18 +52,33 @@ _ASSIGNMENT_RE = re.compile(
     r"))([\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^&\s;\"',}]+)"
 )
 _CLI_SECRET_OPTION_RE = re.compile(
-    r"(?i)(\s--(?:password|passwd|token|secret|api-key|access-key|"
+    r"(?i)(?:^|(?<=\s))(--(?:password|passwd|token|secret|api-key|access-key|"
     r"secret-key|client-secret)(?:\s+|=))([^\s]+)"
 )
 _SSHPASS_RE = re.compile(r"(?i)(\bsshpass\s+-p\s+)([^\s]+)")
 _AUTH_TOKEN_RE = re.compile(r"(?i)\b(Basic|Bearer)\s+[A-Za-z0-9+/=._~:-]+")
-_GENERIC_AUTH_HEADER_RE = re.compile(r"(?i)\bAuthorization\s*:\s*(?!(?:Basic|Bearer)\b)[^\s,;]+")
+# A header value is everything up to the line end (raw HTTP dumps) or up
+# to the closing quote (dict / JSON repr). Schemes other than Basic and
+# Bearer (NTLM, Negotiate, Digest, AWS4-HMAC-SHA256, ...) carry their
+# credential after the scheme name, possibly as several comma-separated
+# parameters, so the whole value is replaced; only the scheme name stays.
+_HEADER_VALUE = r"([\"']?[ \t]*[:=][ \t]*)(?:([\"'])(.*?)\3|([^\r\n]*))"
+_GENERIC_AUTH_HEADER_RE = re.compile(
+    r"(?i)(?<![a-z0-9_-])((?:proxy-)?authorization)" + _HEADER_VALUE
+)
+_COOKIE_HEADER_RE = re.compile(r"(?i)(?<![a-z0-9_-])((?:set-)?cookie)" + _HEADER_VALUE)
+_AUTH_SCHEME_RE = re.compile(r"([A-Za-z][A-Za-z0-9._-]*)\s+\S")
+_PEM_PRIVATE_KEY_RE = re.compile(
+    r"(-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?)-----)(.*?)(-----END \2-----|\Z)",
+    re.DOTALL,
+)
 _URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>'\"]+", re.IGNORECASE)
 _TRAILING_URL_PUNCT = ".,;)"
 
 
 # Every pattern above needs whitespace, ':' or '=' to match (the URL one
-# through '://'); text without any of them cannot change.
+# through '://', the PEM one through the space in "BEGIN ... KEY"); text
+# without any of them cannot change.
 _NEEDS_SCAN_RE = re.compile(r"[\s:=]")
 
 
@@ -113,12 +128,29 @@ def _redact_assignment(match: re.Match[str]) -> str:
     return f"{key}=<redacted>"
 
 
+def _redact_header(match: re.Match[str], *, keep_scheme: bool) -> str:
+    name, sep, quote = match.group(1), match.group(2), match.group(3) or ""
+    value = match.group(4) if quote else match.group(5)
+    if not value.strip():
+        return match.group(0)
+    scheme = _AUTH_SCHEME_RE.match(value) if keep_scheme else None
+    hidden = f"{scheme.group(1)} <redacted>" if scheme else "<redacted>"
+    return f"{name}{sep}{quote}{hidden}{quote}"
+
+
 def redact_text(value: str) -> str:
     """Best-effort redaction for human log strings."""
     if not _NEEDS_SCAN_RE.search(value):
         return value
-    text = _AUTH_TOKEN_RE.sub(lambda m: f"{m.group(1)} <redacted>", value)
-    text = _GENERIC_AUTH_HEADER_RE.sub("Authorization: <redacted>", text)
+    return _scan_text(value)
+
+
+def _scan_text(value: str) -> str:
+    """Every redaction pass of :func:`redact_text`, without the fast path."""
+    text = _PEM_PRIVATE_KEY_RE.sub(lambda m: f"{m.group(1)}<redacted>{m.group(4)}", value)
+    text = _AUTH_TOKEN_RE.sub(lambda m: f"{m.group(1)} <redacted>", text)
+    text = _GENERIC_AUTH_HEADER_RE.sub(lambda m: _redact_header(m, keep_scheme=True), text)
+    text = _COOKIE_HEADER_RE.sub(lambda m: _redact_header(m, keep_scheme=False), text)
     urls: list[str] = []
 
     def replace_url(match: re.Match[str]) -> str:

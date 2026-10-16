@@ -51,6 +51,9 @@ class TerminalPaneWidget(QWidget):
         self._profile = profile
         self._connection_manager = connection_manager
         self._session: LocalTerminalSession | SSHTerminalSession | None = None
+        # ConnectionManager references this pane holds; shutdown gives
+        # back exactly these, never one it did not take.
+        self._refs = 0
 
         self._setup_ui()
         self._start_session()
@@ -138,15 +141,23 @@ class TerminalPaneWidget(QWidget):
     def _get_transport(self):
         """Get an active transport, reconnecting via ConnectionManager if needed."""
         if self._transport is not None and self._transport.is_active():
+            self._hold_live_session()
             return self._transport
 
         if self._profile and self._connection_manager:
             session = self._connection_manager.get_session(self._profile)
-            if session and hasattr(session, "transport") and session.transport:
+            if session is not None:
+                if not getattr(session, "transport", None):
+                    # Live, but not a shell-capable backend: connecting
+                    # again would only hand back the same session.
+                    return None
                 self._transport = session.transport
+                self._hold_live_session()
                 return self._transport
 
-            # Try to reconnect
+            # The session this pane held is gone; give its reference
+            # back before connect() takes a new one.
+            self._release_refs()
             try:
                 log.info("Terminal pane reconnecting to %s", self._label_text)
                 password = self._profile.get_password() or ""
@@ -154,13 +165,33 @@ class TerminalPaneWidget(QWidget):
                     self._profile,
                     password=password,
                 )
-                if hasattr(session, "transport"):
-                    self._transport = session.transport
-                    return self._transport
             except Exception as e:
                 log.error("Terminal pane reconnect failed: %s", e)
+                return None
+            self._refs += 1
+            transport = getattr(session, "transport", None)
+            if transport:
+                self._transport = transport
+                return self._transport
+            self._release_refs()
 
         return None
+
+    def _hold_live_session(self) -> None:
+        """Take one reference on the live session the profile holds, so
+        it stays open while this pane uses its transport."""
+        if self._refs or not (self._profile and self._connection_manager):
+            return
+        if self._connection_manager.acquire(self._profile):
+            self._refs = 1
+
+    def _release_refs(self) -> None:
+        while self._refs > 0:
+            self._refs -= 1
+            try:
+                self._connection_manager.release(self._profile)
+            except Exception:  # noqa: BLE001 - a dead session must not block a close
+                log.debug("Terminal pane: releasing %s failed", self._label_text, exc_info=True)
 
     def _start_session(self) -> None:
         if self._session and self._session.is_active:
@@ -289,9 +320,7 @@ class TerminalPaneWidget(QWidget):
         if self._session:
             self._session.close()
             self._session = None
-        # Release connection ref if we hold one
-        if self._profile and self._connection_manager:
-            self._connection_manager.release(self._profile)
+        self._release_refs()
 
     def mousePressEvent(self, event):
         self.pane_focused.emit()

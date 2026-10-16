@@ -274,9 +274,10 @@ class TerminalEmulator(QPlainTextEdit):
 
 
 class LocalTerminalSession:
-    """A local shell session using pty."""
+    """A local shell session using pty, optionally started in *cwd*."""
 
-    def __init__(self):
+    def __init__(self, cwd: str | None = None):
+        self._cwd = cwd
         self._master_fd: int | None = None
         self._pid: int | None = None
         self._running = False
@@ -297,6 +298,15 @@ class LocalTerminalSession:
             # libreadline against ours — "symbol lookup error:
             # undefined symbol: rl_trim_arg_from_keyseq".
             env = clean_child_env(TERM="xterm")
+            if self._cwd:
+                try:
+                    os.chdir(self._cwd)
+                    env["PWD"] = self._cwd
+                except OSError as exc:
+                    # The child must reach execve whatever happens: falling
+                    # back into the parent's Python code from a fork would
+                    # run a second copy of the application.
+                    os.write(2, f"axross: cannot enter {self._cwd}: {exc}\r\n".encode())
             os.execve(shell, [shell], env)
         else:
             self._pid = pid
@@ -395,8 +405,11 @@ class SSHTerminalSession:
         self,
         transport: paramiko.Transport,
         suppress_history: bool = True,
+        initial_dir: str | None = None,
     ):
         self._transport = transport
+        # Remote folder to cd into once the shell is up (Open Terminal Here).
+        self._initial_dir = initial_dir
         self._channel: paramiko.Channel | None = None
         self._running = False
         # When False, we skip the post-shell history-suppression
@@ -428,6 +441,15 @@ class SSHTerminalSession:
                 log.debug("SSH terminal: history-suppression send failed: %s", exc)
         else:
             log.info("SSH terminal: history suppression disabled per profile")
+        if self._initial_dir:
+            from core.terminal_here import remote_cd_command
+
+            try:
+                self._channel.sendall(remote_cd_command(self._initial_dir))
+            except ValueError as exc:
+                log.warning("SSH terminal: not changing folder: %s", exc)
+            except Exception as exc:  # noqa: BLE001 — defensive, like the line above
+                log.debug("SSH terminal: cd send failed: %s", exc)
         log.info("SSH terminal session started")
 
     def write(self, data: bytes) -> None:
@@ -562,9 +584,12 @@ class _TerminalSearchBar(QWidget):
 class _TerminalTab:
     """Holds state for one terminal session: session object + output buffer."""
 
-    def __init__(self):
+    def __init__(self, cwd: str | None = None, remote_dir: str | None = None):
         self.session: LocalTerminalSession | SSHTerminalSession | None = None
         self.buffer: str = ""  # accumulated output text
+        # Folder a (re)started session begins in: local, or remote via cd.
+        self.cwd = cwd
+        self.remote_dir = remote_dir
 
 
 class TerminalDock(QDockWidget):
@@ -584,6 +609,9 @@ class TerminalDock(QDockWidget):
         # Map combo-box index key to tab state
         self._tabs: dict[str, _TerminalTab] = {}
         self._active_key: str | None = None
+        # Extra "Open Terminal Here" SSH entries -> the session name they
+        # belong to, so remove_ssh_session takes them down as well.
+        self._ssh_extra: dict[str, str] = {}
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -692,26 +720,33 @@ class TerminalDock(QDockWidget):
                                 self._btn_stop.setEnabled(False)
                                 self._status_label.setText("Disconnected")
                                 self._terminal.append_output(f"\n--- Reconnect failed: {e} ---\n")
+                for j in range(self._session_combo.count()):
+                    if self._ssh_extra.get(self._session_combo.itemText(j)) == name:
+                        self._session_combo.setItemData(j, transport)
                 log.debug("Updated SSH terminal option: %s", label)
                 return
         self._session_combo.addItem(label, userData=transport)
         log.info("Registered SSH terminal option: %s", label)
 
     def remove_ssh_session(self, name: str) -> None:
-        """Remove an SSH terminal option."""
-        label = f"SSH: {name}"
-        for i in range(self._session_combo.count()):
-            if self._session_combo.itemText(i) == label:
-                # Stop session if active
-                tab = self._tabs.get(label)
-                if tab and tab.session:
-                    tab.session.close()
-                    tab.session = None
-                self._tabs.pop(label, None)
-                if self._active_key == label:
-                    self._active_key = None
-                self._session_combo.removeItem(i)
-                break
+        """Remove an SSH terminal option, and the folder entries opened on it."""
+        labels = [f"SSH: {name}"] + [
+            lbl for lbl, owner in self._ssh_extra.items() if owner == name
+        ]
+        for label in labels:
+            self._ssh_extra.pop(label, None)
+            for i in range(self._session_combo.count()):
+                if self._session_combo.itemText(i) == label:
+                    # Stop session if active
+                    tab = self._tabs.get(label)
+                    if tab and tab.session:
+                        tab.session.close()
+                        tab.session = None
+                    self._tabs.pop(label, None)
+                    if self._active_key == label:
+                        self._active_key = None
+                    self._session_combo.removeItem(i)
+                    break
 
     def _on_session_switched(self, _index: int) -> None:
         """User switched session in combo box — show that session's buffer."""
@@ -752,7 +787,7 @@ class TerminalDock(QDockWidget):
         if transport is not None:
             # SSH session
             try:
-                tab.session = SSHTerminalSession(transport)
+                tab.session = SSHTerminalSession(transport, initial_dir=tab.remote_dir)
                 tab.session.start()
                 self._status_label.setText(f"Connected: {key}")
             except Exception as e:
@@ -761,7 +796,7 @@ class TerminalDock(QDockWidget):
                 return
         else:
             # Local shell
-            tab.session = LocalTerminalSession()
+            tab.session = LocalTerminalSession(cwd=tab.cwd)
             tab.session.start()
             self._status_label.setText("Local Shell")
 
@@ -880,6 +915,64 @@ class TerminalDock(QDockWidget):
             log.error("Spawn local sub-shell failed: %s", exc)
             self._status_label.setText(f"Spawn failed: {exc}")
         log.info("Terminal dock: spawned %s", label)
+
+    # ------------------------------------------------------------------
+    # Open Terminal Here
+    # ------------------------------------------------------------------
+
+    def _unique_label(self, base: str) -> str:
+        existing = {self._session_combo.itemText(i) for i in range(self._session_combo.count())}
+        if base not in existing:
+            return base
+        n = 2
+        while f"{base} #{n}" in existing:
+            n += 1
+        return f"{base} #{n}"
+
+    def _open_tab(self, label: str, tab: _TerminalTab, transport=None) -> str:
+        """Add *tab* as a new combo entry, switch to it and start it."""
+        self._tabs[label] = tab
+        self._session_combo.addItem(label, userData=transport)
+        self._session_combo.setCurrentText(label)
+        try:
+            self._start_session()
+        except Exception as exc:  # noqa: BLE001 — UI-level catch, like + Local
+            log.error("Terminal dock: starting %s failed: %s", label, exc)
+            self._status_label.setText(f"Start failed: {exc}")
+        return label
+
+    def open_local_shell_at(self, directory: str) -> str | None:
+        """Open a fresh local shell whose working folder is *directory*.
+
+        Returns the new entry's label, or None (with the reason in the
+        status line) when the folder no longer exists.
+        """
+        folder = os.path.abspath(directory)
+        if not os.path.isdir(folder):
+            self._status_label.setText(f"{folder} is no longer a folder")
+            log.warning("Terminal dock: %s is no longer a folder", folder)
+            return None
+        name = os.path.basename(folder.rstrip(os.sep)) or folder
+        label = self._unique_label(f"Local Shell: {name}")
+        log.info("Terminal dock: local shell in %s", folder)
+        return self._open_tab(label, _TerminalTab(cwd=folder))
+
+    def open_ssh_shell_at(self, name: str, transport, directory: str) -> str | None:
+        """Open a fresh shell on *transport* (SSH session *name*) and cd to
+        *directory*. Returns the label, or None when the folder name holds
+        a control character that cannot be sent to a remote tty."""
+        from core.terminal_here import remote_cd_command
+
+        try:
+            remote_cd_command(directory)
+        except ValueError as exc:
+            self._status_label.setText(str(exc))
+            log.warning("Terminal dock: %s", exc)
+            return None
+        label = self._unique_label(f"SSH: {name} @ {directory}")
+        self._ssh_extra[label] = name
+        log.info("Terminal dock: SSH shell on %s in %s", name, directory)
+        return self._open_tab(label, _TerminalTab(remote_dir=directory), transport)
 
     def _on_theme_changed(self, theme_name: str) -> None:
         """Live-swap the terminal's colour theme. Affects the visible

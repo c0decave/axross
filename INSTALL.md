@@ -202,14 +202,15 @@ Run the host test suite (no Docker required):
 
 ```bash
 QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q \
-    tests/test_hardening_regressions.py tests/test_regressions.py \
+    tests/test_regressions.py \
     tests/test_new_features.py tests/test_backend_regressions.py \
     tests/test_pane_layout_regressions.py tests/test_e2e.py
 ```
 
-Expected: ~925 pass, 5 skip (three FUSE tests gated on `fusepy`,
-one GDrive-refresh test gated on `google-auth`, one end-to-end test
-that needs the docker lab).
+Expected without the Docker lab: 271 passed, 5 skipped (the five SSH
+tests in `tests/test_new_features.py` that need the lab). A missing
+optional dependency (`dulwich`, `defusedxml`) skips the tests that
+need it.
 
 For the Docker protocol lab see the **Development / Testing** section
 in [README.md](README.md) — the protocol coverage matrix there spells

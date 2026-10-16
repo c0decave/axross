@@ -98,7 +98,8 @@ class BuiltSdistTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
         subprocess.run(
-            [sys.executable, "-m", "build", "--sdist", "--no-isolation", "--outdir", tmp.name, str(REPO_ROOT)],
+            [sys.executable, "-m", "build", "--sdist", "--no-isolation",
+             "--outdir", tmp.name, str(REPO_ROOT)],
             check=True,
             capture_output=True,
         )
@@ -131,14 +132,14 @@ class BuiltSdistTest(unittest.TestCase):
 
     def test_sad_the_checker_reports_private_members(self) -> None:
         members = [
-            "axross-1.0/tests/test_scrub_rules.py",
+            "axross-1.0/tests/test_internal_tool.py",
             "axross-1.0/docs/plans/x.md",
             "axross-1.0/core/ram_fs.py",
             "axross-1.0/",
         ]
         self.assertEqual(
-            _private_members(members, ("tests/test_scrub_rules.py", "docs/plans/")),
-            ["docs/plans/x.md", "tests/test_scrub_rules.py"],
+            _private_members(members, ("tests/test_internal_tool.py", "docs/plans/")),
+            ["docs/plans/x.md", "tests/test_internal_tool.py"],
         )
 
     def test_edge_every_private_test_path_is_excluded_even_when_untracked(self) -> None:
@@ -149,7 +150,9 @@ class BuiltSdistTest(unittest.TestCase):
         """
         from setuptools._distutils.filelist import FileList
 
-        private = [p + "x.py" if p.endswith("_") else p for p in self.prefixes if p.startswith("tests/")]
+        private = [
+            p + "x.py" if p.endswith("_") else p for p in self.prefixes if p.startswith("tests/")
+        ]
         public = ["tests/test_packaging.py", "tests/test_peers.py"]
         self.assertTrue(private)
         with tempfile.TemporaryDirectory() as tmp:
@@ -163,7 +166,8 @@ class BuiltSdistTest(unittest.TestCase):
                 files.findall()
                 files.process_template_line("include tests/test*.py")  # setuptools default
                 for line in (REPO_ROOT / "MANIFEST.in").read_text().splitlines():
-                    if line.strip().startswith(("exclude", "prune", "global-exclude", "recursive-exclude")):
+                    excluding = ("exclude", "prune", "global-exclude", "recursive-exclude")
+                    if line.strip().startswith(excluding):
                         files.process_template_line(line.strip())
                 included = {f.replace(os.sep, "/") for f in files.files}
             finally:
@@ -172,8 +176,8 @@ class BuiltSdistTest(unittest.TestCase):
         self.assertEqual(sorted(set(public) & included), sorted(public))
 
     def test_edge_the_checker_matches_like_the_mirror_export(self) -> None:
-        members = ["a-1/tests/test_peer_x.py", "a-1/tests/test_peers.py", "a-1/tests/test_pe.py"]
-        self.assertEqual(_private_members(members, ("tests/test_peer_",)), ["tests/test_peer_x.py"])
+        members = ["a-1/tests/test_ops_x.py", "a-1/tests/test_opsx.py", "a-1/tests/test_op.py"]
+        self.assertEqual(_private_members(members, ("tests/test_ops_",)), ["tests/test_ops_x.py"])
         self.assertEqual(_private_members([], self.prefixes), [])
 
 

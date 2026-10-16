@@ -34,10 +34,13 @@ import ssl
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Iterator
+from typing import TYPE_CHECKING, Iterable, Iterator
 
 from core.path_policy import safe_join
 from core.redaction import redact_url
+
+if TYPE_CHECKING:
+    from core.backend import FileBackend
 
 log = logging.getLogger(__name__)
 
@@ -599,7 +602,7 @@ def subnet_hosts(cidr: str) -> list[str]:
 
 
 def find_files(
-    backend,
+    backend: FileBackend,
     path: str,
     *,
     pattern: str | None = None,
@@ -1243,7 +1246,7 @@ class GrepHit:
 
 
 def grep(
-    backend,
+    backend: FileBackend,
     path: str,
     pattern: str,
     *,
@@ -1301,7 +1304,13 @@ def grep(
 
 
 def diff_files(
-    b1, p1: str, b2, p2: str, *, max_bytes: int = 10 * 1024 * 1024, n_context: int = 3
+    b1: FileBackend,
+    p1: str,
+    b2: FileBackend,
+    p2: str,
+    *,
+    max_bytes: int = 10 * 1024 * 1024,
+    n_context: int = 3,
 ) -> list[str]:
     """Unified diff of two files, possibly on different backends.
     Returns a list of diff lines (incl. ``--- / +++`` headers). Empty

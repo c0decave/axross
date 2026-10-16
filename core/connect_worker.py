@@ -50,6 +50,8 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
+from core.thread_lifetime import detach_running_thread
+
 log = logging.getLogger(__name__)
 
 HOST_KEY_PROMPT_TIMEOUT_S = 120.0
@@ -88,6 +90,7 @@ class HostKeyPrompt(QObject):
         self._answer: bool = False
         self._reply_timeout_s = max(0.0, float(reply_timeout_s))
         self._prompt: Callable[[Any], bool] | None = None
+        self._abandoned = False
 
     def set_prompt(self, prompt: Callable[[Any], bool] | None) -> None:
         self._prompt = prompt
@@ -98,11 +101,15 @@ class HostKeyPrompt(QObject):
         If the GUI side never answers, fail closed instead of leaving
         the connect worker stuck forever.
         """
+        if self._abandoned:
+            return False
         self._event.clear()
         self._answer = False
         # Qt.QueuedConnection auto-selected because the emitter is on
         # a different thread than the receiver.
         self.request.emit(exc)
+        if self._abandoned:  # abandon() ran between the check and clear()
+            return False
         if not self._event.wait(self._reply_timeout_s):
             log.error(
                 "host_key_prompt timed out after %.1fs; denying by default",
@@ -131,6 +138,21 @@ class HostKeyPrompt(QObject):
         """Called from the GUI thread with the user's answer."""
         self._answer = bool(ok)
         self._event.set()
+
+    def abandon(self) -> None:
+        """Nobody is left to answer: deny the host key, now and later.
+
+        A worker waiting in :meth:`ask` is released at once instead of
+        after the reply timeout, and a question already queued for the
+        GUI no longer opens a dialog over a window that has closed.
+        """
+        self._abandoned = True
+        self._prompt = None
+        try:
+            self.request.disconnect()
+        except TypeError:  # nothing connected
+            pass
+        self.reply(False)
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +234,8 @@ class ConnectTask:
     """Handle returned by :func:`run_connect`.
 
     Pin this to ``self._connect_task`` on the widget that triggered
-    the connect; letting it get GC'd while the network call is still
-    running leaks the worker and prints ``QThread: Destroyed while
-    thread is still running``.
+    the connect, so the result still reaches it. A handle dropped while
+    the network call runs abandons the attempt (see :meth:`abandon`).
     """
 
     worker: _ConnectWorker
@@ -227,16 +248,32 @@ class ConnectTask:
         the resulting session is released immediately."""
         self.worker.cancel()
 
+    def abandon(self) -> bool:
+        """Drop the attempt: no result is delivered, nothing waits for it.
+
+        The network call cannot be interrupted, so a thread still inside
+        it is handed over to finish on its own (and a session it still
+        opens is released by the worker). Returns True when there was a
+        running thread to hand over.
+        """
+        self.worker.cancel()
+        self.bridge.abandon()
+        return detach_running_thread(
+            self.thread,
+            self.worker.succeeded,
+            self.worker.failed,
+            keep=(self.worker, self.bridge),
+        )
+
     def __del__(self) -> None:
-        # Ensure the thread finished before Python/C++ release the
-        # QThread object. Without this we race with deleteLater and
-        # Qt complains or crashes on teardown.
+        # Never wait here: the first version waited 2 s and then let the
+        # QThread be destroyed with the attempt still running inside it,
+        # which Qt answers with "QThread: Destroyed while thread '' is
+        # still running" and an abort. __del__ may also run on the
+        # worker thread itself, where a wait could never succeed.
         try:
-            thread = self.thread
-            if thread is not None and thread.isRunning():
-                thread.quit()
-                thread.wait(2000)
-        except Exception:
+            self.abandon()
+        except Exception:  # noqa: BLE001
             # Object may already be partially destructed; nothing to do.
             pass
 
@@ -285,12 +322,14 @@ def run_connect(
         worker.failed.connect(on_failure)
 
     # Cleanup: quit the thread when the worker signals finished
-    # (always fires, even when cancelled). We deliberately do NOT
-    # use deleteLater on the thread here — that races with
-    # ``ConnectTask.__del__``. The worker IS deleteLater'd because
-    # it lives on the worker thread and its pending queued slots
-    # need to drain before Python drops it.
-    worker.finished.connect(thread.quit)
+    # (always fires, even when cancelled). Direct, so the thread ends
+    # from inside itself even when the GUI event loop that a queued
+    # quit() would need is already gone. We deliberately do NOT use
+    # deleteLater on the thread here — ``ConnectTask.abandon`` does
+    # that for a thread it hands over. The worker IS deleteLater'd
+    # because it lives on the worker thread and its pending queued
+    # slots need to drain before Python drops it.
+    worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
     thread.finished.connect(worker.deleteLater)
 
     thread.start()

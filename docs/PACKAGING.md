@@ -360,7 +360,6 @@ uv venv
 
 # 2. Run the full regression
 QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q \
-    tests/test_hardening_regressions.py \
     tests/test_regressions.py \
     tests/test_new_features.py \
     tests/test_backend_regressions.py \

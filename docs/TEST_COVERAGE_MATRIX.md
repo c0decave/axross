@@ -8,20 +8,26 @@ markierten Tests.
 
 ## Gesamtzahlen
 
+Zahlen aus `pytest --collect-only` (2026-10-15).
+
 | Suite | Tests | Runs on |
 |---|---|---|
-| `test_protocols.py` | 215 | docker test-runner-iscsi (host-net) |
-| `test_network.py` (SSH/Proxy) | 33 | docker test-runner |
-| `test_new_features.py` | 12 | docker test-runner |
-| `test_backend_regressions.py` | ~95 (inkl. neue Backends + Scripts) | host (Qt) |
+| `test_protocols.py` | 442 | docker test-runner-iscsi (host-net) |
+| `test_network.py` (SSH/Proxy) | 35 (ohne erreichbares Lab überspringt sich das Modul komplett) | docker test-runner |
+| `test_new_features.py` | 18 | docker test-runner |
+| `test_backend_regressions.py` | 162 (inkl. neue Backends + Scripts) | host (Qt) |
 | `test_e2e.py` | 25 | host (Qt) |
-| `test_regressions.py` | 16 | host (Qt) |
-| `test_pane_layout_regressions.py` | 4 | host (Qt) |
-| `test_hardening_regressions.py` | ~145 (inkl. F1-F30) | host (Qt) |
-| **Gesamt** | **~545 + 110 subtests** | |
+| `test_regressions.py` | 63 | host (Qt) |
+| `test_pane_layout_regressions.py` | 8 | host (Qt) |
+| **Gesamt** | **753** | |
 
-Letzte volle Sweep (host-Suiten ohne live-Lab): **1360 passed,
-5 skipped, 110 subtests passed, 0 failures**.
+Letzter Lauf der Host-Suiten ohne live-Lab (`test_regressions.py`,
+`test_new_features.py`, `test_backend_regressions.py`,
+`test_pane_layout_regressions.py`, `test_e2e.py`): **271 passed,
+5 skipped, 108 subtests passed, 0 failures**. Die 5 Skips sind die
+SSH-Tests in `test_new_features.py`, die das Lab brauchen.
+
+Hardening-Tests: siehe Matrix 6.
 
 Lint: `ruff` clean auf allen neuen Modulen
 (`core/scripting.py`, `core/rsh_client.py`, `core/telnet_cisco.py`,
@@ -144,43 +150,18 @@ smbprotocol's Session-Pool ist prozessweit / eine Session pro Host — dokumenti
 | 10.99.0.50 | toxiproxy | ghcr.io/shopify/toxiproxy | TCP fault injection |
 | 10.99.0.60 | tiny-ftp-server | stilliard/pure-ftpd | 16 MB tmpfs home (quota testing) |
 
-## Matrix 6: Hardening-Regressions (host-side)
+## Matrix 6: Hardening-Tests (host-side)
 
-136 Tests in `tests/test_hardening_regressions.py` (1 pre-existing
-Skip bei fehlendem `google-auth`). Hauptklassen:
+Hardening-Regressions liegen in thematischen Dateien. Zahlen aus
+`pytest --collect-only` (2026-10-15):
 
-| Test-Klasse | Tests | Gebiet |
+| Datei | Tests | Gebiet |
 |---|:-:|---|
-| SecureStorageTests | 5 | 0o600-from-birth, atomic replace, parent 0o700 |
-| OAuthTokenPersistenceTests | 1 | Dropbox token via helper |
-| TelnetTransportTests | 6 | Host-Validation, Port, IPv6, WARNING-Log |
-| ProxyErrorLoggingTests | 2 | Refused logs WARNING, chains cause |
-| CredentialsLoggingTests | 2 | WARNING-Level + Profilname, ImportError |
-| TransferManagerDirectoryErrorTests | 1 | `directory_error` signal |
-| DropboxTokenLoaderTests | 6 | Schema-Validation |
-| SSHHostKeyTrustLogTests | 1 | TOFU-Log: Key-Type + SHA256 |
-| ImapPlaintextWarningTests | 1 | WARNING bei `use_ssl=False` |
-| GDriveTokenRefreshLoggingTests | 2 (1 skip) | Refresh-Exception |
-| WebDavXxeHardeningTests | 2 | defusedxml, fail-closed |
-| TelnetMarkerRandomnessTests | 2 | `secrets.token_hex` |
-| SafeBasenameTests | 8 | `.`, `..`, `/`, `\`, `\x00`, Unicode, normal |
-| TransferManagerFilenameSanitizationTests | 1 | `..`-Eintrag skipped |
-| QApplicationSingletonTests | 1 | Widget-Konstruktion |
-| TransferCancellationTests | 1 | `cancel_event` → `CANCELLED` |
-| TransferManagerConcurrencyTests | 1 | 5 queued jobs alle DONE |
-| ChecksumPrimitiveTests | 3 | sha256/md5 aliases, error on unknown |
-| TransferIntegrityVerificationTests | 3 | Post-transfer CRC mismatch → FAIL |
-| AtimeSupportTests | 3 | atime/created Felder auf FileItem |
-| AtomicWriteTests | 3 | tmp-then-rename, rollback on failure |
-| ServerSideCopyMoveTests | 4 | native copy + stream fallback |
-| WatcherTests | 3 | PollingWatcher created/modified/deleted |
-| CloudVersioningTests | 7 | Mock-SDK: Dropbox/GDrive/OneDrive/Azure |
-| UniversalTrashTests | 11 | trash/restore/empty, rollback, orphan |
-| CrossProtocolLinkTests | 12 | .axlink schema + happy/sad |
-| EncryptedOverlayTests | 14 | AES-GCM roundtrip + tamper + KDF guard |
-| ContentAddressableTests | 10 | CAS upsert/find/duplicates/URL |
-| SnapshotBrowserTests | 9 | Timeline merge + filter + read_snapshot |
-| MetadataIndexTests | 11 | SQLite search by name/ext/size/mtime |
+| `tests/test_hardening_misc.py` | 14 | Proxy-SSRF-Guard, Redaction, CAS-Permissions, atomic modes |
+| `tests/test_proxy_hardening.py` | 39 | Proxy-Defekte aus dem Review 2026-10-14 (ProxyCommand, Bypass-Ports, PAC-Credentials, Shim-Auth, Proxy-Credentials, Half-Close) |
+| `tests/test_mcp_http_hardening.py` | 16 | MCP-HTTP: DNS-Rebinding, Session-Flood, TLS-Handshake |
+| `tests/test_previews_hardening.py` | 4 | Pillow-Fallback: keine Ghostscript-Formate, begrenzter Decode-Speicher |
+| `tests/test_fuzz_*.py` (31 Dateien) | 688 | Clients gegen hostile Server: sane data oder `OSError`, nie Programmierfehler-Exceptions, nie Hang |
 
 ## Matrix 7: Neue Backends + Features (Erweiterungs-Sessions)
 

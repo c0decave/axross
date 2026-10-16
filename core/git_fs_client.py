@@ -30,6 +30,8 @@ Requires: ``pip install axross[git]`` — dulwich>=0.21.
 from __future__ import annotations
 
 import contextlib
+import errno
+import functools
 import hashlib
 import io
 import logging
@@ -39,16 +41,19 @@ import re
 import shlex
 import stat as st_mod
 import threading
+import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import IO
 from urllib.parse import urlsplit, urlunsplit
 
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.redaction import redact_url
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
+
 
 @contextlib.contextmanager
 def _as_oserror(operation: str, path: str):
@@ -81,7 +86,81 @@ def _as_oserror(operation: str, path: str):
         ) from exc
 
 
+# A loose object's header ("blob 1234\0") is far shorter than this.
+_LOOSE_HEADER_MAX = 64
+
+
+def _loose_header_is_complete(raw: bytes) -> bool:
+    """Whether a zlib-framed loose object decompresses to a header
+    ending in NUL within its first ``_LOOSE_HEADER_MAX`` bytes. A
+    stream that is not zlib at all counts as complete: dulwich reads it
+    as a new-style object or rejects it with its own error."""
+    try:
+        head = zlib.decompressobj().decompress(raw, _LOOSE_HEADER_MAX)
+    except zlib.error:
+        return True  # dulwich raises zlib.error itself; _as_oserror maps it
+    return b"\0" in head
+
+
+def _guard_loose_objects(repo) -> None:
+    """Refuse a truncated loose object instead of hanging on it.
+
+    dulwich (1.2.6) parses a loose object's header in
+    ShaFile._parse_legacy_object_header (dulwich/objects.py) by reading
+    more of the file until the decompressed header holds a NUL - after
+    _parse_file already read the whole file, so a zlib stream that ends
+    before the NUL (an object cut short by a crash or a full disk, or
+    sent so by a remote) loops forever on empty reads, hanging every
+    call that touches it (found by tests/test_fuzz_git.py). The check
+    runs before dulwich's loader; the store keeps working as before for
+    every intact object.
+    """
+    store = getattr(repo, "object_store", None)
+    loader = getattr(store, "_get_loose_object", None)
+    shafile_path = getattr(store, "_get_shafile_path", None)
+    if loader is None or shafile_path is None:
+        return
+
+    def guarded(sha):
+        try:
+            with open(shafile_path(sha), "rb") as fh:
+                raw = fh.read(4096)
+        except OSError:
+            return loader(sha)  # missing: dulwich answers None
+        if raw and (raw[0] & 0x8F) == 0x08 and not _loose_header_is_complete(raw):
+            raise OSError(
+                errno.EIO,
+                f"Git object {sha!r} is truncated: its header never ends (a corrupt loose object)",
+            )
+        return loader(sha)
+
+    store._get_loose_object = guarded
+
+
+def _object_errors_as_oserror(method):
+    """``_as_oserror`` around a whole backend method.
+
+    It guarded only the commit path, but every read decodes objects too:
+    a corrupt (or hostile, as fetched from a remote) commit, tree or blob
+    made list_dir / stat / open_read raise dulwich's
+    ObjectFormatException or zlib.error to callers that handle OSError
+    (found by tests/test_fuzz_git.py)."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        path = args[0] if args and isinstance(args[0], str) else ""
+        with _as_oserror(method.__name__, path):
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 from core.git_fs_writer_helper import _GitWriter  # noqa: E402
+
+
+def _is_gitlink(mode: int) -> bool:
+    return (mode & 0o170000) == _GITLINK_MODE
+
 
 try:
     from dulwich import porcelain  # type: ignore[import-not-found]
@@ -99,6 +178,9 @@ CACHE_ROOT = Path.home() / ".cache" / "axross" / "git"
 # per-file (the FileBackend chmod surface only flips one bit on/off
 # in the commit metadata); 0o100644 is the regular-file default.
 _DEFAULT_BLOB_MODE = 0o100644
+# A submodule entry: the sha names a commit of ANOTHER repository, which
+# this object store usually does not hold.
+_GITLINK_MODE = 0o160000
 _EXEC_BLOB_MODE = 0o100755
 
 
@@ -172,7 +254,7 @@ def _proxied_transport(url: str, proxy_cfg) -> tuple[str, dict, list]:
     return connect_url, kwargs, [tunnel]
 
 
-class GitFsSession:
+class GitFsSession(SessionLifecycle):
     """Git-backed FileBackend."""
 
     supports_symlinks = False
@@ -203,6 +285,7 @@ class GitFsSession:
         if path and not url:
             # Local repo path supplied directly.
             self._repo = Repo(os.path.abspath(path))
+            _guard_loose_objects(self._repo)
             self._workdir = self._repo.path
             log.info("Git-FS opened local repo: %s", self._workdir)
         else:
@@ -218,6 +301,7 @@ class GitFsSession:
             try:
                 if (cache_dir / ".git").exists() or (cache_dir / "HEAD").exists():
                     self._repo = Repo(str(cache_dir))
+                    _guard_loose_objects(self._repo)
                     self._workdir = str(cache_dir)
                     # Refresh from origin so we operate on current refs.
                     try:
@@ -238,6 +322,7 @@ class GitFsSession:
                         depth=None,
                         **self._transport_kwargs,
                     )
+                    _guard_loose_objects(self._repo)
                     self._workdir = str(cache_dir)
             except BaseException:
                 self._close_tunnels()
@@ -335,17 +420,37 @@ class GitFsSession:
             path = "/" + path
         return posixpath.normpath(path) or "/"
 
-    @staticmethod
-    def _split_branch(path: str) -> tuple[str, str]:
+    def _split_branch(self, path: str) -> tuple[str, str]:
         """Split ``/branch/sub/path`` → ``("branch", "sub/path")``.
-        Root → ``("", "")``."""
-        path = path.lstrip("/")
+        Root → ``("", "")``.
+
+        Branch names may contain ``/`` (``feature/x``), so the longest
+        known branch that matches whole leading components wins. A path
+        that names no known branch splits at its first component, which
+        is how a write creates a new branch."""
+        path = path.strip("/")
         if not path:
             return "", ""
+        best = ""
+        for branch in self._branch_tips:
+            if len(branch) > len(best) and (path == branch or path.startswith(branch + "/")):
+                best = branch
+        if best:
+            return best, path[len(best) + 1 :]
         parts = path.split("/", 1)
         if len(parts) == 1:
             return parts[0], ""
         return parts[0], parts[1]
+
+    def _namespace_children(self, prefix: str) -> list[str]:
+        """Next name components of the branches below ``prefix``
+        (``""`` for the root): ``feature/x`` makes ``feature`` a
+        directory at ``/`` and ``x`` one at ``/feature``."""
+        lead = prefix.strip("/")
+        lead = lead + "/" if lead else ""
+        return sorted(
+            {b[len(lead) :].split("/", 1)[0] for b in self._branch_tips if b.startswith(lead)}
+        )
 
     # ------------------------------------------------------------------
     # Branch / tree walking
@@ -369,17 +474,17 @@ class GitFsSession:
                     if name not in self._branch_tips:
                         self._branch_tips[name] = sha
 
-    def _list_branches(self) -> list[FileItem]:
+    def _list_branches(self, prefix: str = "") -> list[FileItem]:
         return [
             FileItem(
-                name=branch,
+                name=name,
                 is_dir=True,
                 is_link=False,
                 size=0,
                 modified=datetime.fromtimestamp(0),
                 permissions=0o755,
             )
-            for branch in sorted(self._branch_tips)
+            for name in self._namespace_children(prefix)
         ]
 
     def _walk_tree_to(self, branch: str, sub_path: str) -> tuple[Tree, str]:
@@ -418,11 +523,14 @@ class GitFsSession:
     # FileBackend — read surface
     # ------------------------------------------------------------------
 
+    @_object_errors_as_oserror
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
         if path == "/":
             return self._list_branches()
         branch, sub = self._split_branch(path)
+        if branch not in self._branch_tips and self._namespace_children(path):
+            return self._list_branches(path)
         try:
             if not sub:
                 tip = self._branch_tips.get(branch)
@@ -467,6 +575,7 @@ class GitFsSession:
             )
         return items
 
+    @_object_errors_as_oserror
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
         if path == "/":
@@ -479,11 +588,20 @@ class GitFsSession:
                 permissions=0o755,
             )
         branch, sub = self._split_branch(path)
+        if branch not in self._branch_tips and self._namespace_children(path):
+            return FileItem(
+                name=posixpath.basename(path),
+                is_dir=True,
+                is_link=False,
+                size=0,
+                modified=datetime.fromtimestamp(0),
+                permissions=0o755,
+            )
         if branch and not sub:
             if branch not in self._branch_tips:
                 raise OSError(f"No such branch: {branch}")
             return FileItem(
-                name=branch,
+                name=posixpath.basename(branch),
                 is_dir=True,
                 is_link=False,
                 size=0,
@@ -496,7 +614,7 @@ class GitFsSession:
         except KeyError as exc:
             raise OSError(f"Git stat({path}): {exc}") from exc
         if entry is None:
-            raise OSError(f"No such path: {path}")
+            raise FileNotFoundError(errno.ENOENT, f"No such path: {path}")
         mode, sha = entry
         is_dir = st_mod.S_ISDIR(mode)
         if is_dir:
@@ -507,6 +625,16 @@ class GitFsSession:
                 size=0,
                 modified=datetime.fromtimestamp(0),
                 permissions=0o755,
+            )
+        if _is_gitlink(mode):
+            # Submodule: the commit lives in another repository.
+            return FileItem(
+                name=leaf,
+                is_dir=False,
+                is_link=False,
+                size=0,
+                modified=datetime.fromtimestamp(0),
+                permissions=0o555,
             )
         blob = self._repo[sha]
         size = len(blob.data)
@@ -532,6 +660,7 @@ class GitFsSession:
         except OSError:
             return False
 
+    @_object_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
         path = self.normalize(path)
         branch, sub = self._split_branch(path)
@@ -547,9 +676,16 @@ class GitFsSession:
         mode, sha = entry
         if st_mod.S_ISDIR(mode):
             raise OSError(f"Is a directory: {path}")
+        if _is_gitlink(mode):
+            raise OSError(f"Git read: {path} is a submodule, not a file")
         blob = self._repo[sha]
+        # dulwich hands back whatever a cut-short zlib stream yielded
+        # ("hel" for "hello\n") without an error; check() recomputes the
+        # object's id from its content and raises ChecksumMismatch.
+        blob.check()
         return io.BytesIO(blob.data)
 
+    @_object_errors_as_oserror
     def readlink(self, path: str) -> str:
         raise OSError("Git symlinks not exposed by axross")
 
@@ -557,6 +693,7 @@ class GitFsSession:
     # FileBackend — write surface
     # ------------------------------------------------------------------
 
+    @_object_errors_as_oserror
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         path = self.normalize(path)
         branch, sub = self._split_branch(path)
@@ -577,6 +714,7 @@ class GitFsSession:
                 raise OSError(f"Git append: existing file exceeds {cap // (1024 * 1024)} MiB cap")
         return _GitWriter(self, branch, sub, prelude)
 
+    @_object_errors_as_oserror
     def mkdir(self, path: str) -> None:
         # Git tracks files, not empty directories. mkdir is a no-op
         # except when the user is trying to create a top-level branch
@@ -588,14 +726,20 @@ class GitFsSession:
             )
         # Deeper paths: no-op (git has no empty trees).
 
+    @_object_errors_as_oserror
     def remove(self, path: str, recursive: bool = False) -> None:
         path = self.normalize(path)
         branch, sub = self._split_branch(path)
         if not branch or not sub:
             raise OSError("Git remove: refusing to delete a branch via FS API")
+        item = self.stat(path)  # FileNotFoundError when the path is absent
+        if item.is_dir and not recursive:
+            # A git tree is never empty, so a directory always has children.
+            raise OSError(errno.ENOTEMPTY, f"Git remove: directory not empty: {path}")
         # Build a new tree without the removed entry.
         self._commit_modification(branch, sub, blob_data=None, message=f"axross: rm {sub}")
 
+    @_object_errors_as_oserror
     def rename(self, src: str, dst: str) -> None:
         src = self.normalize(src)
         dst = self.normalize(dst)
@@ -613,6 +757,7 @@ class GitFsSession:
             src_branch, src_sub, blob_data=None, message=f"axross: mv {src_sub} → {dst_sub} (b)"
         )
 
+    @_object_errors_as_oserror
     def copy(self, src: str, dst: str) -> None:
         src = self.normalize(src)
         dst = self.normalize(dst)
@@ -623,6 +768,7 @@ class GitFsSession:
             dst_branch, dst_sub, blob_data=data, message=f"axross: cp {src} → {dst}"
         )
 
+    @_object_errors_as_oserror
     def chmod(self, path: str, mode: int) -> None:
         # Map any executable bit → 0o100755, else 0o100644.
         path = self.normalize(path)
@@ -653,6 +799,7 @@ class GitFsSession:
     # Git-specific verbs (API_GAPS round 2)
     # ------------------------------------------------------------------
 
+    @_object_errors_as_oserror
     def log(
         self, branch: str = "main", *, limit: int = 100, sub_path: str | None = None
     ) -> list[dict]:
@@ -697,6 +844,7 @@ class GitFsSession:
                 break
         return out
 
+    @_object_errors_as_oserror
     def diff(self, sha_a: str, sha_b: str = "HEAD", *, branch: str = "main") -> str:
         """Unified diff between two commits. ``sha_b="HEAD"`` resolves
         to the current branch tip; otherwise both args are full or
@@ -746,12 +894,14 @@ class GitFsSession:
             return obj.tree
         return obj.id
 
+    @_object_errors_as_oserror
     def branch_list(self) -> list[str]:
         """All known local + remote-tracking branches, sorted. Refreshes
         the cached tip-set first so a remote-side advance shows up."""
         self._refresh_branch_tips()
         return sorted(self._branch_tips)
 
+    @_object_errors_as_oserror
     def tag_list(self) -> list[dict]:
         """All tags in the repo. Returns dicts ``{name, sha, target}``
         — ``target`` is the commit the tag points at; for annotated
@@ -781,6 +931,7 @@ class GitFsSession:
             )
         return sorted(out, key=lambda t: t["name"])
 
+    @_object_errors_as_oserror
     def blame(self, path: str, *, branch: str | None = None) -> list[dict]:
         """Per-line authorship for ``path`` — returns one dict per
         line ``{line_no, sha, author_name, author_email, timestamp,
@@ -875,6 +1026,7 @@ class GitFsSession:
             for i, c in enumerate(lines_credit)
         ]
 
+    @_object_errors_as_oserror
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         # Git already has a content-addressable hash — return the
         # blob SHA as a strong fingerprint. The "git:" prefix flags
@@ -928,12 +1080,14 @@ class GitFsSession:
                 refs = self._repo.get_refs()
                 origin_sha = refs.get(origin_ref)
                 if origin_sha and origin_sha != tip_sha:
-                    if self._is_ancestor(tip_sha, origin_sha):
-                        # Local is BEHIND origin — refuse to commit on
-                        # top of stale tip; user has to fetch+merge first.
+                    if not self._is_ancestor(origin_sha, tip_sha):
+                        # Only a local tip that already contains origin
+                        # may grow. Behind, diverged, or an ancestry walk
+                        # that hit its cap: refuse rather than commit on
+                        # top of history the push would have to rewrite.
                         raise GitForceRefused(
-                            f"Local branch {branch} is behind origin/{branch}; "
-                            "fetch + merge before committing via axross."
+                            f"Local branch {branch} is behind or has diverged from "
+                            f"origin/{branch}; fetch + merge before committing via axross."
                         )
                 parent_commit = self._repo[tip_sha]
                 root_tree = self._repo[parent_commit.tree]
@@ -984,20 +1138,27 @@ class GitFsSession:
             if entry.path == head:
                 continue
             new_tree.add(entry.path, entry.mode, entry.sha)
+        existing = self._tree_entry(tree, parts[0])
         if len(parts) == 1:
             # Leaf modification.
             if blob_data is not None:
+                if existing and st_mod.S_ISDIR(existing[0]):
+                    # Writing a blob here would drop the whole subtree.
+                    raise IsADirectoryError(errno.EISDIR, f"Is a directory: {parts[0]}")
                 blob = Blob.from_string(blob_data)
                 self._repo.object_store.add_object(blob)
                 new_tree.add(head, blob_mode, blob.id)
             # else: deletion — already left out above.
         else:
             # Recurse into the (possibly new) subtree.
-            existing = self._tree_entry(tree, parts[0])
-            if existing and st_mod.S_ISDIR(existing[0]):
+            if existing is None:
+                sub_tree = Tree()
+            elif st_mod.S_ISDIR(existing[0]):
                 sub_tree = self._repo[existing[1]]
             else:
-                sub_tree = Tree()
+                # A file or submodule: replacing it with a directory
+                # would silently drop it from the commit.
+                raise NotADirectoryError(errno.ENOTDIR, f"Not a directory: {parts[0]}")
             new_sub = self._modify_tree_rec(sub_tree, parts[1:], blob_data, blob_mode)
             # Only persist non-empty subtrees — git has no concept of
             # an empty directory, and unconditionally adding empty

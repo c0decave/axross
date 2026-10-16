@@ -15,6 +15,7 @@ import socket
 import ssl
 import tempfile
 import threading
+from tests.socket_lifecycle import close_socket  # noqa: E402
 from pathlib import Path
 
 from cryptography import x509
@@ -190,10 +191,7 @@ class FakeHttpProxy:
     # -- lifecycle ---------------------------------------------------------
     def close(self) -> None:
         self._stop.set()
-        try:
-            self._listener.close()
-        except OSError:
-            pass
+        close_socket(self._listener)
 
     def __enter__(self):
         return self
@@ -430,4 +428,4 @@ class OriginHttpServer:
             conn.close()
 
     def close(self) -> None:
-        self._listener.close()
+        close_socket(self._listener)

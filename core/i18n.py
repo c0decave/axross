@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -214,9 +215,19 @@ def store_language(language: str, path: str | Path | None = None) -> None:
     window["language"] = language
     data["window"] = window
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(target)
+    # 0600 like the window's own save: the file also lists the profiles and
+    # remote paths of the open panes.
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(data, indent=2))
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 #: Where the shipped catalogues live, relative to the project root.

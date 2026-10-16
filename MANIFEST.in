@@ -2,10 +2,12 @@ include LICENSE NOTICE README.md README_PYPI.md README_de.md README_es.md INSTAL
 include dev-requirements.txt
 include OAUTH_SETUP.md SECURITY.md CONTRIBUTING.md THIRD_PARTY_LICENSES.md
 recursive-include docs *.md
+include docs/mcp-tools.json
 prune docs/plans
 exclude docs/HANDOFF.md docs/BACKLOG.md docs/SECURITY-REVIEW-2026-10.md
 # setuptools ships every tests/test*.py by default; these are internal-only.
 exclude tests/test_scrub_rules.py tests/test_export_mirror.py tests/test_public_export.py
+exclude tests/test_docs_public_refs.py
 exclude tests/test_peer_*
 exclude tests/test_hardening_regressions.py tests/test_defense_in_depth_layers.py
 exclude tests/test_sidecar_overlay_safety.py tests/test_scan_exclude_paths.py
@@ -18,4 +20,5 @@ exclude tests/test_conn_health_locking.py
 recursive-include examples *.md *.py
 recursive-include resources/logo *.png *.svg
 recursive-include resources/scripts *.md *.py
+recursive-include resources/extensions *.py
 recursive-include resources/wordlists *.txt

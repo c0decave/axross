@@ -23,7 +23,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+from core.backend import SessionLifecycle
 from core.local_fs import group_name, owner_name
+from core.path_policy import confined_path
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -44,7 +46,7 @@ _IQN_SAFE = re.compile(r"^[a-zA-Z0-9.:_\-]+$")
 _IP_SAFE = re.compile(r"^[0-9a-fA-F.:]+$")
 
 
-class IscsiSession:
+class IscsiSession(SessionLifecycle):
     """iSCSI block-storage backend implementing the FileBackend protocol.
 
     Workflow:
@@ -182,25 +184,25 @@ class IscsiSession:
         return items
 
     def stat(self, path: str) -> FileItem:
-        real = self._real(path)
+        real = self._real(path, follow=False)
         st = os.lstat(real)
         name = os.path.basename(real) or path
         return self._stat_to_item(name, st, full_path=real)
 
     def is_dir(self, path: str) -> bool:
         try:
-            return stat_module.S_ISDIR(os.lstat(self._real(path)).st_mode)
+            return stat_module.S_ISDIR(os.lstat(self._real(path, follow=False)).st_mode)
         except OSError:
             return False
 
     def exists(self, path: str) -> bool:
-        return os.path.lexists(self._real(path))
+        return os.path.lexists(self._real(path, follow=False))
 
     def mkdir(self, path: str) -> None:
         os.makedirs(self._real(path), exist_ok=True)
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        real = self._real(path)
+        real = self._real(path, follow=False)
         st = os.lstat(real)
         if stat_module.S_ISLNK(st.st_mode):
             os.remove(real)
@@ -213,7 +215,7 @@ class IscsiSession:
             os.remove(real)
 
     def rename(self, src: str, dst: str) -> None:
-        os.rename(self._real(src), self._real(dst))
+        os.rename(self._real(src, follow=False), self._real(dst, follow=False))
 
     def open_read(self, path: str) -> IO[bytes]:
         return open(self._real(path), "rb")
@@ -242,7 +244,7 @@ class IscsiSession:
         os.chmod(self._real(path), mode)
 
     def readlink(self, path: str) -> str:
-        return os.readlink(self._real(path))
+        return os.readlink(self._real(path, follow=False))
 
     def list_versions(self, path: str) -> list:
         return []
@@ -359,8 +361,9 @@ class IscsiSession:
         binary = shutil.which("lsblk")
         if not binary:
             raise OSError("lun_list requires lsblk (util-linux)")
+        # -b: sizes as byte counts; without it lsblk prints "280G".
         proc = subprocess.run(
-            [binary, "-J", "-O"],
+            [binary, "-J", "-O", "-b"],
             capture_output=True,
             text=True,
             timeout=10.0,
@@ -414,17 +417,13 @@ class IscsiSession:
         """The mounted path on this machine (see core.storage_identity)."""
         return self._real(path)
 
-    def _real(self, path: str) -> str:
-        """Map a virtual path (``/``, ``/foo/bar``) to the mounted filesystem."""
-        clean = path.lstrip("/")
-        real = os.path.abspath(os.path.join(self._mount_point, clean))
-        mount_root = os.path.abspath(self._mount_point)
-        if os.path.commonpath([mount_root, real]) != mount_root:
-            raise PermissionError(f"Path traversal detected: {path}")
-        return real
+    def _real(self, path: str, *, follow: bool = True) -> str:
+        """Map a virtual path (``/``, ``/foo/bar``) to the mounted filesystem,
+        confined to it even through symlinks on the LUN (confined_path)."""
+        return confined_path(self._mount_point, path, follow=follow)
 
     @staticmethod
-    def _redact_command(cmd: list[str]) -> str:
+    def _masked_command(cmd: list[str]) -> list[str]:
         masked: list[str] = []
         for index, part in enumerate(cmd):
             if (
@@ -436,7 +435,11 @@ class IscsiSession:
                 masked.append("******")
             else:
                 masked.append(part)
-        return " ".join(masked)
+        return masked
+
+    @classmethod
+    def _redact_command(cls, cmd: list[str]) -> str:
+        return " ".join(cls._masked_command(cmd))
 
     # ------------------------------------------------------------------
     # Internal helpers -- subprocess
@@ -471,6 +474,12 @@ class IscsiSession:
             raise OSError(
                 f"privileged command timed out after {timeout:.0f}s: {self._redact_command(cmd)}"
             ) from exc
+        except subprocess.CalledProcessError as exc:
+            # Its message quotes exc.cmd, which may hold the CHAP secret
+            # (the argv fallback in _set_chap_if_needed). Callers branch on
+            # the type and returncode, so only the command is masked.
+            exc.cmd = self._masked_command(list(cmd))
+            raise
 
     # ------------------------------------------------------------------
     # Internal helpers -- iSCSI lifecycle
@@ -917,7 +926,7 @@ class IscsiSession:
                 self._mount_point,
             )
             self._run_privileged(
-                ["mount", "--bind", existing, self._mount_point],
+                ["mount", "--bind", "--", existing, self._mount_point],
             )
             self._mounted = True
             return
@@ -929,8 +938,19 @@ class IscsiSession:
             return
 
         log.info("Mounting %s (%s) on %s", self._device_path, fs_type, self._mount_point)
+        # Mounted as root: a set-uid binary or device node on the LUN must
+        # not act on this machine.
         self._run_privileged(
-            ["mount", "-t", fs_type, self._device_path, self._mount_point],
+            [
+                "mount",
+                "-t",
+                fs_type,
+                "-o",
+                "nosuid,nodev,noexec",
+                "--",
+                self._device_path,
+                self._mount_point,
+            ],
         )
         self._mounted = True
         log.info("Mounted successfully at %s", self._mount_point)

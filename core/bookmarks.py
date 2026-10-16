@@ -7,6 +7,8 @@ import logging
 import os
 import re
 import tempfile
+import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -14,8 +16,8 @@ log = logging.getLogger(__name__)
 
 # The module-level constants are kept so existing test fixtures that
 # do ``BM.BOOKMARKS_FILE = Path("/tmp/x.json")`` to redirect the
-# store keep working (BookmarkSchemaTests in test_hardening_regressions
-# uses that pattern). Their import-time values are snapshotted in
+# store keep working (tests/test_bookmark_groups.py and
+# tests/test_bookmark_dialogs.py use that pattern). Their import-time values are snapshotted in
 # ``_DEFAULT_*`` below; the helpers prefer a live re-read from
 # ``Path.home()`` ONLY when the public constant still equals its
 # snapshot, so a HOME-patch (mock.patch.dict(os.environ, {"HOME":
@@ -40,6 +42,18 @@ def _bookmarks_file() -> Path:
 
 
 _KEEP = object()
+
+
+def _set_aside(path: Path) -> None:
+    """Rename an unreadable store file to a unique sibling, best effort."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    aside = path.with_name(f"{path.name}.unreadable-{stamp}-{uuid.uuid4().hex[:8]}")
+    try:
+        os.rename(path, aside)
+    except OSError as exc:
+        log.error("Could not set unreadable %s aside: %s", path, exc)
+        return
+    log.warning("Unreadable %s kept as %s", path, aside)
 
 
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
@@ -217,8 +231,12 @@ class BookmarkManager:
                 raise TypeError("Bookmarks JSON must be a list")
             self._root = self._load_nodes(data, 0)
             log.info("Loaded %d bookmarks", len(self.all()))
-        except (json.JSONDecodeError, OSError, TypeError) as e:
+        except (ValueError, OSError, TypeError) as e:
+            # ValueError covers JSONDecodeError and UnicodeDecodeError.
             log.error("Failed to load bookmarks: %s", e)
+            # The next save writes the (now empty) tree to this path; move
+            # the unreadable file out of the way so it cannot be destroyed.
+            _set_aside(bf)
 
     @classmethod
     def _load_nodes(cls, data: list, depth: int) -> list[Node]:
@@ -321,19 +339,32 @@ class BookmarkManager:
     # ------------------------------------------------------------------
     # Mutation
     # ------------------------------------------------------------------
-    def add(self, bookmark: Bookmark, group: BookmarkGroup | None = None) -> None:
-        # Avoid duplicates (across the whole tree)
+    def add(
+        self,
+        bookmark: Bookmark,
+        group: BookmarkGroup | None = None,
+        index: int | None = None,
+    ) -> bool:
+        """Add *bookmark* to *group* (``None`` = top level) at *index*
+        (clamped; ``None`` appends). Returns ``False`` without changing
+        anything when the same path on the same backend is already
+        bookmarked anywhere in the tree."""
         for existing in self.all():
             if existing.path == bookmark.path and existing.backend_name == bookmark.backend_name:
                 log.debug(
                     "Skipping duplicate bookmark for %s on %s", bookmark.path, bookmark.backend_name
                 )
-                return
+                return False
         bookmark.icon_name = _sanitize_icon_name(bookmark.icon_name)
         bookmark.color = _sanitize_color(bookmark.color)
-        self._siblings(group).append(bookmark)
+        siblings = self._siblings(group)
+        if index is None:
+            siblings.append(bookmark)
+        else:
+            siblings.insert(max(0, min(index, len(siblings))), bookmark)
         self.save()
         log.info("Added bookmark: %s -> %s", bookmark.name, bookmark.path)
+        return True
 
     def remove(self, index: int) -> None:
         """Remove the bookmark at flat *index* (see :meth:`all`)."""

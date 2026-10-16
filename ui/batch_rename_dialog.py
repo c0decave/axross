@@ -165,6 +165,40 @@ class BatchRenameDialog(QDialog):
                 return temp_path
         raise OSError(f"Could not allocate a unique temp name for {old_name!r}")
 
+    def _recovery_path(self, old_name: str) -> str:
+        """Return a free visible ``name (n).ext`` path next to *old_name*."""
+        stem, dot, ext = old_name.rpartition(".")
+        if not stem:  # no extension, or a dot file such as ".bashrc"
+            stem, dot, ext = old_name, "", ""
+        for n in range(1, 1000):
+            candidate = f"{stem} ({n}){dot}{ext}"
+            path = self._backend.join(self._base_path, candidate)
+            if not self._backend.exists(path):
+                return path
+        raise OSError(f"No free recovery name for {old_name!r}")
+
+    def _roll_back(self, old_name: str, temp_path: str) -> str:
+        """Move a staged entry back out of its hidden temporary name.
+
+        The original name is preferred. When another entry of the same
+        batch has taken it already (a chain such as ``a -> b, b -> c``),
+        the entry goes to a visible ``name (n)`` path instead. Returns a
+        note for the error report when the entry did not get its
+        original name back, so the user can find it.
+        """
+        rollback_path = self._backend.join(self._base_path, old_name)
+        try:
+            if not self._backend.exists(rollback_path):
+                self._backend.rename(temp_path, rollback_path)
+                return ""
+            log.error("Batch rename rollback target already exists: %s", rollback_path)
+            recovery_path = self._recovery_path(old_name)
+            self._backend.rename(temp_path, recovery_path)
+        except OSError as exc:
+            log.error("Batch rename rollback failed for %s: %s", temp_path, exc)
+            return f"left as {temp_path}"
+        return f"kept as {recovery_path}"
+
     def _update_preview(self) -> None:
         pairs = self._compute_new_names()
         changed = 0
@@ -235,17 +269,9 @@ class BatchRenameDialog(QDialog):
             except OSError as e:
                 log.error("Batch rename finalize failed: %s -> %s: %s", old_name, new_name, e)
                 errors.append(f"{old_name}: {e}")
-                try:
-                    rollback_path = self._backend.join(self._base_path, old_name)
-                    if not self._backend.exists(rollback_path):
-                        self._backend.rename(temp_path, rollback_path)
-                    else:
-                        log.error(
-                            "Batch rename rollback target already exists: %s",
-                            rollback_path,
-                        )
-                except OSError:
-                    pass
+                note = self._roll_back(old_name, temp_path)
+                if note:
+                    errors[-1] += f" ({note})"
 
         if errors:
             QMessageBox.warning(

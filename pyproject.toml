@@ -76,7 +76,7 @@ winrm = ["pywinrm>=0.4"]
 wmi = ["impacket>=0.11"]
 exchange = ["exchangelib>=5.0"]
 adb = ["adb-shell>=0.4"]
-archive = ["py7zr>=1.1.3", "rarfile>=4.0"]
+archive = ["py7zr>=1.1.3", "rarfile>=4.0", "backports.zstd>=1.0; python_version < '3.14'"]
 tftp = ["tftpy>=0.8"]
 postgres = ["psycopg[binary]>=3.1"]
 redis = ["redis>=5.0"]
@@ -90,6 +90,11 @@ ldap = ["ldap3>=2.9"]
 mac = ["manuf>=1.1"]
 whois = ["ipwhois>=1.3"]
 ntp = ["ntplib>=0.4"]
+# Removing PDF metadata (Info dictionary + XMP, full rewrite). Reading works
+# without it through QtPdf. Not mutagen: GPL-2.0+ would bind the binary.
+metadata = ["pypdf>=6.4.0"]
+# File analysis (Analysis dock), an opt-in extra: not part of "all".
+sift = ["sift-summarizer>=0.1.86"]
 all = [
     "smbprotocol>=1.13",
     "defusedxml>=0.7",
@@ -118,6 +123,7 @@ all = [
     "manuf>=1.1",
     "ipwhois>=1.3",
     "ntplib>=0.4",
+    "pypdf>=6.4.0",
 ]
 
 [project.scripts]
@@ -138,6 +144,7 @@ packages = [
     "resources.logo",
     "resources.logo.concepts",
     "resources.scripts",
+    "resources.extensions",
     "resources.wordlists",
 ]
 

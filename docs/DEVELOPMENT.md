@@ -23,6 +23,21 @@ pip install -r dev-requirements.txt
 plus `cryptography` and `jsonschema` that some MCP tests exercise
 directly.
 
+### File analysis (Analysis dock)
+
+The Analysis dock (`Ctrl+Shift+I`) explains the selected file with
+sift (`axross[sift]`). Until
+sift is published, install it from a local checkout into the same
+environment:
+
+```bash
+pip install --no-deps -e /path/to/sift
+```
+
+sift runs in a separate worker process (`core/analysis_worker.py`);
+without it the dock says that sift is missing and the rest of axross is
+unaffected.
+
 ## Repository layout
 
 ```
@@ -44,7 +59,6 @@ axross/
 
 ```bash
 QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q \
-    tests/test_hardening_regressions.py \
     tests/test_regressions.py \
     tests/test_new_features.py \
     tests/test_backend_regressions.py \
@@ -52,13 +66,12 @@ QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q \
     tests/test_e2e.py
 ```
 
-Expected: ≥ 1130 passed, 5 skipped, 1 warning in ~30 s.
+Expected without the Docker lab: 271 passed, 5 skipped in a few
+seconds.
 
-The five skipped tests in the default run are:
-
-* Three FUSE tests gated on `fusepy` being importable.
-* One GDrive-refresh test gated on `google-auth`.
-* One end-to-end test that needs the docker lab to be up.
+The five skipped tests are the SSH tests in `tests/test_new_features.py`
+that need the Docker lab. A missing optional dependency (`dulwich`,
+`defusedxml`) skips the tests that need it.
 
 ## Docker lab
 
@@ -108,8 +121,8 @@ or "❌", don't trust the green CI badge alone.
 | WMI / DCOM        | —                      | `tests/test_windows_integration.py`        | ❌ needs real host  | Same. |
 | Exchange (EWS)    | —                      | —                                          | ❌ untested         | No Exchange emulator exists; real Office 365 / on-prem required. |
 | DFS-N             | —                      | `tests/test_windows_integration.py`        | ❌ needs real host  | DFS referrals need an Active-Directory namespace. |
-| ADB (Android)     | —                      | `AdbClientTests` in hardening regressions   | ⚠ mocked only       | Wire protocol + shell-quoting + push/pull mocked. Real-device tests need an Android phone with USB debugging accepted. |
-| MTP (Android)     | —                      | `MtpClientTests` in hardening regressions   | ⚠ mocked only       | Mounter subprocess + parser mocked. Real-device tests need `jmtpfs` / `simple-mtpfs` on PATH and a connected phone. |
+| ADB (Android)     | —                      | ADB verbs in `test_protocols.py`, `test_adb_checksum_prefix.py` | ⚠ mocked only       | adb-shell device replaced by a fake: shell CR/LF refusal, APK push + install, screencap, logcat, package list, checksums. Real-device tests need an Android phone with USB debugging accepted. |
+| MTP (Android)     | —                      | MTP verbs in `test_protocols.py`            | ⚠ mocked only       | Session on a stand-in mount directory: device info, storage list, unreadable mount. Real-device tests need `jmtpfs` / `simple-mtpfs` on PATH and a connected phone. |
 
 Supporting infrastructure containers (not backends themselves):
 `socks-proxy`, `http-proxy` (used in Section 21d), `toxiproxy`
@@ -152,19 +165,13 @@ layer) and the Qt-UI giants (`main_window`, `file_pane`,
 suite in `tests/docker/` covers the protocol backends end-to-end
 when the lab is running.
 
-## OpSec hardening tests
+## OpSec defaults
 
-`tests/test_hardening_regressions.py::OpSecHardeningTests` guards
-the [OPSEC.md](OPSEC.md) mitigations: SSH banner override,
-uniform User-Agent, rsync metadata stripping, env allow-list,
-SMB `socket.gethostname` patch behaviour, atomic temp prefix,
-ADB pubkey scrub. A future refactor that accidentally reverts a
-hardening default fails this suite loudly.
-
-```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/pytest \
-    tests/test_hardening_regressions.py::OpSecHardeningTests
-```
+The [OPSEC.md](OPSEC.md) mitigations are deliberate defaults: SSH
+banner override, uniform User-Agent, rsync metadata stripping, env
+allow-list, SMB `socket.gethostname` patch behaviour, atomic temp
+prefix, ADB pubkey scrub. A change that reverts one of them
+re-introduces a fingerprint; call it out in the PR description.
 
 ## Packaging
 

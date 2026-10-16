@@ -23,9 +23,9 @@ Resumability requires:
   backends do, S3 does NOT — multipart upload is the right primitive
   there but is out of scope for this first cut; S3-as-target with
   resume falls back to "restart on failure").
-* The manifest is stored locally next to the destination
-  (``<dst>.axross-resume.json``) by default; pass ``manifest_path`` to
-  override. Manifest is mode 0o600.
+* The manifest is stored locally in ``$XDG_STATE_HOME/axross/resume/``
+  (``<safe dst label + path>.json``, directory mode 0o700) by default;
+  pass ``manifest_path`` to override. Manifest is mode 0o600.
 
 The verification on resume is conservative: every "done" segment must
 match the destination's current bytes for that range *and* hash to the
@@ -40,6 +40,7 @@ import inspect
 import json
 import logging
 import os
+import stat
 import tempfile
 import time
 from collections.abc import Callable
@@ -139,14 +140,18 @@ def _load_manifest(path: Path) -> _Manifest | None:
         return None
     try:
         d = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
+        # ValueError covers JSONDecodeError and UnicodeDecodeError.
         log.warning("copy_resume: cannot read manifest %s: %s", path, exc)
+        return None
+    if not isinstance(d, dict):
+        log.warning("copy_resume: malformed manifest %s: not a JSON object", path)
         return None
     try:
         manifest = _Manifest.from_dict(d)
         _validate_manifest(manifest)
         return manifest
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         log.warning("copy_resume: malformed manifest %s: %s", path, exc)
         return None
 
@@ -175,6 +180,32 @@ def _validate_manifest(manifest: _Manifest) -> None:
                 raise ValueError("done segment has invalid sha256")
     if expected_offset != manifest.total_bytes:
         raise ValueError("segments do not cover total_bytes")
+
+
+def _private_manifest_dir() -> Path:
+    """Return the per-user default manifest directory, mode 0o700.
+
+    Lives under ``$XDG_STATE_HOME/axross/resume`` (default
+    ``~/.local/state``), never in the shared tempdir where another local
+    user could create the directory first. The directory is verified
+    after creation and refused unless it is a real directory owned by
+    the current user that nobody else can enter.
+    """
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    local_dir = Path(base) / "axross" / "resume"
+    local_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    st = os.lstat(local_dir)
+    if stat.S_ISLNK(st.st_mode):
+        raise OSError(f"copy_resume: refusing symlinked resume directory {local_dir}")
+    if not stat.S_ISDIR(st.st_mode):
+        raise OSError(f"copy_resume: resume directory {local_dir} is not a directory")
+    if st.st_uid != os.geteuid():
+        raise OSError(
+            f"copy_resume: resume directory {local_dir} is not owned by the current user"
+        )
+    if stat.S_IMODE(st.st_mode) & 0o077:
+        os.chmod(local_dir, 0o700)
+    return local_dir
 
 
 def _save_manifest(manifest: _Manifest, path: Path) -> None:
@@ -437,9 +468,8 @@ def resumable_copy(
         segment_size: bytes per segment. Clamped to
             ``[MIN_SEGMENT_SIZE, MAX_SEGMENT_SIZE]``.
         manifest_path: where to keep the resume manifest. Defaults to
-            ``"<dst>.axross-resume.json"`` next to the destination
-            path on the local filesystem (NOT on the destination
-            backend).
+            ``$XDG_STATE_HOME/axross/resume/<safe dst label + path>.json`` on
+            the local filesystem (NOT on the destination backend).
         overwrite: when True, ignore any existing destination
             content. Default False — refuse if the destination already
             exists and the manifest can't account for it.
@@ -453,12 +483,7 @@ def resumable_copy(
 
     # Manifest path — local file, default beside the destination's basename.
     if manifest_path is None:
-        local_dir = Path(tempfile.gettempdir()) / "axross-resume"
-        local_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(local_dir, 0o700)
-        except OSError as exc:
-            log.debug("copy_resume: cannot chmod %s: %s", local_dir, exc)
+        local_dir = _private_manifest_dir()
         safe = (dst_label + dst_path).replace("/", "_").replace(":", "_")[:120]
         mpath = local_dir / f"{safe}.json"
     else:
@@ -623,6 +648,7 @@ def resumable_copy(
     bytes_done = bytes_skipped
     transferred = 0
     source = _SourceReader(src_backend, src_path)
+    copied = False
     try:
         for seg in manifest.segments:
             if seg.done:
@@ -649,12 +675,24 @@ def resumable_copy(
                     progress(bytes_done, total)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("resumable_copy: progress raised: %s", exc)
+        copied = True
     finally:
         source.close()
-        try:
-            dst_handle.close()
-        except Exception as exc:  # noqa: BLE001
-            log.debug("resumable_copy: close raised: %s", exc)
+        if not copied:
+            # Already failing: the original error is what the caller needs.
+            try:
+                dst_handle.close()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("resumable_copy: close raised: %s", exc)
+    # Buffered writers (FTP, WebDAV, S3, ...) upload at close, so a failure
+    # here means the destination was never written. Keep the manifest; the
+    # next run re-verifies the destination and restarts what is missing.
+    try:
+        dst_handle.close()
+    except Exception as exc:
+        raise OSError(
+            f"resumable_copy: committing destination {dst_path!r} failed: {exc}"
+        ) from exc
 
     completed = all(s.done for s in manifest.segments)
     if completed:

@@ -25,6 +25,16 @@ honest about which operations HAVE one:
     rather than attempted.
 ``atomic_write``
     Replaced content with no backup. Same.
+``metadata_remove``
+    One entry per removal run (a whole folder is one entry, so one undo
+    restores all of it). Each item replaced in place names the trash copy
+    of its original and the SHA-256 of what was written; undo puts the
+    original back only while the file still has that content
+    (:func:`core.trash.restore_over`). An item written as a cleaned copy
+    is undone by moving that copy to the trash, again only if unchanged.
+``undo``
+    Written by :func:`record_undone` after an undo succeeded, so the same
+    entry is not offered again; not itself reversible.
 
 Quietly skipping the last two would be the worst outcome: the user
 presses undo, nothing objects, and they believe the state was restored.
@@ -67,6 +77,48 @@ class UndoPlan:
     trash_id: str = ""
     #: Transfer direction recorded for a cross-backend move, if any.
     direction: str = ""
+    #: Label of the connection a transfer-engine move took the data FROM.
+    #: Empty for journals written before it was recorded; such a move
+    #: cannot be sent back, because the source host is unknown.
+    source_backend: str = ""
+    #: ``metadata_remove``: one :class:`MetadataUndoItem` per file.
+    items: tuple = ()
+
+
+@dataclass(frozen=True)
+class MetadataUndoItem:
+    """One file of a metadata removal, as the journal recorded it."""
+
+    path: str
+    #: ``"in_place"`` (``trash_id`` holds the original) or ``"copy"``
+    #: (``output`` is the cleaned copy written next to the original).
+    mode: str
+    sha256: str
+    trash_id: str = ""
+    output: str = ""
+
+
+def _metadata_items(details: dict) -> tuple:
+    raw = details.get("items")
+    if not isinstance(raw, list):
+        return ()
+    items = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        path, sha = entry.get("path"), entry.get("sha256")
+        mode = entry.get("mode") or details.get("mode") or "in_place"
+        if not isinstance(path, str) or not path or not isinstance(sha, str) or not sha:
+            continue
+        if mode == "copy":
+            output = entry.get("output")
+            if isinstance(output, str) and output:
+                items.append(MetadataUndoItem(path, "copy", sha, output=output))
+        elif mode == "in_place":
+            trash_id = entry.get("trash_id")
+            if isinstance(trash_id, str) and trash_id:
+                items.append(MetadataUndoItem(path, "in_place", sha, trash_id=trash_id))
+    return tuple(items)
 
 
 def _refuse(event: dict, reason: str) -> UndoPlan:
@@ -113,6 +165,7 @@ def plan_undo(event: dict) -> UndoPlan:
                 dest=dest,
                 backend=str(event.get("backend", "")),
                 direction=direction,
+                source_backend=str(details.get("source_backend", "")),
             )
         return UndoPlan(
             operation_id=str(event.get("operation_id", "")),
@@ -140,6 +193,34 @@ def plan_undo(event: dict) -> UndoPlan:
             backend=str(event.get("backend", "")),
             trash_id=trash_id,
         )
+
+    if operation == "metadata_remove":
+        items = _metadata_items(details if isinstance(details, dict) else {})
+        if not items:
+            return _refuse(event, "the journal entry names no file whose original was kept")
+        if len(items) == 1:
+            what = items[0].path
+            reason = (
+                f"put back {what} with its metadata"
+                if items[0].mode == "in_place"
+                else f"move the cleaned copy {items[0].output} to the trash"
+            )
+        else:
+            reason = f"put back the originals of {len(items)} files whose metadata was removed"
+        return UndoPlan(
+            operation_id=str(event.get("operation_id", "")),
+            operation=operation,
+            reversible=True,
+            action="restore_metadata",
+            reason=reason,
+            source=source,
+            dest=dest,
+            backend=str(event.get("backend", "")),
+            items=items,
+        )
+
+    if operation == "undo":
+        return _refuse(event, "an undo is not itself undoable")
 
     if operation == "transfer":
         return _refuse(
@@ -220,7 +301,83 @@ def apply_undo(
         log.info("undo: restored %s from trash", result)
         return result
 
+    if plan.action == "restore_metadata":
+        if trash_module is None:
+            from core import trash as trash_module  # type: ignore[no-redef]
+        return _restore_metadata(plan, backend, trash_module)
+
     raise ValueError(f"unknown undo action: {plan.action!r}")
+
+
+def _restore_metadata(plan: UndoPlan, backend, trash_module) -> str:
+    """Every item of a metadata removal back; failures are collected and
+    raised together after the rest was done, so one edited file does not
+    keep the others from coming back."""
+    done = 0
+    failures: list[str] = []
+    for item in plan.items:
+        try:
+            if item.mode == "in_place":
+                trash_module.restore_over(
+                    backend, item.trash_id, target=item.path, expected_sha256=item.sha256
+                )
+            else:
+                from core.trash import _sha256_of
+
+                if backend.exists(item.output):
+                    if _sha256_of(backend, item.output) != item.sha256:
+                        raise OSError(
+                            f"{item.output} was changed after it was written; left in place"
+                        )
+                    trash_module.trash(backend, item.output, journal=False)
+            done += 1
+        except (OSError, ValueError) as exc:
+            failures.append(f"{item.path}: {exc}")
+    log.info("undo: metadata removal reversed for %d of %d files", done, len(plan.items))
+    if failures:
+        shown = "\n".join(failures[:10])
+        more = f"\n… and {len(failures) - 10} more" if len(failures) > 10 else ""
+        raise OSError(f"restored {done} of {len(plan.items)} files:\n{shown}{more}")
+    return plan.source or (plan.items[0].path if plan.items else "")
+
+
+def record_undone(plan: UndoPlan) -> None:
+    """Journal that *plan* was carried out, so :func:`undoable` stops
+    offering it - a second Ctrl+Z then reaches the operation before it
+    instead of failing on the one already reversed."""
+    from core.operation_journal import finish_operation, new_operation_id
+
+    finish_operation(
+        new_operation_id(),
+        "undo",
+        status="done",
+        source=plan.source,
+        dest=plan.dest,
+        backend=plan.backend,
+        details={"undone": plan.operation_id, "reversed": plan.operation},
+    )
+
+
+def _with_start_fields(event: dict, starts: dict[str, dict]) -> dict:
+    """``event`` with the backend label and details its start event recorded.
+
+    Transfer-engine moves journaled before their finish events carried
+    these had them on the START event only. Without the direction such a
+    move plans as a same-backend rename, and without the label it would
+    run against whichever backend is open. Fields the finish event has
+    itself win.
+    """
+    start = starts.get(str(event.get("operation_id", "")))
+    if start is None:
+        return event
+    merged = dict(event)
+    if not merged.get("backend") and start.get("backend"):
+        merged["backend"] = start["backend"]
+    start_details = start.get("details")
+    if isinstance(start_details, dict) and start_details:
+        own = event.get("details")
+        merged["details"] = {**start_details, **(own if isinstance(own, dict) else {})}
+    return merged
 
 
 def undoable(events: list[dict]) -> list[UndoPlan]:
@@ -232,16 +389,27 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
     user to wonder where it went.
     """
     plans: list[UndoPlan] = []
+    starts: dict[str, dict] = {}
+    undone: set[str] = set()
     for event in events:
         if not isinstance(event, dict):
+            continue
+        if event.get("phase") == "start" and event.get("operation_id"):
+            starts[str(event["operation_id"])] = event
             continue
         # Only the finish event knows whether the operation succeeded.
         if event.get("phase") != "finish":
             continue
+        details = event.get("details")
+        if event.get("operation") == "undo" and isinstance(details, dict):
+            target = details.get("undone")
+            if isinstance(target, str) and target:
+                undone.add(target)
         try:
-            plans.append(plan_undo(event))
+            plans.append(plan_undo(_with_start_fields(event, starts)))
         except Exception as exc:  # noqa: BLE001 — a bad row must not kill the list
             log.debug("undo: skipping malformed journal row: %s", exc)
+    plans = [p for p in plans if p.operation_id not in undone]
     plans.reverse()
     return plans
 
@@ -273,4 +441,12 @@ def pick_undoable(plans: list[UndoPlan], available_backends) -> UndoPlan | None:
     return None
 
 
-__all__ = ["UndoPlan", "apply_undo", "pick_undoable", "plan_undo", "undoable"]
+__all__ = [
+    "MetadataUndoItem",
+    "UndoPlan",
+    "apply_undo",
+    "pick_undoable",
+    "plan_undo",
+    "record_undone",
+    "undoable",
+]

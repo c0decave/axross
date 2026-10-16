@@ -59,10 +59,21 @@ class DetectorTest(_QtCase):
     def setUp(self) -> None:
         # Other tests leave an application stylesheet / palette behind; the
         # controls below must see only the palette set on them.
+        # Restyles with the collector paused: a collection during the walk
+        # frees widgets Qt still visits (see ui.themes.collection_paused).
+        from ui import themes
+
         app = self.app
         saved = (app.styleSheet(), app.palette())
-        app.setStyleSheet("")
-        self.addCleanup(lambda: (app.setStyleSheet(saved[0]), app.setPalette(saved[1])))
+        with themes.collection_paused():
+            app.setStyleSheet("")
+
+        def restore() -> None:
+            with themes.collection_paused():
+                app.setStyleSheet(saved[0])
+                app.setPalette(saved[1])
+
+        self.addCleanup(restore)
 
     def _tree(self, text: str, base: str, alt: str):
         from PyQt6.QtGui import QColor, QPalette, QStandardItem, QStandardItemModel

@@ -23,9 +23,11 @@ ingress is added.
 **Entry point / command.** `main.py` `main()` dispatches to
 `core.mcp_server` when `--mcp-server` or `AXROSS_MCP=1` is set. The
 process speaks JSON-RPC line-framed over stdin/stdout to an LLM
-client. Tool handlers in `core/mcp_server.py` (`do_*`,
-`_run_task`, `_ToolContext`) receive arguments parsed from caller
-JSON.
+client. Tool handlers are closures built by `_build_tools` in
+`core/mcp_server.py` (run by `_dispatch` or, for `tasks/start`,
+`_run_task`, each with a `_ToolContext`); the capability groups of
+`--mcp-tools` add the handlers of `core/mcp_groups.py`. All receive
+arguments parsed from caller JSON.
 
 **Untrusted input.** Tool call arguments (paths, glob patterns,
 hostnames, ports, raw bytes for `write_file`). Although the *client*
@@ -33,23 +35,73 @@ is an LLM driven by a human operator, the **tool arguments are
 treated as untrusted** because LLM output is not source-of-truth and
 prompt-injected docs/web can steer them.
 
-**Trust boundary.** Host machine ↔ LLM agent. The MCP root is pinned
-to `backend.home()` at boot; write tools and script execution are
-each opt-in (`--mcp-write`, `--mcp-allow-scripts`).
+**Trust boundary.** Host machine ↔ LLM agent. The CLI serves one
+`LocalFS` backend, plus — with `--mcp-tools remote` — saved connection
+profiles the client opens with `remote_open` (backend
+`profile:<name>`). The MCP root is `--mcp-root` when given and
+defaults to `backend.home()` otherwise; write tools, script execution
+and each capability group are opt-in (`--mcp-write`,
+`--mcp-allow-scripts`, `--mcp-tools GROUP`), and a group's mutating
+tools additionally need `--mcp-write`. The root confines the file
+tools and every local path of the group tools — the script tools are
+not root-confined at all (`script_run` executes arbitrary Python as
+the server's user), and paths on an opened remote profile are not
+either (the profile's server account is the boundary there).
 
 **Defenses in place.** Per-tool argument schemas; path
-normalisation against MCP root; per-scope task registry with
-`MAX_TASKS_PER_SCOPE` (DoS cap); cooperative cancellation; rate
-limiter (`_RateLimiter`); output size cap (`_read_capped_stream`);
-write tools default OFF and, when enabled, require an explicit
-`--mcp-root` (the default root is `$HOME`); `script_run` requires explicit
-`--mcp-allow-scripts` AND a non-paranoid `security_mode`.
+normalisation against MCP root (except the `symlink` target, which is
+deliberately not root-checked; reads resolve links through
+`_enforce_root` before following them); per-scope task registry with
+`MAX_TASKS_PER_SCOPE` (retention cap) and `MAX_RUNNING_TASKS_PER_SCOPE`
+(concurrency cap); `tasks/start` draws from the same rate limiter
+(`_RateLimiter`) and runs under the same per-tool timeout as
+`tools/call`; output size cap (`_read_capped_stream`); write tools
+default OFF and, when enabled, require an explicit `--mcp-root` (the
+default root is `$HOME`); script tools require explicit
+`--mcp-allow-scripts` AND a non-paranoid `security_mode`, and are
+refused together with `--mcp-http`; `script_run` runs the script in a
+child process (`core.script_runner.run_bounded`: stdin on /dev/null,
+its own process group killed when the run ends, a wall-clock
+`timeout_s`, stdout/stderr capped, `AXROSS_NONINTERACTIVE=1` so
+confirmations and the production tarpit fail closed); write and script tools log
+attempt/ok/refused on `core.mcp_server.audit`; every stdout writer
+(loop, task threads, log forwarder) shares one lock. Capability
+groups (`core/mcp_groups.py`): unknown group names exit 2; group
+schemas refuse unknown arguments; pack / extract / decrypt / encrypt
+/ metadata export and cleaned copies only create fresh names under
+the root (never overwrite); dedupe re-checks every copy and trashes
+into `<root>/.axross-trash`; passphrases and the 7z password are
+never in results, errors or audit lines; `remote_profiles` uses a
+field allow-list (no secrets); `remote_open` takes passwords only
+from the keyring of a profile that stores them, never prompts
+(refuses unknown SSH host keys and browser sign-ins — Dropbox's
+sign-in reads stdin, which on stdio is the protocol stream), refuses
+paranoid-mode legacy protocols and profiles that resolve to the local
+file system, keeps opened profiles per HTTP session (at most 8,
+released when the session ends) and refuses every mutation on a
+production-flagged profile.
 
 **Known gaps to attack.** TOCTOU on path normalisation after
 symlink follow; argument-coercion edge cases (path with NUL,
 windows-style drive letters under Linux MCP root); cancellation
-races during long-running tasks; verify that `script_run`
-truly cannot escape via `os.system` / `ctypes` even when allowed.
+races during long-running tasks; a synchronous `tools/call` on stdio
+cannot be cancelled by `notifications/cancelled` (single-threaded
+loop) — only its timeout stops it, and a hard-stopped worker keeps
+running in the background; verify that `script_run`
+truly cannot escape via `os.system` / `ctypes` even when allowed
+(it is not sandboxed: with `--mcp-allow-scripts` the client has the
+server user's full rights); a process a script starts with `setsid`
+leaves the group and outlives the run; no RLIMIT bounds memory or
+disk use of a run. Group-specific: hostile archives and
+media files reach the existing parsers (`core.archive`,
+`core.metadata_formats`, ffprobe) under client control; a saved
+profile is a capability grant the client can exercise with every
+tool (`--mcp-root` does not apply to it); `duplicates_scan` and
+`index_build` write axross' own index databases, so an LLM can grow
+them (walks are capped at `MAX_WALK_ENTRIES`); the TOCTOU window
+between the root check and the write also exists for the
+fresh-name placement of group outputs on remote backends
+(existence check, then upload).
 
 ## MCP Server, HTTP / SSE transport (`--mcp-http HOST:PORT`)
 
@@ -81,8 +133,11 @@ sessions (`MAX_SESSIONS`); partial TLS flags are an error;
 headers; SSE long-poll keepalive may leak side-channel timing;
 under mTLS the session id is bound to the SHA-256 of the peer
 certificate; on plain loopback sessions are unbound, so the
-Host/Origin check is the only guard. `tasks/start` is not yet
-rate-limited or timed like `tools/call`.
+Host/Origin check is the only guard. `logging/setLevel` acts on the
+one server-wide log forwarder, so any session can change the
+forwarded log level for every session (routing stays per session).
+The script tools are never served over HTTP; `--mcp-allow-scripts`
+with `--mcp-http` is refused at startup.
 
 ## Headless script runner (`--script <file|->`)
 

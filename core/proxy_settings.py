@@ -28,12 +28,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from core.credentials import DEFAULT_PROXY_OWNER
 from core.proxy import ProxyConfig, is_valid_proxy_type, parse_proxy_type
+from core.secure_storage import keep_unreadable_copy
 
 log = logging.getLogger(__name__)
 
 SETTINGS_PATH = Path.home() / ".config" / "axross" / "proxy.json"
-KEYRING_NAME = "__default_proxy__"
+KEYRING_NAME = DEFAULT_PROXY_OWNER
 DEFAULT_BYPASS = ("localhost", "127.0.0.0/8", "::1")
 MAX_BYPASS_ENTRIES = 256
 MAX_PAC_BYTES = 1 << 20
@@ -99,15 +101,26 @@ def _from_dict(raw: dict) -> ProxyDefaults:
     )
 
 
-def load(path: Path | None = None) -> ProxyDefaults:
-    """Stored defaults; a missing / unreadable / hostile file gives the
-    "no default proxy" state rather than an error."""
-    p = path or SETTINGS_PATH
+def _read(p: Path) -> tuple[ProxyDefaults, bool]:
+    """The stored defaults and whether the file could be read. A missing
+    file is readable: it means "no default proxy". A file that exists but
+    cannot be read, is no JSON / UTF-8 or no object is not."""
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ProxyDefaults(), True
     except (OSError, ValueError):
-        return ProxyDefaults()
-    return _from_dict(raw) if isinstance(raw, dict) else ProxyDefaults()
+        return ProxyDefaults(), False
+    if not isinstance(raw, dict):
+        return ProxyDefaults(), False
+    return _from_dict(raw), True
+
+
+def load(path: Path | None = None) -> ProxyDefaults:
+    """Stored defaults; a missing / unreadable / hostile file gives the
+    "no default proxy" state rather than an error. Connections do not use
+    this: :func:`resolve` refuses to decide over an unreadable file."""
+    return _read(path or SETTINGS_PATH)[0]
 
 
 def validate(d: ProxyDefaults) -> None:
@@ -147,6 +160,10 @@ def save(d: ProxyDefaults, path: Path | None = None) -> None:
     }
     with _LOCK:
         p.parent.mkdir(parents=True, exist_ok=True)
+        # The dialog showed an unreadable file as "no proxy"; replacing it
+        # would erase the proxy it held, so a copy of it is kept first.
+        if not _read(p)[1] and not keep_unreadable_copy(p):
+            raise OSError(f"Not saving: the unreadable {p} could not be kept as a copy")
         fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".proxy.", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -404,7 +421,16 @@ def resolve(
         return Resolution(None, "none")
     if mode != "default":
         return Resolution(own, "custom") if own is not None else Resolution(None, "custom")
-    d = defaults if defaults is not None else load()
+    if defaults is not None:
+        d = defaults
+    else:
+        d, readable = _read(SETTINGS_PATH)
+        if not readable:
+            # "No default proxy" would connect directly: fail closed.
+            raise ProxyResolutionError(
+                f"The default proxy settings in {SETTINGS_PATH} cannot be read; "
+                "not connecting without them"
+            )
     if not d.configured:
         return Resolution(None, "default-none")
     if host and bypass_matches(host, d.bypass, port):

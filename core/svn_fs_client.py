@@ -21,11 +21,11 @@ Capabilities & guard rails:
   URL fragment ``...?rev=42``) pins to a specific revision.
 * **Auth via URL or profile.** ``svn://user:pass@host/path`` is
   sanitised to remove embedded credentials before we store or log the
-  URL. Credentials are then passed to ``svn`` via ``--username`` /
-  ``--password`` plus ``--non-interactive --no-auth-cache`` so the
-  binary never prompts on the terminal and never writes credentials
-  to ``~/.subversion``. Caveat: the portable SVN CLI exposes
-  ``--password`` in process arguments while the command is running.
+  URL. Credentials are then passed to ``svn`` via ``--username`` and
+  ``--password-from-stdin`` (svn >= 1.10) plus ``--non-interactive
+  --no-auth-cache`` so the binary never prompts on the terminal, never
+  writes credentials to ``~/.subversion`` and the password never shows
+  up in the process arguments other local users can read.
 * **Listing parsed from XML** (``svn ls --xml``) — no fragile
   whitespace parsing. ``stat`` falls back to the parent dir's
   listing when the leaf is missing.
@@ -52,6 +52,7 @@ from datetime import datetime
 from typing import IO, cast
 from xml.etree import ElementTree as ET
 
+from core.backend import SessionLifecycle
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 
@@ -126,7 +127,7 @@ def _strip_url_password(url: str) -> tuple[str, str, str]:
     return clean_url, username, password
 
 
-class SvnFsSession:
+class SvnFsSession(SessionLifecycle):
     """Read-only Subversion-as-FS backend."""
 
     supports_symlinks = False
@@ -157,15 +158,14 @@ class SvnFsSession:
         # URL otherwise spread into subprocess argv, session names and
         # logs because the URL is repeated for every ``svn`` operation.
         self._url = clean_url
-        self._setup_proxy(clean_url, _ignored)
         self._username = username or url_username
         self._password = password or url_password
-        if self._password:
-            log.warning(
-                "SVN password authentication uses the svn CLI --password "
-                "option; the password may be visible to local process "
-                "inspectors while svn is running."
-            )
+        if "\n" in self._password or "\r" in self._password:
+            # ``--password-from-stdin`` reads a single line. Refuse rather
+            # than fall back to ``--password``, which would expose the
+            # secret in argv.
+            raise OSError("SVN password must not contain a line break")
+        self._setup_proxy(clean_url, _ignored)
         self._revision = revision or "HEAD"
         self._lock = threading.RLock()
         self._closed = False
@@ -309,7 +309,9 @@ class SvnFsSession:
         if self._username:
             argv += ["--username", self._username]
         if self._password:
-            argv += ["--password", self._password]
+            # The secret itself is written to the child's stdin by
+            # ``_run``; argv is world-readable via /proc/<pid>/cmdline.
+            argv += ["--password-from-stdin"]
         # SVN clients vary on whether they trust unknown server certs;
         # for HTTPS repos we leave validation strictly enabled — the
         # user can pin the cert via their system trust store.
@@ -331,17 +333,11 @@ class SvnFsSession:
         ``binary=True`` returns bytes (used for ``svn cat``);
         otherwise stdout is decoded as UTF-8 (with replacement)."""
         argv = self._build_argv(*args)
-        log.debug(
-            "SVN exec: %s",
-            argv[:1]
-            + [
-                a if not isinstance(a, str) else ("<password>" if a == self._password and a else a)
-                for a in argv[1:]
-            ],
-        )
+        log.debug("SVN exec: %s", argv)
         try:
             result = subprocess.run(
                 argv,
+                input=(self._password + "\n").encode("utf-8") if self._password else None,
                 capture_output=True,
                 timeout=timeout,
                 check=False,
@@ -353,6 +349,11 @@ class SvnFsSession:
             raise OSError("svn binary disappeared mid-session") from exc
         if result.returncode != 0:
             stderr = result.stderr.decode("utf-8", "replace").strip()
+            if self._password and "password-from-stdin" in stderr:
+                raise OSError(
+                    "svn client is too old: password authentication needs "
+                    "svn 1.10 or newer (--password-from-stdin)"
+                )
             # SVN error codes worth surfacing distinctly:
             # E170000-range = remote-side errors (bad URL / 404)
             # E215004 = no creds

@@ -213,24 +213,25 @@ def test_sad_unknown_policy_is_rejected():
 # The whole point of this feature is local against remote, and those two
 # disagree about tzinfo: LocalFS reports naive datetimes from the
 # filesystem while S3, Azure and WebDAV report timezone-aware ones.
-# Comparing the two raises TypeError in Python, so the one policy that
-# looks at timestamps hit it on exactly the pairing it exists for.
+# Comparing the two raised TypeError in Python, so the one policy that
+# looks at timestamps hit it on exactly the pairing it exists for. A naive
+# FileItem time is local wall clock time (models/file_item.py), so the
+# aware one is converted on construction and the two order by instant.
 # --------------------------------------------------------------------------
 
 
-def test_sad_newer_wins_survives_a_naive_versus_aware_timestamp():
+def test_sad_newer_wins_orders_a_naive_local_against_an_aware_timestamp():
     from datetime import timezone
 
-    naive = FileItem(name="x", size=10, modified=BASE)
-    aware = FileItem(name="x", size=20, modified=BASE.replace(tzinfo=timezone.utc))
+    aware_dt = BASE.replace(tzinfo=timezone.utc)
+    an_hour_earlier_locally = aware_dt.astimezone().replace(tzinfo=None) - timedelta(hours=1)
+    naive = FileItem(name="x", size=10, modified=an_hour_earlier_locally)
+    aware = FileItem(name="x", size=20, modified=aware_dt)
     entries = [_entry("c.txt", Status.DIFFERS, left=naive, right=aware)]
 
     plan = plan_sync(entries, policy=ConflictPolicy.NEWER_WINS)
-    # It must not crash. It also must not guess: without a comparable
-    # pair of timestamps, "newer" has no answer.
-    assert _action_for(plan, "c.txt") is None
-    assert plan.conflicts
-    assert "timestamp" in plan.conflicts[0].reason.lower()
+    assert not plan.conflicts
+    assert _action_for(plan, "c.txt").direction == "to_left"
 
 
 def test_happy_two_aware_timestamps_still_compare_normally():

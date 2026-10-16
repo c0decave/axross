@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import io
 import logging
 import posixpath
+import re
 import select
 import socket
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from ftplib import FTP, FTP_TLS, error_perm  # nosec B402
+from ftplib import Error as _FtpLibError  # nosec B402
 from typing import IO
 
-from core.path_policy import safe_join
+from core.backend import SessionLifecycle
+from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
+from core.session_lock import io_lock, liveness_check, serialized
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -28,14 +34,92 @@ log = logging.getLogger(__name__)
 # close ("421" + FIN) makes it readable and sends us down the NOOP path.
 LIVENESS_WINDOW = 10.0
 
+# A framing line of a multi-line reply: three digits, then '-' or ' '.
+_FTP_REPLY_LINE = re.compile(r"^\d{3}[ -]")
+
+# ftplib's own exceptions - error_temp (4xx), error_perm (5xx), error_reply,
+# error_proto - and the EOFError it raises when the server hangs up are not
+# OSError. The backend contract is OSError, which is what every caller
+# (compare, pane, transfers, recursive delete) handles.
+_FTP_PROTOCOL_ERRORS = (_FtpLibError, EOFError)
+
+# One ``ls -l`` style LIST line: type and mode, link count, owner,
+# optional group, size, date, then one space and the name. The date
+# anchors the name, which may itself contain spaces; a symlink's name is
+# followed by " -> target".
+_UNIX_LIST_LINE = re.compile(
+    r"^(?P<type>[-bcdlps])[-rwxsStTl]{9}\S*\s+\d+\s+\S+\s+(?:\S+\s+)?\d+\s+"
+    r"\w{3}\s+\d{1,2}\s+(?:\d{1,2}:\d{2}|\d{4}) (?P<rest>.*)$"
+)
+
+
+def _parse_unix_list(lines: list[str]) -> list[tuple[str, str]] | None:
+    """``(type char, name[ -> target])`` per entry of a Unix-style LIST.
+
+    None when a line is neither a ``total`` line nor Unix-style (a DOS
+    or other listing that cannot say what is a symbolic link).
+    """
+    entries: list[tuple[str, str]] = []
+    for line in lines:
+        line = line.rstrip("\r")
+        if not line.strip() or line.startswith("total "):
+            continue
+        m = _UNIX_LIST_LINE.match(line)
+        if m is None:
+            return None
+        entries.append((m.group("type"), m.group("rest")))
+    return entries
+
+
+def _unix_entry(entries: list[tuple[str, str]] | None, name: str) -> tuple[str, str] | None:
+    """``(type char, link target)`` of ``name`` in a parsed LIST, or None.
+
+    None also when the listing is missing or names the entry ambiguously
+    (a name that itself contains " -> ").
+    """
+    if entries is None:
+        return None
+    found: set[tuple[str, str]] = set()
+    for kind, rest in entries:
+        if kind == "l":
+            if rest.startswith(name + " -> "):
+                found.add(("l", rest[len(name) + 4 :]))
+        elif rest == name:
+            found.add((kind, ""))
+    return found.pop() if len(found) == 1 else None
+
+
+def _ftp_errors_as_oserror(fn):
+    """Re-raise ftplib protocol errors from ``fn`` as ``OSError``."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except _FTP_PROTOCOL_ERRORS as exc:
+            detail = str(exc) or "connection closed by server"
+            raise OSError(f"FTP {fn.__name__}: {detail}") from exc
+        except UnicodeEncodeError as exc:
+            # ftplib encodes each command in the session encoding (latin-1
+            # when the server refused OPTS UTF8): a name it cannot carry is
+            # a failed operation, not a crash.
+            raise OSError(
+                f"FTP {fn.__name__}: name cannot be encoded as {exc.encoding} "
+                f"for this server: {exc.object[exc.start : exc.end]!r}"
+            ) from exc
+
+    return wrapper
+
 
 class _SpooledWriter:
     """Write to a temp file, then upload on close."""
 
-    def __init__(self, ftp: FTP, remote_path: str, append: bool = False):
+    def __init__(self, ftp: FTP, remote_path: str, append: bool = False, lock=None):
         self._ftp = ftp
         self._remote_path = remote_path
         self._append = append
+        # The session's I/O lock: the upload runs on the shared handle.
+        self._lock = lock if lock is not None else contextlib.nullcontext()
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
 
@@ -51,6 +135,7 @@ class _SpooledWriter:
     def tell(self) -> int:
         return self._buf.tell()
 
+    @_ftp_errors_as_oserror
     def close(self) -> None:
         if self._closed:
             return
@@ -58,7 +143,8 @@ class _SpooledWriter:
         try:
             self._buf.seek(0)
             cmd = "APPE" if self._append else "STOR"
-            self._ftp.storbinary(f"{cmd} {self._remote_path}", self._buf)
+            with self._lock:
+                self._ftp.storbinary(f"{cmd} {self._remote_path}", self._buf)
         finally:
             self._buf.close()
 
@@ -177,11 +263,58 @@ class _FtpProxyMixin:
         return conn, size
 
 
-class _ProxyFTP(_FtpProxyMixin, FTP):
+class _LenientListingMixin:
+    """``retrlines`` that decodes the data channel with ``errors="replace"``.
+
+    ftplib decodes LIST / NLST / MLSD data strictly in ``self.encoding``
+    (ftplib.FTP.retrlines: ``conn.makefile('r', encoding=self.encoding)``),
+    so one name in another encoding - a server that accepted OPTS UTF8 ON
+    but lists latin-1 names - raised UnicodeDecodeError out of list_dir,
+    which no caller catches, and left the reply of the aborted transfer
+    unread on the control channel. The control channel is already read
+    with ``errors="replace"`` (see FtpSession._connect); listings now
+    follow the same rule. Otherwise this is ftplib's own retrlines.
+    """
+
+    def retrlines(self, cmd, callback=None):
+        import ssl
+
+        if callback is None:
+            callback = print
+        self.sendcmd("TYPE A")
+        with (
+            self.transfercmd(cmd) as conn,
+            conn.makefile("r", encoding=self.encoding, errors="replace") as fp,
+        ):
+            while True:
+                line = fp.readline(self.maxline + 1)
+                if len(line) > self.maxline:
+                    raise _FtpLibError(f"got more than {self.maxline} bytes")
+                if not line:
+                    break
+                if line[-2:] == "\r\n":
+                    line = line[:-2]
+                elif line[-1:] == "\n":
+                    line = line[:-1]
+                callback(line)
+            if isinstance(conn, ssl.SSLSocket):
+                conn.unwrap()
+        return self.voidresp()
+
+
+class _FTP(_LenientListingMixin, FTP):
+    """Plain FTP with lenient listing decoding."""
+
+
+class _FTP_TLS(_LenientListingMixin, FTP_TLS):
+    """FTPS with lenient listing decoding."""
+
+
+class _ProxyFTP(_FtpProxyMixin, _LenientListingMixin, FTP):
     """FTP subclass with proxy-aware control + data channels."""
 
 
-class _ProxyFTP_TLS(_FtpProxyMixin, FTP_TLS):
+class _ProxyFTP_TLS(_FtpProxyMixin, _LenientListingMixin, FTP_TLS):
     """FTPS subclass with proxy-aware control + data channels."""
 
 
@@ -231,7 +364,7 @@ def _ftp_connect_via_proxy(ftp, host: str, port: int, proxy_config, timeout: flo
     return ftp.welcome
 
 
-class FtpSession:
+class FtpSession(SessionLifecycle):
     """FTP/FTPS backend implementing the FileBackend protocol.
 
     Uses ftplib (stdlib). Supports both plain FTP and explicit FTPS.
@@ -317,10 +450,10 @@ class FtpSession:
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
             ftp = (
-                _ProxyFTP_TLS(context=context) if self._proxy.enabled else FTP_TLS(context=context)
+                _ProxyFTP_TLS(context=context) if self._proxy.enabled else _FTP_TLS(context=context)
             )
         else:
-            ftp = _ProxyFTP() if self._proxy.enabled else FTP()  # nosec B321
+            ftp = _ProxyFTP() if self._proxy.enabled else _FTP()  # nosec B321
 
         if self._proxy.enabled:
             _ftp_connect_via_proxy(
@@ -383,6 +516,7 @@ class FtpSession:
         )
 
     @property
+    @liveness_check
     def connected(self) -> bool:
         if self._ftp is None:
             return False
@@ -392,6 +526,7 @@ class FtpSession:
         except Exception:
             return False
 
+    @serialized
     def disconnect(self) -> None:
         if self._ftp:
             log.info("FTP disconnecting from %s@%s", self._username, self._host)
@@ -439,6 +574,8 @@ class FtpSession:
             return False
         return not readable
 
+    @_ftp_errors_as_oserror
+    @serialized
     def list_dir(self, path: str) -> list[FileItem]:
         ftp = self._ensure_connected()
         items: list[FileItem] = []
@@ -447,6 +584,11 @@ class FtpSession:
             try:
                 for name, facts in ftp.mlsd(path, facts=["type", "size", "modify", "perm"]):
                     if name in (".", ".."):
+                        continue
+                    # RFC 3659 7.5.1: cdir is the listed directory itself
+                    # and pdir a parent; their pathname may be "tmp" or
+                    # "/tmp" rather than "." / "..", so the type decides.
+                    if facts.get("type", "").lower() in ("cdir", "pdir"):
                         continue
                     items.append(self._mlsd_to_item(name, facts))
                 return items
@@ -459,10 +601,15 @@ class FtpSession:
         except error_perm as e:
             raise OSError(f"Cannot list {path}: {e}") from e
 
+        # The stat fallback probes directories with CWD, which follows a
+        # symbolic link; only LIST says which entries are links.
+        listing = self._unix_listing(ftp, path) if names else None
         for full_path in names:
             entry_name = posixpath.basename(full_path) or full_path
             if entry_name in (".", ".."):
                 continue
+            link = _unix_entry(listing, entry_name)
+            is_link = link is not None and link[0] == "l"
             try:
                 stat_path = (
                     posixpath.join(path, entry_name) if not full_path.startswith("/") else full_path
@@ -473,14 +620,58 @@ class FtpSession:
                         name=entry_name,
                         size=item.size,
                         modified=item.modified,
-                        is_dir=item.is_dir,
+                        is_dir=item.is_dir and not is_link,
+                        is_link=is_link,
+                        link_target=link[1] if is_link else "",
                     )
                 )
             except OSError:
-                items.append(FileItem(name=entry_name))
+                items.append(FileItem(name=entry_name, is_link=is_link))
 
         return items
 
+    def _unix_listing(self, ftp: FTP, path: str) -> list[tuple[str, str]] | None:
+        """Parsed Unix-style ``LIST`` of directory ``path``, or None when
+        the server refuses it or answers in a format without link types."""
+        lines: list[str] = []
+        try:
+            ftp.retrlines(f"LIST {path}", lines.append)
+        except error_perm:
+            return None
+        return _parse_unix_list(lines)
+
+    def _entry_kind(self, ftp: FTP, path: str) -> str | None:
+        """``"link"``, ``"dir"`` or None (unknown) for an entry that CWD
+        accepts as a directory.
+
+        CWD follows symbolic links, and some MLSD servers report a link
+        with its target's type, so the parent's LIST decides. When LIST
+        is not Unix-style, an MLSD server's own type is trusted; without
+        MLSD the type stays unknown.
+        """
+        norm = posixpath.normpath(path)
+        parent, leaf = posixpath.split(norm)
+        if not leaf:
+            return "dir"  # the root has no parent that could link to it
+        listing = self._unix_listing(ftp, parent or ".")
+        entry = _unix_entry(listing, leaf)
+        if entry is not None:
+            return {"l": "link", "d": "dir"}.get(entry[0])
+        if listing is None and self._has_mlsd:
+            try:
+                facts = self._mlst_reply_facts(ftp.sendcmd(f"MLST {path}"))
+            except error_perm:
+                return None
+            if facts is not None:
+                item = self._mlsd_to_item(leaf, facts)
+                if item.is_link:
+                    return "link"
+                if item.is_dir:
+                    return "dir"
+        return None
+
+    @_ftp_errors_as_oserror
+    @serialized
     def stat(self, path: str) -> FileItem:
         ftp = self._ensure_connected()
         name = posixpath.basename(path) or path
@@ -492,17 +683,9 @@ class FtpSession:
         if self._has_mlsd:
             try:
                 resp = ftp.sendcmd(f"MLST {path}")
-                # PATTERN-001: ftplib joins multi-line responses with `\n`
-                # (see ftplib.getmultiline). Split on the actual emitter
-                # delimiter, not splitlines(), so a server-supplied entry
-                # name carrying \v / \f / U+0085 / U+2028 / U+2029 cannot
-                # forge a fake `type=...; name` line.
-                for line in split_lf_only_stream(resp):
-                    line = line.strip().rstrip("\r")
-                    if "=" in line:
-                        facts_str, _, entry_name = line.rpartition(" ")
-                        facts = self._parse_mlsd_facts(facts_str)
-                        return self._mlsd_to_item(name, facts)
+                facts = self._mlst_reply_facts(resp)
+                if facts is not None:
+                    return self._mlsd_to_item(name, facts)
             except error_perm:
                 pass
 
@@ -516,7 +699,8 @@ class FtpSession:
             mdtm_resp = ftp.sendcmd(f"MDTM {path}")
             # Response: "213 YYYYMMDDHHMMSS"
             ts = mdtm_resp.split(None, 1)[-1]
-            modified = datetime.strptime(ts[:14], "%Y%m%d%H%M%S")
+            # RFC 3659 2.3 / 3: MDTM times are UTC.
+            modified = datetime.strptime(ts[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
         except Exception:
             pass
 
@@ -531,6 +715,8 @@ class FtpSession:
 
         return FileItem(name=name, size=size, modified=modified, is_dir=is_dir)
 
+    @_ftp_errors_as_oserror
+    @serialized
     def is_dir(self, path: str) -> bool:
         ftp = self._ensure_connected()
         try:
@@ -555,6 +741,8 @@ class FtpSession:
             )
             return False
 
+    @_ftp_errors_as_oserror
+    @serialized
     def exists(self, path: str) -> bool:
         ftp = self._ensure_connected()
         try:
@@ -562,6 +750,10 @@ class FtpSession:
             return True
         except error_perm:
             pass
+        except ValueError:
+            # ftplib's size() int()s the reply text: "213 abc" is a success
+            # reply (the file is there) with a size it cannot parse.
+            return True
         try:
             old_cwd = ftp.pwd()
             ftp.cwd(path)
@@ -573,6 +765,8 @@ class FtpSession:
             # See is_dir() for the pure-ftpd/vsftpd encoding mismatch.
             return False
 
+    @_ftp_errors_as_oserror
+    @serialized
     def mkdir(self, path: str) -> None:
         ftp = self._ensure_connected()
         try:
@@ -580,10 +774,25 @@ class FtpSession:
         except error_perm as e:
             raise OSError(f"Cannot create directory {path}: {e}") from e
 
+    @_ftp_errors_as_oserror
+    @serialized
     def remove(self, path: str, recursive: bool = False) -> None:
         ftp = self._ensure_connected()
         if self.is_dir(path):
-            if recursive:
+            # CWD also accepts a symbolic link to a directory: such an
+            # entry is unlinked, never emptied.
+            kind = self._entry_kind(ftp, path)
+            if kind == "link":
+                try:
+                    ftp.delete(path)
+                except error_perm as e:
+                    raise OSError(f"Cannot delete link {path}: {e}") from e
+            elif recursive:
+                if kind != "dir":
+                    raise OSError(
+                        f"Refusing to recursively delete {path}: the server does not "
+                        "say whether it is a directory or a symbolic link"
+                    )
                 self._rmdir_recursive(path)
             else:
                 try:
@@ -596,8 +805,15 @@ class FtpSession:
             except error_perm as e:
                 raise OSError(f"Cannot delete {path}: {e}") from e
 
-    def _rmdir_recursive(self, path: str) -> None:
+    _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
+
+    def _rmdir_recursive(self, path: str, depth: int = 0) -> None:
+        check_tree_depth(path, depth, self._MAX_TREE_DEPTH)
         ftp = self._ensure_connected()
+        # A child is descended into only when LIST confirms a directory
+        # (or, when LIST cannot tell, an MLSD server says so); a link is
+        # unlinked. Every child is classified before anything is deleted.
+        listing = self._unix_listing(ftp, path)
         children = []
         for item in self.list_dir(path):
             try:
@@ -606,14 +822,30 @@ class FtpSession:
                 raise OSError(
                     f"Cannot recursively remove {path}: unsafe child name {item.name!r}: {exc}"
                 ) from exc
-            children.append((item, child))
-        for item, child in children:
-            if item.is_dir:
-                self._rmdir_recursive(child)
+            entry = _unix_entry(listing, item.name)
+            if item.is_link or (entry is not None and entry[0] == "l"):
+                descend = False
+            elif not item.is_dir:
+                descend = False
+            elif entry is not None and entry[0] == "d":
+                descend = True
+            elif entry is None and listing is None and self._has_mlsd:
+                descend = True
+            else:
+                raise OSError(
+                    f"Refusing to recursively delete {path}: the server does not say "
+                    f"whether {item.name!r} is a directory or a symbolic link"
+                )
+            children.append((descend, child))
+        for descend, child in children:
+            if descend:
+                self._rmdir_recursive(child, depth + 1)
             else:
                 ftp.delete(child)
         ftp.rmd(path)
 
+    @_ftp_errors_as_oserror
+    @serialized
     def rename(self, src: str, dst: str) -> None:
         ftp = self._ensure_connected()
         try:
@@ -621,6 +853,8 @@ class FtpSession:
         except error_perm as e:
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
 
+    @_ftp_errors_as_oserror
+    @serialized
     def open_read(self, path: str) -> IO[bytes]:
         ftp = self._ensure_connected()
         buf = io.BytesIO()
@@ -631,9 +865,11 @@ class FtpSession:
         buf.seek(0)
         return buf
 
+    @_ftp_errors_as_oserror
+    @serialized
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         ftp = self._ensure_connected()
-        return _SpooledWriter(ftp, path, append=append)
+        return _SpooledWriter(ftp, path, append=append, lock=io_lock(self))
 
     def normalize(self, path: str) -> str:
         return posixpath.normpath(path) or "/"
@@ -647,10 +883,14 @@ class FtpSession:
     def parent(self, path: str) -> str:
         return posixpath.dirname(path) or "/"
 
+    @_ftp_errors_as_oserror
+    @serialized
     def home(self) -> str:
         ftp = self._ensure_connected()
         return ftp.pwd()
 
+    @_ftp_errors_as_oserror
+    @serialized
     def chmod(self, path: str, mode: int) -> None:
         ftp = self._ensure_connected()
         octal = format(mode, "o")
@@ -681,6 +921,8 @@ class FtpSession:
     # FTP-specific verbs (round 2 of API_GAPS)
     # ------------------------------------------------------------------
 
+    @_ftp_errors_as_oserror
+    @serialized
     def features(self) -> list[str]:
         """``FEAT`` — list every server-advertised feature
         (``MLSD``, ``UTF8``, ``HASH``, ``EPSV``, ``SIZE``, …). Returns
@@ -708,6 +950,8 @@ class FtpSession:
             out.append(stripped)
         return out
 
+    @_ftp_errors_as_oserror
+    @serialized
     def site(self, command: str) -> str:
         """Send a raw ``SITE <command>`` and return the textual
         response. ``SITE`` is the universal extension verb — most
@@ -727,6 +971,8 @@ class FtpSession:
         except error_perm as exc:
             raise OSError(f"FTP SITE {command!r}: {exc}") from exc
 
+    @_ftp_errors_as_oserror
+    @serialized
     def mlst(self, path: str) -> dict[str, str]:
         """``MLST <path>`` — RFC 3659 facts for one entry. Returns the
         facts as a dict (e.g. ``{"size": "4096", "type": "dir",
@@ -748,24 +994,11 @@ class FtpSession:
             resp = ftp.sendcmd(f"MLST {path}")
         except error_perm as exc:
             raise OSError(f"FTP MLST {path}: {exc}") from exc
-        # Response:
-        #   250-Listing PATH
-        #    type=dir;size=4096;modify=20260426170000; PATH
-        #   250 End
-        # PATTERN-001: ftplib emits `\n`-joined responses; avoid splitlines().
-        for line in split_lf_only_stream(resp):
-            stripped = line.strip().rstrip("\r")
-            if stripped.startswith("250") or not stripped:
-                continue
-            # Each fact line ends with ``; <pathname>``; split on the
-            # last `; ` to peel that off, then parse facts.
-            facts_str = stripped
-            if "; " in stripped:
-                facts_str, _ = stripped.rsplit("; ", 1)
-                facts_str += ";"
-            return self._parse_mlsd_facts(facts_str)
-        return {}
+        facts = self._mlst_reply_facts(resp)
+        return facts if facts is not None else {}
 
+    @_ftp_errors_as_oserror
+    @serialized
     def cwd(self, path: str) -> None:
         """Raw ``CWD`` — change the server-side working directory.
         Useful when a script wants to run a sequence of relative-path
@@ -782,6 +1015,8 @@ class FtpSession:
         except error_perm as exc:
             raise OSError(f"FTP CWD {path}: {exc}") from exc
 
+    @_ftp_errors_as_oserror
+    @serialized
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """FTP has no native checksum command. Some servers advertise
         ``HASH`` (RFC draft) or ``XMD5`` / ``XSHA256`` extensions; we
@@ -816,6 +1051,35 @@ class FtpSession:
     # --- MLSD helpers ---
 
     @staticmethod
+    def _mlst_reply_facts(resp: str) -> dict[str, str] | None:
+        """Facts of the one entry line in an ``MLST`` reply, or None.
+
+        RFC 3659 7.2: the reply is ``250-<text>``, then the entry line
+        ``" facts SP pathname"``, then ``250 <text>``. The framing lines
+        usually echo the requested path, which may itself contain ``=``
+        or ``; ``, so they are recognised by their reply code and never
+        parsed as facts. Facts contain no space, so the pathname is
+        everything after the first space of the entry line.
+        """
+        # PATTERN-001: ftplib joins multi-line responses with `\n`
+        # (see ftplib.getmultiline). Split on the actual emitter
+        # delimiter, not splitlines(), so a server-supplied entry
+        # name carrying \v / \f / U+0085 / U+2028 / U+2029 cannot
+        # forge a fake `type=...; name` line.
+        for line in split_lf_only_stream(resp):
+            line = line.rstrip("\r")
+            if _FTP_REPLY_LINE.match(line):
+                continue
+            entry = line.lstrip(" ")
+            if not entry:
+                continue
+            facts_str, _, _pathname = entry.partition(" ")
+            if "=" not in facts_str:
+                continue
+            return FtpSession._parse_mlsd_facts(facts_str)
+        return None
+
+    @staticmethod
     def _parse_mlsd_facts(facts_str: str) -> dict[str, str]:
         facts: dict[str, str] = {}
         for part in facts_str.split(";"):
@@ -829,7 +1093,8 @@ class FtpSession:
     def _mlsd_to_item(name: str, facts: dict[str, str]) -> FileItem:
         entry_type = facts.get("type", "file").lower()
         is_dir = entry_type in ("dir", "cdir", "pdir")
-        is_link = entry_type == "os.unix=symlink"
+        # "OS.unix=slink:<target>" is the IANA-registered form (ProFTPD).
+        is_link = entry_type == "os.unix=symlink" or entry_type.startswith("os.unix=slink")
 
         size = 0
         if "size" in facts:
@@ -842,7 +1107,8 @@ class FtpSession:
         if "modify" in facts:
             try:
                 ts = facts["modify"][:14]
-                modified = datetime.strptime(ts, "%Y%m%d%H%M%S")
+                # RFC 3659 2.3 / 7.5.3: the modify fact is UTC.
+                modified = datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
             except (ValueError, IndexError):
                 pass
 

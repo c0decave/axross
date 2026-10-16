@@ -53,6 +53,7 @@ import tempfile
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ def _validate_filename(name: str) -> str:
     return cleaned
 
 
-class TftpSession:
+class TftpSession(SessionLifecycle):
     """TFTP backend implementing the FileBackend protocol.
 
     Read/write of literal paths works in any mode. Listing requires

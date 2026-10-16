@@ -72,6 +72,23 @@ class ResultParsingTest(unittest.TestCase):
             with self.assertRaises(pac.PacError, msg=repr(bad)):
                 pac.parse_result(bad)
 
+    def test_port_with_non_ascii_digits_is_a_pac_error(self) -> None:
+        # str.isdigit() accepts "²" (int() then raised ValueError past the
+        # PacError contract) and "٣" (int() made it port 3).
+        for bad in ("PROXY h:\u00b2", "PROXY h:8\u00b980", "PROXY h:\u0663", "SOCKS5 h:\uff18\uff10"):
+            with self.assertRaises(pac.PacError, msg=repr(bad)):
+                pac.parse_result(bad)
+
+    def test_script_returning_a_superscript_port_is_a_pac_error(self) -> None:
+        src = 'function FindProxyForURL(u, h) { return "PROXY a:\u00b2"; }'
+        with self.assertRaises(pac.PacError):
+            _find(src, "http://x/", "x")
+
+    def test_ascii_port_edges_still_parse(self) -> None:
+        self.assertEqual(pac.parse_result("PROXY h:1")[0].port, 1)
+        self.assertEqual(pac.parse_result("PROXY h:65535")[0].port, 65535)
+        self.assertEqual(pac.parse_result("PROXY h:00080")[0].port, 80)
+
 
 class CorporatePacTest(unittest.TestCase):
     def kinds(self, url, host):

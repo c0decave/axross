@@ -139,7 +139,8 @@ def _decode(raw: bytes) -> CrossProtocolLink:
         raise ValueError(f"xlink payload is not UTF-8: {exc}") from exc
     try:
         data = json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
+        # RecursionError: nested past the decoder's stack.
         raise ValueError(f"xlink payload is not JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("xlink payload must be a JSON object")
@@ -147,7 +148,10 @@ def _decode(raw: bytes) -> CrossProtocolLink:
         raise ValueError(
             f"xlink schema mismatch: expected {SCHEMA_TAG!r}, got {data.get('schema')!r}"
         )
-    version = int(data.get("version") or 0)
+    try:
+        version = int(data.get("version") or 0)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"xlink version {data.get('version')!r} is not a number") from exc
     if version < 1 or version > SCHEMA_VERSION:
         raise ValueError(
             f"xlink version {version} is not supported by this build (max {SCHEMA_VERSION})"

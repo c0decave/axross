@@ -99,9 +99,18 @@ class _Sftp(SFTPServerInterface):
                     raise OSError("simulated disk full")
                 return self._inner.write(data)
 
+        class _FailingClose(_Counting):
+            """A write handle whose close reports an error, as close(2)
+            does on NFS when the server only then runs out of quota."""
+
+            def close(self):
+                self._inner.close()
+                if stats.get("fail_close"):
+                    raise OSError("simulated EDQUOT at close")
+
         handle.filename = real
         handle.readfile = _Counting(fobj) if "r" in mode or "+" in mode else None
-        handle.writefile = _Counting(fobj) if mode != "rb" else None
+        handle.writefile = _FailingClose(fobj) if mode != "rb" else None
         return handle
 
     def remove(self, path):

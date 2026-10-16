@@ -19,25 +19,34 @@ backend they live on. This dialog wraps two operations:
 * **Move Selected to Trash** — only the selected copies, and only after
   :func:`core.cas.delete_duplicates` re-checked on the live backend that
   each still holds the indexed content and that a genuine other copy
-  survives. Removal goes to the axross trash, so it can be undone.
+  survives. Removal goes to the axross trash, so it can be undone. When
+  every copy of a group is selected (Ctrl+A), the first copy is kept.
+* **Mark All Duplicates (keep first)** — selects every copy but the first
+  of each group. The rows of a group are shown in survivor order (oldest
+  modification time first, see :func:`core.cas.survivor_key`), so the
+  first row is the copy that stays.
+* **Show** — all scans, one recorded scan, or only the copies inside a
+  folder; **Index & History…** opens :mod:`ui.cas_history_dialog`.
 
-A "Rebuild" run is the only way fresh data lands in the index; a
-"Find" run is a SELECT and free.
+A "Rebuild" run is the only way fresh data lands in the index (and it is
+recorded as a scan); a "Find" run is a SELECT and free.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
@@ -53,57 +62,20 @@ from ui.scan_job import BusyStrip, ScanJob
 
 log = logging.getLogger("ui.cas_dialog")
 
-COL_NAME, COL_FOLDER, COL_SIZE, COL_BACKEND, COL_HASH = range(5)
+COL_NAME, COL_FOLDER, COL_SIZE, COL_MODIFIED, COL_BACKEND, COL_HASH = range(6)
+
+MARK_ALL_TEXT = "Mark All Duplicates (keep first)"
+SURVIVOR_TIP = (
+    "First in its group: kept by “Mark All Duplicates (keep first)” and when "
+    "every copy is selected — the oldest copy; ties go to the shorter, then "
+    "the alphabetically first path."
+)
 
 
-@dataclass(frozen=True)
-class DeletionPlan:
-    """What a delete request resolves to, after the safety check."""
-
-    #: Entries that may be removed.
-    deletable: list = field(default_factory=list)
-    #: Hash values of groups held back because every copy was selected.
-    refused_groups: list = field(default_factory=list)
-    #: Copies that would remain across the affected groups.
-    survivors: int = 0
-
-
-def plan_deletion(selected, groups) -> DeletionPlan:
-    """Resolve a selection into a plan that cannot erase content.
-
-    A duplicate group exists precisely because the same bytes live in
-    more than one place. Selecting every row in a group and pressing
-    delete would remove the content entirely — turning a deduplication
-    tool into a deletion tool, in one click, on data the user believes
-    is safely duplicated.
-
-    So a group whose every copy is selected is refused as a whole rather
-    than partially applied: dropping "one of them" silently would leave
-    the user with a survivor they did not choose. Refusals are returned
-    so the UI can explain itself, and they never block deletions in
-    other groups — one reckless selection should not cost the rest of
-    an intended cleanup.
-
-    A group of one is not a duplicate and is likewise refused; deleting
-    a lone file is ordinary deletion and belongs in the file pane.
-    """
-    selected_keys = {(e.backend_id, e.path, e.value) for e in selected}
-    deletable: list = []
-    refused: list = []
-    survivors = 0
-
-    for group in groups:
-        in_group = [e for e in group if (e.backend_id, e.path, e.value) in selected_keys]
-        if not in_group:
-            continue
-        remaining = len(group) - len(in_group)
-        if remaining < 1:
-            refused.append(group[0].value)
-            continue
-        deletable.extend(in_group)
-        survivors += remaining
-
-    return DeletionPlan(deletable=deletable, refused_groups=refused, survivors=survivors)
+# The plan lives in core so the scripting API (``axross.dedupe``) and this
+# dialog decide alike; re-exported here for existing imports.
+DeletionPlan = CAS.DeletionPlan
+plan_deletion = CAS.plan_deletion
 
 
 def _format_size(n: int) -> str:
@@ -123,12 +95,24 @@ def _split_path(path: str) -> tuple[str, str]:
     return trimmed[:cut] or trimmed[: cut + 1], trimmed[cut + 1 :]
 
 
-def _backend_id_for(backend) -> str:
-    """Same shape as the metadata-search dialog — ``<class>:<name>``
-    or just ``<class>`` when the backend has no display name."""
-    cls = type(backend).__name__
-    name = getattr(backend, "name", "") or ""
-    return f"{cls}:{name}" if name else cls
+_backend_id_for = CAS.backend_id_for
+
+
+def _format_mtime(mtime) -> str:
+    if mtime is None:
+        return "unknown"
+    try:
+        return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+    except (OverflowError, OSError, ValueError):
+        return "unknown"
+
+
+def scan_label(scan) -> str:
+    """One line for a scan in the Show list."""
+    if scan.scan_id == CAS.EARLIER_SCANS:
+        return "Earlier scans (before scan history)"
+    when = scan.started_at.strftime("%Y-%m-%d %H:%M") if scan.started_at else "?"
+    return f"Scan #{scan.scan_id}: {scan.root} [{scan.backend_id}] — {when} ({scan.status})"
 
 
 class CasDuplicatesDialog(QDialog):
@@ -136,10 +120,13 @@ class CasDuplicatesDialog(QDialog):
 
     open_requested = pyqtSignal(str, str)  # backend_id, path
 
-    def __init__(self, active_pane=None, parent=None, backends=None) -> None:
+    def __init__(self, active_pane=None, parent=None, backends=None, scan_id=None) -> None:
         """*backends* are the connected backends of every open pane; a copy
-        on one of them can be verified as the survivor of a deletion."""
+        on one of them can be verified as the survivor of a deletion.
+        *scan_id* opens the finder on the duplicates of that scan."""
         super().__init__(parent)
+        self._scope: tuple = ("all", None) if scan_id is None else ("scan", int(scan_id))
+        self._history_dialog = None
         self._active_pane = active_pane
         self._backends: dict = {}
         for backend in [getattr(active_pane, "backend", None), *(backends or [])]:
@@ -154,6 +141,7 @@ class CasDuplicatesDialog(QDialog):
         self._job = ScanJob(self, formatter=self._format_progress)
         self._job.finished.connect(self._on_job_finished)
         self._build_ui()
+        self._populate_scopes()
         self._reload()
 
     # ------------------------------------------------------------------
@@ -172,6 +160,25 @@ class CasDuplicatesDialog(QDialog):
         intro.setWordWrap(True)
         root.addWidget(intro)
 
+        scope_row = QHBoxLayout()
+        scope_row.addWidget(QLabel("Show:", self))
+        self._scope_combo = QComboBox(self)
+        self._scope_combo.setToolTip(
+            "All scans; one scan (every group with a copy from it, all copies "
+            "shown); or only the copies inside a folder"
+        )
+        self._scope_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._scope_combo.currentIndexChanged.connect(self._on_scope_chosen)
+        scope_row.addWidget(self._scope_combo, stretch=1)
+        self._history_btn = QPushButton("Index && History…", self)
+        self._history_btn.setToolTip(
+            "Every scan that built the index: show its duplicates, re-scan, "
+            "remove it from the index, or clear the whole index"
+        )
+        self._history_btn.clicked.connect(self._open_history)
+        scope_row.addWidget(self._history_btn)
+        root.addLayout(scope_row)
+
         btn_row = QHBoxLayout()
         self._rebuild_btn = QPushButton("Rebuild from Active Pane…", self)
         self._rebuild_btn.clicked.connect(self._do_rebuild_active)
@@ -179,8 +186,16 @@ class CasDuplicatesDialog(QDialog):
         btn_row.addWidget(self._rebuild_btn)
 
         self._refresh_btn = QPushButton("Refresh", self)
-        self._refresh_btn.clicked.connect(self._reload)
+        self._refresh_btn.clicked.connect(self._refresh)
         btn_row.addWidget(self._refresh_btn)
+
+        self._mark_all_btn = QPushButton(MARK_ALL_TEXT, self)
+        self._mark_all_btn.setToolTip(
+            "Select every copy except the first of each group — the oldest by "
+            "modification time. Review, then Move Selected to Trash."
+        )
+        self._mark_all_btn.clicked.connect(self._mark_all_duplicates)
+        btn_row.addWidget(self._mark_all_btn)
 
         self._copy_btn = QPushButton("Copy ax-cas URL", self)
         self._copy_btn.clicked.connect(self._copy_url)
@@ -190,7 +205,8 @@ class CasDuplicatesDialog(QDialog):
         self._delete_btn.setToolTip(
             "Move the selected copies to the axross trash (restorable via Show Trash). "
             "Each file is re-checked first, and at least one verified copy of every "
-            "group is always kept."
+            "group is always kept: when every copy of a group is selected, the first "
+            "(oldest) one stays."
         )
         self._delete_btn.clicked.connect(self._delete_selected)
         btn_row.addWidget(self._delete_btn)
@@ -206,13 +222,20 @@ class CasDuplicatesDialog(QDialog):
         btn_row.addWidget(self._status)
         root.addLayout(btn_row)
 
+        # Said when the survivor rule could not use a modification time.
+        self._undated_label = QLabel("", self)
+        self._undated_label.setProperty("role", "muted")
+        self._undated_label.setWordWrap(True)
+        self._undated_label.setVisible(False)
+        root.addWidget(self._undated_label)
+
         # Tree: parent rows are the dup-group hash; children are the
         # actual paths. Doing it as a QTreeWidget keeps the visual
         # grouping obvious without us having to draw alternating
         # backgrounds in a flat table.
         self._tree = QTreeWidget(self)
-        self._tree.setColumnCount(5)
-        self._tree.setHeaderLabels(["Name", "Folder", "Size", "Backend", "Hash"])
+        self._tree.setColumnCount(6)
+        self._tree.setHeaderLabels(["Name", "Folder", "Size", "Modified", "Backend", "Hash"])
         font = self._tree.font()
         # Monospace is much nicer for hashes.
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -226,6 +249,7 @@ class CasDuplicatesDialog(QDialog):
         header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(COL_FOLDER, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_SIZE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_MODIFIED, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(COL_BACKEND, QHeaderView.ResizeMode.ResizeToContents)
         # A full sha256 is 64 characters and used to take the room the
         # names needed; it is in the tooltip and in "Copy ax-cas URL".
@@ -259,52 +283,130 @@ class CasDuplicatesDialog(QDialog):
     # ------------------------------------------------------------------
     # Data
     # ------------------------------------------------------------------
+    def scope(self) -> tuple:
+        """``("all", None)``, ``("scan", scan_id)`` or ``("folder", path)``."""
+        return self._scope
+
+    def set_scope(self, kind: str, value=None) -> None:
+        """Show all scans, one scan's duplicates, or a folder's."""
+        if kind not in ("all", "scan", "folder"):
+            raise ValueError(f"unknown scope {kind!r}")
+        self._scope = (kind, int(value) if kind == "scan" else value)
+        self._populate_scopes()
+        self._reload()
+
+    def _populate_scopes(self) -> None:
+        """Fill the Show list: all scans, every recorded scan, the folder
+        choice (and the folder in use, if any); select the current scope."""
+        combo = self._scope_combo
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem("All scans", ("all", None))
+            try:
+                scans = CAS.list_scans(None)
+            except Exception as exc:  # noqa: BLE001 — a broken index must not hide the dialog
+                log.warning("CAS.list_scans failed: %s", exc)
+                scans = []
+            for scan in scans:
+                combo.addItem(scan_label(scan), ("scan", scan.scan_id))
+            kind, value = self._scope
+            if kind == "scan" and not any(s.scan_id == value for s in scans):
+                combo.addItem(f"Scan #{value} (no longer in the index)", ("scan", value))
+            if kind == "folder" and value:
+                combo.addItem(f"Only inside folder: {value}", ("folder", value))
+            combo.addItem("Only inside folder…", ("folder", None))
+            for i in range(combo.count()):
+                if tuple(combo.itemData(i)) == tuple(self._scope):
+                    combo.setCurrentIndex(i)
+                    break
+        finally:
+            combo.blockSignals(False)
+
+    def _on_scope_chosen(self, index: int) -> None:
+        data = self._scope_combo.itemData(index)
+        if not data:
+            return
+        kind, value = data
+        if kind == "folder" and value is None:
+            start = getattr(self._active_pane, "current_path", "") or ""
+            if self._scope[0] == "folder":
+                start = self._scope[1]
+            text, ok = QInputDialog.getText(
+                self,
+                "Only Inside Folder",
+                "Show only duplicates whose copies lie inside this folder (on any backend):",
+                text=start,
+            )
+            text = (text or "").strip()
+            if not ok or not text:
+                self._populate_scopes()  # back to the scope still in use
+                return
+            value = text
+        self.set_scope(kind, value)
+
+    def _refresh(self) -> None:
+        self._populate_scopes()
+        self._reload()
+
+    def _query_groups(self) -> list:
+        """Groups of every algorithm in the index (rebuild defaults to sha256,
+        but a backend may have registered md5: S3 ETag, Azure Content-MD5)."""
+        kind, value = self._scope
+        if kind == "scan":
+            return CAS.duplicates(None, None, scan_id=value)
+        if kind == "folder":
+            return CAS.duplicates(None, None, folder=value)
+        return CAS.duplicates(None, None)
+
     def _reload(self) -> None:
         self._tree.clear()
         # Kept so plan_deletion can see whole groups, not just the rows
         # the user happened to click — the safety check needs to know
         # how many copies a group started with.
         self._groups: list[list] = []
-        # Try a few common algorithms; CAS rebuild defaults to sha256
-        # but a backend could've registered md5 (S3 ETag, Azure
-        # Content-MD5) so we surface those groups too.
-        algos = ("sha256", "md5", "etag", "dropbox", "quickxor")
-        total_groups = 0
         total_files = 0
+        undated = 0
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            for algo in algos:
-                try:
-                    groups = CAS.duplicates(None, algo)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("CAS.duplicates(%s) failed: %s", algo, exc)
+            try:
+                groups = self._query_groups()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("CAS.duplicates failed: %s", exc)
+                groups = []
+            for group in groups:
+                if not group:
                     continue
-                for group in groups:
-                    if not group:
-                        continue
-                    total_groups += 1
-                    total_files += len(group)
-                    self._groups.append(list(group))
-                    parent = QTreeWidgetItem(self._tree)
-                    head = group[0]
-                    parent.setText(COL_NAME, f"[{head.algorithm}] {len(group)} copies")
-                    parent.setText(COL_SIZE, _format_size(head.size))
-                    parent.setText(COL_HASH, head.value)
-                    parent.setToolTip(COL_HASH, f"{head.algorithm}:{head.value}")
-                    parent.setData(
-                        COL_NAME, Qt.ItemDataRole.UserRole, ("group", head.algorithm, head.value)
-                    )
-                    for entry in group:
-                        folder, name = _split_path(entry.path)
-                        child = QTreeWidgetItem(parent)
-                        child.setText(COL_NAME, name)
-                        child.setText(COL_FOLDER, folder)
-                        child.setText(COL_SIZE, _format_size(entry.size))
-                        child.setText(COL_BACKEND, entry.backend_id)
-                        for col in (COL_NAME, COL_FOLDER):
-                            child.setToolTip(col, entry.path)
-                        child.setData(COL_NAME, Qt.ItemDataRole.UserRole, ("entry", entry))
-                    parent.setExpanded(True)
+                total_files += len(group)
+                undated += CAS.has_undated(group)
+                self._groups.append(list(group))
+                parent = QTreeWidgetItem(self._tree)
+                head = group[0]
+                parent.setText(COL_NAME, f"[{head.algorithm}] {len(group)} copies")
+                parent.setText(COL_SIZE, _format_size(head.size))
+                parent.setText(COL_HASH, head.value)
+                parent.setToolTip(COL_HASH, f"{head.algorithm}:{head.value}")
+                parent.setData(
+                    COL_NAME, Qt.ItemDataRole.UserRole, ("group", head.algorithm, head.value)
+                )
+                # Rows come in survivor order: the first one is the copy that stays.
+                for position, entry in enumerate(group):
+                    folder, name = _split_path(entry.path)
+                    child = QTreeWidgetItem(parent)
+                    child.setText(COL_NAME, name)
+                    child.setText(COL_FOLDER, folder)
+                    child.setText(COL_SIZE, _format_size(entry.size))
+                    child.setText(COL_MODIFIED, _format_mtime(entry.mtime))
+                    child.setText(COL_BACKEND, entry.backend_id)
+                    for col in (COL_NAME, COL_FOLDER):
+                        child.setToolTip(col, entry.path)
+                    if position == 0:
+                        font = child.font(COL_MODIFIED)
+                        font.setBold(True)
+                        child.setFont(COL_MODIFIED, font)
+                        child.setToolTip(COL_MODIFIED, SURVIVOR_TIP)
+                    child.setData(COL_NAME, Qt.ItemDataRole.UserRole, ("entry", entry))
+                parent.setExpanded(True)
         finally:
             QApplication.restoreOverrideCursor()
         self._tree.resizeColumnToContents(COL_NAME)
@@ -312,7 +414,15 @@ class CasDuplicatesDialog(QDialog):
         cap = max(200, self._tree.viewport().width() // 2)
         if self._tree.columnWidth(COL_NAME) > cap:
             self._tree.setColumnWidth(COL_NAME, cap)
-        self._status.setText(f"{total_groups} duplicate group(s) covering {total_files} file(s)")
+        self._undated_label.setText(
+            f"{undated} group(s) contain copies without a modification time: those "
+            "sort after dated copies, then by path, so “first” there means the "
+            "shortest path. Rebuild the index to record the times."
+        )
+        self._undated_label.setVisible(undated > 0)
+        self._status.setText(
+            f"{len(self._groups)} duplicate group(s) covering {total_files} file(s)"
+        )
 
     def _do_rebuild_active(self) -> None:
         pane = self._active_pane
@@ -370,7 +480,7 @@ class CasDuplicatesDialog(QDialog):
         else:
             text = f"Indexed {value} file(s) under {path}."
         QMessageBox.information(self, "Rebuild CAS", text)
-        self._reload()
+        self._refresh()
 
     def reject(self) -> None:
         # Esc, the Close button and the window's own close all land here or
@@ -410,16 +520,8 @@ class CasDuplicatesDialog(QDialog):
             )
             return
 
+        # Every copy of a group selected (Ctrl+A): its first copy is kept.
         plan = plan_deletion(selected, getattr(self, "_groups", []))
-
-        if plan.refused_groups:
-            QMessageBox.warning(
-                self,
-                "Every copy selected",
-                f"{len(plan.refused_groups)} group(s) had ALL their copies selected. "
-                "Removing those would erase the content entirely, so they were "
-                "left alone — deselect at least one copy per group to proceed.",
-            )
         if not plan.deletable:
             return
 
@@ -438,11 +540,17 @@ class CasDuplicatesDialog(QDialog):
             return
 
         hosts = sorted({e.backend_id for e in mine})
+        kept = f"{plan.survivors} " + ("copy is kept" if plan.survivors == 1 else "copies are kept")
+        if plan.auto_kept:
+            kept += (
+                f" — in {len(plan.auto_kept)} group(s) every copy was selected, so "
+                "the first (oldest) copy of each stays"
+            )
         confirm = QMessageBox.question(
             self,
             "Move to Trash",
             f"Move {len(mine)} file(s) on {', '.join(hosts)} to the axross trash?\n"
-            f"{plan.survivors} indexed copy/copies will remain.\n\n"
+            f"{kept}.\n\n"
             "Each file is re-checked first: it is only moved if it still holds "
             "the indexed content and another verified copy remains. Trashed "
             "files can be restored via Show Trash."
@@ -491,8 +599,8 @@ class CasDuplicatesDialog(QDialog):
             QMessageBox.warning(self, "Move to Trash", "\n".join(lines))
         else:
             QMessageBox.information(self, "Move to Trash", "\n".join(lines))
+        self._refresh()
         self._status.setText(f"Moved {len(outcome.removed)} duplicate(s) to trash")
-        self._reload()
 
     # ------------------------------------------------------------------
     # Context menu
@@ -531,12 +639,7 @@ class CasDuplicatesDialog(QDialog):
 
         if kind is not None:
             menu.addSeparator()
-        menu.addAction(
-            "Select Duplicates in Every Group (keep one)",
-            lambda: self._select_all_but_one(
-                [self._tree.topLevelItem(i) for i in range(self._tree.topLevelItemCount())]
-            ),
-        )
+        menu.addAction(MARK_ALL_TEXT, self._mark_all_duplicates)
         menu.addAction("Clear Selection", self._tree.clearSelection)
         menu.addSeparator()
         has_files = bool(self.selected_entries())
@@ -556,9 +659,17 @@ class CasDuplicatesDialog(QDialog):
             if child is not keep:
                 child.setSelected(True)
 
+    def _mark_all_duplicates(self) -> None:
+        """Select every copy except the first (the survivor) of each group."""
+        self._select_all_but_one(
+            [self._tree.topLevelItem(i) for i in range(self._tree.topLevelItemCount())]
+        )
+        self._status.setText(f"{len(self.selected_entries())} duplicate(s) marked")
+
     def _select_all_but_one(self, groups) -> None:
-        """Select every copy except the first of each group — the user
-        sees the result and can change it before removing anything."""
+        """Select every copy except the first of each group — the rows are in
+        survivor order, so that is the oldest copy. The user sees the result
+        and can change it before removing anything."""
         self._tree.clearSelection()
         for group in groups:
             for i in range(1, group.childCount()):
@@ -585,7 +696,7 @@ class CasDuplicatesDialog(QDialog):
                 forgotten += CAS.remove(None, entry.backend_id, entry.path)
             except Exception as exc:  # noqa: BLE001 — report, keep going
                 log.warning("CAS index removal failed for %s: %s", entry.path, exc)
-        self._reload()
+        self._refresh()
         self._status.setText(f"Removed {forgotten} row(s) from the index")
 
     def _export(self) -> None:
@@ -618,6 +729,27 @@ class CasDuplicatesDialog(QDialog):
             return
         QGuiApplication.clipboard().setText(url)
         self._status.setText(f"Copied {url} to clipboard")
+
+    def _open_history(self) -> None:
+        """The Index / History view, following this finder: "Show Duplicates"
+        there sets the scope here, and every change reloads it."""
+        from ui.cas_history_dialog import CasHistoryDialog
+
+        if self._history_dialog is not None and self._history_dialog.isVisible():
+            self._history_dialog.raise_()
+            self._history_dialog.activateWindow()
+            return
+        dlg = CasHistoryDialog(parent=self, backends=self._backends)
+        dlg.show_duplicates_requested.connect(lambda sid: self.set_scope("scan", sid))
+        dlg.index_changed.connect(self._refresh)
+        dlg.finished.connect(lambda _code: self._forget_history(dlg))
+        self._history_dialog = dlg
+        dlg.open()
+
+    def _forget_history(self, dlg) -> None:
+        if self._history_dialog is dlg:
+            self._history_dialog = None
+        dlg.deleteLater()  # a child of the finder: gone once closed
 
     def _on_double_click(self, item: QTreeWidgetItem, _col: int) -> None:
         data = item.data(COL_NAME, Qt.ItemDataRole.UserRole)

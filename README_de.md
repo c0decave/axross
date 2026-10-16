@@ -94,10 +94,20 @@ links `/` als **TARGET**, rechts `/proc` als **SOURCE**. Symlinks wie
    startbar via `axross --script` oder REPL-Slash `.run name`.
 
 7. **MCP-Server-Modus für LLM-Agenten.** Headless `axross
-   --mcp-server` spricht JSON-RPC über stdio oder HTTPS+mTLS.
-   Read-only per Default; `--mcp-write` öffnet die Datei-Mutation;
-   **`--mcp-allow-scripts` lässt das LLM eigene Python-Skripte
-   schreiben und ausführen** über den Server. Siehe
+   --mcp-server` spricht JSON-RPC über stdio oder HTTP (mTLS Pflicht
+   außerhalb von Loopback) und bedient das lokale Dateisystem unter
+   `--mcp-root` (Default: das Home-Verzeichnis). Read-only per
+   Default; `--mcp-write` öffnet die Datei-Mutation (braucht ein
+   explizites `--mcp-root`); **`--mcp-allow-scripts` (nur stdio)
+   lässt das LLM eigene Python-Skripte schreiben und mit deinen
+   Rechten ausführen**, jeden Lauf in einem Kindprozess mit Timeout —
+   nicht auf die Root begrenzt, also wie eine Shell behandeln. `--mcp-tools GRUPPE[,…]` (oder `all`) fügt
+   Capability-Gruppen hinzu: metadata, duplicates, packer, archive,
+   crypto, index, filetype, transfer, remote (gespeicherte Profile als
+   weitere Backends, Credentials nur aus dem Keyring, nie ein Prompt)
+   und extensions; ihre mutierenden Tools brauchen zusätzlich
+   `--mcp-write`. `axross --mcp-list-tools` gibt das JSON-Manifest
+   aller Tools aus ([docs/mcp-tools.json](docs/mcp-tools.json)). Siehe
    [docs/MCP_de.md](docs/MCP_de.md).
 
 8. **Verschlüsselter Overlay (`.axenc`).** AEAD-versiegeltes Datei-
@@ -234,7 +244,7 @@ Von PyPI, sobald ein Release veröffentlicht ist:
 python3 -m venv .venv && source .venv/bin/activate
 pip install "axross[all]"
 axross              # GUI starten
-axross --mcp-server # oder Backends als MCP-Tools an einen LLM ausliefern
+axross --mcp-server # oder das lokale Dateisystem als MCP-Tools an einen LLM ausliefern
 ```
 
 Aus einem Source-Checkout:
@@ -245,7 +255,7 @@ cd axross
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 axross              # GUI starten
-axross --mcp-server # oder Backends als MCP-Tools an einen LLM ausliefern
+axross --mcp-server # oder das lokale Dateisystem als MCP-Tools an einen LLM ausliefern
 ```
 
 ```python

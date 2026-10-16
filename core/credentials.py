@@ -13,6 +13,7 @@ backends.
 from __future__ import annotations
 
 import logging
+import os
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +76,14 @@ def _ensure_non_interactive_keyring() -> None:
             keyring_logger.setLevel(prev_level)
 
         ident = _backend_identifier(backend)
-        if _is_unusable(backend):
+        # PYTHON_KEYRING_BACKEND is an explicit choice ("this backend and no
+        # other" - the test suite pins the null backend with it); only an
+        # unconfigured, unusable default is replaced.
+        explicit = bool(os.environ.get("PYTHON_KEYRING_BACKEND", "").strip())
+        if _is_unusable(backend) and explicit:
+            _keyring_usable = False
+            log.info("Keyring backend %s was chosen explicitly; secrets are not saved", ident)
+        elif _is_unusable(backend):
             if _try_set_real_backend():
                 backend = keyring.get_keyring()
                 ident = _backend_identifier(backend)
@@ -132,6 +140,45 @@ def keyring_status_message() -> str:
 
 def _entry_name(profile_name: str, suffix: str = "") -> str:
     return profile_name if not suffix else f"{profile_name}:{suffix}"
+
+
+# Every keyring entry lives in one flat namespace under SERVICE_NAME. A
+# connection profile's own entry is its bare name, so a name must never
+# equal an entry some other secret is stored under.
+_PROXY_SUFFIX = "proxy"
+_SECRET_INFIX = "secret"
+#: Owner name of the global default proxy's password (core.proxy_settings).
+DEFAULT_PROXY_OWNER = "__default_proxy__"
+#: Prefix of every LLM profile API-key entry (core.llm_profiles).
+LLM_API_KEY_PREFIX = "llm-profile:"
+
+
+def profile_name_problem(profile_name: str) -> str | None:
+    """Why *profile_name* cannot name a connection profile, or None.
+
+    The profile's password entry would be the entry of another secret:
+    the proxy password or a sensitive field of another profile, the
+    default proxy's password, or an LLM API key.
+    """
+    if profile_name.endswith(f":{_PROXY_SUFFIX}"):
+        return f"ends with ':{_PROXY_SUFFIX}', which names another profile's proxy password"
+    if f":{_SECRET_INFIX}:" in profile_name:
+        return f"contains ':{_SECRET_INFIX}:', which names another profile's stored secret"
+    if profile_name == DEFAULT_PROXY_OWNER:
+        return "is reserved for the default proxy password"
+    if profile_name.startswith(LLM_API_KEY_PREFIX):
+        return f"starts with {LLM_API_KEY_PREFIX!r}, which names LLM API keys"
+    return None
+
+
+def proxy_entry(profile_name: str) -> str:
+    """Keyring entry of *profile_name*'s proxy password."""
+    return _entry_name(profile_name, _PROXY_SUFFIX)
+
+
+def secret_entry(profile_name: str, secret_name: str) -> str:
+    """Keyring entry of *profile_name*'s sensitive field *secret_name*."""
+    return _entry_name(profile_name, f"{_SECRET_INFIX}:{secret_name}")
 
 
 def store_password(profile_name: str, password: str) -> bool:
@@ -195,24 +242,24 @@ def delete_password(profile_name: str) -> bool:
 
 
 def store_proxy_password(profile_name: str, password: str) -> bool:
-    return store_password(f"{profile_name}:proxy", password)
+    return store_password(proxy_entry(profile_name), password)
 
 
 def get_proxy_password(profile_name: str) -> str | None:
-    return get_password(f"{profile_name}:proxy")
+    return get_password(proxy_entry(profile_name))
 
 
 def delete_proxy_password(profile_name: str) -> bool:
-    return delete_password(f"{profile_name}:proxy")
+    return delete_password(proxy_entry(profile_name))
 
 
 def store_secret(profile_name: str, secret_name: str, value: str) -> bool:
-    return store_password(f"{profile_name}:secret:{secret_name}", value)
+    return store_password(secret_entry(profile_name, secret_name), value)
 
 
 def get_secret(profile_name: str, secret_name: str) -> str | None:
-    return get_password(f"{profile_name}:secret:{secret_name}")
+    return get_password(secret_entry(profile_name, secret_name))
 
 
 def delete_secret(profile_name: str, secret_name: str) -> bool:
-    return delete_password(f"{profile_name}:secret:{secret_name}")
+    return delete_password(secret_entry(profile_name, secret_name))

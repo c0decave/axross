@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -294,6 +295,16 @@ class ConnectionManager:
     def __init__(self):
         self._sessions: dict[tuple[str, ...], object] = {}
         self._ref_counts: dict[tuple[str, ...], int] = {}
+        # connect() runs on worker QThreads while release() runs on the
+        # GUI thread; this guards the two dicts above.
+        self._lock = threading.Lock()
+        # One (profile, session key) entry per reference handed out by
+        # connect() / acquire(). release() gives back the key the
+        # reference was taken under: recomputing it would go through
+        # the PAC again, whose answer may have changed meanwhile (a new
+        # PAC file after the cache TTL, a time-based rule) or which may
+        # no longer be readable.
+        self._held: list[tuple[ConnectionProfile, tuple[str, ...]]] = []
         self._profile_resolver: Callable[[str], ConnectionProfile | None] | None = None
 
     def set_profile_resolver(self, resolver: Callable[[str], ConnectionProfile | None]) -> None:
@@ -375,27 +386,38 @@ class ConnectionManager:
         key = self._session_key(resolved)
 
         # Reuse existing active session
-        if key in self._sessions:
-            session = self._sessions[key]
-            if self._is_connected(session):
-                self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
-                log.info(
-                    "Reusing existing session for %s (refs: %d)", key[:4], self._ref_counts[key]
-                )
-                self._decorate_session(session, profile, key)
-                self._record_visit(profile)
-                return session
-            else:
-                log.info("Stale session for %s, reconnecting", key[:4])
-                self._unenroll_health(key)
-                del self._sessions[key]
-                self._ref_counts.pop(key, None)
+        reused = self._reuse_locked(key, profile)
+        if reused is not None:
+            self._decorate_session(reused, profile, key)
+            self._record_visit(profile)
+            return reused
 
-        # Create new session based on protocol
+        # Create new session based on protocol. Not under the lock: it is
+        # network I/O (and may wait for a host-key prompt).
         session = self._create_session(resolved, password, key_passphrase, on_unknown_host)
 
-        self._sessions[key] = session
-        self._ref_counts[key] = 1
+        # Another thread may have connected the same key meanwhile (two
+        # panes opening one profile). Keep the registered session so both
+        # panes share one reference count; close the duplicate.
+        with self._lock:
+            existing = self._sessions.get(key)
+            if existing is not None and self._is_connected(existing):
+                self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
+                duplicate, session = session, existing
+            else:
+                duplicate = None
+                self._sessions[key] = session
+                self._ref_counts[key] = 1
+            self._held.append((profile, key))
+        if duplicate is not None:
+            log.info("Concurrent connect for %s; closing the duplicate session", key[:4])
+            try:
+                self._disconnect_session(duplicate)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("ConnectionManager: closing duplicate failed: %s", exc)
+            self._decorate_session(session, profile, key)
+            self._record_visit(profile)
+            return session
         self._decorate_session(session, profile, key)
         self._enroll_health(session, profile, key)
         self._record_visit(profile)
@@ -403,6 +425,29 @@ class ConnectionManager:
             "New %s session established for %s@%s", profile.protocol, profile.username, profile.host
         )
         return session
+
+    def _reuse_locked(
+        self, key: tuple[str, ...], profile: ConnectionProfile | None = None
+    ) -> object | None:
+        """Take a reference on the live session for *key*, or drop a stale
+        one and return None."""
+        with self._lock:
+            session = self._sessions.get(key)
+            if session is None:
+                return None
+            if self._is_connected(session):
+                self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
+                if profile is not None:
+                    self._held.append((profile, key))
+                log.info(
+                    "Reusing existing session for %s (refs: %d)", key[:4], self._ref_counts[key]
+                )
+                return session
+            log.info("Stale session for %s, reconnecting", key[:4])
+            del self._sessions[key]
+            self._ref_counts.pop(key, None)
+        self._unenroll_health(key)
+        return None
 
     @staticmethod
     def _decorate_session(
@@ -819,33 +864,72 @@ class ConnectionManager:
         # Non-SSH backends: assume connected if the object exists
         return True
 
+    def _held_key_locked(
+        self, profile: ConnectionProfile, *, take: bool
+    ) -> tuple[str, ...] | None:
+        """Session key of a reference *profile* holds (the same object
+        first, then an equal copy), newest first; *take* removes it."""
+        for same in (lambda held: held is profile, lambda held: held == profile):
+            for idx in range(len(self._held) - 1, -1, -1):
+                held_profile, key = self._held[idx]
+                if same(held_profile):
+                    if take:
+                        del self._held[idx]
+                    return key
+        return None
+
+    def acquire(self, profile: ConnectionProfile) -> bool:
+        """Take one more reference on the live session *profile* holds
+        (a terminal pane beside a file pane). False when there is none;
+        then nothing is taken and the caller connects on its own."""
+        with self._lock:
+            key = self._held_key_locked(profile, take=False)
+            if key is None or key not in self._sessions:
+                return False
+            self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
+            self._held.append((profile, key))
+            return True
+
     def release(self, profile: ConnectionProfile) -> None:
         """Release a reference to a session. Disconnects when no more references."""
-        key = self._session_key(profile)
-        if key not in self._ref_counts:
-            return
+        with self._lock:
+            key = self._held_key_locked(profile, take=True)
+        if key is None:
+            # A reference not taken through connect() / acquire().
+            try:
+                key = self._session_key(profile)
+            except ConnectionError as exc:  # PAC unreadable: nothing to match
+                log.debug("release: no session key for %s: %s", profile.name, exc)
+                return
+        with self._lock:
+            if key not in self._ref_counts:
+                return
 
-        self._ref_counts[key] -= 1
-        log.debug("Released session %s (refs: %d)", key[:4], self._ref_counts[key])
+            self._ref_counts[key] -= 1
+            log.debug("Released session %s (refs: %d)", key[:4], self._ref_counts[key])
 
-        if self._ref_counts[key] <= 0:
+            if self._ref_counts[key] > 0:
+                return
             session = self._sessions.pop(key, None)
             self._ref_counts.pop(key, None)
-            self._unenroll_health(key)
-            if session:
-                self._disconnect_session(session)
-                log.info("Disconnected session %s (no more references)", key[:4])
+        self._unenroll_health(key)
+        if session:
+            self._disconnect_session(session)
+            log.info("Disconnected session %s (no more references)", key[:4])
 
     def disconnect_all(self) -> None:
         """Disconnect all sessions."""
-        for key, session in list(self._sessions.items()):
+        with self._lock:
+            sessions = list(self._sessions.items())
+            self._sessions.clear()
+            self._ref_counts.clear()
+            self._held.clear()
+        for key, session in sessions:
             try:
                 self._unenroll_health(key)
                 self._disconnect_session(session)
             except Exception as e:
                 log.error("Error disconnecting %s: %s", key[:4], e)
-        self._sessions.clear()
-        self._ref_counts.clear()
         log.info("All sessions disconnected")
 
     @staticmethod
@@ -858,12 +942,18 @@ class ConnectionManager:
 
     def get_session(self, profile: ConnectionProfile) -> object | None:
         """Get an existing session without connecting."""
-        key = self._session_key(profile)
-        session = self._sessions.get(key)
+        with self._lock:
+            key = self._held_key_locked(profile, take=False)
+        if key is None:
+            key = self._session_key(profile)
+        with self._lock:
+            session = self._sessions.get(key)
         if session and self._is_connected(session):
             return session
         return None
 
     def active_sessions(self) -> list:
         """Return all active sessions."""
-        return [s for s in self._sessions.values() if self._is_connected(s)]
+        with self._lock:
+            sessions = list(self._sessions.values())
+        return [s for s in sessions if self._is_connected(s)]

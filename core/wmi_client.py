@@ -38,6 +38,8 @@ import re
 from datetime import datetime
 from typing import IO
 
+from core.answer_fields import as_size, as_str
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -171,7 +173,7 @@ def _compose(drive: str, path: str, name: str, ext: str) -> str:
 # --------------------------------------------------------------------------
 
 
-class WMISession:
+class WMISession(SessionLifecycle):
     """DCOM-WMI backend (FileBackend). Metadata-only.
 
     Construct one per (host, credentials). Lazy-connects on first
@@ -528,17 +530,21 @@ class WMISession:
     def _row_to_item(row: dict, *, is_dir: bool) -> FileItem:
         # Win32_Directory rows don't have FileName/Extension columns,
         # so we fall back to the basename of Name (the full path).
-        name = row.get("FileName")
-        ext = row.get("Extension")
+        # Properties are read with the type they should have: a value of
+        # another type (a hostile or broken WMI provider) must not raise
+        # AttributeError / ValueError in the pane. FileSize is a CIM
+        # uint64, which WMI hands over as a decimal string.
+        name = as_str(row.get("FileName"))
+        ext = as_str(row.get("Extension"))
         if name:
             display = f"{name}.{ext}" if ext else name
         else:
-            full = row.get("Name") or ""
+            full = as_str(row.get("Name"))
             display = full.rsplit("\\", 1)[-1] or full
         return FileItem(
             name=display,
-            size=int(row.get("FileSize") or 0),
-            modified=_parse_dmtf(row.get("LastModified") or ""),
+            size=as_size(row.get("FileSize"), digit_strings=True),
+            modified=_parse_dmtf(as_str(row.get("LastModified"))),
             is_dir=is_dir,
         )
 

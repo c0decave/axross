@@ -26,6 +26,8 @@ except ImportError:  # pragma: no cover
     EC = None
 
 WHEN = datetime(2026, 1, 2, tzinfo=timezone.utc)
+# FileItem keeps local wall clock time (models/file_item.py contract).
+LOCAL_WHEN = WHEN.astimezone().replace(tzinfo=None)
 
 
 def _messages():
@@ -74,7 +76,10 @@ class ListingFieldsTest(unittest.TestCase):
                 expected.append((mid, 0))
         got = [(i.name, i.size) for i in self.s._list_messages(self.folder)]
         mtimes = [i.modified for i in self.s._list_messages(self.folder) if not i.is_dir]
-        self.assertEqual(mtimes, [EC.ExchangeSession._msg_mtime(m) for m in _messages()])
+        self.assertEqual(
+            [m.timestamp() for m in mtimes],
+            [EC.ExchangeSession._msg_mtime(m).timestamp() for m in _messages()],
+        )
         self.assertEqual(got, expected)
 
     def test_happy_only_the_shown_fields_are_requested(self) -> None:
@@ -141,16 +146,16 @@ class MetadataFetchTest(unittest.TestCase):
 
     def test_happy_eml_stat_uses_the_listing_fields(self) -> None:
         item = self.s.stat("/Inbox/M1_s.eml")
-        self.assertEqual((item.size, item.modified), (900, WHEN))
+        self.assertEqual((item.size, item.modified), (900, LOCAL_WHEN))
         self.assertEqual(self.only_calls, [EC.LISTING_FIELDS])
 
     def test_happy_attachment_listing_and_stat_fetch_attachments_only(self) -> None:
         folder = self.s._resolve_folder(["Inbox"])
         listed = self.s._list_attachments(folder, "M1")
         self.assertEqual([(i.name, i.size) for i in listed], [("a.pdf", 77)])
-        self.assertEqual([i.modified for i in listed], [WHEN])
+        self.assertEqual([i.modified for i in listed], [LOCAL_WHEN])
         item = self.s.stat("/Inbox/M1/a.pdf")
-        self.assertEqual((item.size, item.modified), (77, WHEN))
+        self.assertEqual((item.size, item.modified), (77, LOCAL_WHEN))
         self.assertEqual(self.only_calls[0], EC.ATTACHMENT_FIELDS)
         self.assertEqual(self.only_calls[-1], EC.ATTACHMENT_FIELDS)
 

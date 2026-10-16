@@ -29,6 +29,7 @@ import logging
 import os
 import posixpath
 import sqlite3
+import stat
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -92,7 +93,16 @@ _lock = threading.Lock()
 @contextmanager
 def _connect(db_path: Path | None):
     path = Path(db_path) if db_path else _DEFAULT_DB
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # The index lists backend ids (user@host) and full remote paths of
+    # everything indexed: private to the user, like core.cas's index.
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not path.exists():
+        os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))
+    elif stat.S_IMODE(path.stat().st_mode) & 0o077:
+        try:
+            os.chmod(path, 0o600)  # written world-readable by older versions
+        except OSError as exc:
+            log.debug("metadata_index: cannot chmod %s: %s", path, exc)
     with _lock:
         conn = sqlite3.connect(str(path))
         try:

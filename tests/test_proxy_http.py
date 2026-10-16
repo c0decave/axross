@@ -146,6 +146,66 @@ class HttpsProxyTest(unittest.TestCase):
             s.close()
 
 
+class IdnTargetTest(unittest.TestCase):
+    """A target host with non-ASCII letters reaches every proxy kind as its
+    IDNA (punycode) name, the form DNS and the proxy understand."""
+
+    PUNY = "xn--bcher-kva.example"
+
+    def setUp(self) -> None:
+        self.pki = TestPki()
+        self.echo = EchoServer()
+        self.addCleanup(self.echo.close)
+        self.routes = {(self.PUNY, 5432): ("127.0.0.1", self.echo.port)}
+        patcher = allow_loopback_proxy()
+        patcher.__enter__()
+        self.addCleanup(patcher.__exit__, None, None, None)
+
+    def _talk(self, cfg, host: str) -> bytes:
+        s = proxy.create_proxy_socket(cfg, host, 5432, timeout=5)
+        self.addCleanup(s.close)
+        s.settimeout(5)
+        return s.recv(6)
+
+    def test_plain_http_connect_sends_punycode(self) -> None:
+        srv = FakeHttpProxy(self.routes)
+        self.addCleanup(srv.close)
+        self.assertEqual(self._talk(_cfg(srv.port, "http"), "bücher.example"), b"HELLO\n")
+        self.assertEqual(srv.connects, [f"{self.PUNY}:5432"])
+
+    def test_https_proxy_sends_punycode(self) -> None:
+        srv = FakeHttpProxy(self.routes, tls=self.pki.issue("127.0.0.1"))
+        self.addCleanup(srv.close)
+        cfg = _cfg(srv.port, "https", ca=self.pki.ca_file)
+        self.assertEqual(self._talk(cfg, "bücher.example"), b"HELLO\n")
+        self.assertEqual(srv.connects, [f"{self.PUNY}:5432"])
+
+    def test_socks5_sends_punycode(self) -> None:
+        srv = FakeSocks5Server(self.routes)
+        self.addCleanup(srv.close)
+        self.assertEqual(self._talk(_cfg(srv.port, "socks5"), "bücher.example"), b"HELLO\n")
+        self.assertEqual(srv.connects, [(self.PUNY, 5432)])
+
+    def test_ascii_and_punycode_targets_are_unchanged(self) -> None:
+        srv = FakeHttpProxy(self.routes)
+        self.addCleanup(srv.close)
+        self.assertEqual(self._talk(_cfg(srv.port, "http"), self.PUNY), b"HELLO\n")
+        self.assertEqual(srv.connects, [f"{self.PUNY}:5432"])
+
+    def test_invalid_idn_is_a_connection_error_before_the_proxy_is_dialled(self) -> None:
+        listener = socket.socket()
+        self.addCleanup(listener.close)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        port = listener.getsockname()[1]
+        for kind in ("http", "https"):
+            with self.assertRaises(ConnectionError, msg=kind):
+                proxy.create_proxy_socket(_cfg(port, kind), "ü" * 70 + ".example", 5432, timeout=2)
+        listener.settimeout(0.3)
+        with self.assertRaises(TimeoutError):
+            listener.accept()
+
+
 class AuthTest(unittest.TestCase):
     def setUp(self) -> None:
         self.pki = TestPki()
@@ -280,6 +340,53 @@ class GuardTest(unittest.TestCase):
     def test_half_configured_advanced_proxy_fails_closed(self) -> None:
         with self.assertRaises(ValueError):
             proxy.ProxyConfig("https+ntlm", "").enabled  # noqa: B018
+
+
+class HostileResponseFramingTest(unittest.TestCase):
+    """A proxy's status line and body framing reach callers as
+    ConnectionError at worst (found by tests/test_fuzz_proxy.py)."""
+
+    def _discard(self, head: bytes, body: bytes) -> PH._Response:
+        resp = PH._parse_response(head)
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        a.settimeout(2)
+        b.sendall(body)
+        b.shutdown(socket.SHUT_WR)
+        PH._discard_body(a, resp)
+        return resp
+
+    def test_valid_status_and_framing(self) -> None:
+        resp = PH._parse_response(b"HTTP/1.1 407 Auth\r\nContent-Length: 3\r\n\r\n")
+        self.assertEqual(resp.status, 407)
+        self.assertTrue(self._discard(b"HTTP/1.1 407 x\r\nContent-Length: 3\r\n\r\n", b"abc").keepalive)
+        chunked = b"HTTP/1.1 407 x\r\nTransfer-Encoding: chunked\r\n\r\n"
+        self.assertTrue(self._discard(chunked, b"3;ext=1\r\nabc\r\nA\r\n0123456789\r\n0\r\n\r\n").keepalive)
+
+    def test_non_ascii_digit_status_is_a_connection_error(self) -> None:
+        # str.isdigit() accepted latin-1 "²²²"; int() then raised ValueError.
+        for head in (b"HTTP/1.1 \xb2\xb2\xb2 x\r\n\r\n", b"HTTP/1.1 4\xb907 x\r\n\r\n"):
+            with self.assertRaises(ConnectionError, msg=head):
+                PH._parse_response(head)
+
+    def test_non_ascii_content_length_is_unframed(self) -> None:
+        resp = self._discard(b"HTTP/1.1 407 x\r\nContent-Length: \xb2\r\n\r\n", b"")
+        self.assertFalse(resp.keepalive)
+
+    def test_malformed_chunk_size_is_a_connection_error(self) -> None:
+        chunked = b"HTTP/1.1 407 x\r\nTransfer-Encoding: chunked\r\n\r\n"
+        for body in (b"zz\r\n", b"-5\r\nabc\r\n0\r\n\r\n", b"0x3\r\nabc\r\n", b"\r\n", b" \r\n"):
+            with self.assertRaises(ConnectionError, msg=body):
+                self._discard(chunked, body)
+
+    def test_huge_chunk_size_ends_keepalive_without_reading_it(self) -> None:
+        chunked = b"HTTP/1.1 407 x\r\nTransfer-Encoding: chunked\r\n\r\n"
+        self.assertFalse(self._discard(chunked, b"ffffffffffffffffff\r\n").keepalive)
+
+    def test_shim_authority_port_must_be_ascii(self) -> None:
+        self.assertEqual(PH._split_authority("h:8080", 443), ("h", 8080))
+        self.assertEqual(PH._split_authority("h:\u00b2", 443), ("h", 443))
 
 
 class ShimTest(unittest.TestCase):

@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.file_type import BINARY_SIGNATURES
 from core.i18n import tr
 from core.open_limits import describe_limit, max_open_bytes
 from core.redaction import redact_url
@@ -205,6 +206,14 @@ _EXTRA_MOUSE_BUTTONS = (
 )
 
 
+def _drop_action(event) -> Qt.DropAction:
+    """Ctrl copies, anything else moves: read from the event itself, whose
+    modifiers are those of the drop (QApplication's can lag behind)."""
+    if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        return Qt.DropAction.CopyAction
+    return Qt.DropAction.MoveAction
+
+
 class _DragTableView(QTableView):
     """QTableView subclass that delegates drag initiation and drop handling to the parent pane."""
 
@@ -333,13 +342,13 @@ class _DragTableView(QTableView):
         self._pane.dragEnterEvent(event)
 
     def dragMoveEvent(self, event) -> None:
-        self._pane.dragMoveEvent(event)
+        self._pane.dragMoveEvent(event, self._pane._folder_at(event.position().toPoint()))
 
     def dragLeaveEvent(self, event) -> None:
         self._pane.dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
-        self._pane.dropEvent(event)
+        self._pane.dropEvent(event, self._pane._folder_at(event.position().toPoint()))
 
 
 if TYPE_CHECKING:
@@ -349,6 +358,39 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 TRANSFER_MIME_TYPE = "application/x-axross-transfer"
 PANE_MIME_TYPE = "application/x-axross-pane-drag"
+
+
+def decode_transfer_payload(mime: QMimeData | None) -> dict[str, object] | None:
+    """The pane drag payload as ``{"paths", "source_pane_id", "dirs"}``, or
+    ``None`` for anything else (another program's text or URLs, garbage).
+
+    ``dirs`` is the subset of ``paths`` the source listing showed as
+    folders; a missing or malformed field means no folders. Pure parsing:
+    nothing here touches a filesystem, so it is safe in drag handlers."""
+    if mime is None or not mime.hasFormat(TRANSFER_MIME_TYPE):
+        return None
+    try:
+        raw = bytes(mime.data(TRANSFER_MIME_TYPE)).decode("utf-8")
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        log.debug("Ignoring malformed drag payload", exc_info=True)
+        return None
+    if not isinstance(payload, dict):
+        return None
+    paths = payload.get("paths")
+    source_pane_id = payload.get("source_pane_id")
+    if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+        return None
+    if not isinstance(source_pane_id, str):
+        return None
+    dirs = payload.get("dirs")
+    dragged = set(paths)
+    if isinstance(dirs, list):
+        dirs = [d for d in dirs if isinstance(d, str) and d in dragged]
+    else:
+        dirs = []
+    return {"paths": paths, "source_pane_id": source_pane_id, "dirs": dirs}
+
 
 _DRAG_THRESHOLD = 10  # pixels before header drag starts
 
@@ -440,13 +482,15 @@ class FilePaneWidget(QWidget):
     """Reusable file browser pane, works with any FileBackend."""
 
     path_changed = pyqtSignal(str)
+    view_mode_changed = pyqtSignal(str)  # "details" or "thumbnails"
     file_activated = pyqtSignal(str)  # full path of activated file
     # (path, ok) when a background load ends; ok is False for failures and cancels.
     navigation_finished = pyqtSignal(str, bool)
     transfer_requested = pyqtSignal(list)  # list of full paths to transfer (copy)
     move_requested = pyqtSignal(list)  # list of full paths to move
     # paths, target pane, source pane id, is_move
-    drop_transfer_requested = pyqtSignal(list, object, str, bool)
+    # paths, target pane, source pane id, move?, folder dropped on ("" = current)
+    drop_transfer_requested = pyqtSignal(list, object, str, bool, str)
     selection_changed = pyqtSignal()
     pane_focused = pyqtSignal()
     bookmark_requested = pyqtSignal(str, str)  # path, backend_name
@@ -459,6 +503,9 @@ class FilePaneWidget(QWidget):
     # The pane does not own the duplicate-finder dialog; the main window
     # does, because the index spans every connection rather than one pane.
     open_duplicates_requested = pyqtSignal()
+    # Open Terminal Here: the folder to open a shell in. The main window owns
+    # the terminal dock and decides between a local and an SSH shell.
+    open_terminal_requested = pyqtSignal(str)
     # Emitted from the watcher background thread so the GUI thread
     # owns the actual list refresh. Internal: connect via Qt's auto
     # cross-thread queueing (PyQt does this when the receiver lives
@@ -490,6 +537,10 @@ class FilePaneWidget(QWidget):
         self._watch_enabled = True
         self._watch_debounce: QTimer | None = None
         self._shutting_down = False
+        #: Open metadata windows (see open_metadata).
+        self.metadata_dialogs: list = []
+        #: Open Identify File Type windows (see identify_file_type).
+        self.file_type_dialogs: list = []
 
         self._setup_ui()
         # The debounce timer is created in the GUI thread so its
@@ -689,6 +740,9 @@ class FilePaneWidget(QWidget):
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         self._table.doubleClicked.connect(self._on_double_click)
         self._table.selectionModel().selectionChanged.connect(lambda: self.selection_changed.emit())
+        # A new listing resets the model, which drops the selection without a
+        # selectionChanged: say so, or a listener keeps the old folder's file.
+        self._proxy.modelReset.connect(lambda: self.selection_changed.emit())
 
         # Enable drag & drop on the table
         self._table.setDragEnabled(True)
@@ -796,7 +850,12 @@ class FilePaneWidget(QWidget):
         """UI part of a navigation. *history* is ``"push"`` (record the path),
         ``"keep"`` (refresh: leave the history alone) or an int (back / forward:
         move to that position)."""
+        # The same folder again (F5, an operation, the watcher): the model
+        # reset drops the selection, so it is taken by name and given back.
+        keep = self._selection_by_name() if path == self._current_path else None
         self._model.set_items(items)
+        if keep:
+            self._restore_selection(*keep)
         if history == "push":
             if not self._history or path != self._history[self._history_pos]:
                 # Truncate forward history and append
@@ -846,6 +905,11 @@ class FilePaneWidget(QWidget):
     def navigate(self, path: str) -> None:
         """Load *path* and wait for it (programmatic callers and tests).
         The UI itself uses :meth:`navigate_async`."""
+        if self._nav_ctx:
+            # Supersede a background load like a new navigate_async does:
+            # its late result would otherwise replace this listing.
+            self._nav_job.abandon()
+            self._end_loading()
         self._progress_bar.show()
         self._status.setText("Loading...")
         QApplication.processEvents()
@@ -1056,6 +1120,10 @@ class FilePaneWidget(QWidget):
         """
         self._shutting_down = True
         self._nav_job.abandon()
+        if getattr(self, "_pack_job", None) is not None:
+            self._pack_job.abandon()  # the pack stops and removes its temp file
+        if getattr(self, "_thumbs", None) is not None:
+            self._thumbs.shutdown()
         if self._watch_debounce is not None:
             try:
                 self._watch_debounce.stop()
@@ -1177,6 +1245,104 @@ class FilePaneWidget(QWidget):
         )
         dlg.exec()
         return True
+
+    #: The last media-view choices, shared by every pane for the session.
+    _media_view_defaults = None
+
+    def open_metadata(self, action: str = "show"):
+        """Open the metadata window on the selection (files and folders) or,
+        with nothing selected, on this folder. *action* is ``show``,
+        ``remove`` or ``export``; returns the window."""
+        from ui.metadata_dialog import MetadataDialog
+
+        targets: list[tuple[str, bool]] = []
+        for item in self.selected_file_items():
+            path = self._safe_item_path(item, warn=False)
+            if path is not None:
+                targets.append((path, bool(item.is_dir)))
+        if not targets:
+            targets = [(self._current_path, True)]
+        dlg = MetadataDialog(self._backend, targets, action=action, parent=self)
+        dlg.changed.connect(lambda: self.refresh_after_change(quiet=True))
+        self.metadata_dialogs.append(dlg)
+        dlg.destroyed.connect(
+            lambda _obj=None, d=dlg: self.metadata_dialogs.remove(d)
+            if d in self.metadata_dialogs
+            else None
+        )
+        dlg.show()
+        dlg.start()
+        return dlg
+
+    def identify_file_type(self):
+        """Open the Identify File Type window on the selection: the real type
+        of each entry from its content, what its extension claims and
+        whether they disagree. Returns the window, or ``None`` when nothing
+        is selected."""
+        from ui.file_type_dialog import FileTypeDialog
+
+        paths = [
+            path
+            for path in (self._safe_item_path(i, warn=False) for i in self.selected_file_items())
+            if path is not None
+        ]
+        if not paths:
+            return None
+        dlg = FileTypeDialog(self._backend, paths, parent=self)
+        self.file_type_dialogs.append(dlg)
+        dlg.destroyed.connect(
+            lambda _obj=None, d=dlg: self.file_type_dialogs.remove(d)
+            if d in self.file_type_dialogs
+            else None
+        )
+        dlg.show()
+        dlg.start()
+        return dlg
+
+    def view_media(self, selected_only: bool = False):
+        """Ask for the media-view options, then open the media viewer on
+        this folder (or on the selected files and folders). Returns the
+        viewer window, or ``None`` when nothing was opened."""
+        from core.security_mode import current_policy
+        from ui.media_viewer import MediaViewOptionsDialog
+
+        policy = current_policy()
+        if not policy.allow_auto_preview:
+            QMessageBox.warning(
+                self,
+                tr("View Media"),
+                tr("The '{mode}' security mode blocks the media viewer.").format(mode=policy.name),
+            )
+            return None
+        names = None
+        if selected_only:
+            names = {item.name for item in self.selected_file_items()}
+            if not names:
+                return None
+        dialog = MediaViewOptionsDialog(
+            self, selection=selected_only, defaults=FilePaneWidget._media_view_defaults
+        )
+        if dialog.exec() != MediaViewOptionsDialog.DialogCode.Accepted:
+            return None
+        options = dialog.options()
+        FilePaneWidget._media_view_defaults = options
+        return self.open_media_viewer(options, only_names=names)
+
+    def open_media_viewer(self, options, only_names: set[str] | None = None):
+        """Open the media viewer without asking (``options`` already chosen)."""
+        from ui.media_viewer import MediaViewerDialog
+
+        dialog = MediaViewerDialog(
+            self._backend,
+            self._current_path,
+            options,
+            only_names=only_names,
+            include_hidden=bool(getattr(self._proxy, "show_hidden", False)),
+            parent=self.window(),
+        )
+        dialog.show()
+        dialog.start()
+        return dialog
 
     def _edit_selected(self) -> None:
         """Open selected file in editor (F4) — text or hex based on type."""
@@ -1340,15 +1506,54 @@ class FilePaneWidget(QWidget):
 
     def selected_items(self) -> list[str]:
         """Return full paths of selected items."""
-        paths = []
+        return [path for path, _item in self._selected_entries()]
+
+    def _selected_entries(self) -> list[tuple[str, FileItem]]:
+        """``(full path, listing item)`` of every selected row but ".."."""
+        entries = []
         for index in self._table.selectionModel().selectedRows(COL_NAME):
             source_idx = self._proxy.mapToSource(index)
             item = self._model.get_item(source_idx.row())
             if item and item.name != "..":
                 path = self._safe_item_path(item, warn=False)
                 if path is not None:
-                    paths.append(path)
-        return paths
+                    entries.append((path, item))
+        return entries
+
+    def _selection_by_name(self) -> tuple[set[str], str | None] | None:
+        """The selected rows' names and the current row's name, or None."""
+        sel = self._table.selectionModel()
+        names = set()
+        for index in sel.selectedRows(COL_NAME):
+            item = self._model.get_item(self._proxy.mapToSource(index).row())
+            if item is not None:
+                names.add(item.name)
+        if not names:
+            return None
+        current = self._model.get_item(self._proxy.mapToSource(sel.currentIndex()).row())
+        return names, current.name if current is not None else None
+
+    def _restore_selection(self, names: set[str], current: str | None) -> None:
+        """Select the rows named ``names`` in one change; ``current`` back as current."""
+        selection = QItemSelection()
+        current_index = None
+        for row in range(self._model.rowCount()):
+            item = self._model.get_item(row)
+            if item is None or item.name not in names:
+                continue
+            index = self._proxy.mapFromSource(self._model.index(row, COL_NAME))
+            if not index.isValid():  # filtered out (hidden files)
+                continue
+            selection.select(index, index)
+            if item.name == current:
+                current_index = index
+        if selection.isEmpty():
+            return
+        sel = self._table.selectionModel()
+        flags = QItemSelectionModel.SelectionFlag
+        sel.select(selection, flags.ClearAndSelect | flags.Rows)
+        if current_index is not None:
+            sel.setCurrentIndex(current_index, flags.NoUpdate)
 
     def selected_file_items(self) -> list[FileItem]:
         """Return FileItem objects for selected rows."""
@@ -1369,13 +1574,24 @@ class FilePaneWidget(QWidget):
         self._proxy_label.setToolTip(tooltip)
         self._proxy_label.setVisible(bool(text))
 
-    def set_backend(self, backend: FileBackend) -> None:
+    def set_backend(self, backend: FileBackend, path: str | None = None) -> None:
+        """Switch to *backend* (a reconnect) and load *path*, else its home.
+
+        The listing on screen belongs to the old connection and is dropped
+        here: ``_current_path`` moves at once, and a name selected in the
+        old listing would otherwise be joined onto the new folder by the
+        next Delete / Rename. The watcher is bound to a backend as well and
+        is stopped, so the next listing starts one on the new connection.
+        """
+        self._stop_watcher()
         self._backend = backend
         self._current_path = backend.home()
         self._history = []
         self._history_pos = 0
+        self._model.set_items([])
+        self._path_edit.setText(self._current_path)
         self.update_header_color()
-        self.navigate_async(self._current_path)
+        self.navigate_async(path or self._current_path)
 
     def get_session_type(self) -> str:
         """Return 'local', 'remote', or 'root' based on the backend type."""
@@ -1527,10 +1743,13 @@ class FilePaneWidget(QWidget):
 
     def _start_drag(self) -> None:
         """Called by _DragTableView.startDrag when user drags from the table."""
-        selected = self.selected_items()
+        entries = self._selected_entries()
+        selected = [path for path, _item in entries]
         if not selected:
             log.debug("Drag start ignored: no selected items")
             return
+        # Folders as the listing shows them; no stat on the GUI thread.
+        dirs = [path for path, item in entries if item.is_dir]
 
         drag = QDrag(self._table)
         mime = QMimeData()
@@ -1546,12 +1765,14 @@ class FilePaneWidget(QWidget):
                 url.setPath(path)
                 urls.append(url)
         mime.setUrls(urls)
-        mime.setData(TRANSFER_MIME_TYPE, self._encode_transfer_payload(selected))
+        mime.setData(TRANSFER_MIME_TYPE, self._encode_transfer_payload(selected, dirs))
         drag.setMimeData(mime)
         log.debug("Starting drag with %d item(s) from %s", len(selected), self._backend.name)
+        # A plain drag moves; Ctrl copies (the drop side decides from the
+        # modifiers, this is only what the cursor proposes first).
         result = drag.exec(
             Qt.DropAction.CopyAction | Qt.DropAction.MoveAction,
-            Qt.DropAction.CopyAction,
+            Qt.DropAction.MoveAction,
         )
         log.debug("Drag finished with action %s", result)
 
@@ -1566,15 +1787,60 @@ class FilePaneWidget(QWidget):
                 self._drop_overlay.show()
                 self._drop_overlay.raise_()
                 return
-        # File transfer drag
+        # File transfer drag (from any pane, this one included: inside a
+        # pane a drop onto a folder moves or copies into it)
         payload = self._decode_transfer_payload(event.mimeData())
-        if payload and payload["source_pane_id"] != str(id(self)):
-            event.setDropAction(Qt.DropAction.CopyAction)
+        if payload:
+            event.setDropAction(_drop_action(event))
             event.accept()
             return
         event.ignore()
 
-    def dragMoveEvent(self, event) -> None:
+    def _folder_at(self, pos: QPoint, view=None) -> str | None:
+        """The folder a drop at viewport *pos* of *view* (the table unless
+        given) goes into: a folder row, the parent for "..", else None (the
+        pane's current folder applies)."""
+        index = (view or self._table).indexAt(pos)
+        if not index.isValid():
+            return None
+        item = self._model.get_item(self._proxy.mapToSource(index).row())
+        if item is None:
+            return None
+        if item.name == "..":
+            parent = self._backend.parent(self._current_path)
+            return parent if parent and parent != self._current_path else None
+        if not item.is_dir:
+            return None
+        return self._safe_item_path(item)
+
+    def _drop_target(self, payload: dict, folder: str | None) -> str | None:
+        """Where a drop of *payload* goes: the folder, "" for this pane's
+        current folder, or None when the drop would do nothing."""
+        paths = [str(p) for p in payload.get("paths") or []]
+        same_pane = payload.get("source_pane_id") == str(id(self))
+        if folder is None:
+            return None if same_pane else ""
+        for path in paths:
+            if self.is_within(folder, path):
+                return None  # onto itself or into itself
+        if same_pane and all(self._backend.parent(p) == folder for p in paths):
+            return None  # already there
+        return folder
+
+    def is_within(self, folder: str, path: str) -> bool:
+        """True when *folder* is *path* or lies below it, walked up with the
+        backend's own parent() so every path syntax is handled."""
+        current = folder
+        for _ in range(256):
+            if current == path:
+                return True
+            parent = self._backend.parent(current)
+            if not parent or parent == current:
+                return False
+            current = parent
+        return False
+
+    def dragMoveEvent(self, event, folder: str | None = None) -> None:
         # Pane rearrangement — show drop zone
         if event.mimeData().hasFormat(PANE_MIME_TYPE):
             source_id = bytes(event.mimeData().data(PANE_MIME_TYPE)).decode()
@@ -1589,21 +1855,17 @@ class FilePaneWidget(QWidget):
             return
         # File transfer drag
         payload = self._decode_transfer_payload(event.mimeData())
-        if not payload or payload["source_pane_id"] == str(id(self)):
+        if not payload or self._drop_target(payload, folder) is None:
             event.ignore()
             return
-        mods = QApplication.keyboardModifiers()
-        if mods & Qt.KeyboardModifier.ControlModifier:
-            event.setDropAction(Qt.DropAction.MoveAction)
-        else:
-            event.setDropAction(Qt.DropAction.CopyAction)
+        event.setDropAction(_drop_action(event))
         event.accept()
 
     def dragLeaveEvent(self, event) -> None:
         self._drop_overlay.hide()
         super().dragLeaveEvent(event)
 
-    def dropEvent(self, event) -> None:
+    def dropEvent(self, event, folder: str | None = None) -> None:
         self._drop_overlay.hide()
         # Pane rearrangement drop
         if event.mimeData().hasFormat(PANE_MIME_TYPE):
@@ -1625,14 +1887,16 @@ class FilePaneWidget(QWidget):
 
         paths = payload["paths"]
         source_pane_id = payload["source_pane_id"]
-        is_move = event.dropAction() == Qt.DropAction.MoveAction
-        if not is_move:
-            mods = QApplication.keyboardModifiers()
-            is_move = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        target = self._drop_target(payload, folder)
+        if target is None:
+            event.ignore()
+            return
+        is_move = _drop_action(event) == Qt.DropAction.MoveAction
 
         if paths:
-            self.drop_transfer_requested.emit(paths, self, source_pane_id, is_move)
-            event.acceptProposedAction()
+            self.drop_transfer_requested.emit(paths, self, source_pane_id, is_move, target)
+            event.setDropAction(_drop_action(event))
+            event.accept()
             action = "Move" if is_move else "Copy"
             log.info("Drop %s received: %d items", action, len(paths))
         else:
@@ -1642,32 +1906,19 @@ class FilePaneWidget(QWidget):
         """Determine which zone the cursor is in: left, right, top, or bottom."""
         return detect_drop_zone(pos.x(), pos.y(), self.width(), self.height())
 
-    def _encode_transfer_payload(self, paths: list[str]) -> bytes:
+    def _encode_transfer_payload(self, paths: list[str], dirs: list[str] | None = None) -> bytes:
+        """*dirs* names the dragged folders (from the listing, no stat):
+        the bookmark sidebar bookmarks those and only those."""
         payload = {
             "paths": paths,
             "source_pane_id": str(id(self)),
+            "dirs": list(dirs or []),
         }
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     @staticmethod
     def _decode_transfer_payload(mime: QMimeData | None) -> dict[str, object] | None:
-        if mime is None or not mime.hasFormat(TRANSFER_MIME_TYPE):
-            return None
-        try:
-            raw = bytes(mime.data(TRANSFER_MIME_TYPE)).decode("utf-8")
-            payload = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            log.debug("Ignoring malformed drag payload", exc_info=True)
-            return None
-        if not isinstance(payload, dict):
-            return None
-        paths = payload.get("paths")
-        source_pane_id = payload.get("source_pane_id")
-        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
-            return None
-        if not isinstance(source_pane_id, str):
-            return None
-        return {"paths": paths, "source_pane_id": source_pane_id}
+        return decode_transfer_payload(mime)
 
     # --- Slots ---
 
@@ -1896,28 +2147,9 @@ class FilePaneWidget(QWidget):
         "cmakelists.txt",
     }
 
-    # Binary magic bytes: (offset, signature)
-    _BINARY_MAGIC = [
-        (0, b"\x89PNG"),  # PNG
-        (0, b"\xff\xd8\xff"),  # JPEG
-        (0, b"GIF8"),  # GIF
-        (0, b"PK\x03\x04"),  # ZIP/DOCX/XLSX/JAR
-        (0, b"\x1f\x8b"),  # gzip
-        (0, b"BZ"),  # bzip2
-        (0, b"\xfd7zXZ"),  # xz
-        (0, b"\x7fELF"),  # ELF binary
-        (0, b"MZ"),  # PE/EXE
-        (0, b"\xca\xfe\xba\xbe"),  # Mach-O / Java class
-        (0, b"%PDF"),  # PDF
-        (0, b"SQLite"),  # SQLite
-        (0, b"\x00asm"),  # WebAssembly
-        (0, b"RIFF"),  # WAV/AVI/WEBP
-        (0, b"\xff\xfb"),  # MP3
-        (0, b"ID3"),  # MP3 with ID3 tag
-        (0, b"fLaC"),  # FLAC
-        (0, b"OggS"),  # OGG
-        (0, b"\x1a\x45\xdf\xa3"),  # MKV/WEBM
-    ]
+    # Binary magic bytes: (offset, signature). Derived from the signature
+    # table core.file_type classifies with, so the two cannot drift apart.
+    _BINARY_MAGIC = list(BINARY_SIGNATURES)
 
     def _is_binary_file(self, path: str, name: str) -> bool:
         """Detect if a file is binary using extension + magic bytes."""
@@ -2009,8 +2241,15 @@ class FilePaneWidget(QWidget):
 
         Split out from :meth:`_show_context_menu` so the menu's contents
         can be asserted without popping up a modal — ``menu.exec`` blocks
-        until a human clicks.
+        until a human clicks. Loaded extensions add their entries last.
         """
+        menu = self._build_base_context_menu()
+        from ui import extension_host
+
+        extension_host.add_context_actions(self, menu)
+        return menu
+
+    def _build_base_context_menu(self) -> QMenu:
         menu = QMenu(self)
         selected = self.selected_file_items()
 
@@ -2037,6 +2276,8 @@ class FilePaneWidget(QWidget):
 
         bookmark_action = menu.addAction(tr("Bookmark This Directory"))
         bookmark_action.triggered.connect(self._add_bookmark)
+
+        self._add_terminal_actions(menu)
 
         xlink_action = menu.addAction(tr("Create XLink…"))
         xlink_action.triggered.connect(self._create_xlink)
@@ -2073,16 +2314,47 @@ class FilePaneWidget(QWidget):
         dupes_action = menu.addAction(tr("Find Duplicate Files…"))
         dupes_action.triggered.connect(self.open_duplicates_requested.emit)
 
+        view_as = "View as Details" if self.view_mode == "thumbnails" else "View as Thumbnails"
+        view_as_action = menu.addAction(tr(view_as))
+        view_as_action.triggered.connect(lambda _checked=False: self.toggle_view_mode())
+
+        # Same reasoning: the media viewer starts from the folder itself.
+        media_action = menu.addAction(tr("View Media…"))
+        media_action.triggered.connect(lambda _checked=False: self.view_media())
+
+        # Metadata acts on the selection, or on this folder when nothing is
+        # selected - "remove all metadata" for a directory is one click.
+        for label, meta_action in (
+            ("Show Metadata…", "show"),
+            ("Remove Metadata…", "remove"),
+            ("Export Metadata…", "export"),
+        ):
+            act = menu.addAction(tr(label))
+            act.triggered.connect(lambda _checked=False, a=meta_action: self.open_metadata(a))
+
         if selected:
+            media_sel_action = menu.addAction(tr("View Selected Media…"))
+            media_sel_action.triggered.connect(
+                lambda _checked=False: self.view_media(selected_only=True)
+            )
+
             menu.addSeparator()
 
             props_action = menu.addAction(tr("Properties…\tAlt+Enter"))
             props_action.triggered.connect(self._show_properties)
 
+            type_action = menu.addAction(tr("Identify File Type…"))
+            type_action.setToolTip(
+                tr("Detect the real type from the content and compare it with the extension")
+            )
+            type_action.triggered.connect(lambda _checked=False: self.identify_file_type())
+
             copy_action = menu.addAction(tr("Copy to Target Pane"))
             copy_action.triggered.connect(
                 lambda: self.transfer_requested.emit(self.selected_items())
             )
+
+            menu.addMenu(self._build_pack_menu(selected, menu))
 
             # Open in editor (for single file selection)
             files = [i for i in selected if not i.is_dir]
@@ -2178,9 +2450,9 @@ class FilePaneWidget(QWidget):
                     arc_item = files[0]
                     arc_path = self._safe_item_path(arc_item, warn=False)
 
-                    # "Vorschau" (Preview) opens the non-modal archive
+                    # "Preview Archive" opens the non-modal archive
                     # dock without extracting anything to disk.
-                    preview_action = menu.addAction(tr("Vorschau"))
+                    preview_action = menu.addAction(tr("Preview Archive"))
                     if arc_path is not None:
                         preview_action.triggered.connect(
                             lambda _checked=False, p=arc_path: self._open_archive_preview(p)
@@ -2188,7 +2460,7 @@ class FilePaneWidget(QWidget):
                     else:
                         preview_action.setEnabled(False)
 
-                    extract_action = menu.addAction(tr("Entpacken…"))
+                    extract_action = menu.addAction(tr("Extract…"))
                     extract_action.triggered.connect(lambda: self._extract_archive(arc_item))
                     # Colour-highlight the extract entry so it stands
                     # apart from the read-only preview. QMenu/QAction
@@ -2215,6 +2487,89 @@ class FilePaneWidget(QWidget):
 
         return menu
 
+    def _add_terminal_actions(self, menu: QMenu) -> None:
+        """Open Terminal Here (embedded dock) and, for local folders, Open
+        External Terminal Here. Outside the selection block: on empty space
+        they act on the folder shown."""
+        from core import terminal_here as TH
+
+        kind = TH.shell_kind(self._backend)
+        menu.setToolTipsVisible(True)
+        embedded = menu.addAction(tr("Open Terminal Here"))
+        embedded.triggered.connect(lambda _checked=False: self.open_terminal_here())
+        if not kind:
+            embedded.setEnabled(False)
+            embedded.setToolTip(TH.no_shell_reason(self._backend))
+        elif self.receivers(self.open_terminal_requested) == 0:
+            embedded.setEnabled(False)
+            embedded.setToolTip(tr("No embedded terminal is available in this window."))
+        elif kind == TH.SSH:
+            embedded.setToolTip(tr("Open a shell on this SSH connection in the folder"))
+        else:
+            embedded.setToolTip(tr("Open a shell in the terminal dock in this folder"))
+        if kind == TH.LOCAL:
+            external = menu.addAction(tr("Open External Terminal Here"))
+            external.setToolTip(tr("Start your terminal emulator ($TERMINAL) in this folder"))
+            external.triggered.connect(lambda _checked=False: self.open_external_terminal_here())
+
+    def terminal_directory(self) -> str:
+        """The folder Open Terminal Here acts on: a single selected folder,
+        otherwise the folder shown (a selected file opens its parent)."""
+        selected = self.selected_file_items()
+        if len(selected) == 1 and selected[0].is_dir:
+            path = self._safe_item_path(selected[0], warn=False)
+            if path is not None:
+                return path
+        return self._current_path
+
+    def _local_folder_or_warn(self, directory: str) -> str | None:
+        import os
+
+        if os.path.isdir(directory):
+            return directory
+        QMessageBox.warning(
+            self,
+            tr("Open Terminal Here"),
+            tr("{path} is no longer a folder (deleted or unmounted?).").format(path=directory),
+        )
+        return None
+
+    def open_terminal_here(self) -> None:
+        """Ask the main window for an embedded shell in :meth:`terminal_directory`."""
+        from core import terminal_here as TH
+
+        directory = self.terminal_directory()
+        kind = TH.shell_kind(self._backend)
+        if kind == TH.LOCAL:
+            if self._local_folder_or_warn(directory) is None:
+                return
+        elif kind == TH.SSH:
+            try:
+                TH.remote_cd_command(directory)
+            except ValueError as exc:
+                QMessageBox.warning(self, tr("Open Terminal Here"), str(exc))
+                return
+        else:
+            QMessageBox.information(
+                self, tr("Open Terminal Here"), TH.no_shell_reason(self._backend)
+            )
+            return
+        self.open_terminal_requested.emit(directory)
+
+    def open_external_terminal_here(self) -> None:
+        """Start the user's terminal emulator in :meth:`terminal_directory`."""
+        from core import terminal_here as TH
+
+        directory = self._local_folder_or_warn(self.terminal_directory())
+        if directory is None:
+            return
+        try:
+            argv = TH.launch_external_terminal(directory)
+        except TH.TerminalLaunchError as exc:
+            QMessageBox.warning(self, tr("Open External Terminal Here"), str(exc))
+            return
+        log.info("Started external terminal %s in %s", argv[0], directory)
+
     def _show_context_menu(self, pos) -> None:
         # ``pos`` arrives in viewport-local coordinates per Qt's
         # QAbstractScrollArea contract, but user reports show the
@@ -2228,9 +2583,124 @@ class FilePaneWidget(QWidget):
 
         self._build_context_menu().exec(QCursor.pos())
 
+    # -- packing ------------------------------------------------------------
+    _QUICK_PACK = (("zip", "Pack as ZIP"), ("tar.gz", "Pack as .tar.gz"),
+                   ("tar.zst", "Pack as .tar.zst"), ("7z", "Pack as 7z"))
+    _QUICK_COMPRESS = (("gz", "Compress as .gz"), ("zst", "Compress as .zst"),
+                       ("xz", "Compress as .xz"), ("bz2", "Compress as .bz2"))
+
+    def _build_pack_menu(self, selected, parent: QMenu) -> QMenu:
+        """Pack submenu: one click per common format, single-file
+        compression when one file is selected, and the options dialog."""
+        from core import packer as PK
+
+        menu = QMenu(tr("Pack"), parent)
+        for fmt_id, label in self._QUICK_PACK:
+            action = menu.addAction(tr(label))
+            ok, reason = PK.FORMATS[fmt_id].available()
+            action.setEnabled(ok)
+            action.setToolTip(reason)
+            action.triggered.connect(lambda _checked=False, f=fmt_id: self.pack_selection(f))
+        files = [i for i in selected if not i.is_dir and i.name != ".."]
+        if len(selected) == 1 and len(files) == 1:
+            menu.addSeparator()
+            for fmt_id, label in self._QUICK_COMPRESS:
+                action = menu.addAction(tr(label))
+                ok, reason = PK.FORMATS[fmt_id].available()
+                action.setEnabled(ok)
+                action.setToolTip(reason)
+                action.triggered.connect(lambda _checked=False, f=fmt_id: self.pack_selection(f))
+        menu.setToolTipsVisible(True)
+        menu.addSeparator()
+        options = menu.addAction(tr("Pack with Options…"))
+        options.triggered.connect(lambda _checked=False: self.pack_selection(None))
+        return menu
+
+    def status_message(self, text: str) -> None:
+        """Show *text* in the pane's status line and the window's."""
+        self._status.setText(text)
+        window = self.window()
+        if window is not self and hasattr(window, "statusBar"):
+            window.statusBar().showMessage(text, 8000)
+
+    @property
+    def pack_running(self) -> bool:
+        job = getattr(self, "_pack_job", None)
+        return job is not None and job.running
+
+    def pack_selection(self, fmt_id: str | None = None) -> bool:
+        """Pack the selection into this folder - with *fmt_id*, or after
+        asking with the options dialog. Runs in the background; the
+        listing refreshes when the archive is in place. False when nothing
+        started (nothing selected, dialog cancelled, a pack still running)."""
+        from core import packer as PK
+        from ui.scan_job import ScanJob
+
+        if self.pack_running:
+            self.status_message(tr("A pack is still running in this pane."))
+            return False
+        items = [i for i in self.selected_file_items() if i.name != ".."]
+        if not items:
+            return False
+        names = [i.name for i in items]
+        single = len(items) == 1 and not items[0].is_dir
+        default = PK.default_name(names, self._current_path)
+        if fmt_id is None:
+            from ui.pack_dialog import PackDialog
+
+            dialog = PackDialog(names, default, single_file=single, parent=self)
+            try:
+                if dialog.exec() != PackDialog.DialogCode.Accepted:
+                    return False
+                archive_name, options = dialog.result_values()
+            finally:
+                dialog.deleteLater()
+        else:
+            archive_name, options = default, PK.PackOptions(fmt=fmt_id)
+        backend, folder = self._backend, self._current_path
+
+        def work(cancelled, report):
+            class _Cancel:
+                is_set = staticmethod(cancelled)
+
+            return PK.pack(
+                backend, folder, names, archive_name, options,
+                progress=lambda done, total, name: report(done, total, name),
+                cancel=_Cancel(),
+            )
+
+        job = getattr(self, "_pack_job", None)
+        if job is None:
+            job = ScanJob(
+                self,
+                formatter=lambda st: f"Packing… {st['scanned']} of {st['indexed']} — {st['path']}",
+            )
+            job.progress.connect(self.status_message)
+            job.finished.connect(self._on_pack_finished)
+            self._pack_job = job
+        self.status_message(tr("Packing {what}…").format(what=default))
+        return job.start(work)
+
+    def _on_pack_finished(self, kind: str, value, cancelled: bool) -> None:
+        from core import packer as PK
+
+        if kind == "done":
+            note = f" ({len(value.skipped)} link(s) skipped)" if value.skipped else ""
+            name = value.path.replace("\\", "/").rsplit("/", 1)[-1]
+            self.status_message(f"Packed {value.files} file(s) into {name}{note}")
+            self.refresh_after_change(quiet=True)
+            return
+        if cancelled or isinstance(value, PK.PackCancelled):
+            self.status_message(tr("Packing cancelled - nothing was written."))
+            return
+        QMessageBox.warning(self, tr("Pack"), f"{tr('The archive was not made:')}\n{value}")
+
     def _create_folder(self) -> None:
         from PyQt6.QtWidgets import QInputDialog
 
+        # Taken before the dialog: a folder load finishing while it is open
+        # moves _current_path (see _rename_selected).
+        folder = self._current_path
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
         if ok and name:
             if not _is_safe_leaf_name(name):
@@ -2242,7 +2712,7 @@ class FilePaneWidget(QWidget):
                 )
                 return
             try:
-                path = self._backend.join(self._current_path, name)
+                path = self._backend.join(folder, name)
                 if self._backend.exists(path):
                     QMessageBox.warning(
                         self,
@@ -2273,6 +2743,7 @@ class FilePaneWidget(QWidget):
         """
         from PyQt6.QtWidgets import QInputDialog
 
+        folder = self._current_path  # before the dialog; see _create_folder
         name, ok = QInputDialog.getText(self, "New File", "File name:")
         if not ok or not name:
             return
@@ -2283,7 +2754,7 @@ class FilePaneWidget(QWidget):
                 "File name must be a plain filename — no path separators, no '..', no NUL bytes.",
             )
             return
-        path = self._backend.join(self._current_path, name)
+        path = self._backend.join(folder, name)
         try:
             if self._backend.exists(path):
                 QMessageBox.warning(
@@ -2315,6 +2786,9 @@ class FilePaneWidget(QWidget):
         """
         from PyQt6.QtWidgets import QInputDialog
 
+        # Before the dialogs (see _create_folder): a relative target
+        # resolves next to the link, so the folder decides what it means.
+        folder = self._current_path
         target, ok = QInputDialog.getText(
             self,
             "New Symlink",
@@ -2336,7 +2810,7 @@ class FilePaneWidget(QWidget):
                 "Link name must be a plain filename — no path separators, no '..', no NUL bytes.",
             )
             return
-        link_path = self._backend.join(self._current_path, link_name)
+        link_path = self._backend.join(folder, link_name)
         try:
             self._backend.symlink(target, link_path)
             log.info("Created symlink: %s → %s", link_path, target)
@@ -2360,6 +2834,7 @@ class FilePaneWidget(QWidget):
         """
         from PyQt6.QtWidgets import QInputDialog
 
+        folder = self._current_path  # before the dialogs; see _create_folder
         target, ok = QInputDialog.getText(
             self,
             "New Hardlink",
@@ -2381,7 +2856,7 @@ class FilePaneWidget(QWidget):
                 "Link name must be a plain filename — no path separators, no '..', no NUL bytes.",
             )
             return
-        link_path = self._backend.join(self._current_path, link_name)
+        link_path = self._backend.join(folder, link_name)
         try:
             self._backend.hardlink(target, link_path)
             log.info("Created hardlink: %s → %s", link_path, target)
@@ -2401,6 +2876,12 @@ class FilePaneWidget(QWidget):
         if not items:
             return
         item = items[0]
+        # Resolved before the dialog: a folder load finishing while it is
+        # open moves _current_path, and the item belongs to this folder.
+        old_path = self._safe_item_path(item)
+        if old_path is None:
+            return
+        folder = self._current_path
         new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=item.name)
         if ok and new_name and new_name != item.name:
             if not _is_safe_leaf_name(new_name):
@@ -2412,10 +2893,7 @@ class FilePaneWidget(QWidget):
                 )
                 return
             try:
-                old_path = self._safe_item_path(item)
-                if old_path is None:
-                    return
-                new_path = self._backend.join(self._current_path, new_name)
+                new_path = self._backend.join(folder, new_name)
                 if self._backend.exists(new_path):
                     QMessageBox.warning(
                         self,
@@ -2555,17 +3033,21 @@ class FilePaneWidget(QWidget):
         if not dirs:
             return
 
+        # Resolved before the event loop runs below: a folder load
+        # finishing there moves _current_path (see _rename_selected).
+        targets = []
+        for item in dirs:
+            dir_path = self._safe_item_path(item)
+            if dir_path is not None:
+                targets.append((item.name, dir_path))
+
         self._status.setText("Calculating sizes...")
         self._progress_bar.show()
         QApplication.processEvents()
 
         results = []
-        for item in dirs:
-            dir_path = self._safe_item_path(item)
-            if dir_path is None:
-                continue
-            total = self._recursive_size(dir_path)
-            results.append((item.name, total))
+        for name, dir_path in targets:
+            results.append((name, self._recursive_size(dir_path)))
 
         self._progress_bar.hide()
 
@@ -3028,6 +3510,7 @@ class FilePaneWidget(QWidget):
         from core import xlink as XL
         from ui.create_xlink_dialog import CreateXlinkDialog
 
+        folder = self._current_path  # before the dialog; see _create_folder
         dlg = CreateXlinkDialog(parent=self)
         if not dlg.exec():
             return
@@ -3041,7 +3524,7 @@ class FilePaneWidget(QWidget):
                 "Link name must be a plain filename — no path separators, no '..', no NUL bytes.",
             )
             return
-        target_path = self._backend.join(self._current_path, name)
+        target_path = self._backend.join(folder, name)
         try:
             final = XL.create_xlink(
                 self._backend,
@@ -3359,6 +3842,10 @@ class FilePaneWidget(QWidget):
 
         from core import encrypted_overlay as E
 
+        # Resolved before the passphrase prompts; see _rename_selected.
+        src_path = self._safe_item_path(item)
+        if src_path is None:
+            return
         pw, ok = QInputDialog.getText(
             self,
             "Encrypt File",
@@ -3383,10 +3870,19 @@ class FilePaneWidget(QWidget):
             )
             return
 
-        src_path = self._safe_item_path(item)
-        if src_path is None:
-            return
         try:
+            # Same question Decrypt asks: an existing ciphertext may be
+            # the only copy of an older version, under another passphrase.
+            existing = E._ensure_enc_suffix(src_path)
+            if self._backend.exists(existing):
+                reply = QMessageBox.question(
+                    self,
+                    "Overwrite?",
+                    f"'{existing.rsplit('/', 1)[-1]}' already exists. Overwrite?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
             with self._backend.open_read(src_path) as fh:
                 data = fh.read()
             dst_path = E.write_encrypted(
@@ -3419,6 +3915,12 @@ class FilePaneWidget(QWidget):
 
         from core import encrypted_overlay as E
 
+        # Resolved before the passphrase prompt; see _rename_selected.
+        src_path = self._safe_item_path(item)
+        if src_path is None:
+            return
+        dst_name = item.name[: -len(E.ENC_SUFFIX)] or item.name + ".decrypted"
+        dst_path = self._backend.join(self._current_path, dst_name)
         pw, ok = QInputDialog.getText(
             self,
             "Decrypt File",
@@ -3427,12 +3929,6 @@ class FilePaneWidget(QWidget):
         )
         if not ok or not pw:
             return
-
-        src_path = self._safe_item_path(item)
-        if src_path is None:
-            return
-        dst_name = item.name[: -len(E.ENC_SUFFIX)] or item.name + ".decrypted"
-        dst_path = self._backend.join(self._current_path, dst_name)
         try:
             plain = E.read_encrypted(self._backend, src_path, pw)
         except E.InvalidCiphertext as exc:
@@ -3497,15 +3993,71 @@ class FilePaneWidget(QWidget):
         super().focusInEvent(event)
         self.pane_focused.emit()
 
+    def _key_views(self) -> tuple:
+        views = (self._table, self._table.viewport())
+        thumbs = getattr(self, "_thumbs", None)
+        if thumbs is not None:
+            views += (thumbs, thumbs.viewport())
+        return views
+
+    # -- view mode: details table or thumbnails ---------------------------
+    VIEW_MODES = ("details", "thumbnails")
+
+    @property
+    def view_mode(self) -> str:
+        thumbs = getattr(self, "_thumbs", None)
+        return "thumbnails" if thumbs is not None and not thumbs.isHidden() else "details"
+
+    @property
+    def thumbnail_view(self):
+        """The thumbnail face of this pane, made on first use."""
+        if getattr(self, "_thumbs", None) is None:
+            from ui.thumbnail_view import ThumbnailView
+
+            thumbs = ThumbnailView(self)
+            thumbs.hide()
+            layout = self._table.parentWidget().layout()
+            layout.insertWidget(layout.indexOf(self._table) + 1, thumbs, 1)
+            for widget in (thumbs, thumbs.viewport()):
+                widget.installEventFilter(self)
+            self._thumbs = thumbs
+        return self._thumbs
+
+    def set_view_mode(self, mode: str) -> None:
+        """Show the folder as the details table or as thumbnails. The
+        selection is shared, so it stays as it is."""
+        if mode not in self.VIEW_MODES:
+            raise ValueError(f"unknown view mode {mode!r}")
+        if mode == self.view_mode:
+            return
+        had_focus = self._table.hasFocus() or (
+            getattr(self, "_thumbs", None) is not None and self._thumbs.hasFocus()
+        )
+        if mode == "thumbnails":
+            thumbs = self.thumbnail_view
+            self._table.hide()
+            thumbs.show()
+            shown = thumbs
+        else:
+            self._thumbs.hide()
+            self._table.show()
+            shown = self._table
+        current = self._table.selectionModel().currentIndex()
+        if current.isValid():
+            shown.scrollTo(current)
+        if had_focus:
+            shown.setFocus()
+        self.view_mode_changed.emit(mode)
+
+    def toggle_view_mode(self) -> None:
+        self.set_view_mode("details" if self.view_mode == "thumbnails" else "thumbnails")
+
     def eventFilter(self, watched, event) -> bool:
         if event.type() in (QEvent.Type.FocusIn, QEvent.Type.MouseButtonPress):
             self.pane_focused.emit()
 
         # Keyboard shortcuts when the table (or its viewport) has focus
-        if event.type() == QEvent.Type.KeyPress and watched in (
-            self._table,
-            self._table.viewport(),
-        ):
+        if event.type() == QEvent.Type.KeyPress and watched in self._key_views():
             key = event.key()
             mods = event.modifiers()
             ctrl = mods == Qt.KeyboardModifier.ControlModifier
@@ -3524,7 +4076,8 @@ class FilePaneWidget(QWidget):
                 return True
 
             # --- File operations ---
-            if key in (Qt.Key.Key_Delete, Qt.Key.Key_F8) and no_mods:
+            # F8 is the window's "Add Current Directory" shortcut, not delete.
+            if key == Qt.Key.Key_Delete and no_mods:
                 self._delete_selected()
                 return True
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and no_mods:

@@ -33,12 +33,15 @@ from __future__ import annotations
 import base64
 import io
 import logging
-from datetime import datetime
+import secrets
+from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from models.exec_result import ExecResult
 
+from core.answer_fields import as_size, as_str
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -48,12 +51,57 @@ try:
     import winrm  # type: ignore[import-not-found]
     from winrm.exceptions import (  # type: ignore[import-not-found]
         InvalidCredentialsError,
+        WinRMError,
         WinRMTransportError,
     )
 except ImportError:  # pragma: no cover — optional dep
     winrm = None  # type: ignore[assignment]
     InvalidCredentialsError = OSError  # type: ignore[assignment,misc]
+    WinRMError = OSError  # type: ignore[assignment,misc]
     WinRMTransportError = OSError  # type: ignore[assignment,misc]
+
+# pywinrm's run_ps sends "powershell -encodedcommand <base64 of the
+# UTF-16LE script>" as the command line (winrm/__init__.py run_ps), which
+# the WinRM cmd shell caps at 8,190 characters.
+_PS_COMMAND_PREFIX = "powershell -encodedcommand "
+_COMMAND_LINE_LIMIT = 8190
+
+
+def _ps_command_length(script: str) -> int:
+    """Length of the command line ``Session.run_ps(script)`` sends."""
+    utf16_len = len(script.encode("utf_16_le"))
+    return len(_PS_COMMAND_PREFIX) + 4 * -(-utf16_len // 3)
+
+
+def _write_script(path_expr: str, data_b64: str, *, append: bool) -> str:
+    if append:
+        return f"""
+            $p = {path_expr}
+            $bytes = [Convert]::FromBase64String('{data_b64}')
+            $s = [IO.File]::Open($p, [IO.FileMode]::Append)
+            try {{ $s.Write($bytes, 0, $bytes.Length) }} finally {{ $s.Close() }}
+        """
+    return f"""
+            $p = {path_expr}
+            $bytes = [Convert]::FromBase64String('{data_b64}')
+            [IO.File]::WriteAllBytes($p, $bytes)
+        """
+
+
+def _max_chunk_bytes(path_expr: str) -> int:
+    """Largest payload whose append script still fits the command line.
+
+    Derived from the real template: every base64 character adds two
+    UTF-16LE bytes, i.e. 8/3 characters of the outer base64."""
+    room = (_COMMAND_LINE_LIMIT - len(_PS_COMMAND_PREFIX)) // 4 * 3 // 2
+    b64_chars = room - len(_write_script(path_expr, "", append=True))
+    return max(0, b64_chars // 4 * 3)
+
+
+# pywinrm refuses a read timeout that does not exceed the operation
+# timeout (its own default read timeout is 30 s): the server may hold a
+# request for the whole operation timeout before it answers.
+_READ_TIMEOUT_MARGIN_SEC = 10
 
 
 # Cap on a single read_file call. Larger files transit fine through
@@ -89,7 +137,7 @@ def _b64(value: str) -> str:
 # --------------------------------------------------------------------------
 
 
-class WinRMSession:
+class WinRMSession(SessionLifecycle):
     """PowerShell-Remoting backend (FileBackend protocol).
 
     Construct one per (host, credentials) tuple. The pywinrm
@@ -128,8 +176,9 @@ class WinRMSession:
                 transport=transport,
                 server_cert_validation=("validate" if verify_ssl else "ignore"),
                 operation_timeout_sec=operation_timeout_sec,
+                read_timeout_sec=int(operation_timeout_sec) + _READ_TIMEOUT_MARGIN_SEC,
             )
-        except (InvalidCredentialsError, WinRMTransportError, OSError) as exc:
+        except (InvalidCredentialsError, WinRMTransportError, WinRMError, ValueError, OSError) as exc:
             raise OSError(f"WinRM connect to {host}: {exc}") from exc
         from core.proxy import build_requests_proxies
 
@@ -260,7 +309,8 @@ class WinRMSession:
             }} | ConvertTo-Json -Compress -Depth 2
         """
         out = self._run_ps(script)
-        return [self._parse_listing_row(row) for row in self._parse_json_array(out)]
+        items = [self._parse_listing_row(row) for row in self._parse_json_array(out)]
+        return [item for item in items if item.name]  # a row without a name names nothing
 
     def stat(self, path: str) -> FileItem:
         path_b64 = _b64(self.normalize(path))
@@ -369,9 +419,15 @@ class WinRMSession:
             try:
                 with self.open_read(path) as fh:
                     buffer.write(fh.read())
-            except OSError:
-                # File doesn't exist yet — append from empty is fine.
-                pass
+            except OSError as exc:
+                # A missing file appends from empty; one that exists but
+                # could not be read (too large, locked, denied) would be
+                # overwritten by the new bytes alone.
+                if self.exists(path):
+                    raise OSError(
+                        f"WinRM append: refusing to overwrite {path}; could not "
+                        f"read existing content ({exc})"
+                    ) from exc
 
         class _WinRMWriteHandle(io.BytesIO):
             def close(self_inner) -> None:  # noqa: N805
@@ -404,17 +460,37 @@ class WinRMSession:
         return h
 
     def _write_bytes(self, path: str, data: bytes) -> None:
-        path_b64 = _b64(self.normalize(path))
-        data_b64 = base64.b64encode(data).decode("ascii")
+        target = self.normalize(path)
+        target_expr = _ps_decode(_b64(target))
         # Two-stage: decode the base64 inside PS, then ReadAllBytes-style
         # write. Path goes through _ps_decode for the same anti-injection
         # reason as the other ops.
-        script = f"""
-            $p = {_ps_decode(path_b64)}
-            $bytes = [Convert]::FromBase64String('{data_b64}')
-            [IO.File]::WriteAllBytes($p, $bytes)
-        """
-        self._run_ps(script)
+        script = _write_script(target_expr, base64.b64encode(data).decode("ascii"), append=False)
+        if _ps_command_length(script) <= _COMMAND_LINE_LIMIT:
+            self._run_ps(script)
+            return
+        # Too large for one command line: append chunks to a part file
+        # next to the target, then move it over the target - a failed
+        # chunk never leaves a truncated file under the real name.
+        part = f"{target}.axross-part-{secrets.token_hex(4)}"
+        part_expr = _ps_decode(_b64(part))
+        chunk = _max_chunk_bytes(part_expr)
+        if chunk <= 0:
+            raise OSError(f"WinRM write {path}: path too long for a command line")
+        try:
+            for offset in range(0, len(data), chunk):
+                piece = base64.b64encode(data[offset : offset + chunk]).decode("ascii")
+                self._run_ps(_write_script(part_expr, piece, append=offset > 0))
+            self._run_ps(
+                f"Move-Item -Force -LiteralPath {part_expr} "
+                f"-Destination {target_expr} -ErrorAction Stop"
+            )
+        except OSError:
+            try:
+                self._run_ps(f"Remove-Item -Force -LiteralPath {part_expr} -ErrorAction SilentlyContinue")
+            except OSError:
+                log.warning("WinRM write %s: could not remove part file %s", path, part)
+            raise
 
     # ------------------------------------------------------------------
     # Server-side helpers
@@ -548,7 +624,7 @@ class WinRMSession:
 
         try:
             data = _json.loads(out)
-        except _json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:  # see _parse_json_array
             raise OSError(f"WinRM cim_query: malformed JSON from server: {out[:200]!r}") from exc
         # ConvertTo-Json returns a single object for 1 row, list for N.
         if isinstance(data, dict):
@@ -587,10 +663,13 @@ class WinRMSession:
             return []
         try:
             data = json.loads(text)
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
+            # ValueError: JSONDecodeError or an integer above the digit
+            # limit; RecursionError: nesting deeper than the C stack.
             raise OSError(f"WinRM: malformed JSON: {exc}") from exc
         if isinstance(data, list):
-            return data
+            # Rows are objects; anything else in the array names nothing.
+            return [row for row in data if isinstance(row, dict)]
         if isinstance(data, dict):
             return [data]
         raise OSError(f"WinRM: unexpected JSON shape: {type(data).__name__}")
@@ -599,12 +678,19 @@ class WinRMSession:
     def _parse_listing_row(row: dict) -> FileItem:
         mtime_iso = row.get("Mtime") or ""
         try:
-            mtime = datetime.fromisoformat(mtime_iso.rstrip("Z"))
+            # LastWriteTimeUtc.ToString('o'): seven fraction digits and a
+            # "Z" that means UTC. Python 3.10 accepts neither, and a naive
+            # value would be read as local time by FileItem.
+            text = mtime_iso[:-1] if mtime_iso.endswith("Z") else mtime_iso
+            head, dot, frac = text.partition(".")
+            mtime = datetime.fromisoformat(f"{head}.{frac[:6].ljust(6, '0')}" if dot else head)
+            if mtime_iso.endswith("Z"):
+                mtime = mtime.replace(tzinfo=timezone.utc)
         except (ValueError, AttributeError):
             mtime = datetime.fromtimestamp(0)
         return FileItem(
-            name=row.get("Name") or "",
-            size=int(row.get("Size") or 0),
+            name=as_str(row.get("Name")),
+            size=as_size(row.get("Size")),
             modified=mtime,
             is_dir=bool(row.get("IsDir")),
             is_link=bool(row.get("IsLink")),

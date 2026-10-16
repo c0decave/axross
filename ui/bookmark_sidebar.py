@@ -9,6 +9,16 @@ moved into / out of groups by drag & drop or from the right-click menu.
 Every change goes through :class:`core.bookmarks.BookmarkManager`; the tree
 rebuilds from it afterwards and ``changed`` tells the main window to refresh
 its Bookmarks menu.
+
+Files and folders dragged from a file pane can be dropped here as well:
+folders dropped on empty space, onto a group or between entries become
+bookmarks there (:pyattr:`BookmarkSidebar.bookmark_drop_requested`), and
+anything dropped onto a bookmark is moved (Ctrl: copied) into the
+bookmarked folder (:pyattr:`BookmarkSidebar.transfer_drop_requested`).
+The sidebar only reads the drag payload and its own tree - it never
+touches a backend, so a dead mount or an unreachable remote behind a
+bookmark cannot freeze a drag; the main window does the rest off the GUI
+thread. Payloads from other programs (text, URLs) are ignored.
 """
 
 from __future__ import annotations
@@ -16,7 +26,8 @@ from __future__ import annotations
 import logging
 from html import escape as _html_escape
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -33,6 +44,7 @@ from PyQt6.QtWidgets import (
 
 from core.bookmarks import Bookmark, BookmarkGroup, BookmarkManager
 from ui.bookmark_edit_dialog import BookmarkEditDialog, GroupEditDialog
+from ui.file_pane import TRANSFER_MIME_TYPE, _drop_action, decode_transfer_payload
 from ui.icon_provider import icon
 
 log = logging.getLogger(__name__)
@@ -44,15 +56,42 @@ def _count_bookmarks(group: BookmarkGroup) -> int:
     return sum(_count_bookmarks(c) if isinstance(c, BookmarkGroup) else 1 for c in group.children)
 
 
+def _emit_later(owner: QWidget, signal, *args) -> None:
+    """Emit *signal* on the next event-loop turn.
+
+    A drop is handed over this way: rebuilding the tree inside the drop
+    handler would delete the item Qt is still working with, and modal
+    dialogs do not belong inside a drag. The timer is a child of *owner*,
+    so when the owner is destroyed first nothing fires (a bare
+    ``QTimer.singleShot`` lambda would then raise a RuntimeError inside
+    Qt, which aborts a process without main.py's excepthook)."""
+    timer = QTimer(owner)
+    timer.setSingleShot(True)
+
+    def fire() -> None:
+        timer.deleteLater()
+        signal.emit(*args)
+
+    timer.timeout.connect(fire)
+    timer.start(0)
+
+
 class _BookmarkTree(QTreeWidget):
     """Tree whose drops are NOT applied by Qt: they are reported as
     ``(dragged node, target node or None, where)`` and the sidebar applies
-    them through the manager, then rebuilds."""
+    them through the manager, then rebuilds.
+
+    Pane drags (:data:`ui.file_pane.TRANSFER_MIME_TYPE`) are reported as
+    ``(payload, target node or None, where, move)`` with *where* one of
+    ``onto`` (a bookmark: transfer into it), ``into`` (a group),
+    ``above`` / ``below`` (an entry) or ``end`` (empty space)."""
 
     drop_requested = pyqtSignal(object, object, str)  # dragged, target, "above|below|into"
+    external_drop_requested = pyqtSignal(dict, object, str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._drop_marker: tuple[QRect, str] | None = None
         self.setHeaderHidden(True)
         self.setIconSize(QSize(20, 20))
         self.setIndentation(14)
@@ -65,7 +104,110 @@ class _BookmarkTree(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
+    # -- pane drags -------------------------------------------------------
+    def _external_drop(self, event) -> tuple[dict, object, str, QRect] | None:
+        """What a pane drag at the event position means:
+        ``(payload, target node or None, where, marker rect)``, or ``None``
+        when it would do nothing. Reads the payload and the tree only."""
+        payload = decode_transfer_payload(event.mimeData())
+        if payload is None or not payload["paths"]:
+            return None
+        pos = event.position().toPoint()
+        item = self.itemAt(pos)
+        node = item.data(0, _NODE_ROLE) if item is not None else None
+        if node is None:
+            where, rect = "end", self.viewport().rect()
+        else:
+            rect = self.visualItemRect(item)
+            margin = max(2, min(rect.height() // 4, 12))
+            if pos.y() < rect.top() + margin:
+                where = "above"
+            elif pos.y() > rect.bottom() - margin:
+                where = "below"
+            else:
+                where = "into" if isinstance(node, BookmarkGroup) else "onto"
+            # Files can only go INTO a bookmark; near its edge they still do.
+            if isinstance(node, Bookmark) and (where == "onto" or not payload["dirs"]):
+                return payload, node, "onto", rect
+        if not payload["dirs"]:
+            return None  # only folders can be bookmarked
+        return payload, node, where, rect
+
+    def _set_drop_marker(self, marker: tuple[QRect, str] | None) -> None:
+        if marker != self._drop_marker:
+            self._drop_marker = marker
+            self.viewport().update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._drop_marker is None:
+            return
+        rect, where = self._drop_marker
+        painter = QPainter(self.viewport())
+        try:
+            pen = QPen(self.palette().color(QPalette.ColorRole.Highlight))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            if where == "above":
+                painter.drawLine(rect.topLeft(), rect.topRight())
+            elif where == "below":
+                painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+            else:
+                painter.drawRect(rect.adjusted(1, 1, -2, -2))
+        finally:
+            painter.end()
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(TRANSFER_MIME_TYPE):
+            self.dragMoveEvent(event)
+        elif event.source() is self:
+            super().dragEnterEvent(event)  # reordering inside the tree
+        else:
+            event.ignore()  # text, URLs, other programs' drags
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(TRANSFER_MIME_TYPE):
+            target = self._external_drop(event)
+            if target is None:
+                self._set_drop_marker(None)
+                event.ignore()
+                return
+            self._set_drop_marker((target[3], target[2]))
+            event.setDropAction(_drop_action(event))
+            event.accept()
+        elif event.source() is self:
+            super().dragMoveEvent(event)
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._set_drop_marker(None)
+        super().dragLeaveEvent(event)
+
     def dropEvent(self, event) -> None:
+        self._set_drop_marker(None)
+        mime = event.mimeData()
+        if mime.hasFormat(TRANSFER_MIME_TYPE):
+            target = self._external_drop(event)
+            if target is None:
+                event.ignore()
+                return
+            payload, node, where, _rect = target
+            action = _drop_action(event)
+            event.setDropAction(action)
+            event.accept()
+            _emit_later(
+                self,
+                self.external_drop_requested,
+                payload,
+                node,
+                where,
+                action == Qt.DropAction.MoveAction,
+            )
+            return
+        if not any(mime.hasFormat(fmt) for fmt in self.mimeTypes()):
+            event.ignore()  # not one of our own rows: never move the selection
+            return
         selected = self.selectedItems() or ([self.currentItem()] if self.currentItem() else [])
         if not selected:
             event.ignore()
@@ -79,9 +221,50 @@ class _BookmarkTree(QTreeWidget):
             QAbstractItemView.DropIndicatorPosition.BelowItem: "below",
         }.get(position, "into")
         event.ignore()  # the manager does the move; the tree is rebuilt from it
-        # Rebuilding inside the drop handler would delete the item Qt is
-        # still working with, so hand over on the next event-loop turn.
-        QTimer.singleShot(0, lambda: self.drop_requested.emit(dragged, target, where))
+        _emit_later(self, self.drop_requested, dragged, target, where)
+
+
+class _DropHint(QLabel):
+    """The empty-state hint; folders dragged from a pane can be dropped on
+    it (the tree is hidden while there are no bookmarks)."""
+
+    external_drop_requested = pyqtSignal(dict, object, str, bool)
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setAcceptDrops(True)
+
+    @staticmethod
+    def _folders(event) -> dict | None:
+        payload = decode_transfer_payload(event.mimeData())
+        return payload if payload is not None and payload["dirs"] else None
+
+    def dragEnterEvent(self, event) -> None:
+        self.dragMoveEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if self._folders(event) is None:
+            event.ignore()
+            return
+        event.setDropAction(_drop_action(event))
+        event.accept()
+
+    def dropEvent(self, event) -> None:
+        payload = self._folders(event)
+        if payload is None:
+            event.ignore()
+            return
+        action = _drop_action(event)
+        event.setDropAction(action)
+        event.accept()
+        _emit_later(
+            self,
+            self.external_drop_requested,
+            payload,
+            None,
+            "end",
+            action == Qt.DropAction.MoveAction,
+        )
 
 
 class BookmarkSidebar(QDockWidget):
@@ -89,6 +272,12 @@ class BookmarkSidebar(QDockWidget):
 
     navigate_requested = pyqtSignal(object)  # emits Bookmark
     changed = pyqtSignal()  # after any edit / move / delete / new group
+    # Folders dragged from a pane: (folder paths, source pane id,
+    # group or None for the top level, index or None to append).
+    bookmark_drop_requested = pyqtSignal(list, str, object, object)
+    # Items dragged from a pane onto a bookmark:
+    # (paths, source pane id, Bookmark, move? - False when Ctrl copies).
+    transfer_drop_requested = pyqtSignal(list, str, object, bool)
 
     def __init__(self, bookmark_manager: BookmarkManager, parent=None) -> None:
         super().__init__("Bookmarks", parent)
@@ -118,12 +307,13 @@ class BookmarkSidebar(QDockWidget):
 
         # Empty-state hint — tells the user how to populate the panel so a
         # fresh install doesn't look broken.
-        self._hint = QLabel(
+        self._hint = _DropHint(
             "No bookmarks yet.\n\n"
-            "Right-click a folder in a pane and choose\n"
-            '"Bookmark This Directory" to add one.',
+            "Drag folders here from a pane, or right-click\n"
+            'a folder and choose "Bookmark This Directory".',
             container,
         )
+        self._hint.external_drop_requested.connect(self._apply_external_drop)
         self._hint.setProperty("role", "muted")
         self._hint.setStyleSheet("padding: 16px;")
         self._hint.setWordWrap(True)
@@ -136,6 +326,7 @@ class BookmarkSidebar(QDockWidget):
         self._tree.itemCollapsed.connect(lambda item: self._on_expanded(item, False))
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
         self._tree.drop_requested.connect(self._apply_drop)
+        self._tree.external_drop_requested.connect(self._apply_external_drop)
         layout.addWidget(self._tree, stretch=1)
         self.setWidget(container)
         self._container = container
@@ -261,6 +452,32 @@ class BookmarkSidebar(QDockWidget):
             log.debug("bookmark drop ignored: %s", exc)
             return
         self._after_change()
+
+    def _apply_external_drop(self, payload: dict, target, where: str, is_move: bool) -> None:
+        """Turn a pane drop into a request for the main window: a transfer
+        into the bookmark dropped onto, or bookmarks for the dragged folders
+        at the drop position. A target that vanished meanwhile (the tree
+        was rebuilt) means the end of the top level."""
+        paths = list(payload["paths"])
+        source_pane_id = payload["source_pane_id"]
+        if where == "onto" and isinstance(target, Bookmark):
+            self.transfer_drop_requested.emit(paths, source_pane_id, target, is_move)
+            return
+        folders = list(payload["dirs"])
+        if not folders:
+            return
+        group, index = None, None
+        try:
+            if where == "into" and isinstance(target, BookmarkGroup):
+                self._manager.parent_of(target)  # KeyError when gone
+                group = target
+            elif target is not None and where in ("above", "below"):
+                group = self._manager.parent_of(target)
+                position = next(i for i, s in enumerate(self._siblings_of(target)) if s is target)
+                index = position if where == "above" else position + 1
+        except (KeyError, StopIteration):
+            group, index = None, None
+        self.bookmark_drop_requested.emit(folders, source_pane_id, group, index)
 
     def _new_group(self, parent: BookmarkGroup | None) -> None:
         dialog = GroupEditDialog(parent=self)

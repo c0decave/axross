@@ -14,10 +14,12 @@ import logging
 import os
 import posixpath
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO
 
+from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetime
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.path_policy import safe_leaf
 from core.secure_storage import write_secret_file
 from models.file_item import FileItem
@@ -105,7 +107,7 @@ class _SpooledWriter:
             self.close()
 
 
-class GDriveSession:
+class GDriveSession(SessionLifecycle):
     """Google Drive backend implementing the FileBackend protocol.
 
     Uses the Google Drive v3 API with OAuth2. Paths are mapped to Drive
@@ -356,11 +358,13 @@ class GDriveSession:
             except Exception as e:
                 raise OSError(f"Cannot resolve path '{path}': {e}") from e
 
-            files = resp.get("files", [])
+            files = as_list(as_dict(resp).get("files"))
             if not files:
                 raise FileNotFoundError(f"Not found: {path}")
 
-            current_id = files[0]["id"]
+            current_id = as_str(as_dict(files[0]).get("id"))
+            if not current_id:
+                raise OSError(f"Cannot resolve path '{path}': the answer carries no file id")
             self._path_cache[current_path] = current_id
 
         return current_id
@@ -380,7 +384,7 @@ class GDriveSession:
     def _get_metadata(self, file_id: str) -> dict:
         """Fetch metadata for a single file ID."""
         try:
-            return (
+            meta = (
                 self._service.files()
                 .get(
                     fileId=file_id,
@@ -390,6 +394,9 @@ class GDriveSession:
             )
         except Exception as e:
             raise OSError(f"Cannot get metadata for {file_id}: {e}") from e
+        if not isinstance(meta, dict):
+            raise OSError(f"Cannot get metadata for {file_id}: the answer is not a JSON object")
+        return meta
 
     # ------------------------------------------------------------------
     # FileBackend protocol
@@ -422,6 +429,7 @@ class GDriveSession:
 
         items: list[FileItem] = []
         page_token: str | None = None
+        seen_tokens: set[str] = set()
 
         while True:
             try:
@@ -438,9 +446,14 @@ class GDriveSession:
             except Exception as e:
                 raise OSError(f"Cannot list {path}: {e}") from e
 
+            if not isinstance(resp, dict) or not isinstance(resp.get("files", []), list):
+                raise OSError(f"Cannot list {path}: the answer is not a file list")
             for f in resp.get("files", []):
+                if not isinstance(f, dict):
+                    continue
+                file_id = as_str(f.get("id"))
                 try:
-                    name = safe_leaf(f["name"])
+                    name = safe_leaf(as_str(f.get("name")))
                 except ValueError as exc:
                     log.warning(
                         "Google Drive list_dir(%s): skipping unsafe child name %r: %s",
@@ -449,8 +462,11 @@ class GDriveSession:
                         exc,
                     )
                     continue
+                if not file_id:
+                    log.warning("Google Drive list_dir(%s): skipping %r without an id", path, name)
+                    continue
                 is_dir = f.get("mimeType") == _FOLDER_MIME
-                size = int(f.get("size", 0)) if not is_dir else 0
+                size = as_size(f.get("size"), digit_strings=True) if not is_dir else 0
                 modified = self._parse_time(f.get("modifiedTime", ""))
                 items.append(
                     FileItem(
@@ -463,11 +479,15 @@ class GDriveSession:
 
                 # Cache the child path for future lookups
                 child_path = posixpath.join(self.normalize(path), name)
-                self._path_cache[child_path] = f["id"]
+                self._path_cache[child_path] = file_id
 
-            page_token = resp.get("nextPageToken")
+            page_token = as_str(resp.get("nextPageToken"))
             if not page_token:
                 break
+            # A token handed back twice would page forever.
+            if page_token in seen_tokens:
+                raise OSError(f"Cannot list {path}: the server repeats a page token")
+            seen_tokens.add(page_token)
 
         return items
 
@@ -475,9 +495,9 @@ class GDriveSession:
         file_id = self._resolve_path(path)
         meta = self._get_metadata(file_id)
         is_dir = meta.get("mimeType") == _FOLDER_MIME
-        size = int(meta.get("size", 0)) if not is_dir else 0
+        size = as_size(meta.get("size"), digit_strings=True) if not is_dir else 0
         modified = self._parse_time(meta.get("modifiedTime", ""))
-        name = meta.get("name", posixpath.basename(path.rstrip("/")) or "/")
+        name = as_str(meta.get("name")) or posixpath.basename(path.rstrip("/")) or "/"
         return FileItem(name=name, size=size, modified=modified, is_dir=is_dir)
 
     def is_dir(self, path: str) -> bool:
@@ -518,7 +538,11 @@ class GDriveSession:
         except Exception as e:
             raise OSError(f"Cannot create directory {path}: {e}") from e
 
-        self._path_cache[path] = result["id"]
+        # The folder exists now; without an id in the answer it is
+        # simply resolved by name on the next lookup.
+        folder_id = as_str(as_dict(result).get("id"))
+        if folder_id:
+            self._path_cache[path] = folder_id
         log.info("Created directory: %s", path)
 
     def remove(self, path: str, recursive: bool = False) -> None:
@@ -674,26 +698,26 @@ class GDriveSession:
         except Exception as exc:
             log.warning("GDrive list_versions(%s) failed: %s", path, exc)
             return []
-        revs = list(resp.get("revisions") or [])
+        revs = [r for r in as_list(as_dict(resp).get("revisions")) if isinstance(r, dict)]
 
-        # Parse modifiedTime; sort newest first.
+        # Parse modifiedTime; sort newest first. Aware throughout: a
+        # naive fallback next to an aware date fails the sort.
+        oldest = datetime.min.replace(tzinfo=timezone.utc)
+
         def _ts(r):
-            s = r.get("modifiedTime") or ""
-            try:
-                return datetime.fromisoformat(s.replace("Z", "+00:00"))
-            except Exception:
-                return datetime.min
+            return as_utc_datetime(r.get("modifiedTime"), default=oldest)
 
         revs.sort(key=_ts, reverse=True)
         out: list = []
         for i, r in enumerate(revs):
+            rev_id = as_str(r.get("id"))
             out.append(
                 FileVersion(
-                    version_id=r.get("id") or "",
+                    version_id=rev_id,
                     modified=_ts(r),
-                    size=int(r.get("size") or 0),
+                    size=as_size(r.get("size"), digit_strings=True),
                     is_current=(i == 0),
-                    label=f"gdrive-rev:{r.get('id', '')}",
+                    label=f"gdrive-rev:{rev_id}",
                 )
             )
         return out
@@ -769,24 +793,27 @@ class GDriveSession:
             body["emailAddress"] = email
         if type == "anyone":
             body["allowFileDiscovery"] = bool(allow_discovery)
-        perm = (
-            self._service.permissions()
-            .create(
-                fileId=fid,
-                body=body,
-                fields="id",
+        try:
+            perm = as_dict(
+                self._service.permissions()
+                .create(
+                    fileId=fid,
+                    body=body,
+                    fields="id",
+                )
+                .execute()
             )
-            .execute()
-        )
-        meta = (
-            self._service.files()
-            .get(
-                fileId=fid,
-                fields="webViewLink,webContentLink",
+            meta = as_dict(
+                self._service.files()
+                .get(
+                    fileId=fid,
+                    fields="webViewLink,webContentLink",
+                )
+                .execute()
             )
-            .execute()
-        )
-        url = meta.get("webViewLink") or meta.get("webContentLink") or ""
+        except Exception as exc:
+            raise OSError(f"Cannot share {path}: {exc}") from exc
+        url = as_str(meta.get("webViewLink")) or as_str(meta.get("webContentLink"))
         log.info(
             "Drive share: %s granted role=%s type=%s%s -> %s",
             path,
@@ -796,7 +823,7 @@ class GDriveSession:
             url,
         )
         return {
-            "permission_id": perm.get("id", ""),
+            "permission_id": as_str(perm.get("id")),
             "url": url,
         }
 
@@ -813,7 +840,8 @@ class GDriveSession:
         permissions). One dict per permission with id/role/type/email."""
         fid = self._resolve_path(path)
         out: list[dict] = []
-        page_token = None
+        page_token = ""
+        seen_tokens: set[str] = set()
         while True:
             kwargs = dict(
                 fileId=fid,
@@ -821,20 +849,28 @@ class GDriveSession:
             )
             if page_token:
                 kwargs["pageToken"] = page_token
-            resp = self._service.permissions().list(**kwargs).execute()
-            for p in resp.get("permissions", []):
+            try:
+                resp = as_dict(self._service.permissions().list(**kwargs).execute())
+            except Exception as exc:
+                raise OSError(f"Cannot list permissions of {path}: {exc}") from exc
+            for p in as_list(resp.get("permissions")):
+                if not isinstance(p, dict):
+                    continue
                 out.append(
                     {
-                        "id": p.get("id", ""),
-                        "role": p.get("role", ""),
-                        "type": p.get("type", ""),
-                        "email": p.get("emailAddress", ""),
-                        "domain": p.get("domain", ""),
+                        "id": as_str(p.get("id")),
+                        "role": as_str(p.get("role")),
+                        "type": as_str(p.get("type")),
+                        "email": as_str(p.get("emailAddress")),
+                        "domain": as_str(p.get("domain")),
                     }
                 )
-            page_token = resp.get("nextPageToken")
+            page_token = as_str(resp.get("nextPageToken"))
             if not page_token:
                 break
+            if page_token in seen_tokens:
+                raise OSError(f"Cannot list permissions of {path}: the server repeats a page token")
+            seen_tokens.add(page_token)
         return out
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
@@ -863,10 +899,15 @@ class GDriveSession:
             )
         except Exception as exc:
             raise OSError(f"Cannot stat {path}: {exc}") from exc
-        val = meta.get(field) or meta.get("md5Checksum")
+        meta = as_dict(meta)
+        val = as_str(meta.get(field))
+        actual_algo = algorithm if field != "md5Checksum" else "md5"
+        if not val:
+            # The requested hash is missing: the md5 fallback is
+            # labelled md5, never as the algorithm that was asked for.
+            val, actual_algo = as_str(meta.get("md5Checksum")), "md5"
         if not val:
             return ""
-        actual_algo = algorithm if field != "md5Checksum" or algorithm == "md5" else "md5"
         return f"{actual_algo}:{val}"
 
     # ------------------------------------------------------------------
@@ -876,11 +917,11 @@ class GDriveSession:
     @staticmethod
     def _parse_time(timestamp: str) -> datetime:
         """Parse an RFC 3339 timestamp from the Drive API."""
-        if not timestamp:
+        if not timestamp or not isinstance(timestamp, str):
             return datetime.fromtimestamp(0)
         try:
-            # Strip trailing 'Z' and parse
-            clean = timestamp.rstrip("Z")
-            return datetime.fromisoformat(clean)
+            # The trailing 'Z' is UTC; dropping it would leave a naive
+            # value that FileItem reads as local time.
+            return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         except (ValueError, TypeError):
             return datetime.fromtimestamp(0)

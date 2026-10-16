@@ -87,7 +87,7 @@ def test_edge_the_same_treatment_applies_to_the_other_loader_variables():
 def test_happy_a_normal_environment_is_passed_through_untouched():
     """Outside a bundle there is nothing to undo, and stripping a
     developer's LD_LIBRARY_PATH would break their setup."""
-    source_env = {"PATH": "/usr/bin", "HOME": "~", "LANG": "en_US.UTF-8"}
+    source_env = {"PATH": "/usr/bin", "HOME": "/home/x", "LANG": "en_US.UTF-8"}
     assert clean_child_env(source_env) == source_env
 
 

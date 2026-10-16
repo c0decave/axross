@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QMainWindow,
     QMenu,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from core.bookmarks import Bookmark, BookmarkManager
 from core.connection_manager import ConnectionManager
+from core import i18n
 from core.i18n import tr
 from core.local_fs import LocalFS
 from core.profiles import ConnectionProfile, ProfileManager
@@ -72,10 +74,48 @@ MAX_PROFILE_IMPORT_BYTES = 8 * 1024 * 1024
 
 
 def _read_json_file(path: Path | str, *, max_bytes: int = MAX_UI_STATE_BYTES):
+    """Parsed JSON of ``path``. Raises OSError (unreadable, too large) or
+    ValueError (not UTF-8: UnicodeDecodeError, not JSON: JSONDecodeError);
+    callers catch both."""
     target = Path(path)
     if target.stat().st_size > max_bytes:
         raise OSError(f"{target} exceeds {max_bytes} bytes")
     return json.loads(target.read_bytes().decode("utf-8"))
+
+
+#: Real layouts are a few splitters deep; the rebuild recurses per level.
+MAX_SESSION_DEPTH = 32
+MAX_RESTORED_WINDOW_PX = 100_000
+
+
+def _session_problem(data) -> str:
+    """Why a saved session cannot be restored, or "" when it can.
+
+    Checks the whole shape ``_restore_session`` relies on, so a bad file is
+    refused before the open panes are closed instead of half-way through.
+    """
+    if not isinstance(data, dict):
+        return "The file does not hold a JSON object."
+    if not isinstance(data.get("window", {}), dict):
+        return "The window settings are not an object."
+    stack = [(data.get("splitter", {}), 1)]
+    while stack:
+        node, depth = stack.pop()
+        if not isinstance(node, dict):
+            return "A layout entry is not an object."
+        if depth > MAX_SESSION_DEPTH:
+            return f"The layout is nested deeper than {MAX_SESSION_DEPTH} levels."
+        if node.get("type", "splitter") == "pane":
+            if not isinstance(node.get("path", "/"), str):
+                return "A pane path is not text."
+            if not isinstance(node.get("profile", ""), (str, type(None))):
+                return "A pane profile name is not text."
+            continue
+        children = node.get("children", [])
+        if not isinstance(children, list):
+            return "A splitter's children are not a list."
+        stack.extend((child, depth + 1) for child in children)
+    return ""
 
 
 def _write_private_text(path: Path | str, text: str) -> None:
@@ -144,6 +184,8 @@ class MainWindow(QMainWindow):
         # doesn't tear the worker threads down mid-run. Older tasks
         # drain off this list once their threads have actually exited.
         self._connect_tasks: list = []
+        # Open Compare windows with the two panes each was built on.
+        self._compare_dialogs: list = []
 
         self._current_theme = themes.DEFAULT_THEME
         self._compact_mode = False
@@ -164,12 +206,16 @@ class MainWindow(QMainWindow):
 
         self._setup_menubar()
         self._setup_toolbar()
+        self._setup_menu_mirrors()
         self._setup_central()
         self._setup_transfer_dock()
         self._setup_terminal_dock()
         self._setup_log_dock()
         self._setup_console_dock()
+        self._setup_scripts_dock()
         self._setup_bookmark_sidebar()
+        self._setup_analysis_dock()
+        self._setup_status_bar()
         # Arm the recurring-job tick. Failure here must never stop the
         # window from opening — a broken schedule file should cost the
         # user their schedule, not their file manager.
@@ -206,8 +252,17 @@ class MainWindow(QMainWindow):
 
         # Track which panes received transfers for auto-refresh
         self._transfer_target_panes: set[FilePaneWidget] = set()
+        # Destination checks of F5 / F6 / drops still running (ScanJob).
+        self._conflict_checks: set = set()
         self._transfer_manager.job_finished.connect(self._on_transfer_finished)
         self._transfer_manager.all_finished.connect(self._on_all_transfers_finished)
+
+        # Extensions: only the switched-on ones are loaded, and none in the
+        # paranoid security mode (core.extensions).
+        from ui.extension_host import ExtensionHost
+
+        self.extension_host = ExtensionHost(self, self.extensions_menu)
+        self.extension_host.load_enabled()
 
         # Debounce timer for post-transfer refresh
         self._refresh_timer = QTimer(self)
@@ -285,6 +340,15 @@ class MainWindow(QMainWindow):
         self._hidden_action.setShortcut(QKeySequence("Ctrl+H"))
         self._hidden_action.toggled.connect(self._toggle_hidden)
 
+        # Per pane: the active pane switches, the check mark follows it.
+        self.thumbnail_view_action = view_menu.addAction(tr("&Thumbnail View"))
+        self.thumbnail_view_action.setCheckable(True)
+        self.thumbnail_view_action.setShortcut(QKeySequence("Ctrl+Shift+G"))
+        self.thumbnail_view_action.setToolTip(
+            tr("Show the active pane's folder as thumbnails (images, PDFs, videos)")
+        )
+        self.thumbnail_view_action.triggered.connect(self._toggle_thumbnail_view)
+
         view_menu.addSeparator()
 
         add_local_action = view_menu.addAction(tr("Add &Local Pane"))
@@ -353,17 +417,39 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
 
         find_action = view_menu.addAction(tr("&Find in Index…"))
+        self._find_index_action = find_action
         find_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
         find_action.triggered.connect(self._open_metadata_search)
 
+        self._view_media_action = view_menu.addAction(tr("View &Media…"))
+        self._view_media_action.setToolTip(
+            "Images, PDFs and videos of the active pane's folder as overview or slideshow"
+        )
+        self._view_media_action.triggered.connect(lambda: self._view_media(selected_only=False))
+
+        self._view_selected_media_action = view_menu.addAction(tr("View Selec&ted Media…"))
+        self._view_selected_media_action.setToolTip(
+            "Images, PDFs and videos among the active pane's selection"
+        )
+        self._view_selected_media_action.triggered.connect(
+            lambda: self._view_media(selected_only=True)
+        )
+
         cas_action = view_menu.addAction(tr("&Duplicate Finder…"))
+        cas_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
         cas_action.triggered.connect(self._open_cas_duplicates)
 
+        cas_history_action = view_menu.addAction(tr("Duplicate Index && &History…"))
+        cas_history_action.setToolTip("Every scan of the duplicate index; remove or clear it")
+        cas_history_action.triggered.connect(self._open_cas_history)
+
         disk_action = view_menu.addAction(tr("Dis&k Usage…"))
+        self._disk_usage_action = disk_action
         disk_action.setToolTip("Capacity of every open connection")
         disk_action.triggered.connect(self._open_disk_usage)
 
         compare_action = view_menu.addAction(tr("Co&mpare Panes…"))
+        self._compare_action = compare_action
         compare_action.setToolTip("Diff the active pane's tree against the target pane's")
         compare_action.triggered.connect(self._open_compare_panes)
 
@@ -400,10 +486,12 @@ class MainWindow(QMainWindow):
         toggle_orient_action = pane_menu.addAction(tr("Toggle &Layout (H/V)"))
         toggle_orient_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
         toggle_orient_action.triggered.connect(self._toggle_splitter_orientation)
+        self._toggle_orient_action = toggle_orient_action  # the toolbar shows it too
 
         equalize_action = pane_menu.addAction(tr("&Equalize Pane Sizes"))
         equalize_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
         equalize_action.triggered.connect(self._equalize_pane_sizes)
+        self._equalize_action = equalize_action
 
         pane_menu.addSeparator()
 
@@ -418,6 +506,7 @@ class MainWindow(QMainWindow):
         extract_action = pane_menu.addAction(tr("E&xtract Pane to Root"))
         extract_action.setShortcut(QKeySequence("Ctrl+Shift+X"))
         extract_action.triggered.connect(self._extract_pane_from_split)
+        self._extract_pane_action = extract_action
 
         pane_menu.addSeparator()
 
@@ -435,6 +524,13 @@ class MainWindow(QMainWindow):
         recovery_action.triggered.connect(self._run_recovery_scan)
         network_action = tools_menu.addAction(tr("&Network && Proxy…"))
         network_action.triggered.connect(self._show_network_proxy)
+        llm_action = tools_menu.addAction(tr("&LLM Profiles…"))
+        llm_action.triggered.connect(self._show_llm_profiles)
+        metadata_settings_action = tools_menu.addAction(tr("&Metadata Settings…"))
+        metadata_settings_action.setToolTip(
+            "How Remove Metadata writes (in place or a cleaned copy) and whether it asks first"
+        )
+        metadata_settings_action.triggered.connect(self._show_metadata_settings)
         tools_menu.addSeparator()
         self._paranoid_action = tools_menu.addAction(tr("&Paranoid Security Mode"))
         self._paranoid_action.setCheckable(True)
@@ -443,11 +539,24 @@ class MainWindow(QMainWindow):
         self._paranoid_action.setChecked(is_paranoid())
         self._paranoid_action.triggered.connect(self._toggle_paranoid_mode)
 
+        # Extensions menu: three fixed entries; loaded extensions add theirs
+        # below (ui.extension_host).
+        self.extensions_menu = menubar.addMenu(tr("E&xtensions"))
+        manage_ext_action = self.extensions_menu.addAction(tr("&Manage Extensions…"))
+        self._manage_ext_action = manage_ext_action
+        manage_ext_action.triggered.connect(self._show_extensions_dialog)
+        folder_ext_action = self.extensions_menu.addAction(tr("&Open Extensions Folder"))
+        folder_ext_action.triggered.connect(self._open_extensions_folder)
+        reload_ext_action = self.extensions_menu.addAction(tr("&Reload Extensions"))
+        reload_ext_action.triggered.connect(lambda _checked=False: self.extension_host.reload())
+
         # Help menu
         help_menu = menubar.addMenu(tr("&Help"))
         shortcuts_action = help_menu.addAction(tr("&Keyboard Shortcuts"))
         shortcuts_action.setShortcut(QKeySequence("F1"))
         shortcuts_action.triggered.connect(self._show_shortcuts)
+        guide_action = help_menu.addAction(tr("&Scripting Guide"))
+        guide_action.triggered.connect(self._show_scripting_guide)
         about_action = help_menu.addAction(tr("&About axross"))
         about_action.triggered.connect(self._show_about)
 
@@ -490,17 +599,19 @@ class MainWindow(QMainWindow):
         close_btn.setToolTip("Close active pane (Ctrl+W)")
         close_btn.triggered.connect(self._close_active_pane)
 
-        toggle_btn = toolbar.addAction(tr("Toggle Layout"))
+        # The Pane menu's own actions: one QAction per command, so a
+        # shortcut has one owner and both places stay the same.
+        toggle_btn = self._toggle_orient_action
+        toolbar.addAction(toggle_btn)
         toggle_btn.setToolTip("Toggle layout horizontal/vertical (Ctrl+Shift+L)")
-        toggle_btn.triggered.connect(self._toggle_splitter_orientation)
 
-        eq_btn = toolbar.addAction(tr("Equalize Panes"))
+        eq_btn = self._equalize_action
+        toolbar.addAction(eq_btn)
         eq_btn.setToolTip("Equalize pane sizes (Ctrl+Shift+E)")
-        eq_btn.triggered.connect(self._equalize_pane_sizes)
 
-        extract_btn = toolbar.addAction(tr("Extract Pane"))
+        extract_btn = self._extract_pane_action
+        toolbar.addAction(extract_btn)
         extract_btn.setToolTip("Extract pane from nested split (Ctrl+Shift+X)")
-        extract_btn.triggered.connect(self._extract_pane_from_split)
 
         toolbar.addSeparator()
 
@@ -525,6 +636,11 @@ class MainWindow(QMainWindow):
         refresh_btn.setShortcut(QKeySequence("Ctrl+R"))
         refresh_btn.triggered.connect(self._refresh_active)
 
+        # The shortcut belongs to View > Duplicate Finder; one owner per key.
+        dupes_btn = toolbar.addAction(tr("Duplicate Finder"))
+        dupes_btn.setToolTip("Duplicate Finder (Ctrl+Shift+D)")
+        dupes_btn.triggered.connect(self._open_cas_duplicates)
+
         # Icon-only toolbar: drop the inline [Shortcut] text labels,
         # swap in SVG icons. Tooltips still carry the shortcut hint.
         from PyQt6.QtCore import QSize as _QSize
@@ -547,11 +663,118 @@ class MainWindow(QMainWindow):
             (copy_btn, "copy-right"),
             (move_btn, "move-right"),
             (refresh_btn, "refresh"),
+            (dupes_btn, "duplicates"),
         ):
             # Remembered on the action so a theme / monochrome switch can
             # re-icon the bar without matching on translated labels.
             act.setProperty("axIcon", icon_name)
             act.setIcon(_ico(icon_name))
+        self._add_feature_buttons(toolbar)
+        self._shell_action = shell_btn
+        self._copy_target_action = copy_btn
+        self._move_target_action = move_btn
+        self._refresh_action = refresh_btn
+
+    def _add_feature_buttons(self, toolbar: QToolBar) -> None:
+        """Buttons for the newer features, after the existing ones. Where
+        a menu entry exists the button IS that QAction (one shortcut
+        owner, one check state)."""
+        from PyQt6.QtGui import QAction
+
+        from ui.icon_provider import icon as _ico
+
+        self._pack_action = QAction(tr("Pack…"), self)
+        self._pack_action.triggered.connect(self._pack_from_toolbar)
+        self._metadata_action = QAction(tr("Show Metadata…"), self)
+        self._metadata_action.triggered.connect(self._metadata_from_toolbar)
+        toolbar.addSeparator()
+        for action, icon_name, tip in (
+            (self.thumbnail_view_action, "thumbnails", "Thumbnail view for the active pane (Ctrl+Shift+G)"),
+            (self._view_media_action, "media-view", "View the images, PDFs and videos of this folder"),
+            (self._find_index_action, "find-index", "Find in the offline index (Ctrl+Shift+F)"),
+            (self._compare_action, "compare", "Compare the two panes"),
+            (self._disk_usage_action, "disk-usage", "Disk usage of this folder"),
+            (self._metadata_action, "metadata", "Show the metadata of the selection or this folder"),
+            (self._pack_action, "pack", "Pack the selection into an archive"),
+            (self._manage_ext_action, "extensions", "Manage extensions"),
+        ):
+            toolbar.addAction(action)
+            action.setToolTip(tip)
+            action.setProperty("axIcon", icon_name)
+            action.setIcon(_ico(icon_name))
+
+    def _pack_from_toolbar(self, _checked: bool = False) -> None:
+        pane = self._active_pane
+        if pane is None:
+            self.statusBar().showMessage(tr("No file pane is active."), 5000)
+            return
+        if not pane.selected_items():
+            self.statusBar().showMessage(tr("Select the files or folders to pack first."), 5000)
+            return
+        pane.pack_selection(None)
+
+    def _metadata_from_toolbar(self, _checked: bool = False) -> None:
+        pane = self._active_pane
+        if pane is None:
+            self.statusBar().showMessage(tr("No file pane is active."), 5000)
+            return
+        pane.open_metadata("show")
+
+    def _setup_menu_mirrors(self) -> None:
+        """Put what only the toolbar and the right-click menu offered into
+        the menu bar too - the same QAction objects, so each shortcut keeps
+        one owner (two actions on one key make Qt fire neither)."""
+        menubar = self.menuBar()
+        view_menu = next(a.menu() for a in menubar.actions() if a.text() == tr("&View"))
+        edit_action = next(a for a in menubar.actions() if a.text() == tr("&Edit"))
+        first_view_entry = view_menu.actions()[0]
+        view_menu.insertAction(first_view_entry, self._shell_action)
+        view_menu.insertAction(first_view_entry, self._bookmarks_btn)
+        view_menu.insertSeparator(first_view_entry)
+
+        self.actions_menu = QMenu(tr("&Actions"), self)
+        after_edit = menubar.actions()[menubar.actions().index(edit_action) + 1]
+        menubar.insertMenu(after_edit, self.actions_menu)
+        self._actions_source: QMenu | None = None
+        self.actions_menu.aboutToShow.connect(self._fill_actions_menu)
+        self._fill_actions_menu()
+
+    def _fill_actions_menu(self) -> None:
+        """The active pane's right-click menu, rebuilt each time the menu
+        opens (it depends on the selection), below the transfer entries."""
+        menu = self.actions_menu
+        menu.clear()
+        fixed = (
+            self._copy_target_action,
+            self._move_target_action,
+            self._refresh_action,
+            self._pack_action,
+            self._metadata_action,
+        )
+        for action in fixed:
+            menu.addAction(action)
+        menu.addSeparator()
+        old = self._actions_source
+        if old is not None:
+            old.deleteLater()
+        self._actions_source = None
+        pane = getattr(self, "_active_pane", None)
+        if pane is None:
+            note = menu.addAction(tr("No file pane is active"))
+            note.setEnabled(False)
+            return
+        try:
+            source = pane._build_context_menu()
+        except Exception:  # noqa: BLE001 - the menu bar must open regardless
+            log.warning("Building the Actions menu failed", exc_info=True)
+            return
+        source.setParent(self, source.windowFlags())
+        self._actions_source = source  # owns the actions while they are shown
+        above = {tr("Refresh"), tr("Show Metadata…")}  # the window-wide ones are above
+        for action in source.actions():
+            if action.text() in above:
+                continue
+            menu.addAction(action)
 
     def _toggle_bookmark_sidebar(self, checked: bool) -> None:
         sidebar = getattr(self, "_bookmark_sidebar", None)
@@ -589,6 +812,10 @@ class MainWindow(QMainWindow):
         )
         # Edits made in the sidebar (reorder, groups, colours) refresh the menu.
         self._bookmark_sidebar.changed.connect(self._populate_bookmarks_menu)
+        # Pane drags dropped on the sidebar: new bookmarks, or a transfer
+        # into the bookmarked folder.
+        self._bookmark_sidebar.bookmark_drop_requested.connect(self._on_bookmark_drop)
+        self._bookmark_sidebar.transfer_drop_requested.connect(self._on_bookmark_transfer_drop)
         # Keep the toolbar button's checked state in step with the dock,
         # however it was toggled (F12, menu, the dock's own X).
         self._bookmark_sidebar.visibilityChanged.connect(self._bookmarks_btn.setChecked)
@@ -648,6 +875,137 @@ class MainWindow(QMainWindow):
         self._populate_dock_view_menu()
         self._wire_dock_activity_indicators()
 
+    def _setup_scripts_dock(self) -> None:
+        """Saved scripts: edit, run in a child process, manage. Tabbed
+        next to the Console, which runs a script in the live namespace."""
+        from ui.scripts_dock import ScriptsDock
+
+        self._scripts_dock = ScriptsDock(self, scheduled_jobs=self._scheduled_script_jobs)
+        self._install_dock_titlebar(self._scripts_dock, tr("Scripts"), "edit")
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._scripts_dock)
+        self.tabifyDockWidget(self._console_dock, self._scripts_dock)
+        self._transfer_dock.raise_()
+        self._scripts_dock.run_in_console_requested.connect(self._run_script_in_console)
+        self._watch_dock_activity(self._scripts_dock)
+        self._populate_dock_view_menu()
+
+    def _scheduled_script_jobs(self) -> dict[str, list[str]]:
+        """Script name -> names of the scheduled jobs that run it."""
+        by_script: dict[str, list[str]] = {}
+        for job in self._job_store().load():
+            if job.kind == "script":
+                by_script.setdefault(job.target, []).append(job.name)
+        return by_script
+
+    def _run_script_in_console(self, name: str) -> None:
+        """Scripts dock > Run in Console: the REPL runs it in its live namespace."""
+        self._console_dock.show()
+        self._console_dock.raise_()
+        self._console_dock.repl.run_saved_script(name)
+
+    def _show_scripting_guide(self) -> None:
+        """Help > Scripting Guide: one non-modal window, raised when open."""
+        from ui.scripting_guide import ScriptingGuideDialog
+
+        dialog = getattr(self, "_scripting_guide", None)
+        if dialog is None:
+            dialog = ScriptingGuideDialog(self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_scripting_guide", None))
+            self._scripting_guide = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    # ------------------------------------------------------------------
+    # Analysis dock: sift's explanation of the selected file
+    def _setup_analysis_dock(self) -> None:
+        from ui.analysis_dock import AnalysisDock
+
+        self._analysis_dock = AnalysisDock(self)
+        self._install_dock_titlebar(self._analysis_dock, "Analysis", "bot")
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._analysis_dock)
+        self._analysis_dock.hide()
+        # Debounced: arrowing through a listing analyses where it stops.
+        self._analysis_timer = QTimer(self)
+        self._analysis_timer.setSingleShot(True)
+        self._analysis_timer.setInterval(200)
+        self._analysis_timer.timeout.connect(self._analyse_selection)
+        self._analysis_dock.visibilityChanged.connect(self._on_analysis_visibility)
+        self._analysis_dock.settings_requested.connect(self._show_llm_profiles)
+        self._populate_dock_view_menu()
+
+    def _show_llm_profiles(self) -> None:
+        from ui.llm_settings_dialog import LLMSettingsDialog
+
+        dialog = LLMSettingsDialog(self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()  # a child of the window: gone once closed
+        dock = getattr(self, "_analysis_dock", None)
+        if dock is not None:
+            dock.refresh_profiles()
+
+    def _on_analysis_visibility(self, visible: bool) -> None:
+        if visible:
+            self._analysis_dock.refresh_profiles()
+            self._schedule_analysis()
+        else:
+            self._analysis_timer.stop()
+
+    def _on_pane_selection_changed(self, pane: FilePaneWidget) -> None:
+        if pane is self._active_pane:
+            self._schedule_analysis()
+
+    def _schedule_analysis(self) -> None:
+        dock = getattr(self, "_analysis_dock", None)
+        if dock is None or not dock.isVisible():
+            return  # nothing is analysed while nobody looks
+        self._analysis_timer.start()
+
+    def _analyse_selection(self) -> None:
+        dock = getattr(self, "_analysis_dock", None)
+        pane = self._active_pane
+        if dock is None or pane is None or not dock.isVisible():
+            return
+        items = pane.selected_file_items()
+        paths = pane.selected_items()
+        if not items:
+            dock.show_message(tr("Select a file to see what it is."))
+            return
+        if len(items) != len(paths):
+            dock.show_message(tr("Select a single file to see its analysis."))
+            return
+        if len(items) > 1:
+            targets = [
+                self._analysis_target(pane, i, p)
+                for i, p in zip(items, paths)
+                if not i.is_dir and not i.is_link
+            ]
+            if targets:
+                dock.offer_batch(targets, tr("{n} files selected").format(n=len(targets)))
+            else:
+                dock.show_message(tr("Select a single file to see its analysis."))
+            return
+        item = items[0]
+        if item.is_dir:
+            dock.offer_folder(pane.backend, paths[0], item.name)
+            return
+        dock.analyse(self._analysis_target(pane, item, paths[0]))
+
+    @staticmethod
+    def _analysis_target(pane: FilePaneWidget, item, path: str):
+        from core.file_analysis import Target
+
+        try:
+            mtime = item.modified.timestamp() if item.modified else 0.0
+        except (OverflowError, OSError, ValueError):
+            mtime = 0.0
+        return Target(
+            backend=pane.backend, path=path, name=item.name, size=int(item.size or 0), mtime=mtime
+        )
+
     # ------------------------------------------------------------------
     # Archive preview dock (Task A4)
     # ------------------------------------------------------------------
@@ -665,7 +1023,7 @@ class MainWindow(QMainWindow):
         The hosted :class:`~ui.archive_pane.ArchivePaneWidget` emits
         extraction signals; we wire them to the same QProgressDialog +
         daemon-thread extraction flow as the file pane's right-click
-        "Entpacken…". The widget never extracts on its own.
+        "Extract…". The widget never extracts on its own.
         """
         from PyQt6.QtWidgets import QDockWidget
 
@@ -915,12 +1273,22 @@ class MainWindow(QMainWindow):
         case that viewer still holds the file open. Each dir is also
         tracked in ``_archive_member_tempdirs`` as a close-time safety
         net (deduped so ``closeEvent`` doesn't double-remove)."""
+        import shutil
         import tempfile as _tempfile
-
-        from core import archive as ARCH
 
         self._reap_last_member_tempdir()
         base = _tempfile.mkdtemp(prefix="axross-archive-")
+        extracted = self._extract_member_into(base, archive_path, member_name)
+        if extracted is None:
+            # Only a successful open is tracked for later removal; a failed
+            # one must not leave its temp dir behind.
+            shutil.rmtree(base, ignore_errors=True)
+        return extracted
+
+    def _extract_member_into(self, base: str, archive_path: str, member_name: str) -> str | None:
+        """The extraction half of :meth:`_extract_single_member`, into *base*."""
+        from core import archive as ARCH
+
         # extract_members requires a non-existing target dir, so place
         # the extraction in a child of the mkdtemp dir.
         target = os.path.join(base, "member")
@@ -942,11 +1310,6 @@ class MainWindow(QMainWindow):
             log.warning("Open archive member failed for %r: %s", member_name, exc)
             return None
 
-        # Track for the close-time safety net (deduped) and mark as the
-        # current member temp dir so the NEXT open reaps it.
-        if base not in self._archive_member_tempdirs:
-            self._archive_member_tempdirs.append(base)
-        self._archive_last_member_tempdir = base
         # The member name may include a directory prefix; resolve the
         # actual extracted file path under the target dir.
         extracted = os.path.join(target, member_name.replace("\\", "/"))
@@ -960,6 +1323,11 @@ class MainWindow(QMainWindow):
         if extracted is None or not os.path.isfile(extracted):
             QMessageBox.warning(self, "Open Member", "Extracted member not found on disk.")
             return None
+        # Track for the close-time safety net (deduped) and mark as the
+        # current member temp dir so the NEXT open reaps it.
+        if base not in self._archive_member_tempdirs:
+            self._archive_member_tempdirs.append(base)
+        self._archive_last_member_tempdir = base
         return extracted
 
     def _archive_open_member(self, archive_path: str, member_name: str) -> None:
@@ -1017,21 +1385,30 @@ class MainWindow(QMainWindow):
             self._log_dock: False,
             self._console_dock: False,
         }
-        for dock in self._dock_has_activity:
-            dock.activity.connect(  # type: ignore[attr-defined]
-                lambda d=dock: self._flag_dock_activity(d),
-            )
-            dock.visibilityChanged.connect(
-                lambda visible, d=dock: self._on_dock_visibility_changed(
-                    d,
-                    visible,
-                ),
-            )
+        for dock in list(self._dock_has_activity):
+            self._watch_dock_activity(dock)
+
+    def _watch_dock_activity(self, dock) -> None:
+        """Colour ``dock``'s tab when its ``activity`` fires out of sight."""
+        self._dock_has_activity[dock] = False
+        dock.activity.connect(  # type: ignore[attr-defined]
+            lambda d=dock: self._flag_dock_activity(d),
+        )
+        dock.visibilityChanged.connect(
+            lambda visible, d=dock: self._on_dock_visibility_changed(
+                d,
+                visible,
+            ),
+        )
 
     def _flag_dock_activity(self, dock) -> None:
         # Skip the flag when the dock is already what the user is
         # looking at — no point colouring the tab that's already raised.
         if self._is_dock_currently_visible(dock):
+            return
+        # Already flagged: the tab is coloured. Every log record lands
+        # here, and a burst re-walked every tab bar once per record.
+        if self._dock_has_activity.get(dock):
             return
         self._dock_has_activity[dock] = True
         self._apply_tab_colors()
@@ -1072,12 +1449,7 @@ class MainWindow(QMainWindow):
                 else:
                     # Only reset if it was one of OUR tabs; leave
                     # other tab bars' colours alone.
-                    if title in (
-                        self._transfer_dock.windowTitle(),
-                        self._terminal_dock.windowTitle(),
-                        self._log_dock.windowTitle(),
-                        self._console_dock.windowTitle(),
-                    ):
+                    if title in {dock.windowTitle() for dock in self._dock_has_activity}:
                         tabbar.setTabTextColor(i, default)
 
     def _populate_dock_view_menu(self) -> None:
@@ -1088,6 +1460,9 @@ class MainWindow(QMainWindow):
         self._dock_view_menu.addAction(self._terminal_dock.toggleViewAction())
         self._dock_view_menu.addAction(self._log_dock.toggleViewAction())
         self._dock_view_menu.addAction(self._console_dock.toggleViewAction())
+        scripts = getattr(self, "_scripts_dock", None)
+        if scripts is not None:
+            self._dock_view_menu.addAction(scripts.toggleViewAction())
         # Bookmark sidebar toggle + F12 hotkey. Uses the dock's
         # built-in toggleViewAction so show / hide / close all stay
         # in sync — closing the panel via its X button flips the
@@ -1104,6 +1479,12 @@ class MainWindow(QMainWindow):
         # any rebuild so the toggle survives. ``clear()`` only detaches
         # actions from the menu (it doesn't delete the dock's reused
         # toggleViewAction), and the register helper is idempotent.
+        analysis = getattr(self, "_analysis_dock", None)
+        if analysis is not None:
+            analysis_toggle = analysis.toggleViewAction()
+            analysis_toggle.setText("&Analysis")
+            analysis_toggle.setShortcut(QKeySequence("Ctrl+Shift+I"))
+            self._dock_view_menu.addAction(analysis_toggle)
         if getattr(self, "_archive_dock", None) is not None:
             self._register_archive_dock_view_action()
 
@@ -1122,6 +1503,9 @@ class MainWindow(QMainWindow):
     ) -> FilePaneWidget:
         pane = FilePaneWidget(backend, async_initial_load=True)
         pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
+        pane.view_mode_changed.connect(lambda _mode, p=pane: self._sync_view_mode_action(p))
+        pane.selection_changed.connect(lambda p=pane: self._extension_event("selection_changed", p))
+        pane.path_changed.connect(lambda _path, p=pane: self._extension_event("path_changed", p))
         pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
         pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
         pane.drop_transfer_requested.connect(self._on_drop_transfer)
@@ -1131,9 +1515,13 @@ class MainWindow(QMainWindow):
         pane.pane_drop_requested.connect(self._on_pane_drop)
         pane.open_bookmarks_requested.connect(self._show_bookmarks_popup)
         pane.open_duplicates_requested.connect(self._open_cas_duplicates)
+        pane.open_terminal_requested.connect(
+            lambda directory, p=pane: self._open_terminal_here(p, directory)
+        )
         pane.cycle_pane_requested.connect(
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
+        pane.selection_changed.connect(lambda p=pane: self._on_pane_selection_changed(p))
         splitter.addWidget(pane)
         self._panes.append(pane)
         if profile is not None:
@@ -1153,13 +1541,54 @@ class MainWindow(QMainWindow):
     def _set_active_pane(self, pane: FilePaneWidget) -> None:
         if pane not in self._panes:
             return
+        changed = pane is not self._active_pane
         if self._active_pane and self._active_pane != pane:
             self._target_pane = self._active_pane
         self._active_pane = pane
         if self._target_pane is pane:
             self._target_pane = next((p for p in self._panes if p is not pane), None)
         self._refresh_pane_styles()
+        self._sync_view_mode_action()
+        if changed:
+            self._extension_event("pane_activated", pane)
         log.debug("Active pane: %s at %s", pane.backend.name, pane.current_path)
+        if changed:  # a click into the active pane must not restart its analysis
+            self._schedule_analysis()
+
+    def _toggle_thumbnail_view(self, _checked: bool = False) -> None:
+        pane = self._active_pane
+        if pane is None:
+            self.thumbnail_view_action.setChecked(False)
+            return
+        pane.toggle_view_mode()
+        self._sync_view_mode_action(pane)
+
+    def _sync_view_mode_action(self, pane=None) -> None:
+        action = getattr(self, "thumbnail_view_action", None)
+        if action is None or (pane is not None and pane is not self._active_pane):
+            return
+        active = self._active_pane
+        action.setChecked(active is not None and active.view_mode == "thumbnails")
+
+    def _extension_event(self, event: str, pane) -> None:
+        """Forward a pane event to the extensions - for the active pane only."""
+        host = getattr(self, "extension_host", None)
+        if host is not None and pane is self._active_pane:
+            host.emit(event, pane)
+
+    def _show_extensions_dialog(self, _checked: bool = False) -> None:
+        from ui.extensions_dialog import ExtensionsDialog
+
+        dialog = ExtensionsDialog(self.extension_host, parent=self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def _open_extensions_folder(self, _checked: bool = False) -> None:
+        from ui.extensions_dialog import open_extensions_folder
+
+        open_extensions_folder()
 
     def _set_target_pane(self, pane: FilePaneWidget) -> None:
         """Explicitly set a pane as the transfer target."""
@@ -1259,14 +1688,10 @@ class MainWindow(QMainWindow):
         profile: ConnectionProfile | None,
         beside_pane: FilePaneWidget | None,
     ) -> None:
-        """Create a TerminalPaneWidget and split it beside the given file pane."""
-        # Bump ref count so the connection stays alive while the terminal pane exists
-        if profile:
-            key = self._connection_manager._session_key(profile)
-            self._connection_manager._ref_counts[key] = (
-                self._connection_manager._ref_counts.get(key, 0) + 1
-            )
+        """Create a TerminalPaneWidget and split it beside the given file pane.
 
+        The pane takes its own reference on the profile's session and
+        gives back exactly that in TerminalPaneWidget.shutdown."""
         term_pane = TerminalPaneWidget(
             transport=transport,
             label=label,
@@ -1388,6 +1813,9 @@ class MainWindow(QMainWindow):
         pane / drop-target machinery just like a manual split would."""
         pane = FilePaneWidget(LocalFS(), async_initial_load=True)
         pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
+        pane.view_mode_changed.connect(lambda _mode, p=pane: self._sync_view_mode_action(p))
+        pane.selection_changed.connect(lambda p=pane: self._extension_event("selection_changed", p))
+        pane.path_changed.connect(lambda _path, p=pane: self._extension_event("path_changed", p))
         pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
         pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
         pane.drop_transfer_requested.connect(self._on_drop_transfer)
@@ -1397,9 +1825,13 @@ class MainWindow(QMainWindow):
         pane.pane_drop_requested.connect(self._on_pane_drop)
         pane.open_bookmarks_requested.connect(self._show_bookmarks_popup)
         pane.open_duplicates_requested.connect(self._open_cas_duplicates)
+        pane.open_terminal_requested.connect(
+            lambda directory, p=pane: self._open_terminal_here(p, directory)
+        )
         pane.cycle_pane_requested.connect(
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
+        pane.selection_changed.connect(lambda p=pane: self._on_pane_selection_changed(p))
         self._panes.append(pane)
         return pane
 
@@ -1421,14 +1853,29 @@ class MainWindow(QMainWindow):
 
     def _preset_tear_down_existing(self) -> None:
         """Close every file + terminal pane before applying a new
-        preset so we don't leak backend sessions / SSH transports."""
+        preset so we don't leak backend sessions / SSH transports.
+
+        Each pane gives back what it holds, as _close_pane and
+        _close_terminal_pane do: a saved connection's reference and its
+        terminal-dock entry, and a terminal's shell. ``close()`` alone
+        stopped neither - TerminalPaneWidget has no closeEvent."""
         for pane in list(self._panes):
+            profile = self._pane_profiles.pop(pane, None)
+            try:
+                if _is_ssh_session(pane.backend):
+                    self._terminal_dock.remove_ssh_session(pane.backend.name)
+                if profile is not None:
+                    self._connection_manager.release(profile)
+            except Exception:  # noqa: BLE001 — a dead session must not block the switch
+                log.debug("Preset teardown: releasing %s failed", pane, exc_info=True)
+            self._close_compare_windows_for(pane)
             try:
                 pane.close()
             except Exception:  # noqa: BLE001
                 pass
         for term in list(self._terminal_panes):
             try:
+                term.shutdown()
                 term.close()
             except Exception:  # noqa: BLE001
                 pass
@@ -1490,6 +1937,7 @@ class MainWindow(QMainWindow):
         if profile is not None:
             self._connection_manager.release(profile)
         self._panes.remove(pane)
+        self._close_compare_windows_for(pane)
         if pane is self._target_pane:
             self._target_pane = None
         if pane is self._active_pane:
@@ -1743,6 +2191,8 @@ class MainWindow(QMainWindow):
         dlg.exec()
         # Pick up edits without waiting for the next tick.
         self._scheduler_jobs = self._job_store().load()
+        if getattr(self, "_scripts_dock", None) is not None:
+            self._scripts_dock.refresh()  # the [scheduled] markers
 
     def _start_scheduler(self) -> None:
         """Arm the tick that runs due jobs.
@@ -1805,24 +2255,29 @@ class MainWindow(QMainWindow):
 
         from core.scheduler import run_job
 
-        thread = QThread(self)
-        # Keep a reference: a QThread that goes out of scope while
-        # running is destroyed mid-flight, which Qt answers with an
-        # abort.
+        done = self._scheduler_done
+        runner = self._scheduled_runner
+
+        def _report(j, ok, detail):
+            try:
+                done.emit(j.job_id, ok, detail)
+            except RuntimeError:  # the window is gone; nobody to tell
+                log.info("scheduler: job %s ended after the window closed", j.name)
+
+        class _JobThread(QThread):
+            # The work goes into run(): a plain function connected to
+            # ``started`` was queued back to the GUI thread (its
+            # receiver lives there), so the job ran on the GUI thread
+            # after all and the window froze for as long as it took.
+            def run(self) -> None:
+                run_job(job, runner=runner, on_finished=_report)
+
+        # No parent: a QThread parented to the window died with it while
+        # the job still ran, which Qt answers with an abort. closeEvent
+        # hands a running one over instead. Keep a reference meanwhile.
+        thread = _JobThread()
         self._scheduler_threads = getattr(self, "_scheduler_threads", [])
         self._scheduler_threads.append(thread)
-
-        def _work():
-            run_job(
-                job,
-                runner=self._scheduled_runner,
-                on_finished=lambda j, ok, detail: self._scheduler_done.emit(
-                    j.job_id, ok, detail
-                ),
-            )
-            thread.quit()
-
-        thread.started.connect(_work)
         thread.finished.connect(
             lambda t=thread: self._scheduler_threads.remove(t)
             if t in self._scheduler_threads
@@ -1899,6 +2354,11 @@ class MainWindow(QMainWindow):
                 )
             return
 
+        refusal = self._undo_refusal(plan, by_label)
+        if refusal:
+            QMessageBox.information(self, "Cannot undo", refusal)
+            return
+
         if QMessageBox.question(
             self,
             "Undo",
@@ -1908,9 +2368,14 @@ class MainWindow(QMainWindow):
         ) != QMessageBox.StandardButton.Yes:
             return
 
-        backend, pane = by_label[plan.backend] if plan.backend in by_label else (None, None)
-        if backend is None:
-            backend, pane = next(iter(by_label.values()))
+        # Looked up again: while the question was open a reconnect may have
+        # replaced a connection, or a pane may have been closed.
+        by_label = self._backends_by_label()
+        refusal = self._undo_refusal(plan, by_label)
+        if refusal:
+            QMessageBox.information(self, "Cannot undo", refusal)
+            return
+        backend, pane = by_label[plan.backend] if plan.backend else next(iter(by_label.values()))
         try:
             apply_undo(
                 plan,
@@ -1921,35 +2386,91 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Undo failed", str(exc))
             return
+        try:
+            from core.undo import record_undone
+
+            # The next Ctrl+Z reaches the operation before this one.
+            record_undone(plan)
+        except Exception as exc:  # noqa: BLE001 - the undo itself succeeded
+            log.warning("undo: could not record the undo in the journal: %s", exc)
         if pane is not None:
             pane.refresh_after_change()
         self.statusBar().showMessage(f"Undone: {plan.reason}", 5000)
 
-    def _undo_source_backend(self, plan, by_label: dict):
-        """The far side of a cross-backend move, if it is open.
+    @staticmethod
+    def _undo_refusal(plan, by_label: dict) -> str:
+        """Why *plan* cannot be carried out on the open connections, or "".
 
-        Returns ``None`` when it is not, which makes apply_undo refuse
-        with an explanation instead of pushing data to whichever host
+        Each connection is looked up by the label the journal recorded;
+        none is ever guessed. A move between two local panes has "Local"
+        on both ends, so "any other open connection" picked a remote host
+        as the source and sent the file there.
+        """
+        if not by_label:
+            return "No connection is open."
+        if not plan.backend:
+            if len(by_label) > 1:
+                return (
+                    "The journal entry does not say which connection it belongs to, "
+                    "and more than one is open. Close the others and try again."
+                )
+        elif plan.backend not in by_label:
+            return f"The connection {plan.backend} is no longer open."
+        if plan.action == "transfer_back":
+            if not plan.source_backend:
+                return (
+                    "This move was recorded before the journal named the connection "
+                    "the data came from, so sending it back would mean guessing the host."
+                )
+            if plan.source_backend not in by_label:
+                return (
+                    f"The data came from {plan.source_backend}, which is not open. "
+                    "Connect to it and try again."
+                )
+        return ""
+
+    def _undo_source_backend(self, plan, by_label: dict):
+        """The connection a transfer-engine move took the data from.
+
+        Returns ``None`` when it is not open (or not recorded), which makes
+        apply_undo refuse instead of pushing data to whichever host
         happened to be at hand.
         """
-        if plan.action != "transfer_back":
+        if plan.action != "transfer_back" or not plan.source_backend:
             return None
-        for label, (backend, _pane) in by_label.items():
-            if label != plan.backend:
-                return backend
-        return None
+        entry = by_label.get(plan.source_backend)
+        return entry[0] if entry else None
 
     def _undo_transfer(self, *, src_backend, src_path, dst_backend, dst_path) -> str:
-        """Move data back through the normal transfer engine."""
-        src_pane = dst_pane = None
+        """Move data back to *dst_path* through the normal transfer engine.
+
+        The target folder is the one the data came from - not the folder a
+        pane on that connection happens to show now, where a file of the
+        same name would be overwritten.
+        """
+        src_name = src_path.rsplit(src_backend.separator(), 1)[-1]
+        dst_name = dst_path.rsplit(dst_backend.separator(), 1)[-1]
+        if src_name != dst_name:
+            raise OSError(
+                f"{src_path} no longer has the name it was moved under ({dst_name}); "
+                "undo cannot put it back."
+            )
+        if dst_backend.exists(dst_path):
+            raise OSError(
+                f"{dst_path} exists again — undo would overwrite it. Move or rename it first."
+            )
+        self._transfer_manager.transfer_files(
+            source_backend=src_backend,
+            dest_backend=dst_backend,
+            source_paths=[src_path],
+            dest_dir=dst_backend.parent(dst_path),
+            direction=self._transfer_direction(src_backend, dst_backend),
+            move=True,
+        )
+        labels = {getattr(src_backend, "name", None), getattr(dst_backend, "name", None)}
         for pane in self._panes:
-            if getattr(pane, "backend", None) is src_backend:
-                src_pane = pane
-            elif getattr(pane, "backend", None) is dst_backend:
-                dst_pane = pane
-        if src_pane is None or dst_pane is None:
-            raise OSError("both sides of the move must be open in a pane to undo it")
-        self._start_transfer_between(src_pane, dst_pane, [src_path], move=True)
+            if getattr(pane.backend, "name", None) in labels:
+                self._transfer_target_panes.add(pane)
         return dst_path
 
     def _open_compare_panes(self) -> None:
@@ -1973,6 +2494,8 @@ class MainWindow(QMainWindow):
             return
 
         dlg = CompareDialog(left, right, parent=self)
+        self._compare_dialogs.append((dlg, left, right))
+        dlg.finished.connect(lambda _code, d=dlg: self._forget_compare_dialog(d))
         dlg.reveal_requested.connect(
             lambda side, path, left=left, right=right: self._reveal_compared(
                 left if side == "left" else right, path
@@ -1996,8 +2519,43 @@ class MainWindow(QMainWindow):
         # user closed the very dialog they were navigating from.
         dlg.show()
 
+    def _close_compare_windows_for(self, pane) -> None:
+        """Close every Compare window built on *pane*.
+
+        The window is modeless and its rows name that pane's folder and
+        connection; once the pane is closed they belong to nothing, and an
+        action there would run on a released connection and refresh a
+        deleted widget.
+        """
+        for dlg, left, right in list(self._compare_dialogs):
+            if pane is left or pane is right:
+                self._compare_dialogs.remove((dlg, left, right))
+                try:
+                    dlg.close()
+                except RuntimeError:  # already deleted
+                    pass
+
+    def _forget_compare_dialog(self, dlg) -> None:
+        self._compare_dialogs = [e for e in self._compare_dialogs if e[0] is not dlg]
+        # A child of the window: without this every closed Compare window
+        # stays alive until the app exits.
+        dlg.deleteLater()
+
+    def _compared_panes_open(self, *panes) -> bool:
+        """True when every pane of a comparison is still open; else says so."""
+        if all(pane in self._panes for pane in panes):
+            return True
+        QMessageBox.information(
+            self,
+            "Compare Panes",
+            "A pane of this comparison has been closed; compare again.",
+        )
+        return False
+
     def _reveal_compared(self, pane, full_path: str) -> None:
         """Navigate ``pane`` to the directory holding ``full_path``."""
+        if not self._compared_panes_open(pane):
+            return
         parent = full_path.rsplit("/", 1)[0] or "/"
         try:
             pane.navigate_async(parent)
@@ -2013,7 +2571,7 @@ class MainWindow(QMainWindow):
         batches, one per direction, so the transfer dock shows them as
         ordinary transfers.
         """
-        if not items:
+        if not items or not self._compared_panes_open(left, right):
             return
         made, errors = 0, []
         for item in items:
@@ -2034,13 +2592,13 @@ class MainWindow(QMainWindow):
             ("to_right", (left, right)),
             ("to_left", (right, left)),
         ):
-            paths = [
-                i["source"]
+            pairs = [
+                (i["source"], i["dest"])
                 for i in items
                 if i["direction"] == direction and i.get("kind") == "copy"
             ]
-            if paths:
-                self._start_transfer_between(source, target, paths, move=False)
+            if pairs:
+                self._transfer_compared(source, target, pairs)
 
         if errors:
             QMessageBox.warning(
@@ -2052,12 +2610,28 @@ class MainWindow(QMainWindow):
             5000,
         )
 
-    def _copy_compared(self, left, right, direction: str, paths: list) -> None:
+    def _copy_compared(self, left, right, direction: str, pairs: list) -> None:
         """Route a comparison copy through the normal transfer engine."""
-        if not paths:
+        if not pairs or not self._compared_panes_open(left, right):
             return
         source, target = (left, right) if direction == "to_right" else (right, left)
-        self._start_transfer_between(source, target, list(paths), move=False)
+        self._transfer_compared(source, target, pairs)
+
+    def _transfer_compared(self, source, target, pairs) -> None:
+        """Queue ``(source, dest)`` pairs so each lands at its own path.
+
+        ``_start_transfer_between`` on its own queues into the target
+        pane's CURRENT folder: a file from ``sub/`` landed beside the
+        compared root's files (or wherever the pane had browsed to) and
+        replaced a namesake there. Grouped by destination folder, the
+        name is the source's, which a comparison row shares on both sides.
+        """
+        backend = target.backend
+        by_dir: dict[str, list[str]] = {}
+        for src, dst in pairs:
+            by_dir.setdefault(backend.parent(dst), []).append(src)
+        for dest_dir, paths in by_dir.items():
+            self._start_transfer_between(source, target, paths, move=False, dest_dir=dest_dir)
 
     def _delete_compared(self, pane, paths: list) -> None:
         """Delete paths the compare window asked for.
@@ -2067,7 +2641,7 @@ class MainWindow(QMainWindow):
         and reports what failed.
         """
         backend = getattr(pane, "backend", None)
-        if backend is None or not paths:
+        if backend is None or not paths or not self._compared_panes_open(pane):
             return
         removed, errors = 0, []
         for path in paths:
@@ -2091,11 +2665,43 @@ class MainWindow(QMainWindow):
         from ui.disk_usage_dialog import DiskUsageDialog, collect_backends
 
         dlg = DiskUsageDialog(collect_backends(self._panes), parent=self)
-        dlg.exec()
+        try:
+            dlg.exec()
+        finally:
+            dlg.deleteLater()  # a child of the window: gone once closed
 
-    def _open_cas_duplicates(self) -> None:
+    def _view_media(self, selected_only: bool = False) -> None:
+        """View -> View Media…: the media viewer on the active pane."""
+        pane = self._active_pane
+        if pane is None:
+            return
+        pane.view_media(selected_only=selected_only)
+
+    def _open_terminal_here(self, pane, directory: str) -> None:
+        """A pane's Open Terminal Here: a local shell in *directory*, or a
+        shell on the pane's SSH transport that cds into it. The dock comes
+        to the front either way; it reports its own failures."""
+        from core import terminal_here as TH
+
+        dock = self._terminal_dock
+        backend = pane.backend
+        kind = TH.shell_kind(backend)
+        if kind == TH.LOCAL:
+            dock.open_local_shell_at(directory)
+        elif kind == TH.SSH:
+            dock.open_ssh_shell_at(backend.name, TH.ssh_transport(backend), directory)
+        else:
+            QMessageBox.information(self, tr("Open Terminal Here"), TH.no_shell_reason(backend))
+            return
+        # The dock focuses its terminal when a session starts; a refusal
+        # (folder gone) is in its status line, so it is shown either way.
+        dock.show()
+        dock.raise_()
+
+    def _open_cas_duplicates(self, *_args, scan_id: int | None = None) -> None:
         """Open the CAS duplicate-finder. The active pane is wired in
-        so the rebuild button has a backend + path to walk."""
+        so the rebuild button has a backend + path to walk; *scan_id*
+        opens it on one recorded scan's duplicates."""
         from ui.cas_dialog import CasDuplicatesDialog
         from ui.disk_usage_dialog import collect_backends
 
@@ -2105,9 +2711,20 @@ class MainWindow(QMainWindow):
             active_pane=self._active_pane,
             parent=self,
             backends=collect_backends(self._panes),
+            scan_id=scan_id,
         )
         dlg.open_requested.connect(self._on_cas_open)
         dlg.open()
+
+    def _open_cas_history(self) -> None:
+        """View > Duplicate Index & History: the index on its own."""
+        from ui.cas_history_dialog import CasHistoryDialog
+        from ui.disk_usage_dialog import collect_backends
+
+        dlg = CasHistoryDialog(parent=self, backends=collect_backends(self._panes))
+        dlg.show_duplicates_requested.connect(lambda sid: self._open_cas_duplicates(scan_id=sid))
+        dlg.finished.connect(dlg.deleteLater)
+        dlg.show()
 
     def _on_cas_open(self, backend_id: str, path: str) -> None:
         """Same routing as the metadata search: navigate the active
@@ -2216,7 +2833,32 @@ class MainWindow(QMainWindow):
 
     def _show_quick_connect(self) -> None:
         """Show a popup menu with recent profiles and all saved profiles for quick connect."""
-        menu = QMenu("Quick Connect", self)
+        menu = self._build_quick_connect_menu()
+
+        # Show at a reasonable position
+        toolbar = self.findChild(QToolBar)
+        if toolbar:
+            pos = toolbar.mapToGlobal(toolbar.rect().bottomLeft())
+        else:
+            pos = self.mapToGlobal(self.rect().topLeft())
+        try:
+            menu.exec(pos)
+        finally:
+            menu.deleteLater()
+
+    def _build_quick_connect_menu(self):
+        """The Quick Connect list: recent profiles, then all of them. A right
+        click on a profile offers Connect, Connect in Background and Edit
+        Config (see :mod:`ui.quick_connect_menu`)."""
+        from ui.quick_connect_menu import QuickConnectMenu
+
+        menu = QuickConnectMenu(
+            "Quick Connect",
+            self,
+            on_connect=lambda p: self._quick_connect_profile(p),
+            on_background=lambda p: self._quick_connect_profile(p, activate=False),
+            on_edit=lambda p: self._on_connect(profile=p),
+        )
 
         # Recent profiles (with number shortcuts 1-8)
         if self._recent_profiles:
@@ -2225,9 +2867,7 @@ class MainWindow(QMainWindow):
                 profile = self._profile_manager.get(name)
                 if not profile:
                     continue
-                label = f"&{i + 1}  {self._profile_label(profile)}"
-                action = menu.addAction(label)
-                action.triggered.connect(lambda checked, p=profile: self._quick_connect_profile(p))
+                menu.add_profile(f"&{i + 1}  {self._profile_label(profile)}", profile)
 
         # All saved profiles
         all_names = self._profile_manager.list_names()
@@ -2237,9 +2877,7 @@ class MainWindow(QMainWindow):
                 profile = self._profile_manager.get(name)
                 if not profile:
                     continue
-                label = self._profile_label(profile)
-                action = menu.addAction(label)
-                action.triggered.connect(lambda checked, p=profile: self._quick_connect_profile(p))
+                menu.add_profile(self._profile_label(profile), profile)
 
         if menu.isEmpty():
             action = menu.addAction(tr("No profiles — open Connection Manager"))
@@ -2247,15 +2885,8 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
         manager_action = menu.addAction(tr("Connection Manager... [Ctrl+Shift+N]"))
-        manager_action.triggered.connect(self._on_connect)
-
-        # Show at a reasonable position
-        toolbar = self.findChild(QToolBar)
-        if toolbar:
-            pos = toolbar.mapToGlobal(toolbar.rect().bottomLeft())
-        else:
-            pos = self.mapToGlobal(self.rect().topLeft())
-        menu.exec(pos)
+        manager_action.triggered.connect(lambda _checked=False: self._on_connect())
+        return menu
 
     def _run_connect_async(
         self,
@@ -2324,8 +2955,12 @@ class MainWindow(QMainWindow):
         profile: ConnectionProfile,
         *,
         post_connect=None,
+        activate: bool = True,
     ) -> None:
         """Connect to a profile, prompting for password if needed.
+
+        ``activate=False`` (Quick Connect's "Connect in Background") adds
+        the new pane without making it the active one.
 
         ``post_connect`` is an optional callable ``(pane) -> None``
         run after the new pane lands. Used by ``_navigate_bookmark``
@@ -2409,7 +3044,8 @@ class MainWindow(QMainWindow):
                 password=password,
                 key_passphrase=key_passphrase,
             )
-            self._set_active_pane(pane)
+            if activate:
+                self._set_active_pane(pane)
 
             if (
                 hasattr(session, "transport")
@@ -2484,7 +3120,8 @@ class MainWindow(QMainWindow):
         )
 
     _RECENTS_FILE = Path.home() / ".config" / "axross" / "recents.json"
-    _SESSION_FILE = Path.home() / ".config" / "axross" / "session.json"
+    # The viewers and the language setting read and write the same file.
+    _SESSION_FILE = i18n.SETTINGS_FILE
 
     def _add_to_recent(self, name: str) -> None:
         """Add a profile name to the recent list (max 8, deduplicated) and persist."""
@@ -2509,7 +3146,7 @@ class MainWindow(QMainWindow):
             data = _read_json_file(MainWindow._RECENTS_FILE)
             if isinstance(data, list):
                 return [s for s in data if isinstance(s, str)][:8]
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
             pass
         return []
 
@@ -2527,7 +3164,7 @@ class MainWindow(QMainWindow):
             if not self._SESSION_FILE.exists():
                 return
             data = _read_json_file(self._SESSION_FILE)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:
             log.debug(
                 "Persistent visual settings: could not read %s: %s",
                 self._SESSION_FILE,
@@ -2549,16 +3186,28 @@ class MainWindow(QMainWindow):
         """Save current pane layout and connections for later restore."""
         from ui.icon_provider import is_monochrome as _is_mono
 
-        session = {
-            "splitter": self._serialize_splitter(self._root_splitter),
-            "window": {
+        # session.json is shared: core.i18n.store_language keeps the
+        # language the user picked in window.language. Keep what this
+        # window does not write itself instead of dropping it.
+        try:
+            previous = _read_json_file(self._SESSION_FILE)
+        except (OSError, ValueError):
+            previous = None
+        session = previous if isinstance(previous, dict) else {}
+        window = session.get("window")
+        if not isinstance(window, dict):
+            window = {}
+        window.update(
+            {
                 "width": self.width(),
                 "height": self.height(),
                 "ui_theme": self._current_theme,
                 "compact": self._compact_mode,
                 "monochrome_icons": _is_mono(),
-            },
-        }
+            }
+        )
+        session["splitter"] = self._serialize_splitter(self._root_splitter)
+        session["window"] = window
         try:
             _write_private_text(
                 self._SESSION_FILE,
@@ -2607,11 +3256,22 @@ class MainWindow(QMainWindow):
         """Restore panes and layout from the saved session file."""
         try:
             data = _read_json_file(self._SESSION_FILE)
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, ValueError) as e:
             QMessageBox.information(
                 self,
                 "Restore Session",
                 f"No saved session found.\n{e}",
+            )
+            return
+
+        # Checked in full before anything is torn down: a tree that fails
+        # half-way through the rebuild leaves the window without its panes.
+        problem = _session_problem(data)
+        if problem:
+            QMessageBox.information(
+                self,
+                "Restore Session",
+                f"The saved session cannot be restored.\n{problem}",
             )
             return
 
@@ -2628,6 +3288,13 @@ class MainWindow(QMainWindow):
         self._reconnect_timer.stop()
 
         try:
+            # Terminal panes are not part of a saved session. Close them
+            # properly first: clearing the splitters below would delete a
+            # nested one with its splitter while it stayed listed and its
+            # shell ran on, and closeEvent then failed on the dead widget.
+            for term in list(self._terminal_panes):
+                self._close_terminal_pane(term)
+
             # Close all existing panes
             for pane in list(self._panes):
                 if len(self._panes) > 1:
@@ -2662,8 +3329,16 @@ class MainWindow(QMainWindow):
 
         # Restore window size
         win = data.get("window", {})
-        if win.get("width") and win.get("height"):
-            self.resize(win["width"], win["height"])
+        width, height = win.get("width"), win.get("height")
+        if (
+            isinstance(width, int)
+            and isinstance(height, int)
+            and not isinstance(width, bool)
+            and not isinstance(height, bool)
+            and 0 < width <= MAX_RESTORED_WINDOW_PX
+            and 0 < height <= MAX_RESTORED_WINDOW_PX
+        ):
+            self.resize(width, height)
         self._compact_action.setChecked(bool(win.get("compact", False)))
         # ``theme`` is the pre-modern key and is deliberately ignored:
         # the modern theme became the default for everyone, and the old
@@ -2874,7 +3549,12 @@ class MainWindow(QMainWindow):
     def _show_network_proxy(self) -> None:
         from ui.network_proxy_dialog import NetworkProxyDialog
 
-        if NetworkProxyDialog(self._profile_manager, parent=self).exec():
+        dialog = NetworkProxyDialog(self._profile_manager, parent=self)
+        try:
+            accepted = dialog.exec()
+        finally:
+            dialog.deleteLater()  # a child of the window: gone once closed
+        if accepted:
             for pane in list(self._panes):
                 self._refresh_proxy_indicator(pane)
 
@@ -2898,15 +3578,20 @@ class MainWindow(QMainWindow):
             label = f"via {cfg.proxy_type.upper()} {cfg.host}:{cfg.port}"
             pane.set_proxy_info(label, res.description)
 
-    def _on_connect(self) -> None:
+    def _on_connect(self, _checked: bool = False, *, profile=None) -> None:
+        """The connection dialog; with *profile* it opens with that profile
+        loaded (Quick Connect's "Edit Config…")."""
         from ui.connection_dialog import ConnectionDialog
 
-        dialog = ConnectionDialog(self._profile_manager, parent=self)
-        if dialog.exec() != ConnectionDialog.DialogCode.Accepted or not dialog.result_profile:
-            return
-        profile = dialog.result_profile
-        password = dialog.result_password
-        key_passphrase = dialog.result_key_passphrase
+        dialog = ConnectionDialog(self._profile_manager, parent=self, profile=profile)
+        try:
+            if dialog.exec() != ConnectionDialog.DialogCode.Accepted or not dialog.result_profile:
+                return
+            profile = dialog.result_profile
+            password = dialog.result_password
+            key_passphrase = dialog.result_key_passphrase
+        finally:
+            dialog.deleteLater()  # a child of the window: gone once closed
 
         def _on_success(session):
             pane = self._add_pane_to_splitter(
@@ -2988,7 +3673,11 @@ class MainWindow(QMainWindow):
                 proxy_command=host.proxy_command,
                 address_family=host.address_family,
             )
-            self._profile_manager.add(profile)
+            try:
+                self._profile_manager.add(profile)
+            except ValueError as exc:  # a name that would share a keyring entry
+                log.warning("Not importing SSH host %r: %s", host.alias, exc)
+                continue
             imported += 1
 
         log.info("Imported %d profiles from %s", imported, source)
@@ -3086,7 +3775,7 @@ class MainWindow(QMainWindow):
 
         try:
             data = _read_json_file(path, max_bytes=MAX_PROFILE_IMPORT_BYTES)
-        except (json.JSONDecodeError, OSError) as e:
+        except (ValueError, OSError) as e:
             QMessageBox.warning(self, "Import Error", f"Cannot read file:\n{e}")
             return
 
@@ -3297,6 +3986,11 @@ class MainWindow(QMainWindow):
 
         policy = set_policy("paranoid" if checked else "normal")
         log.warning("Security mode changed to %s", policy.name)
+        if getattr(self, "_scripts_dock", None) is not None:
+            self._scripts_dock.refresh_policy()
+        host = getattr(self, "extension_host", None)
+        if host is not None:
+            host.reload()  # paranoid unloads them all, normal loads the switched-on ones
         QMessageBox.information(
             self,
             "Security Mode",
@@ -3324,7 +4018,7 @@ class MainWindow(QMainWindow):
             )
             return
         if paths:
-            self._start_transfer_between(pane, self._target_pane, paths, move=True)
+            self._request_transfer(pane, self._target_pane, paths, move=True)
 
     def _on_drop_transfer(
         self,
@@ -3332,14 +4026,23 @@ class MainWindow(QMainWindow):
         target_pane: FilePaneWidget,
         source_pane_id: str,
         is_move: bool = False,
+        dest_dir: str = "",
     ) -> None:
-        """Handle drag & drop transfer using the explicit source pane id."""
-        source_pane = next((p for p in self._panes if str(id(p)) == source_pane_id), None)
-        if source_pane is None or source_pane is target_pane:
+        """Handle drag & drop transfer using the explicit source pane id.
+
+        *dest_dir* is the folder the drop was released on ("" = the target
+        pane's current folder). Inside one pane only a drop on a folder
+        means anything."""
+        source_pane = self._pane_by_id(source_pane_id)
+        if source_pane is None:
             log.warning("Could not resolve source pane for drop transfer")
             return
+        if source_pane is target_pane and not dest_dir:
+            return
 
-        self._start_transfer_between(source_pane, target_pane, paths, move=is_move)
+        self._request_transfer(
+            source_pane, target_pane, paths, move=is_move, dest_dir=dest_dir or None
+        )
 
     def _start_transfer(self, source: FilePaneWidget, selected: list[str]) -> None:
         if not self._target_pane:
@@ -3351,7 +4054,7 @@ class MainWindow(QMainWindow):
             return
         if not selected:
             return
-        self._start_transfer_between(source, self._target_pane, selected)
+        self._request_transfer(source, self._target_pane, selected)
 
     def _move_files(self) -> None:
         """Move selected files from active pane to target pane (F6)."""
@@ -3360,7 +4063,121 @@ class MainWindow(QMainWindow):
         selected = self._active_pane.selected_items()
         if not selected:
             return
-        self._start_transfer_between(self._active_pane, self._target_pane, selected, move=True)
+        self._request_transfer(self._active_pane, self._target_pane, selected, move=True)
+
+    @staticmethod
+    def _transfer_direction(source_backend, target_backend) -> TransferDirection:
+        source_is_remote = not isinstance(source_backend, LocalFS)
+        target_is_remote = not isinstance(target_backend, LocalFS)
+        if source_is_remote and target_is_remote:
+            return TransferDirection.RELAY
+        if source_is_remote:
+            return TransferDirection.DOWNLOAD
+        if target_is_remote:
+            return TransferDirection.UPLOAD
+        return TransferDirection.DOWNLOAD  # local to local
+
+    def _request_transfer(
+        self,
+        source: FilePaneWidget,
+        target: FilePaneWidget,
+        selected: list[str],
+        move: bool = False,
+        *,
+        dest_dir: str | None = None,
+    ) -> None:
+        """F5 / F6 / drag & drop: check the destination, ask, then queue.
+
+        The destination is listed on a background thread (a slow remote
+        must not freeze the window); every name the transfer would replace
+        is put to the user before a single job is queued. The jobs then
+        refuse to replace anything the answers did not allow, so a file
+        that appears in the meantime is not overwritten silently.
+        """
+        if not selected:
+            return
+        from core import transfer_conflicts as TC
+        from ui.scan_job import ScanJob
+
+        paths = list(selected)
+        if dest_dir is None:
+            dest_dir = target.current_path
+        source_backend, dest_backend = source.backend, target.backend
+        check = ScanJob(self)
+        self._conflict_checks.add(check)
+
+        def work(cancel, _progress):
+            return TC.scan_conflicts(
+                source_backend, dest_backend, paths, dest_dir, cancel=cancel
+            )
+
+        def finished(kind: str, value, cancelled: bool) -> None:
+            self._conflict_checks.discard(check)
+            check.deleteLater()
+            self.statusBar().clearMessage()
+            title = tr("Move") if move else tr("Copy")
+            if cancelled:
+                return
+            if kind == "error":
+                QMessageBox.warning(
+                    self,
+                    title,
+                    tr("Could not check {dest} for existing names, so nothing was "
+                       "queued:\n{error}").format(dest=dest_dir, error=value),
+                )
+                return
+            if (
+                source not in self._panes
+                or target not in self._panes
+                or source.backend is not source_backend
+                or target.backend is not dest_backend
+            ):
+                log.info("Transfer dropped: a pane closed or changed connection meanwhile")
+                return
+            plan = self._resolve_transfer_conflicts(dest_backend, value)
+            if plan is None:
+                log.info("Transfer cancelled at the conflict prompt")
+                return
+            self._start_transfer_between(
+                source, target, paths, move=move, dest_dir=dest_dir, conflict_plan=plan
+            )
+
+        check.finished.connect(finished)
+        self.statusBar().showMessage(tr("Checking the destination for existing names…"))
+        check.start(work)
+
+    def _resolve_transfer_conflicts(self, dest_backend, scan):
+        """Ask about each conflict of *scan*; a ConflictPlan, or None on Cancel."""
+        from core import transfer_conflicts as TC
+
+        overwriting = (TC.ConflictAction.OVERWRITE, TC.ConflictAction.OVERWRITE_IF_NEWER)
+        plan = TC.ConflictPlan(dest_backend, scan)
+        for_all = None
+        total = len(scan.conflicts)
+        for index, conflict in enumerate(scan.conflicts):
+            action = for_all
+            if action in overwriting and conflict.type_mismatch:
+                action = None  # a folder against a file is never overwritten by "all"
+            if action is None:
+                answer = self._ask_transfer_conflict(conflict, total - index - 1)
+                if answer is None:
+                    return None
+                action, apply_all = answer
+                if apply_all:
+                    for_all = action
+            plan.decide(conflict, action)
+        return plan
+
+    def _ask_transfer_conflict(self, conflict, remaining: int):
+        """The prompt for one name: ``(action, apply_to_all)`` or ``None``."""
+        from ui.transfer_conflict_dialog import TransferConflictDialog
+
+        dialog = TransferConflictDialog(conflict, remaining, self)
+        try:
+            dialog.exec()
+            return dialog.result_choice()
+        finally:
+            dialog.deleteLater()
 
     def _start_transfer_between(
         self,
@@ -3368,18 +4185,15 @@ class MainWindow(QMainWindow):
         target: FilePaneWidget,
         selected: list[str],
         move: bool = False,
+        *,
+        dest_dir: str | None = None,
+        conflict_plan=None,
     ) -> None:
-        source_is_remote = not isinstance(source.backend, LocalFS)
-        target_is_remote = not isinstance(target.backend, LocalFS)
-
-        if source_is_remote and target_is_remote:
-            direction = TransferDirection.RELAY
-        elif source_is_remote and not target_is_remote:
-            direction = TransferDirection.DOWNLOAD
-        elif not source_is_remote and target_is_remote:
-            direction = TransferDirection.UPLOAD
-        else:
-            direction = TransferDirection.DOWNLOAD  # local to local
+        """Queue the transfer now. Without *conflict_plan* existing files
+        are replaced: callers that confirmed that themselves (compare /
+        sync) use this directly; the user commands go through
+        ``_request_transfer``."""
+        direction = self._transfer_direction(source.backend, target.backend)
 
         # Track target pane (and source for move) for auto-refresh on completion
         self._transfer_target_panes.add(target)
@@ -3392,9 +4206,10 @@ class MainWindow(QMainWindow):
             source_backend=source.backend,
             dest_backend=target.backend,
             source_paths=selected,
-            dest_dir=target.current_path,
+            dest_dir=target.current_path if dest_dir is None else dest_dir,
             direction=direction,
             move=move,
+            conflict_plan=conflict_plan,
         )
         log.info(
             "Transfer enqueued: %s: %d file(s), %d byte(s)",
@@ -3460,13 +4275,8 @@ class MainWindow(QMainWindow):
                     password=password,
                     key_passphrase=key_passphrase,
                 )
-                pane.set_backend(session)
-                try:
-                    pane.navigate_async(previous_path)
-                except Exception:
-                    log.warning(
-                        "Auto-reconnect: failed to navigate to %s", previous_path, exc_info=True
-                    )
+                # One load, straight to where the pane was.
+                pane.set_backend(session, previous_path)
                 if (
                     hasattr(session, "transport")
                     and session.transport
@@ -3479,17 +4289,28 @@ class MainWindow(QMainWindow):
 
     # --- Bookmarks ---
 
-    def _on_bookmark_request(self, path: str, backend_name: str) -> None:
-        profile_name = ""
-        sender = self.sender()
-        if isinstance(sender, FilePaneWidget) and sender in self._pane_profiles:
-            profile_name = self._pane_profiles[sender].name
-        draft = Bookmark(
+    def _bookmark_draft(
+        self, path: str, backend_name: str, pane: FilePaneWidget | None
+    ) -> Bookmark:
+        """A new bookmark for *path* shown in *pane*: its backend and, for a
+        profile-backed connection, the profile ``_navigate_bookmark``
+        reconnects through later."""
+        profile = self._pane_profiles.get(pane) if pane is not None else None
+        return Bookmark(
             name=path.rsplit("/", 1)[-1] or path,
             path=path,
             backend_name=backend_name,
-            profile_name=profile_name,
+            profile_name=profile.name if profile is not None else "",
         )
+
+    def _on_bookmark_request(
+        self, path: str, backend_name: str, pane: FilePaneWidget | None = None
+    ) -> None:
+        if pane is None:
+            # From a pane's own bookmark button the pane is the sender.
+            sender = self.sender()
+            pane = sender if isinstance(sender, FilePaneWidget) else None
+        draft = self._bookmark_draft(path, backend_name, pane)
         dialog = BookmarkEditDialog(
             draft,
             parent=self,
@@ -3521,11 +4342,10 @@ class MainWindow(QMainWindow):
         self._bookmarks_menu.clear()
 
         add_action = self._bookmarks_menu.addAction(tr("Add Current Directory"))
-        # F8 = add bookmark. Doesn't collide with any other binding:
-        # F2 rename, F3 view, F4 edit, F5 copy, F6 move, F7 mkdir,
-        # F8 bookmark, F9 rename-alias, F10 context menu, F12
-        # bookmark-sidebar toggle.
-        add_action.setShortcut(QKeySequence("F8"))
+        # F8 / Ctrl+Shift+B = add bookmark, window-wide. F2 rename, F3 view,
+        # F4 edit, F5 copy, F6 move, F7 mkdir, F9 rename-alias, F10 context
+        # menu, F12 bookmark-sidebar toggle; Del deletes.
+        add_action.setShortcuts([QKeySequence("F8"), QKeySequence("Ctrl+Shift+B")])
         add_action.triggered.connect(self._bookmark_active_dir)
 
         manage_action = self._bookmarks_menu.addAction(tr("Manage Bookmarks..."))
@@ -3568,9 +4388,184 @@ class MainWindow(QMainWindow):
 
     def _bookmark_active_dir(self) -> None:
         if self._active_pane:
+            # Pass the pane: from the menu / F8 the sender is the QAction,
+            # and a remote bookmark would lose its connection profile.
             self._on_bookmark_request(
-                self._active_pane.current_path, self._active_pane.backend.name
+                self._active_pane.current_path,
+                self._active_pane.backend.name,
+                self._active_pane,
             )
+
+    def _pane_by_id(self, pane_id: str) -> FilePaneWidget | None:
+        """The open pane a drag payload's ``source_pane_id`` names."""
+        return next((p for p in self._panes if str(id(p)) == pane_id), None)
+
+    def _drop_status(self, text: str, timeout_ms: int = 6000) -> None:
+        self.statusBar().showMessage(text, timeout_ms)
+
+    def _on_bookmark_drop(self, paths: list, source_pane_id: str, group, index: int | None) -> None:
+        """Folders dragged from a pane onto the bookmark sidebar: bookmark
+        each at the drop position, without a dialog (Edit… changes name,
+        icon and group later). A remote folder keeps the pane's backend and
+        connection profile, like "Add Current Directory" does."""
+        source = self._pane_by_id(source_pane_id)
+        if source is None:
+            self._drop_status(tr("The dragged items come from a pane that is no longer open."))
+            return
+        if group is not None:
+            try:
+                self._bookmark_manager.parent_of(group)
+            except KeyError:  # the group was deleted meanwhile
+                group, index = None, None
+        backend_name = source.backend.name
+        added = skipped = 0
+        for path in paths:
+            if not isinstance(path, str) or not path:
+                continue
+            draft = self._bookmark_draft(path, backend_name, source)
+            at = None if index is None else index + added
+            if self._bookmark_manager.add(draft, group=group, index=at):
+                added += 1
+            else:
+                skipped += 1
+        self._rebuild_bookmarks_menu()
+        if added and skipped:
+            text = tr("Bookmarked {added} folder(s); {skipped} already bookmarked.")
+        elif added:
+            text = tr("Bookmarked {added} folder(s).")
+        else:
+            text = tr("Nothing added: {skipped} folder(s) already bookmarked.")
+        self._drop_status(text.format(added=added, skipped=skipped))
+
+    @staticmethod
+    def _pane_serves_bookmark(pane: FilePaneWidget, bookmark: Bookmark) -> bool:
+        """Whether *pane* shows the filesystem *bookmark* points into. Only
+        names and types are compared - no backend call."""
+        if bookmark.backend_name == "Local":
+            return isinstance(pane.backend, LocalFS)
+        return not isinstance(pane.backend, LocalFS) and pane.backend.name == bookmark.backend_name
+
+    def _pane_for_bookmark(
+        self, bookmark: Bookmark, prefer: FilePaneWidget | None
+    ) -> FilePaneWidget | None:
+        """An open pane on the bookmark's filesystem, *prefer* first (a
+        transfer inside one filesystem then stays a rename)."""
+        for pane in (prefer, self._active_pane, self._target_pane, *self._panes):
+            if (
+                pane is not None
+                and pane in self._panes
+                and self._pane_serves_bookmark(pane, bookmark)
+            ):
+                return pane
+        return None
+
+    @staticmethod
+    def _bookmark_drop_refusal(
+        source: FilePaneWidget, paths: list[str], bookmark: Bookmark
+    ) -> str | None:
+        """Why dropping *paths* onto *bookmark* would do nothing (or harm),
+        or ``None``. Pure path arithmetic with the source backend's own
+        ``parent()``; only applies when both sit on the same filesystem."""
+        if not MainWindow._pane_serves_bookmark(source, bookmark):
+            return None
+        # A hand-edited bookmark may end in "/"; parent() never does.
+        folder = bookmark.path.rstrip("/") or bookmark.path
+        if any(source.is_within(folder, path) for path in paths):
+            return tr("Cannot move or copy a folder into itself.")
+        if all(source.backend.parent(path) == folder for path in paths):
+            return tr("The dropped items are already in {folder}.").format(folder=folder)
+        return None
+
+    def _on_bookmark_transfer_drop(
+        self, paths: list, source_pane_id: str, bookmark, is_move: bool
+    ) -> None:
+        """Items dragged from a pane onto a bookmark: move them (Ctrl: copy)
+        into the bookmarked folder through ``_request_transfer``.
+
+        Nothing here touches a filesystem or the network. Whether the folder
+        is there at all (a dead mount, a deleted folder, a file now) and
+        whether a remote answers is found out by the destination check that
+        ``_request_transfer`` runs on a background thread; a failure is
+        reported and nothing is queued. A remote bookmark without an open
+        pane connects through its profile first - the same asynchronous
+        connect a bookmark click uses - and transfers once the pane is up."""
+        source = self._pane_by_id(source_pane_id)
+        if source is None:
+            self._drop_status(tr("The dragged items come from a pane that is no longer open."))
+            return
+        if not isinstance(bookmark, Bookmark) or not any(
+            b is bookmark for b in self._bookmark_manager.all()
+        ):
+            self._drop_status(tr("That bookmark no longer exists."))
+            return
+        paths = [p for p in paths if isinstance(p, str) and p]
+        if not paths:
+            return
+        refusal = self._bookmark_drop_refusal(source, paths, bookmark)
+        if refusal:
+            self._drop_status(refusal)
+            return
+        target = self._pane_for_bookmark(bookmark, source)
+        if target is None and bookmark.backend_name == "Local":
+            # Same as a click on a local bookmark without a local pane.
+            target = self._add_pane_to_splitter(self._root_splitter, LocalFS())
+        if target is not None:
+            self._request_transfer(source, target, paths, move=is_move, dest_dir=bookmark.path)
+            return
+        self._connect_then_transfer(source, paths, bookmark, is_move)
+
+    def _connect_then_transfer(
+        self, source: FilePaneWidget, paths: list[str], bookmark: Bookmark, is_move: bool
+    ) -> None:
+        """Open the bookmark's connection (asynchronously, with the usual
+        password prompt) and transfer once its pane is there."""
+        from html import escape
+
+        name = escape(bookmark.name)
+        if not bookmark.profile_name:
+            QMessageBox.warning(
+                self,
+                tr("Bookmark"),
+                tr(
+                    "Bookmark '{name}' has no connection profile, so its connection "
+                    "cannot be opened. Connect to {backend} first and drop again; "
+                    "nothing was transferred."
+                ).format(name=name, backend=escape(bookmark.backend_name)),
+            )
+            return
+        profile = self._profile_manager.get(bookmark.profile_name)
+        if profile is None:
+            QMessageBox.warning(
+                self,
+                tr("Bookmark"),
+                tr(
+                    "Profile '{profile}' for bookmark '{name}' was not found; "
+                    "nothing was transferred."
+                ).format(profile=escape(bookmark.profile_name), name=name),
+            )
+            return
+        source_backend = source.backend
+
+        def transfer_when_connected(pane: FilePaneWidget) -> None:
+            if source not in self._panes or source.backend is not source_backend:
+                self._drop_status(tr("The dragged items come from a pane that is no longer open."))
+                return
+            if pane.backend.name != bookmark.backend_name:
+                self._drop_status(
+                    tr(
+                        "The connection for '{name}' opened {actual}, not {expected}; "
+                        "nothing was transferred."
+                    ).format(
+                        name=bookmark.name,
+                        actual=pane.backend.name,
+                        expected=bookmark.backend_name,
+                    ),
+                    10000,
+                )
+                return
+            self._request_transfer(source, pane, paths, move=is_move, dest_dir=bookmark.path)
+
+        self._quick_connect_profile(profile, post_connect=transfer_when_connected)
 
     def _navigate_bookmark(self, bookmark: Bookmark) -> None:
         if not self._active_pane:
@@ -3713,131 +4708,73 @@ class MainWindow(QMainWindow):
     # --- About ---
 
     def _show_shortcuts(self) -> None:
-        """Show keyboard shortcuts reference (F1)."""
-        text = """<h2>Tastenkombinationen</h2>
+        """Show the keyboard shortcut reference (F1)."""
+        from ui.shortcuts_dialog import ShortcutsDialog
 
-<h3>Dateioperationen</h3>
-<table>
-<tr><td width="140"><b>F2 / F9</b></td><td>Umbenennen</td></tr>
-<tr><td><b>F3</b></td><td>Datei ansehen (Text/Hex)</td></tr>
-<tr><td><b>F4</b></td><td>Datei bearbeiten (Text/Hex)</td></tr>
-<tr><td><b>F5</b></td><td>Kopieren zum Ziel-Pane</td></tr>
-<tr><td><b>F6</b></td><td>Verschieben zum Ziel-Pane</td></tr>
-<tr><td><b>F7</b></td><td>Neuen Ordner anlegen</td></tr>
-<tr><td><b>F8 / Entf</b></td><td>Löschen</td></tr>
-<tr><td><b>Enter</b></td><td>Öffnen / in Verzeichnis wechseln</td></tr>
-<tr><td><b>F10</b></td><td>Kontextmenü</td></tr>
-</table>
+        dialog = ShortcutsDialog(self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()  # a child of the window: gone once closed
 
-<h3>Navigation</h3>
-<table>
-<tr><td width="140"><b>Ctrl+R</b></td><td>Aktualisieren</td></tr>
-<tr><td><b>Backspace</b></td><td>Verzeichnis hoch</td></tr>
-<tr><td><b>Alt+Links</b></td><td>History zurück</td></tr>
-<tr><td><b>Alt+Rechts</b></td><td>History vorwärts</td></tr>
-<tr><td><b>Ctrl+L</b></td><td>Pfadleiste fokussieren</td></tr>
-<tr><td><b>Ctrl+F</b></td><td>Filter-Bar fokussieren</td></tr>
-<tr><td><b>Tab</b></td><td>Nächstes Pane</td></tr>
-<tr><td><b>Shift+Tab</b></td><td>Vorheriges Pane</td></tr>
-</table>
+    def _setup_status_bar(self) -> None:
+        """The running version, bottom right; a permanent widget, so a
+        temporary status message never covers it."""
+        from axross._version import __version__
 
-<h3>Selektion</h3>
-<table>
-<tr><td width="140"><b>Space</b></td><td>Datei markieren + Cursor runter</td></tr>
-<tr><td><b>Ctrl+A</b></td><td>Alles auswählen</td></tr>
-<tr><td><b>Ctrl+Shift+A</b></td><td>Auswahl umkehren</td></tr>
-<tr><td><b>Shift+Klick</b></td><td>Bereich auswählen</td></tr>
-<tr><td><b>Ctrl+Klick</b></td><td>Einzeln dazu/abwählen</td></tr>
-<tr><td><b>Escape</b></td><td>Auswahl aufheben</td></tr>
-</table>
-
-<h3>Pane-Verwaltung</h3>
-<table>
-<tr><td width="140"><b>Ctrl+Shift+H</b></td><td>Horizontal splitten</td></tr>
-<tr><td><b>Ctrl+Shift+V</b></td><td>Vertikal splitten</td></tr>
-<tr><td><b>Ctrl+W</b></td><td>Aktives Pane schließen</td></tr>
-<tr><td><b>Ctrl+Shift+L</b></td><td>Layout umschalten (H/V)</td></tr>
-<tr><td><b>Ctrl+Shift+E</b></td><td>Pane-Größen angleichen</td></tr>
-<tr><td><b>Ctrl+Shift+←/→</b></td><td>Pane verschieben</td></tr>
-<tr><td><b>Ctrl+Shift+X</b></td><td>Pane aus Verschachtelung lösen</td></tr>
-</table>
-
-<h3>Sonstiges</h3>
-<table>
-<tr><td width="140"><b>Ctrl+N</b></td><td>Quick Connect</td></tr>
-<tr><td><b>Ctrl+Shift+N</b></td><td>Connection Manager</td></tr>
-<tr><td><b>Ctrl+Shift+T</b></td><td>Shell-Terminal öffnen</td></tr>
-<tr><td><b>Ctrl+H</b></td><td>Versteckte Dateien ein/aus</td></tr>
-<tr><td><b>Ctrl+C</b></td><td>Pfade in Zwischenablage</td></tr>
-<tr><td><b>Ctrl+D</b></td><td>Verzeichnis als Lesezeichen</td></tr>
-<tr><td><b>Ctrl+B</b></td><td>Lesezeichen öffnen</td></tr>
-<tr><td><b>Alt+Enter</b></td><td>Eigenschaften (Größe, Owner, Rechte)</td></tr>
-<tr><td><b>Ctrl+Q</b></td><td>Beenden</td></tr>
-<tr><td><b>F1</b></td><td>Diese Übersicht</td></tr>
-</table>
-
-<h3>Terminal-Pane (im Pin-Modus)</h3>
-<table>
-<tr><td width="140"><b>Ctrl+Shift+P</b></td><td>Pin ein/aus</td></tr>
-<tr><td><b>Ctrl+A..Z</b></td><td>Terminal-Steuerzeichen</td></tr>
-</table>
-
-<h3>Drag &amp; Drop</h3>
-<table>
-<tr><td width="140"><b>Drag</b></td><td>Kopieren</td></tr>
-<tr><td><b>Ctrl+Drag</b></td><td>Verschieben</td></tr>
-<tr><td><b>Header-Drag</b></td><td>Pane umordnen</td></tr>
-</table>
-"""
-        QMessageBox.information(self, "Tastenkombinationen — axross", text)
+        self._version_label = QLabel(f"axross {__version__}")
+        self._version_label.setProperty("role", "muted")
+        self._version_label.setToolTip(tr("Version of this axross"))
+        self.statusBar().addPermanentWidget(self._version_label)
 
     def _show_about(self) -> None:
-        about_text = """<h2>axross</h2>
-<p>Multi-Protokoll Dateimanager mit Pane-basiertem UI</p>
+        from axross._version import __version__
 
-<h3>Unterstützte Protokolle</h3>
+        about_text = f"""<h2>axross {__version__}</h2>
+<p>Multi-protocol file manager with a pane-based UI, a scripting surface
+and an MCP server.</p>
+
+<h3>Protocols</h3>
 <table>
-<tr><td><b>SFTP / SCP</b></td><td>SSH-basiert (Passwort, Key, Agent)</td></tr>
-<tr><td><b>FTP / FTPS</b></td><td>Aktiv/Passiv, explizites TLS</td></tr>
-<tr><td><b>SMB / CIFS</b></td><td>Windows/Samba-Freigaben</td></tr>
+<tr><td><b>SFTP / SCP</b></td><td>SSH (password, key, agent)</td></tr>
+<tr><td><b>FTP / FTPS</b></td><td>Active/passive, explicit TLS</td></tr>
+<tr><td><b>SMB / CIFS</b></td><td>Windows/Samba shares</td></tr>
 <tr><td><b>WebDAV</b></td><td>Nextcloud, ownCloud, Apache</td></tr>
-<tr><td><b>S3</b></td><td>AWS, MinIO, R2 (auch anonym)</td></tr>
-<tr><td><b>Rsync</b></td><td>Daemon-Modus</td></tr>
-<tr><td><b>NFS</b></td><td>Netzwerk-Dateisystem (v3/v4)</td></tr>
-<tr><td><b>IMAP</b></td><td>E-Mail als Dateisystem</td></tr>
-<tr><td><b>Azure Blob/Files</b></td><td>Microsoft Cloud Storage</td></tr>
-<tr><td><b>OneDrive/SharePoint</b></td><td>Microsoft 365</td></tr>
-<tr><td><b>Google Drive</b></td><td>Google Workspace</td></tr>
-<tr><td><b>Dropbox</b></td><td>Dropbox Cloud</td></tr>
-<tr><td><b>iSCSI</b></td><td>Block-Storage Mount</td></tr>
+<tr><td><b>S3</b></td><td>AWS, MinIO, R2 (anonymous too)</td></tr>
+<tr><td><b>Rsync</b></td><td>Daemon and SSH transport</td></tr>
+<tr><td><b>NFS</b></td><td>v3 / v4</td></tr>
+<tr><td><b>IMAP / POP3</b></td><td>Mail as a file system</td></tr>
+<tr><td><b>Azure Blob / Files</b></td><td>Microsoft cloud storage</td></tr>
+<tr><td><b>OneDrive / SharePoint</b></td><td>Microsoft 365</td></tr>
+<tr><td><b>Google Drive, Dropbox</b></td><td>Cloud storage</td></tr>
+<tr><td><b>iSCSI</b></td><td>Block storage mount</td></tr>
 </table>
+<p>…and more: see File &gt; Connection Manager for the full list.</p>
 
 <h3>Features</h3>
 <ul>
-<li>Multi-Pane: beliebig viele Panes, horizontal/vertikal anordnen</li>
-<li>Drag & Drop zwischen allen Panes und Protokollen</li>
-<li>Remote-to-Remote Relay-Transfer</li>
-<li>Transfer-Warteschlange mit Fortschritt, Resume & Retry</li>
-<li>Echtzeit-Filter (Regex oder Textsuche)</li>
-<li>Integriertes SSH-Terminal</li>
-<li>Text-Editor und Hex-Editor</li>
-<li>Batch-Umbenennung (Suchen/Ersetzen, Nummerierung)</li>
-<li>Lesezeichen-Verwaltung</li>
-<li>Proxy-Unterstützung (SOCKS5, SOCKS4, HTTP CONNECT)</li>
-<li>Themes: Default, Dark, Hacker, Amber</li>
+<li>Any number of panes, split horizontally or vertically</li>
+<li>Drag &amp; drop between all panes and protocols; remote-to-remote relay</li>
+<li>Transfer queue with progress, resume and retry; asks before overwriting</li>
+<li>Live filter, text and hex editor, batch rename, bookmarks</li>
+<li>Proxies (SOCKS, HTTP, HTTPS, PAC) per profile or globally</li>
+<li>Analysis dock, media viewer, Scripts panel with a Python editor</li>
+<li>Themes: Modern (light/dark), Classic, Light, Hacker, Amber</li>
 </ul>
 
 <h3>Docks</h3>
 <ul>
-<li><b>Transfers</b> — Warteschlange, Fortschritt, Retry/Cancel</li>
-<li><b>Terminal</b> — SSH-Shell zu verbundenen Hosts</li>
-<li><b>Log</b> — Live-Protokoll aller Operationen</li>
+<li><b>Transfers</b> — queue, progress, retry/cancel</li>
+<li><b>Terminal</b> — shell on connected hosts</li>
+<li><b>Log</b> — live log of all operations</li>
+<li><b>Console / Scripts</b> — Python REPL and saved scripts</li>
+<li><b>Analysis</b> — what the selected file is</li>
 </ul>
 
-<p><small>axross — Python + PyQt6 | github.com/c0decave/axross</small></p>
-<p><small>F1 = Tastenkombinationen anzeigen</small></p>
+<p><small>axross {__version__} — Python + PyQt6 | github.com/c0decave/axross</small></p>
+<p><small>F1 = keyboard shortcuts · Help &gt; Scripting Guide</small></p>
 """
-        QMessageBox.about(self, "About axross", about_text)
+        QMessageBox.about(self, f"About axross {__version__}", about_text)
 
     # --- Font / Zoom ---
 
@@ -3857,11 +4794,12 @@ class MainWindow(QMainWindow):
             return
         font = app.font()
         font.setPointSize(size)
-        app.setFont(font)
-        # Update all existing widgets
-        for widget in app.allWidgets():
-            widget.setFont(font)
-            widget.update()
+        with themes.collection_paused():
+            app.setFont(font)
+            # Update all existing widgets
+            for widget in app.allWidgets():
+                widget.setFont(font)
+                widget.update()
         log.info("Font size set to %dpt", size)
 
     # --- Themes ---
@@ -3880,18 +4818,19 @@ class MainWindow(QMainWindow):
             # Remember what the desktop gave us so classic can restore it.
             self._base_style_name = app.style().objectName()
             self._base_palette = app.palette()
-        if tokens is not None:
-            # Fusion honours the palette and the stylesheet uniformly;
-            # native styles (Breeze, Windows11, ...) draw some controls
-            # themselves and ignore parts of both.
-            app.setStyle("Fusion")
-            app.setPalette(themes.qpalette_for(tokens))
-        else:
-            if self._base_style_name:
-                app.setStyle(self._base_style_name)
-            app.setPalette(self._base_palette)
         css = themes.stylesheet_for(theme, scheme, compact=self._compact_mode)
-        app.setStyleSheet(css)
+        with themes.collection_paused():
+            if tokens is not None:
+                # Fusion honours the palette and the stylesheet uniformly;
+                # native styles (Breeze, Windows11, ...) draw some controls
+                # themselves and ignore parts of both.
+                app.setStyle("Fusion")
+                app.setPalette(themes.qpalette_for(tokens))
+            else:
+                if self._base_style_name:
+                    app.setStyle(self._base_style_name)
+                app.setPalette(self._base_palette)
+            app.setStyleSheet(css)
 
         # Re-apply pane border styles on top of the theme
         self._refresh_pane_styles()
@@ -3901,6 +4840,11 @@ class MainWindow(QMainWindow):
     def _on_system_scheme_changed(self, *_args) -> None:
         if self._current_theme == "modern":
             self._apply_theme("modern")
+
+    def _show_metadata_settings(self) -> None:
+        from ui.metadata_dialog import MetadataSettingsDialog
+
+        MetadataSettingsDialog(self).exec()
 
     def _choose_open_limit(self) -> None:
         from core import open_limits as _ol
@@ -3982,21 +4926,66 @@ class MainWindow(QMainWindow):
             (getattr(self, "_transfer_dock", None), "Transfers", "download"),
             (getattr(self, "_terminal_dock", None), "Terminal", "terminal"),
             (getattr(self, "_log_dock", None), "Log", "inbox"),
+            (getattr(self, "_scripts_dock", None), tr("Scripts"), "edit"),
             (getattr(self, "_bookmark_sidebar", None), "Bookmarks", "bookmark"),
         ]
         for dock, title, icon_name in dock_specs:
             if dock is not None:
                 self._install_dock_titlebar(dock, title, icon_name)
 
+    def _abandon_background_threads(self) -> None:
+        """Hand over connect attempts and scheduled jobs still running.
+
+        Neither can be interrupted, and waiting would hang the close for
+        as long as an unanswering server takes. Destroying their QThread
+        with them still running aborts the app instead ("QThread:
+        Destroyed while thread '' is still running"), so each is cut
+        from the window and left to finish on its own.
+        """
+        from core.thread_lifetime import detach_running_thread
+
+        for task in self._connect_tasks:
+            try:
+                task.abandon()
+            except Exception:  # noqa: BLE001 — the rest of the cleanup must run
+                log.warning("Abandoning a connect attempt failed on close", exc_info=True)
+        self._connect_tasks.clear()
+        for thread in list(getattr(self, "_scheduler_threads", ())):
+            detach_running_thread(thread)
+        self._scheduler_threads = []
+
     def closeEvent(self, event) -> None:
+        scripts = getattr(self, "_scripts_dock", None)
+        if scripts is not None and not scripts.maybe_close():
+            event.ignore()  # unsaved script edits, and the user chose Cancel
+            return
         log.info("Application closing, cleaning up...")
+        if scripts is not None:
+            try:
+                scripts.shutdown()  # a running script ends with the window
+            except Exception:  # noqa: BLE001 — the rest of the cleanup must run
+                log.warning("Scripts dock shutdown failed on close", exc_info=True)
         self._save_session()
         self._reconnect_timer.stop()
+        self._abandon_background_threads()
+        host = getattr(self, "extension_host", None)
+        if host is not None:
+            host.unload_all()  # their deactivate() runs while the window is whole
+        for check in list(self._conflict_checks):
+            check.abandon()
+        self._conflict_checks.clear()
         for tp in self._terminal_panes:
-            tp.shutdown()
+            # One broken pane must not skip the cleanup below (transfer
+            # threads, connections, temp dirs).
+            try:
+                tp.shutdown()
+            except Exception:  # noqa: BLE001
+                log.warning("Terminal pane shutdown failed on close", exc_info=True)
         self._terminal_panes.clear()
         self._log_dock.shutdown()
         self._terminal_dock.shutdown()
+        if getattr(self, "_analysis_dock", None) is not None:
+            self._analysis_dock.shutdown()
         self._transfer_manager.shutdown()
         self._connection_manager.disconnect_all()
         self._cleanup_archive_tempdirs()

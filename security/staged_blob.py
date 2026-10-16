@@ -14,9 +14,8 @@ helper so:
 * future scanners (CI hook, secondary pre-receive, audit tool) can
   reuse the same policy and cannot regress to "read the worktree
   again",
-* the contract has a focused test suite (`tests/test_staged_blob_helper.py`)
-  that exercises happy / edge / sad cases independently of the
-  end-to-end script tests.
+* the contract can be unit-tested (happy / edge / sad) independently
+  of the end-to-end script tests.
 """
 
 from __future__ import annotations

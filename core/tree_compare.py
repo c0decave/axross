@@ -28,6 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
+from core.path_policy import drop_unsafe_names
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -106,7 +107,10 @@ def walk(
         except OSError as exc:
             log.debug("tree_compare: skipping %s: %s", path, exc)
             return
-        for item in entries:
+        # Listing names are server-chosen (WebDAV takes them from
+        # <D:displayname>). ``../x`` or ``a/b`` would become a relative
+        # path that a sync joins onto the OTHER root, outside it.
+        for item in drop_unsafe_names(entries, origin=path):
             rel = f"{prefix}{item.name}"
             found[rel] = item
             if item.is_dir and not item.is_link:

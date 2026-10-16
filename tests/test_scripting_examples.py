@@ -14,6 +14,7 @@ from examples.scripting_api import (
     credential_testing,
     docker_protocol_smoke,
     local_file_workflows,
+    metadata_workflows,
     network_diagnostics,
     protocol_recipes,
     script_store,
@@ -52,6 +53,7 @@ def test_local_scripting_examples_run(tmp_path: Path) -> None:
         "network_diagnostics": network_diagnostics.run(),
         "credential_testing": credential_testing.run(tmp_path / "creds"),
         "protocol_recipes": protocol_recipes.run(tmp_path / "protocols"),
+        "metadata_workflows": metadata_workflows.run(tmp_path / "metadata"),
     }
 
     assert results["local_file_workflows"]["grep_hits"] >= 1
@@ -59,6 +61,9 @@ def test_local_scripting_examples_run(tmp_path: Path) -> None:
     assert results["network_diagnostics"]["http_status"] == 200
     assert results["credential_testing"]["enum_hits"] == ["alice"]
     assert results["protocol_recipes"]["sqlite_rows"] == 1
+    assert results["metadata_workflows"]["artist"] == ["Example Artist"]
+    assert results["metadata_workflows"]["status"] == "cleaned"
+    assert results["metadata_workflows"]["removable_after"] == 0
 
 
 @pytest.mark.skipif(

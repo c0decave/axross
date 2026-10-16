@@ -18,6 +18,7 @@ MODULES = (
     "credential_testing",
     "protocol_recipes",
     "docker_protocol_smoke",
+    "metadata_workflows",
 )
 
 

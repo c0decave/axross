@@ -1,4 +1,4 @@
-FROM stilliard/pure-ftpd:latest
+FROM docker.io/stilliard/pure-ftpd:latest
 
 ARG USERNAME=ftpuser
 ARG PASSWORD=ftp123

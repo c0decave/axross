@@ -317,33 +317,34 @@ the proxy and points the kernel at it:
 
 ## How to test
 
-The host test suite includes a `ProxySupportTests` class
-(`tests/test_hardening_regressions.py`) that:
+The host tests for the proxy layer need no network and no lab:
 
-- Verifies `build_requests_proxies` URL formation, IPv6 brackets,
-  credential URL-encoding, password-without-username refusal, and
-  the SSRF guard.
-- Verifies `patched_create_connection` restores `socket.create_connection`
-  after a successful run, after an exception inside the context,
-  after concurrent threaded use, and refuses an unset proxy port
-  before installing the patch.
-- Verifies half-configured proxies (`proxy_type` set without
-  `proxy_host`) fail closed before a direct connection can be opened.
-- Verifies profile-like proxy application uses `proxy_host`, not the
-  target `host`.
-- Verifies every proxy-capable session ctor accepts the `proxy_*`
-  kwargs, and unsupported direct constructors warn before continuing
-  or before optional-dependency errors.
-- Verifies requests-like SDK sessions disable process-environment proxy
-  inheritance (`trust_env=False`) before applying the profile proxy.
-- Verifies OAuth browser bootstrap warnings for OneDrive / SharePoint
-  and Google Drive.
-- Verifies the rsync helpers produce well-formed
-  `RSYNC_CONNECT_PROG` and ssh `ProxyCommand` strings, including
-  IPv6 bracketing and shell-shaped host rejection.
-- Verifies ADB USB mode + proxy raises, Exchange autodiscover +
-  proxy raises, and Exchange / WinRM / Dropbox / Google Drive SDK
-  hooks fail closed when a configured proxy cannot be attached.
+- `tests/test_proxy_tunnel.py` — `proxy_*` kwargs parsing, the
+  loopback tunnel, SOCKS5 UDP.
+- `tests/test_proxy_http.py` — HTTPS proxies, NTLM / Negotiate auth,
+  the loopback shim, `build_requests_proxies` URL formation (no
+  credentials in a shim URL), and the SSRF guard refusing loopback /
+  metadata proxies and half-configured advanced proxies.
+- `tests/test_hardening_misc.py` (`ProxyGuardTest`) — the private-range
+  SSRF guard: private, IPv4-mapped IPv6, unspecified and CGNAT
+  addresses are refused, public ones allowed.
+- `tests/test_backend_proxy_routing.py` — Redis, Postgres, MongoDB,
+  LDAP, Git, SVN, S3, SLP and TFTP really route through a loopback
+  SOCKS5 fake that records the requested target; rsh, WMI and NFSv3
+  refuse a configured proxy before connecting.
+- `tests/test_kernel_backend_tunnel.py` — NFSv4 and iSCSI are pointed
+  at a loopback tunnel: what the kernel is told to connect to, and the
+  tunnel's peer check.
+- `tests/test_proxy_settings.py` — the global default proxy:
+  persistence, bypass list, PAC resolution, profile modes, probing.
+- `tests/test_pac.py` — the restricted PAC interpreter.
+- `tests/test_proxy_hardening.py` — reviewed proxy defects, each
+  reproduced before the fix (ProxyCommand vs. default proxy, bypass
+  ports, PAC credentials, the shim's kept-alive auth, Git proxy
+  credentials, half-closed relays).
+- `tests/test_fuzz_proxy.py` — SOCKS4 / SOCKS5 / HTTP CONNECT
+  handshakes against a hostile proxy end in an `OSError`, never a
+  crash or a hang.
 
 ### Proxy lab (podman)
 

@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 from typing import IO, Callable
 
 _APPEND_READ_CHUNK = 1024 * 1024
 
 
-def _looks_not_found(exc: BaseException) -> bool:
-    text = str(exc).lower()
+def _looks_not_found(exc: BaseException, path: str = "") -> bool:
+    if isinstance(exc, FileNotFoundError) or getattr(exc, "errno", None) == errno.ENOENT:
+        return True
+    text = str(exc)
+    # The messages carry the path: "Cannot read /site/404.html: Access
+    # Denied" must not read as "404" because of the object's name.
+    for form in sorted({path, path.lstrip("/")}, key=len, reverse=True):
+        if form:
+            text = text.replace(form, "")
+    text = text.lower()
     return (
         text.startswith("not found:")
         or "not found" in text
@@ -58,7 +67,7 @@ def read_existing_for_append(
         try:
             stat(path)
         except OSError as stat_exc:
-            if _looks_not_found(read_exc) or _looks_not_found(stat_exc):
+            if _looks_not_found(read_exc, path) or _looks_not_found(stat_exc, path):
                 return b""
             raise OSError(
                 f"{label} append: cannot verify existing object state for {path}: {stat_exc}"

@@ -5,11 +5,11 @@ RUN apk add --no-cache openssh-server openssh-sftp-server busybox-extras redis &
     ssh-keygen -A && \
     adduser -D -s /bin/sh labuser && \
     echo "labuser:labpass123" | chpasswd && \
-    mkdir -p ~/data /srv/ftp /srv/www && \
-    echo "hello through the proxy" > ~/data/readme.txt && \
+    mkdir -p /home/labuser/data /srv/ftp /srv/www && \
+    echo "hello through the proxy" > /home/labuser/data/readme.txt && \
     echo "hello over ftp" > /srv/ftp/readme.txt && \
     echo "hello over http" > /srv/www/index.html && \
-    chown -R labuser:labuser ~ && \
+    chown -R labuser:labuser /home/labuser && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     echo "Subsystem sftp /usr/lib/ssh/sftp-server" >> /etc/ssh/sshd_config
 COPY entrypoint-targets.sh /entrypoint.sh

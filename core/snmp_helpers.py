@@ -107,7 +107,28 @@ def _to_var(varbind) -> SnmpVar:
     type_name = type(value).__name__
     # Most pysnmp values stringify to the readable form (OctetString
     # decodes printable ASCII automatically; Counter32 etc. give ints).
-    return SnmpVar(oid=oid_str, type=type_name, value=value.prettyPrint())
+    return SnmpVar(oid=oid_str, type=type_name, value=_printable(value))
+
+
+def _printable(value) -> str:
+    """``value.prettyPrint()``, or the raw payload when that fails.
+
+    pysnmp formats through the MIB: an agent answering sysDescr (a
+    DisplayString) with an Integer leaves a DisplayString holding an int,
+    whose prettyPrint raises AttributeError or TypeError depending on the
+    path. The agent controls the type, so any formatting failure falls
+    back to the value it actually sent.
+    """
+    try:
+        return value.prettyPrint()
+    except Exception as exc:  # noqa: BLE001 - pysnmp/pyasn1 raise several types here
+        raw = getattr(value, "_value", None)
+        log.debug(
+            "SNMP value of type %s did not format (%s); raw %r", type(value).__name__, exc, raw
+        )
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw).decode("utf-8", "replace")
+        return str(raw) if raw is not None else f"<unprintable {type(value).__name__}>"
 
 
 def snmp_get(

@@ -15,13 +15,29 @@ radius than most users intend.
 
 Backends
 --------
-The server is started with a default backend (LocalFS rooted at
-``$HOME``) and may be given additional named backends that tools
-can route to per-call via an optional ``backend_id`` argument; when
-omitted the default is used. Use the ``list_backends`` tool to
-enumerate what's available. This keeps the common single-backend
-shape narrow and predictable while letting operators expose a
-curated set of protocols without starting multiple servers.
+The server is started with a default backend and may be given
+additional named backends (``ServerConfig.backends``) that tools can
+route to per-call via an optional ``backend`` argument; when omitted
+the default is used. The ``list_backends`` tool enumerates them and
+only exists when such a registry is configured. ``main.py`` never
+passes ``backends=``: the CLI server (``--mcp-server``, stdio or
+``--mcp-http``) serves ``default_backend()`` — LocalFS — and gets a
+registry only through the ``remote`` capability group, whose
+``remote_open`` adds saved profiles at run time (per session; see
+core.mcp_groups). The default backend is then ``local``.
+
+Capability groups
+-----------------
+``--mcp-tools GROUP[,GROUP...]`` (``tool_groups`` on ServerConfig /
+HTTPServerConfig / _build_tools) adds the tools of core.mcp_groups:
+metadata, duplicates, packer, archive, crypto, index, filetype,
+transfer, remote, extensions. Their mutating tools follow
+``allow_write`` like the write tools; their local paths go through the
+same root confinement (``_scope_path`` / ``_write_path`` /
+``_refuse_root``, backend-aware: a profile opened by ``remote_open`` is
+not local disk, so the root does not apply to it). ``axross
+--mcp-list-tools`` prints the manifest of whatever a flag set serves
+(docs/mcp-tools.json for everything).
 
 Activation
 ----------
@@ -43,25 +59,57 @@ Tool surface (read-only)
 * ``recursive_checksum(path, algorithm=…, max_files=…, max_depth=…,
   max_file_bytes=…)`` → hash every file under path; one progress
   notification per hashed file
+* ``grep(pattern, path=…, max_depth=…, max_matches=…)`` → bounded
+  server-side regex search with progress notifications
+* ``preview(path, edge=…)`` → thumbnail as an MCP image block
+* ``list_versions(path)`` / ``open_version_read(path, version_id, …)``
 
-Adds when write is enabled:
+Adds when write is enabled (``--mcp-write``), nine tools:
 
 * ``write_file(path, content_b64)``
 * ``mkdir(path)``
 * ``remove(path, recursive=False)``
+* ``rename(src, dst)`` / ``copy(src, dst)``
 * ``bulk_copy(src, dst, max_files=…, max_depth=…, overwrite=…)`` →
   tree copy, one progress notification per copied file
+* ``symlink(target, link_path)`` / ``hardlink(target, link_path)``
+* ``chmod(path, mode)``
+
+Adds when scripts are enabled (``--mcp-allow-scripts``, stdio only):
+``script_list``, ``script_api_schema``, ``script_read``, ``script_write``, ``script_delete``,
+``script_run``. These work on the user's script directory; script_run
+runs the script as the user in a child process (stdin empty, its own
+process group, ``timeout_s`` wall-clock limit, bounded output) and
+answers with exit status, output and any uncaught exception. They are
+not confined to the MCP root.
+
+Write tools and ``script_write`` / ``script_delete`` / ``script_run``
+leave attempt / ok / refused lines on the ``core.mcp_server.audit``
+logger (names, paths and sizes only, never payloads).
 
 Long-running operations (MCP progress notifications)
 ----------------------------------------------------
 Clients may supply ``params._meta.progressToken`` on ``tools/call``
 to opt into streaming progress. Handlers that can report partial
-work — ``walk`` (entries visited), ``grep`` (files scanned), and
-``checksum`` (bytes hashed in the streaming fallback) — call
-``ctx.progress(done, total, msg)`` inside the loop, which writes a
-``notifications/progress`` frame to the same stdout stream the
-final response goes to. The stdio transport is naturally serial so
-progress frames never interleave with other responses.
+work — ``walk`` (entries visited), ``grep`` (files scanned),
+``checksum`` (bytes hashed in the streaming fallback),
+``recursive_checksum`` (files hashed) and ``bulk_copy`` (files
+copied) — call ``ctx.progress(done, total, msg)`` inside the loop,
+which writes a ``notifications/progress`` frame to the same stdout
+stream the final response goes to. Several threads write that stream
+(the request loop, ``tasks/start`` workers, the log forwarder), so
+``serve()`` routes every write through one :class:`_SerializedWriter`
+lock: frames from different threads may arrive in any order, but
+never interleave inside one line.
+
+Cancellation on stdio
+---------------------
+The stdio loop is single-threaded: while a synchronous ``tools/call``
+runs, the loop sits in the worker join and reads no further input,
+so a ``notifications/cancelled`` for that call is only read after it
+finished. On stdio a synchronous call is therefore stopped only by
+its wall-clock timeout. Use ``tasks/start`` + ``tasks/cancel`` for
+work that must be cancellable.
 
 Task namespace (fire-and-forget long-running calls)
 ---------------------------------------------------
@@ -95,6 +143,9 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import IO, Any, Callable, Optional
+
+from core.redaction import redact_text
+from core.script_runner import OUTPUT_DRAIN_SECONDS, STOP_GRACE_SECONDS
 
 try:  # pragma: no cover — optional dep
     import jsonschema
@@ -149,6 +200,32 @@ DEFAULT_TIMEOUT_PREVIEW = 30.0  # preview renders a thumbnail
 # backend. Tools that poll ctx.check_cancel() can still be stopped by
 # the client at any point before this deadline.
 DEFAULT_TIMEOUT_STREAM_HASH = 300.0
+# Whole-tree jobs of the capability groups (duplicate scan, index build,
+# pack, extract, transfer): half an hour bounds a wedged backend while a
+# real job on a large tree still finishes. They poll ctx.check_cancel(),
+# so tasks/cancel stops them much sooner.
+DEFAULT_TIMEOUT_LONG = 1800.0
+# script_run's own wall-clock limit (its ``timeout_s`` argument): the
+# default and the most a caller may ask for. The child is terminated at
+# the limit and killed STOP_GRACE_SECONDS later; tasks/start runs a
+# script in the background of the stdio loop.
+DEFAULT_SCRIPT_TIMEOUT_S = 60.0
+MAX_SCRIPT_TIMEOUT_S = 600.0
+# The tool deadline of script_run, derived so it never fires before the
+# script's own limit, the kill grace and the output drain have run out:
+# the run then always ends with a structured reply, not ERR_TIMEOUT.
+DEFAULT_TIMEOUT_SCRIPT = MAX_SCRIPT_TIMEOUT_S + STOP_GRACE_SECONDS + OUTPUT_DRAIN_SECONDS + 5.0
+# Named timeout classes. Every tool has one (see _TIMEOUT_CLASS_BY_TOOL);
+# the class is what the --mcp-list-tools manifest reports.
+TIMEOUT_CLASSES: dict[str, float] = {
+    "quick": DEFAULT_TIMEOUT_QUICK,
+    "walk": DEFAULT_TIMEOUT_WALK,
+    "write": DEFAULT_TIMEOUT_WRITE,
+    "preview": DEFAULT_TIMEOUT_PREVIEW,
+    "stream": DEFAULT_TIMEOUT_STREAM_HASH,
+    "long": DEFAULT_TIMEOUT_LONG,
+    "script": DEFAULT_TIMEOUT_SCRIPT,
+}
 
 # JSON-RPC application error code for rate-limit rejection. The
 # -32000 range is "server-defined"; nothing in the MCP spec claims
@@ -332,6 +409,10 @@ MAX_TOOL_RESULT_BYTES = 16 * 1024 * 1024
 # instead of pinning memory in the MCP process.
 MAX_SCRIPT_OUTPUT_CHARS = 1 * 1024 * 1024
 
+# script_run's ``args`` (the script's sys.argv[1:]): how many, how long each.
+MAX_SCRIPT_ARGS = 64
+MAX_SCRIPT_ARG_CHARS = 4096
+
 # Stdio transport line cap. HTTP has MAX_REQUEST_BYTES; stdio needs the
 # same shape of guard because ``readline()`` without a size can allocate
 # until a malicious client finally sends a newline.
@@ -342,6 +423,15 @@ MAX_STDIN_LINE_CHARS = 16 * 1024 * 1024
 # oldest-first so tasks/start always succeeds even when a client
 # forgets to call tasks/status on older tasks.
 MAX_TASKS_PER_SCOPE = 100
+
+# Tasks of one scope that may run at the same time. Each running task
+# owns a worker thread and never gets evicted, so without this cap a
+# tasks/start loop spawns threads without bound.
+MAX_RUNNING_TASKS_PER_SCOPE = 8
+
+
+class TaskLimitError(RuntimeError):
+    """The scope already runs ``MAX_RUNNING_TASKS_PER_SCOPE`` tasks."""
 
 # How long a finished task is retained in the registry before it
 # becomes eligible for eviction. One hour is long enough for a
@@ -371,6 +461,9 @@ class _Task:
     error: str | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
     thread: Optional[threading.Thread] = field(default=None, repr=False)
+    # Set by the deadline timer before it flips cancel_event, so the
+    # runner can tell a timeout from a tasks/cancel.
+    timed_out: threading.Event = field(default_factory=threading.Event)
 
 
 class _TaskRegistry:
@@ -395,11 +488,13 @@ class _TaskRegistry:
         *,
         max_per_scope: int = MAX_TASKS_PER_SCOPE,
         retention_seconds: float = TASK_RETENTION_SECONDS,
+        max_running_per_scope: int | None = None,
     ) -> None:
         self._tasks: dict[str, _Task] = {}
         self._lock = threading.Lock()
         self._max_per_scope = max_per_scope
         self._retention_seconds = retention_seconds
+        self._max_running_per_scope = max_running_per_scope
 
     def start(self, scope: str, tool_name: str, arguments: dict) -> _Task:
         import secrets as _secrets
@@ -413,7 +508,15 @@ class _TaskRegistry:
             status="running",
             started_at=time.time(),
         )
+        cap = self._max_running_per_scope
+        if cap is None:
+            cap = MAX_RUNNING_TASKS_PER_SCOPE
         with self._lock:
+            running = sum(
+                1 for t in self._tasks.values() if t.scope == scope and t.status == "running"
+            )
+            if running >= cap:
+                raise TaskLimitError(f"{running} tasks already running in this session (cap {cap})")
             self._evict_stale_locked(scope)
             self._tasks[task_id] = task
         return task
@@ -568,6 +671,33 @@ class _ToolContext:
         return self.cancel_event is not None and self.cancel_event.is_set()
 
 
+class _SerializedWriter:
+    """Serialise writes to one stream shared by several threads.
+
+    On stdio three writers share ``sys.stdout``: the request loop
+    (responses), ``tasks/start`` worker threads and timed-out tool
+    workers (``notifications/progress``) and the log forwarder
+    (``notifications/message``). ``io.TextIOWrapper`` is documented as
+    not thread-safe, so without one shared lock two frames can
+    interleave inside a single JSON-RPC line. Every frame is written
+    with a single ``write()`` call, so a lock per call keeps each line
+    whole. Re-entrant so a stream that logs from inside ``write`` cannot
+    deadlock its own thread.
+    """
+
+    def __init__(self, stream: IO) -> None:
+        self._stream = stream
+        self._lock = threading.RLock()
+
+    def write(self, text: str) -> int:
+        with self._lock:
+            return self._stream.write(text)
+
+    def flush(self) -> None:
+        with self._lock:
+            self._stream.flush()
+
+
 def _run_task(task: _Task, tool: "_Tool", stdout: IO | None) -> None:
     """Background worker body for a ``tasks/start`` invocation.
 
@@ -618,6 +748,18 @@ def _run_task(task: _Task, tool: "_Tool", stdout: IO | None) -> None:
 
     ctx.progress = _progress  # type: ignore[method-assign]
 
+    # Same cooperative wall-clock limit as a synchronous tools/call.
+    timer = None
+    if tool.timeout_seconds:
+
+        def _on_deadline() -> None:
+            task.timed_out.set()
+            task.cancel_event.set()
+
+        timer = threading.Timer(tool.timeout_seconds, _on_deadline)
+        timer.daemon = True
+        timer.start()
+
     try:
         result = tool.handler(task.arguments, ctx)
         # Serialise eagerly so a too-big-to-return payload fails
@@ -639,11 +781,17 @@ def _run_task(task: _Task, tool: "_Tool", stdout: IO | None) -> None:
         task.result = result
         task.status = "done"
     except CancelledError:
-        task.status = "cancelled"
+        if task.timed_out.is_set():
+            task.status = "error"
+            task.error = f"tool {tool.name!r} exceeded its {tool.timeout_seconds}s timeout"
+        else:
+            task.status = "cancelled"
     except Exception as exc:  # noqa: BLE001 — surface on task record
         task.status = "error"
-        task.error = str(exc)
+        task.error = redact_text(str(exc))
     finally:
+        if timer is not None:
+            timer.cancel()
         task.finished_at = time.time()
 
 
@@ -659,52 +807,65 @@ class _PreviewResult:
     height: int = 0
 
 
-class _CappedStringIO:
-    """Small text sink that raises once a script exceeds its output cap."""
-
-    def __init__(self, limit: int):
-        import io
-
-        self._buf = io.StringIO()
-        self._limit = int(limit)
-        self._chars = 0
-
-    def write(self, text: str) -> int:
-        if not isinstance(text, str):
-            text = str(text)
-        projected = self._chars + len(text)
-        if projected > self._limit:
-            remaining = max(0, self._limit - self._chars)
-            if remaining:
-                self._buf.write(text[:remaining])
-                self._chars += remaining
-            raise RuntimeError(f"script output exceeded {self._limit} characters")
-        self._buf.write(text)
-        self._chars = projected
-        return len(text)
-
-    def flush(self) -> None:
-        return None
-
-    def getvalue(self) -> str:
-        return self._buf.getvalue()
-
-
 @dataclass
 class _Tool:
     name: str
     description: str
     schema: dict
     handler: Callable[[dict, _ToolContext], Any]
-    write: bool = False  # gated behind --mcp-write
+    write: bool = False  # mutating; gated behind --mcp-write (scripts: --mcp-allow-scripts)
     # Wall-clock ceiling for one invocation. A background timer flips
     # the ctx.cancel_event when the deadline passes; handlers that call
     # ctx.check_cancel() then raise CancelledError and the dispatcher
-    # answers -32000 "tool timed out". Tools that don't periodically
+    # answers ERR_TIMEOUT (-32002). Tools that don't periodically
     # check cancel won't be force-killed — the timer just nudges them;
     # but every tool added after Commit 3 does check, so timeouts land
     # within one loop tick.
     timeout_seconds: float | None = None
+    # Key of TIMEOUT_CLASSES; None takes the class from
+    # _TIMEOUT_CLASS_BY_TOOL (default "quick").
+    timeout_class: str | None = None
+    # "core" (file tools), "write" (--mcp-write), "scripts"
+    # (--mcp-allow-scripts) or a capability group of core.mcp_groups.
+    group: str = "core"
+    # False for tools that name their backends themselves (transfer) or
+    # touch none (profiles, extensions): the multi-backend wiring then
+    # leaves their schema without the generic ``backend`` argument.
+    accepts_backend: bool = True
+
+
+def _script_run_args(raw) -> list[str]:
+    """script_run's ``args``: a list of at most MAX_SCRIPT_ARGS strings of
+    at most MAX_SCRIPT_ARG_CHARS each, without NUL (argv cannot carry it).
+    Checked here as well as by the schema: jsonschema is optional."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("script_run args must be a list of strings")
+    if len(raw) > MAX_SCRIPT_ARGS:
+        raise ValueError(f"script_run takes at most {MAX_SCRIPT_ARGS} args")
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError("script_run args must be strings")
+        if len(item) > MAX_SCRIPT_ARG_CHARS:
+            raise ValueError(f"a script_run arg is longer than {MAX_SCRIPT_ARG_CHARS} characters")
+        if "\x00" in item:
+            raise ValueError("a script_run arg contains a NUL character")
+    return list(raw)
+
+
+def _script_run_timeout(raw) -> float:
+    """script_run's ``timeout_s``: a finite number in (0, MAX_SCRIPT_TIMEOUT_S];
+    DEFAULT_SCRIPT_TIMEOUT_S when absent."""
+    import math
+
+    if raw is None:
+        return DEFAULT_SCRIPT_TIMEOUT_S
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError("script_run timeout_s must be a number of seconds")
+    if not math.isfinite(raw) or not 0 < raw <= MAX_SCRIPT_TIMEOUT_S:
+        raise ValueError(f"script_run timeout_s must be in (0, {MAX_SCRIPT_TIMEOUT_S:g}]")
+    return float(raw)
 
 
 def _backend_id_for(backend) -> str:
@@ -824,8 +985,9 @@ def _enforce_root(path: str, root: str) -> str:
     resolved location, which is still prefix-checked.
 
     Returns the cleaned absolute path on success. Raises
-    :class:`PermissionError` (mapped to -32602 by the dispatcher)
-    when either pass finds an escape.
+    :class:`PermissionError` when either pass finds an escape; the
+    dispatcher answers it as -32603 with ``data.type`` =
+    ``"PermissionError"`` (only ValueError / TypeError map to -32602).
     """
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
@@ -893,8 +1055,14 @@ def _build_tools(
     root: str | None = None,
     backends: dict | None = None,
     allow_scripts: bool = False,
+    tool_groups: frozenset[str] | None = None,
 ) -> list[_Tool]:
     """Build the catalogue. Write tools are added only when allowed.
+
+    *tool_groups* names the optional capability groups
+    (:data:`core.mcp_groups.GROUPS`) to add on top of the file tools;
+    empty or None keeps the plain file-tool surface. A group's mutating
+    tools follow *allow_write* like the write tools do.
 
     *backend_id* is the metadata-index key the search tool is allowed
     to filter against. Defaults to the configured backend's own id —
@@ -913,6 +1081,9 @@ def _build_tools(
     remains the fallback used when the call omits ``backend``. This
     keeps single-backend deployments unchanged (no schema churn) and
     only adds the backend-selection field when a registry is wired."""
+    from core import mcp_groups as _groups
+
+    groups = _groups.check_groups(tool_groups or ())
     server_backend_id = backend_id or _backend_id_for(backend)
     read_root = root
     write_root = root or "/"
@@ -924,10 +1095,27 @@ def _build_tools(
     # ValueError if the caller named an unknown id.
     _default_backend = backend
 
+    # The ``remote`` group opens saved profiles at run time. They live in
+    # a per-session registry beside the static ``backends`` one, and the
+    # static registry gains the default backend as "local" so every
+    # backend has an id.
+    remote_registry = _groups.RemoteRegistry() if "remote" in groups else None
+    if remote_registry is not None:
+        backends = dict(backends or {})
+        if not any(b is backend for b in backends.values()):
+            backends["local" if "local" not in backends else "default"] = backend
+
+    def _is_remote(active_backend) -> bool:
+        return remote_registry is not None and remote_registry.holds(active_backend)
+
     def _resolve_backend(args):
         bid = args.get("backend") if isinstance(args, dict) else None
         if not bid:
             return _default_backend
+        if remote_registry is not None:
+            opened = remote_registry.get(bid)
+            if opened is not None:
+                return opened
         if not backends:
             # Single-backend deployment; the arg is ignored silently
             # rather than erroring — gentler on clients that always
@@ -938,17 +1126,51 @@ def _build_tools(
             raise ValueError(f"unknown backend {bid!r}; call 'list_backends' to see available ids")
         return b
 
-    def _scope_path(path: str) -> str:
+    def _backend_by_id(bid):
+        """Strict lookup for tools that name two backends (transfer):
+        an unknown id is an error even without a registry."""
+        if bid is None or bid == "":
+            return _default_backend
+        if not isinstance(bid, str):
+            raise ValueError("a backend id must be a string")
+        if remote_registry is not None and remote_registry.get(bid) is not None:
+            return remote_registry.get(bid)
+        if backends and bid in backends:
+            return backends[bid]
+        if bid == "local":
+            return _default_backend
+        raise ValueError(f"unknown backend {bid!r}; call 'list_backends' to see available ids")
+
+    def _scope_path(path: str, active_backend=None) -> str:
         """Apply the configured MCP root to a tool path.
 
         ``resources/read`` already enforces the root through
         _ResourceCatalog. The tool catalogue needs the same guard
         because clients can call read_file/checksum/grep directly
-        without going through resource URIs.
+        without going through resource URIs. A backend opened through
+        the ``remote`` group is not local disk: --mcp-root does not
+        apply, its paths are only checked for shape.
         """
+        if active_backend is not None and _is_remote(active_backend):
+            return _groups.check_remote_path(path)
         if read_root is None:
             return path
         return _enforce_root(path, read_root)
+
+    def _write_path(path: str, active_backend) -> str:
+        """Confine a path a mutating tool writes, moves or deletes. On a
+        remote backend of a production-flagged profile every mutation
+        is refused (the GUI's countdown cannot be shown over MCP)."""
+        if _is_remote(active_backend):
+            remote_registry.refuse_production(active_backend)
+            return _groups.check_remote_path(path)
+        return _enforce_root(path, write_root)
+
+    def _refuse_root(path: str, active_backend, operation: str) -> None:
+        """Refuse a mutation of the configured root object itself."""
+        if _is_remote(active_backend):
+            return
+        _refuse_configured_root(path, write_root, operation)
 
     def _safe_child_path(active_backend, parent: str, name: str) -> str | None:
         from core.path_policy import safe_join
@@ -961,7 +1183,7 @@ def _build_tools(
 
     def _list_dir(args, ctx):
         backend = _resolve_backend(args)
-        path = _scope_path(args.get("path") or "/")
+        path = _scope_path(args.get("path") or "/", backend)
         entries = backend.list_dir(path)
         return [
             {
@@ -983,7 +1205,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("stat requires a path")
-        path = _scope_path(path)
+        path = _scope_path(path, backend)
         item = backend.stat(path)
         return {
             "name": getattr(item, "name", ""),
@@ -1001,7 +1223,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("read_file requires a path")
-        path = _scope_path(path)
+        path = _scope_path(path, backend)
         cap = int(args.get("max_bytes") or MAX_READ_BYTES)
         cap = max(0, min(cap, MAX_READ_BYTES))
         with backend.open_read(path) as fh:
@@ -1020,7 +1242,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("checksum requires a path")
-        path = _scope_path(path)
+        path = _scope_path(path, backend)
         algo = (args.get("algorithm") or "sha256").lower()
         if algo not in _HASHLIB_ALGOS:
             raise ValueError(
@@ -1059,7 +1281,7 @@ def _build_tools(
             # The index is shared by every session of every backend id;
             # only rows under the configured MCP root may leave.
             try:
-                _scope_path(entry_path)
+                _scope_path(entry_path, resolved)
             except (PermissionError, ValueError):
                 return False
             return True
@@ -1089,7 +1311,7 @@ def _build_tools(
         ``notifications/cancelled`` from the client lands within one
         list_dir round-trip of arrival."""
         backend = _resolve_backend(args)
-        path = _scope_path(args.get("path") or "/")
+        path = _scope_path(args.get("path") or "/", backend)
         max_depth = int(args.get("max_depth") or 4)
         max_entries = int(args.get("max_entries") or 1000)
         if max_depth < 0 or max_entries <= 0:
@@ -1162,7 +1384,7 @@ def _build_tools(
         ``recursive_checksum`` based on prior knowledge.
         """
         backend = _resolve_backend(args)
-        path = _scope_path(args.get("path") or "/")
+        path = _scope_path(args.get("path") or "/", backend)
         algo = (args.get("algorithm") or "sha256").lower()
         if algo not in _HASHLIB_ALGOS:
             raise ValueError(
@@ -1211,7 +1433,7 @@ def _build_tools(
                 return
             ctx.check_cancel()
             try:
-                safe_full_path = _scope_path(full_path)
+                safe_full_path = _scope_path(full_path, backend)
                 result = _hash_one_path(
                     backend,
                     safe_full_path,
@@ -1228,7 +1450,7 @@ def _build_tools(
                         "path": full_path,
                         "size": size,
                         "algorithm": algo,
-                        "error": str(exc),
+                        "error": redact_text(str(exc)),
                     }
                 )
                 return
@@ -1443,7 +1665,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("list_versions requires a path")
-        path = _scope_path(path)
+        path = _scope_path(path, backend)
         versions = backend.list_versions(path)
         return [
             {
@@ -1468,7 +1690,7 @@ def _build_tools(
             raise ValueError(
                 "open_version_read requires path + version_id",
             )
-        path = _scope_path(path)
+        path = _scope_path(path, backend)
         cap = int(args.get("max_bytes") or MAX_READ_BYTES)
         cap = max(0, min(cap, MAX_READ_BYTES))
         with backend.open_version_read(path, version_id) as fh:
@@ -1531,7 +1753,7 @@ def _build_tools(
             regex = re.compile(pattern)
         except re.error as exc:
             raise ValueError(f"grep: bad regex {pattern!r}: {exc}") from exc
-        start = _scope_path(args.get("path") or "/")
+        start = _scope_path(args.get("path") or "/", backend)
         max_depth = int(args.get("max_depth") or 2)
         max_matches = int(args.get("max_matches") or 100)
         max_matches = min(max_matches, MAX_GREP_MATCHES)
@@ -1567,7 +1789,7 @@ def _build_tools(
                 if size > MAX_GREP_FILE_BYTES:
                     continue
                 try:
-                    safe_full = _scope_path(full)
+                    safe_full = _scope_path(full, backend)
                     with backend.open_read(safe_full) as fh:
                         raw = fh.read(MAX_GREP_FILE_BYTES + 1)
                 except (OSError, PermissionError):
@@ -1617,7 +1839,7 @@ def _build_tools(
         path = args.get("path")
         if not path:
             raise ValueError("preview requires a path")
-        path = _scope_path(path)
+        path = _scope_path(path, backend)
         edge = int(args.get("edge") or 256)
         edge = max(16, min(edge, 2048))
         from core import previews as P
@@ -1719,18 +1941,19 @@ def _build_tools(
         ]
     )
 
-    if allow_write:
+    def _audit(tool_name: str, outcome: str, **fields) -> None:
+        """Emit a single audit line. Paths, names and outcomes are safe
+        to log; payloads are never logged (write_file and script_write
+        go through this helper with ``size=<bytes>``, never the bytes or
+        the script source themselves). Shared by the write tools and the
+        script tools, so it lives outside both opt-in blocks.
+        """
+        parts = [f"tool={tool_name}", f"outcome={outcome}"]
+        for k, v in fields.items():
+            parts.append(f"{k}={v!r}")
+        audit_log.info(" ".join(parts))
 
-        def _audit(tool_name: str, outcome: str, **fields) -> None:
-            """Emit a single audit line. Paths and outcomes are safe
-            to log; payloads are never logged (write_file goes
-            through this helper with ``size=<bytes>``, never the
-            bytes themselves).
-            """
-            parts = [f"tool={tool_name}", f"outcome={outcome}"]
-            for k, v in fields.items():
-                parts.append(f"{k}={v!r}")
-            audit_log.info(" ".join(parts))
+    if allow_write:
 
         def _write_file(args, ctx):
             backend = _resolve_backend(args)
@@ -1745,8 +1968,8 @@ def _build_tools(
             # outcome is unknown.
             _audit("write_file", "attempt", path=path)
             try:
-                safe = _enforce_root(path, write_root)
-                _refuse_configured_root(safe, write_root, "write_file")
+                safe = _write_path(path, backend)
+                _refuse_root(safe, backend, "write_file")
                 data = base64.b64decode(content_b64, validate=True)
                 from core.atomic_io import atomic_write
 
@@ -1764,8 +1987,8 @@ def _build_tools(
                 raise ValueError("mkdir requires a path")
             _audit("mkdir", "attempt", path=path)
             try:
-                safe = _enforce_root(path, write_root)
-                _refuse_configured_root(safe, write_root, "mkdir")
+                safe = _write_path(path, backend)
+                _refuse_root(safe, backend, "mkdir")
                 backend.mkdir(safe)
             except BaseException as exc:
                 _audit("mkdir", "refused", path=path, error=type(exc).__name__)
@@ -1781,8 +2004,8 @@ def _build_tools(
             recursive = bool(args.get("recursive", False))
             _audit("remove", "attempt", path=path, recursive=recursive)
             try:
-                safe = _enforce_root(path, write_root)
-                _refuse_configured_root(safe, write_root, "remove")
+                safe = _write_path(path, backend)
+                _refuse_root(safe, backend, "remove")
                 backend.remove(safe, recursive=recursive)
             except BaseException as exc:
                 _audit(
@@ -1800,10 +2023,10 @@ def _build_tools(
                 raise ValueError("rename requires src + dst")
             _audit("rename", "attempt", src=src, dst=dst)
             try:
-                safe_src = _enforce_root(src, write_root)
-                _refuse_configured_root(safe_src, write_root, "rename source")
-                safe_dst = _enforce_root(dst, write_root)
-                _refuse_configured_root(safe_dst, write_root, "rename destination")
+                safe_src = _write_path(src, backend)
+                _refuse_root(safe_src, backend, "rename source")
+                safe_dst = _write_path(dst, backend)
+                _refuse_root(safe_dst, backend, "rename destination")
                 if backend.exists(safe_dst):
                     raise OSError(f"rename target already exists: {safe_dst}")
                 from core.server_ops import server_side_move
@@ -1823,9 +2046,9 @@ def _build_tools(
                 raise ValueError("copy requires src + dst")
             _audit("copy", "attempt", src=src, dst=dst)
             try:
-                safe_src = _enforce_root(src, write_root)
-                safe_dst = _enforce_root(dst, write_root)
-                _refuse_configured_root(safe_dst, write_root, "copy destination")
+                safe_src = _write_path(src, backend)
+                safe_dst = _write_path(dst, backend)
+                _refuse_root(safe_dst, backend, "copy destination")
                 if backend.exists(safe_dst):
                     raise OSError(f"copy target already exists: {safe_dst}")
                 from core.server_ops import server_side_copy
@@ -1917,10 +2140,10 @@ def _build_tools(
 
             _audit("bulk_copy", "attempt", src=src, dst=dst, overwrite=overwrite)
             try:
-                safe_src = _enforce_root(src, write_root)
-                safe_dst = _enforce_root(dst, write_root)
+                safe_src = _write_path(src, backend)
+                safe_dst = _write_path(dst, backend)
                 if overwrite:
-                    _refuse_configured_root(safe_dst, write_root, "bulk_copy destination")
+                    _refuse_root(safe_dst, backend, "bulk_copy destination")
             except BaseException as exc:
                 _audit("bulk_copy", "refused", src=src, dst=dst, error=type(exc).__name__)
                 raise
@@ -1931,8 +2154,8 @@ def _build_tools(
             def _copy_one(src_file: str, dst_file: str, size: int) -> None:
                 nonlocal truncated
                 try:
-                    safe_src_file = _enforce_root(src_file, write_root)
-                    safe_dst_file = _enforce_root(dst_file, write_root)
+                    safe_src_file = _write_path(src_file, backend)
+                    safe_dst_file = _write_path(dst_file, backend)
                 except PermissionError as exc:
                     _audit(
                         "bulk_copy.file",
@@ -1947,7 +2170,7 @@ def _build_tools(
                             "dst": dst_file,
                             "size": size,
                             "action": "error",
-                            "error": str(exc),
+                            "error": redact_text(str(exc)),
                         }
                     )
                     return
@@ -2004,7 +2227,7 @@ def _build_tools(
                             "dst": dst_file,
                             "size": size,
                             "action": "error",
-                            "error": str(exc),
+                            "error": redact_text(str(exc)),
                         }
                     )
                     return
@@ -2095,8 +2318,8 @@ def _build_tools(
             # create a read escape.
             _audit("symlink", "attempt", target=target, link_path=link_path)
             try:
-                safe_link = _enforce_root(link_path, write_root)
-                _refuse_configured_root(safe_link, write_root, "symlink link_path")
+                safe_link = _write_path(link_path, backend)
+                _refuse_root(safe_link, backend, "symlink link_path")
                 backend.symlink(target, safe_link)
             except BaseException as exc:
                 _audit(
@@ -2122,9 +2345,9 @@ def _build_tools(
             # not meant to expose, so cap both ends.
             _audit("hardlink", "attempt", target=target, link_path=link_path)
             try:
-                safe_target = _enforce_root(target, write_root)
-                safe_link = _enforce_root(link_path, write_root)
-                _refuse_configured_root(safe_link, write_root, "hardlink link_path")
+                safe_target = _write_path(target, backend)
+                safe_link = _write_path(link_path, backend)
+                _refuse_root(safe_link, backend, "hardlink link_path")
                 backend.hardlink(safe_target, safe_link)
             except BaseException as exc:
                 _audit(
@@ -2161,8 +2384,8 @@ def _build_tools(
                 )
             _audit("chmod", "attempt", path=path, mode=oct(mode_int))
             try:
-                safe = _enforce_root(path, write_root)
-                _refuse_configured_root(safe, write_root, "chmod")
+                safe = _write_path(path, backend)
+                _refuse_root(safe, backend, "chmod")
                 backend.chmod(safe, mode_int)
             except BaseException as exc:
                 _audit("chmod", "refused", path=path, mode=oct(mode_int), error=type(exc).__name__)
@@ -2170,6 +2393,7 @@ def _build_tools(
             _audit("chmod", "ok", path=safe, mode=oct(mode_int))
             return {"ok": True}
 
+        _first_write_tool = len(tools)
         tools.extend(
             [
                 _Tool(
@@ -2340,21 +2564,29 @@ def _build_tools(
             ]
         )
 
+        for _tool in tools[_first_write_tool:]:
+            _tool.group = "write"
+
     # ----------------------------------------------------------------
     # Scripting tools (opt-in via allow_scripts).
     #
     # script_list / script_read leak only metadata + bytes the user
     # already wrote; script_write / script_run / script_delete
     # mutate state. ALL are gated behind ``allow_scripts`` because
-    # script_run hands the LLM ``exec()`` over Python in the server
-    # process — that's strictly more powerful than the per-file
-    # write_file tool. Operators who want neither leave the flag off.
+    # script_run hands the LLM arbitrary Python as the user (in a
+    # child process, core.script_runner.run_bounded) — strictly more
+    # powerful than the per-file write_file tool. Operators who want neither leave the flag off.
     # ----------------------------------------------------------------
     if allow_scripts:
         from core import scripting as _scripting
 
         def _script_list(args, ctx):
             return {"scripts": _scripting.list_scripts()}
+
+        def _script_api_schema(args, ctx):
+            # Read-only: built with inspect from the scripting module the
+            # server already imported; no user code runs.
+            return _scripting.api_schema()
 
         def _script_read(args, ctx):
             name = args.get("name")
@@ -2367,48 +2599,90 @@ def _build_tools(
             source = args.get("source", "")
             if not name:
                 raise ValueError("script_write requires a name")
-            path = _scripting.save_script(name, source)
+            # Same attempt / ok / refused trail as the write tools: the
+            # name and the size only, never the source text.
+            _audit("script_write", "attempt", name=name)
+            try:
+                path = _scripting.save_script(name, source)
+            except BaseException as exc:
+                _audit("script_write", "refused", name=name, error=type(exc).__name__)
+                raise
+            _audit("script_write", "ok", name=name, size=len(source))
             return {"name": name, "path": path, "size": len(source)}
 
         def _script_delete(args, ctx):
             name = args.get("name")
             if not name:
                 raise ValueError("script_delete requires a name")
-            _scripting.delete_script(name)
+            _audit("script_delete", "attempt", name=name)
+            try:
+                _scripting.delete_script(name)
+            except BaseException as exc:
+                _audit("script_delete", "refused", name=name, error=type(exc).__name__)
+                raise
+            _audit("script_delete", "ok", name=name)
             return {"name": name, "deleted": True}
 
         def _script_run(args, ctx):
-            """Execute a saved script in a fresh namespace (NOT the
-            server's). stdout from the script is captured and
-            returned so the LLM can see what the script printed."""
-            import contextlib
+            """Run a saved script in a child process (core.script_runner)
+            and answer with a structured outcome. Never in the server
+            process: there a looping script held the server, nothing could
+            stop it, and input() read the stdio JSON-RPC stream."""
+            from core import script_runner as _runner
+            from core.security_mode import current_policy, require
+            from core.ui_helpers import ENV_NONINTERACTIVE
 
             name = args.get("name")
             if not name:
                 raise ValueError("script_run requires a name")
-            buf = _CappedStringIO(MAX_SCRIPT_OUTPUT_CHARS)
-            err_buf = _CappedStringIO(MAX_SCRIPT_OUTPUT_CHARS)
+            script_args = _script_run_args(args.get("args"))
+            timeout_s = _script_run_timeout(args.get("timeout_s"))
+            # Audit the name and the outcome only — the arguments and the
+            # captured stdout/stderr are payload and stay out of the trail.
+            _audit("script_run", "attempt", name=name)
             try:
-                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err_buf):
-                    ns = _scripting.run_script(name)
-            except SystemExit as exc:
-                return {
-                    "name": name,
-                    "exit": int(exc.code or 0),
-                    "stdout": buf.getvalue(),
-                    "stderr": err_buf.getvalue(),
-                    "namespace_keys": [],
-                }
-            # Strip private + dunder names so the LLM doesn't see
-            # injected helper modules.
-            keys = sorted(k for k in ns if not k.startswith("_") and k not in ("axross",))
-            return {
+                require("saved script execution", current_policy().allow_scripts)
+                _scripting.load_script(name)  # refuses bad names, missing files
+                run = _runner.run_bounded(
+                    name,
+                    args=script_args,
+                    timeout_s=timeout_s,
+                    max_output_chars=MAX_SCRIPT_OUTPUT_CHARS,
+                    cancel_event=ctx.cancel_event,
+                    env_overrides={ENV_NONINTERACTIVE: "1"},
+                )
+                if run.cancelled:
+                    raise CancelledError("request cancelled by client")
+                if run.output_exceeded:
+                    raise RuntimeError(
+                        f"script output exceeded {MAX_SCRIPT_OUTPUT_CHARS} characters "
+                        f"on {run.output_exceeded}; the script was stopped"
+                    )
+            except BaseException as exc:
+                _audit("script_run", "refused", name=name, error=type(exc).__name__)
+                raise
+            outcome: dict = {"exit": run.exit}
+            if run.timed_out:
+                outcome["timed_out"] = True
+            if run.error_type:
+                outcome["error"] = run.error_type
+            _audit("script_run", "ok", name=name, **outcome)
+            reply = {
                 "name": name,
-                "stdout": buf.getvalue(),
-                "stderr": err_buf.getvalue(),
-                "namespace_keys": keys,
+                "exit": run.exit,
+                "timed_out": run.timed_out,
+                "duration_ms": run.duration_ms,
+                "stdout": run.stdout,
+                "stderr": run.stderr,
+                "namespace_keys": run.namespace_keys,
             }
+            if run.error_type:
+                reply.update(
+                    error_type=run.error_type, error=run.error or "", traceback=run.traceback or ""
+                )
+            return reply
 
+        _first_script_tool = len(tools)
         tools.extend(
             [
                 _Tool(
@@ -2419,6 +2693,22 @@ def _build_tools(
                     ),
                     schema={"type": "object", "properties": {}},
                     handler=_script_list,
+                ),
+                _Tool(
+                    name="script_api_schema",
+                    description=(
+                        "Describe the ``axross`` scripting API that script_run gives a "
+                        "script, as JSON built from the live code: per public function "
+                        "its signature, parameters with types and defaults, return type, "
+                        "first docstring paragraph, group, ``mutates`` (can change files, "
+                        "remote state or settings) and ``prompts`` (needs a human: under "
+                        "script_run it raises NonInteractiveError unless the script opts "
+                        "in, e.g. confirm(assume_yes=True)); the public classes; and the "
+                        "methods every backend session has (with close() and the with "
+                        "statement). Same data as axross.api_schema()."
+                    ),
+                    schema={"type": "object", "properties": {}},
+                    handler=_script_api_schema,
                 ),
                 _Tool(
                     name="script_read",
@@ -2469,21 +2759,75 @@ def _build_tools(
                 _Tool(
                     name="script_run",
                     description=(
-                        "Execute a saved script in a fresh namespace seeded "
-                        "with ``axross`` (the curated scripting module). "
-                        "Returns captured stdout/stderr and the names of "
-                        "top-level vars the script left behind. Read "
-                        "axross.help() for the available API."
+                        "Run a saved script in its own Python process with ``axross`` "
+                        "(the scripting API; see script_api_schema) in "
+                        "its namespace. stdin is empty, so input() gets EOF and "
+                        "axross.confirm() raises NonInteractiveError unless the script "
+                        "passes assume_yes=True. ``args`` become sys.argv[1:]. The run "
+                        "is stopped after ``timeout_s`` seconds, with every process it "
+                        "started. Returns {name, exit, timed_out, duration_ms, stdout, "
+                        "stderr, namespace_keys} and, after an uncaught exception, "
+                        "error_type, error and traceback; exit follows SystemExit (None "
+                        "is 0, an int is itself, anything else is printed and gives 1) "
+                        "and is the negative signal number of a stopped run. stdout and "
+                        f"stderr hold up to {MAX_SCRIPT_OUTPUT_CHARS} characters each; "
+                        "more stops the run and fails the call."
                     ),
                     schema={
                         "type": "object",
-                        "properties": {"name": {"type": "string"}},
+                        "properties": {
+                            "name": {"type": "string"},
+                            "args": {
+                                "type": "array",
+                                "items": {"type": "string", "maxLength": MAX_SCRIPT_ARG_CHARS},
+                                "maxItems": MAX_SCRIPT_ARGS,
+                                "description": "The script's sys.argv[1:]. Default: none.",
+                            },
+                            "timeout_s": {
+                                "type": "number",
+                                "exclusiveMinimum": 0,
+                                "maximum": MAX_SCRIPT_TIMEOUT_S,
+                                "description": (
+                                    "Wall-clock limit in seconds. Default: "
+                                    f"{DEFAULT_SCRIPT_TIMEOUT_S:g}."
+                                ),
+                            },
+                        },
                         "required": ["name"],
                     },
                     handler=_script_run,
                     write=True,
                 ),
             ]
+        )
+
+        for _tool in tools[_first_script_tool:]:
+            _tool.group = "scripts"
+            # They work on the script directory and never read ``backend``.
+            _tool.accepts_backend = False
+
+    # Capability groups (--mcp-tools). Built last among the tool sets so
+    # they reuse the confinement and audit helpers above.
+    if groups:
+        tools.extend(
+            _groups.build_group_tools(
+                groups,
+                _groups.GroupEnv(
+                    default_backend=_default_backend,
+                    resolve_backend=_resolve_backend,
+                    scope_path=_scope_path,
+                    write_path=_write_path,
+                    refuse_root=_refuse_root,
+                    index_backend_id=lambda b: (
+                        server_backend_id if b is _default_backend else _backend_id_for(b)
+                    ),
+                    audit=_audit,
+                    root=root,
+                    allow_write=allow_write,
+                    backend_by_id=_backend_by_id,
+                    remote=remote_registry,
+                ),
+            )
         )
 
     # Multi-backend wiring: if the caller configured a registry,
@@ -2512,24 +2856,43 @@ def _build_tools(
                         "class": type(b).__name__,
                         "name": getattr(b, "name", "") or "",
                         "is_default": bid == _default_id,
+                        "remote": False,
                     }
                 )
+            if remote_registry is not None:
+                # Profiles opened with remote_open in this session.
+                for bid, opened in remote_registry.entries():
+                    out.append(
+                        {
+                            "id": bid,
+                            "class": type(opened.backend).__name__,
+                            "name": getattr(opened.backend, "name", "") or "",
+                            "is_default": False,
+                            "remote": True,
+                            "profile": opened.profile.name,
+                            "protocol": opened.profile.protocol,
+                            "production": bool(getattr(opened.profile, "production", False)),
+                        }
+                    )
             return out
 
         tools.append(
             _Tool(
                 name="list_backends",
                 description=(
-                    "List configured backend IDs. Pass the id via the "
-                    "``backend`` argument on any other tool to route that "
-                    "call to a non-default backend."
+                    "List the backend ids: {id, class, name, is_default, remote} per "
+                    "backend; a profile opened with remote_open adds profile, "
+                    "protocol and production. Pass the id via the ``backend`` "
+                    "argument on any other tool to route that call to that backend."
                 ),
                 schema={"type": "object", "properties": {}},
                 handler=_list_backends,
+                group="remote" if remote_registry is not None else "core",
+                accepts_backend=False,
             )
         )
         for tool in tools:
-            if tool.name == "list_backends":
+            if tool.name == "list_backends" or not tool.accepts_backend:
                 continue
             props = tool.schema.setdefault("properties", {})
             props.setdefault(
@@ -2549,54 +2912,62 @@ def _build_tools(
     return tools
 
 
-# Category → default timeout. Tool names are looked up against this
-# map; anything missing lands on DEFAULT_TIMEOUT_QUICK. Callers can
-# override on a specific tool by assigning after build.
-_TIMEOUT_BY_TOOL = {
+# Tool → timeout class (a key of TIMEOUT_CLASSES). Anything missing lands
+# on "quick"; group tools name their class on the _Tool itself. Callers
+# can override on a specific tool by assigning after build.
+_TIMEOUT_CLASS_BY_TOOL = {
     # Quick: one backend op, bounded output.
-    "list_dir": DEFAULT_TIMEOUT_QUICK,
-    "stat": DEFAULT_TIMEOUT_QUICK,
-    "read_file": DEFAULT_TIMEOUT_QUICK,
-    "checksum": DEFAULT_TIMEOUT_STREAM_HASH,
-    "search": DEFAULT_TIMEOUT_QUICK,
-    "list_versions": DEFAULT_TIMEOUT_QUICK,
-    "open_version_read": DEFAULT_TIMEOUT_QUICK,
+    "list_dir": "quick",
+    "stat": "quick",
+    "read_file": "quick",
+    "search": "quick",
+    "list_versions": "quick",
+    "open_version_read": "quick",
+    # checksum may stream-hash a whole file when the backend has no
+    # native fingerprint.
+    "checksum": "stream",
     # Traversal: may hit many files over slow backends.
-    "walk": DEFAULT_TIMEOUT_WALK,
-    "grep": DEFAULT_TIMEOUT_WALK,
+    "walk": "walk",
+    "grep": "walk",
     # recursive_checksum can be long: 500 files × streaming sha256 of
     # up-to-1 GiB each is many minutes even on a fast local backend.
     # The cancel path inside _hash_one_path means clients can always
     # stop sooner; this is just the deadline before the timer fires.
-    "recursive_checksum": DEFAULT_TIMEOUT_STREAM_HASH,
+    "recursive_checksum": "stream",
     # Preview runs an image decoder + resizer — give it breathing room.
-    "preview": DEFAULT_TIMEOUT_PREVIEW,
+    "preview": "preview",
     # Writes: one round-trip per call, but a slow backend (SMB over a
     # flaky link) can take a while to acknowledge.
-    "write_file": DEFAULT_TIMEOUT_WRITE,
-    "mkdir": DEFAULT_TIMEOUT_WRITE,
-    "remove": DEFAULT_TIMEOUT_WRITE,
-    "rename": DEFAULT_TIMEOUT_WRITE,
-    "copy": DEFAULT_TIMEOUT_WRITE,
+    "write_file": "write",
+    "mkdir": "write",
+    "remove": "write",
+    "rename": "write",
+    "copy": "write",
     # bulk_copy walks a tree and issues backend.copy per file. 1000
     # files × 30 s each is a lot — but the cancel path inside the
     # per-file loop means the client can always stop sooner. The
-    # streaming-hash ceiling doubles as "long write" ceiling here
-    # since no separate long-write constant exists.
-    "bulk_copy": DEFAULT_TIMEOUT_STREAM_HASH,
-    "symlink": DEFAULT_TIMEOUT_WRITE,
-    "hardlink": DEFAULT_TIMEOUT_WRITE,
-    "chmod": DEFAULT_TIMEOUT_WRITE,
+    # streaming-hash ceiling doubles as "long write" ceiling here.
+    "bulk_copy": "stream",
+    # script_run stops its child at its own timeout_s; the tool deadline
+    # only backs that up (DEFAULT_TIMEOUT_SCRIPT).
+    "script_run": "script",
+    "symlink": "write",
+    "hardlink": "write",
+    "chmod": "write",
+}
+# Seconds per tool, derived from the class table (kept for callers that
+# read the per-tool ceiling directly).
+_TIMEOUT_BY_TOOL = {
+    name: TIMEOUT_CLASSES[cls] for name, cls in _TIMEOUT_CLASS_BY_TOOL.items()
 }
 
 
 def _apply_default_timeouts(tools: list[_Tool]) -> None:
     for tool in tools:
+        if tool.timeout_class is None:
+            tool.timeout_class = _TIMEOUT_CLASS_BY_TOOL.get(tool.name, "quick")
         if tool.timeout_seconds is None:
-            tool.timeout_seconds = _TIMEOUT_BY_TOOL.get(
-                tool.name,
-                DEFAULT_TIMEOUT_QUICK,
-            )
+            tool.timeout_seconds = TIMEOUT_CLASSES[tool.timeout_class]
 
 
 # ---------------------------------------------------------------------------
@@ -2845,10 +3216,11 @@ class _LogForwarder(logging.Handler):
 
     Thread-safety
     -------------
-    The stdio transport only ever writes to stdout from the main
-    request loop, but logging writes can fire from any thread (a
-    handler's background pool, the HTTP ThreadingMixIn). A per-
-    instance lock serialises per-sink writes.
+    Logging writes can fire from any thread (a tool worker, a
+    ``tasks/start`` worker, the HTTP ThreadingMixIn). A per-instance
+    lock serialises this forwarder's own writes. On stdio the default
+    sink is the :class:`_SerializedWriter` that ``serve()`` also uses
+    for responses and progress, so all writers share one lock there.
     """
 
     def __init__(self, default_sink: IO | None = None, min_level: int = logging.WARNING) -> None:
@@ -2931,10 +3303,10 @@ class _LogForwarder(logging.Handler):
             except Exception:  # noqa: BLE001
                 return
             # Lock per write so two records don't interleave bytes
-            # into the same JSON-RPC line. Note: separate sinks get
-            # separate serialisation — fine because each sink is
-            # written to from one concrete thread at a time (the
-            # per-session queue on HTTP, the main loop on stdio).
+            # into the same JSON-RPC line. Other writers on the same
+            # sink are covered by the sink itself: the HTTP _QueueSink
+            # handles each write() atomically under the session lock,
+            # and the stdio sink is serve()'s _SerializedWriter.
             with self._lock:
                 try:
                     sink.write(line)
@@ -2972,10 +3344,18 @@ def _ok(req_id, result):
 
 
 def _err(req_id, code: int, message: str, data=None):
-    err: dict[str, Any] = {"code": code, "message": message}
+    # Messages embed backend exception text, which can carry a URL with
+    # userinfo, a ``password=`` pair or an auth header.
+    err: dict[str, Any] = {"code": code, "message": redact_text(message)}
     if data is not None:
         err["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": err}
+
+
+def _is_request_id(value) -> bool:
+    """A JSON-RPC id this server accepts: a string or an integer (bool
+    is an int subclass in Python, but ``true`` is not an id)."""
+    return isinstance(value, (str, int)) and not isinstance(value, bool)
 
 
 def _negotiate_protocol_version(requested) -> str:
@@ -3051,7 +3431,7 @@ def _dispatch(
     req_id = req.get("id")
     method = req.get("method")
     params = req.get("params") or {}
-    if req_id is not None and (isinstance(req_id, bool) or not isinstance(req_id, (str, int))):
+    if req_id is not None and not _is_request_id(req_id):
         return {
             "jsonrpc": "2.0",
             "id": None,
@@ -3102,8 +3482,10 @@ def _dispatch(
         # request id. No response — notifications never get one.
         # Unknown / already-finished ids are silently tolerated per
         # MCP spec (a race between cancel and completion is normal).
-        if cancels is not None:
-            target = params.get("requestId")
+        # A requestId that cannot be an id names no request: a list
+        # is not even a dict key, and ``true`` would hit request 1.
+        target = params.get("requestId")
+        if cancels is not None and _is_request_id(target):
             cancels.cancel(target)
         return None
     if method == "tools/list":
@@ -3216,7 +3598,24 @@ def _dispatch(
                         f"tool {name!r} arguments failed schema: {exc.message}",
                         data={"type": "ValidationError", "path": list(exc.absolute_path)},
                     )
-            task = tasks.start(scope, name, args)
+            # A task is a tools/call that returns early: the same rate
+            # limit applies, and the running ones are capped per session.
+            if rate_limiter is not None and not rate_limiter.try_acquire():
+                return _err(
+                    req_id,
+                    ERR_RATE_LIMITED,
+                    "tasks/start rate limit exceeded — retry shortly",
+                    data={"type": "RateLimitError"},
+                )
+            try:
+                task = tasks.start(scope, name, args)
+            except TaskLimitError as exc:
+                return _err(
+                    req_id,
+                    ERR_RATE_LIMITED,
+                    f"tasks/start refused: {exc}; wait for one to finish",
+                    data={"type": "TaskLimitError"},
+                )
             # Spawn worker with a copy_context so contextvar-based
             # session routing in the log forwarder still works.
             ctx_snapshot = contextvars.copy_context()
@@ -3297,6 +3696,8 @@ def _dispatch(
         name = params.get("name")
         args = params.get("arguments") or {}
         meta = params.get("_meta") or {}
+        if not isinstance(meta, dict):
+            return _err(req_id, ERR_INVALID_PARAMS, "_meta must be an object")
         # Rate-limit BEFORE we touch the cancel registry or allocate a
         # context — the cheap rejection path should stay cheap. A
         # tools/list probe isn't rate-limited because it doesn't
@@ -3514,8 +3915,9 @@ class ServerConfig:
     allow_write: bool = False
     backend_id: str | None = None  # explicit override; default = derived
     # Backend-tool root cap. Defaults to unrestricted for direct
-    # library callers; main.py supplies backend.home() so a casual MCP
-    # client cannot read or write outside the exposed tree.
+    # library callers; main.py supplies --mcp-root, or backend.home()
+    # when none is given, so a casual MCP client cannot read or write
+    # outside the exposed tree.
     root: str | None = None
     # Optional multi-backend registry: ``{id: backend_instance}``.
     # When set, the tools/call surface gains a list_backends tool
@@ -3524,12 +3926,15 @@ class ServerConfig:
     # this config is still the default (used when a tool call omits
     # ``backend``). Single-backend deployments leave this None.
     backends: dict | None = None
-    # Scripting tools (script_list / read / write / run / delete) are
+    # Scripting tools (script_list / api_schema / read / write / run / delete) are
     # gated behind their own opt-in. Read-only would still leak any
     # secrets the user has pasted into local scripts; write+run hands
-    # the LLM ``exec()`` over Python in the server process. Default
+    # the LLM arbitrary Python as the user (in a child process). Default
     # OFF so a casual LLM connection can't reach the script surface.
     allow_scripts: bool = False
+    # Optional capability groups (``--mcp-tools``); see core.mcp_groups.
+    # Empty keeps the plain file-tool surface.
+    tool_groups: frozenset[str] = frozenset()
     stdin: IO = field(default_factory=lambda: sys.stdin)
     stdout: IO = field(default_factory=lambda: sys.stdout)
     # Rate limit: token-bucket guarding tools/call only. Default on
@@ -3550,6 +3955,7 @@ def serve(config: ServerConfig) -> int:
         root=config.root,
         backends=config.backends,
         allow_scripts=config.allow_scripts,
+        tool_groups=config.tool_groups,
     )
     resources = _build_resources(config.backend, root=config.root)
     cancels = _CancelRegistry()
@@ -3572,36 +3978,50 @@ def serve(config: ServerConfig) -> int:
         len(tools),
         config.allow_write,
     )
-    log_forwarder = _LogForwarder(config.stdout)
+    # One lock for every writer on stdout: this loop, task / timed-out
+    # tool worker threads (progress) and the log forwarder (messages).
+    out = _SerializedWriter(config.stdout)
+    log_forwarder = _LogForwarder(out)
     _attach_log_forwarder(log_forwarder)
+    # Lines are read as bytes and decoded one at a time where the
+    # stream has a byte layer (sys.stdin): a text stream raises
+    # UnicodeDecodeError from readline() for a client byte that is not
+    # UTF-8 and drops the rest of the chunk it was decoding, the
+    # following requests included.
+    binary = getattr(config.stdin, "buffer", None)
+    readline = binary.readline if binary is not None else config.stdin.readline
+    newline = b"\n" if binary is not None else "\n"
     try:
         while True:
-            line = config.stdin.readline(MAX_STDIN_LINE_CHARS + 1)
+            line = readline(MAX_STDIN_LINE_CHARS + 1)
             if not line:
                 log.info("MCP serve: stdin closed, exiting")
                 return 0
-            if len(line) > MAX_STDIN_LINE_CHARS and not line.endswith("\n"):
+            if len(line) > MAX_STDIN_LINE_CHARS and not line.endswith(newline):
                 # Drain the rest of this overlong frame so the next
                 # iteration starts at a fresh JSON-RPC line instead of
                 # parsing arbitrary chunks of the rejected payload.
                 while True:
-                    chunk = config.stdin.readline(MAX_STDIN_LINE_CHARS + 1)
-                    if not chunk or chunk.endswith("\n"):
+                    chunk = readline(MAX_STDIN_LINE_CHARS + 1)
+                    if not chunk or chunk.endswith(newline):
                         break
                 response = _err(
                     None,
                     ERR_INVALID_REQUEST,
                     f"Request line exceeds {MAX_STDIN_LINE_CHARS} chars",
                 )
-                config.stdout.write(json.dumps(response) + "\n")
-                config.stdout.flush()
+                out.write(json.dumps(response) + "\n")
+                out.flush()
                 continue
             line = line.strip()
             if not line:
                 continue
             try:
+                # ValueError covers JSONDecodeError, a line that is not
+                # UTF-8 and an integer above the digit limit;
+                # RecursionError is nesting deeper than the C stack.
                 req = json.loads(line)
-            except json.JSONDecodeError as exc:
+            except (ValueError, RecursionError) as exc:
                 response = _err(None, ERR_PARSE, f"Parse error: {exc}")
             else:
                 if not isinstance(req, dict):
@@ -3610,7 +4030,7 @@ def serve(config: ServerConfig) -> int:
                     response = _handle_request(
                         req,
                         tools,
-                        stdout=config.stdout,
+                        stdout=out,
                         cancels=cancels,
                         resources=resources,
                         log_forwarder=log_forwarder,
@@ -3618,8 +4038,8 @@ def serve(config: ServerConfig) -> int:
                         tasks=tasks,
                     )
             if response is not None:
-                config.stdout.write(json.dumps(response) + "\n")
-                config.stdout.flush()
+                out.write(json.dumps(response) + "\n")
+                out.flush()
     finally:
         _detach_log_forwarder(log_forwarder)
 

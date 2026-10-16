@@ -133,6 +133,9 @@ class ScanJob(QObject):
                 )
             return
         self._timer.stop()
+        # Delivered: the worker's queued wake and the timer race, and the
+        # loser must find nothing left to report.
+        self._state = {}
         self.finished.emit(result[0], result[1], self._cancel.is_set())
 
 

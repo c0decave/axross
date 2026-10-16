@@ -220,3 +220,64 @@ def test_populate_dock_view_menu_keeps_archive_toggle(window, sample_zip):
     # A second rebuild still must not duplicate it.
     window._populate_dock_view_menu()
     assert _archive_toggle_count() == 1
+
+
+# Found in review: _extract_single_member created its mkdtemp dir first
+# and only tracked it on success. Every failed preview (unsupported 7z/RAR
+# member, broken archive, member not found) left an axross-archive-* dir
+# in the system temp dir that not even closeEvent removed.
+
+
+@pytest.fixture
+def made_tempdirs(monkeypatch):
+    import tempfile as _tempfile
+
+    made: list[str] = []
+    real = _tempfile.mkdtemp
+
+    def recording(*a, **k):
+        path = real(*a, **k)
+        made.append(path)
+        return path
+
+    monkeypatch.setattr(_tempfile, "mkdtemp", recording)
+    return made
+
+
+def test_sad_an_unsupported_member_leaves_no_temp_dir(window, monkeypatch, tmp_path, made_tempdirs):
+    import core.archive as ARCH
+
+    monkeypatch.setattr(
+        ARCH, "extract_members", lambda *_a, **_k: (_ for _ in ()).throw(NotImplementedError())
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.StandardButton.Ok)
+    assert window._extract_single_member(str(tmp_path / "x.7z"), "a.txt") is None
+    assert made_tempdirs and not any(os.path.exists(d) for d in made_tempdirs)
+
+
+def test_sad_a_broken_archive_leaves_no_temp_dir(window, monkeypatch, tmp_path, made_tempdirs):
+    import core.archive as ARCH
+
+    def broken(_archive, target, *_a, **_k):
+        os.makedirs(target)
+        open(os.path.join(target, "half"), "wb").close()
+        raise OSError("truncated archive")
+
+    monkeypatch.setattr(ARCH, "extract_members", broken)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: QMessageBox.StandardButton.Ok)
+    assert window._extract_single_member(str(tmp_path / "x.zip"), "a.txt") is None
+    assert made_tempdirs and not any(os.path.exists(d) for d in made_tempdirs)
+    assert window._archive_member_tempdirs == []
+
+
+def test_edge_a_member_that_extracts_to_nothing_leaves_no_temp_dir(
+    window, monkeypatch, tmp_path, made_tempdirs
+):
+    import core.archive as ARCH
+
+    monkeypatch.setattr(ARCH, "extract_members", lambda _a, target, *_x, **_k: os.makedirs(target))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: QMessageBox.StandardButton.Ok)
+    assert window._extract_single_member(str(tmp_path / "x.zip"), "a.txt") is None
+    assert made_tempdirs and not any(os.path.exists(d) for d in made_tempdirs)
+    assert window._archive_member_tempdirs == []
+    assert window._archive_last_member_tempdir is None

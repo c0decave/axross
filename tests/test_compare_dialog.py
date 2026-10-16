@@ -285,14 +285,14 @@ def _select_all(dlg):
     APP.processEvents()
 
 
-def test_happy_copy_emits_absolute_paths_for_the_compared_roots():
+def test_happy_copy_emits_absolute_source_and_dest_for_the_compared_roots():
     dlg = _dialog_with([_e("sub/only-left.txt", Status.LEFT_ONLY, right=False)])
-    seen: list[tuple[str, list[str]]] = []
+    seen: list[tuple[str, list[tuple[str, str]]]] = []
     dlg.copy_requested.connect(lambda d, p: seen.append((d, list(p))))
     try:
         _select_all(dlg)
         dlg._copy_selected()
-        assert seen == [("to_right", ["/l/sub/only-left.txt"])]
+        assert seen == [("to_right", [("/l/sub/only-left.txt", "/r/sub/only-left.txt")])]
     finally:
         dlg.close()
         dlg.deleteLater()
@@ -301,12 +301,12 @@ def test_happy_copy_emits_absolute_paths_for_the_compared_roots():
 
 def test_happy_right_only_copy_resolves_against_the_right_root():
     dlg = _dialog_with([_e("x.txt", Status.RIGHT_ONLY, left=False)])
-    seen: list[tuple[str, list[str]]] = []
+    seen: list[tuple[str, list[tuple[str, str]]]] = []
     dlg.copy_requested.connect(lambda d, p: seen.append((d, list(p))))
     try:
         _select_all(dlg)
         dlg._copy_selected()
-        assert seen == [("to_left", ["/r/x.txt"])]
+        assert seen == [("to_left", [("/r/x.txt", "/l/x.txt")])]
     finally:
         dlg.close()
         dlg.deleteLater()
@@ -318,13 +318,13 @@ def test_edge_paths_resolve_against_the_root_that_was_compared():
     against the pane's CURRENT directory would then point the copy at
     the wrong place, so the roots captured at compare time are used."""
     dlg = _dialog_with([_e("a.txt", Status.LEFT_ONLY, right=False)], left_root="/l")
-    seen: list[tuple[str, list[str]]] = []
+    seen: list[tuple[str, list[tuple[str, str]]]] = []
     dlg.copy_requested.connect(lambda d, p: seen.append((d, list(p))))
     try:
         dlg._left_pane.current_path = "/somewhere/else"
         _select_all(dlg)
         dlg._copy_selected()
-        assert seen == [("to_right", ["/l/a.txt"])]
+        assert seen == [("to_right", [("/l/a.txt", "/r/a.txt")])]
     finally:
         dlg.close()
         dlg.deleteLater()

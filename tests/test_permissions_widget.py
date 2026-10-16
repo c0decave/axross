@@ -149,6 +149,49 @@ def test_edge_high_bits_are_preserved_when_deciding_no_op(widget):
     assert backend.calls == []
 
 
+def test_edge_high_bits_survive_a_change_to_the_rwx_bits(widget):
+    """Found in review: the no-op check kept setuid/setgid/sticky, but
+    any real edit wrote only the low nine bits, so taking group write off
+    a setgid shared directory (02775) silently dropped the setgid bit."""
+    backend = _RecordingBackend()
+    w = widget(0o2775, backend=backend)
+    w._checks[4].setChecked(False)  # group write
+    assert w.apply() is None
+    assert backend.calls == [("/tmp/a.txt", 0o2755)]
+
+
+def test_edge_setuid_and_sticky_survive_an_octal_edit(widget):
+    backend = _RecordingBackend()
+    w = widget(0o5755, backend=backend)
+    w._octal_edit.setText("750")
+    assert w.apply() is None
+    assert backend.calls == [("/tmp/a.txt", 0o5750)]
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX modes")
+def test_edge_the_dialog_keeps_the_sticky_bit_on_a_real_directory(tmp_path):
+    """End to end: the standalone dialog, OK clicked, a real chmod."""
+    from PyQt6.QtWidgets import QDialogButtonBox
+
+    from core.local_fs import LocalFS
+    from ui.permissions_dialog import PermissionsDialog
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o1775)
+    backend = LocalFS()
+    item = backend.stat(str(shared))
+    assert item.permissions & 0o7777 == 0o1775
+    dlg = PermissionsDialog(backend, str(shared), item)
+    try:
+        dlg._widget._checks[6].setChecked(False)  # others read
+        dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok).click()
+        assert os.stat(shared).st_mode & 0o7777 == 0o1771
+    finally:
+        dlg.deleteLater()
+        APP.processEvents()
+
+
 def test_edge_octal_above_777_is_rejected(widget):
     w = widget(0o644)
     w._octal_edit.setText("7777")

@@ -165,12 +165,19 @@ class PollingWatcher(Watcher):
             )
             return self._tick_state.completed_at_least(target)
 
-    def _snapshot(self) -> _Snapshot:
+    def _snapshot(self) -> _Snapshot | None:
+        """The folder as listed now, or None when it could not be listed.
+
+        A failed listing says nothing about the folder: reading it as an
+        empty one would report every entry "deleted" (and "created" again
+        on the next good poll). Backends raise more than ``OSError``
+        (``EOFError``, ``paramiko.SSHException``); none of them may end
+        the watcher."""
         try:
             items = self._backend.list_dir(self._path)
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - any backend failure is "no news"
             log.debug("PollingWatcher: list_dir(%s) failed: %s", self._path, exc)
-            return _Snapshot(entries={})
+            return None
         return self._snapshot_of(items)
 
     @staticmethod
@@ -196,6 +203,15 @@ class PollingWatcher(Watcher):
             with self._tick_cond:
                 self._tick_state.mark_started()
             curr = self._snapshot()
+            if curr is None or prev is None:
+                # Nothing to compare: keep the last good listing, or take
+                # this one as the first (a failed first listing is no
+                # baseline, so nothing is reported against it).
+                prev = prev if curr is None else curr
+                with self._tick_cond:
+                    self._tick_state.mark_completed()
+                    self._tick_cond.notify_all()
+                continue
             # created
             for name, props in curr.entries.items():
                 if name not in prev.entries:

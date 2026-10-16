@@ -77,6 +77,8 @@ class HexWidget(QWidget):
         self._modified_offsets: set[int] = set()
         self._scroll_offset = 0  # First visible line index
         self._editing_hex = True  # True = hex column, False = ASCII column
+        # A viewer: navigation and search only, no byte is changed.
+        self.read_only = False
 
         # Font setup
         font = QFont("Monospace", 10)
@@ -317,6 +319,10 @@ class HexWidget(QWidget):
             self._ensure_cursor_visible()
             return
 
+        if self.read_only:
+            super().keyPressEvent(event)
+            return
+
         # Editing in hex mode
         if self._editing_hex and text and len(text) == 1:
             if not self._data:
@@ -436,6 +442,8 @@ class HexEditorDialog(QDialog):
         self._file_path = file_path
         self._original_data = b""
         self._read_only = read_only
+        # True once the file was read; see exec().
+        self._loaded_once = False
 
         filename = file_path.rsplit(backend.separator(), 1)[-1]
         prefix = "View Hex" if read_only else "Hex"
@@ -464,6 +472,7 @@ class HexEditorDialog(QDialog):
         # Hex view + scrollbar
         hex_layout = QHBoxLayout()
         self._hex_widget = HexWidget()
+        self._hex_widget.read_only = self._read_only
         hex_layout.addWidget(self._hex_widget, stretch=1)
 
         self._scrollbar = QScrollBar(Qt.Orientation.Vertical)
@@ -583,6 +592,7 @@ class HexEditorDialog(QDialog):
             self._hex_widget.set_data(self._original_data)
             self._status_label.setText("Loaded")
             self._btn_save.setEnabled(False)
+            self._loaded_once = True
             log.debug("Hex loaded: %s (%d bytes)", self._file_path, len(self._original_data))
 
         except OSError as e:
@@ -602,7 +612,16 @@ class HexEditorDialog(QDialog):
                 return
         self._load_file()
 
+    def exec(self) -> int:
+        # ``_load_file`` already said why and called reject() from the
+        # constructor; without this the caller's exec() showed an empty view.
+        if not self._loaded_once:
+            return 0
+        return super().exec()
+
     def _save_file(self) -> None:
+        if not self._loaded_once:
+            return
         try:
             # Conflict check
             try:

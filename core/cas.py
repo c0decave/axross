@@ -84,6 +84,44 @@ class CasEntry:
     value: str
     size: int
     indexed_at: datetime
+    #: Modification time as a timestamp; None when the backend had none or
+    #: the row predates stored times.
+    mtime: float | None = None
+    #: The recorded scan that last indexed (or confirmed) this row; None for
+    #: rows written before scans were recorded.
+    scan_id: int | None = None
+
+
+#: ``scan_id`` of the pseudo entry that holds every row no recorded scan
+#: owns: rows from before scan history existed, or written by :func:`upsert`.
+EARLIER_SCANS = 0
+
+SCAN_RUNNING = "running"
+SCAN_COMPLETE = "complete"
+SCAN_CANCELLED = "cancelled"
+SCAN_FAILED = "failed"
+SCAN_EARLIER = "earlier"
+
+
+@dataclass(frozen=True)
+class ScanRecord:
+    """One rebuild of the index, as the history shows it."""
+
+    scan_id: int
+    backend_id: str
+    root: str
+    algorithm: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    #: Files the rebuild indexed or confirmed unchanged, counted when it ended.
+    files_indexed: int
+    status: str
+    #: Rows that belong to this scan now (a later scan of the same files
+    #: takes them over; trashed copies leave the index).
+    files_in_index: int = 0
+    #: Duplicate groups that have at least one copy from this scan, now.
+    duplicate_groups: int = 0
+    error: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -99,12 +137,24 @@ CREATE TABLE IF NOT EXISTS cas (
     size       INTEGER NOT NULL DEFAULT 0,
     indexed_at TEXT NOT NULL,
     mtime      REAL,
+    scan_id    INTEGER,
     PRIMARY KEY (backend_id, path, algorithm)
 );
 CREATE INDEX IF NOT EXISTS cas_by_value
     ON cas (algorithm, value);
 CREATE INDEX IF NOT EXISTS cas_by_backend
     ON cas (backend_id);
+CREATE TABLE IF NOT EXISTS scans (
+    scan_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    backend_id    TEXT NOT NULL,
+    root          TEXT NOT NULL,
+    algorithm     TEXT NOT NULL,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    files_indexed INTEGER NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL,
+    error         TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -134,11 +184,21 @@ def _connect(db_path: Path | None):
 
 
 def _migrate(conn) -> None:
-    """Indexes written before 0.7.5 have no ``mtime`` column; their rows
-    keep NULL, which means "hash again" on the next rebuild."""
+    """Bring an index written by an older release up to the current schema.
+
+    Before 0.7.5 there was no ``mtime`` column; such rows keep NULL, which
+    means "hash again" on the next rebuild. Before scans were recorded there
+    was no ``scan_id`` column; such rows keep NULL and belong to the
+    :data:`EARLIER_SCANS` pseudo entry until a rebuild sees them again. The
+    ``scans`` table itself comes from :data:`SCHEMA_SQL`."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(cas)")}
     if "mtime" not in cols:
         conn.execute("ALTER TABLE cas ADD COLUMN mtime REAL")
+    if "scan_id" not in cols:
+        conn.execute("ALTER TABLE cas ADD COLUMN scan_id INTEGER")
+    # Created here, not in SCHEMA_SQL: on an old table the column only
+    # exists after the ALTER above.
+    conn.execute("CREATE INDEX IF NOT EXISTS cas_by_scan ON cas (scan_id)")
 
 
 # ---------------------------------------------------------------------------
@@ -146,12 +206,17 @@ def _migrate(conn) -> None:
 # ---------------------------------------------------------------------------
 
 _UPSERT_SQL = (
-    "INSERT INTO cas(backend_id, path, algorithm, value, size, indexed_at, mtime) "
-    "VALUES(?, ?, ?, ?, ?, ?, ?) "
+    "INSERT INTO cas(backend_id, path, algorithm, value, size, indexed_at, mtime, scan_id) "
+    "VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
     "ON CONFLICT(backend_id, path, algorithm) DO UPDATE SET "
     "value=excluded.value, size=excluded.size, "
-    "indexed_at=excluded.indexed_at, mtime=excluded.mtime"
+    "indexed_at=excluded.indexed_at, mtime=excluded.mtime, "
+    "scan_id=COALESCE(excluded.scan_id, cas.scan_id)"
 )
+
+# A file a rebuild found unchanged is not hashed again, but it is now
+# vouched for by that rebuild: it moves into its scan.
+_TOUCH_SQL = "UPDATE cas SET scan_id=? WHERE backend_id=? AND path=? AND algorithm=?"
 
 
 def _split_prefix(raw: str) -> tuple[str, str]:
@@ -179,7 +244,7 @@ def upsert(
     """
     row = _checked_row(backend_id, path, algorithm, value, size, mtime)
     with _connect(db_path) as conn:
-        conn.execute(_UPSERT_SQL, row)
+        conn.execute(_UPSERT_SQL, (*row, None))
 
 
 def _checked_row(backend_id, path, algorithm, value, size, mtime) -> tuple:
@@ -217,21 +282,74 @@ class _BatchWriter:
 
     BATCH = 500
 
-    def __init__(self, db_path) -> None:
+    def __init__(self, db_path, scan: _ScanLog | None = None) -> None:
         self._db_path = db_path
+        self._scan = scan
         self._rows: list[tuple] = []
+        self._touched: list[tuple] = []
 
     def add(self, row: tuple) -> None:
         self._rows.append(row)
-        if len(self._rows) >= self.BATCH:
+        self._maybe_flush()
+
+    def touch(self, backend_id: str, path: str, algorithm: str) -> None:
+        """Attribute an unchanged, already indexed file to this scan."""
+        if self._scan is not None:
+            self._touched.append((backend_id, path, algorithm))
+            self._maybe_flush()
+
+    def _maybe_flush(self) -> None:
+        if len(self._rows) + len(self._touched) >= self.BATCH:
             self.flush()
 
     def flush(self) -> None:
-        if not self._rows:
+        if not self._rows and not self._touched:
             return
         rows, self._rows = self._rows, []
+        touched, self._touched = self._touched, []
         with _connect(self._db_path) as conn:
-            conn.executemany(_UPSERT_SQL, rows)
+            scan_id = self._scan.ensure(conn) if self._scan is not None else None
+            conn.executemany(_UPSERT_SQL, [(*row, scan_id) for row in rows])
+            conn.executemany(_TOUCH_SQL, [(scan_id, *key) for key in touched])
+
+
+class _ScanLog:
+    """The ``scans`` row of one rebuild.
+
+    The row is written lazily — with the first batch of index rows, or when
+    the rebuild ends — so a rebuild never creates the database before its
+    walk (an index kept inside the scanned tree must not index itself)."""
+
+    def __init__(self, db_path, backend_id: str, root: str, algorithm: str) -> None:
+        self._db_path = db_path
+        self._fields = (backend_id, root, algorithm)
+        self._started = datetime.now().isoformat(timespec="seconds")
+        self.scan_id: int | None = None
+
+    def ensure(self, conn) -> int:
+        if self.scan_id is None:
+            cur = conn.execute(
+                "INSERT INTO scans(backend_id, root, algorithm, started_at, status) "
+                "VALUES(?, ?, ?, ?, ?)",
+                (*self._fields, self._started, SCAN_RUNNING),
+            )
+            self.scan_id = int(cur.lastrowid)
+        return self.scan_id
+
+    def finish(self, status: str, files: int, error: str = "") -> None:
+        with _connect(self._db_path) as conn:
+            scan_id = self.ensure(conn)
+            conn.execute(
+                "UPDATE scans SET finished_at=?, status=?, files_indexed=?, error=? "
+                "WHERE scan_id=?",
+                (
+                    datetime.now().isoformat(timespec="seconds"),
+                    status,
+                    int(files),
+                    error[:500],
+                    scan_id,
+                ),
+            )
 
 
 def remove(db_path, backend_id: str, path: str) -> int:
@@ -244,12 +362,14 @@ def remove(db_path, backend_id: str, path: str) -> int:
         return cur.rowcount
 
 
+_ENTRY_COLUMNS = "backend_id, path, algorithm, value, size, indexed_at, mtime, scan_id"
+
+
 def find_by_value(db_path, algorithm: str, value: str) -> list[CasEntry]:
     """Return every file whose checksum matches."""
     with _connect(db_path) as conn:
         cur = conn.execute(
-            "SELECT backend_id, path, algorithm, value, size, indexed_at "
-            "FROM cas WHERE algorithm=? AND value=?",
+            f"SELECT {_ENTRY_COLUMNS} FROM cas WHERE algorithm=? AND value=?",
             (algorithm.lower(), value.lower()),
         )
         return [_row_to_entry(r) for r in cur.fetchall()]
@@ -258,41 +378,129 @@ def find_by_value(db_path, algorithm: str, value: str) -> list[CasEntry]:
 def list_for_backend(db_path, backend_id: str) -> list[CasEntry]:
     with _connect(db_path) as conn:
         cur = conn.execute(
-            "SELECT backend_id, path, algorithm, value, size, indexed_at "
-            "FROM cas WHERE backend_id=? ORDER BY path",
+            f"SELECT {_ENTRY_COLUMNS} FROM cas WHERE backend_id=? ORDER BY path",
             (backend_id,),
         )
         return [_row_to_entry(r) for r in cur.fetchall()]
 
 
-def duplicates(db_path, algorithm: str = "sha256") -> list[list[CasEntry]]:
+# ---------------------------------------------------------------------------
+# Which copy survives
+# ---------------------------------------------------------------------------
+
+
+def survivor_key(entry: CasEntry) -> tuple:
+    """Sort key of the survivor rule: the copy that sorts first stays.
+
+    Oldest modification time first; a tie goes to the shorter full path,
+    then to the alphabetically first path (the backend id only breaks an
+    exact tie, so the order is total). A copy without a modification time
+    sorts after every dated copy — its age is unknown, so it never wins
+    against a copy whose age is known."""
+    undated = entry.mtime is None
+    return (undated, 0.0 if undated else entry.mtime, len(entry.path), entry.path, entry.backend_id)
+
+
+def order_by_survivor(group) -> list[CasEntry]:
+    """*group* sorted by :func:`survivor_key`: the survivor comes first."""
+    return sorted(group, key=survivor_key)
+
+
+def has_undated(group) -> bool:
+    """True when the survivor rule could not use a modification time for
+    every copy of *group* (it then falls back to the path rule)."""
+    return any(e.mtime is None for e in group)
+
+
+def _folder_clause(folder: str) -> tuple[str, list]:
+    """SQL matching paths strictly inside *folder*, on whole components.
+
+    ``substr`` instead of ``LIKE``: LIKE folds ASCII case and needs its
+    wildcards escaped; a prefix comparison does neither. Both separators
+    count, so a Windows path matches too."""
+    if not folder:
+        raise ValueError("folder must be a non-empty path")
+    trimmed = folder.rstrip("/\\")
+    prefixes = [folder[0]] if not trimmed else [trimmed + "/", trimmed + "\\"]
+    clause = " OR ".join("substr(path, 1, ?) = ?" for _ in prefixes)
+    params: list = []
+    for prefix in prefixes:
+        params += [len(prefix), prefix]
+    return f"({clause})", params
+
+
+_UNOWNED_SQL = "(scan_id IS NULL OR scan_id NOT IN (SELECT scan_id FROM scans))"
+
+
+def duplicates(
+    db_path,
+    algorithm: str | None = "sha256",
+    *,
+    scan_id: int | None = None,
+    folder: str | None = None,
+    backend_id: str | None = None,
+) -> list[list[CasEntry]]:
     """Groups of 2+ files that share a checksum. Empty list if none.
 
-    One query for all groups (it used to be one connection and one query
-    per group); groups come in value order, rows within a group in
-    insertion order, as before."""
-    algo = algorithm.lower()
+    ``algorithm=None`` returns the groups of every algorithm in the index.
+    Groups come in ``(algorithm, value)`` order; the rows of a group in
+    survivor order (:func:`order_by_survivor`), so the first row is the
+    copy that a "keep first" removal keeps.
+
+    Scopes, combinable:
+
+    * *folder* (with an optional *backend_id*) — only copies strictly inside
+      that folder count; a group needs two of them.
+    * *scan_id* — groups that have at least one copy indexed by that scan,
+      shown with all their copies; :data:`EARLIER_SCANS` selects the rows no
+      recorded scan owns.
+
+    One query for all groups."""
+    where: list[str] = []
+    params: list = []
+    if algorithm:
+        where.append("algorithm=?")
+        params.append(algorithm.lower())
+    if backend_id:
+        where.append("backend_id=?")
+        params.append(backend_id)
+    if folder is not None:
+        clause, folder_params = _folder_clause(folder)
+        where.append(clause)
+        params += folder_params
+    having = "COUNT(*) >= 2"
+    if scan_id is not None:
+        if int(scan_id) == EARLIER_SCANS:
+            having += f" AND SUM({_UNOWNED_SQL}) > 0"
+        else:
+            having += " AND SUM(scan_id = ?) > 0"
+            params.append(int(scan_id))
+    sql = (
+        f"WITH r AS (SELECT rowid AS rid, {_ENTRY_COLUMNS} FROM cas"
+        + (" WHERE " + " AND ".join(where) if where else "")
+        + f"), g AS (SELECT algorithm, value FROM r GROUP BY algorithm, value HAVING {having}) "
+        + "SELECT "
+        + ", ".join(f"r.{c.strip()}" for c in _ENTRY_COLUMNS.split(","))
+        + " FROM r JOIN g ON r.algorithm = g.algorithm AND r.value = g.value"
+        " ORDER BY r.algorithm, r.value, r.rid"
+    )
     with _connect(db_path) as conn:
-        cur = conn.execute(
-            "SELECT backend_id, path, algorithm, value, size, indexed_at FROM cas "
-            "WHERE algorithm=? AND value IN ("
-            "SELECT value FROM cas WHERE algorithm=? GROUP BY value HAVING COUNT(*) >= 2"
-            ") ORDER BY value, rowid",
-            (algo, algo),
-        )
-        rows = cur.fetchall()
+        rows = conn.execute(sql, params).fetchall()
     groups: list[list[CasEntry]] = []
     for row in rows:
         entry = _row_to_entry(row)
-        if groups and groups[-1][0].value == entry.value:
+        head = groups[-1][0] if groups else None
+        if head is not None and (head.algorithm, head.value) == (entry.algorithm, entry.value):
             groups[-1].append(entry)
         else:
             groups.append([entry])
-    return groups
+    return [order_by_survivor(g) for g in groups]
 
 
 def _row_to_entry(row) -> CasEntry:
-    backend_id, path, algorithm, value, size, indexed_at = row
+    backend_id, path, algorithm, value, size, indexed_at, *rest = row
+    mtime = rest[0] if rest else None
+    scan_id = rest[1] if len(rest) > 1 else None
     try:
         when = datetime.fromisoformat(indexed_at)
     except ValueError:
@@ -304,7 +512,102 @@ def _row_to_entry(row) -> CasEntry:
         value=value,
         size=int(size),
         indexed_at=when,
+        mtime=float(mtime) if mtime is not None else None,
+        scan_id=int(scan_id) if scan_id is not None else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Scan history
+# ---------------------------------------------------------------------------
+
+
+def _parse_when(text) -> datetime | None:
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def list_scans(db_path=None) -> list[ScanRecord]:
+    """Every recorded scan, newest first, plus — last — the
+    :data:`EARLIER_SCANS` pseudo entry when rows no recorded scan owns
+    exist. File and duplicate-group counts are those of the index now."""
+    owner = f"CASE WHEN {_UNOWNED_SQL} THEN {EARLIER_SCANS} ELSE scan_id END"
+    with _connect(db_path) as conn:
+        files = dict(conn.execute(f"SELECT {owner} AS o, COUNT(*) FROM cas GROUP BY o"))
+        dupes = dict(
+            conn.execute(
+                f"SELECT {owner} AS o, COUNT(DISTINCT algorithm || ':' || value) FROM cas "
+                "WHERE (algorithm, value) IN (SELECT algorithm, value FROM cas "
+                "GROUP BY algorithm, value HAVING COUNT(*) >= 2) GROUP BY o"
+            )
+        )
+        rows = conn.execute(
+            "SELECT scan_id, backend_id, root, algorithm, started_at, finished_at, "
+            "files_indexed, status, error FROM scans ORDER BY scan_id DESC"
+        ).fetchall()
+    scans = [
+        ScanRecord(
+            scan_id=int(sid),
+            backend_id=bid,
+            root=root,
+            algorithm=algo,
+            started_at=_parse_when(started),
+            finished_at=_parse_when(finished),
+            files_indexed=int(count or 0),
+            status=status,
+            files_in_index=int(files.get(sid, 0)),
+            duplicate_groups=int(dupes.get(sid, 0)),
+            error=error or "",
+        )
+        for sid, bid, root, algo, started, finished, count, status, error in rows
+    ]
+    if files.get(EARLIER_SCANS):
+        scans.append(
+            ScanRecord(
+                scan_id=EARLIER_SCANS,
+                backend_id="",
+                root="",
+                algorithm="",
+                started_at=None,
+                finished_at=None,
+                files_indexed=int(files[EARLIER_SCANS]),
+                status=SCAN_EARLIER,
+                files_in_index=int(files[EARLIER_SCANS]),
+                duplicate_groups=int(dupes.get(EARLIER_SCANS, 0)),
+            )
+        )
+    return scans
+
+
+def remove_scan(db_path, scan_id: int) -> int:
+    """Forget one scan: its rows leave the index and its entry the history.
+
+    Files are never touched. :data:`EARLIER_SCANS` removes the rows no
+    recorded scan owns. Returns the number of index rows removed."""
+    with _connect(db_path) as conn:
+        if int(scan_id) == EARLIER_SCANS:
+            return conn.execute(f"DELETE FROM cas WHERE {_UNOWNED_SQL}").rowcount
+        removed = conn.execute("DELETE FROM cas WHERE scan_id=?", (int(scan_id),)).rowcount
+        conn.execute("DELETE FROM scans WHERE scan_id=?", (int(scan_id),))
+        return removed
+
+
+def clear_index(db_path=None) -> int:
+    """Empty the whole index and its scan history; files are never touched.
+
+    Returns the number of index rows removed. A database that does not
+    exist is not created."""
+    path = Path(db_path) if db_path else _DEFAULT_DB
+    if not path.exists():
+        return 0
+    with _connect(db_path) as conn:
+        removed = conn.execute("DELETE FROM cas").rowcount
+        conn.execute("DELETE FROM scans")
+        return removed
 
 
 # ---------------------------------------------------------------------------
@@ -440,19 +743,26 @@ def rebuild(
     *progress* is called as ``progress(scanned, indexed, path)`` after
     every file; an exception in it never aborts the rebuild.
 
+    Every rebuild is recorded as a scan (see :func:`list_scans`): status
+    ``complete``, ``cancelled`` or ``failed`` (the exception still
+    propagates), and every row it indexed or found unchanged belongs to it.
+
     Returns the number of files that are indexed and current.
     """
     algo = algorithm.lower()
     known = {} if rehash else _known_rows(db_path, backend_id, algo)
-    writer = _BatchWriter(db_path)
+    scan = _ScanLog(db_path, backend_id, root, algo)
+    writer = _BatchWriter(db_path, scan)
     count = 0
     scanned = 0
+    status, error = SCAN_FAILED, ""
     try:
         for path, size, mtime in _walk_files(backend, root, cancel=cancel):
             if cancel is not None and cancel():
                 break
             scanned += 1
             if mtime is not None and known.get(path) == (size, mtime):
+                writer.touch(backend_id, path, algo)
                 count += 1
             elif _index_one(backend, backend_id, path, size, mtime, algo, writer):
                 count += 1
@@ -461,8 +771,18 @@ def rebuild(
                     progress(scanned, count, path)
                 except Exception as exc:  # noqa: BLE001 — a UI callback must not kill the run
                     log.debug("cas.rebuild: progress callback failed: %s", exc)
+        status = SCAN_CANCELLED if cancel is not None and cancel() else SCAN_COMPLETE
+    except BaseException as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
-        writer.flush()
+        try:
+            writer.flush()
+        finally:
+            try:
+                scan.finish(status, count, error)
+            except Exception as exc:  # noqa: BLE001 — the history must not mask the result
+                log.warning("cas.rebuild: could not record the scan: %s", exc)
     return count
 
 
@@ -728,6 +1048,177 @@ def delete_duplicates(
 
 
 # ---------------------------------------------------------------------------
+# Planning a removal — which selected copies go, which copy stays
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DeletionPlan:
+    """What a delete request resolves to, before the live re-verification."""
+
+    #: Entries that may be removed.
+    deletable: list = field(default_factory=list)
+    #: Hash values of selected groups that are not duplicates (one copy).
+    refused_groups: list = field(default_factory=list)
+    #: Copies that would remain across the affected groups.
+    survivors: int = 0
+    #: The first copy (:func:`order_by_survivor`) of every group whose copies
+    #: were ALL selected — kept automatically instead of removed.
+    auto_kept: list = field(default_factory=list)
+
+
+def _entry_key(e: CasEntry) -> tuple:
+    return (e.backend_id, e.path, e.algorithm, e.value)
+
+
+def plan_deletion(selected, groups) -> DeletionPlan:
+    """Resolve a selection into a plan that cannot erase content.
+
+    A duplicate group exists because the same bytes live in more than one
+    place. When every copy of a group is selected ("select all, delete"),
+    the first copy by the survivor rule — the oldest — is kept and only the
+    others are planned for removal; a partial selection is taken as it is,
+    so the user can keep a newer copy on purpose. Either way at least one
+    copy of every group remains, and :func:`delete_duplicates` re-checks on
+    the live backend that it is a genuine, intact copy before anything goes.
+
+    A group of one is not a duplicate and is refused; deleting a lone file
+    is ordinary deletion and belongs in the file pane.
+    """
+    selected_keys = {_entry_key(e) for e in selected}
+    deletable: list = []
+    refused: list = []
+    auto_kept: list = []
+    survivors = 0
+
+    for group in groups:
+        in_group = [e for e in group if _entry_key(e) in selected_keys]
+        if not in_group:
+            continue
+        if len(group) < 2:
+            refused.append(group[0].value)
+            continue
+        if len(in_group) == len(group):
+            keep = order_by_survivor(group)[0]
+            auto_kept.append(keep)
+            in_group = [e for e in in_group if _entry_key(e) != _entry_key(keep)]
+        deletable.extend(in_group)
+        survivors += len(group) - len(in_group)
+
+    return DeletionPlan(
+        deletable=deletable, refused_groups=refused, survivors=survivors, auto_kept=auto_kept
+    )
+
+
+def backend_id_for(backend) -> str:
+    """The id the index files a backend's rows under: ``<class>:<name>``,
+    or just ``<class>`` when the backend has no display name."""
+    cls = type(backend).__name__
+    name = getattr(backend, "name", "") or ""
+    return f"{cls}:{name}" if name else cls
+
+
+#: Survivor rules :func:`dedupe` knows.
+KEEP_RULES = ("oldest",)
+
+
+@dataclass(frozen=True)
+class DedupeResult:
+    """What :func:`dedupe` planned and, unless a dry run, did."""
+
+    dry_run: bool
+    #: Duplicate groups considered.
+    groups: int
+    #: The copy kept in each group (the first by the survivor rule).
+    keep: list = field(default_factory=list)
+    #: The copies planned for the trash.
+    trash: list = field(default_factory=list)
+    #: Groups where a copy had no modification time (path rule used).
+    undated_groups: int = 0
+    #: Real run only — see :class:`DeleteOutcome`.
+    removed: list = field(default_factory=list)
+    refused: list = field(default_factory=list)
+    failed: list = field(default_factory=list)
+
+    def render(self) -> str:
+        """A short human-readable summary."""
+        head = "Dry run" if self.dry_run else "Dedupe"
+        lines = [
+            f"{head}: {self.groups} duplicate group(s), keep {len(self.keep)}, "
+            f"trash {len(self.trash)}"
+        ]
+        if self.undated_groups:
+            lines.append(
+                f"{self.undated_groups} group(s) have copies without a modification "
+                "time; those sort after dated copies, then by path."
+            )
+        if not self.dry_run:
+            lines.append(
+                f"moved to the axross trash: {len(self.removed)}, kept after "
+                f"re-checking: {len(self.refused)}, failed: {len(self.failed)}"
+            )
+            lines += [f"  kept {e.path}: {why}" for e, why in self.refused[:20]]
+            lines += [f"  failed {e.path}: {why}" for e, why in self.failed[:20]]
+        else:
+            lines += [f"  keep  {e.backend_id} {e.path}" for e in self.keep[:20]]
+            lines += [f"  trash {e.backend_id} {e.path}" for e in self.trash[:20]]
+        return "\n".join(lines)
+
+
+def dedupe(
+    groups,
+    backends,
+    *,
+    keep: str = "oldest",
+    dry_run: bool = True,
+    db_path=None,
+    trash_root: str | None = None,
+    cancel=None,
+    progress=None,
+) -> DedupeResult:
+    """Keep the first copy of every group in *groups*, trash the others.
+
+    *backends* maps a ``backend_id`` to a connected backend (copies on any
+    other backend are refused, never guessed). With ``dry_run=True`` (the
+    default) nothing is touched and the plan is returned; otherwise the
+    planned copies go through :func:`delete_duplicates` — re-verified on
+    the live backend, moved to the axross trash, restorable.
+    """
+    if keep not in KEEP_RULES:
+        raise ValueError(f"keep must be one of {KEEP_RULES}, not {keep!r}")
+    groups = [order_by_survivor(g) for g in groups if len(g) >= 2]
+    plan = plan_deletion([e for g in groups for e in g], groups)
+    undated = sum(1 for g in groups if has_undated(g))
+    if dry_run:
+        return DedupeResult(
+            dry_run=True,
+            groups=len(groups),
+            keep=list(plan.auto_kept),
+            trash=list(plan.deletable),
+            undated_groups=undated,
+        )
+    outcome = delete_duplicates(
+        plan.deletable,
+        groups,
+        backends,
+        db_path=db_path,
+        trash_root=trash_root,
+        cancel=cancel,
+        progress=progress,
+    )
+    return DedupeResult(
+        dry_run=False,
+        groups=len(groups),
+        keep=list(plan.auto_kept),
+        trash=list(plan.deletable),
+        undated_groups=undated,
+        removed=outcome.removed,
+        refused=outcome.refused,
+        failed=outcome.failed,
+    )
+
+
+# ---------------------------------------------------------------------------
 # URL helpers
 # ---------------------------------------------------------------------------
 
@@ -765,17 +1256,36 @@ def resolve_url(url: str, db_path=None) -> list[CasEntry]:
 
 __all__ = [
     "CasEntry",
+    "DedupeResult",
     "DeleteOutcome",
+    "DeletionPlan",
     "CAS_URL_SCHEME",
+    "EARLIER_SCANS",
+    "KEEP_RULES",
+    "SCAN_CANCELLED",
+    "SCAN_COMPLETE",
+    "SCAN_EARLIER",
+    "SCAN_FAILED",
+    "SCAN_RUNNING",
+    "ScanRecord",
+    "backend_id_for",
     "cas_url",
+    "clear_index",
+    "dedupe",
     "delete_duplicates",
     "duplicates",
     "find_by_value",
+    "has_undated",
     "list_for_backend",
+    "list_scans",
+    "order_by_survivor",
     "parse_cas_url",
+    "plan_deletion",
     "prune_missing",
     "rebuild",
     "remove",
+    "remove_scan",
     "resolve_url",
+    "survivor_key",
     "upsert",
 ]

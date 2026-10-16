@@ -99,8 +99,12 @@ class EquivalenceTest(_Tree):
         CAS.upsert(self.db, "Other:x", "/o/a", "md5", "abc", 1)
         CAS.upsert(self.db, "Other:x", "/o/b", "md5", "abc", 1)
         for algo in ("sha256", "md5", "etag"):
-            got = [[(e.backend_id, e.path) for e in g] for g in CAS.duplicates(self.db, algo)]
-            self.assertEqual(got, _reference_duplicates(self.db, algo), algo)
+            # Same groups in the same (value) order; the rows of a group are
+            # in survivor order now (tests/test_cas_survivor.py), so compare
+            # them as sets.
+            got = [{(e.backend_id, e.path) for e in g} for g in CAS.duplicates(self.db, algo)]
+            want = [set(g) for g in _reference_duplicates(self.db, algo)]
+            self.assertEqual(got, want, algo)
 
     def test_edge_duplicates_on_an_empty_index(self) -> None:
         self.assertEqual(CAS.duplicates(self.db), [])

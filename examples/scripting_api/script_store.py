@@ -32,6 +32,9 @@ COVERS = (
     "message",
     "confirm",
     "toast",
+    "api_schema",
+    "is_interactive",
+    "NonInteractiveError",
 )
 
 
@@ -72,6 +75,30 @@ def interactive_prompt_example() -> None:
     if axross.confirm("Start the operator-approved action?"):
         axross.toast("Action started", level="info")
         axross.message("Action completed", title="axross example")
+
+
+def machine_safe_confirm(question: str) -> bool:
+    """Pattern for scripts a machine may run: ask only when someone can
+    answer, otherwise take the safe branch instead of failing."""
+    import axross
+
+    if not axross.is_interactive():
+        return False
+    return axross.confirm(question)
+
+
+@contextlib.contextmanager
+def _unattended() -> Iterator[None]:
+    """Run the block the way an MCP ``script_run`` child runs."""
+    old = os.environ.get("AXROSS_NONINTERACTIVE")
+    os.environ["AXROSS_NONINTERACTIVE"] = "1"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("AXROSS_NONINTERACTIVE", None)
+        else:
+            os.environ["AXROSS_NONINTERACTIVE"] = old
 
 
 def run(base_dir: str | os.PathLike[str] | None = None) -> dict:
@@ -140,6 +167,20 @@ def run(base_dir: str | os.PathLike[str] | None = None) -> dict:
             full_docs = axross.docs()
             assert docs_text.startswith("### `axross.copy")
             assert "axross.open" in full_docs
+
+            schema = axross.api_schema()
+            copy_entry = next(f for f in schema["functions"] if f["name"] == "copy")
+            assert copy_entry["mutates"] is True
+
+            with _unattended():
+                assert axross.is_interactive() is False
+                assert machine_safe_confirm("Delete the old backups?") is False
+                try:
+                    axross.confirm("Delete the old backups?")
+                except axross.NonInteractiveError:
+                    pass
+                else:
+                    raise AssertionError("an unattended confirm must not answer")
 
             help_buffer = io.StringIO()
             with contextlib.redirect_stdout(help_buffer):

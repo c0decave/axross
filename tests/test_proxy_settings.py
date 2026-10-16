@@ -111,6 +111,35 @@ class StoreTest(_Isolated):
             PS.save(PS.ProxyDefaults("http", "", 1))
         self.assertEqual(self.path.read_text(), before)
 
+    def _copies(self) -> list[Path]:
+        return sorted(self.tmp.glob("proxy.json.unreadable-*"))
+
+    def test_sad_saving_over_an_unreadable_file_keeps_a_copy_of_it(self) -> None:
+        """The dialog shows "no proxy" for an unreadable file; saving it
+        must not erase the proxy the file held."""
+        for content in (b'{"proxy_type": "socks5", "host": "10.9.9.9", "po', b"[1]", b"\xff"):
+            with self.subTest(content=content):
+                for old in self._copies():
+                    old.unlink()
+                self.path.write_bytes(content)
+                PS.save(PS.ProxyDefaults("http", "new.proxy", 3128))
+                self.assertEqual(PS.load().host, "new.proxy")
+                self.assertEqual([p.read_bytes() for p in self._copies()], [content])
+
+    def test_sad_no_save_when_the_unreadable_file_cannot_be_kept(self) -> None:
+        self.path.write_bytes(b'{"proxy_type": "socks5", "host": "10.9.9.9", "po')
+        with mock.patch.object(PS, "keep_unreadable_copy", return_value=False):
+            with self.assertRaises(OSError):
+                PS.save(PS.ProxyDefaults("http", "new.proxy", 3128))
+        self.assertEqual(
+            self.path.read_bytes(), b'{"proxy_type": "socks5", "host": "10.9.9.9", "po'
+        )
+
+    def test_edge_saving_over_a_readable_or_missing_file_keeps_no_copy(self) -> None:
+        PS.save(PS.ProxyDefaults("http", "p", 3128))
+        PS.save(PS.ProxyDefaults("http", "q", 3128))
+        self.assertEqual(self._copies(), [])
+
 
 class BypassTest(unittest.TestCase):
     def m(self, host, patterns, port=None):
@@ -199,6 +228,31 @@ class ResolveTest(_Isolated):
     def test_default_without_a_configured_proxy_is_direct(self) -> None:
         r = PS.resolve("default", None, "example.com", 22)
         self.assertEqual((r.config, r.source), (None, "default-none"))
+
+    def test_sad_an_unreadable_default_fails_closed(self) -> None:
+        """A truncated / non-UTF-8 / non-object proxy.json must not turn
+        "use the default proxy" into a direct connection."""
+        self.default()
+        good = self.path.read_bytes()
+        for content in (good[: len(good) // 2], b"\xff" + good, b"[]"):
+            with self.subTest(content=content[:20]):
+                self.path.write_bytes(content)
+                with self.assertRaises(PS.ProxyResolutionError):
+                    PS.resolve("default", None, "example.com", 22)
+                with self.assertRaises(PS.ProxyResolutionError):
+                    PS.default_proxy_kwargs("example.com", 22, "sftp")
+
+    def test_sad_a_default_profile_does_not_connect_direct_over_an_unreadable_file(self) -> None:
+        self.default()
+        self.path.write_bytes(self.path.read_bytes()[:20])
+        p = ConnectionProfile(name="x", host="db.example", proxy_mode="default")
+        with self.assertRaises(ConnectionError):
+            cm.effective_profile(p)
+
+    def test_edge_an_unreadable_default_leaves_none_and_custom_modes_alone(self) -> None:
+        self.path.write_bytes(b"{not json")
+        self.assertIsNone(PS.resolve("none", self.own, "example.com", 22).config)
+        self.assertIs(PS.resolve("custom", self.own, "example.com", 22).config, self.own)
 
     def test_bypass_wins_over_the_default(self) -> None:
         self.default(bypass=["*.corp.local"])

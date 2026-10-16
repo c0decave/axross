@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -32,15 +33,30 @@ class NameCacheTest(unittest.TestCase):
             (self.tmp / f"f{i}").write_bytes(b"x")
 
     def test_happy_a_listing_resolves_each_id_once(self) -> None:
+        # The cache is process-wide: a background listing left running by
+        # another test may fill it between setUp's clear and this listing,
+        # and then this thread looks nothing up. Count only this thread's
+        # lookups; 30 entries must cost at most one each.
+        me = threading.get_ident()
+        mine = {"gr": 0, "pw": 0}
+
+        def counted(key, real):
+            def call(ident):
+                if threading.get_ident() == me:
+                    mine[key] += 1
+                return real(ident)
+
+            return call
+
         real_gr, real_pw = local_fs.grp.getgrgid, local_fs.pwd.getpwuid
         with (
-            mock.patch.object(local_fs.grp, "getgrgid", side_effect=real_gr) as gr,
-            mock.patch.object(local_fs.pwd, "getpwuid", side_effect=real_pw) as pw,
+            mock.patch.object(local_fs.grp, "getgrgid", side_effect=counted("gr", real_gr)),
+            mock.patch.object(local_fs.pwd, "getpwuid", side_effect=counted("pw", real_pw)),
         ):
             items = LocalFS().list_dir(str(self.tmp))
         self.assertEqual(len(items), 30)
-        self.assertEqual(gr.call_count, 1)
-        self.assertEqual(pw.call_count, 1)
+        self.assertLessEqual(mine["gr"], 1)
+        self.assertLessEqual(mine["pw"], 1)
 
     def test_happy_names_are_the_real_ones(self) -> None:
         import grp

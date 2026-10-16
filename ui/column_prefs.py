@@ -29,6 +29,9 @@ DEFAULT_PATH = Path.home() / ".config" / "axross" / "column_prefs.json"
 # the wild), which then pinned Owner at half the window on next start.
 VERSION = 2
 _LEGACY_STRETCH_COLUMNS = (0, 4)
+#: Widest column width kept from the file. Qt takes a C int, so a
+#: hand-edited 1e30 would raise in QHeaderView.resizeSection.
+MAX_WIDTH = 100_000
 
 
 # In-process lock around load+modify+save. Multiple FilePane instances
@@ -85,8 +88,10 @@ def load(path: Path | None = None) -> ColumnPrefs:
     if isinstance(widths_raw, dict):
         for k, v in widths_raw.items():
             try:
-                widths[int(k)] = int(v)
-            except (TypeError, ValueError):
+                width = int(v)
+                if 0 < width <= MAX_WIDTH:
+                    widths[int(k)] = width
+            except (TypeError, ValueError, OverflowError):
                 continue
     hidden_raw = raw.get("hidden", [])
     hidden: set[int] = set()
@@ -94,7 +99,7 @@ def load(path: Path | None = None) -> ColumnPrefs:
         for h in hidden_raw:
             try:
                 hidden.add(int(h))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
     if raw.get("version") != VERSION:
         for col in _LEGACY_STRETCH_COLUMNS:

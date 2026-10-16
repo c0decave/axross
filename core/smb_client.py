@@ -6,19 +6,22 @@ Requires: pip install axross[smb]  (smbprotocol>=1.13)
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import importlib
 import logging
 import os
 import posixpath
 import socket
 import stat as stat_module
+import struct
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import IO
 
+from core.backend import SessionLifecycle
 from core.client_identity import SMB_CLIENT_NAME
-from core.path_policy import safe_join
+from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -60,13 +63,32 @@ def _import_smbclient_package():
 
 try:
     smbclient = _import_smbclient_package()
-    from smbprotocol.exceptions import SMBOSError
+    from smbprotocol.exceptions import SMBException, SMBOSError
 
     _SMB_IMPORT_ERROR: ImportError | None = None
 except ImportError as exc:  # pragma: no cover
     smbclient = None  # type: ignore[assignment]
     SMBOSError = OSError  # type: ignore[assignment,misc]
+    SMBException = OSError  # type: ignore[assignment,misc]
     _SMB_IMPORT_ERROR = exc
+
+# Every way an smbclient call fails: OSError / SMBOSError for an error
+# status; SMBException (not an OSError) for a message whose signature
+# does not verify or a closed connection; and whatever parsing a server
+# message raised in smbprotocol's message worker, which stores the
+# exception and re-raises it in the caller (smbprotocol/connection.py
+# _process_message_thread, _check_worker_running) - KeyError for an
+# unknown message id, struct.error / ValueError / IndexError for a short
+# or malformed message.
+_SMB_FAILURES: tuple[type[BaseException], ...] = (
+    OSError,
+    SMBOSError,
+    SMBException,
+    KeyError,
+    IndexError,
+    ValueError,
+    struct.error,
+)
 
 
 # Per-host lock registry so concurrent SmbSession constructors don't
@@ -129,13 +151,22 @@ _FILE_ATTRIBUTE_READONLY = 0x01  # smbprotocol FileAttributes, MS-FSCC 2.6
 _FILE_ATTRIBUTE_DIRECTORY = 0x10
 
 
-class SmbSession:
+class SmbSession(SessionLifecycle):
     """SMB/CIFS backend implementing the FileBackend protocol.
 
     Uses smbclient (high-level wrapper over smbprotocol).
     Paths are stored internally as UNC: \\\\server\\share\\path
     but the UI sees forward-slash paths relative to the share root.
     """
+
+    _port: int = 445
+
+    @property
+    def _kw(self) -> dict:
+        """Connection arguments for every smbclient call. smbclient keys its
+        pool by "host:port" and defaults every call to port 445, so a call
+        without them dials 445 - not the port this session registered."""
+        return {"port": self._port}
 
     def __init__(
         self,
@@ -185,7 +216,7 @@ class SmbSession:
 
         with _session_lock(host):
             try:
-                smbclient.delete_session(host)
+                smbclient.delete_session(host, port=port)
             except Exception:
                 pass
 
@@ -215,10 +246,10 @@ class SmbSession:
                 # misconfiguration surfaces at connection time instead
                 # of halfway into a transfer.
                 try:
-                    smbclient.listdir(self._prefix)
+                    smbclient.listdir(self._prefix, **self._kw)
                 except Exception as exc:
                     try:
-                        smbclient.delete_session(host)
+                        smbclient.delete_session(host, port=port)
                     except Exception:
                         pass
                     raise OSError(f"SMB connect failed for {self._prefix}: {exc}") from exc
@@ -232,7 +263,7 @@ class SmbSession:
     @property
     def connected(self) -> bool:
         try:
-            smbclient.listdir(self._prefix)
+            smbclient.listdir(self._prefix, **self._kw)
             return True
         except Exception:
             return False
@@ -245,7 +276,7 @@ class SmbSession:
         bugs and means disconnected UI sessions leak kernel resources.
         """
         try:
-            smbclient.delete_session(self._host)
+            smbclient.delete_session(self._host, **self._kw)
         except Exception as exc:
             log.debug("smbclient.delete_session(%s) raised: %s", self._host, exc)
 
@@ -272,67 +303,79 @@ class SmbSession:
         unc = self._unc(path)
         items: list[FileItem] = []
         try:
-            for entry in smbclient.scandir(unc):
+            for entry in smbclient.scandir(unc, **self._kw):
                 if entry.name in (".", ".."):
                     continue
                 # The directory query already carries attributes, size and
                 # times; entry.stat() costs one extra SMB call per entry.
                 # Symlinks still need it: their target decides type and size.
-                item = None if entry.is_symlink() else self._dir_info_to_item(entry)
+                is_link = entry.is_symlink()
+                item = None if is_link else self._dir_info_to_item(entry)
                 if item is not None:
                     items.append(item)
                     continue
                 try:
-                    st = entry.stat()
-                    items.append(self._stat_to_item(entry.name, st))
-                except (OSError, SMBOSError) as e:
+                    # Not entry.stat(): SMBDirEntry passes no port on.
+                    st = smbclient.stat(entry.path, **self._kw)
+                    item = self._stat_to_item(entry.name, st)
+                except _SMB_FAILURES as e:
                     log.warning("Cannot stat %s: %s", entry.name, e)
-                    items.append(FileItem(name=entry.name))
-        except (OSError, SMBOSError) as e:
+                    item = FileItem(name=entry.name)
+                # Marked as a link: a recursive delete removes the link
+                # itself instead of descending into its target. An entry
+                # that only fell back to stat() (an unusable FILETIME) is
+                # not a link.
+                items.append(dataclasses.replace(item, is_link=True) if is_link else item)
+        except _SMB_FAILURES as e:
             raise OSError(f"Cannot list {path}: {e}") from e
         return items
 
     def stat(self, path: str) -> FileItem:
         unc = self._unc(path)
         try:
-            st = smbclient.stat(unc)
+            st = smbclient.stat(unc, **self._kw)
             name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or path
             return self._stat_to_item(name, st)
-        except (OSError, SMBOSError) as e:
+        except _SMB_FAILURES as e:
             raise OSError(f"Cannot stat {path}: {e}") from e
 
     def is_dir(self, path: str) -> bool:
         try:
-            return smbclient.path.isdir(self._unc(path))
-        except (OSError, SMBOSError):
+            return smbclient.path.isdir(self._unc(path), **self._kw)
+        except _SMB_FAILURES:
             return False
 
     def exists(self, path: str) -> bool:
         try:
-            return smbclient.path.exists(self._unc(path))
-        except (OSError, SMBOSError):
+            return smbclient.path.exists(self._unc(path), **self._kw)
+        except _SMB_FAILURES:
             return False
 
     def mkdir(self, path: str) -> None:
         try:
-            smbclient.mkdir(self._unc(path))
-        except (OSError, SMBOSError) as e:
+            smbclient.mkdir(self._unc(path), **self._kw)
+        except _SMB_FAILURES as e:
             raise OSError(f"Cannot create directory {path}: {e}") from e
 
     def remove(self, path: str, recursive: bool = False) -> None:
         unc = self._unc(path)
         try:
             if self.is_dir(path):
-                if recursive:
+                if recursive and not smbclient.path.islink(unc, **self._kw):
                     self._rmdir_recursive(path)
                 else:
-                    smbclient.rmdir(unc)
+                    # A link to a directory goes as the link: smbclient
+                    # deletes with FILE_OPEN_REPARSE_POINT, never the target.
+                    smbclient.rmdir(unc, **self._kw)
             else:
-                smbclient.remove(unc)
-        except (OSError, SMBOSError) as e:
+                smbclient.remove(unc, **self._kw)
+        except _SMB_FAILURES as e:
             raise OSError(f"Cannot remove {path}: {e}") from e
 
-    def _rmdir_recursive(self, path: str) -> None:
+    _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
+
+    def _rmdir_recursive(self, path: str, depth: int = 0) -> None:
+        check_tree_depth(path, depth, self._MAX_TREE_DEPTH)
         children = []
         for item in self.list_dir(path):
             try:
@@ -343,29 +386,36 @@ class SmbSession:
                 ) from exc
             children.append((item, child))
         for item, child in children:
-            if item.is_dir:
-                self._rmdir_recursive(child)
+            if item.is_link:
+                # Never descend through a link: its target may lie outside
+                # the tree being deleted. Only the link itself goes.
+                if item.is_dir:
+                    smbclient.rmdir(self._unc(child), **self._kw)
+                else:
+                    smbclient.remove(self._unc(child), **self._kw)
+            elif item.is_dir:
+                self._rmdir_recursive(child, depth + 1)
             else:
-                smbclient.remove(self._unc(child))
-        smbclient.rmdir(self._unc(path))
+                smbclient.remove(self._unc(child), **self._kw)
+        smbclient.rmdir(self._unc(path), **self._kw)
 
     def rename(self, src: str, dst: str) -> None:
         try:
-            smbclient.rename(self._unc(src), self._unc(dst))
-        except (OSError, SMBOSError) as e:
+            smbclient.rename(self._unc(src), self._unc(dst), **self._kw)
+        except _SMB_FAILURES as e:
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
 
     def open_read(self, path: str) -> IO[bytes]:
         try:
-            return smbclient.open_file(self._unc(path), mode="rb")
-        except (OSError, SMBOSError) as e:
+            return smbclient.open_file(self._unc(path), mode="rb", **self._kw)
+        except _SMB_FAILURES as e:
             raise OSError(f"Cannot read {path}: {e}") from e
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         mode = "ab" if append else "wb"
         try:
-            return smbclient.open_file(self._unc(path), mode=mode)
-        except (OSError, SMBOSError) as e:
+            return smbclient.open_file(self._unc(path), mode=mode, **self._kw)
+        except _SMB_FAILURES as e:
             raise OSError(f"Cannot write {path}: {e}") from e
 
     def normalize(self, path: str) -> str:
@@ -424,15 +474,25 @@ class SmbSession:
             raise OSError(
                 "shares_list requires the system 'smbclient' binary (install samba-client / samba)"
             )
+        from core.subprocess_env import clean_child_env
+
         cmd = [binary, "-L", f"//{host}", "-g"]
+        env = clean_child_env()
+        env.pop("PASSWD", None)
         if username:
-            # ``-U user%password`` is the only safe way to pass a
-            # password on smbclient's CLI without a TTY prompt.
-            cmd += ["-U", f"{username}%{password}"]
+            # Never "-U user%password": argv is world readable in /proc
+            # and ps, and smbclient scrubs it only after startup. smbclient
+            # reads the PASSWD environment variable instead (smbclient(1)),
+            # which only this user can see. It splits "-U" at "%" itself,
+            # so a "%" in the name would turn the rest into a password.
+            if "%" in username:
+                raise ValueError("SMB shares_list username must not contain '%'")
+            cmd += ["-U", username]
+            env["PASSWD"] = password
         else:
             cmd += ["-N"]  # no auth
         try:
-            proc = _sp.run(cmd, capture_output=True, text=True, timeout=float(timeout))
+            proc = _sp.run(cmd, capture_output=True, text=True, timeout=float(timeout), env=env)
         except _sp.TimeoutExpired as exc:
             raise OSError(f"smbclient -L {host} timed out") from exc
         if proc.returncode != 0:
@@ -508,7 +568,7 @@ class SmbSession:
         try:
             import smbclient.shutil as smb_shutil
 
-            usage = smb_shutil.disk_usage(self._unc(path))
+            usage = smb_shutil.disk_usage(self._unc(path), **self._kw)
             return (usage.total, usage.used, usage.free)
         except (AttributeError, ImportError):
             log.debug("smbclient.shutil.disk_usage not available")
@@ -523,8 +583,18 @@ class SmbSession:
         Listing and stat both go through here with the microseconds floored,
         as smbprotocol floors FILETIME for directory entries; rounding a
         float in one path and flooring in the other made them disagree by
-        a microsecond."""
-        return datetime.fromtimestamp(us / 1_000_000) if us else datetime.fromtimestamp(0)
+        a microsecond.
+
+        A FILETIME at the edge of datetime's range (a server may report
+        9999-12-31 23:59:59 UTC) is out of range as local time east of
+        UTC (year 10000); such a time reads as the epoch, like a missing
+        one."""
+        if not us:
+            return datetime.fromtimestamp(0)
+        try:
+            return datetime.fromtimestamp(us / 1_000_000)
+        except (ValueError, OverflowError, OSError):
+            return datetime.fromtimestamp(0)
 
     @classmethod
     def _dir_info_to_item(cls, entry) -> FileItem | None:

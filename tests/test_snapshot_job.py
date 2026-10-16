@@ -166,6 +166,51 @@ class SnapshotJobTest(unittest.TestCase):
         self.assertFalse(self.save_target.exists())
         self.assertTrue(self.dlg._save_btn.isEnabled())
 
+    # Found in review: the copy wrote straight into the chosen file, so a
+    # failed or cancelled save over an EXISTING file deleted it ("remove
+    # the partial file") - the file the user had, gone, and no version
+    # saved in its place. A read error before a single byte even unlinked
+    # it without having opened it.
+    def test_sad_a_failed_save_over_an_existing_file_keeps_that_file(self) -> None:
+        self.save_target.write_bytes(b"precious")
+
+        def broken(entry):
+            raise OSError("version vanished")
+
+        with mock.patch("core.snapshot_browser.read_snapshot", broken):
+            self.dlg._save_as_selected()
+            self.assertTrue(self._wait(lambda: self._warning.called))
+        self.assertEqual(self.save_target.read_bytes(), b"precious")
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["live.bin", "saved.bin"])
+
+    def test_sad_a_cancelled_save_over_an_existing_file_keeps_that_file(self) -> None:
+        self.save_target.write_bytes(b"precious")
+        self.dlg._save_as_selected()
+        self._started()
+        self.dlg._cancel_btn.click()
+        self.assertTrue(self._wait(lambda: not self.dlg._busy_bar.isVisible()))
+        self.assertEqual(self.save_target.read_bytes(), b"precious")
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["live.bin", "saved.bin"])
+
+    def test_happy_a_finished_save_replaces_an_existing_file(self) -> None:
+        self.save_target.write_bytes(b"precious")
+        self.gate.set()
+        self.dlg._save_as_selected()
+        self.assertTrue(self._wait(lambda: not self.dlg._busy_bar.isVisible()))
+        self.assertEqual(self.save_target.stat().st_size, CHUNKS * MIB)
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["live.bin", "saved.bin"])
+
+    def test_edge_a_save_into_a_missing_folder_reports_and_creates_nothing(self) -> None:
+        missing = self.tmp / "gone" / "saved.bin"
+        self.gate.set()
+        with mock.patch(
+            "ui.snapshot_browser_dialog.QFileDialog.getSaveFileName",
+            return_value=(str(missing), ""),
+        ):
+            self.dlg._save_as_selected()
+            self.assertTrue(self._wait(lambda: self._warning.called))
+        self.assertFalse(missing.exists())
+
     def test_declining_the_file_dialog_starts_nothing(self) -> None:
         with mock.patch(
             "ui.snapshot_browser_dialog.QFileDialog.getSaveFileName", return_value=("", "")

@@ -7,6 +7,8 @@ filesystem operations.  No external dependencies — pure stdlib sockets.
 from __future__ import annotations
 
 import base64
+import binascii
+import codecs
 import io
 import logging
 import posixpath
@@ -20,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import IO, TYPE_CHECKING
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -63,11 +66,11 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\([AB0-2]")
 # ls -la line parser
 _LS_LINE_RE = re.compile(
     r"^([dlcbps-])"  # type char
-    r"([rwxsStT-]{9})\s+"  # permissions
+    r"([rwxsStT-]{9})[.+@]?\s+"  # permissions; GNU appends . (SELinux) / + (ACL), macOS @
     r"(\d+)\s+"  # nlinks
     r"(\S+)\s+"  # owner
     r"(\S+)\s+"  # group
-    r"(\d+)\s+"  # size
+    r"(\d+|\d+,\s*\d+)\s+"  # size, or "major, minor" for a device
     r"(.{12})\s+"  # date (fixed width)
     r"(.+)$"  # name (may contain -> for symlinks)
 )
@@ -77,6 +80,9 @@ CMD_TIMEOUT = 30.0
 TRANSFER_TIMEOUT = 300.0
 _READ_SLICE = 0.1  # select() poll interval
 MAX_READ_UNTIL_CHARS = 64 * 1024 * 1024
+# Longest IAC SB ... IAC SE the transport waits for. Real subnegotiations
+# (terminal type, window size, environment) are a few dozen bytes.
+MAX_SUBNEGOTIATION_BYTES = 64 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +161,9 @@ class _TelnetTransport:
             raise OSError(f"Cannot connect to {host}:{port}: {e}") from e
         self._sock.setblocking(False)
         self._buffer = b""
+        # One decoder for the whole stream: a character whose bytes
+        # straddle two recv() calls must not decode as two U+FFFD.
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._closed = False
         log.debug("Telnet transport connected to %s:%d", host, port)
 
@@ -285,14 +294,15 @@ class _TelnetTransport:
             raise OSError(f"Read failed: {e}") from e
         if not raw:
             self._closed = True
-            return ""
+            # Bytes of a character the stream ended inside of.
+            return self._decoder.decode(b"", final=True).replace("\r", "")
         # Prepend any leftover bytes from previous incomplete IAC sequence
         data = self._buffer + raw
         self._buffer = b""
         data, leftover = self._negotiate(data)
         self._buffer = leftover
         # Strip carriage returns
-        text = data.decode("utf-8", errors="replace").replace("\r", "")
+        text = self._decoder.decode(data).replace("\r", "")
         return text
 
     def _negotiate(self, data: bytes) -> tuple[bytes, bytes]:
@@ -327,6 +337,15 @@ class _TelnetTransport:
                 # Sub-negotiation: find SE
                 se_idx = data.find(bytes([IAC, SE]), i + 2)
                 if se_idx == -1:
+                    # Kept for the next read - but not without bound: a
+                    # server that never sends IAC SE would otherwise have
+                    # everything after IAC SB buffered (and re-scanned).
+                    if len(data) - i > MAX_SUBNEGOTIATION_BYTES:
+                        self._closed = True  # the stream is out of step for good
+                        raise OSError(
+                            f"Telnet subnegotiation exceeds {MAX_SUBNEGOTIATION_BYTES} "
+                            "bytes without IAC SE"
+                        )
                     return bytes(clean), data[i:]
                 self._handle_subneg(data[i + 2 : se_idx])
                 i = se_idx + 2
@@ -802,9 +821,56 @@ def _probe_capabilities(shell: _ShellSession) -> _Capabilities:
     return caps
 
 
+def rename_command(src: str, dst: str) -> str:
+    """Shell command that renames ``src`` to ``dst`` like rename(2).
+
+    Plain ``mv`` moves ``src`` INTO ``dst`` when ``dst`` is a directory
+    (or a symlink to one), replacing a same-named entry in there.
+    ``mv -T`` refuses that but is GNU only, so the directory is tested
+    first and the rename fails instead. An existing non-directory
+    ``dst`` is replaced, as rename(2) does.
+    """
+    qsrc, qdst = shlex.quote(src), shlex.quote(dst)
+    return (
+        f"if test -d {qdst}; then echo {shlex.quote(f'mv: {dst}: is a directory')} >&2; false; "
+        f"else mv -- {qsrc} {qdst}; fi"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Layer 4: Output Parsers
 # ---------------------------------------------------------------------------
+def _uu_encode(data: bytes) -> str:
+    """uuencode ``data`` as ``begin 644 -`` ... ``end`` (what uudecode reads).
+
+    Replaces the ``uu`` module, which Python 3.13 removed."""
+    lines = ["begin 644 -\n"]
+    for start in range(0, len(data), 45):
+        lines.append(binascii.b2a_uu(data[start : start + 45], backtick=True).decode("ascii"))
+    lines.append("`\nend\n")
+    return "".join(lines)
+
+
+def _uu_decode(text: str) -> bytes:
+    """Decode uuencode output (``begin <mode> <name>`` ... ``end``)."""
+    out = bytearray()
+    started = False
+    for raw in split_lf_only_stream(text):
+        line = raw.rstrip("\r")
+        if not started:
+            started = line.startswith("begin ")
+            continue
+        if line.strip() == "end":
+            return bytes(out)
+        if not line:
+            continue
+        try:
+            out += binascii.a2b_uu(line)
+        except binascii.Error as exc:
+            raise ValueError(f"bad uuencoded line {line[:20]!r}: {exc}") from exc
+    raise ValueError("uuencoded data has no begin/end frame")
+
+
 def _parse_ls_la(output: str) -> list[FileItem]:
     """Parse `ls -la` output into FileItem list."""
     # Strip ANSI escape sequences that some shells/aliases inject
@@ -821,7 +887,7 @@ def _parse_ls_la(output: str) -> list[FileItem]:
         perm_str = m.group(2)
         owner = m.group(4)
         group = m.group(5)
-        size = int(m.group(6))
+        size = 0 if "," in m.group(6) else int(m.group(6))
         date_str = m.group(7).strip()
         name_field = m.group(8)
 
@@ -921,11 +987,17 @@ def _parse_stat_gnu(output: str) -> FileItem:
     """Parse GNU stat output with format '%n|%s|%Y|%f|%U|%G|%F'."""
     parts = output.strip().split("|")
     if len(parts) < 7:
-        raise ValueError(f"Cannot parse stat output: {output!r}")
+        raise OSError(f"Cannot parse stat output: {output[:200]!r}")
     name = posixpath.basename(parts[0])
-    size = int(parts[1])
-    mtime = datetime.fromtimestamp(int(parts[2]))
-    mode = int(parts[3], 16) & 0o7777
+    # The remote shell controls this text: a field that does not convert,
+    # or an mtime outside datetime's range, is an unusable answer (OSError,
+    # what callers of stat() handle), not a ValueError / OverflowError.
+    try:
+        size = int(parts[1])
+        mtime = datetime.fromtimestamp(int(parts[2]))
+        mode = int(parts[3], 16) & 0o7777
+    except (ValueError, OverflowError, OSError) as exc:
+        raise OSError(f"Cannot parse stat output {output[:200]!r}: {exc}") from exc
     owner = parts[4]
     group = parts[5]
     ftype = parts[6].lower()
@@ -1037,8 +1109,6 @@ class _SpooledWriter:
         self._shell.execute_checked(cmd, timeout=TRANSFER_TIMEOUT)
 
     def _upload_uuencode(self, data: bytes, qpath: str) -> None:
-        import uu
-
         # ``uudecode -o`` writes/overwrites the output file — there's
         # no in-tool append flag. ``open_write(append=True)`` handles
         # append at the backend layer by pre-concatenating the
@@ -1053,10 +1123,7 @@ class _SpooledWriter:
                 "Telnet uuencode upload path does not support append; "
                 "go through open_write(append=True) or use xxd/raw.",
             )
-        buf_in = io.BytesIO(data)
-        buf_out = io.BytesIO()
-        uu.encode(buf_in, buf_out, name="-")
-        uu_data = buf_out.getvalue().decode("ascii")
+        uu_data = _uu_encode(data)
         eof = self._safe_eof(uu_data)
         cmd = f"uudecode -o {qpath} << '{eof}'\n{uu_data}\n{eof}"
         self._shell.execute_checked(cmd, timeout=TRANSFER_TIMEOUT)
@@ -1101,7 +1168,7 @@ class _SpooledWriter:
 # ---------------------------------------------------------------------------
 # Main Backend: TelnetSession (FileBackend implementation)
 # ---------------------------------------------------------------------------
-class TelnetSession:
+class TelnetSession(SessionLifecycle):
     """Telnet filesystem backend using shell commands.
 
     Connects via raw telnet, authenticates, then uses standard Unix commands
@@ -1325,7 +1392,7 @@ class TelnetSession:
                 self._exec(f"rm -f {qpath}")
 
     def rename(self, src: str, dst: str) -> None:
-        self._exec(f"mv {shlex.quote(self.normalize(src))} {shlex.quote(self.normalize(dst))}")
+        self._exec(rename_command(self.normalize(src), self.normalize(dst)))
 
     def open_read(self, path: str) -> IO[bytes]:
         path = self.normalize(path)
@@ -1353,15 +1420,10 @@ class TelnetSession:
             output, code = shell.execute(f"uuencode - - < {qpath}", timeout=TRANSFER_TIMEOUT)
             if code != 0:
                 raise OSError(f"Cannot read {path}: uuencode failed (exit {code})")
-            import uu
-
-            buf_in = io.BytesIO(output.encode("ascii"))
-            buf_out = io.BytesIO()
             try:
-                uu.decode(buf_in, buf_out)
-            except Exception as e:
+                data = _uu_decode(output)
+            except ValueError as e:
                 raise OSError(f"Cannot decode {path}: {e}") from e
-            data = buf_out.getvalue()
         else:
             # Raw cat — text only
             output, code = shell.execute(f"cat {qpath}", timeout=TRANSFER_TIMEOUT)
@@ -1379,7 +1441,14 @@ class TelnetSession:
             try:
                 with self.open_read(path) as f:
                     existing = f.read()
-            except OSError:
+            except OSError as exc:
+                # Only a file that is not there may start empty; one that
+                # could not be read would be overwritten by the new bytes.
+                if self.exists(path):
+                    raise OSError(
+                        f"Telnet append: refusing to overwrite {path}; could not "
+                        f"read existing content ({exc})"
+                    ) from exc
                 existing = b""
             writer = _SpooledWriter(self._ensure_connected(), path, self._caps, append=False)
             writer.write(existing)

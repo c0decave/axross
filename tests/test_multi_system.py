@@ -408,6 +408,107 @@ class ConnectionManagerHookTests(unittest.TestCase):
         cm.release(profile)
         self.assertEqual(conn_health.health_pulse(), [])
 
+    # Two panes opening the same profile at once (a restored layout, a
+    # double click) run ConnectionManager.connect on two QThreads.
+    def _racing_manager(self, n: int):
+        from core.connection_manager import ConnectionManager
+
+        created: list[_ClosableSession] = []
+        barrier = threading.Barrier(n)
+
+        class RacingCM(ConnectionManager):
+            def _create_session(self, profile, password, key_passphrase, on_unknown_host):
+                session = _ClosableSession()
+                created.append(session)
+                barrier.wait(timeout=5)  # every thread is inside the slow connect
+                return session
+
+        return RacingCM(), created
+
+    def _connect_in_threads(self, cm, profile, n: int) -> list:
+        got: list = [None] * n
+
+        def worker(i: int) -> None:
+            got[i] = cm.connect(profile)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        return got
+
+    def _profile(self):
+        from core.profiles import ConnectionProfile
+
+        return ConnectionProfile(name="race", protocol="pop3", host="race-host", port=110)
+
+    def test_sad_concurrent_connects_share_one_tracked_session(self) -> None:
+        cm, created = self._racing_manager(2)
+        profile = self._profile()
+        got = self._connect_in_threads(cm, profile, 2)
+        self.assertIs(got[0], got[1])
+        shared = got[0]
+        # The losing duplicate is closed at once, not leaked.
+        self.assertEqual([s.closed for s in created if s is not shared], [True])
+        cm.release(profile)
+        self.assertFalse(shared.closed, "first release closed the session the other pane uses")
+        cm.release(profile)
+        self.assertTrue(all(s.closed for s in created))
+
+    def test_edge_three_concurrent_connects_need_three_releases(self) -> None:
+        cm, created = self._racing_manager(3)
+        profile = self._profile()
+        got = self._connect_in_threads(cm, profile, 3)
+        self.assertEqual(len({id(s) for s in got}), 1)
+        for _ in range(2):
+            cm.release(profile)
+            self.assertFalse(got[0].closed)
+        cm.release(profile)
+        self.assertTrue(all(s.closed for s in created))
+
+    def test_happy_sequential_connects_create_one_session(self) -> None:
+        from core.connection_manager import ConnectionManager
+
+        created: list[_ClosableSession] = []
+
+        class CM(ConnectionManager):
+            def _create_session(self, profile, password, key_passphrase, on_unknown_host):
+                created.append(_ClosableSession())
+                return created[-1]
+
+        cm = CM()
+        profile = self._profile()
+        self.assertIs(cm.connect(profile), cm.connect(profile))
+        self.assertEqual(len(created), 1)
+        cm.release(profile)
+        cm.release(profile)
+        self.assertTrue(created[0].closed)
+
+    def test_sad_a_failed_connect_leaves_nothing_behind(self) -> None:
+        from core.connection_manager import ConnectionManager
+
+        class FailingCM(ConnectionManager):
+            def _create_session(self, profile, password, key_passphrase, on_unknown_host):
+                raise OSError("refused")
+
+        cm = FailingCM()
+        with self.assertRaises(OSError):
+            cm.connect(self._profile())
+        self.assertEqual(cm.active_sessions(), [])
+
+
+class _ClosableSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    @property
+    def connected(self) -> bool:
+        return not self.closed
+
+    def close(self) -> None:
+        self.closed = True
+
 
 # ---------------------------------------------------------------------------
 # safety_tarpit
@@ -1864,6 +1965,90 @@ class ReverseWebDAVTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(self._url("/dir/%2e%2e/file.txt"))
         self.assertEqual(ctx.exception.code, 400)
+
+
+class ReverseServeDnsRebindingTests(unittest.TestCase):
+    """A loopback reverse-server must not answer a page that reached it
+    through DNS rebinding: the page's own name arrives in ``Host``."""
+
+    def setUp(self) -> None:
+        self.b = _ramfs()
+        self.b.mkdir("/bucket")
+        fh = self.b.open_write("/bucket/secret.txt")
+        fh.write(b"private bytes")
+        fh.close()
+        self.dav = reverse_serve.serve_webdav(self.b, bind="127.0.0.1", port=0)
+        self.s3 = reverse_serve.serve_s3(self.b, bind="127.0.0.1", port=0)
+
+    def tearDown(self) -> None:
+        self.dav.shutdown()
+        self.s3.shutdown()
+
+    def _status(self, port: int, method: str, path: str, headers: dict) -> tuple[int, bytes]:
+        import http.client
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.putrequest(method, path, skip_host=True)
+            for k, v in headers.items():
+                conn.putheader(k, v)
+            conn.endheaders()
+            resp = conn.getresponse()
+            return resp.status, resp.read()
+        finally:
+            conn.close()
+
+    def test_foreign_host_is_refused_on_both_flavours(self) -> None:
+        for port, path in ((self.dav.port, "/bucket/secret.txt"), (self.s3.port, "/bucket/secret.txt")):
+            status, body = self._status(port, "GET", path, {"Host": f"evil.example:{port}"})
+            self.assertEqual(status, 403)
+            self.assertNotIn(b"private bytes", body)
+
+    def test_foreign_host_cannot_write_or_delete(self) -> None:
+        port = self.dav.port
+        status, _ = self._status(
+            port, "DELETE", "/bucket/secret.txt", {"Host": f"rebind.evil.example:{port}"}
+        )
+        self.assertEqual(status, 403)
+        self.assertTrue(self.b.exists("/bucket/secret.txt"))
+
+    def test_foreign_origin_is_refused(self) -> None:
+        port = self.dav.port
+        status, _ = self._status(
+            port,
+            "GET",
+            "/bucket/secret.txt",
+            {"Host": f"127.0.0.1:{port}", "Origin": "https://evil.example"},
+        )
+        self.assertEqual(status, 403)
+
+    def test_loopback_names_are_served(self) -> None:
+        port = self.dav.port
+        for host in (f"127.0.0.1:{port}", f"localhost:{port}", "localhost", "127.0.0.1"):
+            status, body = self._status(port, "GET", "/bucket/secret.txt", {"Host": host})
+            self.assertEqual((host, status, body), (host, 200, b"private bytes"))
+        status, _ = self._status(
+            port,
+            "GET",
+            "/bucket/secret.txt",
+            {"Host": f"localhost:{port}", "Origin": f"http://localhost:{port}"},
+        )
+        self.assertEqual(status, 200)
+
+    def test_non_loopback_bind_with_token_keeps_any_host(self) -> None:
+        srv = reverse_serve.serve_webdav(
+            self.b, bind="0.0.0.0", port=0, auth_token="t" * 32
+        )
+        try:
+            status, body = self._status(
+                srv.port,
+                "GET",
+                "/bucket/secret.txt",
+                {"Host": "files.example.internal", "Authorization": "Bearer " + "t" * 32},
+            )
+        finally:
+            srv.shutdown()
+        self.assertEqual((status, body), (200, b"private bytes"))
 
 
 class ReverseWebDAVLockResponseTests(unittest.TestCase):

@@ -37,6 +37,7 @@ import re
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -93,7 +94,7 @@ def _safe_show_subcmd(name: str) -> str:
     return cleaned.replace("-", " ").strip()
 
 
-class CiscoTelnetSession:
+class CiscoTelnetSession(SessionLifecycle):
     """Read-only IOS / IOS-XE / IOS-XR FileBackend via Telnet."""
 
     supports_symlinks = False

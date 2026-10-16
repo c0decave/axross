@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -135,11 +137,16 @@ class JobStore:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return []
-        except (OSError, ValueError) as exc:
+        except ValueError as exc:
+            log.warning("scheduler: ignoring unreadable job store %s: %s", self.path, exc)
+            self._set_aside()
+            return []
+        except OSError as exc:
             log.warning("scheduler: ignoring unreadable job store %s: %s", self.path, exc)
             return []
         if not isinstance(raw, list):
             log.warning("scheduler: job store %s is not a list; ignoring", self.path)
+            self._set_aside()
             return []
 
         jobs: list[Job] = []
@@ -169,6 +176,22 @@ class JobStore:
             except (KeyError, TypeError, ValueError) as exc:
                 log.warning("scheduler: dropping malformed job row: %s", exc)
         return jobs
+
+    def _set_aside(self) -> None:
+        """Move an unparseable store out of the way of the next save.
+
+        Loading degrades to "no jobs" so the app still starts; without
+        this, the next save would replace every configured job with
+        whatever the user added after the failed load.
+        """
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        aside = self.path.with_name(f"{self.path.name}.unreadable-{stamp}-{uuid.uuid4().hex[:8]}")
+        try:
+            os.rename(self.path, aside)
+        except OSError as exc:
+            log.error("scheduler: could not set %s aside: %s", self.path, exc)
+            return
+        log.warning("scheduler: unreadable job store kept as %s", aside)
 
     def save(self, jobs: list[Job]) -> None:
         payload = [

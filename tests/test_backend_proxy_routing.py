@@ -728,5 +728,68 @@ class FailClosedTest(unittest.TestCase):
         RamFsSession(**_KW)  # must not raise
 
 
+# ---------------------------------------------------------------------------
+# axross.open_url for backends that read the proxy from **kwargs
+# ---------------------------------------------------------------------------
+
+
+class OpenUrlKwargProxyTest(_ProxyCase):
+    """``open_url`` used to forward proxy_* only to constructors that name
+    them; LDAP, Postgres, Mongo, Redis, Git and SLP take them via
+    ``**kwargs``, so the proxy was dropped and the backend dialled direct."""
+
+    def test_sad_ldap_open_url_goes_through_the_named_proxy(self) -> None:
+        from core import scripting
+
+        socks = self.route("ldap.internal", 389)
+        with self.assertRaises(Exception):  # the echo fake is no LDAP server
+            scripting.open_url("ldap://ldap.internal:389/", timeout=2.0, **socks_kwargs(socks))
+        self.assertEqual(socks.connects[:1], [("ldap.internal", 389)])
+
+    def test_sad_slp_open_url_uses_the_default_proxy(self) -> None:
+        from core import proxy_settings, scripting
+
+        socks = self.route("slp.internal", 427)
+        default = {
+            "proxy_type": "socks5",
+            "proxy_host": "127.0.0.1",
+            "proxy_port": socks.port,
+            "proxy_username": "",
+            "proxy_password": "",
+        }
+        with mock.patch.object(proxy_settings, "default_proxy_kwargs", return_value=default):
+            with self.assertRaises(OSError):
+                scripting.open_url("slp://slp.internal:427/", use_tcp=True, timeout=1)
+        self.assertEqual(socks.connects[:1], [("slp.internal", 427)])
+
+    def test_happy_explicit_none_stays_direct(self) -> None:
+        from core import scripting
+
+        socks = self.route("ldap.internal", 389)
+        with self.assertRaises(Exception):
+            scripting.open_url("ldap://ldap.internal:389/", timeout=1.0, proxy_type="none")
+        self.assertEqual(socks.connects, [])
+
+    def test_edge_network_backend_that_cannot_proxy_fails_closed(self) -> None:
+        from core import scripting
+
+        class _NoProxyBackend:
+            def __init__(self, host="", port=0, **_ignored):
+                raise AssertionError("must not be constructed with an ignored proxy")
+
+        socks = self.route("db.internal", 1)
+        with (
+            mock.patch("core.backend_registry.load_backend_class", return_value=_NoProxyBackend),
+            self.assertRaises(proxy.ProxyUnsupportedError),
+        ):
+            scripting.open_url("rsh://db.internal:1/", **socks_kwargs(socks))
+
+    def test_edge_local_backend_with_a_default_proxy_still_opens(self) -> None:
+        from core import scripting
+
+        sess = scripting.open_url("sqlite:///:memory:", **socks_kwargs(self.route("x", 1)))
+        self.addCleanup(getattr(sess, "close", lambda: None))
+
+
 if __name__ == "__main__":
     unittest.main()

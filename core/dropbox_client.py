@@ -18,10 +18,11 @@ import posixpath
 import sys
 import tempfile
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO
 
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.secure_storage import write_secret_file
 from models.file_item import FileItem
 
@@ -42,6 +43,60 @@ except ImportError:
     DropboxOAuth2FlowNoRedirect = None  # type: ignore[assignment,misc]
 
 _DEFAULT_TOKEN_PATH = os.path.expanduser("~/.config/axross/dropbox_token.json")
+
+# What the SDK raises from inside a call besides ApiError: its other
+# exception classes (HTTP 400 / 401 / 429 / 5xx answers), stone's
+# ValidationError for an answer that does not match the route's schema,
+# and the plain errors its JSON decoding and stone deserialisation let
+# through for a garbage body (ValueError incl. JSONDecodeError and
+# UnicodeDecodeError, RecursionError, TypeError, KeyError, ...). It even
+# checks the content type of an error answer with ``assert``
+# (DropboxBase.raise_dropbox_error_for_resp).
+_SDK_ANSWER_ERRORS: tuple[type[BaseException], ...] = (
+    AssertionError,
+    ValueError,
+    TypeError,
+    KeyError,
+    IndexError,
+    AttributeError,
+    RecursionError,
+)
+try:
+    from dropbox.exceptions import DropboxException
+    from stone.backends.python_rsrc.stone_validators import ValidationError
+
+    _SDK_ANSWER_ERRORS += (DropboxException, ValidationError)
+except ImportError:  # pragma: no cover - SDK absent: nothing to guard
+    pass
+
+
+class _GuardedDropbox:
+    """The SDK client, with every call failing as ApiError or OSError.
+
+    ApiError passes unchanged (the methods below turn it into an OSError
+    with their own message, and is_dir / exists read it as "no"); any
+    other failure inside an SDK call becomes an OSError, which is what
+    the pane and the transfer layer handle. Only the SDK call is
+    guarded: errors in this module's own code are not masked.
+    """
+
+    def __init__(self, dbx) -> None:
+        self._sdk = dbx
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._sdk, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args, **kwargs):
+            try:
+                return attr(*args, **kwargs)
+            except ApiError:
+                raise
+            except _SDK_ANSWER_ERRORS as exc:
+                raise OSError(f"Dropbox {name} failed: {type(exc).__name__}: {exc}") from exc
+
+        return call
 
 
 class _SpooledWriter:
@@ -99,7 +154,7 @@ class _SpooledWriter:
             self.close()
 
 
-class DropboxSession:
+class DropboxSession(SessionLifecycle):
     """Dropbox backend implementing the FileBackend protocol.
 
     Uses the official ``dropbox`` Python SDK.  Authentication is handled
@@ -365,7 +420,7 @@ class DropboxSession:
     def _ensure_connected(self):
         if self._dbx is None:
             raise OSError("Not connected to Dropbox")
-        return self._dbx
+        return _GuardedDropbox(self._dbx)
 
     @staticmethod
     def _api_path(path: str) -> str:
@@ -392,11 +447,16 @@ class DropboxSession:
 
         try:
             result = dbx.files_list_folder(api_path)
+            cursors: set[str] = set()
             while True:
                 for entry in result.entries:
                     items.append(self._entry_to_item(entry))
                 if not result.has_more:
                     break
+                # A cursor handed back twice would page forever.
+                if result.cursor in cursors:
+                    raise OSError(f"Cannot list {path}: the server repeats a paging cursor")
+                cursors.add(result.cursor)
                 result = dbx.files_list_folder_continue(result.cursor)
         except ApiError as exc:
             raise OSError(f"Cannot list {path}: {exc}") from exc
@@ -560,7 +620,7 @@ class DropboxSession:
 
         dbx = self._ensure_connected()
         try:
-            resp = dbx.files_list_revisions(self._norm(path), limit=100)
+            resp = dbx.files_list_revisions(self._api_path(path), limit=100)
         except Exception as exc:
             log.warning("Dropbox list_versions(%s) failed: %s", path, exc)
             return []
@@ -587,7 +647,7 @@ class DropboxSession:
         """Download a historical revision as a BytesIO stream."""
         dbx = self._ensure_connected()
         try:
-            md, resp = dbx.files_download(self._norm(path), rev=version_id)
+            md, resp = dbx.files_download(self._api_path(path), rev=version_id)
         except Exception as exc:
             raise OSError(f"Dropbox open_version_read failed: {exc}") from exc
         return io.BytesIO(resp.content)
@@ -596,7 +656,7 @@ class DropboxSession:
         """Dropbox files_copy_v2 — server-side."""
         dbx = self._ensure_connected()
         try:
-            dbx.files_copy_v2(self._norm(src), self._norm(dst))
+            dbx.files_copy_v2(self._api_path(src), self._api_path(dst))
         except Exception as exc:
             raise OSError(f"Dropbox copy {src} -> {dst} failed: {exc}") from exc
 
@@ -626,7 +686,7 @@ class DropboxSession:
         )
 
         dbx = self._ensure_connected()
-        norm = self._norm(path)
+        norm = self._api_path(path)
         vis = RequestedVisibility.public if public else RequestedVisibility.team_only
         try:
             link = dbx.sharing_create_shared_link_with_settings(
@@ -700,7 +760,7 @@ class DropboxSession:
         """
         dbx = self._ensure_connected()
         try:
-            meta = dbx.files_get_metadata(self._norm(path))
+            meta = dbx.files_get_metadata(self._api_path(path))
         except Exception as exc:
             raise OSError(f"Cannot stat {path}: {exc}") from exc
         ch = getattr(meta, "content_hash", None)
@@ -721,7 +781,13 @@ class DropboxSession:
                 is_dir=True,
             )
         elif isinstance(entry, FileMetadata):
-            modified = entry.server_modified or datetime.fromtimestamp(0)
+            modified = entry.server_modified
+            if modified is None:
+                modified = datetime.fromtimestamp(0)
+            elif modified.tzinfo is None:
+                # The SDK parses "...Z" into a naive datetime: it is UTC,
+                # and FileItem reads a naive value as local time.
+                modified = modified.replace(tzinfo=timezone.utc)
             return FileItem(
                 name=entry.name,
                 size=entry.size or 0,

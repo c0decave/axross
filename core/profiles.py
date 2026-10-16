@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +18,9 @@ from core.credentials import (
     get_password,
     get_proxy_password,
     get_secret,
+    profile_name_problem,
+    proxy_entry,
+    secret_entry,
     store_password,
     store_proxy_password,
     store_secret,
@@ -613,6 +618,10 @@ class ProfileManager:
 
     def __init__(self):
         self._profiles: dict[str, ConnectionProfile] = {}
+        # True while PROFILES_FILE holds data load() could not take in
+        # completely. The next save() would replace that file with only
+        # what is in memory, so it first keeps a copy of the original.
+        self._file_not_fully_loaded = False
         self.load()
 
     def load(self) -> None:
@@ -625,8 +634,11 @@ class ProfileManager:
             if not isinstance(data, dict):
                 raise ValueError("profile file root must be a JSON object")
             loaded: dict[str, ConnectionProfile] = {}
+            skipped = False
             for name, profile in data.items():
                 if not isinstance(name, str) or not isinstance(profile, dict):
+                    log.warning("Skipping invalid profile entry %r", name)
+                    skipped = True
                     continue
                 try:
                     loaded[name] = self._restore_sensitive_fields(
@@ -634,10 +646,49 @@ class ProfileManager:
                     )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Skipping invalid profile %r: %s", name, exc)
+                    skipped = True
             self._profiles = loaded
+            self._file_not_fully_loaded = skipped
             log.info("Loaded %d profiles from %s", len(self._profiles), PROFILES_FILE)
         except (json.JSONDecodeError, OSError, ValueError) as e:
+            self._file_not_fully_loaded = True
             log.error("Failed to load profiles: %s", e)
+
+    def _preserve_unloaded_file(self) -> bool:
+        """Copy the profile file load() could not take in completely
+        next to it (``profiles.json.corrupt-<time>``, 0600) before save()
+        replaces it. Returns False when the copy could not be made."""
+        if not self._file_not_fully_loaded:
+            return True
+        if not PROFILES_FILE.exists():
+            self._file_not_fully_loaded = False
+            return True
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        for attempt in range(100):
+            suffix = f".corrupt-{stamp}" + (f"-{attempt}" if attempt else "")
+            backup = PROFILES_FILE.with_name(PROFILES_FILE.name + suffix)
+            try:
+                fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                continue
+            except OSError as e:
+                log.error("Could not back up unreadable profiles file: %s", e)
+                return False
+            try:
+                with os.fdopen(fd, "wb") as dst, open(PROFILES_FILE, "rb") as src:
+                    shutil.copyfileobj(src, dst)
+            except OSError as e:
+                log.error("Could not back up unreadable profiles file: %s", e)
+                try:
+                    os.unlink(backup)
+                except OSError:
+                    pass
+                return False
+            log.warning("Kept the unreadable profiles file as %s", backup)
+            self._file_not_fully_loaded = False
+            return True
+        log.error("Could not back up unreadable profiles file: no free backup name")
+        return False
 
     def save(self) -> None:
         target_dir = PROFILES_FILE.parent
@@ -646,6 +697,9 @@ class ProfileManager:
             os.chmod(target_dir, 0o700)
         except OSError:
             log.debug("Could not set permissions on %s", target_dir, exc_info=True)
+        if not self._preserve_unloaded_file():
+            log.error("Not saving profiles: %s would be overwritten", PROFILES_FILE)
+            return
         data = {name: profile.to_dict() for name, profile in self._profiles.items()}
         payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
         try:
@@ -691,24 +745,42 @@ class ProfileManager:
         return sorted(self._profiles.keys())
 
     def add(self, profile: ConnectionProfile) -> None:
-        failed_secret_fields = self._sync_sensitive_fields(profile)
+        problem = profile_name_problem(profile.name)
+        if problem:
+            raise ValueError(f"Profile name {profile.name!r} {problem}")
+        failed_secret_fields = self._sync_sensitive_fields(
+            profile, self._foreign_entries(profile.name)
+        )
         if failed_secret_fields:
             failed = ", ".join(sorted(failed_secret_fields))
             raise RuntimeError(f"Could not store secret fields in keyring: {failed}")
         self._profiles[profile.name] = profile
         if not profile.store_password:
             delete_password(profile.name)
-        if not profile.store_proxy_password:
+        if not profile.store_proxy_password and proxy_entry(profile.name) not in self._profiles:
             delete_proxy_password(profile.name)
         self.save()
 
     def remove(self, name: str) -> None:
         if name in self._profiles:
-            delete_password(name)
-            delete_proxy_password(name)
-            self._delete_sensitive_fields(name)
+            if profile_name_problem(name):
+                # A profile file from before the name check: this name's
+                # entries are another secret's entries, so none is deleted.
+                log.warning("Profile %r shares keyring entries; leaving them in place", name)
+            else:
+                delete_password(name)
+                if proxy_entry(name) not in self._profiles:
+                    delete_proxy_password(name)
+                self._delete_sensitive_fields(name, self._foreign_entries(name))
             del self._profiles[name]
             self.save()
+
+    def _foreign_entries(self, name: str) -> set[str]:
+        """Entries derived from *name* that are another loaded profile's
+        password entry (only possible with a pre-check profile file)."""
+        return {secret_entry(name, field) for field in SENSITIVE_PROFILE_FIELDS} & (
+            set(self._profiles) - {name}
+        )
 
     def all_profiles(self) -> list[ConnectionProfile]:
         return list(self._profiles.values())
@@ -722,18 +794,21 @@ class ProfileManager:
         return profile
 
     @staticmethod
-    def _sync_sensitive_fields(profile: ConnectionProfile) -> list[str]:
+    def _sync_sensitive_fields(
+        profile: ConnectionProfile, foreign: set[str] = frozenset()
+    ) -> list[str]:
         failed_fields: list[str] = []
         for field_name in SENSITIVE_PROFILE_FIELDS:
             value = getattr(profile, field_name, "")
             if value:
                 if not store_secret(profile.name, field_name, value):
                     failed_fields.append(field_name)
-            else:
+            elif secret_entry(profile.name, field_name) not in foreign:
                 delete_secret(profile.name, field_name)
         return failed_fields
 
     @staticmethod
-    def _delete_sensitive_fields(profile_name: str) -> None:
+    def _delete_sensitive_fields(profile_name: str, foreign: set[str] = frozenset()) -> None:
         for field_name in SENSITIVE_PROFILE_FIELDS:
-            delete_secret(profile_name, field_name)
+            if secret_entry(profile_name, field_name) not in foreign:
+                delete_secret(profile_name, field_name)

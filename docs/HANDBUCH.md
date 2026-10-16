@@ -325,6 +325,15 @@ Rechtsklick → Kontextmenü:
 **Move** statt Copy: Rechtsklick → "Move to Target Pane". Nach
 erfolgreichem Transfer wird die Quell-Datei gelöscht.
 
+**Namenskonflikte**: Vor dem ersten Job prüft axross im Hintergrund,
+welche Namen im Ziel schon existieren, und fragt pro Name: Overwrite,
+Overwrite if Newer, Skip, Rename (`name (1).ext`) — optional für alle
+restlichen Konflikte — oder Cancel (dann wird nichts kopiert). Ordner
+werden zusammengeführt; gefragt wird nach den Konflikten darin. Ein
+übersprungener Move lässt die Quelle stehen. Taucht eine Datei erst
+nach der Abfrage im Ziel auf, bricht der Job ab, statt sie zu
+überschreiben. Scripting/MCP behalten ihr explizites `overwrite=`.
+
 **Resume**: Wird ein Transfer abgebrochen (Verbindungsabbruch,
 manueller Cancel), bleibt eine Partial-Datei als `.filename.part-
 <job-id>` im Ziel-Verzeichnis. Beim nächsten Transfer-Versuch der
@@ -453,7 +462,10 @@ Google Drive (revision-history), OneDrive (history), Azure Blob
 
 ### Image Viewer / Previews
 
-`F3` oder Doppelklick auf ein Bild. Geht durch `core.previews`:
+`F3` oder Doppelklick auf ein Bild. `Ctrl+M` Maximize / Restore, `F11`
+Fullscreen (Esc verlässt Fullscreen, nochmal Esc schließt); Größe,
+Position und Maximize-Zustand werden beim Schließen in `session.json`
+(`window.viewers`) gemerkt. Geht durch `core.previews`:
 
 - Strikte MIME-Allowlist (PNG, JPEG, WebP, GIF, BMP, TIFF; **SVG
   bewusst ausgeschlossen** — SVG kann JavaScript enthalten).

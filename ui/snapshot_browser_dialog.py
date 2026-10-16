@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from datetime import datetime
 
 from PyQt6.QtCore import Qt
@@ -210,9 +211,14 @@ class SnapshotBrowserDialog(QDialog):
         self._job_ctx = {"op": "save", "entry": entry, "target": target}
 
         def work(cancel, progress) -> int:
+            # Copied into a sibling temp file and moved over the target only
+            # when complete: a failed or cancelled save must not cost the
+            # user the file they chose to replace.
             done = 0
+            folder, name = os.path.split(target)
+            partial = os.path.join(folder, f".{name}.{uuid.uuid4().hex[:12]}.part")
             try:
-                with SB.read_snapshot(entry) as src, open(target, "wb") as dst:
+                with SB.read_snapshot(entry) as src, open(partial, "xb") as dst:
                     while True:
                         if cancel():
                             break
@@ -223,10 +229,16 @@ class SnapshotBrowserDialog(QDialog):
                         done += len(chunk)
                         progress(done, 0, "")
             except BaseException:
-                self._remove_partial(target)
+                self._remove_partial(partial)
                 raise
             if cancel():
-                self._remove_partial(target)
+                self._remove_partial(partial)
+                return done
+            try:
+                os.replace(partial, target)
+            except BaseException:
+                self._remove_partial(partial)
+                raise
             return done
 
         self._job.start(work)

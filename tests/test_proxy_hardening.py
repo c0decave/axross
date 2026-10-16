@@ -235,6 +235,42 @@ class PacLimitTest(unittest.TestCase):
         )
         self.assertEqual(got[0].kind, "direct")
 
+    # Each step may touch a whole MAX_STRING string; 200 000 such steps
+    # ran for minutes (measured before this limit: 222 s for split("").join("") in a loop).
+    _HEAVY = (
+        'var s="a"; for (var i=0;i<16;i++){ s = s + s; } var n = 0; '
+        'for (var k=0;k<1000;k++){ n = s.split("").join("").length; } return "DIRECT";'
+    )
+
+    def test_sad_expensive_steps_hit_the_time_limit(self) -> None:
+        import time
+
+        with mock.patch.object(pac, "MAX_SECONDS", 0.5, create=True):
+            start = time.monotonic()
+            with self.assertRaises(pac.PacError) as ctx:
+                _run(self._HEAVY)
+            self.assertLess(time.monotonic() - start, 2.0)
+        self.assertIn("time limit", str(ctx.exception))
+
+    def test_sad_endless_expensive_loop_ends_within_the_default_limit(self) -> None:
+        import time
+
+        self.assertLessEqual(pac.MAX_SECONDS, 5.0)
+        start = time.monotonic()
+        with self.assertRaises(pac.PacError):
+            _run('var s="a"; for (var i=0;i<16;i++){ s = s + s; } while (true) { s.split(""); }')
+        self.assertLess(time.monotonic() - start, pac.MAX_SECONDS + 1.5)
+
+    def test_edge_the_time_limit_applies_per_lookup(self) -> None:
+        script = pac.PacScript(
+            "function FindProxyForURL(url, host) {"
+            ' var s="a"; for (var i=0;i<12;i++){ s = s + s; }'
+            ' for (var k=0;k<20;k++){ s.split("").join(""); } return "DIRECT"; }'
+        )
+        with mock.patch.object(pac, "MAX_SECONDS", 1.0, create=True):
+            for _ in range(5):
+                self.assertEqual(script.find("http://h/", "h")[0].kind, "direct")
+
     def test_sad_a_truncated_script_is_a_pac_error(self) -> None:
         with self.assertRaises(pac.PacError):
             pac.PacScript("function FindProxyForURL(url, host) { for(var")

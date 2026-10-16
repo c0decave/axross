@@ -25,7 +25,9 @@ Uses only Python stdlib (``poplib``, ``email``).
 
 from __future__ import annotations
 
+import contextlib
 import email
+import email.errors
 import email.header
 import email.policy
 import io
@@ -35,6 +37,8 @@ import re
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
+from core.session_lock import liveness_check, serialized
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -65,11 +69,16 @@ def _decode_header(raw: str | bytes | None) -> str:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", errors="replace")
     parts: list[str] = []
-    for piece, charset in email.header.decode_header(raw):
+    try:
+        pieces = email.header.decode_header(raw)
+    except email.errors.HeaderParseError:
+        # A B-encoded word that is not base64: show it as the server sent it.
+        return raw.strip()
+    for piece, charset in pieces:
         if isinstance(piece, bytes):
             try:
                 parts.append(piece.decode(charset or "utf-8", errors="replace"))
-            except (LookupError, UnicodeDecodeError):
+            except (LookupError, ValueError):  # unknown charset, NUL in its name
                 parts.append(piece.decode("utf-8", errors="replace"))
         else:
             parts.append(piece)
@@ -154,7 +163,7 @@ def _msgno_from_path(path: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-class Pop3Session:
+class Pop3Session(SessionLifecycle):
     """POP3 read-only backend implementing the FileBackend protocol."""
 
     # POP3 has no folder hierarchy and no mutable surface — these flags
@@ -264,6 +273,7 @@ class Pop3Session:
         return f"POP3{'S' if self._use_ssl else ''}: {self._username}@{self._host}:{self._port}"
 
     @property
+    @liveness_check
     def connected(self) -> bool:
         if self._pop is None:
             return False
@@ -274,6 +284,7 @@ class Pop3Session:
         except Exception:
             return False
 
+    @serialized
     def disconnect(self) -> None:
         """Issue QUIT to commit any DELE flags and close the socket.
         Idempotent; safe to call when not connected."""
@@ -319,6 +330,7 @@ class Pop3Session:
     # FileBackend — read surface
     # ------------------------------------------------------------------
 
+    @serialized
     def list_dir(self, path: str) -> list[FileItem]:
         """List all messages in the mailbox.
 
@@ -382,6 +394,7 @@ class Pop3Session:
             log.debug("POP3 TOP %d failed: %s", msgno, exc)
             return ""
 
+    @serialized
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
         if path == "/":
@@ -396,10 +409,11 @@ class Pop3Session:
         msgno = _msgno_from_path(path)
         pop = self._ensure_connected()
         try:
-            _resp, lines, _octets = pop.list(msgno)
-            text = lines.decode("ascii", errors="replace") if isinstance(lines, bytes) else lines
+            # ``LIST n`` is a single-line reply: ``+OK <msgno> <octets>``.
+            resp = pop.list(msgno)
+            text = resp.decode("ascii", errors="replace") if isinstance(resp, bytes) else resp
             parts = text.strip().split()
-            size = int(parts[1]) if len(parts) >= 2 else 0
+            size = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
         except poplib.error_proto as exc:
             raise OSError(f"POP3 stat({path}): {exc}") from exc
         return FileItem(
@@ -421,28 +435,59 @@ class Pop3Session:
         except OSError:
             return False
 
+    @serialized
     def open_read(self, path: str, mode: str = "rb") -> IO:
         path = self.normalize(path)
         msgno = _msgno_from_path(path)
         pop = self._ensure_connected()
         try:
-            _resp, lines, octets = pop.retr(msgno)
+            lines = self._retr_capped(pop, msgno, MAX_MESSAGE_BYTES)
         except poplib.error_proto as exc:
             raise OSError(f"POP3 RETR({path}): {exc}") from exc
-        if octets and octets > MAX_MESSAGE_BYTES:
-            raise OSError(
-                f"POP3 message {msgno} is {octets} bytes — exceeds the "
-                f"{MAX_MESSAGE_BYTES} byte cap. Use a mail client to fetch.",
-            )
         blob = b"\r\n".join(
             line if isinstance(line, bytes) else line.encode("utf-8", "replace") for line in lines
         )
         return io.BytesIO(blob)
 
+    def _retr_capped(self, pop, msgno: int, cap: int) -> list[bytes]:
+        """``RETR msgno`` with the size cap applied while reading.
+
+        poplib's retr() buffers the whole multi-line answer before
+        returning, so checking the cap afterwards let a server that never
+        ends a message grow memory without bound. This is poplib's
+        _getlongresp() loop with the cap inside it; a message over the cap
+        drops the connection (the rest of the answer is still on the wire)
+        and the next call reconnects.
+        """
+        pop._putcmd(f"RETR {msgno}")
+        pop._getresp()
+        lines: list[bytes] = []
+        octets = 0
+        line, o = pop._getline()
+        while line != b".":
+            if line.startswith(b".."):
+                o -= 1
+                line = line[1:]
+            octets += o
+            if octets > cap:
+                log.warning(
+                    "POP3 message %d exceeds the %d byte cap; dropping the connection", msgno, cap
+                )
+                with contextlib.suppress(Exception):
+                    pop.close()
+                self._pop = None
+                raise OSError(
+                    f"POP3 message {msgno} exceeds the {cap} byte cap. Use a mail client to fetch.",
+                )
+            lines.append(line)
+            line, o = pop._getline()
+        return lines
+
     # ------------------------------------------------------------------
     # FileBackend — write surface (refused; POP3 is read-only)
     # ------------------------------------------------------------------
 
+    @serialized
     def remove(self, path: str, recursive: bool = False) -> None:
         """DELE the message. POP3 only *flags* the message for
         deletion; the actual removal happens on QUIT (when the
@@ -486,6 +531,7 @@ class Pop3Session:
     # POP3-specific verbs (slice 4 of API_GAPS)
     # ------------------------------------------------------------------
 
+    @serialized
     def stat_mailbox(self) -> tuple[int, int]:
         """``STAT`` — returns ``(message_count, total_octets)``. Cheap;
         every POP3 server supports it."""
@@ -493,6 +539,7 @@ class Pop3Session:
         count, octets = pop.stat()
         return (int(count), int(octets))
 
+    @serialized
     def uidl(self, msgno: int | None = None) -> dict[int, str] | str:
         """Server-assigned unique-ID listing. Without ``msgno``,
         returns a dict ``{msgno: uid}`` covering every message in the
@@ -515,6 +562,7 @@ class Pop3Session:
                 out[int(tok[0])] = tok[1]
         return out
 
+    @serialized
     def top(self, msgno: int, n_lines: int = 10) -> bytes:
         """``TOP`` — returns headers + first ``n_lines`` of body.
         Useful for triage without pulling whole messages."""
@@ -523,17 +571,20 @@ class Pop3Session:
         # poplib returns lines as bytes; reassemble with CRLF.
         return b"\r\n".join(line if isinstance(line, bytes) else line.encode() for line in lines)
 
+    @serialized
     def dele(self, msgno: int) -> None:
         """Mark a message for deletion. Actual delete happens on
         clean QUIT (``self.disconnect()``)."""
         pop = self._ensure_connected()
         pop.dele(int(msgno))
 
+    @serialized
     def rset(self) -> None:
         """``RSET`` — undo all DELE marks issued in this session."""
         pop = self._ensure_connected()
         pop.rset()
 
+    @serialized
     def noop(self) -> None:
         """``NOOP`` keep-alive."""
         pop = self._ensure_connected()

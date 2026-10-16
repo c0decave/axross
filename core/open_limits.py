@@ -8,6 +8,10 @@ and across panes without a restart.
 
 The viewers read the whole file into memory, which is why a cap exists
 at all; the ceiling below keeps a typo from asking for the moon.
+
+:func:`read_setting` / :func:`write_setting` give other small preferences
+(the metadata tools' write mode and confirmation) a place in the same
+file instead of a store of their own.
 """
 
 from __future__ import annotations
@@ -70,9 +74,26 @@ def set_max_open_mb(mb: int) -> None:
         raise TypeError(f"max open size must be an integer number of MB, got {mb!r}")
     if not _valid(mb):
         raise ValueError(f"max open size must be {MIN_MAX_OPEN_MB}-{MAX_MAX_OPEN_MB} MB, got {mb}")
+    write_setting(_KEY, mb)
+    log.info("Open size limit set to %d MB", mb)
+
+
+def read_setting(key: str, default=None):
+    """One value of ``settings.json``, or *default* when it is missing or
+    the file cannot be read. Callers validate the type themselves: the file
+    is hand-editable."""
+    return _read_all().get(key, default)
+
+
+def write_setting(key: str, value) -> None:
+    """Store one JSON value in ``settings.json``, keeping every other key.
+
+    The small preferences of several features share this file (the open
+    size limit, the metadata tools' write mode); the write is atomic and
+    the file stays 0600."""
     with _LOCK:
         data = _read_all()
-        data[_KEY] = mb
+        data[key] = value
         target_dir = SETTINGS_PATH.parent
         target_dir.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(dir=target_dir, prefix=".settings.", suffix=".tmp")
@@ -87,7 +108,6 @@ def set_max_open_mb(mb: int) -> None:
             except OSError:
                 pass
             raise
-    log.info("Open size limit set to %d MB", mb)
 
 
 __all__ = [
@@ -97,5 +117,7 @@ __all__ = [
     "describe_limit",
     "max_open_bytes",
     "max_open_mb",
+    "read_setting",
     "set_max_open_mb",
+    "write_setting",
 ]

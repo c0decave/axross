@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import urlsplit
 
@@ -59,6 +59,8 @@ def _dsn_quote(value: object) -> str:
 
 class PostgresFsSession(DbFsBackend):
     """PostgreSQL-backed FileBackend."""
+
+    _DRIVER_ERRORS = (psycopg.Error,) if psycopg is not None else ()
 
     def __init__(
         self,
@@ -286,7 +288,7 @@ class PostgresFsSession(DbFsBackend):
                     row["parent"],
                     bool(row.get("is_dir")),
                     int(row.get("mode") or 0o644),
-                    row.get("mtime") or datetime.now(),
+                    row.get("mtime") or datetime.now(timezone.utc),
                     row.get("content"),
                 ),
             )

@@ -32,15 +32,71 @@ for ``/``.
 
 from __future__ import annotations
 
+import functools
 import io
 import logging
 import posixpath
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO, Any, Iterable
 
+from core.answer_fields import as_size
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
+
+
+def parse_mode(value, default: int) -> int:
+    """Permission bits from a stored ``mode``, else *default*.
+
+    The store is shared: any client can put anything in the field. An
+    int (not bool) or a decimal / ``0o`` octal string (Redis stores
+    text) is accepted and masked to the permission bits; anything else -
+    no number, negative, NaN - gives *default*.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value & 0o7777 if value >= 0 else default
+    if isinstance(value, bytes):
+        value = value.decode("ascii", "replace")
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            if text.startswith("0o"):
+                return int(text[2:], 8) & 0o7777
+            if text.isascii() and text.isdigit() and len(text) <= 12:
+                return int(text) & 0o7777
+        except ValueError:
+            return default
+    return default
+
+
+def _driver_errors_as_oserror(method):
+    """A database driver's own errors as OSError.
+
+    redis.RedisError, pymongo.PyMongoError and psycopg.Error are not
+    OSError, so a dropped connection or a server-side error answer
+    (Redis WRONGTYPE for a key of another type) escaped to callers that
+    handle OSError. Each backend names its driver's base class in
+    ``_DRIVER_ERRORS``.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except self._DRIVER_ERRORS as exc:
+            raise OSError(f"{type(self).__name__}.{method.__name__}: {exc}") from exc
+
+    return wrapper
+
+
+def _now() -> datetime:
+    """The write timestamp, AWARE. A naive value means something different
+    to every store: BSON reads it as UTC, a Postgres TIMESTAMPTZ column in
+    the session's zone (the server's setting, not this machine's)."""
+    return datetime.now(timezone.utc)
 
 
 class _RowAdapter:
@@ -80,7 +136,7 @@ class _RowAdapter:
 # ---------------------------------------------------------------------------
 
 
-class DbFsBackend(_RowAdapter):
+class DbFsBackend(_RowAdapter, SessionLifecycle):
     """FileBackend implementation backed by ``_RowAdapter`` ops.
 
     Concrete subclasses inherit from this AND from ``_RowAdapter``
@@ -89,6 +145,10 @@ class DbFsBackend(_RowAdapter):
 
     supports_symlinks = False
     supports_hardlinks = False
+
+    #: The database driver's exception base classes; see
+    #: _driver_errors_as_oserror. Empty when the driver is missing.
+    _DRIVER_ERRORS: tuple[type[BaseException], ...] = ()
 
     # ------------------------------------------------------------------
     # Identity / lifecycle — subclasses set these.
@@ -157,6 +217,7 @@ class DbFsBackend(_RowAdapter):
     # FileBackend — read surface
     # ------------------------------------------------------------------
 
+    @_driver_errors_as_oserror
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
         # Implicit root: any path that doesn't exist as a row but
@@ -168,9 +229,14 @@ class DbFsBackend(_RowAdapter):
                 raise OSError(f"Not a directory: {path}")
         items: list[FileItem] = []
         for row in self._db_list_meta(path):
-            items.append(self._row_to_item(row))
+            item = self._row_to_item(row)
+            if item is None:
+                log.warning("%s: skipping a row without a path under %s", type(self).__name__, path)
+                continue
+            items.append(item)
         return items
 
+    @_driver_errors_as_oserror
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
         if path == "/":
@@ -185,8 +251,12 @@ class DbFsBackend(_RowAdapter):
         row = self._db_get_meta(path)
         if row is None:
             raise OSError(f"No such path: {path}")
-        return self._row_to_item(row)
+        item = self._row_to_item(row)
+        if item is None:
+            raise OSError(f"Unusable row for {path}: it has no path")
+        return item
 
+    @_driver_errors_as_oserror
     def is_dir(self, path: str) -> bool:
         path = self.normalize(path)
         if path == "/":
@@ -194,12 +264,14 @@ class DbFsBackend(_RowAdapter):
         row = self._db_get_meta(path)
         return bool(row and row.get("is_dir"))
 
+    @_driver_errors_as_oserror
     def exists(self, path: str) -> bool:
         path = self.normalize(path)
         if path == "/":
             return True
         return self._db_get_meta(path) is not None
 
+    @_driver_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
         path = self.normalize(path)
         row = self._db_get(path)
@@ -207,8 +279,19 @@ class DbFsBackend(_RowAdapter):
             raise OSError(f"No such path: {path}")
         if row.get("is_dir"):
             raise OSError(f"Is a directory: {path}")
-        data = row.get("content") or b""
-        return io.BytesIO(bytes(data))
+        return io.BytesIO(self._content_bytes(row, path))
+
+    @staticmethod
+    def _content_bytes(row: dict, path: str) -> bytes:
+        """The stored body as bytes. ``bytes(value)`` of an int would be
+        that many zero bytes (or a MemoryError for a huge one), of a str
+        or a date a TypeError; content of any other type is an error."""
+        data = row.get("content")
+        if data is None:
+            return b""
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            return bytes(data)
+        raise OSError(f"Unusable content for {path}: {type(data).__name__}, not bytes")
 
     def readlink(self, path: str) -> str:
         raise OSError("DB-FS backends do not model symlinks")
@@ -223,6 +306,7 @@ class DbFsBackend(_RowAdapter):
     # FileBackend — write surface
     # ------------------------------------------------------------------
 
+    @_driver_errors_as_oserror
     def mkdir(self, path: str) -> None:
         # Strict normalise so mkdir("..") / mkdir("/foo/../..") /
         # mkdir("/") fail loudly instead of being silent no-ops that
@@ -245,11 +329,12 @@ class DbFsBackend(_RowAdapter):
                 "parent": parent,
                 "is_dir": True,
                 "mode": 0o755,
-                "mtime": datetime.now(),
+                "mtime": _now(),
                 "content": None,
             }
         )
 
+    @_driver_errors_as_oserror
     def remove(self, path: str, recursive: bool = False) -> None:
         path = self.normalize(path)
         if path == "/":
@@ -265,6 +350,7 @@ class DbFsBackend(_RowAdapter):
         else:
             self._db_delete(path)
 
+    @_driver_errors_as_oserror
     def rename(self, src: str, dst: str) -> None:
         src = self.normalize(src)
         dst = self.normalize(dst)
@@ -293,7 +379,7 @@ class DbFsBackend(_RowAdapter):
                 "parent": dst_parent,
                 "is_dir": row.get("is_dir", False),
                 "mode": row.get("mode", 0o644),
-                "mtime": datetime.now(),
+                "mtime": _now(),
                 "content": row.get("content"),
             }
         )
@@ -303,6 +389,7 @@ class DbFsBackend(_RowAdapter):
                 self.rename(child["path"], child_dst)
         self._db_delete(src)
 
+    @_driver_errors_as_oserror
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         path = self.normalize(path)
         if path == "/":
@@ -315,9 +402,10 @@ class DbFsBackend(_RowAdapter):
             raise OSError(f"Is a directory: {path}")
         prelude = b""
         if append and existing is not None:
-            prelude = bytes(existing.get("content") or b"")
+            prelude = self._content_bytes(existing, path)
         return _DbWriter(self, path, prelude)
 
+    @_driver_errors_as_oserror
     def chmod(self, path: str, mode: int) -> None:
         path = self.normalize(path)
         if path == "/":
@@ -326,6 +414,7 @@ class DbFsBackend(_RowAdapter):
             raise OSError(f"No such path: {path}")
         self._db_update(path, mode=int(mode))
 
+    @_driver_errors_as_oserror
     def copy(self, src: str, dst: str) -> None:
         src = self.normalize(src)
         dst = self.normalize(dst)
@@ -349,7 +438,7 @@ class DbFsBackend(_RowAdapter):
                 "parent": dst_parent,
                 "is_dir": False,
                 "mode": row.get("mode", 0o644),
-                "mtime": datetime.now(),
+                "mtime": _now(),
                 "content": row.get("content"),
             }
         )
@@ -366,14 +455,21 @@ class DbFsBackend(_RowAdapter):
     # Internal: row → FileItem
     # ------------------------------------------------------------------
 
-    def _row_to_item(self, row: dict) -> FileItem:
-        path = row["path"]
+    def _row_to_item(self, row: dict) -> FileItem | None:
+        """The FileItem for a stored row; None for a row without a path.
+
+        Rows are read with the type each field should have: the store is
+        shared, and a field of another type must not become a ValueError
+        or TypeError in the pane."""
+        path = row.get("path")
+        if not isinstance(path, str) or not path.strip("/"):
+            return None
         is_dir = bool(row.get("is_dir"))
         if "size" in row:
-            size = 0 if is_dir else int(row["size"] or 0)
+            size = 0 if is_dir else as_size(row["size"], digit_strings=True)
         else:
             content = row.get("content")
-            size = 0 if is_dir or content is None else len(content)
+            size = 0 if is_dir or not isinstance(content, (bytes, bytearray)) else len(content)
         mtime = row.get("mtime")
         if isinstance(mtime, str):
             try:
@@ -386,7 +482,8 @@ class DbFsBackend(_RowAdapter):
             name=posixpath.basename(path) or path,
             size=size,
             modified=mtime,
-            permissions=int(row.get("mode") or (0o755 if is_dir else 0o644)),
+            # (a stored 0 has always read as "unset")
+            permissions=parse_mode(row.get("mode") or None, 0o755 if is_dir else 0o644),
             is_dir=is_dir,
             is_link=False,
         )
@@ -427,27 +524,32 @@ class _DbWriter:
             return
         self._closed = True
         try:
-            data = self._buf.getvalue()
-            existing = self._backend._db_get(self._path)
-            row = {
-                "path": self._path,
-                "parent": self._backend.parent(self._path),
-                "is_dir": False,
-                "mode": (existing or {}).get("mode") or 0o644,
-                "mtime": datetime.now(),
-                "content": data,
-            }
-            if existing is None:
-                self._backend._db_insert(row)
-            else:
-                self._backend._db_update(
-                    self._path,
-                    content=data,
-                    mtime=row["mtime"],
-                    is_dir=False,
-                )
+            self._commit()
+        except self._backend._DRIVER_ERRORS as exc:
+            raise OSError(f"Cannot write {self._path}: {exc}") from exc
         finally:
             self._buf.close()
+
+    def _commit(self) -> None:
+        data = self._buf.getvalue()
+        existing = self._backend._db_get(self._path)
+        row = {
+            "path": self._path,
+            "parent": self._backend.parent(self._path),
+            "is_dir": False,
+            "mode": (existing or {}).get("mode") or 0o644,
+            "mtime": _now(),
+            "content": data,
+        }
+        if existing is None:
+            self._backend._db_insert(row)
+        else:
+            self._backend._db_update(
+                self._path,
+                content=data,
+                mtime=row["mtime"],
+                is_dir=False,
+            )
 
     def discard(self) -> None:
         if self._closed:

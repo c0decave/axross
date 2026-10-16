@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
 import posixpath
@@ -16,8 +17,9 @@ from typing import IO, TYPE_CHECKING
 
 import paramiko
 
+from core.backend import SessionLifecycle
 from core.client_identity import SSH_LOCAL_VERSION, apply_paramiko_banner_override
-from core.path_policy import safe_join
+from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from core.profiles import ConnectionProfile
 from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
 from core.redaction import redact_text
@@ -51,6 +53,69 @@ def _read_limited_stream(stream, cap: int, label: str) -> bytes:
     return raw
 
 
+# What paramiko raises when the SFTP channel or the transport under it is
+# gone: SFTPClient turns EOF into SSHException("Server connection dropped")
+# (sftp_client._read_response); neither is an OSError.
+_SFTP_CONNECTION_ERRORS = (paramiko.SSHException, EOFError)
+
+
+def _sftp_errors_as_oserror(fn):
+    """Re-raise what paramiko raises for a bad answer from ``fn`` as
+    ``OSError``, the backend contract every caller (pane, transfers,
+    compare) handles: a lost connection, a protocol violation
+    (paramiko.SFTPError) and a name or link target that is not UTF-8
+    (paramiko decodes those strictly)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except _SFTP_CONNECTION_ERRORS as exc:
+            detail = str(exc) or type(exc).__name__
+            raise OSError(f"SFTP {fn.__name__}: connection to the server failed: {detail}") from exc
+        except (paramiko.SFTPError, UnicodeError) as exc:
+            raise OSError(f"SFTP {fn.__name__}: unusable answer from the server: {exc}") from exc
+
+    return wrapper
+
+
+def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAttributes]:
+    """``sftp.listdir_attr(path)`` with names decoded leniently.
+
+    SFTP v3 names are bytes and OpenSSH sends them as stored, so a latin-1
+    name is ordinary; paramiko decodes each strictly as UTF-8
+    (Message.get_text) and one such name made the whole folder unlistable
+    with UnicodeDecodeError. This is paramiko's listdir_attr loop with
+    ``errors="replace"`` - the FTP backend's choice for the same case: the
+    entry shows, and addressing it fails cleanly on the server.
+    """
+    from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_NAME, CMD_OPENDIR, CMD_READDIR
+
+    def text(raw: bytes) -> str:
+        return raw.decode("utf-8", errors="replace")
+
+    t, msg = sftp._request(CMD_OPENDIR, sftp._adjust_cwd(path))
+    if t != CMD_HANDLE:
+        raise paramiko.SFTPError("Expected handle")
+    handle = msg.get_binary()
+    entries: list[paramiko.SFTPAttributes] = []
+    while True:
+        try:
+            t, msg = sftp._request(CMD_READDIR, handle)
+        except EOFError:  # end of the directory
+            break
+        if t != CMD_NAME:
+            raise paramiko.SFTPError("Expected name response")
+        for _ in range(msg.get_int()):
+            filename = text(msg.get_string())
+            longname = text(msg.get_string())
+            attr = paramiko.SFTPAttributes._from_msg(msg, filename, longname)
+            if filename not in (".", ".."):
+                entries.append(attr)
+    sftp._request(CMD_CLOSE, handle)
+    return entries
+
+
 class HostKeyVerificationError(paramiko.SSHException):
     """Base class for SSH host key verification errors."""
 
@@ -75,7 +140,7 @@ class HostKeyMismatchError(HostKeyVerificationError):
         self.fingerprint_sha256 = fingerprint_sha256
 
 
-class SSHSession:
+class SSHSession(SessionLifecycle):
     """SFTP file backend over SSH, implementing the FileBackend protocol."""
 
     def __init__(self, profile: ConnectionProfile):
@@ -374,19 +439,32 @@ class SSHSession:
 
     # --- FileBackend implementation ---
 
+    def _list_attrs(self, path: str) -> list[paramiko.SFTPAttributes]:
+        """The folder's entries; a name that is not UTF-8 does not make the
+        whole folder unlistable (see :func:`_listdir_attr`)."""
+        sftp = self.sftp
+        try:
+            return sftp.listdir_attr(path)
+        except UnicodeDecodeError:
+            log.debug("SFTP %s holds a name that is not UTF-8; listing it leniently", path)
+            return _listdir_attr(sftp, path)
+
+    @_sftp_errors_as_oserror
     def list_dir(self, path: str) -> list[FileItem]:
         items: list[FileItem] = []
-        for attr in self.sftp.listdir_attr(path):
+        for attr in self._list_attrs(path):
             items.append(self._attr_to_item(attr))
         from core.path_policy import drop_unsafe_names
 
         return drop_unsafe_names(items, origin=f"SFTP {path}")
 
+    @_sftp_errors_as_oserror
     def stat(self, path: str) -> FileItem:
         attr = self.sftp.lstat(path)
         name = posixpath.basename(path) or path
         return self._attr_to_item(attr, name_override=name)
 
+    @_sftp_errors_as_oserror
     def is_dir(self, path: str) -> bool:
         try:
             attr = self.sftp.lstat(path)
@@ -394,6 +472,7 @@ class SSHSession:
         except OSError:
             return False
 
+    @_sftp_errors_as_oserror
     def exists(self, path: str) -> bool:
         try:
             self.sftp.lstat(path)
@@ -401,9 +480,11 @@ class SSHSession:
         except FileNotFoundError:
             return False
 
+    @_sftp_errors_as_oserror
     def mkdir(self, path: str) -> None:
         self.sftp.mkdir(path)
 
+    @_sftp_errors_as_oserror
     def remove(self, path: str, recursive: bool = False) -> None:
         if self.is_dir(path):
             if recursive:
@@ -413,10 +494,13 @@ class SSHSession:
         else:
             self.sftp.remove(path)
 
-    def _rmtree(self, path: str) -> None:
+    _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
+
+    def _rmtree(self, path: str, depth: int = 0) -> None:
         """Recursively remove a directory tree via SFTP."""
+        check_tree_depth(path, depth, self._MAX_TREE_DEPTH)
         children = []
-        for attr in self.sftp.listdir_attr(path):
+        for attr in self._list_attrs(path):
             try:
                 child = safe_join(self, path, attr.filename)
             except ValueError as exc:
@@ -426,11 +510,12 @@ class SSHSession:
             children.append((attr, child))
         for attr, child in children:
             if stat_module.S_ISDIR(attr.st_mode or 0):
-                self._rmtree(child)
+                self._rmtree(child, depth + 1)
             else:
                 self.sftp.remove(child)
         self.sftp.rmdir(path)
 
+    @_sftp_errors_as_oserror
     def rename(self, src: str, dst: str) -> None:
         posix_rename = getattr(self.sftp, "posix_rename", None)
         if posix_rename is not None:
@@ -441,12 +526,14 @@ class SSHSession:
                 log.debug("posix-rename %s -> %s failed, falling back: %s", src, dst, e)
         self.sftp.rename(src, dst)
 
+    @_sftp_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
         # Pipelined, bounded read-ahead: see core.sftp_io.
         from core.sftp_io import open_read_ahead
 
         return open_read_ahead(lambda: self.sftp.open(path, "rb"))
 
+    @_sftp_errors_as_oserror
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         # WRITEs go out without waiting for each answer (one round trip per
         # 32 KiB otherwise); every answer is still checked: core.sftp_io.
@@ -457,7 +544,7 @@ class SSHSession:
     def normalize(self, path: str) -> str:
         try:
             return self.sftp.normalize(path)
-        except OSError:
+        except (OSError, UnicodeError, paramiko.SFTPError, *_SFTP_CONNECTION_ERRORS):
             return posixpath.normpath(path)
 
     def separator(self) -> str:
@@ -472,11 +559,18 @@ class SSHSession:
     def home(self) -> str:
         return self._home_dir
 
+    @_sftp_errors_as_oserror
     def chmod(self, path: str, mode: int) -> None:
         self.sftp.chmod(path, mode)
 
+    @_sftp_errors_as_oserror
     def readlink(self, path: str) -> str:
-        return self.sftp.readlink(path) or ""
+        target = self.sftp.readlink(path) or ""
+        if isinstance(target, bytes):
+            # paramiko hands back the raw bytes of a target that is not
+            # UTF-8 (sftp_client._to_unicode); names are decoded leniently.
+            target = target.decode("utf-8", errors="replace")
+        return target
 
     # SFTP speaks symlinks natively (paramiko's sftp.symlink); hardlinks
     # aren't in the SFTP v3 spec, so we fall back to a shell ``ln``

@@ -40,6 +40,7 @@ from core.sync import POLICIES, ConflictPolicy, plan_sync, summarize_plan
 from core.tree_compare import ComparedEntry, Status, summarize
 from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
+from ui.thread_lifetime import detach_running_thread
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +119,8 @@ class CompareDialog(QDialog):
 
     #: (side, absolute path) — the main window navigates and selects.
     reveal_requested = pyqtSignal(str, str)
-    #: (direction, [relative paths]) — routed to the transfer machinery.
+    #: (direction, [(absolute source, absolute destination)]) — routed to
+    #: the transfer machinery.
     copy_requested = pyqtSignal(str, list)
     #: (side, [absolute paths])
     delete_requested = pyqtSignal(str, list)
@@ -351,7 +353,7 @@ class CompareDialog(QDialog):
         entries = self.selected_entries()
         if not entries:
             return
-        directed: dict[str, list[str]] = {"to_left": [], "to_right": []}
+        directed: dict[str, list[tuple[str, str]]] = {"to_left": [], "to_right": []}
         ambiguous: list[str] = []
         for entry in entries:
             direction = copy_direction(entry)
@@ -359,9 +361,17 @@ class CompareDialog(QDialog):
                 ambiguous.append(entry.rel_path)
                 continue
             # to_right means the file lives on the LEFT and travels
-            # right, so the source path is the left one.
+            # right, so the source path is the left one. The destination
+            # travels along: the receiver must not fall back to whatever
+            # folder the target pane shows.
             source_side = "left" if direction == "to_right" else "right"
-            directed[direction].append(self.absolute_path(source_side, entry.rel_path))
+            dest_side = "right" if direction == "to_right" else "left"
+            directed[direction].append(
+                (
+                    self.absolute_path(source_side, entry.rel_path),
+                    self.absolute_path(dest_side, entry.rel_path),
+                )
+            )
 
         if ambiguous:
             QMessageBox.information(
@@ -509,15 +519,17 @@ class CompareDialog(QDialog):
             self._worker.cancel()
         self._thread.quit()
         if not self._thread.wait(5000):
-            # A late `done` must not reach a dialog that is on its way
-            # out: exec() returns, the last Python reference goes, and
-            # the slot would fire on a deleted C++ object.
-            if self._worker is not None:
-                try:
-                    self._worker.done.disconnect()
-                except TypeError:  # already disconnected
-                    pass
+            # Handed over rather than kept: this dialog is a child of the
+            # pane / the window, and destroying it with the thread still
+            # running aborts the process. A late `done` reaches nobody.
+            detach_running_thread(
+                self._thread,
+                *((self._worker.done,) if self._worker is not None else ()),
+                keep=(self._worker,),
+            )
             log.warning("compare: walk still running; left with a cancelled worker")
+            self._thread = None
+            self._worker = None
             return
         self._thread = None
         self._worker = None

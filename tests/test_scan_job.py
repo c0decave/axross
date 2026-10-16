@@ -127,6 +127,39 @@ class ScanJobTest(unittest.TestCase):
         self.assertTrue(self._wait(lambda: "copied 7" in texts))
         gate.set()
 
+    def test_edge_a_timer_tick_before_the_wake_reports_only_once(self) -> None:
+        """The worker's queued wake and the poll timer race: when the timer
+        delivers the result first, the wake still arrives afterwards and
+        must not report the same result a second time (the transfer path
+        would then ask about every conflict twice and queue twice)."""
+        self.job.start(lambda c, p: "result")
+        self.job._thread.join(2)  # result stored, wake queued, nothing delivered
+        self.job._poll()  # the timer tick wins
+        self.assertEqual([d[1] for d in self.done], ["result"])
+        for _ in range(5):
+            self.app.processEvents()  # the late wake
+        self.job._poll()  # and a stray tick
+        self.assertEqual([d[1] for d in self.done], ["result"])
+
+    def test_sad_an_error_result_is_reported_only_once_too(self) -> None:
+        def boom(cancel, progress):
+            raise OSError("gone")
+
+        self.job.start(boom)
+        self.job._thread.join(2)
+        self.job._poll()
+        for _ in range(5):
+            self.app.processEvents()
+        self.assertEqual([d[0] for d in self.done], ["error"])
+
+    def test_happy_the_job_can_run_again_after_reporting(self) -> None:
+        self.job.start(lambda c, p: 1)
+        self.assertTrue(self._wait(lambda: self.done))
+        self.assertTrue(self._wait(lambda: not self.job.running))  # worker thread exits
+        self.assertTrue(self.job.start(lambda c, p: 2))
+        self.assertTrue(self._wait(lambda: len(self.done) == 2))
+        self.assertEqual([d[1] for d in self.done], [1, 2])
+
     def test_running_property(self) -> None:
         gate = threading.Event()
         self.assertFalse(self.job.running)

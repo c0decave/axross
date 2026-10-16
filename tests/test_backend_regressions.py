@@ -45,7 +45,18 @@ def load_connection_manager_class():
     ):
         sys.modules.pop("core.connection_manager", None)
         module = importlib.import_module("core.connection_manager")
-        return module.ConnectionManager
+        cls = module.ConnectionManager
+    # patch.dict put sys.modules back, but the import above also bound the
+    # copy as an attribute of the ``core`` package; put that back too, or
+    # ``from core import connection_manager`` keeps returning the copy.
+    import core
+
+    original = sys.modules.get("core.connection_manager")
+    if original is not None:
+        core.connection_manager = original
+    elif getattr(core, "connection_manager", None) is module:
+        del core.connection_manager
+    return cls
 
 
 class ProfileSecretRegressionTests(unittest.TestCase):
@@ -137,6 +148,134 @@ class ProfileSecretRegressionTests(unittest.TestCase):
                     self.assertLogs("core.profiles", level="ERROR"),
                 ):
                     self.assertEqual(ProfileManager().list_names(), [])
+
+
+class ProfileFileCorruptionTests(unittest.TestCase):
+    """A profiles.json that cannot be read must survive the next save."""
+
+    def _run(self, original: bytes, *, size_cap: int | None = None):
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmpdir, ignore_errors=True))
+        profiles = Path(tmpdir) / "profiles.json"
+        profiles.write_bytes(original)
+        patches = [
+            mock.patch("core.profiles.CONFIG_DIR", Path(tmpdir)),
+            mock.patch("core.profiles.PROFILES_FILE", profiles),
+            mock.patch("core.profiles.delete_password", return_value=True),
+            mock.patch("core.profiles.delete_proxy_password", return_value=True),
+            mock.patch("core.profiles.delete_secret", return_value=True),
+        ]
+        if size_cap is not None:
+            patches.append(mock.patch("core.profiles.MAX_PROFILES_FILE_BYTES", size_cap))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        manager = ProfileManager()
+        manager.add(ConnectionProfile(name="new", host="new.example"))
+        return Path(tmpdir), profiles, manager
+
+    def _backups(self, tmpdir: Path) -> list[Path]:
+        return sorted(tmpdir.glob("profiles.json.corrupt-*"))
+
+    def test_truncated_json_is_kept_as_backup_before_save(self) -> None:
+        original = b'{"prod": {"name": "prod", "host": "prod.example"'
+        tmpdir, profiles, _ = self._run(original)
+        backups = self._backups(tmpdir)
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
+        self.assertEqual(list(json.loads(profiles.read_text())), ["new"])
+
+    def test_wrong_root_type_and_oversize_file_are_kept(self) -> None:
+        tmpdir, _, _ = self._run(b"[]")
+        self.assertEqual([b.read_bytes() for b in self._backups(tmpdir)], [b"[]"])
+        big = b'{"a": {"name": "a", "host": "h"}}'
+        tmpdir, _, _ = self._run(big, size_cap=4)
+        self.assertEqual([b.read_bytes() for b in self._backups(tmpdir)], [big])
+
+    def test_valid_file_gets_no_backup(self) -> None:
+        good = json.dumps({"prod": {"name": "prod", "host": "prod.example"}}).encode()
+        tmpdir, profiles, manager = self._run(good)
+        self.assertEqual(self._backups(tmpdir), [])
+        self.assertEqual(manager.list_names(), ["new", "prod"])
+        self.assertEqual(sorted(json.loads(profiles.read_text())), ["new", "prod"])
+
+    def test_empty_file_is_kept_and_backup_happens_only_once(self) -> None:
+        tmpdir, _, manager = self._run(b"")
+        manager.add(ConnectionProfile(name="second", host="h2"))
+        backups = self._backups(tmpdir)
+        self.assertEqual([b.read_bytes() for b in backups], [b""])
+
+    def test_save_is_refused_when_backup_cannot_be_made(self) -> None:
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmpdir, ignore_errors=True))
+        profiles = Path(tmpdir) / "profiles.json"
+        original = b"{not json"
+        profiles.write_bytes(original)
+        with (
+            mock.patch("core.profiles.CONFIG_DIR", Path(tmpdir)),
+            mock.patch("core.profiles.PROFILES_FILE", profiles),
+            mock.patch("core.profiles.delete_password", return_value=True),
+            mock.patch("core.profiles.delete_proxy_password", return_value=True),
+            mock.patch("core.profiles.delete_secret", return_value=True),
+        ):
+            manager = ProfileManager()
+            with (
+                mock.patch("core.profiles.shutil.copyfileobj", side_effect=OSError("disk full")),
+                self.assertLogs("core.profiles", level="ERROR"),
+            ):
+                manager.add(ConnectionProfile(name="new", host="h"))
+            self.assertEqual(profiles.read_bytes(), original)
+            self.assertEqual(self._backups(Path(tmpdir)), [])
+
+    def test_skipped_entries_are_kept_as_backup(self) -> None:
+        original = json.dumps(
+            {"ok": {"name": "ok", "host": "h"}, "broken": "not-an-object"}
+        ).encode()
+        tmpdir, profiles, manager = self._run(original)
+        self.assertEqual(manager.list_names(), ["new", "ok"])
+        self.assertEqual([b.read_bytes() for b in self._backups(tmpdir)], [original])
+        self.assertEqual(sorted(json.loads(profiles.read_text())), ["new", "ok"])
+
+
+class SecurityModeNameTests(unittest.TestCase):
+    """A misspelt security mode must not silently mean ``normal``."""
+
+    def test_happy_known_names(self) -> None:
+        from core import security_mode as sm
+
+        self.assertIs(sm.policy_from_name("paranoid"), sm.PARANOID)
+        self.assertIs(sm.policy_from_name(" Paranoid\n"), sm.PARANOID)
+        self.assertIs(sm.policy_from_name("normal"), sm.NORMAL)
+        self.assertIs(sm.policy_from_name("NORMAL"), sm.NORMAL)
+
+    def test_edge_unset_or_empty_is_normal(self) -> None:
+        from core import security_mode as sm
+
+        self.assertIs(sm.policy_from_name(None), sm.NORMAL)
+        self.assertIs(sm.policy_from_name(""), sm.NORMAL)
+        self.assertIs(sm.policy_from_name("   "), sm.NORMAL)
+
+    def test_sad_unknown_name_fails_closed_with_a_warning(self) -> None:
+        from core import security_mode as sm
+
+        for typo in ("paranoia", "strict", "paranoid!", "on", "1"):
+            with self.assertLogs("core.security_mode", level="WARNING"):
+                self.assertIs(sm.policy_from_name(typo), sm.PARANOID, typo)
+
+    def test_sad_environment_typo_gives_paranoid(self) -> None:
+        from core import security_mode as sm
+
+        old = sm._CURRENT
+        try:
+            sm._CURRENT = None
+            with (
+                mock.patch.dict(os.environ, {"AXROSS_SECURITY_MODE": "paranoia"}),
+                self.assertLogs("core.security_mode", level="WARNING"),
+            ):
+                self.assertTrue(sm.is_paranoid())
+        finally:
+            sm._CURRENT = old
 
 
 class ConnectionManagerRegressionTests(unittest.TestCase):
@@ -1457,12 +1596,17 @@ class RshBackendTests(unittest.TestCase):
         # keywords turns every such addition into a phantom failure.
         def fake_run(argv, *, input=None, capture_output, timeout, check, **kwargs):
             recorded.append(" ".join(argv))
+            # The remote command reports its exit status in a tagged
+            # trailer (rsh itself carries none); answer like a shell would.
+            import re as _re
+
+            tag = _re.search(r"__AXROSS_RSH_STATUS_[0-9a-f]+__", argv[-1]).group(0)
 
             class _R:
                 returncode = 0
                 stderr = b""
 
-            _R.stdout = stdout
+            _R.stdout = stdout + f"\n{tag} 0\n".encode()
             return _R
 
         return mock.patch("core.rsh_client.subprocess.run", side_effect=fake_run)
@@ -2295,6 +2439,13 @@ class GDriveAppendTruncateGuardTests(unittest.TestCase):
 
         sess = GDriveSession.__new__(GDriveSession)
         sess._service = mock.MagicMock()
+        # The metadata answer the stat() inside the append guard reads:
+        # a JSON object, as the real API returns.
+        sess._service.files.return_value.get.return_value.execute.return_value = {
+            "id": "existing-id",
+            "name": "foo.txt",
+            "size": "3",
+        }
 
         # Stub everything _around_ the append-seed try-block.
         sess.normalize = lambda p: p
@@ -2327,9 +2478,9 @@ class GDriveAppendTruncateGuardTests(unittest.TestCase):
 
 
 class ReplWidgetQtTests(unittest.TestCase):
-    """End-to-end Qt-aware tests for ReplWidget. Uses the module-
-    level QApplication singleton (test_hardening_regressions sets one
-    up; we reuse it via QApplication.instance()).
+    """End-to-end Qt-aware tests for ReplWidget. Uses the process-
+    wide QApplication singleton (reused via QApplication.instance(),
+    created in setUpClass when no earlier test made one).
 
     Covers behaviours the no-Qt tests below can't exercise:
     - keyPressEvent flow (Tab → completion, Up/Down → history,
@@ -2387,6 +2538,7 @@ class ReplWidgetQtTests(unittest.TestCase):
         # Buffer is empty, current input is empty.
         text_before = w.toPlainText()
         QTest.keyClick(w, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyRelease(w, Qt.Key.Key_Control)  # leave no Ctrl held for later tests
         text_after = w.toPlainText()
         # Must show the Ctrl-D message AND a fresh prompt — and a
         # new ">>> " must be visible at the end so the user isn't
@@ -2532,7 +2684,12 @@ class ScriptingUiHelperTests(unittest.TestCase):
     def test_confirm_headless_reads_from_stdin(self) -> None:
         from core.ui_helpers import confirm as ui_confirm
 
-        with mock.patch("core.ui_helpers._qt_is_running", return_value=False):
+        # A human at a terminal: the headless prompt reads the answer.
+        with (
+            mock.patch("core.ui_helpers._qt_is_running", return_value=False),
+            mock.patch("core.ui_helpers._stdin_is_terminal", return_value=True),
+            mock.patch.dict(os.environ, {"AXROSS_NONINTERACTIVE": ""}),
+        ):
             with mock.patch("builtins.input", return_value="y"):
                 self.assertTrue(ui_confirm("?"))
             with mock.patch("builtins.input", return_value="ja"):
@@ -2545,16 +2702,32 @@ class ScriptingUiHelperTests(unittest.TestCase):
                 self.assertFalse(ui_confirm("?", default_yes=False))
 
     def test_confirm_eof_returns_default(self) -> None:
-        # Headless fallback: stdin closed (e.g. cron / piped input
-        # exhausted). Must not raise — returns the default answer.
+        # Ctrl-D at a terminal prompt: the human chose the default.
         from core.ui_helpers import confirm as ui_confirm
 
         with (
             mock.patch("core.ui_helpers._qt_is_running", return_value=False),
+            mock.patch("core.ui_helpers._stdin_is_terminal", return_value=True),
+            mock.patch.dict(os.environ, {"AXROSS_NONINTERACTIVE": ""}),
             mock.patch("builtins.input", side_effect=EOFError),
         ):
             self.assertFalse(ui_confirm("?", default_yes=False))
             self.assertTrue(ui_confirm("?", default_yes=True))
+
+    def test_confirm_without_a_terminal_refuses_instead_of_answering(self) -> None:
+        # Closed stdin (cron, a pipe, an MCP script run) is no human:
+        # returning the default there approved default_yes=True prompts
+        # on its own. It raises instead (tests/test_noninteractive_prompts.py).
+        from core.ui_helpers import NonInteractiveError
+        from core.ui_helpers import confirm as ui_confirm
+
+        with (
+            mock.patch("core.ui_helpers._qt_is_running", return_value=False),
+            mock.patch("core.ui_helpers._stdin_is_terminal", return_value=False),
+            mock.patch("builtins.input", side_effect=EOFError),
+        ):
+            with self.assertRaises(NonInteractiveError):
+                ui_confirm("?", default_yes=True)
 
     def test_toast_headless_writes_to_stdout(self) -> None:
         from core.ui_helpers import toast as ui_toast
@@ -2867,13 +3040,14 @@ class SvnFsSessionTests(unittest.TestCase):
                 svn_mod.SvnFsSession(url="")
 
     def test_password_auth_uses_noninteractive_no_auth_cache(self) -> None:
-        # The portable svn CLI only exposes password auth as
-        # ``--password``. Keep it non-interactive and out of svn's
-        # on-disk auth cache, but be honest that argv contains it.
+        # The password goes over stdin (``--password-from-stdin``), never
+        # into argv; auth stays non-interactive and out of svn's on-disk
+        # auth cache.
         sess, svn_mod = self._make_session()
         argv = sess._build_argv("ls", "https://svn.example.com/repo")
-        self.assertIn("--password", argv)
-        self.assertIn("s3cret", argv)
+        self.assertIn("--password-from-stdin", argv)
+        self.assertNotIn("--password", argv)
+        self.assertNotIn("s3cret", argv)
         self.assertIn("--non-interactive", argv)
         self.assertIn("--no-auth-cache", argv)
 
@@ -2889,10 +3063,9 @@ class SvnFsSessionTests(unittest.TestCase):
                 stdout=self._info_xml(),
                 stderr=b"",
             )
-            with self.assertLogs("core.svn_fs_client", level="WARNING") as logs:
-                sess = svn_mod.SvnFsSession(
-                    url=("https://al%69ce:p%40ss%20word@svn.example.com:8443/repo"),
-                )
+            sess = svn_mod.SvnFsSession(
+                url=("https://al%69ce:p%40ss%20word@svn.example.com:8443/repo"),
+            )
         self.assertEqual(sess._url, "https://svn.example.com:8443/repo")
         self.assertEqual(sess._username, "alice")
         self.assertEqual(sess._password, "p@ss word")
@@ -2902,7 +3075,8 @@ class SvnFsSessionTests(unittest.TestCase):
         joined = " ".join(first_argv)
         self.assertIn("https://svn.example.com:8443/repo", first_argv)
         self.assertNotIn("al%69ce:p%40ss%20word@", joined)
-        self.assertTrue(any("process inspectors" in m for m in logs.output))
+        self.assertNotIn("p@ss word", first_argv)
+        self.assertEqual(run.call_args_list[0].kwargs["input"], b"p@ss word\n")
 
     def test_svn_info_rejects_doctype_xml_when_defusedxml_available(self) -> None:
         from core import svn_fs_client as svn_mod
@@ -3050,3 +3224,47 @@ import subprocess  # noqa: E402
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoaderLeavesOneConnectionManagerModuleTests(unittest.TestCase):
+    """load_connection_manager_class() imports a second copy of the module
+    under patched ``sys.modules``. patch.dict restores ``sys.modules`` but
+    not the ``core.connection_manager`` attribute on the package, so later
+    tests saw two modules: ``from core import connection_manager`` gave the
+    copy, ``from core.connection_manager import X`` the original, and a
+    patch applied through one never reached code importing the other."""
+
+    def test_happy_the_package_attribute_is_the_registered_module(self) -> None:
+        import core
+
+        load_connection_manager_class()
+        self.assertIs(core.connection_manager, sys.modules["core.connection_manager"])
+
+    def test_sad_a_patch_through_the_package_reaches_a_direct_import(self) -> None:
+        load_connection_manager_class()
+        from core import connection_manager as via_package
+
+        with mock.patch.object(via_package.ConnectionManager, "connect", return_value="patched"):
+            from core.connection_manager import ConnectionManager
+
+            self.assertEqual(ConnectionManager().connect(None), "patched")
+
+    def test_edge_a_module_never_imported_before_is_not_left_as_the_copy(self) -> None:
+        import core
+
+        saved = sys.modules.pop("core.connection_manager", None)
+        had_attr = hasattr(core, "connection_manager")
+        old_attr = getattr(core, "connection_manager", None)
+        if had_attr:
+            del core.connection_manager
+        try:
+            cls = load_connection_manager_class()
+            from core.connection_manager import ConnectionManager
+
+            self.assertIsNot(cls, ConnectionManager)
+            self.assertIs(core.connection_manager, sys.modules["core.connection_manager"])
+        finally:
+            if saved is not None:
+                sys.modules["core.connection_manager"] = saved
+            if had_attr:
+                core.connection_manager = old_attr

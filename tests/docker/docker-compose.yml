@@ -68,8 +68,12 @@ services:
         USERNAME: ftpuser
         PASSWORD: ftp123
     hostname: ftpserver
-    # pure-ftpd (stilliard image) is stable out of the box — no seccomp
-    # override needed.
+    # pure-ftpd exits 252 at startup without CAP_AUDIT_WRITE. Docker grants
+    # that capability by default, podman does not (verified 2026-10-15:
+    # exit 252 with podman's default set, running with --cap-add=AUDIT_WRITE,
+    # still exit 252 with only MKNOD or NET_RAW added).
+    cap_add:
+      - AUDIT_WRITE
     networks:
       testnet:
         ipv4_address: 10.99.0.30
@@ -109,6 +113,14 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
+    # MinIO refuses every write once the drive under /data has less free
+    # space than its minimum threshold ("XMinioStorageFull ... Storage
+    # backend has reached its minimum free drive threshold"). On the
+    # container's overlay that is the HOST disk, so a nearly full host
+    # failed the S3 tests (seen 2026-10-15 with 850M free). The lab data
+    # is disposable: keep it in memory, sized well above the threshold.
+    tmpfs:
+      - /data:size=2g
     networks:
       testnet:
         ipv4_address: 10.99.0.33
@@ -229,8 +241,12 @@ services:
         USERNAME: ftpsuser
         PASSWORD: ftps123
     hostname: ftpsserver
-    # pure-ftpd on alpine behaves well under default docker seccomp;
-    # no override needed.
+    # pure-ftpd exits 252 at startup without CAP_AUDIT_WRITE. Docker grants
+    # that capability by default, podman does not (verified 2026-10-15:
+    # exit 252 with podman's default set, running with --cap-add=AUDIT_WRITE,
+    # still exit 252 with only MKNOD or NET_RAW added).
+    cap_add:
+      - AUDIT_WRITE
     networks:
       testnet:
         ipv4_address: 10.99.0.38
@@ -266,16 +282,24 @@ services:
   # to the client so tests for quota-exceeded can pin the
   # expected behaviour.
   tiny-ftp-server:
-    image: stilliard/pure-ftpd:latest
+    image: docker.io/stilliard/pure-ftpd:latest
     hostname: tinyftpserver
     environment:
       PUBLICHOST: 10.99.0.60
       FTP_USER_NAME: tinyftp
       FTP_USER_PASS: tiny123
-      FTP_USER_HOME: ~
+      FTP_USER_HOME: /home/tinyftp
       FTP_PASSIVE_PORTS: 31000:31010
+    # A tmpfs target must be an absolute path: podman refuses "~" with
+    # 'invalid container path "~", must be an absolute path'.
     tmpfs:
-      - ~:size=16m,mode=0777
+      - /home/tinyftp:size=16m,mode=0777
+    # pure-ftpd exits 252 at startup without CAP_AUDIT_WRITE. Docker grants
+    # that capability by default, podman does not (verified 2026-10-15:
+    # exit 252 with podman's default set, running with --cap-add=AUDIT_WRITE,
+    # still exit 252 with only MKNOD or NET_RAW added).
+    cap_add:
+      - AUDIT_WRITE
     networks:
       testnet:
         ipv4_address: 10.99.0.60

@@ -10,24 +10,77 @@ scripts.
 
 ---
 
-## The four ways to run code against axross
+## The ways to run code against axross
 
 | Surface | When | Entry point |
 |---|---|---|
+| **Scripts dock** | Write, save, manage and run scripts in the GUI | *View > Panels > Scripts* (next to *Console*) |
 | **Console dock** (REPL) | Interactive exploration inside the GUI | Bottom dock, *Console* tab |
 | **`axross --script <file>`** | Headless / cron / CI | `axross --script myscript.py` |
 | **REPL slash-commands** | Save / load / run scripts from the prompt | `.save name`, `.run name` |
+| **Scheduled jobs** | Run a saved script on an interval | *View > Scheduled Jobs…* |
 | **MCP `script_*` tools** | LLM agent drives axross | Run with `--mcp-allow-scripts` |
 
 Every surface uses the same `core.scripting` module under the hood,
 so anything you can do at the REPL, you can do in a script,
-headless, or through an LLM.
+headless, or through an LLM. *Help > Scripting Guide* shows this guide
+and the full API reference inside the app; *F1* lists the Scripts dock
+keys and the slash-commands.
+
+---
+
+## The Scripts dock
+
+*View > Panels > Scripts* opens the script manager, tabbed next to the
+Console. Left: your saved scripts (`~/.config/axross/scripts/`) and the
+bundled **Examples**. Centre: a Python editor with syntax highlighting,
+line numbers and auto-indent (Tab inserts four spaces, Shift+Tab
+dedents, both on a whole selection). Bottom: the output of the last run.
+
+| Action | What it does |
+|---|---|
+| **New** | Creates `<name>.py` from a short template (names: letters, digits, `_`, `-`) |
+| **Save** (Ctrl+S) | Writes the editor text (mode 0600). An edited script shows `*` |
+| **Save As…** | Saves the editor text under a new name; the original file is unchanged |
+| **Rename…** / **Delete** | Rename or delete the file; Delete asks first |
+| **Run** (Ctrl+Return) | Saves unsaved edits, then runs the script **in its own Python process** |
+| **Stop** | Terminates the run; kills it if it has not ended after 3 s |
+| **Run in Console** | Runs the saved script in the Console's live namespace (like `.run`) |
+| **Copy to My Scripts** | Makes an editable copy of a bundled example (examples are read-only) |
+
+How a run behaves:
+
+- The child runs with the same `axross` namespace as `axross --script`
+  (`__name__ == "__main__"`, `__file__` is the script path), in the
+  script directory, isolated with `python -I` so a saved script called
+  `json.py` cannot replace the stdlib for the others. The window never
+  waits for it; one run at a time.
+- stdout and stderr (red) stream into the output pane, which keeps the
+  newest 10 000 lines and cuts lines over 1 000 characters. The status
+  line shows the exit status and the duration, or *stopped*.
+- A traceback line that points into the script is a link: click it to
+  jump to that line in the editor.
+- Closing the window stops a running script. Switching to another
+  script, or closing the window, with unsaved edits asks to save,
+  discard or cancel.
+- There is no terminal in a separate run: `axross.confirm()` raises
+  `axross.NonInteractiveError` instead of answering for you (pass
+  `assume_yes=True` to answer yes without asking), and
+  `axross.message()` prints. Use **Run in Console** for scripts that
+  need dialogs — they then run on the GUI thread, and the window waits
+  until they finish.
+- Scripts that a scheduled job runs are marked `[scheduled]`; renaming
+  or deleting one warns first, because the job refers to it by name.
+- In **paranoid** security mode (*Tools > Paranoid Security Mode*) Run
+  and Run in Console are disabled (the tooltip says why); `.run` and
+  the child process refuse as well.
 
 ---
 
 ## The `axross.*` API
 
-The curated namespace covers **90 public names** across connect/backend,
+The curated namespace covers **over a hundred public names**
+(`len(axross.__all__)`; `axross.api_schema()` lists every one) across connect/backend,
 profiles, file I/O, crypto/archives, bookmarks, scripts, per-protocol
 passthroughs, DNS/net, network helpers, SNMP, cross-backend search,
 content inspection, safety/diagnostics, UI helpers and reference.
@@ -118,6 +171,21 @@ axross.dns_resolve("example.com", family="any")
 axross.port_open("10.0.0.1", 22, timeout=3.0)
 ```
 
+### File metadata
+
+```python
+report = axross.metadata(b, "/photos/IMG_0001.jpg")      # MetadataReport
+for f in report.fields:
+    print(f.group, f.name, f.value, "kept" if not f.removable else "")
+axross.remove_metadata(b, "/photos/IMG_0001.jpg")        # in place, Ctrl+Z restores
+axross.remove_metadata(b, "/photos", recursive=True, mode="copy")  # name.clean.ext
+axross.export_metadata(b, "/photos", fmt="csv", recursive=True, out="/tmp/meta.csv")
+```
+
+Images keep only the EXIF orientation and the ICC profile and are never
+re-encoded; PDF removal needs the `[metadata]` extra (pypdf), audio /
+video needs ffmpeg. One `remove_metadata` call is one undo step.
+
 ### Safety + diagnostics
 
 ```python
@@ -128,6 +196,28 @@ axross.recovery_scan(src, "/")
 axross.recent_operations(20)
 axross.security_mode("paranoid")  # block previews, scripts and legacy protocols
 ```
+
+### Duplicate index
+
+The Duplicate Finder's index (*View > Duplicate Finder…*, Ctrl+Shift+D)
+and its scan history (*View > Duplicate Index & History…*). Every group
+lists its copies in survivor order: the oldest by modification time
+first, ties to the shorter, then the alphabetically first path; copies
+without a time sort last.
+
+```python
+for scan in axross.duplicate_scans():            # newest first
+    print(scan.scan_id, scan.status, scan.root, scan.duplicate_groups)
+groups = axross.duplicates(folder="/home/me/Photos")   # or scan=<id>
+plan = axross.dedupe(folder="/home/me/Photos")   # dry run: nothing touched
+print(plan.render())                             # keep / trash per group
+axross.dedupe(folder="/home/me/Photos", dry_run=False)  # to the axross trash
+```
+
+`dedupe(dry_run=False)` keeps the first copy of every group and moves the
+others to the axross trash (restorable), after re-checking each file and
+the kept copy on the live backend; it acts only on the `backends` you pass
+(default: the local filesystem).
 
 ---
 
@@ -142,7 +232,7 @@ interpreter namespace.
 | `.scripts` | Names of every saved script |
 | `.save <name>` | Save the current session's history into `<name>.py` |
 | `.load <name>` | Print the source of a saved script |
-| `.run <name>` | Execute a saved script in the live REPL namespace |
+| `.run <name>` | Execute a saved script in the live REPL namespace (refused in paranoid mode) |
 | `.delete <name>` | Remove a saved script |
 | `.open` | Print the script-directory path |
 
@@ -153,7 +243,8 @@ interpreter namespace.
 32 ready-to-use scripts under `resources/scripts/`. Run any of them
 via `axross --script resources/scripts/<name>.py` or copy into
 `~/.config/axross/scripts/` and call from the REPL with
-`.run <name>`.
+`.run <name>`. In the GUI they are listed under **Examples** in the
+Scripts dock; **Copy to My Scripts** makes an editable copy.
 
 Public `axross.*` API examples live under
 [`examples/scripting_api/`](../examples/scripting_api/). They are
@@ -201,15 +292,54 @@ expose:
 | Tool | Description | Gated by |
 |---|---|---|
 | `script_list` | Names of every saved script | `--mcp-allow-scripts` |
+| `script_api_schema` | The `axross.*` API as JSON (`axross.api_schema()`) | `--mcp-allow-scripts` |
 | `script_read` | Source of a saved script | `--mcp-allow-scripts` |
 | `script_write` | Save Python source as `<name>.py` (mode 0o600) | `--mcp-allow-scripts` |
-| `script_run` | Execute a saved script, return stdout/stderr + namespace keys | `--mcp-allow-scripts` |
+| `script_run` | Run a saved script in its own process (`args`, `timeout_s`); return exit status, stdout/stderr, an uncaught exception | `--mcp-allow-scripts` |
 | `script_delete` | Remove a saved script | `--mcp-allow-scripts` |
 
-`script_run` runs Python in the server process, so the flag is
-**separate from `--mcp-write`** — don't enable scripting for an LLM
-client you don't already trust with arbitrary code execution. With
-both flags off, the MCP surface stays read-only.
+`script_run` runs arbitrary Python as the server's user — in a child
+process with empty stdin, a wall-clock timeout and its own process
+group, but with every right of that user — so the flag is **separate
+from `--mcp-write`**: don't enable scripting for an LLM client you
+don't already trust with arbitrary code execution. With both flags
+off, the MCP surface stays read-only. [MCP.md](MCP.md) §2 has the
+full reply format.
+
+---
+
+## Scripts a machine runs
+
+An LLM (or cron, CI, any caller without a human at the keyboard) needs
+a few guarantees the REPL never had to give. What the API offers:
+
+- **Discover before you write.** `axross.api_schema()` (MCP:
+  `script_api_schema`) is the API as JSON, built from the code: per
+  function the signature with types, the first docstring paragraph,
+  `mutates` (can change files, remote state or settings) and `prompts`
+  (can need a human). It also lists the methods every backend session
+  has. `axross.docs(name)` is the prose for one function.
+- **Nobody to ask.** Without a Qt window and without a terminal on
+  stdin — or with `AXROSS_NONINTERACTIVE=1`, which `script_run` sets —
+  `axross.confirm()` raises `axross.NonInteractiveError` (a
+  `PermissionError`) instead of guessing an answer. Pass
+  `assume_yes=True` to answer yes without asking there;
+  `axross.is_interactive()` tells a script which case it is in. A write
+  to a profile flagged *production* is refused the same way unless the
+  environment that starts axross sets `AXROSS_TARPIT_DISABLE=1`. A run
+  from the Scripts panel still gets the countdown: its output is live
+  and Stop ends it, so a human can watch and stop it.
+- **Close what you open.** Every session supports `with`; leaving the
+  block ends the connection, also after an exception:
+
+  ```python
+  with axross.open("backup-server") as b:
+      print(axross.summarize(b, "/var/log").render())
+  ```
+- **Arguments and exit status.** `script_run` hands `args` to the
+  script as `sys.argv[1:]` and reports `sys.exit(n)` as `exit`; an
+  uncaught exception comes back as `error_type`, `error` and
+  `traceback`.
 
 ---
 

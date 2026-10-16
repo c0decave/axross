@@ -1,9 +1,12 @@
 # Windows Integration Testing
 
-The WinRM, WMI/DCOM, and DFS-N backends have full unit-test coverage
-of their path parsing and mocked-transport logic (see
-`tests/test_hardening_regressions.py`), but nothing in CI exercises
-them against a real Windows target. There is no practical Linux
+The WinRM and WMI/DCOM backends are unit-tested against fake
+transports (`tests/test_fuzz_winrm.py`,
+`tests/test_winrm_malformed_output.py`,
+`tests/test_winrm_session_timeouts.py`,
+`tests/test_winrm_write_command_line.py`, `tests/test_fuzz_wmi.py`),
+but nothing in CI exercises WinRM, WMI/DCOM or DFS-N against a real
+Windows target. There is no practical Linux
 emulator for PowerShell Remoting / WMI-DCOM / MS-DFS-N, so
 end-to-end verification requires a real Windows host.
 

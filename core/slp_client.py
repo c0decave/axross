@@ -31,6 +31,7 @@ import re
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from core.redaction import redact_url
 from models.file_item import FileItem
 
@@ -92,7 +93,7 @@ def _parse_slp_attrs(text: str) -> dict[str, str]:
     return out
 
 
-class SlpSession:
+class SlpSession(SessionLifecycle):
     """Read-only SLPv2 backend implementing the FileBackend protocol."""
 
     supports_symlinks = False

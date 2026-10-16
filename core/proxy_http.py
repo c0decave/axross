@@ -27,6 +27,7 @@ import atexit
 import base64
 import contextlib
 import logging
+import re
 import socket
 import ssl
 import threading
@@ -92,7 +93,7 @@ def _read_head(sock: socket.socket, limit: int = MAX_HEADER_BYTES) -> bytes:
 def _parse_response(head: bytes) -> _Response:
     lines = head.decode("latin-1").split("\r\n")
     parts = lines[0].split(" ", 2)
-    if len(parts) < 2 or not parts[0].startswith("HTTP/") or not parts[1].isdigit():
+    if len(parts) < 2 or not parts[0].startswith("HTTP/") or not _ascii_digits(parts[1]):
         raise ConnectionError(f"malformed proxy response: {lines[0][:80]!r}")
     headers: list[tuple[str, str]] = []
     for line in lines[1:]:
@@ -114,7 +115,10 @@ def _discard_body(sock: socket.socket, resp: _Response) -> None:
         total = 0
         while True:
             size_line = _read_line(sock)
-            size = int(size_line.split(b";")[0].strip() or b"0", 16)
+            token = size_line.split(b";")[0].strip()
+            if not _CHUNK_SIZE.fullmatch(token):
+                raise ConnectionError(f"malformed chunk size in proxy response: {token[:40]!r}")
+            size = int(token, 16)
             if size == 0:
                 while _read_line(sock):  # trailers
                     pass
@@ -125,7 +129,7 @@ def _discard_body(sock: socket.socket, resp: _Response) -> None:
                 return
             _read_exact(sock, size + 2)
     length = resp.get("content-length")
-    if length.isdigit():
+    if _ascii_digits(length):
         n = int(length)
         if n > MAX_BUFFERED_BODY:
             resp.keepalive = False
@@ -134,6 +138,15 @@ def _discard_body(sock: socket.socket, resp: _Response) -> None:
         return
     # No framing: the body runs to EOF, so the connection is done.
     resp.keepalive = False
+
+
+_CHUNK_SIZE = re.compile(rb"[0-9A-Fa-f]+")
+
+
+def _ascii_digits(text: str) -> bool:
+    """``str.isdigit()`` for ASCII only: it also accepts "²", which int()
+    refuses, and other scripts' digits, which no HTTP number uses."""
+    return text.isascii() and text.isdigit()
 
 
 def _read_line(sock: socket.socket) -> bytes:
@@ -410,7 +423,7 @@ def _split_authority(authority: str, default_port: int) -> tuple[str, int]:
         host, _, port = authority.rpartition(":")
         if not host:
             host, port = authority, ""
-    return host, int(port) if port.isdigit() else default_port
+    return host, int(port) if _ascii_digits(port) else default_port
 
 
 class LocalProxyShim:
@@ -588,7 +601,7 @@ class LocalProxyShim:
             fwd.insert(0, ("Host", parts.netloc.rsplit("@", 1)[-1]))
         body_len = 0
         for k, v in headers:
-            if k.lower() == "content-length" and v.isdigit():
+            if k.lower() == "content-length" and _ascii_digits(v):
                 body_len = int(v)
         if any(k.lower() == "transfer-encoding" for k, _ in headers):
             self._reply(client, 501, "Not Implemented", "chunked request bodies are not supported")

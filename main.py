@@ -164,16 +164,40 @@ def main() -> int:
     parser.add_argument(
         "--mcp-write",
         action="store_true",
-        help="When running as an MCP server, expose the write tools "
-        "(write_file, mkdir, remove). Off by default — read-only is safe.",
+        help="When running as an MCP server, expose the nine write tools "
+        "(write_file, mkdir, remove, rename, copy, bulk_copy, symlink, "
+        "hardlink, chmod) and the mutating tools of the --mcp-tools groups. "
+        "Needs --mcp-root. Off by default — read-only is safe.",
     )
     parser.add_argument(
         "--mcp-allow-scripts",
         action="store_true",
-        help="Expose the script_list/read/write/run/delete tools to the "
-        "MCP client. script_run executes Python in the server process, "
-        "so this is gated behind its own opt-in (separate from "
-        "--mcp-write).",
+        help="Expose the script_list/api_schema/read/write/run/delete tools to the "
+        "MCP client. script_run executes arbitrary Python as you (in a "
+        "child process), so this is gated behind its own opt-in (separate from "
+        "--mcp-write). stdio only: refused together with --mcp-http.",
+    )
+    parser.add_argument(
+        "--mcp-tools",
+        action="append",
+        default=None,
+        metavar="GROUP[,GROUP...]",
+        help="Add optional MCP capability groups on top of the file tools; "
+        "repeatable or comma-separated, also via AXROSS_MCP_TOOLS. Groups: "
+        "metadata, duplicates, packer, archive, crypto, index, filetype, "
+        "transfer, remote, extensions; 'all' is every group. Mutating tools "
+        "of a group additionally need --mcp-write. Default: no group (the "
+        "file tools only).",
+    )
+    parser.add_argument(
+        "--mcp-list-tools",
+        action="store_true",
+        help="Print a JSON manifest of the MCP tools that --mcp-server with the "
+        "same --mcp-tools / --mcp-write / --mcp-allow-scripts flags (and their "
+        "AXROSS_MCP_* variables) would serve - name, group, read-only or "
+        "mutating, required flags, input schema, timeout class, description - "
+        "and exit without starting a server. docs/mcp-tools.json is this "
+        "output for '--mcp-tools all --mcp-write --mcp-allow-scripts'.",
     )
     parser.add_argument(
         "--mcp-root",
@@ -242,9 +266,10 @@ def main() -> int:
     truthy = {"1", "true", "yes", "on"}
     mcp_env = os.environ.get("AXROSS_MCP", "").strip().lower()
     write_env = os.environ.get("AXROSS_MCP_WRITE", "").strip().lower()
-    if args.mcp_server or mcp_env in truthy:
+    if args.mcp_list_tools or args.mcp_server or mcp_env in truthy:
         log.info(
-            "Starting Axross MCP server (read-only=%s, http=%s)",
+            "%s Axross MCP server (read-only=%s, http=%s)",
+            "Listing the tools of the" if args.mcp_list_tools else "Starting",
             not args.mcp_write,
             bool(args.mcp_http),
         )
@@ -263,7 +288,43 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
+        if args.mcp_allow_scripts and args.mcp_http:
+            # The HTTP transport never wires the script tools. Accepting
+            # the flag there would let an operator believe scripts are
+            # reachable (or, worse, later wire them by accident) — and
+            # Python execution over a network transport is not offered.
+            print(
+                "--mcp-allow-scripts is stdio-only: script execution over a "
+                "network transport (--mcp-http) is not offered.",
+                file=sys.stderr,
+            )
+            return 2
+        from core import mcp_groups as MG
+
+        try:
+            tool_groups = MG.groups_from(args.mcp_tools, env_value=os.environ.get(MG.ENV_VAR))
+        except MG.GroupError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         backend = M.default_backend()
+        if args.mcp_list_tools:
+            # The manifest of exactly what this start would serve; nothing
+            # is served, so the write root is not demanded here.
+            tools = M._build_tools(
+                backend,
+                allow_write=allow_write,
+                root=_resolve_mcp_root(backend, args.mcp_root),
+                allow_scripts=args.mcp_allow_scripts,
+                tool_groups=tool_groups,
+            )
+            manifest = MG.tool_manifest(
+                tools,
+                groups=tool_groups,
+                allow_write=allow_write,
+                allow_scripts=args.mcp_allow_scripts,
+            )
+            sys.stdout.write(MG.manifest_json(manifest))
+            return 0
         # Default the MCP root to the backend's home() so an LLM
         # cannot read or write outside what we deliberately exposed
         # (e.g. read_file("/etc/passwd")). Users who want a wider
@@ -321,6 +382,7 @@ def main() -> int:
                     cert_file=args.mcp_cert,
                     key_file=args.mcp_key,
                     ca_file=args.mcp_ca,
+                    tool_groups=tool_groups,
                 )
             )
             return 0
@@ -330,6 +392,7 @@ def main() -> int:
                 allow_write=allow_write,
                 allow_scripts=args.mcp_allow_scripts,
                 root=root,
+                tool_groups=tool_groups,
             )
         )
 
@@ -353,18 +416,12 @@ def main() -> int:
             with open(args.script, "r", encoding="utf-8") as fh:
                 source = fh.read()
             filename = args.script
-        import core.scripting as _scripting
+        # Shared with the Scripts dock's child process: one namespace and
+        # one SystemExit mapping (None is 0, an int is the status, anything
+        # else is a message on stderr and status 1).
+        from core.script_runner import execute_source
 
-        ns: dict = {
-            "__name__": "__main__",
-            "__file__": filename,
-            "axross": _scripting,
-        }
-        try:
-            exec(compile(source, filename, "exec"), ns)
-        except SystemExit as exc:
-            return int(exc.code or 0)
-        return 0
+        return execute_source(source, filename)
 
     log.info("Starting Axross")
     _install_excepthook()

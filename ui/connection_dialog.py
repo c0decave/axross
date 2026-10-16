@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
 
@@ -84,6 +85,9 @@ class ConnectionDialog(QDialog):
         self._result_password: str = ""
         self._result_key_passphrase: str = ""
         self._loaded_profile_name: str | None = None
+        # The profile the form was filled from: _build_profile starts from
+        # it, so fields the form has no widget for survive a save.
+        self._loaded_profile: ConnectionProfile | None = None
 
         self.setWindowTitle("Connect to Server")
         self.setMinimumWidth(500)
@@ -91,7 +95,12 @@ class ConnectionDialog(QDialog):
         self._setup_ui()
 
         if profile:
-            self._load_profile(profile)
+            # A saved profile is selected in the list too, so Save and
+            # Delete act on it (Quick Connect's "Edit Config…").
+            if self._profile_combo.findText(profile.name) >= 0:
+                self._profile_combo.setCurrentText(profile.name)
+            if self._loaded_profile_name != profile.name:
+                self._load_profile(profile)
 
     @property
     def result_profile(self) -> ConnectionProfile | None:
@@ -671,6 +680,7 @@ class ConnectionDialog(QDialog):
 
     def _load_profile(self, p: ConnectionProfile) -> None:
         self._loaded_profile_name = p.name
+        self._loaded_profile = p
         self._password.clear()
         self._proxy_password.clear()
         self._key_passphrase.clear()
@@ -796,6 +806,7 @@ class ConnectionDialog(QDialog):
 
     def _clear_fields(self) -> None:
         self._loaded_profile_name = None
+        self._loaded_profile = None
         self._profile_name.clear()
         if "sftp" in self._protocol_ids:
             self._protocol_combo.setCurrentIndex(self._protocol_ids.index("sftp"))
@@ -909,7 +920,7 @@ class ConnectionDialog(QDialog):
         else:
             store_pw = self._simple_store_pw.isChecked()
 
-        return ConnectionProfile(
+        fields = dict(
             name=self._profile_name.text().strip() or auto_name,
             protocol=proto,
             host=host,
@@ -961,6 +972,14 @@ class ConnectionDialog(QDialog):
             iscsi_mount_point=self._iscsi_mount_point.text().strip(),
             # IMAP
             imap_ssl=self._imap_ssl.isChecked(),
+        )
+        if self._loaded_profile is None:
+            return ConnectionProfile(**fields)
+        # Editing: the form overrides what it shows; everything else the
+        # profile carries (production, ftps_verify_tls, terminal_theme, ...)
+        # is kept. A session-only proxy password override is not.
+        return dataclasses.replace(
+            self._loaded_profile, _proxy_password_override=None, **fields
         )
 
     def _validate(self) -> bool:
@@ -1230,6 +1249,18 @@ class ConnectionDialog(QDialog):
             log.error("Failed to store credentials in keyring: %s", e)
 
         self.accept()
+
+    def done(self, result: int) -> None:  # noqa: D102 - Qt override
+        # A test still running must neither report to the closed dialog nor
+        # be destroyed with it (the window keeps this dialog until exit).
+        from ui.thread_lifetime import detach_running_thread
+
+        thread = getattr(self, "_connect_thread", None)
+        if thread is not None:
+            detach_running_thread(thread, thread.success, thread.error, thread.finished)
+            self._btn_test.setEnabled(True)
+            self._btn_test.setText("Test Connection")
+        super().done(result)
 
     def _on_test_success(self, home: str) -> None:
         QMessageBox.information(self, "Success", f"Connection successful!\nHome directory: {home}")

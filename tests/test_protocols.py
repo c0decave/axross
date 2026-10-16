@@ -345,8 +345,11 @@ def test_ftp_paths():
 
     s = FtpSession(host=FTP_HOST, port=FTP_PORT, username=FTP_USER, password=FTP_PASS)
     assert s.separator() == "/"
-    assert s.join("/home", "user") == "~"
-    assert s.parent("~/data") == "~"
+    # "x" is a placeholder home the public-export scrub keeps; "~"
+    # was rewritten to "~" by it, which left the assertion "== '~'".
+    assert s.join("/home", "x") == "/home/x"
+    assert s.parent("/home/x/data") == "/home/x"
+    assert s.parent("/data") == "/"
     s.disconnect()
 
 
@@ -3723,9 +3726,10 @@ def test_s3_four_parallel_uploads():
         assert not t.is_alive()
 
 
-# Conc 14.3 (TransferManager parallel jobs) lives in
-# tests/test_hardening_regressions.py — it depends on PyQt6 which is
-# not installable in the test-runner container without libglib.
+# Conc 14.3 (TransferManager with several queued jobs) runs on the
+# host in tests/test_regressions.py (TransferRegressionTests) — it
+# depends on PyQt6 which is not installable in the test-runner
+# container without libglib.
 
 
 # -- Toxiproxy coverage extension: mid_transfer_drop for the rest ----
@@ -4835,8 +4839,11 @@ def test_ssh_interactive_shell_multiplex_with_sftp():
     )
     s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
     try:
-        # SFTP works at session level.
-        before = s.list_dir(s.home())
+        # SFTP works at session level. The listing is of ~/data, not ~: the
+        # shell writes ~/.ash_history when it exits, which changed the home
+        # listing on a fresh lab container.
+        folder = s.join(s.home(), "data")
+        before = s.list_dir(folder)
         assert len(before) > 0
 
         with s.interactive_shell(cols=120, rows=40) as sh:
@@ -4848,12 +4855,12 @@ def test_ssh_interactive_shell_multiplex_with_sftp():
             out = sh.read_until(marker, timeout=5.0)
             assert marker in out, out[-200:]
             # CONCURRENT SFTP — same transport, different channel
-            during = s.list_dir(s.home())
+            during = s.list_dir(folder)
             assert [i.name for i in during] == [i.name for i in before]
 
         # Channel was closed; transport still alive
         assert s.connected
-        after = s.list_dir(s.home())
+        after = s.list_dir(folder)
         assert [i.name for i in after] == [i.name for i in before]
     finally:
         s.disconnect()
@@ -6251,11 +6258,33 @@ def test_ftp_partial_read():
         s.disconnect()
 
 
+@requires_lab
 @_label("Resume 21c.2 SFTP seek-after-open returns tail")
 def test_sftp_partial_read():
-    pytest.skip(
-        "SFTP is exercised in test_network.py; no sftp container in this suite's lab harness"
+    from core.profiles import ConnectionProfile
+    from core.ssh_client import SSHSession
+
+    s = SSHSession(
+        ConnectionProfile(
+            name="ssh-resume",
+            protocol="sftp",
+            host=_SSH_HOST,
+            port=_SSH_PORT,
+            username=_SSH_USER,
+            auth_type="password",
+        )
     )
+    s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
+    try:
+        path = s.join(s.home(), "resume_probe_sftp.bin")
+        with s.open_write(path) as f:
+            f.write(_RESUME_PAYLOAD)
+        try:
+            _assert_resume_tail_matches(s, path, _RESUME_OFFSET)
+        finally:
+            s.remove(path)
+    finally:
+        s.disconnect()
 
 
 @requires_lab
@@ -7039,27 +7068,38 @@ def test_proxy_matrix_azure_blob_round_trip(proxy_type, proxy_host, proxy_port):
 
 @requires_lab
 @pytest.mark.parametrize("proxy_type,proxy_host,proxy_port", _SOCKS_PROXY_PROTOCOL_CASES)
-def test_proxy_matrix_s3_socks_rejected(proxy_type, proxy_host, proxy_port):
+def test_proxy_matrix_s3_socks_round_trip(proxy_type, proxy_host, proxy_port):
+    """S3 behind SOCKS goes through the loopback HTTP shim (botocore only
+    speaks HTTP proxies). Until 0.7.3 S3Session refused SOCKS outright and
+    this test pinned that refusal."""
     from core.s3_client import S3Session
 
     _require_proxy_endpoint(proxy_type, proxy_host, proxy_port)
     _require_lab_endpoint("S3/MinIO", S3_HOST, S3_PORT)
+    path = f"/proxy_matrix_{proxy_type}.txt"
+    payload = f"s3 via {proxy_type}\n".encode()
     with _ssrf_opt_in():
+        s = S3Session(
+            bucket=S3_BUCKET,
+            endpoint=S3_ENDPOINT,
+            access_key=S3_ACCESS_KEY,
+            secret_key=S3_SECRET_KEY,
+            region="us-east-1",
+            proxy_type=proxy_type,
+            proxy_host=proxy_host,
+            proxy_port=proxy_port,
+        )
         try:
-            S3Session(
-                bucket=S3_BUCKET,
-                endpoint=S3_ENDPOINT,
-                access_key=S3_ACCESS_KEY,
-                secret_key=S3_SECRET_KEY,
-                region="us-east-1",
-                proxy_type=proxy_type,
-                proxy_host=proxy_host,
-                proxy_port=proxy_port,
-            )
-        except OSError as exc:
-            assert "socks" in str(exc).lower(), exc
-            return
-        raise AssertionError(f"S3 unexpectedly accepted {proxy_type} proxy")
+            with s.open_write(path) as f:
+                f.write(payload)
+            with s.open_read(path) as f:
+                assert f.read() == payload
+        finally:
+            try:
+                s.remove(path)
+            except Exception:
+                pass
+            s.disconnect()
 
 
 @requires_lab
@@ -10931,27 +10971,30 @@ def test_rsh_live_round_trip():
 
     s = RshSession(host=RSH_HOST, port=514, username=RSH_USER, timeout=10.0)
     try:
+        # Absolute paths: RshSession.home() is "/", so a "~/" path becomes
+        # "/~/...". (The public-export scrub had turned the absolute
+        # /home/axuser paths of this test into "~/".)
         # Read the seed file the container shipped with.
-        seed = s.open_read("~/data/seed.txt").read()
+        seed = s.open_read("/home/axuser/data/seed.txt").read()
         assert b"hello from rshd" in seed, seed
 
         # Write + readback + checksum.
-        with s.open_write("~/data/probe.txt") as fh:
+        with s.open_write("/home/axuser/data/probe.txt") as fh:
             fh.write(b"axross-rsh-live")
-        assert s.open_read("~/data/probe.txt").read() == b"axross-rsh-live"
-        cs = s.checksum("~/data/probe.txt", "sha256")
+        assert s.open_read("/home/axuser/data/probe.txt").read() == b"axross-rsh-live"
+        cs = s.checksum("/home/axuser/data/probe.txt", "sha256")
         assert cs.startswith("sha256:") and len(cs) == len("sha256:") + 64
 
         # Subdir + copy + recursive remove.
-        s.mkdir("~/data/sub")
-        s.copy("~/data/probe.txt", "~/data/sub/copy.txt")
-        items = sorted(i.name for i in s.list_dir("~/data/sub"))
+        s.mkdir("/home/axuser/data/sub")
+        s.copy("/home/axuser/data/probe.txt", "/home/axuser/data/sub/copy.txt")
+        items = sorted(i.name for i in s.list_dir("/home/axuser/data/sub"))
         assert items == ["copy.txt"], items
-        s.remove("~/data/sub", recursive=True)
-        s.remove("~/data/probe.txt")
+        s.remove("/home/axuser/data/sub", recursive=True)
+        s.remove("/home/axuser/data/probe.txt")
 
         # Final state matches the original seed-only listing.
-        names = sorted(i.name for i in s.list_dir("~/data"))
+        names = sorted(i.name for i in s.list_dir("/home/axuser/data"))
         assert names == ["seed.txt"], names
     finally:
         s.disconnect()

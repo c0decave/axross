@@ -23,11 +23,12 @@ import io
 import logging
 import posixpath
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO, Any
 from urllib.parse import quote, unquote, urlsplit
 
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.redaction import redact_url
 from models.file_item import FileItem
 
@@ -88,21 +89,40 @@ def _redact_proxy_url(url: str) -> str:
     return redact_url(url)
 
 
+def _parse_xml(fromstring, payload: bytes):
+    """Parse a PROPFIND answer; anything unusable is a WebDavRequestError.
+
+    defusedxml raises ParseError (a SyntaxError) for malformed XML, its
+    EntitiesForbidden / DTDForbidden (ValueError subclasses) for XXE and
+    entity expansion, and expat a LookupError for an unknown encoding.
+    None of them is an OSError, which is what every caller handles.
+    """
+    try:
+        return fromstring(payload)
+    except (SyntaxError, ValueError, LookupError) as exc:
+        raise WebDavRequestError(
+            f"WebDAV PROPFIND answer is not usable XML: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
 def _parse_http_date(text: str) -> datetime:
     """Parse a Last-Modified / DAV:getlastmodified value. Returns
     epoch on parse failure so list_dir keeps working."""
     if not text:
         return datetime.fromtimestamp(0)
-    for fmt in (
-        "%a, %d %b %Y %H:%M:%S %Z",
-        "%a, %d %b %Y %H:%M:%S GMT",
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%S",
+    # RFC 1123 dates are GMT by definition (RFC 9110 5.6.7); strptime
+    # returns them naive, which FileItem would read as LOCAL time.
+    for fmt, utc in (
+        ("%a, %d %b %Y %H:%M:%S %Z", True),
+        ("%a, %d %b %Y %H:%M:%S GMT", True),
+        ("%Y-%m-%dT%H:%M:%S%z", False),
+        ("%Y-%m-%dT%H:%M:%S", False),
     ):
         try:
-            return datetime.strptime(text, fmt)
+            parsed = datetime.strptime(text, fmt)
         except ValueError:
             continue
+        return parsed.replace(tzinfo=timezone.utc) if utc else parsed
     return datetime.fromtimestamp(0)
 
 
@@ -160,8 +180,10 @@ class _WebDavClient:
         parts = urlsplit(self._base)
         # Server-relative prefix (e.g. /remote.php/dav/files/alice for
         # Nextcloud). Used to strip from PROPFIND <href> entries so
-        # callers see paths in the same shape they passed in.
-        self._url_path = parts.path or ""
+        # callers see paths in the same shape they passed in. Kept
+        # decoded: hrefs are unquoted before the comparison, and a base
+        # such as .../files/John%20Doe would otherwise never match.
+        self._url_path = unquote(parts.path or "")
         self._auth = (username, password) if username else None
         self._timeout = timeout
         self.session = requests.Session()
@@ -261,7 +283,7 @@ class _WebDavClient:
         return self._parse_propfind(b"".join(chunks))
 
     def _parse_propfind(self, payload: bytes) -> list[dict]:
-        root = _xml_fromstring(payload)
+        root = _parse_xml(_xml_fromstring, payload)
         results: list[dict] = []
         for resp_el in root.findall("d:response", _NSMAP):
             href_el = resp_el.find("d:href", _NSMAP)
@@ -449,7 +471,11 @@ class _WebDavClient:
             return (0, 0, 0)
         if resp.status_code not in (207, 200):
             return (0, 0, 0)
-        tree = _local_fromstring(resp.content)
+        try:
+            tree = _parse_xml(_local_fromstring, resp.content)
+        except WebDavRequestError as exc:
+            log.debug("WebDAV quota answer unusable: %s", exc)
+            return (0, 0, 0)
         avail_el = tree.find(".//{DAV:}quota-available-bytes")
         used_el = tree.find(".//{DAV:}quota-used-bytes")
         if avail_el is None or used_el is None:
@@ -523,7 +549,7 @@ class _SpooledWriter:
 # ---------------------------------------------------------------------------
 
 
-class WebDavSession:
+class WebDavSession(SessionLifecycle):
     """WebDAV backend implementing the FileBackend protocol.
 
     Compatible with Nextcloud, ownCloud, Apache mod_dav, IIS WebDAV,

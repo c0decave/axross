@@ -14,8 +14,11 @@ import posixpath
 import tempfile
 from datetime import datetime
 from typing import IO
+from urllib.parse import quote
 
+from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetime
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.secure_storage import write_secret_file
 from models.file_item import FileItem
 
@@ -33,6 +36,25 @@ except ImportError:
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_TIMEOUT = 30
+
+
+def _graph_json(resp, what: str, *, empty_ok: bool = False) -> dict:
+    """The JSON object a Graph call answered with, else OSError.
+
+    ``requests``' own JSONDecodeError is an OSError, but a body nested
+    deeper than the C stack (RecursionError) or an integer above
+    Python's digit limit (ValueError) escapes it, and a list or a
+    string is valid JSON every caller then called ``.get()`` on.
+    """
+    if empty_ok and not resp.content:
+        return {}
+    try:
+        data = resp.json()
+    except (ValueError, RecursionError) as exc:
+        raise OSError(f"Graph API {what}: answer is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise OSError(f"Graph API {what}: answer is not a JSON object ({type(data).__name__})")
+    return data
 
 
 class _SpooledWriter:
@@ -83,7 +105,7 @@ class _SpooledWriter:
             self.close()
 
 
-class OneDriveSession:
+class OneDriveSession(SessionLifecycle):
     """OneDrive / SharePoint backend implementing the FileBackend protocol.
 
     Uses Microsoft Graph API via ``requests`` and authenticates with MSAL
@@ -274,7 +296,7 @@ class OneDriveSession:
 
         url = f"{GRAPH_BASE}/sites/{hostname}:{site_path}"
         resp = self._graph_get(url)
-        site_id = resp.get("id", "")
+        site_id = as_str(resp.get("id"))
         if not site_id:
             raise OSError(f"Cannot resolve SharePoint site: {self._site_url}")
         return site_id
@@ -285,6 +307,15 @@ class OneDriveSession:
             return f"/sites/{self._site_id}/drive"
         return "/me/drive"
 
+    @staticmethod
+    def _escape_path(path: str) -> str:
+        """``/a b/c#1`` -> ``/a%20b/c%231`` for a ``root:<path>`` segment,
+        ``""`` for the root. Names may carry ``#``, ``?`` and ``%``,
+        which would otherwise end the path, start a query string or be
+        decoded a second time by the server."""
+        normed = path.strip("/")
+        return "/" + quote(normed, safe="/") if normed else ""
+
     def _item_path_url(self, path: str) -> str:
         """Build the Graph API URL for a given path.
 
@@ -292,10 +323,10 @@ class OneDriveSession:
         For other paths: ``/me/drive/root:/path``
         """
         prefix = self._drive_prefix()
-        normed = path.strip("/")
-        if not normed:
+        escaped = self._escape_path(path)
+        if not escaped:
             return f"{GRAPH_BASE}{prefix}/root"
-        return f"{GRAPH_BASE}{prefix}/root:/{normed}"
+        return f"{GRAPH_BASE}{prefix}/root:{escaped}"
 
     def _children_url(self, path: str) -> str:
         """Build the Graph API URL for listing children of *path*.
@@ -304,10 +335,10 @@ class OneDriveSession:
         For other paths: ``/me/drive/root:/path:/children``
         """
         prefix = self._drive_prefix()
-        normed = path.strip("/")
-        if not normed:
+        escaped = self._escape_path(path)
+        if not escaped:
             return f"{GRAPH_BASE}{prefix}/root/children"
-        return f"{GRAPH_BASE}{prefix}/root:/{normed}:/children"
+        return f"{GRAPH_BASE}{prefix}/root:{escaped}:/children"
 
     def _graph_get(self, url: str, **kwargs) -> dict:
         """Execute a GET request against the Graph API."""
@@ -320,7 +351,7 @@ class OneDriveSession:
             resp = self._http.get(url, headers=self._headers(), **kwargs)
         if resp.status_code >= 400:
             raise OSError(f"Graph API GET {url} failed ({resp.status_code}): {resp.text[:500]}")
-        return resp.json()
+        return _graph_json(resp, f"GET {url}")
 
     def _graph_post(self, url: str, json_data: dict) -> dict:
         """Execute a POST request against the Graph API."""
@@ -336,7 +367,7 @@ class OneDriveSession:
             )
         if resp.status_code >= 400:
             raise OSError(f"Graph API POST {url} failed ({resp.status_code}): {resp.text[:500]}")
-        return resp.json()
+        return _graph_json(resp, f"POST {url}")
 
     def _graph_patch(self, url: str, json_data: dict) -> dict:
         """Execute a PATCH request against the Graph API."""
@@ -352,7 +383,7 @@ class OneDriveSession:
             )
         if resp.status_code >= 400:
             raise OSError(f"Graph API PATCH {url} failed ({resp.status_code}): {resp.text[:500]}")
-        return resp.json()
+        return _graph_json(resp, f"PATCH {url}")
 
     def _graph_delete(self, url: str) -> None:
         """Execute a DELETE request against the Graph API."""
@@ -377,7 +408,7 @@ class OneDriveSession:
             resp = self._http.put(url, headers=headers, data=data, timeout=GRAPH_TIMEOUT)
         if resp.status_code >= 400:
             raise OSError(f"Graph API PUT {url} failed ({resp.status_code}): {resp.text[:500]}")
-        return resp.json()
+        return _graph_json(resp, f"PUT {url}")
 
     def _graph_get_bytes(self, url: str) -> bytes:
         """Execute a GET request that returns raw bytes (file download)."""
@@ -407,12 +438,12 @@ class OneDriveSession:
     @staticmethod
     def _parse_item(item: dict) -> FileItem:
         """Parse a Graph API drive-item dict into a FileItem."""
-        name = item.get("name", "")
-        size = item.get("size", 0)
+        name = as_str(item.get("name"))
+        size = as_size(item.get("size"))
         is_dir = "folder" in item
 
         modified = datetime.fromtimestamp(0)
-        raw_modified = item.get("lastModifiedDateTime", "")
+        raw_modified = as_str(item.get("lastModifiedDateTime"))
         if raw_modified:
             try:
                 # Graph returns ISO-8601: "2024-01-15T10:30:00Z"
@@ -435,10 +466,32 @@ class OneDriveSession:
         """Retrieve the Graph item-id for the given path."""
         url = self._item_path_url(path)
         data = self._graph_get(url)
-        item_id = data.get("id", "")
+        item_id = as_str(data.get("id"))
         if not item_id:
             raise OSError(f"Cannot resolve item ID for: {path}")
         return item_id
+
+    def _pages(self, url: str):
+        """Every entry of a paged Graph collection, following
+        ``@odata.nextLink``.
+
+        A ``value`` that is not a list fails; entries that are not
+        objects are skipped. A next link already followed is a loop the
+        server would keep us in forever, so it fails too.
+        """
+        seen: set[str] = set()
+        while url:
+            seen.add(url)
+            data = self._graph_get(url)
+            value = data.get("value", [])
+            if not isinstance(value, list):
+                raise OSError(f"Graph API GET {url}: 'value' is not a list")
+            for entry in value:
+                if isinstance(entry, dict):
+                    yield entry
+            url = as_str(data.get("@odata.nextLink"))
+            if url in seen:
+                raise OSError(f"Graph API GET: paging link repeats ({url})")
 
     # ------------------------------------------------------------------
     # Upload helper (used by _SpooledWriter)
@@ -446,9 +499,8 @@ class OneDriveSession:
 
     def _upload_content(self, path: str, data: bytes) -> None:
         """Upload raw bytes to *path* using the simple upload endpoint."""
-        normed = path.strip("/")
         prefix = self._drive_prefix()
-        url = f"{GRAPH_BASE}{prefix}/root:/{normed}:/content"
+        url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/content"
         self._graph_put_bytes(url, data)
 
     # ------------------------------------------------------------------
@@ -479,16 +531,13 @@ class OneDriveSession:
         self.close()
 
     def list_dir(self, path: str) -> list[FileItem]:
-        url = self._children_url(path)
         items: list[FileItem] = []
-
-        while url:
-            data = self._graph_get(url)
-            for entry in data.get("value", []):
-                items.append(self._parse_item(entry))
-            # Handle pagination
-            url = data.get("@odata.nextLink", "")
-
+        for entry in self._pages(self._children_url(path)):
+            item = self._parse_item(entry)
+            if not item.name:
+                log.warning("OneDrive: skipping a listing entry without a name in %s", path)
+                continue
+            items.append(item)
         return items
 
     def stat(self, path: str) -> FileItem:
@@ -558,8 +607,10 @@ class OneDriveSession:
         # If the parent directory changed, include parentReference
         if new_parent_path != old_parent_path:
             parent_url = self._item_path_url("/" + new_parent_path if new_parent_path else "/")
-            parent_data = self._graph_get(parent_url)
-            payload["parentReference"] = {"id": parent_data["id"]}
+            parent_id = as_str(self._graph_get(parent_url).get("id"))
+            if not parent_id:
+                raise OSError(f"Cannot resolve item ID for: /{new_parent_path}")
+            payload["parentReference"] = {"id": parent_id}
 
         self._graph_patch(url, payload)
 
@@ -568,7 +619,7 @@ class OneDriveSession:
         prefix = self._drive_prefix()
         if not normed:
             raise OSError("Cannot download root")
-        url = f"{GRAPH_BASE}{prefix}/root:/{normed}:/content"
+        url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/content"
         data = self._graph_get_bytes(url)
         buf = io.BytesIO(data)
         buf.seek(0)
@@ -629,10 +680,10 @@ class OneDriveSession:
         try:
             url = f"{GRAPH_BASE}{self._drive_prefix()}"
             data = self._graph_get(url)
-            quota = data.get("quota", {})
-            total = quota.get("total", 0)
-            used = quota.get("used", 0)
-            remaining = quota.get("remaining", 0)
+            quota = as_dict(data.get("quota"))
+            total = as_size(quota.get("total"))
+            used = as_size(quota.get("used"))
+            remaining = as_size(quota.get("remaining"))
             return (total, used, remaining)
         except OSError:
             return (0, 0, 0)
@@ -640,6 +691,7 @@ class OneDriveSession:
     def list_versions(self, path: str) -> list:
         """Graph /items/{id}/versions — OneDrive's implicit version history."""
         from datetime import datetime as _dt
+        from datetime import timezone as _tz
 
         from models.file_version import FileVersion
 
@@ -647,31 +699,32 @@ class OneDriveSession:
         if not normed:
             return []
         prefix = self._drive_prefix()
-        url = f"{GRAPH_BASE}{prefix}/root:/{normed}:/versions"
+        url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/versions"
         try:
             data = self._graph_get(url)
         except Exception as exc:
             log.warning("OneDrive list_versions(%s) failed: %s", path, exc)
             return []
-        items = list(data.get("value") or [])
+        items = [v for v in as_list(data.get("value")) if isinstance(v, dict)]
+
+        # Always aware: the sort below compares them, and a naive
+        # fallback next to an aware date raises TypeError.
+        oldest = _dt.min.replace(tzinfo=_tz.utc)
 
         def _ts(v):
-            s = v.get("lastModifiedDateTime") or ""
-            try:
-                return _dt.fromisoformat(s.replace("Z", "+00:00"))
-            except Exception:
-                return _dt.min
+            return as_utc_datetime(v.get("lastModifiedDateTime"), default=oldest)
 
         items.sort(key=_ts, reverse=True)
         out: list = []
         for i, v in enumerate(items):
+            version_id = as_str(v.get("id"))
             out.append(
                 FileVersion(
-                    version_id=v.get("id") or "",
+                    version_id=version_id,
                     modified=_ts(v),
-                    size=int(v.get("size") or 0),
+                    size=as_size(v.get("size")),
                     is_current=(i == 0),
-                    label=f"onedrive-ver:{v.get('id', '')}",
+                    label=f"onedrive-ver:{version_id}",
                 )
             )
         return out
@@ -682,7 +735,10 @@ class OneDriveSession:
         if not normed:
             raise OSError("Cannot download root version")
         prefix = self._drive_prefix()
-        url = f"{GRAPH_BASE}{prefix}/root:/{normed}:/versions/{version_id}/content"
+        url = (
+            f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/versions/"
+            f"{quote(version_id, safe='')}/content"
+        )
         try:
             data = self._graph_get_bytes(url)
         except Exception as exc:
@@ -750,7 +806,7 @@ class OneDriveSession:
         if expires:
             body["expirationDateTime"] = expires
         data = self._graph_post(url, body)
-        link = (data.get("link") or {}).get("webUrl", "")
+        link = as_str(as_dict(data.get("link")).get("webUrl"))
         if not link:
             raise OSError(f"OneDrive share({path}) returned no webUrl: {data}")
         log.info(
@@ -769,21 +825,18 @@ class OneDriveSession:
         link/email."""
         url = f"{GRAPH_BASE}{self._drive_prefix()}/root:{self._escape_path(path)}:/permissions"
         out: list[dict] = []
-        while url:
-            data = self._graph_get(url)
-            for p in data.get("value", []):
-                grantee = p.get("grantedTo") or p.get("grantedToV2") or {}
-                user = grantee.get("user") if isinstance(grantee, dict) else {}
-                out.append(
-                    {
-                        "id": p.get("id", ""),
-                        "roles": p.get("roles", []),
-                        "type": "link" if p.get("link") else "user",
-                        "email": (user or {}).get("email", ""),
-                        "url": (p.get("link") or {}).get("webUrl", ""),
-                    }
-                )
-            url = data.get("@odata.nextLink", "")
+        for p in self._pages(url):
+            grantee = as_dict(p.get("grantedTo") or p.get("grantedToV2"))
+            user = as_dict(grantee.get("user"))
+            out.append(
+                {
+                    "id": as_str(p.get("id")),
+                    "roles": [r for r in as_list(p.get("roles")) if isinstance(r, str)],
+                    "type": "link" if p.get("link") else "user",
+                    "email": as_str(user.get("email")),
+                    "url": as_str(as_dict(p.get("link")).get("webUrl")),
+                }
+            )
         return out
 
     # ------------------------------------------------------------------
@@ -802,21 +855,18 @@ class OneDriveSession:
         self._require_sharepoint("lists")
         url = f"{GRAPH_BASE}/sites/{self._site_id}/lists"
         out: list[dict] = []
-        while url:
-            data = self._graph_get(url)
-            for entry in data.get("value", []):
-                info = entry.get("list", {})
-                out.append(
-                    {
-                        "id": entry.get("id", ""),
-                        "name": entry.get("name", ""),
-                        "display_name": entry.get("displayName", ""),
-                        "list_type": info.get("template", ""),
-                        "item_count": entry.get("@microsoft.graph.itemCount", 0),
-                        "web_url": entry.get("webUrl", ""),
-                    }
-                )
-            url = data.get("@odata.nextLink", "")
+        for entry in self._pages(url):
+            info = as_dict(entry.get("list"))
+            out.append(
+                {
+                    "id": as_str(entry.get("id")),
+                    "name": as_str(entry.get("name")),
+                    "display_name": as_str(entry.get("displayName")),
+                    "list_type": as_str(info.get("template")),
+                    "item_count": as_size(entry.get("@microsoft.graph.itemCount")),
+                    "web_url": as_str(entry.get("webUrl")),
+                }
+            )
         return out
 
     def items(self, list_id: str, *, expand_fields: bool = True, limit: int = 100) -> list[dict]:
@@ -834,21 +884,20 @@ class OneDriveSession:
         if expand_fields:
             url += "&$expand=fields"
         out: list[dict] = []
-        while url and len(out) < int(limit):
-            data = self._graph_get(url)
-            for it in data.get("value", []):
-                out.append(
-                    {
-                        "id": it.get("id", ""),
-                        "fields": it.get("fields", {}),
-                        "web_url": it.get("webUrl", ""),
-                        "created": it.get("createdDateTime", ""),
-                        "modified": it.get("lastModifiedDateTime", ""),
-                    }
-                )
-                if len(out) >= int(limit):
-                    break
-            url = data.get("@odata.nextLink", "")
+        if int(limit) <= 0:
+            return out
+        for it in self._pages(url):
+            out.append(
+                {
+                    "id": as_str(it.get("id")),
+                    "fields": as_dict(it.get("fields")),
+                    "web_url": as_str(it.get("webUrl")),
+                    "created": as_str(it.get("createdDateTime")),
+                    "modified": as_str(it.get("lastModifiedDateTime")),
+                }
+            )
+            if len(out) >= int(limit):
+                break
         return out
 
     def search(
@@ -878,15 +927,17 @@ class OneDriveSession:
         }
         data = self._graph_post(url, body)
         out: list[dict] = []
-        for resp in data.get("value", []):
-            for hit_container in resp.get("hitsContainers", []):
-                for hit in hit_container.get("hits", []):
+        for resp in as_list(data.get("value")):
+            for hit_container in as_list(as_dict(resp).get("hitsContainers")):
+                for hit in as_list(as_dict(hit_container).get("hits")):
+                    if not isinstance(hit, dict):
+                        continue
                     out.append(
                         {
-                            "id": hit.get("hitId", ""),
-                            "rank": hit.get("rank", 0),
-                            "summary": hit.get("summary", ""),
-                            "resource": hit.get("resource", {}),
+                            "id": as_str(hit.get("hitId")),
+                            "rank": as_size(hit.get("rank")),
+                            "summary": as_str(hit.get("summary")),
+                            "resource": as_dict(hit.get("resource")),
                         }
                     )
                     if len(out) >= int(limit):
@@ -931,7 +982,7 @@ class OneDriveSession:
             )
         if resp.status_code >= 400:
             raise OSError(f"Graph POST {url} → {resp.status_code}: {resp.text[:500]}")
-        return resp.json() if resp.content else {}
+        return _graph_json(resp, f"POST {url}", empty_ok=True)
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return OneDrive's file.hashes.
@@ -945,8 +996,8 @@ class OneDriveSession:
             data = self._graph_get(url)
         except OSError:
             raise
-        file_info = data.get("file") or {}
-        hashes = file_info.get("hashes") or {}
+        file_info = as_dict(data.get("file"))
+        hashes = {k: v for k, v in as_dict(file_info.get("hashes")).items() if isinstance(v, str)}
         want_key = {
             "sha256": "sha256Hash",
             "sha1": "sha1Hash",

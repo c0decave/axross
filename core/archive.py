@@ -48,10 +48,12 @@ extract the same archive without clobbering earlier extractions.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
 import tarfile
+import tempfile
 import time
 import zipfile
 from dataclasses import dataclass
@@ -129,10 +131,37 @@ _TAR_EXTENSIONS = (
     ".tbz2",
     ".tar.xz",
     ".txz",
+    ".tar.zst",
+    ".tzst",
     ".tar",
 )
 _SEVEN_Z_EXTENSIONS = (".7z",)
 _RAR_EXTENSIONS = (".rar",)
+# One compressed file, no container. Checked after the TAR table so
+# ".tar.gz" stays a tarball.
+_SINGLE_EXTENSIONS = (".gz", ".bz2", ".xz", ".zst")
+_ZSTD_EXTENSIONS = (".tar.zst", ".tzst", ".zst")
+
+
+def _zstd_available() -> bool:
+    from core import packer
+
+    return packer.FORMATS["zst"].available()[0]
+
+
+def _tarfile_knows_zstd() -> bool:
+    return "zst" in getattr(tarfile.TarFile, "OPEN_METH", {})
+
+
+def _ext_usable(ext: str) -> bool:
+    return ext not in _ZSTD_EXTENSIONS or _zstd_available()
+
+
+def _single_ext(lower: str) -> str | None:
+    """The single-file extension of *lower*, unless it is a tarball."""
+    if any(lower.endswith(ext) for ext in _TAR_EXTENSIONS):
+        return None
+    return next((ext for ext in _SINGLE_EXTENSIONS if lower.endswith(ext)), None)
 
 
 class ExtractCancelled(Exception):
@@ -211,7 +240,10 @@ def is_supported_archive(name_or_path: str) -> bool:
     lower = name_or_path.lower()
     for ext in _ZIP_EXTENSIONS + _TAR_EXTENSIONS:
         if lower.endswith(ext):
-            return True
+            return _ext_usable(ext)
+    single = _single_ext(lower)
+    if single is not None:
+        return _ext_usable(single)
     if SEVEN_Z_AVAILABLE:
         for ext in _SEVEN_Z_EXTENSIONS:
             if lower.endswith(ext):
@@ -234,6 +266,9 @@ def strip_archive_extension(name_or_path: str) -> str:
     for ext in _TAR_EXTENSIONS + _ZIP_EXTENSIONS + _SEVEN_Z_EXTENSIONS + _RAR_EXTENSIONS:
         if lower.endswith(ext):
             return base[: -len(ext)]
+    single = _single_ext(lower)
+    if single is not None:
+        return base[: -len(single)]
     return base
 
 
@@ -404,6 +439,102 @@ def _extract_zip(
         return files_done
 
 
+@contextlib.contextmanager
+def _open_tar(archive_path: str):
+    """A TarFile for any of the TAR family. A zstd tarball on a Python
+    whose tarfile has no zstd (before 3.14 - the binary build) is
+    decompressed into a private temporary file first, at most a little
+    over MAX_EXTRACT_TOTAL_BYTES: tarfile needs random access."""
+    lower = archive_path.lower()
+    if not lower.endswith((".tar.zst", ".tzst")) or _tarfile_knows_zstd():
+        with tarfile.open(archive_path, mode="r:*") as tf:
+            yield tf
+        return
+    from core import packer
+
+    limit = MAX_EXTRACT_TOTAL_BYTES + MAX_EXTRACT_FILES * 1024 + (1 << 20)
+    with tempfile.TemporaryFile(prefix="axross-tar-") as tmp:
+        try:
+            with open(archive_path, "rb") as raw, packer.zstd_reader(raw) as src:
+                _copy_capped(src, tmp, limit, archive_path)
+        except UnsafeArchive:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the codec's own error types
+            raise UnsafeArchive(
+                f"cannot decompress {os.path.basename(archive_path)}: {exc}"
+            ) from exc
+        tmp.seek(0)
+        with tarfile.open(fileobj=tmp, mode="r:") as tf:
+            yield tf
+
+
+def _copy_capped(src, dst, limit: int, what: str) -> int:
+    total = 0
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            return total
+        total += len(chunk)
+        if total > limit:
+            raise UnsafeArchive(
+                f"{os.path.basename(what)} expands beyond {limit} bytes; "
+                f"cap is {MAX_EXTRACT_TOTAL_BYTES} — likely a bomb",
+            )
+        dst.write(chunk)
+
+
+def _single_reader(archive_path: str, ext: str):
+    import bz2
+    import gzip
+    import lzma
+
+    if ext == ".gz":
+        return gzip.open(archive_path, "rb")
+    if ext == ".bz2":
+        return bz2.open(archive_path, "rb")
+    if ext == ".xz":
+        return lzma.open(archive_path, "rb")
+    from core import packer
+
+    raw = open(archive_path, "rb")  # noqa: SIM115 - closed with the reader
+    try:
+        return packer.zstd_reader(raw, close_raw=True)
+    except BaseException:
+        raw.close()
+        raise
+
+
+def _single_member_name(archive_path: str) -> str:
+    stem = strip_archive_extension(archive_path)
+    return stem if stem not in ("", ".", "..") else "data"
+
+
+def _extract_single(
+    archive_path: str,
+    target: str,
+    progress: Callable[[int, int, str], None] | None,
+) -> int:
+    """One compressed file: decompressed into *target*/<name without the
+    extension>, never more than MAX_EXTRACT_TOTAL_BYTES."""
+    ext = _single_ext(archive_path.lower())
+    if ext is None:
+        raise UnsafeArchive(f"not a single compressed file: {archive_path!r}")
+    name = _single_member_name(archive_path)
+    out_path = _safe_member_path(target, name)
+    if progress is not None:
+        progress(0, 1, name)
+    try:
+        with _single_reader(archive_path, ext) as src, open(out_path, "xb") as dst:
+            _copy_capped(src, dst, MAX_EXTRACT_TOTAL_BYTES, archive_path)
+    except (UnsafeArchive, ExtractCancelled):
+        raise
+    except Exception as exc:  # noqa: BLE001 - zlib.error, LZMAError, ZstdError, EOFError, …
+        raise UnsafeArchive(f"cannot decompress {os.path.basename(archive_path)}: {exc}") from exc
+    if progress is not None:
+        progress(1, 1, name)
+    return 1
+
+
 def _extract_tar(
     archive_path: str,
     target: str,
@@ -412,7 +543,7 @@ def _extract_tar(
     """Extract a TAR-family archive. Tarfile sniffs gz/bz2/xz from
     the magic bytes so a single ``mode='r:*'`` open handles all
     four compressed variants."""
-    with tarfile.open(archive_path, mode="r:*") as tf:
+    with _open_tar(archive_path) as tf:
         members = tf.getmembers()
         if len(members) > MAX_EXTRACT_FILES:
             raise UnsafeArchive(
@@ -734,7 +865,7 @@ def _extract_members_tar(
     """Partial TAR extraction. Mirrors :func:`_extract_tar`'s guards
     (symlink/hardlink + non-file/dir refusal, zip-slip, duplicate, count
     + total-byte caps) applied ONLY to the SELECTED subset."""
-    with tarfile.open(archive_path, mode="r:*") as tf:
+    with _open_tar(archive_path) as tf:
         members_all = tf.getmembers()
         requested = _resolve_selection([m.name for m in members_all], members)
         selected = [m for m in members_all if _is_selected(m.name, requested)]
@@ -847,6 +978,15 @@ def extract_members(
             if lower.endswith(ext):
                 runner = _extract_members_zip
                 break
+    if runner is None and _single_ext(lower) is not None:
+        name = _single_member_name(archive_path)
+        missing = [m for m in members if m.rstrip("/") != name]
+        if missing:
+            raise KeyError(f"not in the archive: {', '.join(missing)}")
+
+        def runner(path, tgt, _members, prog):
+            return _extract_single(path, tgt, prog)
+
     if runner is None:
         for ext in _SEVEN_Z_EXTENSIONS + _RAR_EXTENSIONS:
             if lower.endswith(ext):
@@ -926,7 +1066,7 @@ def _list_zip(p: str) -> list[ArchiveEntry]:
 
 def _list_tar(p: str) -> list[ArchiveEntry]:
     out: list[ArchiveEntry] = []
-    with tarfile.open(p, mode="r:*") as tf:
+    with _open_tar(p) as tf:
         for ti in tf.getmembers():
             is_dir = ti.isdir()
             name = ti.name + "/" if is_dir and not ti.name.endswith("/") else ti.name
@@ -1032,6 +1172,18 @@ def list_archive(archive_path: str) -> list[ArchiveEntry]:
     for ext in _SEVEN_Z_EXTENSIONS:
         if lower.endswith(ext):
             return _list_7z(archive_path)
+    if _single_ext(lower) is not None:
+        # The uncompressed size is not known without decompressing.
+        st = os.stat(archive_path)
+        return [
+            ArchiveEntry(
+                name=_single_member_name(archive_path),
+                size=0,
+                compressed=int(st.st_size),
+                mtime=float(st.st_mtime),
+                is_dir=False,
+            ),
+        ]
     raise UnsafeArchive(
         f"unsupported archive extension: {archive_path!r}",
     )
@@ -1096,6 +1248,8 @@ def extract(
                     raise RarUnavailable(_RAR_UNAVAILABLE_MSG)
                 runner = _extract_rar
                 break
+    if runner is None and _single_ext(lower) is not None:
+        runner = _extract_single
     if runner is None:
         raise UnsafeArchive(
             f"unsupported archive extension: {archive_path!r}",

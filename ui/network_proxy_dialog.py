@@ -304,6 +304,16 @@ class NetworkProxyDialog(QDialog):
         self._probe.finished_with.connect(self._on_probe_done)
         self._probe.start()
 
+    def done(self, result: int) -> None:  # noqa: D102 - Qt override
+        # A probe still running must neither report to the closed dialog
+        # nor be destroyed with it (the window keeps this dialog until exit).
+        from ui.thread_lifetime import detach_running_thread
+
+        if self._probe is not None:
+            detach_running_thread(self._probe, self._probe.finished_with)
+            self._test_btn.setEnabled(True)
+        super().done(result)
+
     def _on_probe_done(self, ok: bool, stage: str, message: str, seconds: float) -> None:
         self._test_btn.setEnabled(True)
         if stage == "direct":

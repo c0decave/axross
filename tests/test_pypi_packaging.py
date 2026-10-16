@@ -70,6 +70,7 @@ def test_pyproject_declares_publishable_package_metadata() -> None:
         "resources.logo",
         "resources.logo.concepts",
         "resources.scripts",
+        "resources.extensions",
         "resources.wordlists",
     } <= packages
 
@@ -87,10 +88,29 @@ def test_pyproject_declares_publishable_package_metadata() -> None:
     assert heavy_deps.isdisjoint(extras["all"])
 
 
+def _wheels_for(version: str) -> list[Path]:
+    # Only a wheel of this tree's version says anything about this tree:
+    # a stale one left in dist/ (0.7.21 next to a 0.8.67 tree) failed the
+    # version check below although nothing was wrong with the code.
+    return sorted((REPO_ROOT / "dist").glob(f"axross-{version}-*.whl"))
+
+
+def test_edge_a_stale_wheel_of_another_version_is_not_checked(tmp_path, monkeypatch) -> None:
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "axross-0.0.1-py3-none-any.whl").write_bytes(b"")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    assert _wheels_for("9.9.9") == []
+    assert [w.name for w in _wheels_for("0.0.1")] == ["axross-0.0.1-py3-none-any.whl"]
+
+
 def test_built_wheel_contains_runtime_resources() -> None:
-    wheels = sorted((REPO_ROOT / "dist").glob("axross-*.whl"))
+    from axross._version import __version__
+
+    wheels = _wheels_for(__version__)
     if not wheels:
-        pytest.skip("wheel not built; run `python -m build` for artifact smoke coverage")
+        pytest.skip(
+            f"no wheel for {__version__} in dist/; run `python -m build` for artifact smoke coverage"
+        )
 
     wheel = wheels[-1]
 
@@ -122,6 +142,8 @@ def test_built_wheel_contains_runtime_resources() -> None:
         "resources/logo/axross-logo-256.png",
         "resources/scripts/__init__.py",
         "resources/scripts/du.py",
+        "resources/extensions/__init__.py",
+        "resources/extensions/checksum_manifest.py",
         "resources/wordlists/__init__.py",
         "resources/wordlists/tftp_common.txt",
         f"{dist_info}/METADATA",

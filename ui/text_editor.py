@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from PyQt6.QtGui import QFont, QKeySequence
@@ -34,6 +36,68 @@ class EditorReadLimitError(OSError):
     """Raised when a backend returns more data than the editor cap."""
 
 
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+#: Everything QPlainTextEdit turns into a block break. The widget keeps
+#: none of them, so the save has to put back the one each line had.
+_LINE_BREAK = re.compile("(\r\n|\r|\n|\u2029)")
+
+
+def _split_lines(text: str) -> tuple[list[str], list[str]]:
+    """*text* as the editor's blocks and the break that ended each one
+    (``""`` after the last block)."""
+    parts = _LINE_BREAK.split(text)
+    return parts[0::2], parts[1::2] + [""]
+
+
+def _common_newline(endings: list[str]) -> str:
+    """The line ending most lines use (first seen wins a tie), else LF.
+    New lines get it."""
+    counts: dict[str, int] = {}
+    for ending in endings:
+        if ending in ("\r\n", "\r", "\n"):
+            counts[ending] = counts.get(ending, 0) + 1
+    return max(counts, key=counts.get) if counts else "\n"
+
+
+def _line_endings(old_lines, old_endings, new_lines, default: str) -> list[str]:
+    """The ending for each of *new_lines*: a line that is still there, or
+    was edited in place, keeps the one it had; a new line gets *default*.
+
+    Joining every line with one ending rewrote the untouched lines of a
+    file that mixes LF and CRLF."""
+    endings = [default] * len(new_lines)
+    # Common head and tail first: an edit is local, and the matcher then
+    # only sees the changed middle of a large file.
+    head = 0
+    limit = min(len(old_lines), len(new_lines))
+    while head < limit and old_lines[head] == new_lines[head]:
+        endings[head] = old_endings[head]
+        head += 1
+    tail = 0
+    while (
+        tail < limit - head
+        and old_lines[len(old_lines) - 1 - tail] == new_lines[len(new_lines) - 1 - tail]
+    ):
+        endings[len(new_lines) - 1 - tail] = old_endings[len(old_lines) - 1 - tail]
+        tail += 1
+    old_mid = old_lines[head : len(old_lines) - tail]
+    new_mid = new_lines[head : len(new_lines) - tail]
+    matcher = difflib.SequenceMatcher(None, old_mid, new_mid, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag not in ("equal", "replace"):
+            continue
+        for k in range(min(i2 - i1, j2 - j1)):
+            endings[head + j1 + k] = old_endings[head + i1 + k]
+    for k in range(len(endings) - 1):
+        if not endings[k]:
+            endings[k] = default
+    if endings:
+        endings[-1] = ""
+    return endings
+
+
 def _read_capped(handle, cap: int | None = None) -> bytes:
     if cap is None:
         cap = max_open_bytes()
@@ -59,9 +123,17 @@ class TextEditorDialog(QDialog):
         self._backend = backend
         self._file_path = file_path
         self._original_content = b""
+        self._newline = "\n"
+        # The file's lines and the break after each, as last read or saved.
+        self._lines: list[str] = [""]
+        self._endings: list[str] = [""]
+        self._bom = False
         self._loading = False
         self._modified = False
         self._read_only = read_only
+        # True once the file was read: a dialog whose load failed must
+        # neither open nor save an empty buffer over the real file.
+        self._loaded_once = False
 
         filename = file_path.rsplit(backend.separator(), 1)[-1]
         prefix = "View" if read_only else "Edit"
@@ -152,14 +224,21 @@ class TextEditorDialog(QDialog):
             with self._backend.open_read(self._file_path) as f:
                 self._original_content = _read_capped(f)
 
-            # Try UTF-8, fallback to Latin-1
+            # Try UTF-8, fallback to Latin-1. The BOM and the line ending
+            # are remembered: the text widget drops the one and folds the
+            # other into "\n", and a save must write back what it read.
+            self._bom = False
             try:
                 text = self._original_content.decode("utf-8")
                 self._encoding_label.setText("UTF-8")
+                if self._original_content.startswith(_UTF8_BOM):
+                    self._bom = True
+                    text = text[1:]
             except UnicodeDecodeError:
                 text = self._original_content.decode("latin-1")
                 self._encoding_label.setText("Latin-1")
 
+            self._remember_lines(text)
             self._loading = True
             self._editor.blockSignals(True)
             self._editor.setPlainText(text)
@@ -168,6 +247,7 @@ class TextEditorDialog(QDialog):
             self._modified = False
             self._btn_save.setEnabled(False)
             self._status_label.setText("Loaded")
+            self._loaded_once = True
             log.debug("Loaded file: %s (%d bytes)", self._file_path, len(self._original_content))
 
         except OSError as e:
@@ -187,7 +267,22 @@ class TextEditorDialog(QDialog):
             return
         self._load_file()
 
+    def exec(self) -> int:
+        # ``_load_file`` already said why and called reject() from the
+        # constructor; without this the caller's exec() showed the empty
+        # editor anyway.
+        if not self._loaded_once:
+            return 0
+        return super().exec()
+
     def _save_file(self) -> None:
+        if not self._loaded_once:
+            QMessageBox.warning(
+                self,
+                "Save Refused",
+                "The file was never read, so saving would replace content nobody has seen.",
+            )
+            return
         try:
             # Check for remote conflict by content hash — the earlier
             # stat-based size/mtime pre-check was dead code (its result
@@ -219,10 +314,20 @@ class TextEditorDialog(QDialog):
 
             # Encode and write
             encoding = "utf-8" if self._encoding_label.text() == "UTF-8" else "latin-1"
-            content = self._editor.toPlainText().encode(encoding)
+            try:
+                content = self._encoded_text(encoding)
+            except UnicodeEncodeError as e:
+                QMessageBox.critical(
+                    self,
+                    "Save Error",
+                    f"The text holds characters {encoding.upper()} cannot store "
+                    f"(the file was opened as {encoding.upper()}); nothing was written:\n{e}",
+                )
+                return
 
             self._save_atomic(content)
 
+            self._remember_lines(self._saved_text)
             self._original_content = content
             self._modified = False
             self._btn_save.setEnabled(False)
@@ -232,6 +337,30 @@ class TextEditorDialog(QDialog):
         except OSError as e:
             log.error("Cannot save file %s: %s", self._file_path, e)
             QMessageBox.critical(self, "Save Error", f"Cannot save file:\n{e}")
+
+    def _encoded_text(self, encoding: str) -> bytes:
+        """The editor's text as the bytes the file should hold.
+
+        Built from the blocks, not ``toPlainText()``: that one rewrites
+        no-break spaces as plain spaces and U+2028 as a line break. Lines
+        are joined with the file's own line ending and a UTF-8 BOM the
+        file started with is put back."""
+        lines = []
+        block = self._editor.document().begin()
+        while block.isValid():
+            lines.append(block.text())
+            block = block.next()
+        endings = _line_endings(self._lines, self._endings, lines, self._newline)
+        text = "".join(line + ending for line, ending in zip(lines, endings))
+        content = text.encode(encoding)
+        self._saved_text = text
+        if self._bom:
+            content = _UTF8_BOM + content
+        return content
+
+    def _remember_lines(self, text: str) -> None:
+        self._lines, self._endings = _split_lines(text)
+        self._newline = _common_newline(self._endings)
 
     def _save_atomic(self, content: bytes) -> None:
         from core.atomic_io import atomic_write

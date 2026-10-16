@@ -89,9 +89,19 @@ Symlinks such as `bin`, `lib`, `lib64` and `sbin` show their own
    `axross --script` or the REPL `.run` slash-command.
 
 7. **MCP server mode for LLM agents.** Headless `axross --mcp-server`
-   speaks JSON-RPC over stdio or HTTPS+mTLS. Read-only by default;
-   `--mcp-write` enables file mutations; `--mcp-allow-scripts` lets
-   the LLM **write and run its own Python** through the server. See
+   speaks JSON-RPC over stdio or HTTP (mTLS required off loopback)
+   and serves the local filesystem under `--mcp-root` (default:
+   your home). Read-only by default; `--mcp-write` enables file
+   mutations (needs an explicit `--mcp-root`); `--mcp-allow-scripts`
+   (stdio only) lets the LLM **write and run its own Python** as
+   your user, each run in a child process with a timeout — not
+   confined to the root, so treat it as a shell. `--mcp-tools GROUP[,…]` (or `all`) adds capability groups:
+   metadata, duplicates, packer, archive, crypto, index, filetype,
+   transfer, remote (saved profiles as extra backends, credentials
+   only from the keyring, never a prompt) and extensions; their
+   mutating tools also need `--mcp-write`. `axross --mcp-list-tools`
+   prints the JSON manifest of every tool
+   ([docs/mcp-tools.json](docs/mcp-tools.json)). See
    [docs/MCP.md](docs/MCP.md).
 
 8. **Encrypted overlay (`.axenc`).** AEAD-sealed file format that
@@ -224,7 +234,7 @@ From PyPI, once a release is published:
 python3 -m venv .venv && source .venv/bin/activate
 pip install "axross[all]"
 axross              # start the GUI
-axross --mcp-server # or expose backends as MCP tools to an LLM
+axross --mcp-server # or expose the local filesystem as MCP tools to an LLM
 ```
 
 From a source checkout:
@@ -235,7 +245,7 @@ cd axross
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 axross              # start the GUI
-axross --mcp-server # or expose backends as MCP tools to an LLM
+axross --mcp-server # or expose the local filesystem as MCP tools to an LLM
 ```
 
 ```python
@@ -281,6 +291,7 @@ Full table of extras + system tools per protocol:
 | [INSTALL.md](INSTALL.md) | Prerequisites, per-protocol extras, OAuth setup, wheel build, dev setup. |
 | [docs/USAGE.md](docs/USAGE.md) · [USAGE_de.md](docs/USAGE_de.md) · [USAGE_es.md](docs/USAGE_es.md) | User guide — connections, panes, transfers, terminal, right-click actions. |
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + `axross.*` API + slash-commands + 32 bundled scripts + MCP scripting tools. |
+| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the five bundled examples. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |
 | [docs/OPSEC.md](docs/OPSEC.md) | Threat model + per-finding analysis of what the client reveals to servers. |

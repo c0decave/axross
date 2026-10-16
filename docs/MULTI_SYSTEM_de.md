@@ -215,7 +215,8 @@ Source wird in Segmente aufgeteilt, ein JSON-Manifest schreibt nach
 jedem fertigen Segment, beim Re-Run wird ab dem ersten unfertigen
 Segment fortgesetzt — nach Verifikation, dass die im Ziel
 gespeicherten Hashes stimmen. Manifest standardmäßig in
-`/tmp/axross-resume/<safe-name>.json` (mode 0o600); per
+`$XDG_STATE_HOME/axross/resume/<safe-name>.json` (Default
+`~/.local/state`, Verzeichnis mode 0o700, Datei mode 0o600); per
 `manifest_path=…` overridebar.
 
 Konservatives Verifizieren: jeder Mismatch auf einem „done"-Segment

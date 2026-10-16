@@ -35,6 +35,7 @@ import logging
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -54,8 +55,51 @@ try:
 except ImportError:  # pragma: no cover
     ldap3 = None  # type: ignore[assignment]
 
+# What ldap3 raises besides LDAPException for an answer it cannot decode:
+# its BER decoder (ldap3.utils.asn1.decode_message_fast) indexes and
+# slices the raw bytes, so a truncated or mislabelled element surfaces
+# as KeyError / IndexError / ValueError / TypeError, a DN or value that
+# is not UTF-8 as UnicodeDecodeError (a ValueError).
+_LDAP_DECODE_ERRORS: tuple[type[BaseException], ...] = (
+    KeyError,
+    IndexError,
+    ValueError,
+    TypeError,
+    AttributeError,
+)
+try:
+    from pyasn1.error import PyAsn1Error
 
-class LdapFsSession:
+    _LDAP_DECODE_ERRORS += (PyAsn1Error,)
+except ImportError:  # pragma: no cover
+    pass
+
+
+def _leading_rdn(dn: str) -> str:
+    """The leftmost RDN of ``dn``, up to the first UNESCAPED comma.
+
+    RFC 4514 escapes a comma inside a value as ``\\,`` (``cn=Doe\\, Jane``)
+    and a backslash as ``\\\\``; a plain split at the first comma cut
+    such names short."""
+    i = 0
+    while i < len(dn):
+        if dn[i] == "\\":
+            i += 2
+            continue
+        if dn[i] == ",":
+            return dn[:i]
+        i += 1
+    return dn
+
+
+def _segment_name(rdn: str) -> str:
+    """``rdn`` as one path segment. RFC 4514 does not escape "/" in a
+    value ("cn=AC/DC"), but here "/" separates segments; its hex-pair
+    escape ``\\2F`` names the same value and the server parses it back."""
+    return rdn.replace("/", "\\2F")
+
+
+class LdapFsSession(SessionLifecycle):
     """Read-only LDAP-as-FileBackend.
 
     ``host`` / ``port`` / ``use_tls`` configure the transport. Bind
@@ -203,8 +247,9 @@ class LdapFsSession:
         # pair) — an unescaped comma there would smuggle additional
         # RDNs into the resulting DN. F31.
         for seg in parts[1:]:
-            unescaped = seg.replace("\\,", "")
-            if "," in unescaped:
+            # Scan escapes left to right: "\\\\," is an escaped backslash
+            # followed by a real separator, not an escaped comma.
+            if _leading_rdn(seg) != seg:
                 raise ValueError(
                     f"LDAP path segment {seg!r} contains an unescaped "
                     f"comma — would smuggle additional RDNs into the DN. "
@@ -221,6 +266,15 @@ class LdapFsSession:
             raise ValueError(f"LDAP path base {parts[0]!r} is not a DN (must contain `=`)")
         # Reverse so the leaf RDN comes first (LDAP convention).
         return ",".join(reversed(parts))
+
+    def _dn(self, path: str) -> str:
+        """``_path_to_dn`` for the FileBackend surface: a path that names
+        no valid DN names no entry (callers handle OSError, not the
+        guard's ValueError)."""
+        try:
+            return self._path_to_dn(path)
+        except ValueError as exc:
+            raise FileNotFoundError(f"LDAP path {path!r}: {exc}") from exc
 
     @staticmethod
     def _dn_to_path(dn: str, base: str = "") -> str:
@@ -244,48 +298,44 @@ class LdapFsSession:
     def list_dir(self, path: str) -> list[FileItem]:
         """List children of the entry at ``path``. At ``"/"`` returns
         the namingContexts (each as a directory)."""
-        dn = self._path_to_dn(path)
+        dn = self._dn(path)
         if not dn:
             # Root → namingContexts.
-            return [FileItem(name=nc, is_dir=True) for nc in self._naming_contexts]
+            return [FileItem(name=_segment_name(nc), is_dir=True) for nc in self._naming_contexts]
         # SCOPE=LEVEL — direct children only.
-        try:
-            self._conn.search(
-                search_base=dn,
-                search_filter="(objectClass=*)",
-                search_scope=LEVEL,
-                attributes=["*", "+"],
-            )
-        except LDAPException as exc:
-            raise OSError(f"LDAP search {dn}: {exc}") from exc
+        _ok, entries = self._search(
+            f"LDAP search {dn}",
+            search_base=dn,
+            search_filter="(objectClass=*)",
+            search_scope=LEVEL,
+            attributes=["*", "+"],
+        )
         out: list[FileItem] = []
-        for entry in self._conn.entries:
+        for entry in entries:
             entry_dn = entry.entry_dn
             # Take the leftmost RDN as the display name.
-            rdn = entry_dn.split(",", 1)[0]
-            out.append(self._entry_to_item(entry, rdn))
+            rdn = _leading_rdn(entry_dn)
+            out.append(self._entry_to_item(entry, _segment_name(rdn)))
         return out
 
     def stat(self, path: str) -> FileItem:
         """Return a FileItem for the entry at ``path``. Treats every
         entry as is_dir=True if it has children, file otherwise."""
-        dn = self._path_to_dn(path)
+        dn = self._dn(path)
         if not dn:
             return FileItem(name="/", is_dir=True)
-        try:
-            ok = self._conn.search(
-                search_base=dn,
-                search_filter="(objectClass=*)",
-                search_scope=BASE,
-                attributes=["*", "+"],
-            )
-        except LDAPException as exc:
-            raise OSError(f"LDAP stat {path}: {exc}") from exc
-        if not ok or not self._conn.entries:
+        ok, entries = self._search(
+            f"LDAP stat {path}",
+            search_base=dn,
+            search_filter="(objectClass=*)",
+            search_scope=BASE,
+            attributes=["*", "+"],
+        )
+        if not ok or not entries:
             raise FileNotFoundError(f"LDAP entry not found: {path}")
-        entry = self._conn.entries[0]
-        rdn = entry.entry_dn.split(",", 1)[0]
-        return self._entry_to_item(entry, rdn)
+        entry = entries[0]
+        rdn = _leading_rdn(entry.entry_dn)
+        return self._entry_to_item(entry, _segment_name(rdn))
 
     def is_dir(self, path: str) -> bool:
         try:
@@ -303,25 +353,26 @@ class LdapFsSession:
     def open_read(self, path: str) -> IO[bytes]:
         """Return the entry serialised as LDIF. Useful for ``cat``-
         style inspection of all attributes on one entry."""
-        dn = self._path_to_dn(path)
+        dn = self._dn(path)
         if not dn:
             # Root has no LDIF — synthesize a tiny summary.
             text = "# axross-ldap root\n" + "\n".join(
                 f"# namingContext: {n}" for n in self._naming_contexts
             )
             return io.BytesIO(text.encode("utf-8"))
-        try:
-            self._conn.search(
-                search_base=dn,
-                search_filter="(objectClass=*)",
-                search_scope=BASE,
-                attributes=["*", "+"],
-            )
-        except LDAPException as exc:
-            raise OSError(f"LDAP open_read {path}: {exc}") from exc
-        if not self._conn.entries:
+        _ok, entries = self._search(
+            f"LDAP open_read {path}",
+            search_base=dn,
+            search_filter="(objectClass=*)",
+            search_scope=BASE,
+            attributes=["*", "+"],
+        )
+        if not entries:
             raise FileNotFoundError(f"LDAP entry not found: {path}")
-        ldif = self._conn.entries[0].entry_to_ldif()
+        try:
+            ldif = entries[0].entry_to_ldif()
+        except _LDAP_DECODE_ERRORS as exc:
+            raise OSError(f"LDAP open_read {path}: cannot render the entry: {exc}") from exc
         if isinstance(ldif, str):
             ldif = ldif.encode("utf-8")
         return io.BytesIO(ldif)
@@ -410,18 +461,16 @@ class LdapFsSession:
         sc = scope_map.get(scope.lower())
         if sc is None:
             raise ValueError(f"search scope must be base/onelevel/subtree, got {scope!r}")
-        try:
-            ok = self._conn.search(
-                search_base=base_dn,
-                search_filter=filter,
-                search_scope=sc,
-                attributes=attributes or ["*"],
-                size_limit=int(limit),
-            )
-        except LDAPException as exc:
-            raise OSError(f"LDAP search {base_dn} {filter}: {exc}") from exc
+        ok, entries = self._search(
+            f"LDAP search {base_dn} {filter}",
+            search_base=base_dn,
+            search_filter=filter,
+            search_scope=sc,
+            attributes=attributes or ["*"],
+            size_limit=int(limit),
+        )
         out: list[dict] = []
-        for entry in self._conn.entries if ok else []:
+        for entry in entries if ok else []:
             attrs: dict = {}
             for attr_name in entry.entry_attributes:
                 vals = entry[attr_name].values
@@ -432,6 +481,25 @@ class LdapFsSession:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _search(self, what: str, **kwargs) -> tuple[bool, list]:
+        """``Connection.search`` plus its entries, failing as OSError.
+
+        ldap3 raises LDAPException for protocol errors but lets its BER
+        decoder's KeyError / IndexError / ValueError ... through for an
+        answer it cannot decode (see _LDAP_DECODE_ERRORS); the entries
+        are built from the answer too, so they are read here as well.
+        """
+        try:
+            ok = self._conn.search(**kwargs)
+            entries = list(self._conn.entries)
+        except LDAPException as exc:
+            raise OSError(f"{what}: {exc}") from exc
+        except _LDAP_DECODE_ERRORS as exc:
+            raise OSError(
+                f"{what}: malformed answer from the server ({type(exc).__name__}: {exc})"
+            ) from exc
+        return bool(ok), entries
 
     def _entry_to_item(self, entry, name: str) -> FileItem:
         """Turn an ldap3 entry into a FileItem. Children-presence is a

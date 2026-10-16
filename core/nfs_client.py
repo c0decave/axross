@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import stat as stat_module
 import subprocess
@@ -18,6 +19,8 @@ import tempfile
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
+from core.path_policy import confined_path
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -25,12 +28,28 @@ from security.protocol_line_split import split_lf_only_stream
 log = logging.getLogger(__name__)
 
 
+#: Mount options that keep a server's files from acting on this machine:
+#: no set-uid/set-gid, no device nodes, nothing executable from the export.
+_SAFE_MOUNT_OPTIONS = "nosuid,nodev,noexec"
+
+# A host name, IPv4 or bracketed IPv6 address - nothing mount(8) could
+# read as an option or a second argument.
+_HOST_RE = re.compile(r"[A-Za-z0-9_.:\[\]%-]+")
+
+
+def _validate_mount_source(host: str, export: str) -> None:
+    if not host or host.startswith("-") or not _HOST_RE.fullmatch(host):
+        raise ValueError(f"NFS host {host!r} is not a host name or address")
+    if not export.startswith("/") or any(ord(c) < 32 or c == "\x7f" for c in export):
+        raise ValueError(f"NFS export {export!r} must be an absolute path without control characters")
+
+
 def _nfs_available() -> bool:
     """Check if mount.nfs is available on the system."""
     return shutil.which("mount.nfs") is not None or shutil.which("mount") is not None
 
 
-class NfsSession:
+class NfsSession(SessionLifecycle):
     """NFS backend using system mount.
 
     Mounts the remote NFS export to a local temp directory and provides
@@ -52,6 +71,7 @@ class NfsSession:
     ):
         from core.proxy import LocalTunnel, proxy_config_from_kwargs, refuse_unsupported_proxy
 
+        _validate_mount_source(host, export_path)
         cfg = proxy_config_from_kwargs(
             {
                 "proxy_type": proxy_type,
@@ -122,9 +142,12 @@ class NfsSession:
             opts = f"vers={self._version},port={port},nolock,tcp"
         else:
             opts = f"vers={self._version},port={port},mountport={port},nolock,tcp"
+        # Mounted as root: without these a set-uid binary on the export is
+        # a local root shell for anyone on this machine.
+        opts = f"{opts},{_SAFE_MOUNT_OPTIONS}"
 
         try:
-            self._run(["mount", "-t", "nfs", "-o", opts, source, self._mount_point])
+            self._run(["mount", "-t", "nfs", "-o", opts, "--", source, self._mount_point])
             self._mounted = True
             log.info("NFS mounted: %s -> %s", source, self._mount_point)
         except subprocess.CalledProcessError as e:
@@ -135,15 +158,10 @@ class NfsSession:
         """The mounted path on this machine (see core.storage_identity)."""
         return self._full_path(path)
 
-    def _full_path(self, path: str) -> str:
-        """Convert virtual path to real mounted path."""
-        clean = path.lstrip("/")
-        full = os.path.join(self._mount_point, clean)
-        normalized = os.path.abspath(full)
-        mount_root = os.path.abspath(self._mount_point)
-        if os.path.commonpath([mount_root, normalized]) != mount_root:
-            raise PermissionError(f"Path traversal detected: {path}")
-        return normalized
+    def _full_path(self, path: str, *, follow: bool = True) -> str:
+        """Convert virtual path to real mounted path, confined to the mount
+        even through server-planted symlinks (see confined_path)."""
+        return confined_path(self._mount_point, path, follow=follow)
 
     @property
     def name(self) -> str:
@@ -214,7 +232,7 @@ class NfsSession:
         return sorted(items, key=lambda i: (not i.is_dir, i.name.lower()))
 
     def stat(self, path: str) -> FileItem:
-        full = self._full_path(path)
+        full = self._full_path(path, follow=False)
         try:
             st = os.stat(full, follow_symlinks=False)
             name = os.path.basename(path.rstrip("/")) or "/"
@@ -234,17 +252,22 @@ class NfsSession:
             raise OSError(f"Cannot stat {path}: {e}") from e
 
     def is_dir(self, path: str) -> bool:
-        return os.path.isdir(self._full_path(path))
+        try:
+            return os.path.isdir(self._full_path(path))
+        except PermissionError:
+            return False
 
     def exists(self, path: str) -> bool:
-        return os.path.lexists(self._full_path(path))
+        return os.path.lexists(self._full_path(path, follow=False))
 
     def mkdir(self, path: str) -> None:
         os.makedirs(self._full_path(path), exist_ok=True)
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        full = self._full_path(path)
-        if os.path.isdir(full):
+        full = self._full_path(path, follow=False)
+        if os.path.islink(full):
+            os.remove(full)  # the link, never what it points at
+        elif os.path.isdir(full):
             if recursive:
                 shutil.rmtree(full)
             else:
@@ -253,7 +276,7 @@ class NfsSession:
             os.remove(full)
 
     def rename(self, old_path: str, new_path: str) -> None:
-        os.rename(self._full_path(old_path), self._full_path(new_path))
+        os.rename(self._full_path(old_path, follow=False), self._full_path(new_path, follow=False))
 
     def open_read(self, path: str) -> IO[bytes]:
         return open(self._full_path(path), "rb")
@@ -294,7 +317,7 @@ class NfsSession:
         os.chmod(self._full_path(path), mode)
 
     def readlink(self, path: str) -> str:
-        return os.readlink(self._full_path(path))
+        return os.readlink(self._full_path(path, follow=False))
 
     def list_versions(self, path: str) -> list:
         return []

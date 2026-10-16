@@ -15,6 +15,10 @@ the palette and the resolution rules are unit-testable headless.
 """
 from __future__ import annotations
 
+import contextlib
+import gc
+from collections.abc import Iterator
+
 DEFAULT_THEME = "modern"
 
 #: (theme id, menu label). ``classic`` is the former dark theme; the
@@ -31,6 +35,28 @@ THEME_CHOICES: list[tuple[str, str]] = [
 ]
 
 _VALID = {theme_id for theme_id, _ in THEME_CHOICES} | {"dark"}
+
+
+
+@contextlib.contextmanager
+def collection_paused() -> Iterator[None]:
+    """No cyclic garbage collection while Qt restyles every widget.
+
+    QApplication.setStyleSheet / setStyle / setPalette / setFont walk a
+    copied list of widgets and send each an event. A Python handler on one
+    of them (the script editor re-highlights on a palette change) allocates
+    and can start the collector, which deletes widgets only Python owned
+    while Qt still walks its list: a segfault. Garbage is collected first,
+    then the collector waits until the walk is over.
+    """
+    was_enabled = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 # --- classic stylesheets (unchanged) -------------------------------------

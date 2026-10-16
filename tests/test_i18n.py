@@ -357,6 +357,29 @@ def test_happy_storing_a_language_keeps_the_rest_of_the_settings(tmp_path):
     assert data["window"]["language"] == "sv"
 
 
+def test_sad_storing_a_language_keeps_the_settings_file_private(tmp_path):
+    """session.json lists the profiles and remote paths of the open panes;
+    the window writes it 0600 and a language change must not widen that."""
+    import json
+    import os
+    import stat
+
+    from core.i18n import store_language
+
+    old = os.umask(0o022)
+    try:
+        path = tmp_path / "session.json"
+        path.write_text(json.dumps({"splitter": {"children": [{"profile": "prod-db"}]}}))
+        os.chmod(path, 0o600)
+        store_language("de", path)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        store_language("sv", tmp_path / "fresh.json")
+        assert stat.S_IMODE((tmp_path / "fresh.json").stat().st_mode) == 0o600
+    finally:
+        os.umask(old)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["fresh.json", "session.json"]
+
+
 def test_sad_a_missing_settings_file_yields_no_preference(tmp_path):
     from core.i18n import stored_language
 

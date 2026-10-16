@@ -123,6 +123,8 @@ cuyo protocolo nativo no las soporta.
 | Nuevo hardlink… | Click derecho | Misma forma; cross-device → `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Búsqueda en el índice offline de metadata. |
 | Duplicate Finder | Menú View | Agrupar por hash de contenido, copiar URLs `ax-cas://…`; mover las copias seleccionadas a la papelera de axross tras comprobar en vivo que queda otra copia real. |
+| View Media… / View Selected Media… | Click derecho, menú View | Imágenes, PDFs y vídeos de la carpeta (opcionalmente recursivo) o de la selección como grid overview, visor para ir pasando o slideshow — ver *Editores y visores*. |
+| Show / Remove / Export Metadata… | Click derecho | EXIF / GPS / XMP / IPTC, propiedades de Office, info de PDF, tags de audio / vídeo de la selección — o de toda la carpeta si no hay nada seleccionado (subcarpetas opcionales) — ver *Metadata de ficheros*. |
 | Move to Trash | Click derecho | Papelera universal. |
 | Show Trash… | Click derecho | Diálogo restaurar / borrar permanentemente. |
 | Show Versions… | Click derecho | Snapshot browser — Save Version As, Restore as Current. |
@@ -142,7 +144,14 @@ cuyo protocolo nativo no las soporta.
 - **Filtro en vivo** escribe en la path bar para filtrar el listado
   en tiempo real.
 - **Marcadores** como dock izquierdo; F8 marca el path actual, F12
-  alterna el dock.
+  alterna el dock. Las carpetas arrastradas desde un pane al dock
+  (espacio libre, un grupo o entre dos entradas) se convierten allí en
+  marcadores, las remotas con su connection profile. Los ficheros y
+  carpetas soltados *sobre* un marcador se mueven a su carpeta (Ctrl
+  copia), con la misma comprobación de nombres existentes que F5 / F6;
+  una carpeta que falta o un remoto que no responde se notifica y no se
+  encola nada, y un marcador remoto sin conexión abierta conecta
+  primero y luego transfiere.
 
 ## Editores y visores
 
@@ -152,10 +161,79 @@ cuyo protocolo nativo no las soporta.
   remotos.
 - **Visor de imágenes** — F3 / doble-click, allow-list MIME,
   caps de tamaño.
+- **Media viewer** — *View → View Media…* o click derecho → *View
+  Media…* sobre la carpeta (*View Selected Media…* para una
+  selección de ficheros y carpetas). Se eligen los tipos (imágenes
+  incl. SVG, PDFs, vídeos vía QtMultimedia), si se incluyen
+  subcarpetas (profundidad 1–32; como máximo 5000 ficheros, las
+  carpetas symlink no se siguen, las ilegibles se saltan y se
+  cuentan) y cómo empezar: **Overview first** (grid de thumbnails
+  con filtro, orden por nombre / fecha / carpeta y slider de
+  tamaño; Enter o doble-click abre), **Start slideshow** o **Click
+  through**. En el visor: Izquierda / Derecha / PageUp / PageDown /
+  Space avanzan (se paran en el primer y último elemento; dentro de
+  un PDF pasan páginas y tras la última van al siguiente elemento),
+  Home / End, F11 fullscreen, Ctrl+M maximize / restore (la ventana
+  recuerda tamaño, posición y estado maximize para la próxima
+  apertura), rueda o `+` / `-` zoom, `F` fit, `1`
+  100 %, `R` rotar, `S` slideshow (intervalo en segundos; la
+  slideshow da la vuelta, un vídeo se reproduce hasta el final), Esc
+  vuelve a la overview, otro Esc cierra. Funciona en cualquier
+  backend: los ficheros remotos se copian a un directorio temporal
+  privado hasta el *Open Size Limit* y se borran después; un
+  elemento demasiado grande, cifrado o roto muestra el motivo. El SVG
+  solo se renderiza sin DOCTYPE/entidades, scripts ni referencias
+  fuera del fichero. El modo `paranoid` bloquea el visor.
+  `I` (o el botón *Info*) muestra la metadata del elemento actual en
+  un panel lateral, con *Remove metadata* — también en el visor de
+  imágenes.
 - **Terminal SSH** — dock con pestañas junto a la cola de
   transferencias. PTY local (`pty.fork()`) y SSH-remoto via
   paramiko están ambos disponibles; la variante SSH reusa la
   conexión existente en lugar de abrir una nueva.
+
+## Metadata de ficheros
+
+Click derecho → **Show Metadata…**, **Remove Metadata…** o **Export
+Metadata…** actúa sobre los ficheros y carpetas seleccionados o, sin
+selección, sobre la propia carpeta. La ventana de metadata lista
+fichero, grupo, campo y valor, con filtro, *Copy* (filas seleccionadas
+como texto), *Export…* (JSON o CSV) y *Remove Metadata*. Las carpetas se
+leen sin bajar; *Include subfolders* entra en las subcarpetas (como
+máximo 5000 ficheros, profundidad 8, las carpetas symlink no se siguen).
+Leer y eliminar corren en segundo plano con progreso y *Cancel*. En los
+visores de imágenes y de media, `I` abre la misma información como panel
+lateral.
+
+| Tipo | Lectura | Se elimina | Se conserva |
+|---|---|---|---|
+| JPEG, PNG, WebP, GIF | incluido | EXIF (GPS, cámara, números de serie, fechas, autor, software), thumbnails embebidos, XMP, IPTC, comentarios, chunks de texto PNG, datos tras la imagen | orientación EXIF, perfil de color ICC; los píxeles nunca se recodifican y se comprueba que son idénticos |
+| TIFF | incluido | lo mismo, con un guardado sin pérdida | orientación, perfil ICC; un TIFF con compresión JPEG se rechaza |
+| docx / xlsx / pptx, odt / ods / odp | incluido | `docProps/core.xml`, `app.xml`, `custom.xml`, `meta.xml` de ODF, el comentario del zip | todas las demás partes, que descomprimen a los mismos bytes |
+| PDF | pypdf, si no QtPdf | diccionario Info, streams XMP, PieceInfo, revisiones anteriores (reescritura completa) | — necesita el extra `[metadata]` (`pip install 'axross[metadata]'`) |
+| Audio / vídeo | `ffprobe` | todos los tags y capítulos, data streams (pistas GPS de cámaras), la carátula de los ficheros de audio (`ffmpeg -c copy`, sin recodificar) | los streams |
+
+**Cómo se escribe** — *Tools → Metadata Settings…*:
+
+- **In place** (por defecto): el fichero se reemplaza de forma atómica
+  y el original queda en el trash de axross. Una ejecución — un fichero
+  o una carpeta entera — es una entrada para *Edit → Undo Last
+  Operation* (`Ctrl+Z`), que devuelve cada original byte a byte, pero
+  solo mientras el fichero contenga exactamente lo que escribió la
+  eliminación.
+- **Cleaned copy**: `nombre.clean.ext` junto al original
+  (`nombre.clean (1).ext` si ya existe); nunca se sobrescribe nada.
+
+Solo se pide confirmación si allí está marcado *Ask before removing
+metadata*. Los ficheros remotos pasan por una copia temporal privada
+limitada por el *Open Size Limit* y vuelven por la escritura atómica del
+backend; una conexión cuyo trash no se puede escribir recibe una copia
+limpia en su lugar, y el resultado lo indica. Un fichero que cambia
+mientras se limpia no se toca. En modo `paranoid` leer y eliminar
+funcionan, salvo audio / vídeo: supondría ejecutar ffprobe / ffmpeg
+sobre el contenido del fichero. Scripts: `axross.metadata`,
+`axross.remove_metadata`, `axross.export_metadata` (ver
+[SCRIPTING_es.md](SCRIPTING_es.md)).
 
 ## Dock de Transferencias / Terminal / Log
 
@@ -229,6 +307,12 @@ axross.toast("1,2 MB guardados", level="success", timeout=2)
 Niveles: ``"info"`` (azul), ``"success"`` (verde), ``"warning"``
 (amarillo), ``"error"`` (rojo) — cada uno con icono SVG de estado
 incrustado y el glifo de axross como icono de ventana.
+
+El prompt headless de ``confirm()`` solo pregunta cuando stdin es un
+terminal. Sin nadie que responda — cron, una pipe, el proceso hijo del
+Scripts dock, un ``script_run`` de MCP o ``AXROSS_NONINTERACTIVE=1`` —
+lanza ``axross.NonInteractiveError`` en vez de usar el valor por
+defecto; ``assume_yes=True`` responde que sí sin preguntar.
 
 ## Multiplexado de terminal SSH/SCP
 

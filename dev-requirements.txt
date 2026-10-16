@@ -23,8 +23,8 @@ tomli>=2.0; python_version < "3.11"
 # and the mTLS tests generate throw-away CA/client certs with it.
 cryptography>=42.0
 # jsonschema is an optional MCP validation dep — stdio/HTTP
-# transports work without it, but McpServerTests exercise the
-# ValidationError path, so tests need it installed.
+# transports work without it; with it installed the MCP server
+# validates tool arguments against each tool's input schema.
 jsonschema>=4.21
 # ADB backend tests mock the transport but still exercise adb-shell's
 # keygen/signer helpers directly.

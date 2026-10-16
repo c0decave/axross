@@ -11,13 +11,19 @@ Also available at runtime: `axross.docs()` returns this same Markdown; `axross.d
 
 ## Open / connect
 
-### `axross.open(profile_name: 'str', password: str | None  (optional) = None, key_passphrase: 'str | None' = None)`
+### `axross.open(profile_name: 'str', password: 'str | None' = None, key_passphrase: 'str | None' = None) -> 'FileBackend'`
 
 Open a backend by saved profile name. Returns a FileBackend
 session. Raises :class:`KeyError` if the profile doesn't exist
 and :class:`OSError` for connection failure.
 
-### `axross.open_url(url: 'str', **kwargs)`
+Every session supports ``with``; leaving the block ends the
+connection (``close()`` does the same by hand)::
+
+    with axross.open("backup-server") as b:
+        print(b.list_dir("/"))
+
+### `axross.open_url(url: 'str', **kwargs: 'Any') -> 'FileBackend'`
 
 Open a backend from a URL like ``sftp://user@host/``,
 ``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.
@@ -62,11 +68,11 @@ a few ergonomic aliases: ``http://`` / ``https://`` open WebDAV,
 ``git+local://`` opens a local Git repository path, and
 ``sftp+key://`` / ``sftp+agent://`` select SSH auth mode.
 
-### `axross.localfs()`
+### `axross.localfs() -> 'LocalFS'`
 
 Return a LocalFS session pointed at the host's filesystem.
 
-### `axross.ramfs(max_bytes: 'int | None' = None)`
+### `axross.ramfs(max_bytes: 'int | None' = None) -> 'RamFsSession'`
 
 Return a fresh RamFS session — bytes never touch disk.
 ``max_bytes`` overrides the default per-instance cap.
@@ -75,14 +81,14 @@ Return a fresh RamFS session — bytes never touch disk.
 
 Return the names of all saved connection profiles.
 
-### `axross.get_profile(name: 'str')`
+### `axross.get_profile(name: 'str') -> 'ConnectionProfile | None'`
 
 Look up a saved :class:`ConnectionProfile` by name.
 
 Returns ``None`` if no profile matches. Use :func:`list_profiles`
 to discover the available names.
 
-### `axross.save_profile(profile) -> 'None'`
+### `axross.save_profile(profile: 'ConnectionProfile') -> 'None'`
 
 Persist a :class:`core.profiles.ConnectionProfile`. The profile
 object itself can be constructed via ``ConnectionProfile(name=...,
@@ -108,7 +114,7 @@ actually installed.
 
 ## File I/O
 
-### `axross.copy(src_backend, src_path: 'str', dst_backend, dst_path: 'str', buffer_size: 'int' = 1048576, *, overwrite: 'bool' = False) -> 'int'`
+### `axross.copy(src_backend: 'FileBackend', src_path: 'str', dst_backend: 'FileBackend', dst_path: 'str', buffer_size: 'int' = 1048576, *, overwrite: 'bool' = False) -> 'int'`
 
 Copy bytes from one backend to another. Returns the number of
 bytes transferred. Same-backend copies use the backend's native
@@ -117,7 +123,7 @@ bytes transferred. Same-backend copies use the backend's native
 Existing destinations are refused by default. Pass
 ``overwrite=True`` when replacement is intentional.
 
-### `axross.move(src_backend, src_path: 'str', dst_backend, dst_path: 'str', *, overwrite: 'bool' = False) -> 'int'`
+### `axross.move(src_backend: 'FileBackend', src_path: 'str', dst_backend: 'FileBackend', dst_path: 'str', *, overwrite: 'bool' = False) -> 'int'`
 
 Move a file from one backend to another. Same-backend uses
 rename; cross-backend uses copy + delete-source.
@@ -127,7 +133,7 @@ also refuse replacing an existing destination even with
 ``overwrite=True`` because a later source-delete failure cannot
 restore the replaced remote object reliably across all protocols.
 
-### `axross.remove(backend, path: 'str', *, recursive: 'bool' = False, confirm: 'bool' = False) -> 'str'`
+### `axross.remove(backend: 'FileBackend', path: 'str', *, recursive: 'bool' = False, confirm: 'bool' = False) -> 'str'`
 
 Delete ``path`` from ``backend`` after an explicit opt-in.
 
@@ -137,7 +143,7 @@ pair this with :func:`confirm` in interactive scripts.
 
 Returns the pre-operation preview summary when available.
 
-### `axross.trash(backend, path: 'str', *, root: 'str | None' = None, confirm: 'bool' = False) -> 'str'`
+### `axross.trash(backend: 'FileBackend', path: 'str', *, root: 'str | None' = None, confirm: 'bool' = False) -> 'str'`
 
 Move ``path`` to Axross trash after an explicit opt-in.
 
@@ -145,7 +151,7 @@ This is the recoverable alternative to :func:`remove`, but it is
 still destructive from the source path, so ``confirm=True`` is
 required. Returns the trash id.
 
-### `axross.read_bytes(backend, path: 'str', *, max_bytes: 'int | None' = 67108864) -> 'bytes'`
+### `axross.read_bytes(backend: 'FileBackend', path: 'str', *, max_bytes: 'int | None' = 67108864) -> 'bytes'`
 
 Read a file into memory.
 
@@ -153,27 +159,27 @@ Capped by default so a hostile backend cannot make a REPL/script
 pull unbounded data into the process. Pass ``max_bytes=None`` for
 an explicit uncapped read.
 
-### `axross.write_bytes(backend, path: 'str', data: 'bytes', *, overwrite: 'bool' = False) -> 'int'`
+### `axross.write_bytes(backend: 'FileBackend', path: 'str', data: 'bytes', *, overwrite: 'bool' = False) -> 'int'`
 
 Write ``data`` to ``path`` on ``backend``. Returns bytes written.
 
 Existing destinations are refused by default. Pass
 ``overwrite=True`` when replacement is intentional.
 
-### `axross.read_text(backend, path: 'str', encoding: 'str' = 'utf-8', *, max_bytes: 'int | None' = 67108864) -> 'str'`
+### `axross.read_text(backend: 'FileBackend', path: 'str', encoding: 'str' = 'utf-8', *, max_bytes: 'int | None' = 67108864) -> 'str'`
 
 Read an entire file as text. Decodes the bytes via ``encoding``
 with ``errors="replace"`` so a stray non-UTF-8 byte never raises;
 use :func:`read_bytes` when you need exact-bytes round-trip.
 
-### `axross.write_text(backend, path: 'str', text: 'str', encoding: 'str' = 'utf-8', *, overwrite: 'bool' = False) -> 'int'`
+### `axross.write_text(backend: 'FileBackend', path: 'str', text: 'str', encoding: 'str' = 'utf-8', *, overwrite: 'bool' = False) -> 'int'`
 
 Write a UTF-8 text file. Convenience wrapper around
 :func:`write_bytes` — encodes ``text`` and forwards. Returns the
 number of bytes written. Existing destinations are refused unless
 ``overwrite=True`` is passed.
 
-### `axross.checksum(backend, path: 'str', algorithm: 'str' = 'sha256') -> 'str'`
+### `axross.checksum(backend: 'FileBackend', path: 'str', algorithm: 'str' = 'sha256') -> 'str'`
 
 Return the backend's content fingerprint for ``path``. Falls
 back to a streaming hash when the backend has no cheap server-side
@@ -184,7 +190,7 @@ checksum.
 Hex digest of ``data`` under ``algorithm`` (anything
 :mod:`hashlib.new` accepts: sha1, sha256, sha512, md5, …).
 
-### `axross.hash_file(backend, path: 'str', algorithm: 'str' = 'sha256', chunk_size: 'int' = 1048576) -> 'str'`
+### `axross.hash_file(backend: 'FileBackend', path: 'str', algorithm: 'str' = 'sha256', chunk_size: 'int' = 1048576) -> 'str'`
 
 Streaming hex digest of a backend-side file. Same as
 :func:`checksum` but never tries to use a server-side fingerprint
@@ -194,7 +200,7 @@ different backends.
 
 ## Encryption + archives
 
-### `axross.encrypt(backend, path: 'str', passphrase: 'str', keep_original: 'bool' = True, *, overwrite: 'bool' = False) -> 'str'`
+### `axross.encrypt(backend: 'FileBackend', path: 'str', passphrase: 'str', keep_original: 'bool' = True, *, overwrite: 'bool' = False) -> 'str'`
 
 Encrypt ``path`` with the axross encrypted-overlay format and
 write the ciphertext to ``<path>.axenc``. Returns the new path.
@@ -204,13 +210,13 @@ remove it after the ciphertext has been written. Existing
 ciphertext destinations are refused unless ``overwrite=True`` is
 passed.
 
-### `axross.decrypt(backend, path: 'str', passphrase: 'str') -> 'bytes'`
+### `axross.decrypt(backend: 'FileBackend', path: 'str', passphrase: 'str') -> 'bytes'`
 
 Read and decrypt an .axenc file. Returns the plaintext bytes —
 the caller decides where to put them (write_bytes to disk, hand
 them to a parser, etc.).
 
-### `axross.extract_archive(local_path: 'str', dst_dir: 'str', progress=None) -> 'str'`
+### `axross.extract_archive(local_path: 'str', dst_dir: 'str', progress: 'Callable[[int, int, str], None] | None' = None) -> 'str'`
 
 Extract a local archive (zip / tar / 7z) to ``dst_dir``. Returns
 the destination directory after the extract. Refuses zip-bombs
@@ -274,7 +280,7 @@ caller can inspect any variables it left behind. ``env`` overrides
 
 ## Per-protocol
 
-### `axross.find_tftp_files(backend, wordlist=None, on_progress=None) -> 'list'`
+### `axross.find_tftp_files(backend: 'FileBackend', wordlist: 'list[str] | str | None' = None, on_progress: 'Callable[[str, int, int], None] | None' = None) -> 'list[FileItem]'`
 
 Walk ``backend.find_files()`` (TFTP wordlist scan). The backend
 must be a :class:`TftpSession`; raises :class:`AttributeError`
@@ -287,7 +293,7 @@ for everything the daemon at ``host`` advertises in ``scope``.
 Pure read; no SrvReg path is ever exercised
 (CVE-2023-29552 mitigation).
 
-### `axross.nntp_post(backend, group: 'str', subject: 'str', body: 'str', author: 'str' = 'axross <noreply@axross>') -> 'None'`
+### `axross.nntp_post(backend: 'FileBackend', group: 'str', subject: 'str', body: 'str', author: 'str' = 'axross <noreply@axross>') -> 'None'`
 
 Post a fully-formed article to ``group`` on ``backend`` (an
 :class:`NntpSession`). Builds a minimal RFC 5322 envelope around
@@ -299,13 +305,13 @@ the envelope so a tainted ``subject`` cannot smuggle additional
 headers / body content into the post (RFC 5322 / RFC 3977 header-
 injection class of bug).
 
-### `axross.git_push(backend, branch: 'str | None' = None) -> 'None'`
+### `axross.git_push(backend: 'FileBackend', branch: 'str | None' = None) -> 'None'`
 
 Push committed work on ``backend`` (a :class:`GitFsSession`) to
 its origin. Raises :class:`GitForceRefused` on non-fast-forward.
 Pass ``branch=None`` to push every branch the session has touched.
 
-### `axross.exec(backend, cmd: 'str', *, timeout: 'float | None' = 30.0, stdin: 'bytes | str | None' = None, stdout_cap: 'int' = 1048576, stderr_cap: 'int' = 65536, env: 'dict[str, str] | None' = None)`
+### `axross.exec(backend: 'FileBackend', cmd: 'str', *, timeout: 'float | None' = 30.0, stdin: 'bytes | str | None' = None, stdout_cap: 'int' = 1048576, stderr_cap: 'int' = 65536, env: 'dict[str, str] | None' = None) -> 'ExecResult'`
 
 Run a shell command on a remote backend. Returns
 :class:`models.exec_result.ExecResult` with ``returncode``,
@@ -314,7 +320,8 @@ Run a shell command on a remote backend. Returns
 Works on any backend whose session implements ``.exec()`` —
 currently SSH/SFTP and SCP. For protocols where ``exec`` is the
 wrong shape (Cisco IOS, IMAP, S3 …) use the per-protocol helper
-instead (``axross.show()``, ``axross.imap_search()``, …).
+instead (``show()`` on a Cisco-telnet session, ``axross.imap_search()``,
+…).
 
 Quote untrusted arguments yourself::
 
@@ -324,7 +331,7 @@ Quote untrusted arguments yourself::
 Pass ``stdin`` as ``bytes`` (or a ``str`` that we'll utf-8 encode)
 to feed input to the remote process before reading its output.
 
-### `axross.interactive_shell(backend, *, term: 'str' = 'xterm-256color', cols: 'int' = 80, rows: 'int' = 24, env: 'dict[str, str] | None' = None)`
+### `axross.interactive_shell(backend: 'FileBackend', *, term: 'str' = 'xterm-256color', cols: 'int' = 80, rows: 'int' = 24, env: 'dict[str, str] | None' = None) -> 'InteractiveShell'`
 
 Open an interactive shell on the same SSH transport ``backend``
 is already using. Multiplexing — file ops on ``backend`` keep
@@ -341,7 +348,7 @@ the same paramiko Transport. Other backends raise TypeError::
         sh.write(b"htop\n")
         ...
 
-### `axross.query(backend, sql_or_args, *args, **kwargs)`
+### `axross.query(backend: 'FileBackend', sql_or_args: 'str', *args: 'Any', **kwargs: 'Any') -> 'list[dict]'`
 
 Generic database-query dispatch. Calls ``backend.query()`` for
 SQL backends (SQLite / Postgres) or ``backend.find()`` for Mongo
@@ -358,12 +365,12 @@ Mongo form::
 Redis is intentionally NOT dispatched here — Redis isn't SQL.
 Use ``b.cmd("CONFIG", "GET", "maxmemory")`` directly.
 
-### `axross.tables(backend) -> 'list[str]'`
+### `axross.tables(backend: 'FileBackend') -> 'list[str]'`
 
 Return every table (SQLite/Postgres) or collection (Mongo) on
 ``backend``. Wraps the per-backend method of the same name.
 
-### `axross.imap_search(backend, criteria: 'str' = 'ALL', *, mailbox: 'str' = 'INBOX') -> 'list'`
+### `axross.imap_search(backend: 'FileBackend', criteria: 'str' = 'ALL', *, mailbox: 'str' = 'INBOX') -> 'list'`
 
 Wrapper around message-backend search. For IMAP this returns
 the list of UIDs matching an IMAP search expression (RFC 3501);
@@ -371,17 +378,17 @@ for Exchange it returns the backend's lightweight message dicts::
 
     uids = axross.imap_search(b, 'UNSEEN SUBJECT "invoice"')
 
-### `axross.imap_move(backend, uid: 'int', src_mailbox: 'str', dst_mailbox: 'str') -> 'None'`
+### `axross.imap_move(backend: 'FileBackend', uid: 'int', src_mailbox: 'str', dst_mailbox: 'str') -> 'None'`
 
 Move an IMAP message by UID. Uses MOVE if the server supports
 it, COPY+\Deleted+EXPUNGE otherwise. See ``ImapSession.move``.
 
-### `axross.imap_set_flags(backend, uid: 'int', flags: 'list[str]', *, mailbox: 'str' = 'INBOX', mode: 'str' = 'set') -> 'None'`
+### `axross.imap_set_flags(backend: 'FileBackend', uid: 'int', flags: 'list[str]', *, mailbox: 'str' = 'INBOX', mode: 'str' = 'set') -> 'None'`
 
 STORE flags on an IMAP message by UID. ``mode`` is ``set`` /
 ``add`` / ``remove``.
 
-### `axross.share(backend, path: 'str', **kwargs) -> 'str'`
+### `axross.share(backend: 'FileBackend', path: 'str', **kwargs: 'Any') -> 'str'`
 
 Create a shareable link for ``path`` on a cloud backend that
 supports it. Dispatches to:
@@ -395,7 +402,7 @@ The keyword args differ per backend — pass them through; we keep
 the signature loose because each cloud's notion of "share" is
 nominally the same but parameter-named differently.
 
-### `axross.ldap_search(backend, base_dn: 'str', filter: 'str' = '(objectClass=*)', *, scope: 'str' = 'subtree', attributes: 'list[str] | None' = None, limit: 'int' = 1000) -> 'list[dict]'`
+### `axross.ldap_search(backend: 'FileBackend', base_dn: 'str', filter: 'str' = '(objectClass=*)', *, scope: 'str' = 'subtree', attributes: 'list[str] | None' = None, limit: 'int' = 1000) -> 'list[dict]'`
 
 Run a raw LDAP search via the connected ``LdapFsSession``.
 Returns up to ``limit`` entries as dicts ``{dn, attributes}``::
@@ -630,7 +637,7 @@ Positive offset = remote ahead, negative = remote behind.
 
 ## Search across backends
 
-### `axross.find_files(backend, path: 'str', *, pattern: 'str | None' = None, ext: 'str | None' = None, mtime_after: 'datetime | None' = None, mtime_before: 'datetime | None' = None, size_min: 'int | None' = None, size_max: 'int | None' = None, max_depth: 'int | None' = None, follow_links: 'bool' = False) -> 'Iterator'`
+### `axross.find_files(backend: 'FileBackend', path: 'str', *, pattern: 'str | None' = None, ext: 'str | None' = None, mtime_after: 'datetime | None' = None, mtime_before: 'datetime | None' = None, size_min: 'int | None' = None, size_max: 'int | None' = None, max_depth: 'int | None' = None, follow_links: 'bool' = False) -> 'Iterator'`
 
 Recursive walk of ``backend`` rooted at ``path``, filtered by
 every non-None criterion. Yields :class:`models.file_item.FileItem`.
@@ -641,7 +648,7 @@ or "txt", case-insensitive). Supplying both ANDs them.
 ``follow_links`` is OFF by default — symlink-loop bombs are a
 classic find footgun. Set True only when you trust the tree.
 
-### `axross.grep(backend, path: 'str', pattern: 'str', *, max_size: 'int' = 10485760, max_matches: 'int' = 100, ignore_case: 'bool' = False, binary: 'bool' = False) -> 'list[GrepHit]'`
+### `axross.grep(backend: 'FileBackend', path: 'str', pattern: 'str', *, max_size: 'int' = 10485760, max_matches: 'int' = 100, ignore_case: 'bool' = False, binary: 'bool' = False) -> 'list[GrepHit]'`
 
 Search ``backend:path`` for ``pattern`` (a regex). Returns up
 to ``max_matches`` hits.
@@ -650,14 +657,104 @@ If ``path`` names a directory the search recurses. Files larger
 than ``max_size`` are skipped (set to 0 to disable). Set
 ``binary=True`` to also search files that contain NUL bytes.
 
-### `axross.diff_files(b1, p1: 'str', b2, p2: 'str', *, max_bytes: 'int' = 10485760, n_context: 'int' = 3) -> 'list[str]'`
+### `axross.diff_files(b1: 'FileBackend', p1: 'str', b2: 'FileBackend', p2: 'str', *, max_bytes: 'int' = 10485760, n_context: 'int' = 3) -> 'list[str]'`
 
 Unified diff of two files, possibly on different backends.
 Returns a list of diff lines (incl. ``--- / +++`` headers). Empty
 list = no difference.
 
 
+## Duplicate index
+
+### `axross.duplicate_scans() -> 'list[ScanRecord]'`
+
+Return the Duplicate Finder's scan history, newest first.
+
+Each item is a :class:`core.cas.ScanRecord` with ``scan_id``,
+``root``, ``backend_id``, ``started_at`` / ``finished_at``,
+``files_indexed``, ``files_in_index``, ``duplicate_groups`` and
+``status`` (``complete`` / ``cancelled`` / ``failed`` / ``running``).
+Rows indexed before scans were recorded appear as a last pseudo
+entry with ``scan_id == 0`` and status ``earlier``.
+
+Example::
+
+    for scan in axross.duplicate_scans():
+        print(scan.scan_id, scan.status, scan.root, scan.duplicate_groups)
+
+### `axross.duplicates(*, scan: 'ScanRecord | int | None' = None, folder: 'str | None' = None, algorithm: 'str | None' = None) -> 'list[list[CasEntry]]'`
+
+Return the duplicate groups of the Duplicate Finder's index.
+
+A list of groups; each group is a list of :class:`core.cas.CasEntry`
+(``backend_id``, ``path``, ``size``, ``mtime``, ``value``) in survivor
+order — the first entry is the copy :func:`dedupe` keeps (the oldest
+by modification time; ties go to the shorter, then the alphabetically
+first path).
+
+* ``scan`` — a ``scan_id`` or a record from :func:`duplicate_scans`:
+  only groups with at least one copy from that scan (all copies shown).
+* ``folder`` — only copies strictly inside that folder count.
+* ``algorithm`` — ``"sha256"``, ``"md5"``, …; ``None`` means all.
+
+The index is a claim about the past; nothing is read from a backend.
+
+### `axross.dedupe(*, keep: 'str' = 'oldest', dry_run: 'bool' = True, scan: 'ScanRecord | int | None' = None, folder: 'str | None' = None, algorithm: 'str | None' = None, backends: 'list[FileBackend] | None' = None) -> 'DedupeResult'`
+
+Keep the first copy of every duplicate group, trash the others.
+
+**A dry run unless ``dry_run=False`` is passed**: the default returns
+the plan (a :class:`core.cas.DedupeResult` with ``keep``, ``trash``,
+``groups``, ``undated_groups``; ``.render()`` prints it) and touches
+nothing. ``keep="oldest"`` is the survivor rule (the only one): the
+oldest copy by modification time stays, ties go to the shorter, then
+the alphabetically first path; copies without a time sort last.
+
+With ``dry_run=False`` every planned copy goes to the axross trash —
+restorable — after the same live re-check as the Duplicate Finder:
+the copy must still hold the indexed content and the kept copy must be
+a genuine, intact other copy; otherwise it is reported in ``refused``.
+``backends`` are the connected backends to act on (default: the local
+filesystem); copies on any other backend are refused, never guessed.
+``scan`` / ``folder`` / ``algorithm`` narrow the groups like
+:func:`duplicates`.
+
+Example::
+
+    plan = axross.dedupe(folder="/home/me/Photos")
+    print(plan.render())
+    if axross.confirm(f"Trash {len(plan.trash)} copies?"):
+        axross.dedupe(folder="/home/me/Photos", dry_run=False)
+
+
 ## Content inspection
+
+### `axross.file_type(backend: 'FileBackend | str | os.PathLike[str]', path: 'str | None' = None, *, max_bytes: 'int' = 65536, timeout: 'float' = 15.0, use_file_command: 'bool' = True) -> 'FileTypeInfo'`
+
+Identify a file's real type from its content (magic bytes), not its name.
+
+Returns a ``FileTypeInfo`` with ``kind`` (``file`` / ``directory`` /
+``special`` / ``error`` / ``timeout`` / ``cancelled``), ``description``
+and ``mime`` (from the content), ``extension`` and ``extension_mime``
+(what the name claims), ``verdict`` (``match`` / ``mismatch`` /
+``unknown``; ``mismatch`` is also the bool property ``mismatch``),
+``size``, ``encoding`` and ``line_endings`` for text, ``engine`` (the
+detector that decided) and ``file_command`` (``file(1)``'s view of a
+local file, ``""`` without it). ``summary()`` gives one line.
+
+Pass a backend and a path, or just a local path. At most ``max_bytes``
+are read, on a helper thread: a remote that does not answer within
+``timeout`` seconds gives ``kind == "timeout"`` instead of hanging, and
+an unreadable file gives ``kind == "error"`` with ``error`` set - this
+never raises for I/O failures. Detection uses Qt's MIME database, then
+puremagic, then a built-in signature table.
+
+Example::
+
+    info = axross.file_type(b, "/upload/invoice.pdf")
+    if info.mismatch:
+        print(info.summary())   # ... MISMATCH: .pdf claims application/pdf
+    print(axross.file_type("/home/me/notes.txt").encoding)
 
 ### `axross.magic_type(data: 'bytes', *, default: 'str' = 'application/octet-stream') -> 'str'`
 
@@ -708,9 +805,71 @@ can't fill memory. Raises ``OSError`` for malformed archives
 or unsupported formats; ``ValueError`` for truncated input.
 
 
+## File metadata
+
+### `axross.metadata(backend: 'FileBackend', path: 'str') -> 'MetadataReport'`
+
+Return the metadata of one file as a ``MetadataReport``.
+
+Supported: images (JPEG, PNG, WebP, GIF, TIFF), Office (docx / xlsx /
+pptx, odt / ods / odp), PDF and audio / video (through ffprobe). The
+report has ``kind``, ``fields`` (each with ``group``, ``name``,
+``value`` and ``removable`` - False for what removal keeps, such as the
+orientation and the colour profile), ``removable`` (the count) and
+``error`` when the file could not be read; values are length-bounded.
+A remote file is read through a temporary copy bounded by the open-size
+limit. For a folder use :func:`export_metadata`.
+
+Example::
+
+    report = axross.metadata(axross.localfs(), "/home/me/IMG_0001.jpg")
+    for f in report.fields:
+        print(f.group, f.name, f.value)
+
+### `axross.remove_metadata(backend: 'FileBackend', path: 'str', *, mode: 'str | None' = None, recursive: 'bool' = False) -> 'list'`
+
+Remove the metadata of a file, or of every supported file in a folder.
+
+Returns a list of ``RemoveResult`` (one for a file) with ``status``
+(``cleaned`` / ``unchanged`` / ``unsupported`` / ``error``), ``output``
+(where the cleaned file is), ``error`` and ``note``.
+
+``mode`` defaults to the setting (Tools -> Metadata Settings…):
+
+* ``"in_place"`` - the file is replaced atomically and its original
+  kept in the axross trash; Edit -> Undo (Ctrl+Z) puts it back.
+* ``"copy"`` - a cleaned ``name.clean.ext`` next to it; nothing is
+  ever overwritten.
+
+Images keep only their EXIF orientation and ICC profile, never
+re-encoded (the pixels are verified identical). PDF removal needs
+pypdf (``pip install 'axross[metadata]'``), audio / video needs ffmpeg.
+``recursive`` descends into subfolders (symlinked folders are not
+followed). The whole call is one undo step.
+
+Example::
+
+    for r in axross.remove_metadata(b, "/photos/trip", recursive=True):
+        print(r.status, r.path, r.error)
+
+### `axross.export_metadata(backend: 'FileBackend', root: 'str', *, fmt: 'str' = 'json', recursive: 'bool' = False, out: 'str | None' = None) -> 'str'`
+
+Return the metadata of a file or of every supported file in a folder,
+as JSON (``{"files": [...]}``) or CSV (one row per field).
+
+``recursive`` descends into subfolders. ``out`` additionally writes the
+text to that LOCAL file (never overwriting an existing one). In CSV a
+value that starts like a spreadsheet formula is prefixed with ``'``.
+
+Example::
+
+    text = axross.export_metadata(b, "/photos", fmt="csv", recursive=True,
+                                  out="/tmp/photos-metadata.csv")
+
+
 ## Safety + diagnostics
 
-### `axross.diagnose(backend, *, root: 'str | None' = None, write_test: 'bool' = False) -> 'str'`
+### `axross.diagnose(backend: 'FileBackend', *, root: 'str | None' = None, write_test: 'bool' = False) -> 'str'`
 
 Run live diagnostics against an open backend and return a
 plain-text report.
@@ -720,21 +879,21 @@ probe in ``root`` (or the backend home directory when omitted).
 Keep it false for read-only targets or when you only want cheap
 connectivity checks.
 
-### `axross.preview_delete(backend, paths: 'list[str]', *, max_entries: 'int' = 10000) -> 'str'`
+### `axross.preview_delete(backend: 'FileBackend', paths: 'list[str]', *, max_entries: 'int' = 10000) -> 'str'`
 
 Preview a delete/trash operation before executing it.
 
 Returns a compact summary with item counts, total bytes and warning
 or truncation counts.
 
-### `axross.preview_transfer(source_backend, dest_backend, source_paths: 'list[str]', dest_dir: 'str', *, operation: 'str' = 'copy', max_entries: 'int' = 10000) -> 'str'`
+### `axross.preview_transfer(source_backend: 'FileBackend', dest_backend: 'FileBackend', source_paths: 'list[str]', dest_dir: 'str', *, operation: 'str' = 'copy', max_entries: 'int' = 10000) -> 'str'`
 
 Preview a copy/move before queueing it.
 
 Returns a compact summary with item counts, total bytes and
 destination conflict counts.
 
-### `axross.recovery_scan(backend, root: 'str | None' = None) -> 'str'`
+### `axross.recovery_scan(backend: 'FileBackend', root: 'str | None' = None) -> 'str'`
 
 Scan a backend location for recoverable temp/trash items and
 return a plain-text report.
@@ -754,7 +913,7 @@ Passing ``"normal"`` restores the default policy.
 
 ## Credential testing (authorised use only)
 
-### `axross.bruteforce(profile, *, users, passwords, rate_per_min: 'float' = 30.0, timeout_per_attempt: 'float' = 10.0, abort_on_lockout: 'bool' = True, abort_after_n_lockouts: 'int' = 1, abort_after_n_failures: 'int | None' = None, max_attempts: 'int | None' = None, stop_on_first_success_per_user: 'bool' = True, progress=None, on_unknown_host=None, state_file=None, dry_run: 'bool' = False, jitter_s: 'float' = 0.0, authorized: 'bool' = False)`
+### `axross.bruteforce(profile: 'ConnectionProfile | str', *, users: 'Iterable[str]', passwords: 'Iterable[str]', rate_per_min: 'float' = 30.0, timeout_per_attempt: 'float' = 10.0, abort_on_lockout: 'bool' = True, abort_after_n_lockouts: 'int' = 1, abort_after_n_failures: 'int | None' = None, max_attempts: 'int | None' = None, stop_on_first_success_per_user: 'bool' = True, progress: 'Callable[[AttemptOutcome], None] | None' = None, on_unknown_host: 'Callable[[object], bool] | None' = None, state_file: 'str | os.PathLike[str] | None' = None, dry_run: 'bool' = False, jitter_s: 'float' = 0.0, authorized: 'bool' = False) -> 'AttackReport'`
 
 Run a brute-force credential test in user-major order against a
 saved profile (name or :class:`ConnectionProfile`).
@@ -776,7 +935,7 @@ For SSH/SCP profiles, ``on_unknown_host`` is forwarded to the
 host-key decision callback; leave it unset unless you have an
 explicit trust policy for the target.
 
-### `axross.spray(profile, *, users, password: str | None  (optional) = None, passwords=None, rate_per_min: 'float' = 30.0, timeout_per_attempt: 'float' = 10.0, abort_on_lockout: 'bool' = True, abort_after_n_lockouts: 'int' = 1, max_attempts: 'int | None' = None, stop_on_first_success_per_user: 'bool' = True, progress=None, on_unknown_host=None, state_file=None, dry_run: 'bool' = False, jitter_s: 'float' = 0.0, authorized: 'bool' = False)`
+### `axross.spray(profile: 'ConnectionProfile | str', *, users: 'Iterable[str]', password: 'str | None' = None, passwords: 'Iterable[str] | None' = None, rate_per_min: 'float' = 30.0, timeout_per_attempt: 'float' = 10.0, abort_on_lockout: 'bool' = True, abort_after_n_lockouts: 'int' = 1, max_attempts: 'int | None' = None, stop_on_first_success_per_user: 'bool' = True, progress: 'Callable[[AttemptOutcome], None] | None' = None, on_unknown_host: 'Callable[[object], bool] | None' = None, state_file: 'str | os.PathLike[str] | None' = None, dry_run: 'bool' = False, jitter_s: 'float' = 0.0, authorized: 'bool' = False) -> 'AttackReport'`
 
 Run a password spray in password-major order — the safer
 pattern for AD-style targets where lockout is per-user-per-window.
@@ -789,7 +948,7 @@ either ``password=`` (single) or ``passwords=`` (list).
 other arguments. Returns an
 :class:`core.cred_attack.AttackReport`.
 
-### `axross.enumerate_users(profile, candidates, *, method: 'str' = 'auto', timeout_per_probe: 'float' = 10.0, timing_samples: 'int' = 5, rate_per_min: 'float' = 30.0, jitter_s: 'float' = 0.0, progress=None, on_unknown_host=None, authorized: 'bool' = False)`
+### `axross.enumerate_users(profile: 'ConnectionProfile | str', candidates: 'Iterable[str]', *, method: 'str' = 'auto', timeout_per_probe: 'float' = 10.0, timing_samples: 'int' = 5, rate_per_min: 'float' = 30.0, jitter_s: 'float' = 0.0, progress: 'Callable[[EnumResult], None] | None' = None, on_unknown_host: 'Callable[[object], bool] | None' = None, authorized: 'bool' = False) -> 'EnumReport'`
 
 Probe whether each candidate username exists on the target.
 
@@ -808,7 +967,7 @@ is mandatory.
 
 ## Multi-system workflow
 
-### `axross.where_was_i(host: 'str | None' = None)`
+### `axross.where_was_i(host: 'str | None' = None) -> 'list[HostVisit] | HostVisit | None'`
 
 Look up the visit-history record(s).
 
@@ -823,7 +982,7 @@ JSON store lives at ``~/.config/axross/visit_history.json`` (mode
 0o600); treat it as sensitive engagement data — it carries the
 path layout of every host you've touched.
 
-### `axross.health_pulse()`
+### `axross.health_pulse() -> 'list[HealthRecord]'`
 
 Snapshot the live connection-health pulse for every enrolled
 session — last-probe latency, median latency, staleness flag.
@@ -831,7 +990,7 @@ session — last-probe latency, median latency, staleness flag.
 Returns a list of :class:`core.conn_health.HealthRecord`. Empty
 when no sessions have been enrolled.
 
-### `axross.summarize(backend, path: 'str' = '', *, max_entries: 'int' = 2000)`
+### `axross.summarize(backend: 'FileBackend', path: 'str' = '', *, max_entries: 'int' = 2000) -> 'Summary'`
 
 One-paragraph synopsis of a directory: file/dir/link counts,
 extension histogram, age buckets, newest/oldest entries, top-5
@@ -842,7 +1001,7 @@ one-line human string. LLM-friendly: a single network round-trip
 yields the gist of "what's in this place" without an N-thousand
 entry ``list_dir`` dump.
 
-### `axross.explain(backend, path: 'str' = '')`
+### `axross.explain(backend: 'FileBackend', path: 'str' = '') -> 'ExplainResult'`
 
 Heuristic best-guess "what IS this directory?" — git repo,
 PostgreSQL data dir, nginx config tree, k8s manifests, Maildir,
@@ -850,7 +1009,7 @@ web-server log dir, and friends. Returns the highest-confidence
 pattern match as a :class:`core.inspect.ExplainResult`, or an
 empty result if nothing scored above 0.2.
 
-### `axross.compare_file(backends: 'list', path: 'str', *, content: 'bool' = True, content_cap_bytes: 'int | None' = None, parallelism: 'int' = 8, per_target_timeout_s: 'float' = 30.0)`
+### `axross.compare_file(backends: 'list[FileBackend]', path: 'str', *, content: 'bool' = True, content_cap_bytes: 'int | None' = None, parallelism: 'int' = 8, per_target_timeout_s: 'float' = 30.0) -> 'CompareReport'`
 
 Compare the SAME path across N backends in parallel.
 
@@ -859,7 +1018,7 @@ metadata + sha256 + pairwise unified-diff strings against the
 first probe with text content. ``content=False`` skips the body
 download and only diffs metadata (cheaper on cloud backends).
 
-### `axross.inspect_targets(targets: 'list', *, content: 'bool' = True, content_cap_bytes: 'int | None' = None, parallelism: 'int' = 8, per_target_timeout_s: 'float' = 30.0)`
+### `axross.inspect_targets(targets: 'list[tuple[FileBackend, str]]', *, content: 'bool' = True, content_cap_bytes: 'int | None' = None, parallelism: 'int' = 8, per_target_timeout_s: 'float' = 30.0) -> 'InspectReport'`
 
 Inspect a list of ``(backend, path)`` pairs in parallel.
 
@@ -867,7 +1026,7 @@ Returns :class:`core.multi_view.InspectReport` aligned with input
 order. Use this to answer "is the local /tmp/foo.bin the same
 file as the S3 object and the SFTP copy?".
 
-### `axross.federated_search(backends: 'list', query=None, *, name: 'str' = '', regex: 'str' = '', contains: 'str' = '', contains_is_regex: 'bool' = False, min_size: 'int' = -1, max_size: 'int' = -1, modified_after: 'float' = 0.0, modified_before: 'float' = 0.0, roots: 'list[str] | None' = None, max_depth: 'int' = 6, max_hits_per_backend: 'int' = 500, max_hits_total: 'int' = 5000, parallelism: 'int' = 8, per_backend_timeout_s: 'float' = 60.0, progress=None)`
+### `axross.federated_search(backends: 'list[FileBackend]', query: 'SearchQuery | None' = None, *, name: 'str' = '', regex: 'str' = '', contains: 'str' = '', contains_is_regex: 'bool' = False, min_size: 'int' = -1, max_size: 'int' = -1, modified_after: 'float' = 0.0, modified_before: 'float' = 0.0, roots: 'list[str] | None' = None, max_depth: 'int' = 6, max_hits_per_backend: 'int' = 500, max_hits_total: 'int' = 5000, parallelism: 'int' = 8, per_backend_timeout_s: 'float' = 60.0, progress: 'Callable[[SearchHit], None] | None' = None) -> 'SearchResult'`
 
 Run one search query against many backends in parallel.
 
@@ -879,7 +1038,7 @@ individual filter kwargs to construct one inline.
 
 Returns a :class:`core.search_federation.SearchResult`.
 
-### `axross.resumable_copy(src_backend, src_path: 'str', dst_backend, dst_path: 'str', *, segment_size: 'int' = 4194304, manifest_path=None, overwrite: 'bool' = False, progress=None)`
+### `axross.resumable_copy(src_backend: 'FileBackend', src_path: 'str', dst_backend: 'FileBackend', dst_path: 'str', *, segment_size: 'int' = 4194304, manifest_path: 'str | os.PathLike[str] | None' = None, overwrite: 'bool' = False, progress: 'Callable[[int, int], None] | None' = None) -> 'ResumeReport'`
 
 Cross-backend copy with checkpoint-resume.
 
@@ -889,7 +1048,7 @@ incomplete segment after verifying the destination matches the
 recorded hashes. Returns a
 :class:`core.copy_resume.ResumeReport`.
 
-### `axross.dashboard(*, with_capacity: 'bool' = False, recent_ops_limit: 'int' = 10, fmt: 'str' = 'text')`
+### `axross.dashboard(*, with_capacity: 'bool' = False, recent_ops_limit: 'int' = 10, fmt: 'str' = 'text', backends: 'list[FileBackend] | None' = None) -> 'str'`
 
 Federation-status dashboard — one screen, every connection.
 
@@ -899,12 +1058,14 @@ Federation-status dashboard — one screen, every connection.
 * ``"markdown"`` — markdown table for MCP / LLM responses.
 * ``"json"`` — structured JSON the GUI / scripts can consume.
 
-Read-only — never performs mutating ops.
+Read-only — never performs mutating ops. Capacity columns require
+opened backend objects; pass ``backends=[...]`` with
+``with_capacity=True``.
 
 
 ## Time-lapse / trail
 
-### `axross.snapshot_now(backend, path: 'str', *, name: 'str' = '', head_hash: 'bool' = False, max_files: 'int' = 5000)`
+### `axross.snapshot_now(backend: 'FileBackend', path: 'str', *, name: 'str' = '', head_hash: 'bool' = False, max_files: 'int' = 5000) -> 'Snapshot'`
 
 Take a single time-lapse snapshot of a directory tree.
 
@@ -914,7 +1075,7 @@ a synthesised tree-hash, into the local SQLite trail database
 take snapshots on a recurring interval and :func:`diff_snapshots`
 to compare any two snapshots of the same trail.
 
-### `axross.start_trail(backend, path: 'str', *, name: 'str' = '', interval_s: 'float' = 300.0, head_hash: 'bool' = False, max_files: 'int' = 5000, on_snapshot=None)`
+### `axross.start_trail(backend: 'FileBackend', path: 'str', *, name: 'str' = '', interval_s: 'float' = 300.0, head_hash: 'bool' = False, max_files: 'int' = 5000, on_snapshot: 'Callable[[Snapshot], None] | None' = None) -> 'str'`
 
 Start a background trail — periodic snapshots until
 :func:`stop_trail` is called. Returns the trail name.
@@ -923,17 +1084,17 @@ Start a background trail — periodic snapshots until
 
 Stop a named background trail. Returns True if one was found.
 
-### `axross.list_trails()`
+### `axross.list_trails() -> 'list[dict]'`
 
 List every recorded trail with its metadata.
 
-### `axross.list_snapshots(trail_name: 'str', *, limit: 'int' = 100)`
+### `axross.list_snapshots(trail_name: 'str', *, limit: 'int' = 100) -> 'list[Snapshot]'`
 
 List the most recent snapshots of one trail (newest first).
 
 Returns a list of :class:`core.trail.Snapshot`.
 
-### `axross.diff_snapshots(snapshot_a: 'int', snapshot_b: 'int')`
+### `axross.diff_snapshots(snapshot_a: 'int', snapshot_b: 'int') -> 'TrailDiff'`
 
 Compare snapshot A to snapshot B (B is the newer / target).
 
@@ -943,7 +1104,7 @@ modified path lists.
 
 ## Reverse-serve (expose a backend over S3 / WebDAV)
 
-### `axross.serve_s3(backend, *, bind: 'str' = '127.0.0.1', port: 'int' = 9000, read_only: 'bool' = False, auth_token: 'str' = '', root_path: 'str' = '/')`
+### `axross.serve_s3(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 9000, read_only: 'bool' = False, auth_token: 'str' = '', root_path: 'str' = '/') -> 'ReverseServer'`
 
 Expose ``backend`` as a minimum-viable S3 endpoint so any
 existing S3 client (aws-cli / restic / rclone / terraform) can
@@ -955,7 +1116,7 @@ intentionally want LAN access; non-local binds without
 :class:`core.reverse_serve.ReverseServer` handle; call
 ``.shutdown()`` to stop.
 
-### `axross.serve_webdav(backend, *, bind: 'str' = '127.0.0.1', port: 'int' = 8080, read_only: 'bool' = False, auth_token: 'str' = '', root_path: 'str' = '/')`
+### `axross.serve_webdav(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 8080, read_only: 'bool' = False, auth_token: 'str' = '', root_path: 'str' = '/') -> 'ReverseServer'`
 
 Expose ``backend`` as a minimum-viable WebDAV endpoint —
 ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser
@@ -1049,13 +1210,21 @@ Example::
     axross.message("Backup completed (123 files copied)",
                    level="success")
 
-### `axross.confirm(text: 'str', *, title: 'str' = 'axross', default_yes: 'bool' = False) -> 'bool'`
+### `axross.confirm(text: 'str', *, title: 'str' = 'axross', default_yes: 'bool' = False, assume_yes: 'bool' = False) -> 'bool'`
 
 Show a Yes/No dialog. Returns True on Yes, False otherwise.
 
 Headless fallback (no Qt event loop): reads a single y/n from
-stdin so ``--script`` and REPL-without-GUI both work. Accepts
-``y/yes/j/ja/s/si/sí`` as Yes; default answer is ``default_yes``.
+stdin when stdin is a terminal, so ``--script`` and
+REPL-without-GUI both work. Accepts ``y/yes/j/ja/s/si/sí`` as Yes;
+an empty answer is ``default_yes``.
+
+When no human can answer - no Qt window and no terminal (an MCP
+``script_run``, the Scripts dock, cron, a pipe) or
+``AXROSS_NONINTERACTIVE=1`` - it raises :class:`NonInteractiveError`
+instead of guessing, whatever ``default_yes`` says. Pass
+``assume_yes=True`` to answer yes without asking in that case; a
+human who can be asked is still asked.
 
 Example::
 
@@ -1076,6 +1245,22 @@ Example::
     axross.toast("Connection lost — retrying", level="error")
     axross.toast("Saved 1.2 MB to /tmp/dump.json",
                  level="success", timeout=2)
+
+### `axross.is_interactive() -> 'bool'`
+
+True when a human can answer :func:`confirm` right now.
+
+False under ``AXROSS_NONINTERACTIVE=1`` (set for every MCP
+``script_run``), off the GUI thread of a Qt window, and without a Qt
+window when stdin is not a terminal. Scripts that a machine may run
+can branch on it instead of catching :class:`NonInteractiveError`.
+
+### `axross.NonInteractiveError(...)`
+
+A confirmation is needed, but no human can answer it.
+
+Raised instead of guessing an answer: a closed stdin used to make
+``confirm(..., default_yes=True)`` approve on its own.
 
 
 ## Misc
@@ -1103,6 +1288,28 @@ Return long-form documentation as Markdown.
 The output is plain Markdown. The doc-pane in the GUI calls this
 too — same source-of-truth for the headless and the GUI surface.
 
+### `axross.api_schema() -> 'dict'`
+
+Describe the scripting API as JSON-serialisable data, for a machine.
+
+Built from the live objects with :mod:`inspect`, so it is never out of
+date: ``functions`` has one entry per public function - ``name``,
+``group``, ``signature``, ``parameters`` (``name``, ``kind``,
+``annotation``, ``required``, ``default`` or ``default_repr``),
+``returns``, ``summary`` (the first docstring paragraph), ``mutates``
+(can change files, remote state or settings) and ``prompts`` (can
+wait for a human, or raises :class:`NonInteractiveError` without
+one); ``classes`` lists the public classes (dataclass fields
+included); ``backend_protocol`` lists the methods every session from
+:func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs`
+has, ``close()`` and the ``with`` statement included.
+
+The MCP tool ``script_api_schema`` returns the same data. For prose,
+use :func:`docs`::
+
+    import json
+    print(json.dumps(axross.api_schema()["functions"][0], indent=2))
+
 
 ---
 
@@ -1116,7 +1323,7 @@ Typed at the `>>> ` prompt; not Python. They never touch the interpreter namespa
 | `.scripts` | Names of every saved script |
 | `.save <name>` | Save the current session's history into `<name>.py` (mode 0o600) |
 | `.load <name>` | Print the source of a saved script |
-| `.run <name>` | Execute a saved script in the live REPL namespace |
+| `.run <name>` | Execute a saved script in the live REPL namespace (refused in paranoid mode) |
 | `.delete <name>` | Remove a saved script |
 | `.open` | Print the script-directory path (`~/.config/axross/scripts/`) |
 

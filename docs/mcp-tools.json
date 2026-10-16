@@ -1,0 +1,2105 @@
+{
+  "generated_for": {
+    "mcp_allow_scripts": true,
+    "mcp_tools": [
+      "archive",
+      "crypto",
+      "duplicates",
+      "extensions",
+      "filetype",
+      "index",
+      "metadata",
+      "packer",
+      "remote",
+      "transfer"
+    ],
+    "mcp_write": true
+  },
+  "groups": {
+    "archive": {
+      "description": "List an archive's members; extract it into a fresh folder (mutating).",
+      "tools": [
+        "archive_list",
+        "archive_extract"
+      ]
+    },
+    "core": {
+      "description": "File tools of the configured backend; always on, read-only.",
+      "tools": [
+        "list_dir",
+        "stat",
+        "read_file",
+        "checksum",
+        "search",
+        "walk",
+        "recursive_checksum",
+        "preview",
+        "grep",
+        "list_versions",
+        "open_version_read"
+      ]
+    },
+    "crypto": {
+      "description": "Encrypt a file into the axross .axenc format and decrypt it again (mutating).",
+      "tools": [
+        "encrypt",
+        "decrypt"
+      ]
+    },
+    "duplicates": {
+      "description": "Duplicate Finder: scan a folder into the duplicate index, list scans and duplicate groups; dedupe to the axross trash (mutating, dry run by default).",
+      "tools": [
+        "duplicates_scan",
+        "duplicates_scans",
+        "duplicates_groups",
+        "duplicates_dedupe"
+      ]
+    },
+    "extensions": {
+      "description": "List installed extensions and whether they are enabled (read-only: extensions are GUI plugins).",
+      "tools": [
+        "extensions_list",
+        "extensions_info"
+      ]
+    },
+    "filetype": {
+      "description": "Identify files by content (magic bytes), flag extension mismatches.",
+      "tools": [
+        "file_type",
+        "file_type_scan"
+      ]
+    },
+    "index": {
+      "description": "Build or refresh the offline metadata index that the search tool reads.",
+      "tools": [
+        "index_build"
+      ]
+    },
+    "metadata": {
+      "description": "Show and export file metadata (EXIF/XMP/IPTC, Office, PDF, media tags); remove it (mutating, writes a cleaned copy).",
+      "tools": [
+        "metadata_read",
+        "metadata_export",
+        "metadata_export_file",
+        "metadata_remove"
+      ]
+    },
+    "packer": {
+      "description": "List archive formats; pack files and folders into zip / tar.* / 7z / single-file compression, 7z optionally AES-256 encrypted (mutating).",
+      "tools": [
+        "pack_formats",
+        "pack"
+      ]
+    },
+    "remote": {
+      "description": "List saved connection profiles (no secrets), open one as an extra backend that every tool can address with its backend argument, close it again.",
+      "tools": [
+        "remote_profiles",
+        "remote_open",
+        "remote_close",
+        "list_backends"
+      ]
+    },
+    "scripts": {
+      "description": "Saved-script tools; only with --mcp-allow-scripts, stdio only, not confined to the MCP root; refused in the paranoid security mode.",
+      "tools": [
+        "script_list",
+        "script_api_schema",
+        "script_read",
+        "script_write",
+        "script_delete",
+        "script_run"
+      ]
+    },
+    "transfer": {
+      "description": "Copy or move files and folders between backends, optionally resumable (mutating).",
+      "tools": [
+        "transfer_copy",
+        "transfer_move"
+      ]
+    },
+    "write": {
+      "description": "Write tools; only with --mcp-write, which needs --mcp-root.",
+      "tools": [
+        "write_file",
+        "mkdir",
+        "remove",
+        "rename",
+        "copy",
+        "bulk_copy",
+        "symlink",
+        "hardlink",
+        "chmod"
+      ]
+    }
+  },
+  "protocol_version": "2024-11-05",
+  "server": "axross-mcp",
+  "timeout_classes": {
+    "long": 1800.0,
+    "preview": 30.0,
+    "quick": 15.0,
+    "script": 610.0,
+    "stream": 300.0,
+    "walk": 60.0,
+    "write": 30.0
+  },
+  "tools": [
+    {
+      "description": "List entries in a directory on the configured backend.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Absolute path on the backend.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_dir",
+      "required_flags": [],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Return name, type, size, and mtime for one path.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "stat",
+      "required_flags": [],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Read up to max_bytes (default 4 MiB) from a file. Returns base64-encoded bytes. Set ``truncated=true`` when the file exceeds the cap.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "read_file",
+      "required_flags": [],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Content hash of a file. Tries the backend's native fingerprint first (S3 ETag, Drive md5Checksum, ssh sha256sum, etc.); falls back to streaming the file through hashlib when the backend has no cheap hash. The streaming fallback emits MCP progress notifications every few MiB when the caller supplied _meta.progressToken, and stops within one chunk of a notifications/cancelled. algorithm must be one of sha256 / sha1 / md5 / sha512 — backend-specific hash names (etag, dropbox, quickxor) are rejected.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "algorithm": {
+            "enum": [
+              "md5",
+              "sha1",
+              "sha256",
+              "sha512"
+            ],
+            "type": "string"
+          },
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "checksum",
+      "required_flags": [],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Search the offline metadata index by name substring, extension, and size range. Free of network round-trips.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "ext": {
+            "type": "string"
+          },
+          "max_size": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_size": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "needle": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "search",
+      "required_flags": [],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Breadth-first recursive listing under path. Caps at max_depth (default 4) and max_entries (default 1000). Emits MCP progress notifications when the caller supplied _meta.progressToken.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_depth": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_entries": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "walk",
+      "required_flags": [],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: \"too-large\"} (file above max_file_bytes), or {path, size, algorithm, error: \"<msg>\"} (backend refused that one file). Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB. If path names a file instead of a directory the result contains exactly one record.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "algorithm": {
+            "enum": [
+              "md5",
+              "sha1",
+              "sha256",
+              "sha512"
+            ],
+            "type": "string"
+          },
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_depth": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_files": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "recursive_checksum",
+      "required_flags": [],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Render a thumbnail of an image file. Returns MCP image content (base64 + mimeType). edge (default 256) is clamped to [16, 2048]. MIME allow-list + size/dimension caps from core.previews apply. Local backends only.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "edge": {
+            "maximum": 2048,
+            "minimum": 16,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "preview",
+      "required_flags": [],
+      "timeout_class": "preview",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Regex search inside file contents under a root path. Recurses up to max_depth (default 2); skips files larger than 4 MiB. Returns up to max_matches (default 100, ceiling 500) {path, line_no, line}. Cooperates with notifications/cancelled.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_depth": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_matches": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "grep",
+      "required_flags": [],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV). Empty list on backends with no native versioning.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_versions",
+      "required_flags": [],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Read a specific historical version of a file. Same max_bytes cap (default 4 MiB) as read_file. version_id comes from list_versions.",
+      "group": "core",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "version_id"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "open_version_read",
+      "required_flags": [],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Overwrite a file with base64-encoded bytes.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "content_b64": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content_b64"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "write_file",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Create a directory on the backend.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "mkdir",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Delete a file or directory.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "recursive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "remove",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Move/rename a file or directory. Both src and dst must live under the configured root.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "dst": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "dst"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "rename",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Server-side copy of src to dst. Uses the backend's native copy primitive (S3 CopyObject, WebDAV COPY, shell cp) where available — no client-side streaming.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "dst": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "dst"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "copy",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is \"copied\", \"skipped\" (reason: \"too-large\" or \"exists\"), or \"error\". Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false. Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "dst": {
+            "type": "string"
+          },
+          "max_depth": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_files": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "overwrite": {
+            "type": "boolean"
+          },
+          "src": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "dst"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "bulk_copy",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Create a symbolic link. target may point anywhere the backend permits (dangling links are allowed); link_path is capped to the MCP root. Raises on backends without symlink support (S3, cloud stores).",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "link_path": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "link_path"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "symlink",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Create a hard link (second name for the same inode). Cross-device errors surface as the backend's OSError. Most protocols refuse — POSIX/SSH only.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "link_path": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "link_path"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "hardlink",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Change POSIX mode bits. Accepts integer (420 for 0o644) or octal-string (\"0o644\" / \"644\"). Backends without POSIX bits (S3, WebDAV, etc.) raise.",
+      "group": "write",
+      "input_schema": {
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "maximum": 4095,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "chmod",
+      "required_flags": [
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "write",
+      "timeout_seconds": 30.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Names of every saved Python script in the server's script directory (~/.config/axross/scripts/).",
+      "group": "scripts",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "script_list",
+      "required_flags": [
+        "--mcp-allow-scripts"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio"
+      ]
+    },
+    {
+      "description": "Describe the ``axross`` scripting API that script_run gives a script, as JSON built from the live code: per public function its signature, parameters with types and defaults, return type, first docstring paragraph, group, ``mutates`` (can change files, remote state or settings) and ``prompts`` (needs a human: under script_run it raises NonInteractiveError unless the script opts in, e.g. confirm(assume_yes=True)); the public classes; and the methods every backend session has (with close() and the with statement). Same data as axross.api_schema().",
+      "group": "scripts",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "script_api_schema",
+      "required_flags": [
+        "--mcp-allow-scripts"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio"
+      ]
+    },
+    {
+      "description": "Read the source of a saved script by name. Names are [A-Za-z0-9_-]+; the path is built relative to the server's script directory.",
+      "group": "scripts",
+      "input_schema": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "script_read",
+      "required_flags": [
+        "--mcp-allow-scripts"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio"
+      ]
+    },
+    {
+      "description": "Save Python source as ``<name>.py`` (mode 0600) in the server's script directory. Overwrites any existing script with the same name.",
+      "group": "scripts",
+      "input_schema": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "script_write",
+      "required_flags": [
+        "--mcp-allow-scripts"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio"
+      ]
+    },
+    {
+      "description": "Remove a saved script by name. Idempotent — no error when the file is already gone.",
+      "group": "scripts",
+      "input_schema": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "script_delete",
+      "required_flags": [
+        "--mcp-allow-scripts"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio"
+      ]
+    },
+    {
+      "description": "Run a saved script in its own Python process with ``axross`` (the scripting API; see script_api_schema) in its namespace. stdin is empty, so input() gets EOF and axross.confirm() raises NonInteractiveError unless the script passes assume_yes=True. ``args`` become sys.argv[1:]. The run is stopped after ``timeout_s`` seconds, with every process it started. Returns {name, exit, timed_out, duration_ms, stdout, stderr, namespace_keys} and, after an uncaught exception, error_type, error and traceback; exit follows SystemExit (None is 0, an int is itself, anything else is printed and gives 1) and is the negative signal number of a stopped run. stdout and stderr hold up to 1048576 characters each; more stops the run and fails the call.",
+      "group": "scripts",
+      "input_schema": {
+        "properties": {
+          "args": {
+            "description": "The script's sys.argv[1:]. Default: none.",
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "timeout_s": {
+            "description": "Wall-clock limit in seconds. Default: 60.",
+            "exclusiveMinimum": 0,
+            "maximum": 600.0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "script_run",
+      "required_flags": [
+        "--mcp-allow-scripts"
+      ],
+      "timeout_class": "script",
+      "timeout_seconds": 610.0,
+      "transports": [
+        "stdio"
+      ]
+    },
+    {
+      "description": "Read the metadata of a file or of every supported file in a folder: images (JPEG/PNG/WebP/GIF/TIFF), Office (docx/xlsx/pptx/odt/ods/odp), PDF, audio/video (ffprobe). Returns {path, is_dir, truncated, files: [{path, name, kind, size, error, truncated, removable_count, fields: [{group, name, value, removable}]}]}}. An unsupported or unreadable file is a report with error set, not a failure. Values are length-bounded. Local paths are confined to the MCP root.",
+      "group": "metadata",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_files": {
+            "default": 200,
+            "description": "For a folder: at most this many files (truncated=true when cut).",
+            "maximum": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "A file, or a folder whose supported files are used.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "recursive": {
+            "default": false,
+            "description": "For a folder: descend into subfolders.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "metadata_read",
+      "required_flags": [
+        "--mcp-tools metadata"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "The metadata_read data of a file or folder as one text in JSON or CSV. Returns {path, format, files, truncated, text}.",
+      "group": "metadata",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "format": {
+            "default": "json",
+            "description": "json: {\"files\": [...]}; csv: one row per field, formula-safe.",
+            "enum": [
+              "json",
+              "csv"
+            ],
+            "type": "string"
+          },
+          "max_files": {
+            "default": 200,
+            "description": "For a folder: at most this many files (truncated=true when cut).",
+            "maximum": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "A file, or a folder whose supported files are used.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "recursive": {
+            "default": false,
+            "description": "For a folder: descend into subfolders.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "metadata_export",
+      "required_flags": [
+        "--mcp-tools metadata"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Write the metadata_export text of path into the new file out (under the MCP root, mode 0600). An existing file is never overwritten: 'meta.json' becomes 'meta (2).json'. Returns {path (the file written), format, files, truncated, size}.",
+      "group": "metadata",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "format": {
+            "default": "json",
+            "description": "json: {\"files\": [...]}; csv: one row per field, formula-safe.",
+            "enum": [
+              "json",
+              "csv"
+            ],
+            "type": "string"
+          },
+          "max_files": {
+            "default": 200,
+            "description": "For a folder: at most this many files (truncated=true when cut).",
+            "maximum": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "out": {
+            "description": "File to create.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "path": {
+            "description": "A file, or a folder whose supported files are used.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "recursive": {
+            "default": false,
+            "description": "For a folder: descend into subfolders.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "out"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "metadata_export_file",
+      "required_flags": [
+        "--mcp-tools metadata",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Remove the metadata of a file, or of every supported file in a folder, by writing a cleaned copy next to each ('photo.jpg' -> 'photo.clean.jpg', then 'photo.clean (1).jpg'); the original is never modified and nothing is overwritten. Images keep orientation and colour profile, pixels are not re-encoded. PDF removal needs pypdf, audio/video needs ffmpeg (both blocked in the paranoid security mode). Returns {path, mode: 'copy', truncated, results: [{path, status (cleaned|unchanged|unsupported|error), output, removed, error, note, sha256}]}.",
+      "group": "metadata",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_files": {
+            "default": 200,
+            "description": "For a folder: at most this many files (truncated=true when cut).",
+            "maximum": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "A file, or a folder whose supported files are used.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "recursive": {
+            "default": false,
+            "description": "For a folder: descend into subfolders.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "metadata_remove",
+      "required_flags": [
+        "--mcp-tools metadata",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Hash every file under a folder into the Duplicate Finder's index (the same index the GUI uses), skipping symlinks and the axross trash; files whose size and mtime did not change are not hashed again unless rehash. Returns {scan_id, root, backend_id, algorithm, files_indexed, status}. One progress notification per file; cancellable (rows indexed so far are kept). Run it before duplicates_groups.",
+      "group": "duplicates",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "default": "sha256",
+            "description": "Hash algorithm.",
+            "enum": [
+              "md5",
+              "sha1",
+              "sha256",
+              "sha512"
+            ],
+            "type": "string"
+          },
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Folder; default: the MCP root (local backend).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "rehash": {
+            "default": false,
+            "description": "Hash every file even when unchanged.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "duplicates_scan",
+      "required_flags": [
+        "--mcp-tools duplicates"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "The scan history of the addressed backend, newest first, limited to scans of folders inside the MCP root: {scans: [{scan_id, root, backend_id, algorithm, started_at, finished_at, files_indexed, files_in_index, duplicate_groups, status (complete|cancelled|failed|running), error}], truncated}.",
+      "group": "duplicates",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "duplicates_scans",
+      "required_flags": [
+        "--mcp-tools duplicates"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Groups of identical files from the index, every copy inside path. Each group is {algorithm, value (hash), size, copies: [{path, size, mtime, scan_id, keep}]} in survivor order: the first copy (keep=true) is the oldest by mtime (ties: shorter, then alphabetically first path) and is what duplicates_dedupe keeps. The index is a record of the last scan; nothing is read from the files. Returns {path, groups, truncated}.",
+      "group": "duplicates",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "description": "Only groups hashed with this algorithm; omit for all.",
+            "enum": [
+              "md5",
+              "sha1",
+              "sha256",
+              "sha512"
+            ],
+            "type": "string"
+          },
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_groups": {
+            "default": 100,
+            "description": "Return at most this many groups.",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Folder; default: the MCP root (local backend).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "scan_id": {
+            "description": "Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "duplicates_groups",
+      "required_flags": [
+        "--mcp-tools duplicates"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Keep the first copy of every duplicate group inside path and move the others to the axross trash (restorable; for the local backend the trash is <MCP root>/.axross-trash). A dry run unless dry_run=false: the dry run only returns the plan. A real run re-checks every copy on disk first: a copy that changed since the scan, or a group without another verified copy, is reported in refused and left alone. Returns {path, dry_run, groups, undated_groups, keep, trash, removed, refused: [{path, reason}], failed: [{path, reason}], trash_root}.",
+      "group": "duplicates",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "description": "Only groups hashed with this algorithm; omit for all.",
+            "enum": [
+              "md5",
+              "sha1",
+              "sha256",
+              "sha512"
+            ],
+            "type": "string"
+          },
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": true,
+            "description": "true: only plan; false: move the planned copies to the trash.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Folder; default: the MCP root (local backend).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "scan_id": {
+            "description": "Only groups with at least one copy from this scan (duplicates_scans); 0 = rows from before scans were recorded.",
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "duplicates_dedupe",
+      "required_flags": [
+        "--mcp-tools duplicates",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "The archive formats pack can write and whether each is usable here: {formats: [{format, label, suffix, single (exactly one file in), encrypts (takes a password), available, reason}], levels}.",
+      "group": "packer",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "pack_formats",
+      "required_flags": [
+        "--mcp-tools packer"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Pack entries of folder into a new archive folder/archive_name + suffix. Folders are packed recursively; symbolic links are skipped and listed in skipped, never followed. The archive is written to a temporary file first and an existing archive is never overwritten: 'bundle.zip' becomes 'bundle (2).zip'. Only 7z takes a password (AES-256; encrypt_names also hides the file list); ZIP and tar refuse one. Single-file formats (gz, bz2, xz, zst) take exactly one file. Returns {path, format, files, folders, bytes_in, bytes_out, skipped, encrypted}. One progress notification per file; cancellable (nothing is left behind).",
+      "group": "packer",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "archive_name": {
+            "description": "Archive file name without directory; the format's suffix is added when missing.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "encrypt_names": {
+            "default": true,
+            "description": "7z with password: also encrypt the file list.",
+            "type": "boolean"
+          },
+          "folder": {
+            "description": "Folder holding the entries; the archive is created here.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "format": {
+            "default": "zip",
+            "description": "Archive format (see pack_formats).",
+            "enum": [
+              "zip",
+              "tar.gz",
+              "tar.zst",
+              "tar.xz",
+              "tar.bz2",
+              "7z",
+              "gz",
+              "zst",
+              "xz",
+              "bz2"
+            ],
+            "type": "string"
+          },
+          "level": {
+            "default": "normal",
+            "description": "Compression level.",
+            "enum": [
+              "fast",
+              "normal",
+              "best"
+            ],
+            "type": "string"
+          },
+          "names": {
+            "description": "Names of files or folders directly inside folder (no path separators, no repeats).",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "password": {
+            "description": "7z only: encrypt with AES-256. Never logged or returned.",
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "folder",
+          "names",
+          "archive_name"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "pack",
+      "required_flags": [
+        "--mcp-tools packer",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "List an archive's members without extracting anything: {path, total, truncated, entries: [{name, size (uncompressed), compressed, mtime, is_dir}]}. Local backend only.",
+      "group": "archive",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_entries": {
+            "default": 1000,
+            "description": "Return at most this many entries.",
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "archive_list",
+      "required_flags": [
+        "--mcp-tools archive"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Extract an archive into a new folder named after it inside dest_dir (default: the archive's folder): 'x.zip' -> 'x', then 'x-1', … - an existing folder is never written into. Zip-slip, absolute paths, links, more than 10,000 entries, more than 1 GiB or a compression ratio above 100 are refused and nothing is left behind. Returns {path (the new folder), files}. Progress per file; cancellable (the partial folder is removed). Local backend only.",
+      "group": "archive",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "dest_dir": {
+            "description": "Existing folder under the MCP root to extract into.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "path": {
+            "description": "Archive file (zip family, tar.*, 7z, rar, gz/bz2/xz/zst) on the local backend.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "archive_extract",
+      "required_flags": [
+        "--mcp-tools archive",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Encrypt a file (at most 1 GiB) into the axross encrypted-overlay format next to it: 'a.txt' -> 'a.txt.axenc', then 'a.txt (2).axenc' - nothing is overwritten. The plaintext stays in place, as in the GUI. Returns {path (the .axenc file), size, plaintext_size}.",
+      "group": "crypto",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "passphrase": {
+            "description": "Passphrase (PBKDF2-SHA256, 200,000 iterations, AES-256-GCM). Never logged or returned.",
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "path": {
+            "description": "File to encrypt.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "passphrase"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "encrypt",
+      "required_flags": [
+        "--mcp-tools crypto",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Decrypt an .axenc file into a new file next to it: 'a.txt.axenc' -> 'a.txt', or 'a (2).txt' when that exists (a name without .axenc gets '.decrypted'); mode 0600, nothing is overwritten. A wrong passphrase or a tampered file fails with nothing written. Returns {path (the plaintext file), size}.",
+      "group": "crypto",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "passphrase": {
+            "description": "Passphrase (PBKDF2-SHA256, 200,000 iterations, AES-256-GCM). Never logged or returned.",
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "path": {
+            "description": "The .axenc file.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "passphrase"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "decrypt",
+      "required_flags": [
+        "--mcp-tools crypto",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Walk a folder and record every entry (name, size, type, mtime) in the offline metadata index that the search tool reads - the same index as the GUI's metadata search. Additive; prune=true also drops index rows under the folder whose file no longer exists. Returns {path, backend_id, recursive, indexed, pruned}. One progress notification per entry; cancellable (what was indexed is kept).",
+      "group": "index",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Folder; default: the MCP root (local backend).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "prune": {
+            "default": false,
+            "description": "Also drop rows of files under the folder that are gone.",
+            "type": "boolean"
+          },
+          "recursive": {
+            "default": true,
+            "description": "Descend into subfolders.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "index_build",
+      "required_flags": [
+        "--mcp-tools index"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Identify one file by its content (magic bytes), not its name, and say whether the extension matches. Returns {path, name, kind (file|directory|special|error|timeout|cancelled), description, mime (from the content), extension, extension_mime (what the name claims), verdict (match|mismatch|unknown), mismatch (bool), size, encoding, line_endings, engine, file_command, bytes_read, error}. Never fails for an unreadable file: kind is then error or timeout with error set.",
+      "group": "filetype",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_bytes": {
+            "default": 65536,
+            "description": "Read at most this many bytes per file.",
+            "maximum": 1048576,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "File to identify.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "use_file_command": {
+            "default": true,
+            "description": "Also ask file(1) for its description (local files only).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "file_type",
+      "required_flags": [
+        "--mcp-tools filetype"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Identify every file under a folder (breadth-first, symlinks skipped). Returns {path, files_scanned, truncated, entries: [{path, name, kind (file|directory|special|error|timeout|cancelled), description, mime (from the content), extension, extension_mime (what the name claims), verdict (match|mismatch|unknown), mismatch (bool), size, encoding, line_endings, engine, file_command, bytes_read, error}]}; with mismatches_only only files whose content contradicts their extension are listed. One progress notification per file; honours cancellation.",
+      "group": "filetype",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "Optional backend id. Omit to use the default; call 'list_backends' to enumerate.",
+            "type": "string"
+          },
+          "max_bytes": {
+            "default": 65536,
+            "description": "Read at most this many bytes per file.",
+            "maximum": 1048576,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_depth": {
+            "default": 2,
+            "description": "Subfolder levels to descend (0: the folder itself only).",
+            "maximum": 50,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_files": {
+            "default": 500,
+            "description": "Stop after this many files (truncated=true).",
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mismatches_only": {
+            "default": false,
+            "description": "List only files whose content does not match the extension.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Folder to scan.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "use_file_command": {
+            "default": true,
+            "description": "Also ask file(1) for its description (local files only).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "file_type_scan",
+      "required_flags": [
+        "--mcp-tools filetype"
+      ],
+      "timeout_class": "stream",
+      "timeout_seconds": 300.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error}]}. Progress per file; cancellable.",
+      "group": "transfer",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dst": {
+            "description": "Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "dst_backend": {
+            "default": "local",
+            "description": "Backend id of the destination.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_depth": {
+            "default": 10,
+            "description": "Subfolder levels to descend.",
+            "maximum": 50,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "default": 10737418240,
+            "description": "Skip files above this size (reason too-large).",
+            "maximum": 1125899906842624,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_files": {
+            "default": 1000,
+            "description": "Copy at most this many files (truncated=true).",
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "overwrite": {
+            "default": false,
+            "description": "Replace existing destination files.",
+            "type": "boolean"
+          },
+          "resumable": {
+            "default": false,
+            "description": "Segmented copy that can continue after an interruption.",
+            "type": "boolean"
+          },
+          "src": {
+            "description": "Source path on src_backend.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "src_backend": {
+            "default": "local",
+            "description": "Backend id of the source (list_backends); 'local' is the local file system under the MCP root.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "dst"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "transfer_copy",
+      "required_flags": [
+        "--mcp-tools transfer",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Move one file to another backend (copy, then delete the source; the copy is removed again if the source cannot be deleted) or within one backend (rename). An existing destination is refused. Returns {src, dst, bytes}.",
+      "group": "transfer",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "dst": {
+            "description": "Destination path on dst_backend (the file, or the folder that becomes the copy of a source folder).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "dst_backend": {
+            "default": "local",
+            "description": "Backend id of the destination.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "src": {
+            "description": "Source path on src_backend.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "src_backend": {
+            "default": "local",
+            "description": "Backend id of the source (list_backends); 'local' is the local file system under the MCP root.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "dst"
+        ],
+        "type": "object"
+      },
+      "mutating": true,
+      "name": "transfer_move",
+      "required_flags": [
+        "--mcp-tools transfer",
+        "--mcp-write",
+        "--mcp-root DIR"
+      ],
+      "timeout_class": "long",
+      "timeout_seconds": 1800.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "The saved connection profiles, without any secret: {profiles: [{name, protocol, host, port, username, auth_type, store_password, production, open_as (backend id when opened in this session, else null), openable, reason (why remote_open would refuse, else empty)}]}.",
+      "group": "remote",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "remote_profiles",
+      "required_flags": [
+        "--mcp-tools remote"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Connect a saved profile and register it as backend 'profile:<name>' for this session; every other tool then reaches it with backend='profile:<name>'. Credentials come from the keyring when the profile stores them; a profile that would need a prompt (password not stored, SSH host key not yet trusted, browser sign-in) fails with an error instead. --mcp-root does not apply to remote paths. Writing needs --mcp-write, and a production-flagged profile stays read-only. Returns {backend, profile, protocol, class, production, writable, reused}.",
+      "group": "remote",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "description": "Profile name.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "remote_open",
+      "required_flags": [
+        "--mcp-tools remote"
+      ],
+      "timeout_class": "walk",
+      "timeout_seconds": 60.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "Disconnect a profile opened with remote_open in this session. Returns {backend, closed}.",
+      "group": "remote",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "description": "'profile:<name>'.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "remote_close",
+      "required_flags": [
+        "--mcp-tools remote"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "The installed extensions (user and bundled) and their state, read without importing any of them: {allowed (false in the paranoid security mode), runnable_over_mcp (always false), why_not_runnable, extensions: [{id ('user:<name>' or 'bundled:<name>'), name, version, description, author, source, enabled (switched on in Extensions > Manage Extensions), loadable, error, active (loaded by the GUI: enabled, loadable and allowed)}]}. Extensions are GUI plugins with no headless actions, so none can be run here.",
+      "group": "extensions",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "extensions_list",
+      "required_flags": [
+        "--mcp-tools extensions"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "One extension by id: {id ('user:<name>' or 'bundled:<name>'), name, version, description, author, source, enabled (switched on in Extensions > Manage Extensions), loadable, error, active (loaded by the GUI: enabled, loadable and allowed)} plus runnable_over_mcp and why_not_runnable.",
+      "group": "extensions",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "ext_id": {
+            "description": "Extension id from extensions_list.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "ext_id"
+        ],
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "extensions_info",
+      "required_flags": [
+        "--mcp-tools extensions"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    },
+    {
+      "description": "List the backend ids: {id, class, name, is_default, remote} per backend; a profile opened with remote_open adds profile, protocol and production. Pass the id via the ``backend`` argument on any other tool to route that call to that backend.",
+      "group": "remote",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "mutating": false,
+      "name": "list_backends",
+      "required_flags": [
+        "--mcp-tools remote"
+      ],
+      "timeout_class": "quick",
+      "timeout_seconds": 15.0,
+      "transports": [
+        "stdio",
+        "http"
+      ]
+    }
+  ]
+}

@@ -26,15 +26,63 @@ from __future__ import annotations
 
 import logging as _logging
 import textwrap as _textwrap
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import Any as _Any
 from urllib.parse import unquote as _unquote
 from urllib.parse import urlsplit as _urlsplit
 from urllib.parse import urlunsplit as _urlunsplit
 
+if _TYPE_CHECKING:  # names of the type hints only; nothing here is imported at run time
+    import os
+    from collections.abc import Callable, Iterable
+    from typing import Any
+
+    from core.backend import FileBackend
+    from core.cas import CasEntry, DedupeResult, ScanRecord
+    from core.conn_health import HealthRecord
+    from core.copy_resume import ResumeReport
+    from core.cred_attack import AttackReport, AttemptOutcome, EnumReport, EnumResult
+    from core.file_type import FileTypeInfo
+    from core.inspect import ExplainResult, Summary
+    from core.local_fs import LocalFS
+    from core.metadata_tools import MetadataReport
+    from core.multi_view import CompareReport, InspectReport
+    from core.profiles import ConnectionProfile
+    from core.ram_fs import RamFsSession
+    from core.reverse_serve import ReverseServer
+    from core.search_federation import SearchHit, SearchQuery, SearchResult
+    from core.trail import Snapshot, TrailDiff
+    from core.visit_history import HostVisit
+    from models.exec_result import ExecResult
+    from models.file_item import FileItem
+    from models.interactive_shell import InteractiveShell
+
 log = _logging.getLogger(__name__)
 
 MAX_SCRIPT_READ_BYTES = 64 * 1024 * 1024
 _SCRIPT_READ_CHUNK = 1024 * 1024
+
+#: Attribute holding a public function's declared traits (see :func:`_api`).
+_API_TRAITS_ATTR = "__axross_api__"
+
+
+def _api(*, mutates: bool, prompts: bool = False):
+    """Declare what a public function may do, for :func:`api_schema`.
+
+    ``mutates``: the call can change state somewhere - files, a remote
+    service, saved settings - with at least some arguments. ``prompts``:
+    the call can wait for a human (a dialog, a terminal prompt, the
+    production tarpit, a browser consent) and raises
+    :class:`NonInteractiveError` or blocks where there is none. Every
+    public function declares both; tests/test_scripting_api_schema.py
+    fails for one that does not.
+    """
+
+    def mark(fn):
+        setattr(fn, _API_TRAITS_ATTR, {"mutates": bool(mutates), "prompts": bool(prompts)})
+        return fn
+
+    return mark
 
 
 def _ensure_registry() -> None:
@@ -53,6 +101,7 @@ def _ensure_registry() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=False)
 def list_profiles() -> list[str]:
     """Return the names of all saved connection profiles."""
     from core.profiles import ProfileManager
@@ -60,7 +109,8 @@ def list_profiles() -> list[str]:
     return ProfileManager().list_names()
 
 
-def get_profile(name: str):
+@_api(mutates=False)
+def get_profile(name: str) -> ConnectionProfile | None:
     """Look up a saved :class:`ConnectionProfile` by name.
 
     Returns ``None`` if no profile matches. Use :func:`list_profiles`
@@ -71,6 +121,7 @@ def get_profile(name: str):
     return ProfileManager().get(name)
 
 
+@_api(mutates=False)
 def list_backends() -> list[str]:
     """Return the protocol IDs of every registered backend (sftp,
     smb, s3, …) regardless of whether the optional dependency is
@@ -82,6 +133,7 @@ def list_backends() -> list[str]:
     return [b.protocol_id for b in all_backends()]
 
 
+@_api(mutates=False)
 def available_backends() -> list[str]:
     """Return the protocol IDs of backends whose dependencies are
     actually installed."""
@@ -96,10 +148,20 @@ def available_backends() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def open(profile_name: str, password: str | None = None, key_passphrase: str | None = None):
+@_api(mutates=False, prompts=True)
+def open(
+    profile_name: str, password: str | None = None, key_passphrase: str | None = None
+) -> FileBackend:
     """Open a backend by saved profile name. Returns a FileBackend
     session. Raises :class:`KeyError` if the profile doesn't exist
-    and :class:`OSError` for connection failure."""
+    and :class:`OSError` for connection failure.
+
+    Every session supports ``with``; leaving the block ends the
+    connection (``close()`` does the same by hand)::
+
+        with axross.open("backup-server") as b:
+            print(b.list_dir("/"))
+    """
     profile = get_profile(profile_name)
     if profile is None:
         raise KeyError(f"No saved profile named {profile_name!r}")
@@ -117,11 +179,27 @@ def open(profile_name: str, password: str | None = None, key_passphrase: str | N
     )
     # ConnectionManager owns the auth fallback chain (key, agent,
     # password); we only override when the caller hands us a value.
-    return cm.connect(
+    session = cm.connect(
         profile,
         password=password or "",
         key_passphrase=key_passphrase or "",
     )
+    return _hand_out(cm, profile, session)
+
+
+def _hand_out(cm, profile, session):
+    """Return ``session`` with a hook that gives back the reference
+    ``cm.connect`` took: leaving ``with session:`` releases it, so the
+    health monitor stops probing a session the script has closed."""
+    import functools
+
+    from core.backend import RELEASE_ATTR
+
+    try:
+        setattr(session, RELEASE_ATTR, functools.partial(cm.release, profile))
+    except (AttributeError, TypeError) as exc:  # a session refusing attributes
+        log.debug("axross: cannot attach the release hook: %s", exc)
+    return session
 
 
 _PROXY_KWARG_NAMES = (
@@ -133,7 +211,8 @@ _PROXY_KWARG_NAMES = (
 )
 
 
-def open_url(url: str, **kwargs):
+@_api(mutates=False, prompts=True)
+def open_url(url: str, **kwargs: Any) -> FileBackend:
     """Open a backend from a URL like ``sftp://user@host/``,
     ``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.
 
@@ -287,23 +366,41 @@ def open_url(url: str, **kwargs):
     # (for example direct gopher:// / nntp:// construction). Do not
     # rely on a catch-all **kwargs signature here: several backends
     # accept **_ignored for unrelated future-proofing and would
-    # otherwise silently drop proxy settings.
+    # otherwise silently drop proxy settings. The backends that DO read
+    # the proxy from **kwargs are listed by ConnectionManager.
     if proxy_kwargs:
         import inspect
+
+        from core.connection_manager import (
+            _PROTOCOLS_HONOURING_KWARG_PROXY,
+            _PROTOCOLS_NO_NETWORK,
+        )
 
         try:
             sig = inspect.signature(load_backend_class(proto_id))
         except (TypeError, ValueError):
             sig = None
+        via_kwargs = proto_id in _PROTOCOLS_HONOURING_KWARG_PROXY
         accepted = False
         for k, v in proxy_kwargs.items():
-            if sig is not None and k in sig.parameters:
+            if via_kwargs or (sig is not None and k in sig.parameters):
                 init_kwargs[k] = v
                 accepted = True
         if not accepted:
+            if proxy_type != "none" and proto_id not in _PROTOCOLS_NO_NETWORK and not suppress_url:
+                # Never connect around a proxy the caller (or the
+                # application default) asked for.
+                from core.proxy import refuse_unsupported_proxy
+
+                refuse_unsupported_proxy(
+                    proto_id,
+                    proxy_type,
+                    str(proxy_kwargs.get("proxy_host", "")),
+                    f"The {proto_id} backend has no SOCKS/HTTP proxy support.",
+                )
             log.warning(
                 "axross.open_url(%s://…) received proxy settings, but the "
-                "%s backend has no SOCKS/HTTP proxy support. The proxy "
+                "%s backend has no network transport to proxy. The proxy "
                 "settings are ignored. See docs/PROXY_SUPPORT.md.",
                 proto_id,
                 proto_id,
@@ -531,21 +628,24 @@ def _open_url_via_cm(
             setattr(profile, k, v)
     cm = ConnectionManager()
     cm.set_profile_resolver(get_profile)
-    return cm.connect(
+    session = cm.connect(
         profile,
         password=password,
         key_passphrase=key_passphrase,
     )
+    return _hand_out(cm, profile, session)
 
 
-def localfs():
+@_api(mutates=False)
+def localfs() -> LocalFS:
     """Return a LocalFS session pointed at the host's filesystem."""
     from core.local_fs import LocalFS
 
     return LocalFS()
 
 
-def ramfs(max_bytes: int | None = None):
+@_api(mutates=False)
+def ramfs(max_bytes: int | None = None) -> RamFsSession:
     """Return a fresh RamFS session — bytes never touch disk.
     ``max_bytes`` overrides the default per-instance cap."""
     from core.ram_fs import RamFsSession
@@ -657,10 +757,11 @@ def _refuse_existing_target_unless_overwrite(
     return existed
 
 
+@_api(mutates=True, prompts=True)
 def copy(
-    src_backend,
+    src_backend: FileBackend,
     src_path: str,
-    dst_backend,
+    dst_backend: FileBackend,
     dst_path: str,
     buffer_size: int = 1024 * 1024,
     *,
@@ -759,7 +860,15 @@ def copy(
     return transferred
 
 
-def move(src_backend, src_path: str, dst_backend, dst_path: str, *, overwrite: bool = False) -> int:
+@_api(mutates=True, prompts=True)
+def move(
+    src_backend: FileBackend,
+    src_path: str,
+    dst_backend: FileBackend,
+    dst_path: str,
+    *,
+    overwrite: bool = False,
+) -> int:
     """Move a file from one backend to another. Same-backend uses
     rename; cross-backend uses copy + delete-source.
 
@@ -866,7 +975,10 @@ def move(src_backend, src_path: str, dst_backend, dst_path: str, *, overwrite: b
     return transferred
 
 
-def remove(backend, path: str, *, recursive: bool = False, confirm: bool = False) -> str:
+@_api(mutates=True, prompts=True)
+def remove(
+    backend: FileBackend, path: str, *, recursive: bool = False, confirm: bool = False
+) -> str:
     """Delete ``path`` from ``backend`` after an explicit opt-in.
 
     This scripting helper deliberately refuses to run unless
@@ -907,7 +1019,10 @@ def remove(backend, path: str, *, recursive: bool = False, confirm: bool = False
     return summary
 
 
-def trash(backend, path: str, *, root: str | None = None, confirm: bool = False) -> str:
+@_api(mutates=True, prompts=True)
+def trash(
+    backend: FileBackend, path: str, *, root: str | None = None, confirm: bool = False
+) -> str:
     """Move ``path`` to Axross trash after an explicit opt-in.
 
     This is the recoverable alternative to :func:`remove`, but it is
@@ -937,7 +1052,8 @@ def trash(backend, path: str, *, root: str | None = None, confirm: bool = False)
     return trash_id
 
 
-def checksum(backend, path: str, algorithm: str = "sha256") -> str:
+@_api(mutates=False)
+def checksum(backend: FileBackend, path: str, algorithm: str = "sha256") -> str:
     """Return the backend's content fingerprint for ``path``. Falls
     back to a streaming hash when the backend has no cheap server-side
     checksum."""
@@ -996,8 +1112,9 @@ def _read_all_capped(handle, *, max_bytes: int | None) -> bytes:
     return bytes(out)
 
 
+@_api(mutates=False)
 def read_bytes(
-    backend,
+    backend: FileBackend,
     path: str,
     *,
     max_bytes: int | None = MAX_SCRIPT_READ_BYTES,
@@ -1019,7 +1136,8 @@ def read_bytes(
     return data
 
 
-def write_bytes(backend, path: str, data: bytes, *, overwrite: bool = False) -> int:
+@_api(mutates=True, prompts=True)
+def write_bytes(backend: FileBackend, path: str, data: bytes, *, overwrite: bool = False) -> int:
     """Write ``data`` to ``path`` on ``backend``. Returns bytes written.
 
     Existing destinations are refused by default. Pass
@@ -1051,8 +1169,9 @@ def write_bytes(backend, path: str, data: bytes, *, overwrite: bool = False) -> 
     return len(data)
 
 
+@_api(mutates=False)
 def read_text(
-    backend,
+    backend: FileBackend,
     path: str,
     encoding: str = "utf-8",
     *,
@@ -1067,8 +1186,9 @@ def read_text(
     )
 
 
+@_api(mutates=True, prompts=True)
 def write_text(
-    backend, path: str, text: str, encoding: str = "utf-8", *, overwrite: bool = False
+    backend: FileBackend, path: str, text: str, encoding: str = "utf-8", *, overwrite: bool = False
 ) -> int:
     """Write a UTF-8 text file. Convenience wrapper around
     :func:`write_bytes` — encodes ``text`` and forwards. Returns the
@@ -1087,8 +1207,14 @@ def write_text(
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=True)
 def encrypt(
-    backend, path: str, passphrase: str, keep_original: bool = True, *, overwrite: bool = False
+    backend: FileBackend,
+    path: str,
+    passphrase: str,
+    keep_original: bool = True,
+    *,
+    overwrite: bool = False,
 ) -> str:
     """Encrypt ``path`` with the axross encrypted-overlay format and
     write the ciphertext to ``<path>.axenc``. Returns the new path.
@@ -1141,7 +1267,8 @@ def encrypt(
     return out_path
 
 
-def decrypt(backend, path: str, passphrase: str) -> bytes:
+@_api(mutates=False)
+def decrypt(backend: FileBackend, path: str, passphrase: str) -> bytes:
     """Read and decrypt an .axenc file. Returns the plaintext bytes —
     the caller decides where to put them (write_bytes to disk, hand
     them to a parser, etc.)."""
@@ -1162,6 +1289,7 @@ def decrypt(backend, path: str, passphrase: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=False)
 def hash_bytes(data: bytes, algorithm: str = "sha256") -> str:
     """Hex digest of ``data`` under ``algorithm`` (anything
     :mod:`hashlib.new` accepts: sha1, sha256, sha512, md5, …)."""
@@ -1172,7 +1300,10 @@ def hash_bytes(data: bytes, algorithm: str = "sha256") -> str:
     return h.hexdigest()
 
 
-def hash_file(backend, path: str, algorithm: str = "sha256", chunk_size: int = 1024 * 1024) -> str:
+@_api(mutates=False)
+def hash_file(
+    backend: FileBackend, path: str, algorithm: str = "sha256", chunk_size: int = 1024 * 1024
+) -> str:
     """Streaming hex digest of a backend-side file. Same as
     :func:`checksum` but never tries to use a server-side fingerprint
     — use this when you specifically want algorithm parity across
@@ -1194,6 +1325,7 @@ def hash_file(backend, path: str, algorithm: str = "sha256", chunk_size: int = 1
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=False)
 def list_bookmarks() -> list:
     """Return all saved bookmarks (list of :class:`Bookmark`)."""
     from core.bookmarks import BookmarkManager
@@ -1201,6 +1333,7 @@ def list_bookmarks() -> list:
     return list(BookmarkManager()._bookmarks)  # noqa: SLF001 — read-only
 
 
+@_api(mutates=True)
 def add_bookmark(
     name: str,
     path: str,
@@ -1230,6 +1363,7 @@ def add_bookmark(
     )
 
 
+@_api(mutates=True)
 def remove_bookmark(index: int) -> None:
     """Remove the bookmark at ``index`` (zero-based)."""
     from core.bookmarks import BookmarkManager
@@ -1250,7 +1384,8 @@ def remove_bookmark(index: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def save_profile(profile) -> None:
+@_api(mutates=True)
+def save_profile(profile: ConnectionProfile) -> None:
     """Persist a :class:`core.profiles.ConnectionProfile`. The profile
     object itself can be constructed via ``ConnectionProfile(name=...,
     protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``."""
@@ -1267,6 +1402,7 @@ def save_profile(profile) -> None:
     )
 
 
+@_api(mutates=True)
 def delete_profile(name: str) -> None:
     """Delete a saved profile by name. No-op if the profile doesn't
     exist."""
@@ -1286,7 +1422,10 @@ def delete_profile(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def extract_archive(local_path: str, dst_dir: str, progress=None) -> str:
+@_api(mutates=True)
+def extract_archive(
+    local_path: str, dst_dir: str, progress: Callable[[int, int, str], None] | None = None
+) -> str:
     """Extract a local archive (zip / tar / 7z) to ``dst_dir``. Returns
     the destination directory after the extract. Refuses zip-bombs
     and zip-slip via the same guards used by the file-manager UI.
@@ -1302,6 +1441,7 @@ def extract_archive(local_path: str, dst_dir: str, progress=None) -> str:
     return dst_dir
 
 
+@_api(mutates=False)
 def is_archive(path: str) -> bool:
     """True when ``path`` looks like a zip / tar / 7z by extension."""
     from core.archive import is_supported_archive
@@ -1362,19 +1502,38 @@ except ImportError:
     class SnmpVar:  # type: ignore[no-redef]
         """Placeholder when pysnmp is missing."""
 
-    def _snmp_unavailable(*_a, **_kw):
-        raise OSError(
-            "SNMP support requires pysnmp — install with "
-            "`pip install pysnmp` (or via the axross[snmp] extra)"
-        )
+    def _snmp_unavailable(name: str):
+        # One stub per name: each carries its own traits for api_schema().
+        def stub(*_args: Any, **_kwargs: Any) -> Any:
+            raise OSError(
+                "SNMP support requires pysnmp — install with "
+                "`pip install pysnmp` (or via the axross[snmp] extra)"
+            )
 
-    snmp_get = snmp_walk = snmp_set = _snmp_unavailable
+        stub.__name__ = stub.__qualname__ = name
+        stub.__doc__ = "Unavailable here: SNMP support requires pysnmp."
+        return stub
+
+    snmp_get = _snmp_unavailable("snmp_get")
+    snmp_walk = _snmp_unavailable("snmp_walk")
+    snmp_set = _snmp_unavailable("snmp_set")
+
+# The re-exported helpers declare their traits here (see _api).
+for _helper in (
+    archive_inspect, diff_files, dns_records, dns_reverse, entropy, find_files, grep,
+    http_probe, mac_lookup, magic_type, ping, port_scan, ssh_hostkey, subnet_hosts,
+    tcp_banner, text_encoding, time_skew, tls_cert, whois, snmp_get, snmp_walk,
+):  # fmt: skip
+    _api(mutates=False)(_helper)
+_api(mutates=True)(snmp_set)
+del _helper
 
 # ---------------------------------------------------------------------------
 # Network helpers (small + frequently useful in scripts)
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=False)
 def dns_resolve(host: str, family: str = "any") -> list[str]:
     """Return the IPs ``host`` resolves to. ``family`` is ``"v4"``,
     ``"v6"``, or ``"any"``.
@@ -1408,6 +1567,7 @@ def dns_resolve(host: str, family: str = "any") -> list[str]:
     return out
 
 
+@_api(mutates=False)
 def port_open(host: str, port: int, timeout: float = 3.0) -> bool:
     """``True`` if a TCP connect to ``host:port`` succeeds within
     ``timeout`` seconds. Useful for lab-up probes in scripts."""
@@ -1425,13 +1585,19 @@ def port_open(host: str, port: int, timeout: float = 3.0) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def find_tftp_files(backend, wordlist=None, on_progress=None) -> list:
+@_api(mutates=False)
+def find_tftp_files(
+    backend: FileBackend,
+    wordlist: list[str] | str | None = None,
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> list[FileItem]:
     """Walk ``backend.find_files()`` (TFTP wordlist scan). The backend
     must be a :class:`TftpSession`; raises :class:`AttributeError`
     otherwise."""
     return backend.find_files(wordlist=wordlist, on_progress=on_progress)
 
 
+@_api(mutates=False)
 def slp_discover(host: str, scope: str = "DEFAULT", port: int = 427, use_tcp: bool = False) -> dict:
     """One-shot SLPv2 discover: returns ``{service_type: [(url, ttl)]}``
     for everything the daemon at ``host`` advertises in ``scope``.
@@ -1449,8 +1615,13 @@ def slp_discover(host: str, scope: str = "DEFAULT", port: int = 427, use_tcp: bo
         sess.close()
 
 
+@_api(mutates=True)
 def nntp_post(
-    backend, group: str, subject: str, body: str, author: str = "axross <noreply@axross>"
+    backend: FileBackend,
+    group: str,
+    subject: str,
+    body: str,
+    author: str = "axross <noreply@axross>",
 ) -> None:
     """Post a fully-formed article to ``group`` on ``backend`` (an
     :class:`NntpSession`). Builds a minimal RFC 5322 envelope around
@@ -1478,7 +1649,8 @@ def nntp_post(
     )
 
 
-def git_push(backend, branch: str | None = None) -> None:
+@_api(mutates=True)
+def git_push(backend: FileBackend, branch: str | None = None) -> None:
     """Push committed work on ``backend`` (a :class:`GitFsSession`) to
     its origin. Raises :class:`GitForceRefused` on non-fast-forward.
     Pass ``branch=None`` to push every branch the session has touched."""
@@ -1486,8 +1658,9 @@ def git_push(backend, branch: str | None = None) -> None:
     backend.flush_push(branch=branch)
 
 
+@_api(mutates=False)
 def ldap_search(
-    backend,
+    backend: FileBackend,
     base_dn: str,
     filter: str = "(objectClass=*)",
     *,
@@ -1509,7 +1682,8 @@ def ldap_search(
     return backend.search(base_dn, filter, scope=scope, attributes=attributes, limit=limit)
 
 
-def share(backend, path: str, **kwargs) -> str:
+@_api(mutates=True)
+def share(backend: FileBackend, path: str, **kwargs: Any) -> str:
     """Create a shareable link for ``path`` on a cloud backend that
     supports it. Dispatches to:
 
@@ -1538,7 +1712,8 @@ def share(backend, path: str, **kwargs) -> str:
     )
 
 
-def imap_search(backend, criteria: str = "ALL", *, mailbox: str = "INBOX") -> list:
+@_api(mutates=False)
+def imap_search(backend: FileBackend, criteria: str = "ALL", *, mailbox: str = "INBOX") -> list:
     """Wrapper around message-backend search. For IMAP this returns
     the list of UIDs matching an IMAP search expression (RFC 3501);
     for Exchange it returns the backend's lightweight message dicts::
@@ -1566,7 +1741,8 @@ def imap_search(backend, criteria: str = "ALL", *, mailbox: str = "INBOX") -> li
     )
 
 
-def imap_move(backend, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
+@_api(mutates=True)
+def imap_move(backend: FileBackend, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
     """Move an IMAP message by UID. Uses MOVE if the server supports
     it, COPY+\\Deleted+EXPUNGE otherwise. See ``ImapSession.move``."""
     if not hasattr(backend, "move") or not hasattr(backend, "set_flags"):
@@ -1580,8 +1756,9 @@ def imap_move(backend, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
     backend.move(uid, src_mailbox, dst_mailbox)
 
 
+@_api(mutates=True)
 def imap_set_flags(
-    backend, uid: int, flags: list[str], *, mailbox: str = "INBOX", mode: str = "set"
+    backend: FileBackend, uid: int, flags: list[str], *, mailbox: str = "INBOX", mode: str = "set"
 ) -> None:
     """STORE flags on an IMAP message by UID. ``mode`` is ``set`` /
     ``add`` / ``remove``."""
@@ -1597,7 +1774,8 @@ def imap_set_flags(
     backend.set_flags(uid, flags, mailbox=mailbox, mode=mode)
 
 
-def query(backend, sql_or_args, *args, **kwargs):
+@_api(mutates=True)
+def query(backend: FileBackend, sql_or_args: str, *args: Any, **kwargs: Any) -> list[dict]:
     """Generic database-query dispatch. Calls ``backend.query()`` for
     SQL backends (SQLite / Postgres) or ``backend.find()`` for Mongo
     when ``sql_or_args`` looks like a collection name + filter dict.
@@ -1627,7 +1805,8 @@ def query(backend, sql_or_args, *args, **kwargs):
     return backend.query(sql_or_args, *args, **kwargs)
 
 
-def tables(backend) -> list[str]:
+@_api(mutates=False)
+def tables(backend: FileBackend) -> list[str]:
     """Return every table (SQLite/Postgres) or collection (Mongo) on
     ``backend``. Wraps the per-backend method of the same name."""
     if hasattr(backend, "tables"):
@@ -1637,14 +1816,15 @@ def tables(backend) -> list[str]:
     raise TypeError(f"backend {type(backend).__name__} does not implement tables() / collections()")
 
 
+@_api(mutates=True)
 def interactive_shell(
-    backend,
+    backend: FileBackend,
     *,
     term: str = "xterm-256color",
     cols: int = 80,
     rows: int = 24,
     env: dict[str, str] | None = None,
-):
+) -> InteractiveShell:
     """Open an interactive shell on the same SSH transport ``backend``
     is already using. Multiplexing — file ops on ``backend`` keep
     working while the shell is open. Returns a
@@ -1668,8 +1848,9 @@ def interactive_shell(
     return backend.interactive_shell(term=term, cols=cols, rows=rows, env=env)
 
 
+@_api(mutates=True)
 def exec(
-    backend,
+    backend: FileBackend,
     cmd: str,
     *,
     timeout: float | None = 30.0,
@@ -1677,7 +1858,7 @@ def exec(
     stdout_cap: int = 1024 * 1024,
     stderr_cap: int = 64 * 1024,
     env: dict[str, str] | None = None,
-):
+) -> ExecResult:
     """Run a shell command on a remote backend. Returns
     :class:`models.exec_result.ExecResult` with ``returncode``,
     ``stdout``, ``stderr`` and the corresponding ``truncated_*`` flags.
@@ -1685,7 +1866,8 @@ def exec(
     Works on any backend whose session implements ``.exec()`` —
     currently SSH/SFTP and SCP. For protocols where ``exec`` is the
     wrong shape (Cisco IOS, IMAP, S3 …) use the per-protocol helper
-    instead (``axross.show()``, ``axross.imap_search()``, …).
+    instead (``show()`` on a Cisco-telnet session, ``axross.imap_search()``,
+    …).
 
     Quote untrusted arguments yourself::
 
@@ -1718,7 +1900,8 @@ def exec(
 # ---------------------------------------------------------------------------
 
 
-def diagnose(backend, *, root: str | None = None, write_test: bool = False) -> str:
+@_api(mutates=True)
+def diagnose(backend: FileBackend, *, root: str | None = None, write_test: bool = False) -> str:
     """Run live diagnostics against an open backend and return a
     plain-text report.
 
@@ -1736,7 +1919,8 @@ def diagnose(backend, *, root: str | None = None, write_test: bool = False) -> s
     ).to_text()
 
 
-def preview_delete(backend, paths: list[str], *, max_entries: int = 10_000) -> str:
+@_api(mutates=False)
+def preview_delete(backend: FileBackend, paths: list[str], *, max_entries: int = 10_000) -> str:
     """Preview a delete/trash operation before executing it.
 
     Returns a compact summary with item counts, total bytes and warning
@@ -1751,9 +1935,10 @@ def preview_delete(backend, paths: list[str], *, max_entries: int = 10_000) -> s
     ).summary()
 
 
+@_api(mutates=False)
 def preview_transfer(
-    source_backend,
-    dest_backend,
+    source_backend: FileBackend,
+    dest_backend: FileBackend,
     source_paths: list[str],
     dest_dir: str,
     *,
@@ -1777,7 +1962,8 @@ def preview_transfer(
     ).summary()
 
 
-def recovery_scan(backend, root: str | None = None) -> str:
+@_api(mutates=False)
+def recovery_scan(backend: FileBackend, root: str | None = None) -> str:
     """Scan a backend location for recoverable temp/trash items and
     return a plain-text report."""
     from core.recovery import format_findings, scan_backend_recovery
@@ -1790,6 +1976,7 @@ def recovery_scan(backend, root: str | None = None) -> str:
     return format_findings(scan_backend_recovery(backend, root))
 
 
+@_api(mutates=False)
 def recent_operations(limit: int = 20) -> list[dict]:
     """Return recent redacted operation-journal events."""
     from core.operation_journal import read_recent
@@ -1797,6 +1984,7 @@ def recent_operations(limit: int = 20) -> list[dict]:
     return read_recent(limit=limit)
 
 
+@_api(mutates=True)
 def security_mode(name: str | None = None) -> str:
     """Get or set the runtime security mode.
 
@@ -1823,11 +2011,12 @@ def security_mode(name: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=True)
 def bruteforce(
-    profile,
+    profile: ConnectionProfile | str,
     *,
-    users,
-    passwords,
+    users: Iterable[str],
+    passwords: Iterable[str],
     rate_per_min: float = 30.0,
     timeout_per_attempt: float = 10.0,
     abort_on_lockout: bool = True,
@@ -1835,13 +2024,13 @@ def bruteforce(
     abort_after_n_failures: int | None = None,
     max_attempts: int | None = None,
     stop_on_first_success_per_user: bool = True,
-    progress=None,
-    on_unknown_host=None,
-    state_file=None,
+    progress: Callable[[AttemptOutcome], None] | None = None,
+    on_unknown_host: Callable[[object], bool] | None = None,
+    state_file: str | os.PathLike[str] | None = None,
     dry_run: bool = False,
     jitter_s: float = 0.0,
     authorized: bool = False,
-):
+) -> AttackReport:
     """Run a brute-force credential test in user-major order against a
     saved profile (name or :class:`ConnectionProfile`).
 
@@ -1884,25 +2073,26 @@ def bruteforce(
     )
 
 
+@_api(mutates=True)
 def spray(
-    profile,
+    profile: ConnectionProfile | str,
     *,
-    users,
+    users: Iterable[str],
     password: str | None = None,
-    passwords=None,
+    passwords: Iterable[str] | None = None,
     rate_per_min: float = 30.0,
     timeout_per_attempt: float = 10.0,
     abort_on_lockout: bool = True,
     abort_after_n_lockouts: int = 1,
     max_attempts: int | None = None,
     stop_on_first_success_per_user: bool = True,
-    progress=None,
-    on_unknown_host=None,
-    state_file=None,
+    progress: Callable[[AttemptOutcome], None] | None = None,
+    on_unknown_host: Callable[[object], bool] | None = None,
+    state_file: str | os.PathLike[str] | None = None,
     dry_run: bool = False,
     jitter_s: float = 0.0,
     authorized: bool = False,
-):
+) -> AttackReport:
     """Run a password spray in password-major order — the safer
     pattern for AD-style targets where lockout is per-user-per-window.
 
@@ -1936,19 +2126,20 @@ def spray(
     )
 
 
+@_api(mutates=True)
 def enumerate_users(
-    profile,
-    candidates,
+    profile: ConnectionProfile | str,
+    candidates: Iterable[str],
     *,
     method: str = "auto",
     timeout_per_probe: float = 10.0,
     timing_samples: int = 5,
     rate_per_min: float = 30.0,
     jitter_s: float = 0.0,
-    progress=None,
-    on_unknown_host=None,
+    progress: Callable[[EnumResult], None] | None = None,
+    on_unknown_host: Callable[[object], bool] | None = None,
     authorized: bool = False,
-):
+) -> EnumReport:
     """Probe whether each candidate username exists on the target.
 
     ``method="auto"`` (default) uses a registered per-protocol oracle
@@ -1990,7 +2181,8 @@ def enumerate_users(
 # ---------------------------------------------------------------------------
 
 
-def where_was_i(host: str | None = None):
+@_api(mutates=False)
+def where_was_i(host: str | None = None) -> list[HostVisit] | HostVisit | None:
     """Look up the visit-history record(s).
 
     With no argument, returns every recorded host (most-recent first)
@@ -2009,7 +2201,8 @@ def where_was_i(host: str | None = None):
     return _impl(host)
 
 
-def health_pulse():
+@_api(mutates=False)
+def health_pulse() -> list[HealthRecord]:
     """Snapshot the live connection-health pulse for every enrolled
     session — last-probe latency, median latency, staleness flag.
 
@@ -2021,7 +2214,8 @@ def health_pulse():
     return _impl()
 
 
-def summarize(backend, path: str = "", *, max_entries: int = 2000):
+@_api(mutates=False)
+def summarize(backend: FileBackend, path: str = "", *, max_entries: int = 2000) -> Summary:
     """One-paragraph synopsis of a directory: file/dir/link counts,
     extension histogram, age buckets, newest/oldest entries, top-5
     largest files. Reads metadata only — no file contents are fetched.
@@ -2036,7 +2230,8 @@ def summarize(backend, path: str = "", *, max_entries: int = 2000):
     return _impl(backend, path, max_entries=max_entries)
 
 
-def explain(backend, path: str = ""):
+@_api(mutates=False)
+def explain(backend: FileBackend, path: str = "") -> ExplainResult:
     """Heuristic best-guess "what IS this directory?" — git repo,
     PostgreSQL data dir, nginx config tree, k8s manifests, Maildir,
     web-server log dir, and friends. Returns the highest-confidence
@@ -2048,15 +2243,16 @@ def explain(backend, path: str = ""):
     return _impl(backend, path)
 
 
+@_api(mutates=False)
 def compare_file(
-    backends: list,
+    backends: list[FileBackend],
     path: str,
     *,
     content: bool = True,
     content_cap_bytes: int | None = None,
     parallelism: int = 8,
     per_target_timeout_s: float = 30.0,
-):
+) -> CompareReport:
     """Compare the SAME path across N backends in parallel.
 
     Returns a :class:`core.multi_view.CompareReport` with per-backend
@@ -2077,14 +2273,15 @@ def compare_file(
     )
 
 
+@_api(mutates=False)
 def inspect_targets(
-    targets: list,
+    targets: list[tuple[FileBackend, str]],
     *,
     content: bool = True,
     content_cap_bytes: int | None = None,
     parallelism: int = 8,
     per_target_timeout_s: float = 30.0,
-):
+) -> InspectReport:
     """Inspect a list of ``(backend, path)`` pairs in parallel.
 
     Returns :class:`core.multi_view.InspectReport` aligned with input
@@ -2103,9 +2300,10 @@ def inspect_targets(
     )
 
 
+@_api(mutates=False)
 def federated_search(
-    backends: list,
-    query=None,
+    backends: list[FileBackend],
+    query: SearchQuery | None = None,
     *,
     name: str = "",
     regex: str = "",
@@ -2121,8 +2319,8 @@ def federated_search(
     max_hits_total: int = 5000,
     parallelism: int = 8,
     per_backend_timeout_s: float = 60.0,
-    progress=None,
-):
+    progress: Callable[[SearchHit], None] | None = None,
+) -> SearchResult:
     """Run one search query against many backends in parallel.
 
     The dispatcher picks the most efficient adapter per backend
@@ -2164,17 +2362,18 @@ def federated_search(
     )
 
 
+@_api(mutates=True)
 def resumable_copy(
-    src_backend,
+    src_backend: FileBackend,
     src_path: str,
-    dst_backend,
+    dst_backend: FileBackend,
     dst_path: str,
     *,
     segment_size: int = 4 * 1024 * 1024,
-    manifest_path=None,
+    manifest_path: str | os.PathLike[str] | None = None,
     overwrite: bool = False,
-    progress=None,
-):
+    progress: Callable[[int, int], None] | None = None,
+) -> ResumeReport:
     """Cross-backend copy with checkpoint-resume.
 
     Splits the source into segments, writes a manifest after each
@@ -2197,9 +2396,15 @@ def resumable_copy(
     )
 
 
+@_api(mutates=True)
 def snapshot_now(
-    backend, path: str, *, name: str = "", head_hash: bool = False, max_files: int = 5000
-):
+    backend: FileBackend,
+    path: str,
+    *,
+    name: str = "",
+    head_hash: bool = False,
+    max_files: int = 5000,
+) -> Snapshot:
     """Take a single time-lapse snapshot of a directory tree.
 
     Records ``(name, size, mtime, optional sha-prefix)`` per file plus
@@ -2219,16 +2424,17 @@ def snapshot_now(
     )
 
 
+@_api(mutates=True)
 def start_trail(
-    backend,
+    backend: FileBackend,
     path: str,
     *,
     name: str = "",
     interval_s: float = 300.0,
     head_hash: bool = False,
     max_files: int = 5000,
-    on_snapshot=None,
-):
+    on_snapshot: Callable[[Snapshot], None] | None = None,
+) -> str:
     """Start a background trail — periodic snapshots until
     :func:`stop_trail` is called. Returns the trail name.
     """
@@ -2245,6 +2451,7 @@ def start_trail(
     )
 
 
+@_api(mutates=True)
 def stop_trail(name: str) -> bool:
     """Stop a named background trail. Returns True if one was found."""
     from core.trail import stop_trail as _impl
@@ -2252,14 +2459,16 @@ def stop_trail(name: str) -> bool:
     return _impl(name)
 
 
-def list_trails():
+@_api(mutates=False)
+def list_trails() -> list[dict]:
     """List every recorded trail with its metadata."""
     from core.trail import list_trails as _impl
 
     return _impl()
 
 
-def list_snapshots(trail_name: str, *, limit: int = 100):
+@_api(mutates=False)
+def list_snapshots(trail_name: str, *, limit: int = 100) -> list[Snapshot]:
     """List the most recent snapshots of one trail (newest first).
 
     Returns a list of :class:`core.trail.Snapshot`.
@@ -2269,7 +2478,8 @@ def list_snapshots(trail_name: str, *, limit: int = 100):
     return _impl(trail_name, limit=limit)
 
 
-def diff_snapshots(snapshot_a: int, snapshot_b: int):
+@_api(mutates=False)
+def diff_snapshots(snapshot_a: int, snapshot_b: int) -> TrailDiff:
     """Compare snapshot A to snapshot B (B is the newer / target).
 
     Returns a :class:`core.trail.TrailDiff` with added / removed /
@@ -2280,13 +2490,14 @@ def diff_snapshots(snapshot_a: int, snapshot_b: int):
     return _impl(snapshot_a, snapshot_b)
 
 
+@_api(mutates=False)
 def dashboard(
     *,
     with_capacity: bool = False,
     recent_ops_limit: int = 10,
     fmt: str = "text",
-    backends: list | None = None,
-):
+    backends: list[FileBackend] | None = None,
+) -> str:
     """Federation-status dashboard — one screen, every connection.
 
     ``fmt`` selects the renderer:
@@ -2325,15 +2536,16 @@ def dashboard(
     return render_text(snap, with_capacity=with_capacity)
 
 
+@_api(mutates=True)
 def serve_s3(
-    backend,
+    backend: FileBackend,
     *,
     bind: str = "127.0.0.1",
     port: int = 9000,
     read_only: bool = False,
     auth_token: str = "",
     root_path: str = "/",
-):
+) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable S3 endpoint so any
     existing S3 client (aws-cli / restic / rclone / terraform) can
     speak to it.
@@ -2356,15 +2568,16 @@ def serve_s3(
     )
 
 
+@_api(mutates=True)
 def serve_webdav(
-    backend,
+    backend: FileBackend,
     *,
     bind: str = "127.0.0.1",
     port: int = 8080,
     read_only: bool = False,
     auth_token: str = "",
     root_path: str = "/",
-):
+) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable WebDAV endpoint —
     ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser
     read-only listings all work. Same OPSEC rules as
@@ -2412,6 +2625,7 @@ def _validate_script_file_fd(fd: int, path: str) -> None:
         raise OSError(f"script file is not owned by the current user: {path}")
 
 
+@_api(mutates=False)
 def script_dir() -> str:
     """Return the script-storage directory path. Created on first
     access. Mode 0700 so other local users can't read scripts that
@@ -2440,6 +2654,7 @@ def script_dir() -> str:
     return str(p)
 
 
+@_api(mutates=False)
 def list_scripts() -> list[str]:
     """Names of every saved script in :func:`script_dir`."""
     import os
@@ -2471,6 +2686,7 @@ def _validate_script_name(name: str) -> str:
     return name
 
 
+@_api(mutates=True)
 def save_script(name: str, source: str) -> str:
     """Write ``source`` to ``script_dir()/<name>.py`` (mode 0o600).
     Overwrites any existing file with the same name. Returns the
@@ -2514,6 +2730,7 @@ def save_script(name: str, source: str) -> str:
     return str(target)
 
 
+@_api(mutates=False)
 def load_script(name: str) -> str:
     """Read the source of a saved script as a UTF-8 string. Raises
     ``FileNotFoundError`` when the script doesn't exist; ``ValueError``
@@ -2541,6 +2758,7 @@ def load_script(name: str) -> str:
         return fh.read()
 
 
+@_api(mutates=True)
 def delete_script(name: str) -> None:
     """Remove a saved script. No-op if the file is already gone."""
     import os
@@ -2553,6 +2771,7 @@ def delete_script(name: str) -> None:
         pass
 
 
+@_api(mutates=True, prompts=True)
 def run_script(name: str, env: dict | None = None) -> dict:
     """Execute a saved script in a fresh namespace pre-populated with
     ``axross`` (this module). Returns the post-exec namespace so the
@@ -2577,6 +2796,311 @@ def run_script(name: str, env: dict | None = None) -> dict:
 
     _builtins.exec(compile(source, ns["__file__"], "exec"), ns)
     return ns
+
+
+# ---------------------------------------------------------------------------
+# Duplicate index (the Duplicate Finder's CAS index and its scan history)
+# ---------------------------------------------------------------------------
+
+
+def _scan_id_of(scan) -> int | None:
+    if scan is None:
+        return None
+    return int(getattr(scan, "scan_id", scan))
+
+
+@_api(mutates=False)
+def duplicate_scans() -> list[ScanRecord]:
+    """Return the Duplicate Finder's scan history, newest first.
+
+    Each item is a :class:`core.cas.ScanRecord` with ``scan_id``,
+    ``root``, ``backend_id``, ``started_at`` / ``finished_at``,
+    ``files_indexed``, ``files_in_index``, ``duplicate_groups`` and
+    ``status`` (``complete`` / ``cancelled`` / ``failed`` / ``running``).
+    Rows indexed before scans were recorded appear as a last pseudo
+    entry with ``scan_id == 0`` and status ``earlier``.
+
+    Example::
+
+        for scan in axross.duplicate_scans():
+            print(scan.scan_id, scan.status, scan.root, scan.duplicate_groups)
+    """
+    from core import cas as _cas
+
+    return _cas.list_scans(None)
+
+
+@_api(mutates=False)
+def duplicates(
+    *,
+    scan: ScanRecord | int | None = None,
+    folder: str | None = None,
+    algorithm: str | None = None,
+) -> list[list[CasEntry]]:
+    """Return the duplicate groups of the Duplicate Finder's index.
+
+    A list of groups; each group is a list of :class:`core.cas.CasEntry`
+    (``backend_id``, ``path``, ``size``, ``mtime``, ``value``) in survivor
+    order — the first entry is the copy :func:`dedupe` keeps (the oldest
+    by modification time; ties go to the shorter, then the alphabetically
+    first path).
+
+    * ``scan`` — a ``scan_id`` or a record from :func:`duplicate_scans`:
+      only groups with at least one copy from that scan (all copies shown).
+    * ``folder`` — only copies strictly inside that folder count.
+    * ``algorithm`` — ``"sha256"``, ``"md5"``, …; ``None`` means all.
+
+    The index is a claim about the past; nothing is read from a backend.
+    """
+    from core import cas as _cas
+
+    return _cas.duplicates(None, algorithm, scan_id=_scan_id_of(scan), folder=folder)
+
+
+@_api(mutates=True, prompts=True)
+def dedupe(
+    *,
+    keep: str = "oldest",
+    dry_run: bool = True,
+    scan: ScanRecord | int | None = None,
+    folder: str | None = None,
+    algorithm: str | None = None,
+    backends: list[FileBackend] | None = None,
+) -> DedupeResult:
+    """Keep the first copy of every duplicate group, trash the others.
+
+    **A dry run unless ``dry_run=False`` is passed**: the default returns
+    the plan (a :class:`core.cas.DedupeResult` with ``keep``, ``trash``,
+    ``groups``, ``undated_groups``; ``.render()`` prints it) and touches
+    nothing. ``keep="oldest"`` is the survivor rule (the only one): the
+    oldest copy by modification time stays, ties go to the shorter, then
+    the alphabetically first path; copies without a time sort last.
+
+    With ``dry_run=False`` every planned copy goes to the axross trash —
+    restorable — after the same live re-check as the Duplicate Finder:
+    the copy must still hold the indexed content and the kept copy must be
+    a genuine, intact other copy; otherwise it is reported in ``refused``.
+    ``backends`` are the connected backends to act on (default: the local
+    filesystem); copies on any other backend are refused, never guessed.
+    ``scan`` / ``folder`` / ``algorithm`` narrow the groups like
+    :func:`duplicates`.
+
+    Example::
+
+        plan = axross.dedupe(folder="/home/me/Photos")
+        print(plan.render())
+        if axross.confirm(f"Trash {len(plan.trash)} copies?"):
+            axross.dedupe(folder="/home/me/Photos", dry_run=False)
+    """
+    import contextlib
+
+    from core import cas as _cas
+
+    if keep not in _cas.KEEP_RULES:
+        raise ValueError(f"axross.dedupe: keep must be one of {_cas.KEEP_RULES}, not {keep!r}")
+    if backends is None:
+        backends = [localfs()]
+    by_id = {_cas.backend_id_for(b): b for b in backends}
+    groups = _cas.duplicates(None, algorithm, scan_id=_scan_id_of(scan), folder=folder)
+    if dry_run:
+        return _cas.dedupe(groups, by_id, keep=keep, dry_run=True)
+    with contextlib.ExitStack() as gates:
+        for backend in by_id.values():
+            gates.enter_context(_mutation_gate(backend, "dedupe: move duplicates to trash"))
+        result = _cas.dedupe(groups, by_id, keep=keep, dry_run=False)
+    log.warning(
+        "axross.dedupe moved %d duplicate(s) to the axross trash (%d kept after re-checking)",
+        len(result.removed),
+        len(result.refused),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# File metadata (EXIF / XMP / IPTC, Office properties, PDF info, media tags)
+# ---------------------------------------------------------------------------
+
+
+def _is_folder(backend, path: str) -> bool:
+    try:
+        return bool(backend.is_dir(path))
+    except OSError:
+        return False
+
+
+@_api(mutates=False)
+def metadata(backend: FileBackend, path: str) -> MetadataReport:
+    """Return the metadata of one file as a ``MetadataReport``.
+
+    Supported: images (JPEG, PNG, WebP, GIF, TIFF), Office (docx / xlsx /
+    pptx, odt / ods / odp), PDF and audio / video (through ffprobe). The
+    report has ``kind``, ``fields`` (each with ``group``, ``name``,
+    ``value`` and ``removable`` - False for what removal keeps, such as the
+    orientation and the colour profile), ``removable`` (the count) and
+    ``error`` when the file could not be read; values are length-bounded.
+    A remote file is read through a temporary copy bounded by the open-size
+    limit. For a folder use :func:`export_metadata`.
+
+    Example::
+
+        report = axross.metadata(axross.localfs(), "/home/me/IMG_0001.jpg")
+        for f in report.fields:
+            print(f.group, f.name, f.value)
+    """
+    from core import metadata_tools as _mt
+
+    if _is_folder(backend, path):
+        raise IsADirectoryError(
+            f"{path} is a folder; use axross.export_metadata(b, folder) to read every file in it"
+        )
+    return _mt.read_metadata(backend, path)
+
+
+@_api(mutates=True, prompts=True)
+def remove_metadata(
+    backend: FileBackend, path: str, *, mode: str | None = None, recursive: bool = False
+) -> list:
+    """Remove the metadata of a file, or of every supported file in a folder.
+
+    Returns a list of ``RemoveResult`` (one for a file) with ``status``
+    (``cleaned`` / ``unchanged`` / ``unsupported`` / ``error``), ``output``
+    (where the cleaned file is), ``error`` and ``note``.
+
+    ``mode`` defaults to the setting (Tools -> Metadata Settings…):
+
+    * ``"in_place"`` - the file is replaced atomically and its original
+      kept in the axross trash; Edit -> Undo (Ctrl+Z) puts it back.
+    * ``"copy"`` - a cleaned ``name.clean.ext`` next to it; nothing is
+      ever overwritten.
+
+    Images keep only their EXIF orientation and ICC profile, never
+    re-encoded (the pixels are verified identical). PDF removal needs
+    pypdf (``pip install 'axross[metadata]'``), audio / video needs ffmpeg.
+    ``recursive`` descends into subfolders (symlinked folders are not
+    followed). The whole call is one undo step.
+
+    Example::
+
+        for r in axross.remove_metadata(b, "/photos/trip", recursive=True):
+            print(r.status, r.path, r.error)
+    """
+    from core import metadata_tools as _mt
+
+    if mode is not None and mode not in _mt.MODES:
+        raise ValueError(f"axross.remove_metadata: mode must be one of {_mt.MODES}, not {mode!r}")
+    folder = _is_folder(backend, path)
+    if not folder and not backend.exists(path):
+        raise FileNotFoundError(path)
+    with _mutation_gate(backend, f"remove metadata {path!r} recursive={recursive}"):
+        if folder:
+            batch = _mt.remove_folder(backend, path, recursive=recursive, mode=mode)
+        else:
+            batch = _mt.remove_many(backend, [path], mode=mode, source=path)
+    _record_backend_visit(
+        backend,
+        path,
+        verb="remove_metadata",
+        desc=f"{sum(r.status == 'cleaned' for r in batch.results)} cleaned",
+    )
+    return batch.results
+
+
+@_api(mutates=True)
+def export_metadata(
+    backend: FileBackend,
+    root: str,
+    *,
+    fmt: str = "json",
+    recursive: bool = False,
+    out: str | None = None,
+) -> str:
+    """Return the metadata of a file or of every supported file in a folder,
+    as JSON (``{"files": [...]}``) or CSV (one row per field).
+
+    ``recursive`` descends into subfolders. ``out`` additionally writes the
+    text to that LOCAL file (never overwriting an existing one). In CSV a
+    value that starts like a spreadsheet formula is prefixed with ``'``.
+
+    Example::
+
+        text = axross.export_metadata(b, "/photos", fmt="csv", recursive=True,
+                                      out="/tmp/photos-metadata.csv")
+    """
+    from core import metadata_tools as _mt
+
+    if (fmt or "").lower() not in _mt.EXPORT_FORMATS:
+        raise ValueError(
+            f"axross.export_metadata: fmt must be one of {_mt.EXPORT_FORMATS}, not {fmt!r}"
+        )
+    if _is_folder(backend, root):
+        reports = _mt.scan_metadata(backend, root, recursive=recursive).reports
+    else:
+        reports = [_mt.read_metadata(backend, root)]
+    text = _mt.export_reports(reports, fmt)
+    if out is not None:
+        import os as _os
+
+        fd = _os.open(out, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+        with _os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# File type identification (content, not name)
+# ---------------------------------------------------------------------------
+
+
+@_api(mutates=False)
+def file_type(
+    backend: FileBackend | str | os.PathLike[str],
+    path: str | None = None,
+    *,
+    max_bytes: int = 64 * 1024,
+    timeout: float = 15.0,
+    use_file_command: bool = True,
+) -> FileTypeInfo:
+    """Identify a file's real type from its content (magic bytes), not its name.
+
+    Returns a ``FileTypeInfo`` with ``kind`` (``file`` / ``directory`` /
+    ``special`` / ``error`` / ``timeout`` / ``cancelled``), ``description``
+    and ``mime`` (from the content), ``extension`` and ``extension_mime``
+    (what the name claims), ``verdict`` (``match`` / ``mismatch`` /
+    ``unknown``; ``mismatch`` is also the bool property ``mismatch``),
+    ``size``, ``encoding`` and ``line_endings`` for text, ``engine`` (the
+    detector that decided) and ``file_command`` (``file(1)``'s view of a
+    local file, ``""`` without it). ``summary()`` gives one line.
+
+    Pass a backend and a path, or just a local path. At most ``max_bytes``
+    are read, on a helper thread: a remote that does not answer within
+    ``timeout`` seconds gives ``kind == "timeout"`` instead of hanging, and
+    an unreadable file gives ``kind == "error"`` with ``error`` set - this
+    never raises for I/O failures. Detection uses Qt's MIME database, then
+    puremagic, then a built-in signature table.
+
+    Example::
+
+        info = axross.file_type(b, "/upload/invoice.pdf")
+        if info.mismatch:
+            print(info.summary())   # ... MISMATCH: .pdf claims application/pdf
+        print(axross.file_type("/home/me/notes.txt").encoding)
+    """
+    from core import file_type as _ft
+
+    if path is None:
+        if isinstance(backend, str) or hasattr(backend, "__fspath__"):
+            import os as _os
+
+            path, backend = _os.fspath(backend), localfs()
+        else:
+            raise TypeError("axross.file_type: pass (backend, path) or a local path")
+    return _ft.identify(
+        backend,
+        path,
+        max_bytes=max_bytes,
+        timeout=timeout,
+        use_file_command=use_file_command,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2689,12 +3213,29 @@ _HELP_GROUPS: list[tuple[str, list[str]]] = [
         ],
     ),
     (
+        "Duplicate index",
+        [
+            "duplicate_scans",
+            "duplicates",
+            "dedupe",
+        ],
+    ),
+    (
         "Content inspection",
         [
+            "file_type",
             "magic_type",
             "text_encoding",
             "entropy",
             "archive_inspect",
+        ],
+    ),
+    (
+        "File metadata",
+        [
+            "metadata",
+            "remove_metadata",
+            "export_metadata",
         ],
     ),
     (
@@ -2769,6 +3310,8 @@ _HELP_GROUPS: list[tuple[str, list[str]]] = [
             "message",
             "confirm",
             "toast",
+            "is_interactive",
+            "NonInteractiveError",
         ],
     ),
     (
@@ -2776,6 +3319,7 @@ _HELP_GROUPS: list[tuple[str, list[str]]] = [
         [
             "help",
             "docs",
+            "api_schema",
         ],
     ),
 ]
@@ -2827,6 +3371,7 @@ def _help_entries() -> list[tuple[str, list[tuple[str, str]]]]:
     return out
 
 
+@_api(mutates=False)
 def help() -> None:
     """Print the curated cheat-sheet of the scripting surface."""
     print("Axross scripting cheat-sheet")
@@ -2853,6 +3398,7 @@ def help() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=False)
 def docs(name: str | None = None) -> str:
     """Return long-form documentation as Markdown.
 
@@ -2896,6 +3442,196 @@ def docs(name: str | None = None) -> str:
     if fn is None:
         raise KeyError(f"axross.docs: {name!r} listed in __all__ but missing")
     return _render_function_block(name, fn)
+
+
+#: Version of the api_schema() layout; raised when a field changes meaning.
+API_SCHEMA_VERSION = 1
+
+_PARAMETER_KINDS = {
+    "POSITIONAL_ONLY": "positional_only",
+    "POSITIONAL_OR_KEYWORD": "positional_or_keyword",
+    "VAR_POSITIONAL": "var_positional",
+    "KEYWORD_ONLY": "keyword_only",
+    "VAR_KEYWORD": "var_keyword",
+}
+
+
+def _annotation_text(annotation) -> str | None:
+    """A hint as source text: hints are strings here (``from __future__
+    import annotations``); others are formatted the way inspect does."""
+    import inspect
+
+    if annotation is inspect.Parameter.empty:
+        return None
+    if isinstance(annotation, str):
+        return annotation
+    return inspect.formatannotation(annotation)
+
+
+class _RawAnnotation:
+    """Formats as its text, unquoted, inside ``str(inspect.Signature)``."""
+
+    __slots__ = ("text",)
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __repr__(self) -> str:
+        return self.text
+
+
+def _signature_text(name: str, sig, *, drop_self: bool = False) -> str:
+    """``name(params) -> returns`` with hints as written and defaults as
+    ``repr()``, the way Python prints a signature."""
+    params = list(sig.parameters.values())
+    if drop_self and params and params[0].name == "self":
+        params = params[1:]
+    params = [
+        p.replace(annotation=_RawAnnotation(text))
+        if (text := _annotation_text(p.annotation)) is not None
+        else p
+        for p in params
+    ]
+    bare = sig.replace(parameters=params, return_annotation=sig.empty)
+    returns = _annotation_text(sig.return_annotation)
+    return f"{name}{bare}" + (f" -> {returns}" if returns else "")
+
+
+def _first_paragraph(obj) -> str:
+    import inspect
+
+    doc = inspect.getdoc(obj) or ""
+    return " ".join(doc.split("\n\n", 1)[0].split())
+
+
+def _function_entry(name: str, fn) -> dict:
+    """One function of :func:`api_schema`, built from the live object."""
+    import inspect
+
+    sig = inspect.signature(fn)
+    parameters = []
+    for param in sig.parameters.values():
+        entry: dict = {"name": param.name, "kind": _PARAMETER_KINDS[param.kind.name]}
+        annotation = _annotation_text(param.annotation)
+        if annotation is not None:
+            entry["annotation"] = annotation
+        variadic = param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+        entry["required"] = param.default is param.empty and not variadic
+        if param.default is not param.empty:
+            default = param.default
+            if default is None or isinstance(default, (bool, int, float, str)):
+                entry["default"] = default
+            else:
+                entry["default_repr"] = repr(default)
+        parameters.append(entry)
+    traits = getattr(fn, _API_TRAITS_ATTR, None) or {}
+    return {
+        "name": name,
+        "group": _help_group_of(name),
+        "signature": _signature_text(name, sig),
+        "parameters": parameters,
+        "returns": _annotation_text(sig.return_annotation),
+        "summary": _first_paragraph(fn),
+        "mutates": traits.get("mutates"),
+        "prompts": traits.get("prompts"),
+    }
+
+
+def _help_group_of(name: str) -> str:
+    for group, names in _HELP_GROUPS:
+        if name in names:
+            return group
+    return "Other"
+
+
+def _class_entry(name: str, cls) -> dict:
+    import dataclasses
+
+    entry: dict = {
+        "name": name,
+        "kind": "exception" if issubclass(cls, BaseException) else "class",
+        "bases": [base.__name__ for base in cls.__mro__[1:] if base is not object],
+        "summary": _first_paragraph(cls),
+    }
+    if dataclasses.is_dataclass(cls):
+        entry["fields"] = [
+            {"name": f.name, "annotation": _annotation_text(f.type) or ""}
+            for f in dataclasses.fields(cls)
+        ]
+    return entry
+
+
+def _backend_protocol_entries() -> list[dict]:
+    """The methods every session has: the FileBackend protocol plus
+    ``close`` and the ``with`` statement (core.backend.SessionLifecycle)."""
+    import inspect
+
+    from core.backend import FileBackend, SessionLifecycle
+
+    out: list[dict] = []
+    members = [(n, getattr(FileBackend, n)) for n in sorted(vars(FileBackend))]
+    members += [(n, getattr(SessionLifecycle, n)) for n in ("close", "__enter__", "__exit__")]
+    for name, member in members:
+        if name.startswith("_") and name not in {"__enter__", "__exit__"}:
+            continue
+        if isinstance(member, property):
+            sig = inspect.signature(member.fget)
+            kind = "property"
+        elif callable(member):
+            sig = inspect.signature(member)
+            kind = "method"
+        else:
+            continue
+        entry = {"name": name, "kind": kind}
+        if kind == "method":
+            entry["signature"] = _signature_text(name, sig, drop_self=True)
+        entry["returns"] = _annotation_text(sig.return_annotation)
+        entry["summary"] = _first_paragraph(member)
+        out.append(entry)
+    return out
+
+
+@_api(mutates=False)
+def api_schema() -> dict:
+    """Describe the scripting API as JSON-serialisable data, for a machine.
+
+    Built from the live objects with :mod:`inspect`, so it is never out of
+    date: ``functions`` has one entry per public function - ``name``,
+    ``group``, ``signature``, ``parameters`` (``name``, ``kind``,
+    ``annotation``, ``required``, ``default`` or ``default_repr``),
+    ``returns``, ``summary`` (the first docstring paragraph), ``mutates``
+    (can change files, remote state or settings) and ``prompts`` (can
+    wait for a human, or raises :class:`NonInteractiveError` without
+    one); ``classes`` lists the public classes (dataclass fields
+    included); ``backend_protocol`` lists the methods every session from
+    :func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs`
+    has, ``close()`` and the ``with`` statement included.
+
+    The MCP tool ``script_api_schema`` returns the same data. For prose,
+    use :func:`docs`::
+
+        import json
+        print(json.dumps(axross.api_schema()["functions"][0], indent=2))
+    """
+    import inspect
+    import sys as _sys
+
+    me = _sys.modules[__name__]
+    functions: list[dict] = []
+    classes: list[dict] = []
+    for name in __all__:
+        obj = getattr(me, name)
+        if inspect.isclass(obj):
+            classes.append(_class_entry(name, obj))
+        elif callable(obj):
+            functions.append(_function_entry(name, obj))
+    return {
+        "schema_version": API_SCHEMA_VERSION,
+        "module": "axross",
+        "functions": functions,
+        "classes": classes,
+        "backend_protocol": _backend_protocol_entries(),
+    }
 
 
 def _render_function_block(name: str, fn) -> str:
@@ -2964,11 +3700,50 @@ def _render_slash_reference() -> str:
         "`<name>.py` (mode 0o600) |\n"
         "| `.load <name>` | Print the source of a saved script |\n"
         "| `.run <name>` | Execute a saved script in the live REPL "
-        "namespace |\n"
+        "namespace (refused in paranoid mode) |\n"
         "| `.delete <name>` | Remove a saved script |\n"
         "| `.open` | Print the script-directory path "
         "(`~/.config/axross/scripts/`) |\n"
     )
+
+
+def _bundled_scripts_dir() -> str:
+    """``resources/scripts/`` next to the ``core`` package — the same
+    relative path in the source tree, a wheel and the frozen bundle."""
+    import os
+
+    me_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(me_dir, "resources", "scripts")
+
+
+def _list_bundled_scripts() -> list[str]:
+    """Names (without ``.py``) of the bundled example scripts."""
+    import os
+
+    directory = _bundled_scripts_dir()
+    if not os.path.isdir(directory):
+        return []
+    return sorted(
+        fname[:-3]
+        for fname in os.listdir(directory)
+        if fname.endswith(".py") and not fname.startswith("_")
+    )
+
+
+def _load_bundled_script(name: str) -> str:
+    """Source of bundled example ``name``. The name passes the same
+    allow-list as a saved script, so it cannot leave the directory."""
+    import os
+
+    safe = _validate_script_name(name)
+    if safe.startswith("_"):
+        raise ValueError(f"{name!r} is not a bundled example")
+    path = os.path.join(_bundled_scripts_dir(), f"{safe}.py")
+    with __import__("builtins").open(path, encoding="utf-8") as fh:
+        source = fh.read(MAX_SCRIPT_SOURCE_BYTES + 1)
+    if len(source.encode("utf-8", errors="replace")) > MAX_SCRIPT_SOURCE_BYTES:
+        raise OSError(f"bundled example is too large: {path}")
+    return source
 
 
 def _render_scripts_reference() -> str:
@@ -2976,8 +3751,7 @@ def _render_scripts_reference() -> str:
     with the docstring's first paragraph."""
     import os
 
-    me_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    scripts_dir = os.path.join(me_dir, "resources", "scripts")
+    scripts_dir = _bundled_scripts_dir()
     parts: list[str] = ["## Bundled example scripts\n"]
     if not os.path.isdir(scripts_dir):
         parts.append("(scripts directory not present in this install)\n")
@@ -3144,12 +3918,21 @@ __all__ = [
     "grep",
     "GrepHit",
     "diff_files",
+    # duplicate index (Duplicate Finder)
+    "duplicate_scans",
+    "duplicates",
+    "dedupe",
     # content inspection
+    "file_type",
     "magic_type",
     "text_encoding",
     "entropy",
     "archive_inspect",
     "ArchiveEntry",
+    # file metadata
+    "metadata",
+    "remove_metadata",
+    "export_metadata",
     # safety + diagnostics
     "diagnose",
     "preview_delete",
@@ -3183,9 +3966,12 @@ __all__ = [
     "message",
     "confirm",
     "toast",
-    # cheat-sheet
+    "is_interactive",
+    "NonInteractiveError",
+    # cheat-sheet + machine-readable description
     "help",
     "docs",
+    "api_schema",
 ]
 
 
@@ -3194,6 +3980,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+@_api(mutates=False)
 def message(text: str, *, title: str = "axross", level: str = "info") -> None:
     """Show a modal informational dialog with the given message.
 
@@ -3217,12 +4004,23 @@ def message(text: str, *, title: str = "axross", level: str = "info") -> None:
     _impl(text, title=title, level=level)  # type: ignore[arg-type]
 
 
-def confirm(text: str, *, title: str = "axross", default_yes: bool = False) -> bool:
+@_api(mutates=False, prompts=True)
+def confirm(
+    text: str, *, title: str = "axross", default_yes: bool = False, assume_yes: bool = False
+) -> bool:
     """Show a Yes/No dialog. Returns True on Yes, False otherwise.
 
     Headless fallback (no Qt event loop): reads a single y/n from
-    stdin so ``--script`` and REPL-without-GUI both work. Accepts
-    ``y/yes/j/ja/s/si/sí`` as Yes; default answer is ``default_yes``.
+    stdin when stdin is a terminal, so ``--script`` and
+    REPL-without-GUI both work. Accepts ``y/yes/j/ja/s/si/sí`` as Yes;
+    an empty answer is ``default_yes``.
+
+    When no human can answer - no Qt window and no terminal (an MCP
+    ``script_run``, the Scripts dock, cron, a pipe) or
+    ``AXROSS_NONINTERACTIVE=1`` - it raises :class:`NonInteractiveError`
+    instead of guessing, whatever ``default_yes`` says. Pass
+    ``assume_yes=True`` to answer yes without asking in that case; a
+    human who can be asked is still asked.
 
     Example::
 
@@ -3233,9 +4031,27 @@ def confirm(text: str, *, title: str = "axross", default_yes: bool = False) -> b
     """
     from core.ui_helpers import confirm as _impl
 
-    return _impl(text, title=title, default_yes=default_yes)
+    return _impl(text, title=title, default_yes=default_yes, assume_yes=assume_yes)
 
 
+@_api(mutates=False)
+def is_interactive() -> bool:
+    """True when a human can answer :func:`confirm` right now.
+
+    False under ``AXROSS_NONINTERACTIVE=1`` (set for every MCP
+    ``script_run``), off the GUI thread of a Qt window, and without a Qt
+    window when stdin is not a terminal. Scripts that a machine may run
+    can branch on it instead of catching :class:`NonInteractiveError`.
+    """
+    from core.ui_helpers import is_interactive as _impl
+
+    return _impl()
+
+
+from core.ui_helpers import NonInteractiveError  # noqa: E402 — part of the API
+
+
+@_api(mutates=False)
 def toast(text: str, *, level: str = "info", timeout: float = 4.0) -> None:
     """Non-modal toast in the bottom-right corner of the main window.
 

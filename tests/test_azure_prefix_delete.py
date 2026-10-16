@@ -4,8 +4,14 @@ Before: ``_remove_prefix`` deleted blob by blob - one HTTP round trip per
 blob (10 000 blobs: 10 000 requests). ``ContainerClient.delete_blobs``
 (Blob Batch, SDK 12.x: at most 256 per request) does the same in 40.
 When the batch call fails as a whole (an account or emulator without
-batch support) that chunk is deleted one by one as before; failures of
-single blobs inside a batch still raise.
+batch support) that chunk is deleted one by one as before.
+
+A refusal can also arrive as a PartialBatchErrorException: Azurite answers
+every batch with ONE "400 InvalidInput" part, whatever the number of
+sub-requests (seen live 2026-10-15), so a recursive delete of a folder
+failed there. Blobs whose part failed - all of them when the parts cannot
+be matched to the requests - are deleted one by one; a blob that fails
+alone too raises, as an OSError from ``remove``.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ class _Container:
         self.batch_calls: list[int] = []
         self.single_calls = 0
         self.batch_error = batch_error
+        self.undeletable: set[str] = set()
 
     def list_blobs(self, name_starts_with=""):
         return iter([SimpleNamespace(name=n) for n in sorted(self.blobs) if n.startswith(name_starts_with)])
@@ -47,7 +54,13 @@ class _Container:
 
     def delete_blob(self, name, **kw):
         self.single_calls += 1
+        if name in self.undeletable:
+            raise HttpResponseError(message=f"LeaseIdMissing: {name}")
         self.blobs.discard(name)
+
+
+def _part(status: int):
+    return SimpleNamespace(status_code=status)
 
 
 @unittest.skipIf(AC is None, "azure-storage-blob not installed")
@@ -72,12 +85,49 @@ class PrefixDeleteTest(unittest.TestCase):
         self.assertEqual(c.single_calls, 300)
         self.assertEqual(c.blobs, {"other/keep"})
 
-    def test_sad_a_failing_blob_inside_a_batch_raises(self) -> None:
-        err = PartialBatchErrorException("1 failed", response=None, parts=[])
+    def test_sad_a_batch_refused_in_one_part_falls_back_to_single_deletes(self) -> None:
+        # Azurite: one "400 InvalidInput" part for a batch of three.
+        err = PartialBatchErrorException("refused", response=None, parts=[_part(400)])
+        c = _Container(self.names(3), batch_error=err)
+        self.session(c)._remove_prefix("dir/")
+        self.assertEqual(c.single_calls, 3)
+        self.assertEqual(c.blobs, {"other/keep"})
+
+    def test_sad_only_the_failed_parts_are_retried_alone(self) -> None:
+        names = self.names(3)
+        c = _Container(names)
+        parts = [_part(202), _part(503), _part(202)]
+
+        def delete_blobs(*batch, **kw):
+            c.batch_calls.append(len(batch))
+            for name, part in zip(batch, parts):
+                if part.status_code == 202:
+                    c.blobs.discard(name)
+            raise PartialBatchErrorException("1 failed", response=None, parts=parts)
+
+        c.delete_blobs = delete_blobs
+        self.session(c)._remove_prefix("dir/")
+        self.assertEqual(c.single_calls, 1)
+        self.assertEqual(c.blobs, {"other/keep"})
+
+    def test_sad_a_blob_that_fails_alone_too_raises_oserror(self) -> None:
+        err = PartialBatchErrorException("refused", response=None, parts=[_part(400)])
+        c = _Container(self.names(2), batch_error=err)
+        c.undeletable = {"dir/f00001"}
+        s = self.session(c)
+        s._to_key = lambda path: path.lstrip("/")
+        s.is_dir = lambda path: True
+        with self.assertRaises(OSError) as ctx:
+            s.remove("/dir", recursive=True)
+        self.assertIn("LeaseIdMissing", str(ctx.exception))
+        self.assertEqual(c.blobs, {"dir/f00001", "other/keep"})
+
+    def test_edge_a_refusal_without_parts_retries_every_blob(self) -> None:
+        err = PartialBatchErrorException("refused", response=None, parts=[])
         c = _Container(self.names(10), batch_error=err)
-        with self.assertRaises(PartialBatchErrorException):
-            self.session(c)._remove_prefix("dir/")
-        self.assertEqual(c.single_calls, 0)
+        self.session(c)._remove_prefix("dir/")
+        self.assertEqual(c.single_calls, 10)
+        self.assertEqual(c.blobs, {"other/keep"})
 
     def test_edge_empty_prefix_and_exact_chunk(self) -> None:
         c = _Container(["other/keep"])

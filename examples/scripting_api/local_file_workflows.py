@@ -32,6 +32,7 @@ COVERS = (
     "grep",
     "GrepHit",
     "diff_files",
+    "file_type",
     "magic_type",
     "text_encoding",
     "entropy",
@@ -58,21 +59,26 @@ COVERS = (
     "list_snapshots",
     "diff_snapshots",
     "dashboard",
+    "duplicate_scans",
+    "duplicates",
+    "dedupe",
 )
 
 
 @contextmanager
 def _isolated_state(root: Path) -> Iterator[None]:
-    """Keep history/trail state under the example temp directory."""
-    from core import trail, visit_history
+    """Keep history/trail/duplicate-index state under the example temp directory."""
+    from core import cas, trail, visit_history
 
     old_trail_config = trail.CONFIG_DIR
     old_trail_db = trail.DB_FILE
     old_history_file = visit_history.HISTORY_FILE
+    old_cas_db = cas._DEFAULT_DB
     state = root / ".axross-state"
     trail.CONFIG_DIR = state
     trail.DB_FILE = state / "trail.db"
     visit_history.HISTORY_FILE = state / "visit_history.json"
+    cas._DEFAULT_DB = state / "cas.sqlite"
     try:
         yield
     finally:
@@ -83,6 +89,7 @@ def _isolated_state(root: Path) -> Iterator[None]:
         trail.CONFIG_DIR = old_trail_config
         trail.DB_FILE = old_trail_db
         visit_history.HISTORY_FILE = old_history_file
+        cas._DEFAULT_DB = old_cas_db
 
 
 def _wait_for_snapshot(axross, trail_name: str, *, minimum: int = 1) -> None:
@@ -200,6 +207,12 @@ def run(base_dir: str | os.PathLike[str] | None = None) -> dict:
             assert grep_hits and grep_hits[0].line_no == 2
             assert "-secret=42" in diff or "+secret=43" in diff
 
+            # Content, not name: a ZIP saved as .txt is reported as a mismatch.
+            disguised = local_root / "disguised.txt"
+            disguised.write_bytes(archive.read_bytes())
+            kind = axross.file_type(local, str(disguised))
+            assert kind.mime == "application/zip" and kind.mismatch, kind.summary()
+
             optional: dict[str, str] = {}
             try:
                 optional["magic_type"] = axross.magic_type(b"PK\x03\x04demo")
@@ -244,6 +257,27 @@ def run(base_dir: str | os.PathLike[str] | None = None) -> dict:
             _wait_for_snapshot(axross, bg_name)
             assert axross.stop_trail(bg_name) is True
 
+            # Duplicate index: index a folder (what the Duplicate Finder's
+            # "Rebuild" does), list the scan, plan a dedupe — a dry run.
+            from core import cas
+
+            dupes_root = local_root / "dupes"
+            dupes_root.mkdir()
+            for name, stamp in (("old.txt", 1_000_000_000), ("new.txt", 1_100_000_000)):
+                (dupes_root / name).write_text("same bytes\n")
+                os.utime(dupes_root / name, (stamp, stamp))
+            cas.rebuild(local, str(dupes_root), backend_id=cas.backend_id_for(local))
+            scans = axross.duplicate_scans()
+            groups = axross.duplicates(folder=str(dupes_root))
+            plan = axross.dedupe(folder=str(dupes_root), backends=[local])
+            assert scans and scans[0].status == "complete"
+            assert [e.path for e in groups[0]] == [
+                str(dupes_root / "old.txt"),
+                str(dupes_root / "new.txt"),
+            ]
+            assert plan.dry_run and [e.path for e in plan.trash] == [str(dupes_root / "new.txt")]
+            assert (dupes_root / "new.txt").exists()  # a dry run touches nothing
+
             dashboard_json = axross.dashboard(
                 fmt="json",
                 with_capacity=True,
@@ -256,6 +290,7 @@ def run(base_dir: str | os.PathLike[str] | None = None) -> dict:
                 "grep_hits": len(grep_hits),
                 "search_hits": len(found.hits),
                 "trail_snapshots": len(snapshots),
+                "dedupe_planned": len(plan.trash),
                 "recent_operations": len(axross.recent_operations(limit=5)),
                 "optional": optional,
             }

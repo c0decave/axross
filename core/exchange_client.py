@@ -49,6 +49,7 @@ import re
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -156,17 +157,24 @@ def _split_path(path: str) -> list[str]:
     return [seg for seg in norm.split("/") if seg]
 
 
+def _id_segment(item_id: str) -> str:
+    """An EWS ItemId as path text. ItemIds are standard base64, which
+    uses "/" - the path separator - but never "-" or "_"."""
+    return item_id.replace("/", "-")
+
+
 def _parse_msg_segment(segment: str) -> tuple[str, str]:
     """Pull (id, subject) out of a message-file or message-dir name.
 
     The on-disk shape is ``<id>_<subject>.eml`` for the raw message
-    file and ``<id>`` for the attachments directory. Returns (id, "")
-    when no subject is present.
+    file and ``<id>`` for the attachments directory, the id written by
+    :func:`_id_segment`. Returns (id, "") when no subject is present.
     """
     name = segment
     if name.endswith(".eml"):
         name = name[:-4]
     head, _, tail = name.partition("_")
+    head = head.replace("-", "/")
     if not _ and not tail:
         return head, ""
     return head, tail
@@ -183,19 +191,28 @@ def _extract_text_body(parsed: email.message.Message) -> str:
     if parsed.is_multipart():
         for part in parsed.walk():
             if part.get_content_type() == "text/plain":
-                raw = part.get_payload(decode=True) or b""
-                charset = part.get_content_charset() or "utf-8"
-                return raw.decode(charset, errors="replace")
+                return _decode_part(part)
         for part in parsed.walk():
             if part.is_multipart():
                 continue
-            raw = part.get_payload(decode=True) or b""
-            charset = part.get_content_charset() or "utf-8"
-            return raw.decode(charset, errors="replace")
+            return _decode_part(part)
         return ""
-    raw = parsed.get_payload(decode=True) or b""
-    charset = parsed.get_content_charset() or "utf-8"
-    return raw.decode(charset, errors="replace")
+    return _decode_part(parsed)
+
+
+def _decode_part(part: email.message.Message) -> str:
+    """A part's payload in its declared charset, UTF-8 when that
+    charset is unknown (LookupError) or not a codec name at all
+    (ValueError, e.g. an embedded NUL) - as the IMAP and POP3 backends
+    decode headers."""
+    raw = part.get_payload(decode=True) or b""
+    if not isinstance(raw, bytes):
+        raw = str(raw).encode("utf-8", "replace")
+    charset = part.get_content_charset() or "utf-8"
+    try:
+        return raw.decode(charset, errors="replace")
+    except (LookupError, ValueError):
+        return raw.decode("utf-8", errors="replace")
 
 
 def _split_addresses(headers: list[str] | None) -> list[str]:
@@ -293,7 +310,7 @@ class _ExchangeMessageWriter:
 # --------------------------------------------------------------------------
 
 
-class ExchangeSession:
+class ExchangeSession(SessionLifecycle):
     """EWS-backed FileBackend.
 
     Construct one per (smtp address, credentials). Folder / message
@@ -971,8 +988,7 @@ class ExchangeSession:
         try:
             cursor = self._account.root
             for segment in parts:
-                # exchangelib supports folder lookup by name with /
-                cursor = cursor / segment
+                cursor = self._child_folder(cursor, segment)
                 # Touch the folder to force an EWS round-trip — if it
                 # doesn't exist we get a clear exception instead of a
                 # lazy failure later.
@@ -983,6 +999,22 @@ class ExchangeSession:
                 f"Exchange folder lookup {'/'.join(parts)}: {exc}",
             ) from exc
 
+    @staticmethod
+    def _child_folder(cursor, segment: str):
+        """Child of ``cursor`` named ``segment``. The listing shows
+        ``_sanitize(name)``, so a folder such as "Projects: 2025" comes
+        back as "Projects_ 2025" and has to be matched that way when
+        exchangelib's exact (case-insensitive) lookup finds nothing."""
+        try:
+            # exchangelib supports folder lookup by name with /
+            return cursor / segment
+        except Exception as exact_miss:  # noqa: BLE001 — ErrorFolderNotFound
+            wanted = segment.lower()
+            for child in cursor.children:
+                if _sanitize(getattr(child, "name", "") or "").lower() == wanted:
+                    return child
+            raise exact_miss
+
     def _list_messages(self, folder) -> list[FileItem]:
         try:
             messages = list(folder.all().only(*LISTING_FIELDS))
@@ -990,7 +1022,7 @@ class ExchangeSession:
             raise OSError(f"Exchange list messages: {exc}") from exc
         out: list[FileItem] = []
         for msg in messages:
-            mid = self._msg_id(msg)
+            mid = _id_segment(self._msg_id(msg))
             subj = _sanitize(getattr(msg, "subject", "") or "no_subject")
             file_name = f"{mid}_{subj}.eml"
             out.append(

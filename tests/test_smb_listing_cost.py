@@ -52,7 +52,12 @@ def _entry(name, *, attrs=0x20, size=10, mtime_us=1_700_000_000_123_457, symlink
         )
 
     return SimpleNamespace(
-        name=name, smb_info=info, is_symlink=lambda: symlink, stat=stat, calls=calls
+        name=name,
+        path=f"\\\\srv\\share\\d\\{name}",
+        smb_info=info,
+        is_symlink=lambda: symlink,
+        stat=stat,
+        calls=calls,
     )
 
 
@@ -63,7 +68,17 @@ class SmbListingTest(unittest.TestCase):
         self.session._prefix = r"\\srv\share"
 
     def listing(self, entries):
-        with mock.patch.object(SC.smbclient, "scandir", return_value=entries):
+        # A symlink is stat-ed through smbclient.stat(entry.path, port=...)
+        # (SMBDirEntry.stat() would drop the port); route it to the entry.
+        by_path = {e.path: e for e in entries}
+
+        def smb_stat(path, **kw):
+            return by_path[path].stat()
+
+        with (
+            mock.patch.object(SC.smbclient, "scandir", return_value=entries),
+            mock.patch.object(SC.smbclient, "stat", side_effect=smb_stat),
+        ):
             return self.session.list_dir("/d")
 
     def test_happy_no_stat_for_regular_entries(self) -> None:

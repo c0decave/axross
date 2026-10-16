@@ -213,6 +213,87 @@ def _run(
         ) from exc
 
 
+#: stderr kept from a capped run; the rest is read and dropped.
+_MAX_STDERR_BYTES = 64 * 1024
+
+
+def _abandon(proc: subprocess.Popen) -> None:
+    """Stop a capped run early. The helper runs as root once pkexec has
+    authorised it, so a kill from us may be refused; closing our end of
+    its stdout ends it with SIGPIPE on its next write either way."""
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+    try:
+        proc.kill()
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        log.warning("elevated_io: helper pid %d did not exit after abort", proc.pid)
+
+
+def _run_capped(argv: list[str], cap: int, action: str) -> subprocess.CompletedProcess:
+    """Like :func:`_run` without stdin, but stdout is read as it arrives
+    and the run is abandoned once it passes *cap* bytes or the timeout,
+    so a helper reading ``/dev/zero`` cannot fill memory."""
+    import selectors
+    import time
+
+    env = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    out = bytearray()
+    err = bytearray()
+    deadline = time.monotonic() + ELEVATED_TIMEOUT_SECS
+    try:
+        with selectors.DefaultSelector() as sel:
+            sel.register(proc.stdout, selectors.EVENT_READ)
+            sel.register(proc.stderr, selectors.EVENT_READ)
+            open_pipes = 2
+            while open_pipes:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ElevatedIOError(
+                        f"elevated_io: command timed out after {ELEVATED_TIMEOUT_SECS}s"
+                    )
+                for key, _events in sel.select(remaining):
+                    chunk = os.read(key.fd, 1024 * 1024)
+                    if not chunk:
+                        sel.unregister(key.fileobj)
+                        open_pipes -= 1
+                    elif key.fileobj is proc.stdout:
+                        out += chunk
+                        if len(out) > cap:
+                            raise ElevatedOutputTooLarge(
+                                f"elevated_io: {action}: output exceeds {cap} byte cap"
+                            )
+                    elif len(err) < _MAX_STDERR_BYTES:
+                        err += chunk[: _MAX_STDERR_BYTES - len(err)]
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                returncode = proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired as exc:
+                raise ElevatedIOError(
+                    f"elevated_io: command timed out after {ELEVATED_TIMEOUT_SECS}s"
+                ) from exc
+    except BaseException:
+        _abandon(proc)
+        raise
+    for pipe in (proc.stdout, proc.stderr):
+        pipe.close()
+    return subprocess.CompletedProcess(argv, returncode, bytes(out), bytes(err))
+
+
 def _check_exit(proc: subprocess.CompletedProcess, action: str) -> None:
     """pkexec returns 126 when the user cancelled the auth dialog and
     127 when authorisation was denied. Everything else that isn't 0
@@ -245,19 +326,15 @@ def elevated_read(backend, path: str) -> bytes:
         raise ElevatedNotAvailable(
             "pkexec or one of its required helpers (cat/tee/stat/ls) is not installed"
         )
-    # We bound the output with ``head -c`` — that's a cleaner cap
-    # than relying on subprocess buffering. pkexec ``cat`` | head is
-    # two processes; we can just cat and check the size after.
-    proc = _run(
+    # The cap is enforced while reading: the run is abandoned as soon
+    # as cat has printed more than MAX_OUTPUT_SIZE bytes.
+    proc = _run_capped(
         [helpers.binary, "--disable-internal-agent", helpers.helpers["cat"], "--", abs_path],
+        MAX_OUTPUT_SIZE,
+        f"read {abs_path!r}",
     )
     _check_exit(proc, f"read {abs_path!r}")
-    data = proc.stdout or b""
-    if len(data) > MAX_OUTPUT_SIZE:
-        raise ElevatedOutputTooLarge(
-            f"elevated_read {abs_path!r}: {len(data)} bytes exceeds {MAX_OUTPUT_SIZE} cap"
-        )
-    return data
+    return proc.stdout or b""
 
 
 def elevated_write(backend, path: str, data: bytes) -> None:

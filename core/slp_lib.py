@@ -45,6 +45,15 @@ DEFAULT_TIMEOUT = 5.0
 MAX_RESPONSE_BYTES = 256 * 1024
 
 
+class SlpProtocolError(OSError, ValueError):
+    """A reply packet that cannot be parsed (truncated, lying lengths,
+    wrong function id).
+
+    An OSError so backend callers - which handle OSError - see a failed
+    query, not a crash; still a ValueError for code that called the
+    parsers before this class existed (like io.UnsupportedOperation)."""
+
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -96,7 +105,7 @@ def _build_header(
 
 def _parse_header(buf: bytes) -> _SlpHeader:
     if len(buf) < 16:
-        raise ValueError("SLP packet too short for a header")
+        raise SlpProtocolError("SLP packet too short for a header")
     version, function = struct.unpack_from(">BB", buf, 0)
     length = int.from_bytes(buf[2:5], "big")
     flags = struct.unpack_from(">H", buf, 5)[0]
@@ -104,7 +113,7 @@ def _parse_header(buf: bytes) -> _SlpHeader:
     xid = struct.unpack_from(">H", buf, 10)[0]
     lt_len = struct.unpack_from(">H", buf, 12)[0]
     if 14 + lt_len > len(buf):
-        raise ValueError("SLP packet truncated lang-tag")
+        raise SlpProtocolError("SLP packet truncated lang-tag")
     lang_tag = buf[14 : 14 + lt_len]
     return _SlpHeader(version, function, length, flags, xid, lang_tag)
 
@@ -159,18 +168,20 @@ def build_attr_req(url: bytes, scope: bytes = b"DEFAULT", tags: bytes = b"") -> 
 
 def _read_u16(buf: bytes, off: int) -> tuple[int, int]:
     if off + 2 > len(buf):
-        raise ValueError(f"SLP u16 read at offset {off} would overrun buffer of length {len(buf)}")
+        raise SlpProtocolError(
+            f"SLP u16 read at offset {off} would overrun buffer of length {len(buf)}"
+        )
     try:
         value = struct.unpack_from(">H", buf, off)[0]
     except struct.error as exc:
-        raise ValueError(f"SLP u16 read at offset {off}: {exc}") from exc
+        raise SlpProtocolError(f"SLP u16 read at offset {off}: {exc}") from exc
     return value, off + 2
 
 
 def _read_str(buf: bytes, off: int) -> tuple[bytes, int]:
     length, off = _read_u16(buf, off)
     if off + length > len(buf):
-        raise ValueError(
+        raise SlpProtocolError(
             f"SLP string of length {length} at offset {off} overruns buffer of length {len(buf)}"
         )
     return buf[off : off + length], off + length
@@ -195,10 +206,10 @@ def _skip_url_auths(buf: bytes, off: int, count: int) -> int:
         # AuthBlockLen includes the length field itself.
         auth_len, off = _read_u16(buf, off)
         if auth_len < 4:
-            raise ValueError(f"SLP URL-auth block length {auth_len} < 4")
+            raise SlpProtocolError(f"SLP URL-auth block length {auth_len} < 4")
         body_len = auth_len - 4
         if off + body_len > len(buf):
-            raise ValueError("SLP URL-auth block body overruns buffer")
+            raise SlpProtocolError("SLP URL-auth block body overruns buffer")
         off += body_len
     return off
 
@@ -211,7 +222,7 @@ def parse_srv_type_reply(blob: bytes) -> list[str]:
     """
     hdr = _parse_header(blob)
     if hdr.function != FN_SRV_TYPE_RPLY:
-        raise ValueError(f"Expected SrvTypeRply, got fn={hdr.function:#x}")
+        raise SlpProtocolError(f"Expected SrvTypeRply, got fn={hdr.function:#x}")
     body_off = 14 + len(hdr.lang_tag)
     err_code, body_off = _read_u16(blob, body_off)
     if err_code != 0:
@@ -230,7 +241,7 @@ def parse_srv_reply(blob: bytes) -> list[tuple[str, int]]:
     """
     hdr = _parse_header(blob)
     if hdr.function != FN_SRV_RPLY:
-        raise ValueError(f"Expected SrvRply, got fn={hdr.function:#x}")
+        raise SlpProtocolError(f"Expected SrvRply, got fn={hdr.function:#x}")
     body_off = 14 + len(hdr.lang_tag)
     err_code, body_off = _read_u16(blob, body_off)
     if err_code != 0:
@@ -269,7 +280,7 @@ def parse_attr_reply(blob: bytes) -> str:
     """
     hdr = _parse_header(blob)
     if hdr.function != FN_ATTR_RPLY:
-        raise ValueError(f"Expected AttrRply, got fn={hdr.function:#x}")
+        raise SlpProtocolError(f"Expected AttrRply, got fn={hdr.function:#x}")
     body_off = 14 + len(hdr.lang_tag)
     err_code, body_off = _read_u16(blob, body_off)
     if err_code != 0:

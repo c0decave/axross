@@ -43,6 +43,7 @@ for the distribution-layer license notice.
 | `[adb]` | adb-shell | Apache-2.0 | https://github.com/JeffLIrion/adb_shell |
 | `[archive]` | py7zr | LGPL-2.1-or-later | https://github.com/miurahr/py7zr |
 | `[tftp]` | tftpy | MIT | https://github.com/msoulier/tftpy |
+| `[metadata]` | pypdf | BSD-3-Clause | https://github.com/py-pdf/pypdf |
 
 ## System tools invoked via subprocess
 
@@ -57,6 +58,7 @@ Axross calls out to.
 | iscsiadm (open-iscsi) | GPL-2.0 | iSCSI backend |
 | jmtpfs / simple-mtpfs / go-mtpfs | GPL-3.0 / GPL-2.0 / BSD | MTP backend (first-available-on-PATH) |
 | pkexec (polkit) | LGPL-2.0 | "Open as root…" action (`core.elevated_io`) |
+| ffprobe / ffmpeg (FFmpeg) | LGPL-2.1-or-later (GPL-2.0-or-later builds exist) | Reading and removing audio / video metadata (`core.metadata_formats`) |
 
 ## Notes for redistributors
 

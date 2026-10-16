@@ -12,6 +12,7 @@ the telnet backend) for reliable binary-safe transfer.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import io
 import logging
@@ -29,6 +30,7 @@ from typing import IO, TYPE_CHECKING
 import paramiko
 
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.profiles import ConnectionProfile
 from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
 from core.redaction import redact_text
@@ -53,6 +55,7 @@ from core.telnet_client import (  # noqa: E402 — re-using telnet shell-output 
     _parse_df,
     _parse_ls_la,
     _parse_stat_gnu,
+    rename_command,
 )
 
 # ---------------------------------------------------------------------------
@@ -62,6 +65,8 @@ CMD_TIMEOUT = 30.0
 TRANSFER_TIMEOUT = 300.0
 COMMAND_STDOUT_CAP = 4 * 1024 * 1024
 COMMAND_STDERR_CAP = 256 * 1024
+_READ_CHUNK = 1024 * 1024
+_READ_SPOOL_MAX = 8 * 1024 * 1024
 
 # Strip ANSI escape sequences
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\([AB0-2]")
@@ -141,7 +146,7 @@ class _SpooledWriter:
 
     def __init__(
         self,
-        exec_fn: Callable[[str, float], str],
+        exec_fn: Callable[..., str],
         remote_path: str,
         caps: _Capabilities,
         append: bool = False,
@@ -187,32 +192,28 @@ class _SpooledWriter:
         self._closed = True
         self._buf.close()
 
-    @staticmethod
-    def _safe_eof(payload: str) -> str:
-        eof = "__AXX_EOF__"
-        while eof in payload:
-            eof += "_"
-        return eof
+    # The payload travels on the command's stdin. Inside the command
+    # string (a heredoc) it became one argument of ``$SHELL -c``, and
+    # Linux refuses exec arguments above 128 KiB (E2BIG).
 
     def _upload_base64(self, data: bytes, qpath: str) -> None:
-        encoded = base64.b64encode(data).decode("ascii")
         redirect = ">>" if self._append else ">"
-        eof = self._safe_eof(encoded)
-        cmd = f"base64 -d {redirect} {qpath} << '{eof}'\n{encoded}\n{eof}"
-        self._exec_fn(cmd, TRANSFER_TIMEOUT)
+        self._exec_fn(
+            f"base64 -d {redirect} {qpath}",
+            TRANSFER_TIMEOUT,
+            stdin_data=base64.b64encode(data),
+        )
 
     def _upload_raw(self, data: bytes, qpath: str) -> None:
         try:
-            text = data.decode("utf-8")
+            data.decode("utf-8")
         except UnicodeDecodeError:
             raise OSError(
                 "Cannot upload binary file: no base64 available on remote system. "
                 "Only text files are supported."
             )
         redirect = ">>" if self._append else ">"
-        eof = self._safe_eof(text)
-        cmd = f"cat {redirect} {qpath} << '{eof}'\n{text}\n{eof}"
-        self._exec_fn(cmd, TRANSFER_TIMEOUT)
+        self._exec_fn(f"cat {redirect} {qpath}", TRANSFER_TIMEOUT, stdin_data=data)
 
     def __enter__(self):
         return self
@@ -227,7 +228,7 @@ class _SpooledWriter:
 # ---------------------------------------------------------------------------
 # Main Backend: SCPSession (FileBackend implementation)
 # ---------------------------------------------------------------------------
-class SCPSession:
+class SCPSession(SessionLifecycle):
     """SCP filesystem backend using paramiko SSH transport + exec_command.
 
     Connects via SSH (same auth flow as SSHSession), then uses standard
@@ -467,8 +468,15 @@ class SCPSession:
         except OSError:
             pass
 
-    def _exec_raw(self, cmd: str, timeout: float = CMD_TIMEOUT) -> tuple[str, int]:
-        """Execute a command via SSH exec_command. Returns (stdout, exit_code)."""
+    def _exec_raw(
+        self, cmd: str, timeout: float = CMD_TIMEOUT, stdin_data: bytes | None = None
+    ) -> tuple[str, int]:
+        """Execute a command via SSH exec_command. Returns (stdout, exit_code).
+
+        ``stdin_data`` is sent on the command's stdin, followed by EOF.
+        It is written before any output is read, so it suits commands
+        that only consume stdin (``base64 -d > file``, ``cat > file``).
+        """
         if not self._client:
             raise ConnectionError("Not connected")
 
@@ -478,6 +486,11 @@ class SCPSession:
                     cmd,
                     timeout=timeout,
                 )
+                if stdin_data is not None:
+                    view = memoryview(stdin_data)
+                    for start in range(0, len(view), 64 * 1024):
+                        stdin.channel.sendall(view[start : start + 64 * 1024])
+                    stdin.channel.shutdown_write()
                 out_bytes = _read_limited_stream(
                     stdout,
                     COMMAND_STDOUT_CAP,
@@ -496,9 +509,11 @@ class SCPSession:
             except (paramiko.SSHException, socket.error) as exc:
                 raise OSError(f"Command execution failed: {exc}") from exc
 
-    def _exec(self, cmd: str, timeout: float = CMD_TIMEOUT) -> str:
+    def _exec(
+        self, cmd: str, timeout: float = CMD_TIMEOUT, stdin_data: bytes | None = None
+    ) -> str:
         """Execute command, raise OSError on non-zero exit code."""
-        output, code = self._exec_raw(cmd, timeout)
+        output, code = self._exec_raw(cmd, timeout, stdin_data=stdin_data)
         if code != 0:
             # Read stderr for better error messages
             raise OSError(f"Command failed (exit {code}): {cmd[:120]}\n{output[:500]}")
@@ -715,30 +730,62 @@ class SCPSession:
                 self._exec(f"rm -f {qpath}")
 
     def rename(self, src: str, dst: str) -> None:
-        self._exec(f"mv {shlex.quote(self.normalize(src))} {shlex.quote(self.normalize(dst))}")
+        self._exec(rename_command(self.normalize(src), self.normalize(dst)))
 
     def open_read(self, path: str) -> IO[bytes]:
+        """Stream the file into a spooled temp file.
+
+        Not through ``_exec_raw``: its 4 MiB stdout cap is meant for
+        command output, and base64 of any file above ~3 MiB exceeded it.
+        An exec channel is 8-bit clean, so ``cat`` output is kept as
+        bytes rather than round-tripped through ``str``.
+        """
         path = self.normalize(path)
         qpath = shlex.quote(path)
+        use_base64 = self._caps.transfer_method == "base64"
+        tool = "base64" if use_base64 else "cat"
+        cmd = f"base64 < {qpath}" if use_base64 else f"cat {qpath}"
+        if not self._client:
+            raise ConnectionError("Not connected")
 
-        if self._caps.transfer_method == "base64":
-            output, code = self._exec_raw(f"base64 < {qpath}", TRANSFER_TIMEOUT)
+        spool = tempfile.SpooledTemporaryFile(max_size=_READ_SPOOL_MAX)
+        try:
+            with self._lock:
+                try:
+                    stdin, stdout, stderr = self._client.exec_command(
+                        cmd, timeout=TRANSFER_TIMEOUT
+                    )
+                    stdin.channel.shutdown_write()
+                    carry = b""
+                    while True:
+                        chunk = stdout.read(_READ_CHUNK)
+                        if not chunk:
+                            break
+                        if not use_base64:
+                            spool.write(chunk)
+                            continue
+                        text = carry + b"".join(chunk.split())
+                        whole = len(text) - len(text) % 4
+                        spool.write(base64.b64decode(text[:whole], validate=True))
+                        carry = text[whole:]
+                    err = _read_limited_stream(stderr, COMMAND_STDERR_CAP, "SCP command stderr")
+                    # -1: the channel closed without an exit status, i.e.
+                    # the stream was cut - never a complete file.
+                    code = stdout.channel.recv_exit_status()
+                except (paramiko.SSHException, socket.error) as exc:
+                    raise OSError(f"Cannot read {path}: {exc}") from exc
+                except binascii.Error as exc:
+                    raise OSError(f"Cannot decode {path}: {exc}") from exc
             if code != 0:
-                raise OSError(f"Cannot read {path}: base64 failed (exit {code})")
-            try:
-                data = base64.b64decode(output.replace("\n", "").replace("\r", "").replace(" ", ""))
-            except Exception as exc:
-                raise OSError(f"Cannot decode {path}: {exc}") from exc
-        else:
-            # Raw cat — works for text; binary may be corrupted by encoding
-            output, code = self._exec_raw(f"cat {qpath}", TRANSFER_TIMEOUT)
-            if code != 0:
-                raise OSError(f"Cannot read {path}: cat failed (exit {code})")
-            data = output.encode("utf-8")
-
-        buf = io.BytesIO(data)
-        buf.seek(0)
-        return buf
+                detail = err.decode("utf-8", "replace").strip()[:500]
+                raise OSError(f"Cannot read {path}: {tool} failed (exit {code}) {detail}".rstrip())
+            if carry:
+                raise OSError(f"Cannot decode {path}: base64 output ends mid-group")
+        except BaseException:
+            spool.close()
+            raise
+        spool.seek(0)
+        return spool
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         path = self.normalize(path)

@@ -43,33 +43,17 @@ def _old_is_sensitive_key(key: object) -> bool:
 
 
 def _old_redact_text(value: str) -> str:
-    text = R._AUTH_TOKEN_RE.sub(lambda m: f"{m.group(1)} <redacted>", value)
-    text = R._GENERIC_AUTH_HEADER_RE.sub("Authorization: <redacted>", text)
-    urls: list[str] = []
-
-    def replace_url(match):
-        url = match.group(0)
-        suffix = ""
-        while url and url[-1] in R._TRAILING_URL_PUNCT:
-            suffix = url[-1] + suffix
-            url = url[:-1]
-        urls.append(R.redact_url(url) + suffix)
-        return f"__AXROSS_REDACTED_URL_{len(urls) - 1}__"
-
-    text = R._URL_RE.sub(replace_url, text)
-    text = R._ASSIGNMENT_RE.sub(R._redact_assignment, text)
-    text = R._CLI_SECRET_OPTION_RE.sub(lambda m: f"{m.group(1)}<redacted>", text)
-    text = R._SSHPASS_RE.sub(lambda m: f"{m.group(1)}<redacted>", text)
-    for idx, url in enumerate(urls):
-        text = text.replace(f"__AXROSS_REDACTED_URL_{idx}__", url)
-    return text
+    # The full pass list without the fast path. It used to be copied here
+    # verbatim; since the Authorization / Cookie / PEM passes were added
+    # the module keeps it in one place, so the copy cannot drift.
+    return R._scan_text(value)
 
 
 # --- corpus ------------------------------------------------------------------
 _FIXED = [
     "",
-    "~/Documents/file_name_12.txt",
-    "~/My Documents/file name.txt",
+    "/home/u/Documents/file_name_12.txt",
+    "/home/u/My Documents/file name.txt",
     "password=hunter2",
     "PASSWORD:hunter2",
     "my_api_key='a b c'",
@@ -143,6 +127,8 @@ class CostTest(unittest.TestCase):
             R,
             _AUTH_TOKEN_RE=boom,
             _GENERIC_AUTH_HEADER_RE=boom,
+            _COOKIE_HEADER_RE=boom,
+            _PEM_PRIVATE_KEY_RE=boom,
             _URL_RE=boom,
             _ASSIGNMENT_RE=boom,
             _CLI_SECRET_OPTION_RE=boom,

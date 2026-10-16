@@ -140,6 +140,9 @@ class NntpClient:
         self._use_tls = bool(use_tls)
         self._timeout = float(timeout)
         self._proxy = proxy_config
+        #: The group the SERVER has selected (last successful GROUP).
+        #: Article numbers are per group; callers check this, not a cache.
+        self.current_group: str | None = None
         self._sock = self._open_socket()
         if self._use_tls and not starttls:
             self._sock = self._tls_wrap(self._sock)
@@ -220,23 +223,64 @@ class NntpClient:
         return self._read_status()
 
     def _read_multiline(self) -> Iterator[str]:
-        """Yield each line of a multi-line response. Strips the
-        trailing ``.`` terminator and dot-unstuffs lines that begin
-        with two dots. Caps total bytes at MAX_MULTILINE_BYTES."""
-        received = 0
-        while True:
-            raw = self._reader.readline()
-            received += len(raw)
-            if received > MAX_MULTILINE_BYTES:
-                raise NntpError(
-                    f"multi-line response exceeds {MAX_MULTILINE_BYTES} byte cap",
-                )
-            line = raw.rstrip(b"\r\n")
-            if line == b".":
-                return
-            if line.startswith(b".."):
-                line = line[1:]
+        """Yield each line of a multi-line response as text (UTF-8,
+        undecodable bytes replaced). For listings and overviews only;
+        article content goes through :meth:`_read_multiline_bytes`."""
+        for line in self._read_multiline_bytes():
             yield line.decode("utf-8", "replace")
+
+    def _read_multiline_bytes(self) -> Iterator[bytes]:
+        """Yield each line of a multi-line response as raw bytes. Strips
+        the trailing ``.`` terminator and dot-unstuffs lines that begin
+        with two dots. Caps total bytes at MAX_MULTILINE_BYTES.
+
+        The response must be read to its terminator before the next
+        command, or that command reads these lines as its status. A
+        consumer that stops early (``break``) gets the rest drained; one
+        that fails mid-response leaves the stream unframed, so the
+        connection is closed rather than reused."""
+        received = 0
+        try:
+            while True:
+                raw = self._reader.readline()
+                received += len(raw)
+                if received > MAX_MULTILINE_BYTES:
+                    raise NntpError(
+                        f"multi-line response exceeds {MAX_MULTILINE_BYTES} byte cap",
+                    )
+                line = raw.rstrip(b"\r\n")
+                if line == b".":
+                    return
+                if line.startswith(b".."):
+                    line = line[1:]
+                yield line
+        except GeneratorExit:
+            self._drain_multiline(received)
+            raise
+        except BaseException:
+            self._drop_connection()
+            raise
+
+    def _drain_multiline(self, received: int) -> None:
+        """Read the unread rest of an abandoned multi-line response."""
+        try:
+            while True:
+                raw = self._reader.readline()
+                received += len(raw)
+                if received > MAX_MULTILINE_BYTES:
+                    raise NntpError("cannot drain an abandoned multi-line response")
+                if raw.rstrip(b"\r\n") == b".":
+                    return
+        except Exception:  # noqa: BLE001 - any failure leaves it unframed
+            self._drop_connection()
+
+    def _drop_connection(self) -> None:
+        log.warning("NNTP: response stream out of step with %s; closing the connection", self._host)
+        self.current_group = None
+        try:
+            self._sock.close()
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------
     # Authentication (RFC 4643 — AUTHINFO USER / PASS)
@@ -321,7 +365,8 @@ class NntpClient:
             raise NntpAuthRequired(code, msg)
         if code != 211:
             raise NntpResponseError(code, msg)
-        # 211 <count> <first> <last> <group>
+        # 211 <count> <first> <last> <group>: the server now has it selected.
+        self.current_group = group
         parts = msg.split()
         try:
             return int(parts[0]), int(parts[1]), int(parts[2])
@@ -366,9 +411,8 @@ class NntpClient:
             raise NntpAuthRequired(code, msg)
         if code != 220:
             raise NntpResponseError(code, msg)
-        chunks: list[bytes] = []
-        for line in self._read_multiline():
-            chunks.append(line.encode("utf-8", "replace"))
+        # Raw bytes: yEnc binaries and 8-bit charsets are not UTF-8.
+        chunks = list(self._read_multiline_bytes())
         return b"\r\n".join(chunks) + b"\r\n"
 
     def head(self, ident: int | str) -> bytes:
@@ -376,9 +420,8 @@ class NntpClient:
         code, msg = self._command(cmd)
         if code != 221:
             raise NntpResponseError(code, msg)
-        chunks: list[bytes] = []
-        for line in self._read_multiline():
-            chunks.append(line.encode("utf-8", "replace"))
+        # Raw bytes: yEnc binaries and 8-bit charsets are not UTF-8.
+        chunks = list(self._read_multiline_bytes())
         return b"\r\n".join(chunks) + b"\r\n"
 
     def body(self, ident: int | str) -> bytes:
@@ -386,9 +429,8 @@ class NntpClient:
         code, msg = self._command(cmd)
         if code != 222:
             raise NntpResponseError(code, msg)
-        chunks: list[bytes] = []
-        for line in self._read_multiline():
-            chunks.append(line.encode("utf-8", "replace"))
+        # Raw bytes: yEnc binaries and 8-bit charsets are not UTF-8.
+        chunks = list(self._read_multiline_bytes())
         return b"\r\n".join(chunks) + b"\r\n"
 
     def post(self, raw_article: bytes) -> None:

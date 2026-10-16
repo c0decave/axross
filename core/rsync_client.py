@@ -28,6 +28,7 @@ from datetime import datetime
 from typing import IO, Callable
 
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -412,7 +413,7 @@ def _escape_rsync_pattern(name: str) -> str:
     return "".join("\\" + c if c in "\\*?[" else c for c in name)
 
 
-class RsyncSession:
+class RsyncSession(SessionLifecycle):
     """Rsync backend implementing the FileBackend protocol.
 
     Supports both native rsync daemon protocol (``rsync://``) and
@@ -876,23 +877,28 @@ class RsyncSession:
     # --------------------------------------------------------------------- #
 
     def open_read(self, path: str) -> IO[bytes]:
-        """Download a remote file to a temp file and return a file handle."""
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        tmp.close()
+        """Download a remote file to a temp file and return a file handle.
 
+        ``-L`` follows a symlink to its target. rsync exits 0 after
+        "skipping non-regular file" or "skipping directory", so the
+        download goes into an empty temp directory and only a regular
+        file that actually arrived there counts as read."""
         url = self._build_url(path)
+        tmpdir = tempfile.mkdtemp(prefix="axross-rsync-")
         try:
-            self._run_rsync([url, tmp.name], timeout=300)
-        except OSError:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
-            raise
+            self._run_rsync(["-L", url, tmpdir + os.sep], timeout=300)
+            arrived = [os.path.join(tmpdir, n) for n in os.listdir(tmpdir)]
+            if len(arrived) != 1 or not os.path.isfile(arrived[0]):
+                raise OSError(f"rsync read {path}: not a regular file")
+            fd, tmp_name = tempfile.mkstemp(prefix="axross-rsync-")
+            os.close(fd)
+            os.replace(arrived[0], tmp_name)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
-        fh = open(tmp.name, "rb")
+        fh = open(tmp_name, "rb")
         # Wrap so the temp file is cleaned up when the handle is closed
-        return _TempFileReader(fh, tmp.name)
+        return _TempFileReader(fh, tmp_name)
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         """Return a writable handle; data is uploaded on close()."""

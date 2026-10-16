@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM docker.io/library/python:3.12-alpine
 
 # Tiny Cisco-IOS-flavoured Telnet daemon used by the live integration
 # suite (tests/test_protocols.py::TestCiscoTelnetLive). Stdlib-only —

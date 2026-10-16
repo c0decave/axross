@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 
 from ui.format_utils import format_size, human_bytes
 from ui.permissions_dialog import PermissionsWidget
+from ui.thread_lifetime import detach_running_thread
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -359,19 +360,21 @@ class PropertiesDialog(QDialog):
             self._worker.cancel()
         self._thread.quit()
         if not self._thread.wait(5000):
-            # A late `done` must not reach a dialog that is on its way
-            # out: exec() returns, the last Python reference goes, and
-            # the slot would fire on a deleted C++ object.
-            if self._worker is not None:
-                try:
-                    self._worker.done.disconnect()
-                except TypeError:  # already disconnected
-                    pass
+            # Handed over rather than kept: this dialog is a child of the
+            # pane / the window, and destroying it with the thread still
+            # running aborts the process. A late `done` reaches nobody.
+            detach_running_thread(
+                self._thread,
+                *((self._worker.done,) if self._worker is not None else ()),
+                keep=(self._worker,),
+            )
             log.warning(
                 "properties: size walk for %s still running; leaving it to "
                 "finish against a cancelled worker",
                 self._file_path,
             )
+            self._thread = None
+            self._worker = None
             return
         self._thread = None
         self._worker = None

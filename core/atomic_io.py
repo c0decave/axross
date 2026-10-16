@@ -5,10 +5,11 @@ either observe the old content or the new content — never a partial
 or mixed state. Implementation strategy depends on what the backend
 supports:
 
-* **Native-atomic backends** (S3, Azure Blob, Azure Files, Dropbox,
-  GDrive, OneDrive, IMAP): a single PUT / upload is server-side
-  atomic; the previous object is replaced exactly at response-commit
-  time. Strategy → plain ``open_write`` + ``close``.
+* **Native-atomic backends** (S3, Azure Blob, Dropbox, GDrive,
+  OneDrive, IMAP): a single PUT / upload is server-side atomic; the
+  previous object is replaced exactly at response-commit time.
+  Strategy → plain ``open_write`` + ``close``. Azure Files is NOT one:
+  its upload resets the file (Create File) and then writes ranges.
 
 * **Rename-capable backends** (LocalFS, SFTP, NFS, iSCSI, SMB,
   WebDAV, FTP, FTPS, Rsync, Telnet, SCP): write to a sibling temp
@@ -45,7 +46,9 @@ _NATIVE_ATOMIC_PROTOCOLS = frozenset(
     {
         "s3",
         "azure_blob",
-        "azure_files",
+        # Not "azure_files": ShareFileClient.upload_file sends Create File
+        # (the existing file reset to the new length, zero-filled) before
+        # uploading ranges, so a failure part-way destroys the old file.
         "dropbox",
         "gdrive",
         "onedrive",

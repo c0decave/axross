@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 # uid / gid -> name, cached. With the stock Arch nsswitch line
@@ -61,7 +62,7 @@ def clear_name_cache() -> None:
 log = logging.getLogger(__name__)
 
 
-class LocalFS:
+class LocalFS(SessionLifecycle):
     """Local filesystem backend implementing the FileBackend protocol."""
 
     # POSIX filesystems support both link flavours; the UI uses these

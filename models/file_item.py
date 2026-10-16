@@ -5,9 +5,30 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 
+def _local_wall_clock(value):
+    """An aware datetime as naive local wall clock time; anything else as is."""
+    if getattr(value, "tzinfo", None) is None:
+        return value
+    try:
+        return value.astimezone().replace(tzinfo=None)
+    except (OverflowError, OSError, ValueError):
+        # datetime.min / max placeholders cannot be shifted; their
+        # wall clock reading is as good as any.
+        return value.replace(tzinfo=None)
+
+
 @dataclass(frozen=True)
 class FileItem:
-    """Represents a single file or directory entry, local or remote."""
+    """Represents a single file or directory entry, local or remote.
+
+    Timestamp contract (``modified``, ``accessed``, ``created``): a naive
+    datetime is LOCAL wall clock time — what ``datetime.fromtimestamp``
+    returns and what LocalFS, the pane's date column and ``.timestamp()``
+    assume. A backend whose protocol reports UTC must hand over an AWARE
+    datetime (``tzinfo=timezone.utc``), never a naive UTC one; aware
+    values are converted to local wall clock time here, so every item
+    from every backend compares and sorts on one clock.
+    """
 
     name: str
     size: int = 0
@@ -30,6 +51,12 @@ class FileItem:
     # backends only update mtime on content change but keep ctime
     # pinned to upload time.
     created: datetime | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("modified", "accessed", "created"):
+            value = getattr(self, name)
+            if getattr(value, "tzinfo", None) is not None:
+                object.__setattr__(self, name, _local_wall_clock(value))
 
     @property
     def permissions_str(self) -> str:

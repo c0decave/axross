@@ -29,7 +29,7 @@ from datetime import datetime
 from typing import Iterable
 from urllib.parse import urlsplit
 
-from core.db_fs_base import DbFsBackend
+from core.db_fs_base import DbFsBackend, parse_mode
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +72,8 @@ _NS_KIDS = "axross:children:"
 
 class RedisFsSession(DbFsBackend):
     """Redis-backed FileBackend."""
+
+    _DRIVER_ERRORS = (redis.exceptions.RedisError,) if redis is not None else ()
 
     def __init__(
         self,
@@ -197,7 +199,9 @@ class RedisFsSession(DbFsBackend):
         content = None
         if not row["is_dir"]:
             content = self._client.get(_NS_DATA + path)
-        row["content"] = bytes(content) if content is not None else None
+        # Passed on as answered: DbFsBackend accepts bytes only.
+        # bytes() of an integer reply would be that many zero bytes.
+        row["content"] = content
         return row
 
     # STRLEN answers the length without sending the value; a missing data
@@ -207,7 +211,7 @@ class RedisFsSession(DbFsBackend):
             meta = self._client.hgetall(_NS_META + path)
         row = self._meta_fields(path, meta)
         if row is not None:
-            row["size"] = 0 if row["is_dir"] else int(self._client.strlen(_NS_DATA + path))
+            row["size"] = 0 if row["is_dir"] else self._client.strlen(_NS_DATA + path)
         return row
 
     def _db_list_meta(self, parent: str) -> Iterable[dict]:
@@ -230,7 +234,10 @@ class RedisFsSession(DbFsBackend):
         for i, child_path in enumerate(paths):
             row = self._meta_fields(child_path, replies[2 * i])
             if row is not None:
-                row["size"] = 0 if row["is_dir"] else int(replies[2 * i + 1])
+                # Read like any stored size (_row_to_item): a reply that
+                # is no integer (RESP lets a server send a bulk string)
+                # reads as 0 instead of raising ValueError.
+                row["size"] = 0 if row["is_dir"] else replies[2 * i + 1]
                 rows.append(row)
         return rows
 
@@ -254,9 +261,9 @@ class RedisFsSession(DbFsBackend):
             "path": path,
             "parent": (get("parent") or b"/").decode("utf-8", "replace"),
             "is_dir": is_dir,
-            "mode": int(get("mode") or b"0o644".decode(), 0)
-            if (get("mode") or b"").startswith(b"0o")
-            else int(get("mode") or b"420"),
+            # Any client can write the hash: a mode that is no number
+            # reads as the default instead of raising ValueError.
+            "mode": parse_mode(get("mode"), 0o755 if is_dir else 0o644),
             "mtime": mtime,
         }
 

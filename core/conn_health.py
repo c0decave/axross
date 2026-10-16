@@ -153,6 +153,10 @@ def _probe_webdav(session: Any) -> None:
         raise OSError(f"OPTIONS returned {resp.status_code}")
 
 
+#: Probes that send a command on a handle the session's own workers use
+#: and whose library cannot have two commands in flight (core.session_lock).
+_SERIALIZED_PROTOCOLS = frozenset({"ftp", "ftps", "imap", "pop3"})
+
 _PROBES: dict[str, Callable[[Any], None]] = {
     "sftp": _probe_sftp,
     "scp": _probe_sftp,
@@ -287,6 +291,24 @@ class HealthManager:
                     log.warning("conn_health probe error: %s", exc)
 
     def _probe_one(self, record: HealthRecord, session: Any) -> None:
+        lock = None
+        if (record.protocol or "").lower() in _SERIALIZED_PROTOCOLS:
+            from core.session_lock import io_lock
+
+            lock = io_lock(session)
+            if not lock.acquire(blocking=False):
+                # A worker is mid-command on this handle: the session is
+                # evidently alive, and a NOOP now would take that
+                # command's reply. Skip this round.
+                log.debug("conn_health: %s busy, probe skipped", record.profile_key)
+                return
+        try:
+            self._probe_unlocked(record, session)
+        finally:
+            if lock is not None:
+                lock.release()
+
+    def _probe_unlocked(self, record: HealthRecord, session: Any) -> None:
         probe = _probe_for_protocol(record.protocol)
         t0 = time.monotonic()
         latency: float | None

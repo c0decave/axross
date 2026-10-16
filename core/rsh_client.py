@@ -40,12 +40,14 @@ import io
 import logging
 import posixpath
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
 from datetime import datetime
 from typing import IO
 
+from core.backend import SessionLifecycle
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -61,10 +63,10 @@ MAX_FILE_BYTES = 64 * 1024 * 1024  # cap on a single read; rsh has no chunking
 # Unix flavours format times slightly differently; we extract what we
 # can and treat the rest as best-effort.
 _LS_RE = re.compile(
-    r"^(?P<perms>[bcdlsp\-][rwxsStTl\-]{9})\s+"  # mode string
+    r"^(?P<perms>[bcdlsp\-][rwxsStTl\-]{9})[.+@]?\s+"  # mode; . SELinux, + ACL, @ xattr
     r"\d+\s+"  # link count
     r"\S+\s+\S+\s+"  # user, group
-    r"(?P<size>\d+)\s+"  # size
+    r"(?P<size>\d+|\d+,\s*\d+)\s+"  # size, or "major, minor" for a device
     r"(?P<date>\S+\s+\S+\s+\S+)\s+"  # date triplet
     r"(?P<name>.+?)$"
 )
@@ -113,7 +115,7 @@ def _ensure_rsh_available() -> str:
 # ---------------------------------------------------------------------------
 
 
-class RshSession:
+class RshSession(SessionLifecycle):
     """rsh-as-filesystem FileBackend.
 
     Instantiated with at minimum ``host`` and ``username``. Trusts
@@ -224,7 +226,17 @@ class RshSession:
         """Execute ``command`` on the remote via rsh; return stdout
         bytes. Non-zero exit raises :class:`RshError` carrying the
         captured stderr.
+
+        The rsh protocol carries stdout and stderr but not the remote
+        command's exit status (classic rsh exits 0 whenever the
+        connection worked), so the command reports it itself: a trailer
+        line with a per-call random tag. No trailer means the stream was
+        cut short, and that is an error too, never a short result.
         """
+        tag = f"__AXROSS_RSH_STATUS_{secrets.token_hex(8)}__"
+        # sh -c: the login shell rshd hands the command to may be csh,
+        # which has no "$?"; one line, as csh rejects a quoted newline.
+        script = f"{command}; printf '\\n%s %d\\n' {tag} \"$?\""
         argv = [self._rsh]
         if self._port and self._port != 514:
             # netkit-rsh accepts -p; some forks don't. Only add when
@@ -232,7 +244,7 @@ class RshSession:
             argv += ["-p", str(self._port)]
         if self._username:
             argv += ["-l", self._username]
-        argv += [self._host, command]
+        argv += [self._host, f"sh -c {shlex.quote(script)}"]
         log.debug("rsh exec: %s", " ".join(shlex.quote(a) for a in argv))
         try:
             proc = subprocess.run(
@@ -245,12 +257,25 @@ class RshSession:
             )
         except subprocess.TimeoutExpired as exc:
             raise RshError(f"rsh timed out: {exc}") from exc
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
         if proc.returncode != 0:
-            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
             raise RshError(
                 f"rsh '{command[:60]}...' on {self._host} exited {proc.returncode}: {err}"
             )
-        return proc.stdout
+        out = proc.stdout or b""
+        marker = b"\n" + tag.encode() + b" "
+        idx = out.rfind(marker)
+        status = out[idx + len(marker) :].strip() if idx >= 0 else b""
+        if idx < 0 or not out.endswith(b"\n") or not status.isdigit():
+            raise RshError(
+                f"rsh '{command[:60]}...' on {self._host}: output ended without the "
+                f"remote exit status (connection cut?): {err}"
+            )
+        if int(status) != 0:
+            raise RshError(
+                f"rsh '{command[:60]}...' on {self._host} exited {int(status)}: {err}"
+            )
+        return out[:idx]
 
     # ------------------------------------------------------------------
     # Read surface
@@ -273,9 +298,10 @@ class RshSession:
             name = m.group("name")
             if name in (".", ".."):
                 continue
-            # Strip ``-> target`` for symlinks; we don't model them.
-            name = name.split(" -> ", 1)[0]
             perms_text = m.group("perms")
+            # Strip ``-> target`` for symlinks; we don't model them.
+            if perms_text.startswith("l"):
+                name = name.split(" -> ", 1)[0]
             is_dir = perms_text.startswith("d")
             try:
                 size = int(m.group("size"))
@@ -331,8 +357,15 @@ class RshSession:
         # socket while we buffer. The explicit ``--`` separator stops
         # any path that survived _validate_path from re-attaching as a
         # flag on the remote tool.
-        cmd = f"head -c {MAX_FILE_BYTES} -- {shlex.quote(path)} && true"
+        # One byte past the cap tells "exactly at the cap" from "cut by it":
+        # a truncated file must fail, not arrive as a shorter file.
+        cmd = f"head -c {MAX_FILE_BYTES + 1} -- {shlex.quote(path)}"
         data = self._run_remote(cmd)
+        if len(data) > MAX_FILE_BYTES:
+            raise RshError(
+                f"rsh read of {path}: file is larger than the {MAX_FILE_BYTES} byte cap "
+                "for a single rsh read"
+            )
         return io.BytesIO(data)
 
     def readlink(self, path: str) -> str:

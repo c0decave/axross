@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import IO
 
 from core.append_helpers import read_existing_for_append
+from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ class _SpooledWriter:
             self.close()
 
 
-class S3Session:
+class S3Session(SessionLifecycle):
     """S3-compatible backend implementing the FileBackend protocol.
 
     Uses boto3. Treats the bucket as the root filesystem.
@@ -369,6 +370,10 @@ class S3Session:
             error_code = e.response.get("Error", {}).get("Code", "")
             if error_code != "404":
                 raise OSError(f"Cannot stat {path}: {e}") from e
+        except Exception as e:
+            # botocore raises ValueError for a HEAD answer it cannot parse
+            # and BotoCoreError (not an OSError) when the endpoint hangs up.
+            raise OSError(f"Cannot stat {path}: {e}") from e
 
         # Check if it's a directory prefix
         try:
@@ -411,6 +416,10 @@ class S3Session:
             return True
         except ClientError:
             pass
+        except Exception as e:
+            # An answer botocore cannot parse, or a dropped connection, says
+            # nothing about existence (see stat()).
+            raise OSError(f"Cannot check {path}: {e}") from e
 
         # Check as directory prefix
         return self.is_dir(path)
@@ -568,27 +577,49 @@ class S3Session:
         the bucket; returns [] for unversioned buckets."""
         from models.file_version import FileVersion
 
-        try:
-            resp = self._s3.list_object_versions(
-                Bucket=self._bucket,
-                Prefix=self._to_key(path),
-            )
-        except Exception as exc:
-            raise OSError(f"S3 list_versions {path}: {exc}") from exc
         versions = []
         target_key = self._to_key(path)
-        for v in resp.get("Versions", []):
-            if v.get("Key") != target_key:
-                continue
-            versions.append(
-                FileVersion(
-                    version_id=v.get("VersionId", ""),
-                    modified=v.get("LastModified") or datetime.fromtimestamp(0),
-                    size=int(v.get("Size", 0) or 0),
-                    is_current=bool(v.get("IsLatest", False)),
+        request = {"Bucket": self._bucket, "Prefix": target_key}
+        while True:
+            try:
+                resp = self._s3.list_object_versions(**request)
+            except Exception as exc:
+                raise OSError(f"S3 list_versions {path}: {exc}") from exc
+            past_target = False
+            for v in resp.get("Versions", []):
+                key = v.get("Key")
+                if key != target_key:
+                    # Keys come in order; the prefix also matches
+                    # siblings such as "a.txt.bak", which sort after it.
+                    past_target = past_target or (key or "") > target_key
+                    continue
+                versions.append(
+                    FileVersion(
+                        version_id=v.get("VersionId", ""),
+                        modified=v.get("LastModified") or datetime.fromtimestamp(0),
+                        size=int(v.get("Size", 0) or 0),
+                        is_current=bool(v.get("IsLatest", False)),
+                    )
                 )
-            )
-        return versions
+            # At most 1 000 entries per call: an object with more versions
+            # continues on the next page.
+            if past_target or not resp.get("IsTruncated"):
+                return versions
+            key_marker = resp.get("NextKeyMarker")
+            marker = (key_marker, resp.get("NextVersionIdMarker"))
+            if not key_marker or marker == (
+                request.get("KeyMarker"),
+                request.get("VersionIdMarker"),
+            ):
+                raise OSError(
+                    f"S3 list_versions {path}: truncated listing without a new continuation marker"
+                )
+            request["KeyMarker"] = key_marker
+            version_marker = resp.get("NextVersionIdMarker")
+            if version_marker:
+                request["VersionIdMarker"] = version_marker
+            else:
+                request.pop("VersionIdMarker", None)
 
     def open_version_read(self, path: str, version_id: str):
         """GET a specific VersionId of an object."""
