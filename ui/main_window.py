@@ -31,7 +31,12 @@ from core.connection_manager import ConnectionManager
 from core import i18n
 from core.i18n import tr
 from core.local_fs import LocalFS
-from core.profiles import ConnectionProfile, ProfileManager
+from core.profiles import (
+    SIMPLE_PASSWORD_PROTOCOLS,
+    ConnectionProfile,
+    ProfileManager,
+    password_needed,
+)
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
 from core import posix_compat
@@ -202,6 +207,47 @@ def _write_private_text(path: Path | str, text: str) -> None:
         except OSError:
             pass
         raise
+
+
+_PROMPT_PROTOCOL_NAMES = {
+    "telnet": "Telnet",
+    "cisco-telnet": "Cisco Telnet",
+    "pop3": "POP3",
+    "nntp": "NNTP",
+    "winrm": "WinRM",
+}
+
+
+def _simple_password_prompt(profile: ConnectionProfile) -> tuple[bool, str]:
+    """Whether Quick Connect asks *profile* for its secret, and the label.
+
+    For a protocol in SIMPLE_PASSWORD_PROTOCOLS - the ones whose dialog
+    has the password field; whether to ask is core.profiles.password_needed,
+    the decision the MCP server shares.
+    """
+    if not password_needed(profile):
+        return False, ""
+    proto = profile.protocol
+    if proto == "s3":
+        return True, f"Secret Key for S3 bucket '{profile.s3_bucket}':"
+    if proto == "webdav":
+        return True, f"Password for WebDAV {(profile.webdav_url or '')[:50]}:"
+    if proto in ("ftp", "ftps"):
+        return True, f"Password for {proto.upper()} {profile.username}@{profile.host}:"
+    if proto == "smb":
+        return True, f"Password for SMB \\\\{profile.host}\\{profile.smb_share}:"
+    if proto == "dfsn":
+        return True, f"Password for DFS \\\\{profile.host}\\{profile.smb_share}:"
+    if proto == "rsync":
+        return True, f"Password for rsync {profile.host}/{profile.rsync_module}:"
+    if proto in ("azure_blob", "azure_files"):
+        return True, f"Account Key for Azure {profile.azure_account_name}:"
+    if proto == "iscsi":
+        return True, f"CHAP password for iSCSI {profile.host}:"
+    if proto == "imap":
+        return True, f"Password for IMAP {profile.username}@{profile.host}:"
+    name = _PROMPT_PROTOCOL_NAMES.get(proto, proto.upper())
+    return True, f"Password for {name} {profile.username}@{profile.host}:"
 
 
 class MainWindow(QMainWindow):
@@ -3164,33 +3210,8 @@ class MainWindow(QMainWindow):
             elif profile.auth_type == "key" and profile.key_file:
                 # Try without passphrase first; if key is encrypted, ask
                 pass
-        elif proto == "s3":
-            # Only prompt for secret key if access key is set (not anonymous)
-            if profile.username:
-                needs_password = True
-                prompt_label = f"Secret Key for S3 bucket '{profile.s3_bucket}':"
-        elif proto == "webdav":
-            url = (profile.webdav_url or "")[:50]
-            needs_password = True
-            prompt_label = f"Password for WebDAV {url}:"
-        elif proto in ("ftp", "ftps"):
-            needs_password = True
-            prompt_label = f"Password for {proto.upper()} {profile.username}@{profile.host}:"
-        elif proto == "smb":
-            needs_password = True
-            prompt_label = f"Password for SMB \\\\{profile.host}\\{profile.smb_share}:"
-        elif proto == "rsync" and not profile.rsync_ssh:
-            needs_password = True
-            prompt_label = f"Password for rsync {profile.host}/{profile.rsync_module}:"
-        elif proto in ("azure_blob", "azure_files"):
-            needs_password = True
-            prompt_label = f"Account Key for Azure {profile.azure_account_name}:"
-        elif proto == "iscsi":
-            needs_password = True
-            prompt_label = f"CHAP password for iSCSI {profile.host}:"
-        elif proto == "imap":
-            needs_password = True
-            prompt_label = f"Password for IMAP {profile.username}@{profile.host}:"
+        elif proto in SIMPLE_PASSWORD_PROTOCOLS:
+            needs_password, prompt_label = _simple_password_prompt(profile)
         # OAuth protocols (onedrive, sharepoint, gdrive, dropbox) don't need password prompts
         # NFS doesn't need password
 

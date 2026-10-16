@@ -192,7 +192,30 @@ class SessionLifecycle:
     A class with its own ``close()`` keeps it. For the others this
     ``close()`` calls ``disconnect()`` when the class has one and does
     nothing otherwise (LocalFS holds no connection).
+
+    It also answers the optional FileBackend methods with the contract's
+    "not supported" for a class that lacks them, so no caller meets an
+    AttributeError. ``copy``, ``symlink`` and ``hardlink`` are left out:
+    callers test those with hasattr or the capability flags.
     """
+
+    def checksum(self, path: str, algorithm: str = "sha256") -> str:
+        """No cheap checksum: callers hash a full read themselves."""
+        return ""
+
+    def disk_usage(self, path: str) -> tuple[int, int, int]:
+        """Not reported."""
+        return (0, 0, 0)
+
+    def list_versions(self, path: str) -> list:
+        """No versioning."""
+        return []
+
+    def open_version_read(self, path: str, version_id: str):
+        raise OSError(f"{type(self).__name__} keeps no file versions")
+
+    def readlink(self, path: str) -> str:
+        raise OSError(f"{type(self).__name__} has no symbolic links")
 
     def close(self) -> None:
         """End the session: ``disconnect()`` when the class has one."""

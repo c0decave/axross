@@ -3064,6 +3064,22 @@ TOXIPROXY_HOST = "10.99.0.50"
 TOXIPROXY_ADMIN = f"http://{TOXIPROXY_HOST}:8474"
 
 
+def _toxiproxy_up() -> bool:
+    try:
+        with socket.create_connection((TOXIPROXY_HOST, 8474), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+# The fault tests need the toxiproxy container as well as the backends
+# behind it; without it they used to fail with "No route to host".
+requires_toxiproxy = pytest.mark.skipif(
+    not (LAB_AVAILABLE and _toxiproxy_up()),
+    reason="toxiproxy lab container (10.99.0.50:8474) not reachable",
+)
+
+
 def _toxiproxy_create(name: str, upstream_host: str, upstream_port: int, listen_port: int) -> str:
     """Create a toxiproxy in front of *upstream_host:upstream_port*.
     Returns the listen host (always 10.99.0.50) / port our client should connect to.
@@ -3151,7 +3167,7 @@ def _toxiproxy_add_toxic(
     urllib.request.urlopen(req, timeout=3).read()
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.1 IMAP mid-transfer connection drop surfaces as error")
 def test_imap_mid_transfer_drop():
     """IMAP uses a single TCP channel (no out-of-band data channel like
@@ -3200,7 +3216,7 @@ def test_imap_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.4 toxiproxy bandwidth cap actually throttles the wire")
 def test_toxiproxy_bandwidth_cap_effective():
     """Proves the fault-injection infrastructure actually throttles
@@ -3234,7 +3250,7 @@ def test_toxiproxy_bandwidth_cap_effective():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.4b WebDAV open_read completes under bandwidth cap")
 def test_webdav_open_read_under_bandwidth_cap():
     """Functional: WebDavSession.open_read must return the full payload
@@ -3271,7 +3287,7 @@ def test_webdav_open_read_under_bandwidth_cap():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.5 IMAP behind high-latency link: still completes")
 def test_imap_high_latency():
     """Add 200ms per-packet latency. A handful of commands should
@@ -3305,7 +3321,7 @@ def test_imap_high_latency():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.3 WebDAV mid-transfer connection drop surfaces as error")
 def test_webdav_mid_transfer_drop():
     """HTTP is single-channel — toxiproxy drop applies directly."""
@@ -3352,7 +3368,7 @@ def test_webdav_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.2 SMB mid-transfer connection drop surfaces as error")
 def test_smb_mid_transfer_drop():
     """Same pattern for SMB: connect through toxiproxy, disable proxy
@@ -3778,7 +3794,7 @@ def _isolate_known_hosts(session, label: str):
     return session
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.6 SSH mid-transfer connection drop surfaces as error")
 def test_ssh_mid_transfer_drop():
     import time as _t
@@ -3824,7 +3840,7 @@ def test_ssh_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.7 S3 mid-transfer connection drop surfaces as error")
 def test_s3_mid_transfer_drop():
     import time as _t
@@ -3875,7 +3891,7 @@ def test_s3_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.8 Rsync unreachable via toxiproxy surfaces as OSError")
 def test_rsync_mid_transfer_drop():
     """Rsync shells out to the rsync binary with a short-lived
@@ -3915,7 +3931,7 @@ def test_rsync_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.9 Telnet mid-transfer connection drop surfaces as OSError")
 def test_telnet_mid_transfer_drop():
     import time as _t
@@ -3961,7 +3977,7 @@ def test_telnet_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.10 Azure Blob mid-transfer connection drop surfaces as error")
 def test_azure_blob_mid_transfer_drop():
     import time as _t
@@ -4015,7 +4031,7 @@ def test_azure_blob_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.11 FTP control-channel drop surfaces as error")
 def test_ftp_mid_transfer_drop():
     import time as _t
@@ -4060,7 +4076,7 @@ def test_ftp_mid_transfer_drop():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.12 FTPS control-channel drop surfaces as error")
 def test_ftps_mid_transfer_drop():
     import time as _t
@@ -4113,7 +4129,7 @@ def test_ftps_mid_transfer_drop():
 # -- Bandwidth-cap extension -----------------------------------------
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.13 SSH large read under bandwidth cap is actually slower")
 def test_ssh_bandwidth_cap():
     """Read a seeded 64 KB file through a 32 KB/s cap. Must take > 1.5s.
@@ -4149,7 +4165,7 @@ def test_ssh_bandwidth_cap():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.14 S3 large read under bandwidth cap is actually slower")
 def test_s3_bandwidth_cap():
     """Upload a 128 KB object directly, then read it back through a
@@ -4212,7 +4228,7 @@ def test_s3_bandwidth_cap():
             direct2.disconnect()
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.15 Telnet file read under bandwidth cap is actually slower")
 def test_telnet_bandwidth_cap():
     """Telnet transfers files base64-encoded over the shell, which
@@ -4250,7 +4266,7 @@ def test_telnet_bandwidth_cap():
 # -- Latency extension -----------------------------------------------
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.16 SSH under high latency completes (slowly)")
 def test_ssh_high_latency():
     import time as _t
@@ -4279,7 +4295,7 @@ def test_ssh_high_latency():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.17 S3 under high latency completes")
 def test_s3_high_latency():
     import time as _t
@@ -4312,7 +4328,7 @@ def test_s3_high_latency():
         _toxiproxy_delete(PROXY)
 
 
-@requires_lab
+@requires_toxiproxy
 @_label("Fault 12.18 WebDAV under high latency completes")
 def test_webdav_high_latency():
     import time as _t
@@ -11139,6 +11155,105 @@ def test_cisco_live_arbitrary_show_passthrough():
 # ════════════════════════════════════════════════════════════
 #  Run
 # ════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════
+#  SVN backend against the lab svn-server (svnserve)
+# ════════════════════════════════════════════════════════════
+#
+# tests/docker/Dockerfile.svn seeds svn://10.99.0.46/repo with
+# trunk/{readme.txt, blob.bin, docs/Grüße ü space.txt, docs/deep/leaf.txt};
+# revision 2 changes readme.txt. Login svnuser / svn123, no anonymous
+# access. Needs the svn client (the testrunner image carries it).
+
+SVN_URL = "svn://10.99.0.46/repo"
+SVN_USER = "svnuser"
+SVN_PASS = "svn123"
+
+
+def _svn_up() -> bool:
+    import shutil
+    import socket as _s
+
+    if shutil.which("svn") is None:
+        return False
+    try:
+        with _s.create_connection(("10.99.0.46", 3690), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+requires_svn = pytest.mark.skipif(not _svn_up(), reason="svn client or lab svn-server missing")
+
+
+def _svn(**kw):
+    from core.svn_fs_client import SvnFsSession
+
+    kw.setdefault("username", SVN_USER)
+    kw.setdefault("password", SVN_PASS)
+    return SvnFsSession(url=SVN_URL, **kw)
+
+
+@requires_svn
+def test_svn_lists_and_reads_with_matching_sizes():
+    s = _svn()
+    try:
+        trunk = {i.name: i for i in s.list_dir("/trunk")}
+        assert {"readme.txt", "blob.bin", "docs"} <= set(trunk)
+        assert trunk["docs"].is_dir and not trunk["blob.bin"].is_dir
+        for name in ("readme.txt", "blob.bin"):
+            data = s.open_read("/trunk/" + name).read()
+            assert len(data) == trunk[name].size == s.stat("/trunk/" + name).size
+        assert s.open_read("/trunk/readme.txt").read() == b"Hello from SVN, revision two\n"
+    finally:
+        s.close()
+
+
+@requires_svn
+def test_svn_utf8_and_nested_names():
+    s = _svn()
+    try:
+        assert "Grüße ü space.txt" in [i.name for i in s.list_dir("/trunk/docs")]
+        assert s.open_read("/trunk/docs/Grüße ü space.txt").read() == b"line one\nline two\n"
+        assert s.open_read("/trunk/docs/deep/leaf.txt").read() == b"deep file\n"
+    finally:
+        s.close()
+
+
+@requires_svn
+def test_svn_an_older_revision_reads_the_old_content():
+    s = _svn(revision="1")
+    try:
+        assert s.open_read("/trunk/readme.txt").read() == b"Hello from SVN\n"
+    finally:
+        s.close()
+
+
+@requires_svn
+def test_svn_missing_path_and_writes_are_errors():
+    s = _svn()
+    try:
+        with pytest.raises(FileNotFoundError):
+            s.stat("/trunk/no-such-file.txt")
+        with pytest.raises(OSError):
+            s.list_dir("/no-such-folder")
+        for op in (lambda: s.mkdir("/trunk/x"), lambda: s.remove("/trunk/readme.txt")):
+            with pytest.raises(OSError, match="read-only"):
+                op()
+    finally:
+        s.close()
+
+
+@requires_svn
+def test_svn_a_wrong_password_fails_without_prompting():
+    import time
+
+    start = time.time()
+    with pytest.raises(OSError):
+        s = _svn(password="wrong")
+        s.list_dir("/trunk")
+    assert time.time() - start < 30  # --non-interactive: no hidden prompt
+
 
 if __name__ == "__main__":
     print("=" * 65)

@@ -30,6 +30,7 @@ directory, then import the profiles via
 | Lab Telnet                      | Telnet   | 10.99.0.37 : 23   | `telnetuser`      | `telnet123`               | xinetd + telnetd — plaintext by design                                         |
 | Lab Azure Blob (Azurite)        | Azure    | 10.99.0.39 : 10000 | `devstoreaccount1` | *(see below)*           | Emulator, container `axross-test`                                              |
 | Lab iSCSI                       | iSCSI    | 10.99.0.40 : 3260 | —                 | —                         | IQN `iqn.2024-01.com.axross:test-target`; **needs `iscsi_tcp` kernel module** |
+| Lab SVN (svnserve)              | SVN      | 10.99.0.46 : 3690 | `svnuser`         | `svn123`                  | URL `svn://10.99.0.46/repo`; read-only backend, no anonymous access            |
 
 ### Azurite connection string
 Azure Blob uses a static emulator connection string rather than a

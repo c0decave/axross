@@ -359,8 +359,14 @@ Damit bekommt eine SCP-Pane den selben "Remote-Shell hier
 Gespeicherte Passwörter landen im OS-Keyring (Secret-Service /
 KWallet / Windows Credential Locker / macOS Keychain / KeePassXC
 Secret-Service-Plug-in). axross probt beim ersten Speichern auf
-ein lauffähiges Backend; ohne Daemon ist "Save in keyring"
-deaktiviert mit konkreter Install-Hilfe:
+ein lauffähiges Backend. Jedes andere keyring-Backend funktioniert
+ebenso, solange es keine Eingabe im Terminal braucht (etwa
+keyring-pass oder keyrings.cryptfile über ``keyringrc.cfg``); sind
+mehrere installiert, nimmt axross das, das keyring selbst zuerst
+nimmt. Klartextdateien (``PlaintextKeyring``) und das
+``EncryptedKeyring`` von keyrings.alt, das sein Master-Passwort im
+Terminal abfragt, werden nicht genutzt. Ohne brauchbares Backend ist
+"Save in keyring" deaktiviert mit konkreter Install-Hilfe:
 
 - **Arch:** ``sudo pacman -S gnome-keyring`` (oder kwallet,
   oder keepassxc)

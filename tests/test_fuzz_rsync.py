@@ -138,7 +138,7 @@ LIST_ONLY = (
 
 
 def _fake_run(stdout: str, returncode: int = 0):
-    def run(cmd, env=None, capture_output=True, text=True, timeout=None):
+    def run(cmd, env=None, capture_output=True, text=True, timeout=None, **_kw):
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr="")
 
     return run

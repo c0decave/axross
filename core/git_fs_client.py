@@ -254,6 +254,19 @@ def _proxied_transport(url: str, proxy_cfg) -> tuple[str, dict, list]:
     return connect_url, kwargs, [tunnel]
 
 
+def _dulwich_url(url: str) -> str:
+    """*url* as dulwich understands it.
+
+    open_url sends every git+ scheme here. dulwich knows git+ssh, but
+    reads git+https:// as an SSH URL with an empty host; the "git+" of
+    git+http(s) only picks this backend and goes.
+    """
+    scheme, sep, rest = url.partition("://")
+    if sep and scheme.lower() in ("git+https", "git+http"):
+        return f"{scheme[4:].lower()}://{rest}"
+    return url
+
+
 class GitFsSession(SessionLifecycle):
     """Git-backed FileBackend."""
 
@@ -267,11 +280,12 @@ class GitFsSession(SessionLifecycle):
         path: str = "",
         author_name: str = "",
         author_email: str = "",
-        default_branch: str = "main",
+        default_branch: str = "",
         **_ignored,
     ):
         self._tunnels: list = []
         self._transport_kwargs: dict = {}
+        url = _dulwich_url(url) if url else url
         self._connect_url = url or ""
         if Repo is None:
             raise ImportError("Git backend requires dulwich. Install with: pip install axross[git]")
@@ -399,7 +413,23 @@ class GitFsSession(SessionLifecycle):
     # ------------------------------------------------------------------
 
     def home(self) -> str:
-        return f"/{self._default_branch}"
+        """The branch a pane opens on: the one named, if the repository has
+        it; else the repository's HEAD branch, "main", or the first branch;
+        "/" for a repository without branches."""
+        tips = self._branch_tips
+        candidates = [self._default_branch, self._head_branch(), "main"]
+        for name in candidates:
+            if name and name in tips:
+                return f"/{name}"
+        return f"/{sorted(tips)[0]}" if tips else "/"
+
+    def _head_branch(self) -> str:
+        try:
+            target = self._repo.refs.get_symrefs().get(b"HEAD", b"")
+        except Exception:  # noqa: BLE001 - a repository without a symbolic HEAD
+            return ""
+        prefix = b"refs/heads/"
+        return target[len(prefix) :].decode("utf-8", "replace") if target.startswith(prefix) else ""
 
     def separator(self) -> str:
         return "/"

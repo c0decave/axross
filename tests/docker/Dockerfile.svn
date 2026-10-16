@@ -1,0 +1,28 @@
+FROM docker.io/library/debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends subversion && \
+    rm -rf /var/lib/apt/lists/*
+
+# One repository with a few revisions: nested folders, a UTF-8 name with
+# spaces, a binary file and a file changed in a later revision, so
+# listing, reading, sizes and revisions can be checked. Login only:
+# svnuser / svn123 (see CREDENTIALS.md), no anonymous access.
+ENV LANG=C.UTF-8
+RUN mkdir -p /srv/svn && svnadmin create /srv/svn/repo && \
+    printf '[general]\nanon-access = none\nauth-access = write\npassword-db = passwd\nrealm = axross-lab\n' \
+        > /srv/svn/repo/conf/svnserve.conf && \
+    printf '[users]\nsvnuser = svn123\n' > /srv/svn/repo/conf/passwd && \
+    mkdir -p /tmp/seed/trunk/docs/deep /tmp/seed/branches /tmp/seed/tags && \
+    echo "Hello from SVN" > /tmp/seed/trunk/readme.txt && \
+    printf 'line one\nline two\n' > "/tmp/seed/trunk/docs/Grüße ü space.txt" && \
+    echo "deep file" > /tmp/seed/trunk/docs/deep/leaf.txt && \
+    head -c 70000 /dev/urandom > /tmp/seed/trunk/blob.bin && \
+    svn import -q -m "seed" /tmp/seed file:///srv/svn/repo && \
+    svn checkout -q file:///srv/svn/repo/trunk /tmp/wc && \
+    echo "Hello from SVN, revision two" > /tmp/wc/readme.txt && \
+    svn commit -q -m "second revision" /tmp/wc && \
+    rm -rf /tmp/seed /tmp/wc
+
+EXPOSE 3690
+CMD ["svnserve", "--foreground", "--daemon", "--root", "/srv/svn", "--listen-host", "0.0.0.0"]

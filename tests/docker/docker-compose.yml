@@ -219,6 +219,16 @@ services:
       testnet:
         ipv4_address: 10.99.0.45
 
+  # ── Subversion server (svnserve, svn://, login required) ──
+  svn-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.svn
+    hostname: svnserver
+    networks:
+      testnet:
+        ipv4_address: 10.99.0.46
+
   # ── Telnet server ─────────────────────────────────────────
   telnet-server:
     build:

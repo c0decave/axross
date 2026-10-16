@@ -113,11 +113,16 @@ def test_happy_menu(gopher):
 
 def test_edge_menu_host_and_port_are_never_dialled(gopher):
     """A menu entry naming another host must not make the client connect
-    there: every fetch goes to the configured server."""
+    there. It is not fetched from the configured server either (that
+    served this server's content under the other's name): it is a link to
+    its gopher:// URL, and opening it says where it points."""
     s = _session(gopher)
     gopher.files["/disk.iso"] = b"ISO"
-    assert s.open_read("/disk.iso").read() == b"ISO"
-    assert gopher.selectors[-1] == b"/disk.iso"
+    entry = {i.name: i for i in s.list_dir("/")}["disk.iso"]
+    assert entry.is_link and entry.link_target == "gopher://other.example:7070/9/disk.iso"
+    with pytest.raises(OSError, match="other.example:7070"):
+        s.open_read("/disk.iso")
+    assert b"/disk.iso" not in gopher.selectors
 
 
 @pytest.mark.parametrize(

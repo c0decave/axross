@@ -365,9 +365,9 @@ class BackendRegressionTests(unittest.TestCase):
             "alice@example.com:/remote/base/nested/file.txt",
         )
         args = session._base_args()
-        self.assertEqual(args[:2], ["rsync", "-e"])
-        self.assertIn("BatchMode=yes", args[2])
-        self.assertNotIn("StrictHostKeyChecking=no", args[2])
+        self.assertEqual(args[:3], ["rsync", "-8", "-e"])
+        self.assertIn("BatchMode=yes", args[3])
+        self.assertNotIn("StrictHostKeyChecking=no", args[3])
 
     def test_iscsi_init_connects_and_rejects_traversal(self) -> None:
         from core.iscsi_client import IscsiSession

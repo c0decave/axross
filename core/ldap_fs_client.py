@@ -531,14 +531,15 @@ class LdapFsSession(SessionLifecycle):
                 modified = ts
         except Exception:  # noqa: BLE001
             pass
-        # Size: rough estimate = total bytes of attribute values.
+        # Size: the bytes open_read returns - the entry's LDIF. An entry
+        # that cannot be rendered cannot be read either.
         size = 0
-        try:
-            for a in entry.entry_attributes:
-                for v in entry[a].values:
-                    size += len(str(v).encode("utf-8"))
-        except Exception:  # noqa: BLE001
-            pass
+        if not is_dir:
+            try:
+                ldif = entry.entry_to_ldif()
+                size = len(ldif.encode("utf-8") if isinstance(ldif, str) else ldif)
+            except _LDAP_DECODE_ERRORS:
+                pass
         return FileItem(
             name=name,
             size=size if not is_dir else 0,

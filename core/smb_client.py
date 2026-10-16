@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import importlib
+import errno
 import logging
 import os
 import posixpath
@@ -403,7 +404,20 @@ class SmbSession(SessionLifecycle):
         try:
             smbclient.rename(self._unc(src), self._unc(dst), **self._kw)
         except _SMB_FAILURES as e:
+            # Samba refuses a rename onto an existing name with
+            # STATUS_ACCESS_DENIED, not OBJECT_NAME_COLLISION: name the
+            # cause, so an overwrite can swap through a backup instead.
+            if self._exists_quietly(dst):
+                raise FileExistsError(
+                    errno.EEXIST, f"Cannot rename {src} -> {dst}: target exists ({e})", dst
+                ) from e
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+
+    def _exists_quietly(self, path: str) -> bool:
+        try:
+            return bool(smbclient.path.exists(self._unc(path), **self._kw))
+        except Exception:
+            return False
 
     def open_read(self, path: str) -> IO[bytes]:
         try:

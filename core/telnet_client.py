@@ -17,6 +17,7 @@ import select
 import shlex
 import socket
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -52,6 +53,13 @@ OPT_NAWS = 31  # Negotiate About Window Size
 OPT_LINEMODE = 34
 
 _PROMPT_MARKER = "__AXX_PROMPT__"
+
+#: Environment of every remote shell command. C.UTF-8 formats dates and
+#: numbers like C, so ls -la stays parseable, but lets ls print names
+#: outside ASCII: under LANG=C BusyBox ls printed "?" for each such byte
+#: and GNU ls on a terminal quoted them in shell-escape style.
+#: QUOTING_STYLE=literal turns GNU ls's quoting off; BusyBox ignores it.
+SHELL_ENV = "LANG=C.UTF-8 LC_ALL=C.UTF-8 QUOTING_STYLE=literal"
 _CMD_START_PREFIX = "__AXX_CMD_START_"
 _CMD_EXIT_PREFIX = "__AXX_CMD_EXIT_"
 
@@ -78,6 +86,8 @@ _LS_LINE_RE = re.compile(
 CONNECT_TIMEOUT = 15.0
 CMD_TIMEOUT = 30.0
 TRANSFER_TIMEOUT = 300.0
+#: Encoded characters per upload heredoc; larger files take several.
+MAX_HEREDOC_CHARS = 64 * 1024
 _READ_SLICE = 0.1  # select() poll interval
 MAX_READ_UNTIL_CHARS = 64 * 1024 * 1024
 # Longest IAC SB ... IAC SE the transport waits for. Real subnegotiations
@@ -435,7 +445,12 @@ class _ShellSession:
 
         self._marker_id = secrets.token_hex(8)
         self._cmd_start = f"{_CMD_START_PREFIX}{self._marker_id}__"
-        self._cmd_exit_re = re.compile(rf"{re.escape(_CMD_EXIT_PREFIX)}{self._marker_id}_(\d+)__")
+        # Every command's markers also carry its sequence number: a late
+        # answer to an earlier command is never taken for this one's.
+        self._seq = 0
+        # One command at a time on the shell (a liveness probe from the
+        # GUI thread must not interleave with a transfer).
+        self._lock = threading.RLock()
         self._login(timeout)
         self._setup_prompt()
 
@@ -629,7 +644,7 @@ class _ShellSession:
             # --- prompt + locale + alias hardening ---
             f"PS1=$(printf '{_PROMPT_MARKER}\\n'); export PS1",
             "export PS2=''",
-            "export LANG=C LC_ALL=C TERM=dumb",
+            f"export {SHELL_ENV} TERM=dumb",
             "unalias ls 2>/dev/null; true",
             "stty -echo 2>/dev/null; true",
             f"echo '{_PROMPT_MARKER}'",
@@ -656,27 +671,32 @@ class _ShellSession:
         For multi-line commands (heredocs), the exit marker is placed on its
         own line after the command to avoid breaking heredoc delimiters.
         """
-        mid = self._marker_id
-        exit_marker_echo = f'"{_CMD_EXIT_PREFIX}{mid}_$?__"'
-        if "\n" in cmd:
-            # Multi-line command (heredoc): exit echo must be on its own line
-            wrapped = f"echo '{self._cmd_start}'\n{cmd}\necho {exit_marker_echo}"
-        else:
-            wrapped = f"echo '{self._cmd_start}'; {cmd} 2>&1; echo {exit_marker_echo}"
-        self._transport.send(wrapped)
+        with self._lock:
+            self._seq += 1
+            tag = f"{self._marker_id}_{self._seq}"
+            start = f"{_CMD_START_PREFIX}{tag}__"
+            exit_re = re.compile(rf"{re.escape(_CMD_EXIT_PREFIX)}{tag}_(\d+)__")
+            exit_marker_echo = f'"{_CMD_EXIT_PREFIX}{tag}_$?__"'
+            if "\n" in cmd:
+                # Multi-line command (heredoc): exit echo must be on its own line
+                wrapped = f"echo '{start}'\n{cmd}\necho {exit_marker_echo}"
+            else:
+                wrapped = f"echo '{start}'; {cmd} 2>&1; echo {exit_marker_echo}"
+            self._transport.send(wrapped)
 
-        # Read until exit marker
-        try:
-            text, m = self._transport.read_until_re(self._cmd_exit_re, timeout=timeout)
-        except TimeoutError:
-            raise TimeoutError(f"Command timed out: {cmd[:80]!r}")
+            # Read until this command's exit marker; answers to earlier
+            # commands that arrive late are skipped over.
+            try:
+                text, m = self._transport.read_until_re(exit_re, timeout=timeout)
+            except TimeoutError:
+                raise TimeoutError(f"Command timed out: {cmd[:80]!r}")
 
         exit_code = int(m.group(1))
 
-        # Extract output between start marker and exit marker
-        start_idx = text.find(self._cmd_start)
+        # Extract output between this command's start marker and exit marker
+        start_idx = text.rfind(start, 0, m.start())
         if start_idx != -1:
-            output = text[start_idx + len(self._cmd_start) : m.start()]
+            output = text[start_idx + len(start) : m.start()]
         else:
             output = text[: m.start()]
 
@@ -1101,12 +1121,29 @@ class _SpooledWriter:
             eof += "_"
         return eof
 
+    def _upload_chunked(self, data: bytes, qpath: str, raw_per_heredoc: int, encode, decoder):
+        """Send *data* as heredocs of at most MAX_HEREDOC_CHARS encoded
+        characters in short lines: the first truncates (unless appending),
+        the rest append. One multi-megabyte line through the interactive
+        shell lost input now and then (see _upload_base64)."""
+        starts = range(0, len(data), raw_per_heredoc) if data else [0]
+        for index, start in enumerate(starts):
+            text = encode(data[start : start + raw_per_heredoc])
+            redirect = ">>" if (self._append or index) else ">"
+            eof = self._safe_eof(text)
+            cmd = f"{decoder} {redirect} {qpath} << '{eof}'\n{text}\n{eof}"
+            self._shell.execute_checked(cmd, timeout=TRANSFER_TIMEOUT)
+
     def _upload_base64(self, data: bytes, qpath: str) -> None:
-        encoded = base64.b64encode(data).decode("ascii")
-        redirect = ">>" if self._append else ">"
-        eof = self._safe_eof(encoded)
-        cmd = f"base64 -d {redirect} {qpath} << '{eof}'\n{encoded}\n{eof}"
-        self._shell.execute_checked(cmd, timeout=TRANSFER_TIMEOUT)
+        # 76-character lines (57 bytes each), never one line of the whole
+        # file: a 4 MB line through the shell's terminal lost input.
+        self._upload_chunked(
+            data,
+            qpath,
+            57 * (MAX_HEREDOC_CHARS // 77),
+            lambda b: base64.encodebytes(b).decode("ascii").rstrip("\n"),
+            "base64 -d",
+        )
 
     def _upload_uuencode(self, data: bytes, qpath: str) -> None:
         # ``uudecode -o`` writes/overwrites the output file — there's
@@ -1129,11 +1166,12 @@ class _SpooledWriter:
         self._shell.execute_checked(cmd, timeout=TRANSFER_TIMEOUT)
 
     def _upload_xxd(self, data: bytes, qpath: str) -> None:
-        hex_data = data.hex()
-        redirect = ">>" if self._append else ">"
-        eof = self._safe_eof(hex_data)
-        cmd = f"xxd -r -p {redirect} {qpath} << '{eof}'\n{hex_data}\n{eof}"
-        self._shell.execute_checked(cmd, timeout=TRANSFER_TIMEOUT)
+        # xxd -r -p ignores line breaks: 76 hex digits (38 bytes) a line.
+        def encode(b: bytes) -> str:
+            h = b.hex()
+            return "\n".join(h[i : i + 76] for i in range(0, len(h), 76))
+
+        self._upload_chunked(data, qpath, 38 * (MAX_HEREDOC_CHARS // 77), encode, "xxd -r -p")
 
     def _upload_raw(self, data: bytes, qpath: str) -> None:
         """Text-only fallback via cat heredoc. Only works for text data."""

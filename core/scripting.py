@@ -343,8 +343,13 @@ def open_url(url: str, **kwargs: Any) -> FileBackend:
 
     init_kwargs: dict[str, _Any] = dict(kwargs)
     init_kwargs.setdefault("host", parts.hostname or "")
+    # A scheme with its own port comes before the registry default:
+    # nntp's default is 563 (NNTPS), which plain nntp:// must not inherit.
+    scheme_port = {"nntp": 119, "nntps": 563, "nntp+ssl": 563}.get(raw_scheme)
     if parts.port:
         init_kwargs.setdefault("port", parts.port)
+    elif scheme_port:
+        init_kwargs.setdefault("port", scheme_port)
     elif info.default_port:
         init_kwargs.setdefault("port", info.default_port)
     if parts.username:

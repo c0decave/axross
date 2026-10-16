@@ -21,6 +21,7 @@ Requires: ``pip install axross[postgres]`` — psycopg>=3.
 
 from __future__ import annotations
 
+import errno
 import logging
 import threading
 from datetime import datetime, timezone
@@ -102,16 +103,41 @@ class PostgresFsSession(DbFsBackend):
                 params = [("host", host), ("port", port)]
             params += [("user", username), ("password", password), ("dbname", database)]
             self._dsn = " ".join(f"{k}={_dsn_quote(v)}" for k, v in params)
-            self._conn = psycopg.connect(self._dsn, autocommit=True)
-            self._lock = threading.RLock()
-            with self._lock, self._conn.cursor() as cur:
-                cur.execute(_SCHEMA)
+            self._conn = None
+            try:
+                self._conn = psycopg.connect(self._dsn, autocommit=True)
+                self._lock = threading.RLock()
+                self._ensure_schema()
+            except psycopg.Error as exc:
+                if self._conn is not None:
+                    self._conn.close()
+                first_line = (str(exc).strip().splitlines() or [type(exc).__name__])[0]
+                if isinstance(exc, psycopg.errors.InsufficientPrivilege):
+                    raise PermissionError(
+                        errno.EACCES,
+                        f"PostgreSQL {database}: no axross_files table and no right to "
+                        f"create it ({first_line})",
+                    ) from exc
+                raise OSError(f"PostgreSQL {host}:{port}/{database}: {first_line}") from exc
         except BaseException:
             if self._tunnel is not None:
                 self._tunnel.close()
             raise
         self._display = f"postgres://{username}@{host}:{port}/{database}"
         log.info("PostgreSQL-FS connected: %s", self._display)
+
+    def _ensure_schema(self) -> None:
+        """Create the table only when it is missing.
+
+        PostgreSQL checks the schema's CREATE privilege before it looks
+        for the table, so CREATE TABLE IF NOT EXISTS locked out a role
+        that may only read an existing vault.
+        """
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('axross_files')")
+            row = cur.fetchone()
+            if row is None or row[0] is None:
+                cur.execute(_SCHEMA)
 
     @property
     def name(self) -> str:

@@ -39,10 +39,13 @@ WORKDIR /app
 #     import-presence coverage would quietly disappear in the container.
 #   - rsync/netcat/nfs-common/open-iscsi back the protocol tests that
 #     talk to the lab containers in docker-compose.yml.
+#   - subversion provides `svn`, which the SVN backend shells out to
+#     (tests against the lab svn-server and svn.apache.org).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         binutils \
         rsync \
+        subversion \
         netcat-openbsd \
         nfs-common \
         open-iscsi \

@@ -436,6 +436,9 @@ class BackendInfo:
     class_name: str  # e.g. "FtpSession"
     default_port: int = 0
     required_extra: str | None = None  # pip extra name, e.g. "smb"
+    # What a backend without a pip extra needs, e.g. "the svn command":
+    # named when it is unavailable.
+    install_hint: str | None = None
     # A bool, or an _ImportProbe that is evaluated when ``available`` is
     # first read (see the property below the class).
     available: InitVar[object] = True
@@ -502,11 +505,13 @@ def load_backend_class(protocol_id: str):
     if info is None:
         raise ValueError(f"Unknown protocol: {protocol_id}")
     if not info.available:
-        extra = info.required_extra or protocol_id
-        raise ImportError(
-            f"Backend '{info.display_name}' is not available. "
-            f"Install it with: pip install axross[{extra}]"
-        )
+        if info.required_extra:
+            hint = f"Install it with: pip install axross[{info.required_extra}]"
+        elif info.install_hint:
+            hint = f"It needs {info.install_hint}."
+        else:
+            hint = "Its dependencies are missing."
+        raise ImportError(f"Backend '{info.display_name}' is not available. {hint}")
     mod = importlib.import_module(info.module)
     return getattr(mod, info.class_name)
 
@@ -650,6 +655,7 @@ def init_registry() -> None:
             class_name="RsyncSession",
             default_port=873,
             available=_check_command_available("rsync"),
+            install_hint="the rsync command",
             capabilities=RSYNC_CAPS,
             credential_kind=CredentialKind.PASSWORD,
         )
@@ -665,6 +671,7 @@ def init_registry() -> None:
             default_port=2049,
             available=_check_command_available("mount", "umount")
             and _check_any_command_available("mount.nfs", "mount.nfs4", "mount"),
+            install_hint="the mount and umount commands with NFS support (nfs-utils)",
             capabilities=NFS_CAPS,
             credential_kind=CredentialKind.NONE,
         )
@@ -769,6 +776,7 @@ def init_registry() -> None:
             class_name="IscsiSession",
             default_port=3260,
             available=_check_command_available("iscsiadm", "mount", "umount", "blkid"),
+            install_hint="the iscsiadm, mount, umount and blkid commands (open-iscsi)",
             capabilities=ISCSI_CAPS,
             credential_kind=CredentialKind.PASSWORD,
         )
@@ -910,6 +918,7 @@ def init_registry() -> None:
             # No pip dep — uses the system svn binary.
             # (Arch: pacman -S subversion · Debian: apt install subversion)
             available=_check_command_available("svn"),
+            install_hint="the svn command (Subversion)",
             capabilities=GOPHER_CAPS,  # read-only, no chmod/symlink/atime
             credential_kind=CredentialKind.PASSWORD,
         )
@@ -951,6 +960,7 @@ def init_registry() -> None:
             default_port=514,
             # No pip dep — uses the system rsh binary (Debian: rsh-client).
             available=_check_command_available("rsh"),
+            install_hint="the rsh command",
             capabilities=TELNET_CAPS,  # shell-out semantics, like Telnet
             credential_kind=CredentialKind.NONE,  # host-based auth via .rhosts
         )
@@ -1114,6 +1124,7 @@ def init_registry() -> None:
                 "simple-mtpfs",
                 "go-mtpfs",
             ),
+            install_hint="one of the jmtpfs, simple-mtpfs or go-mtpfs commands",
             capabilities=MTP_CAPS,
             credential_kind=CredentialKind.NONE,
         )

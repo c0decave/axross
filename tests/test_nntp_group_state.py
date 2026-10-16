@@ -60,6 +60,8 @@ class _StatefulNntp:
             elif verb == "GROUP" and arg in GROUPS:
                 current = arg
                 out = f"211 {GROUPS[arg]} 1 {GROUPS[arg]} {arg}\r\n"
+            elif verb == "GROUP":
+                out = "411 no such newsgroup\r\n"
             elif verb == "OVER" and current:
                 low, _, high = arg.partition("-")
                 rows = "".join(

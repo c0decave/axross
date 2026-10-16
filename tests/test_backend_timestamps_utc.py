@@ -299,7 +299,7 @@ def test_azure_blob_listing_and_stat_keep_the_zone(berlin):
 
     blob = SimpleNamespace(name="f.txt", size=2, last_modified=REMOTE_UTC)
     container = SimpleNamespace(
-        walk_blobs=lambda name_starts_with="", delimiter="/": iter([blob]),
+        walk_blobs=lambda name_starts_with="", include=None, delimiter="/": iter([blob]),
         get_blob_client=lambda key: SimpleNamespace(
             get_blob_properties=lambda: SimpleNamespace(size=2, last_modified=REMOTE_UTC)
         ),

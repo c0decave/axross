@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import errno
 import functools
 import io
 import logging
@@ -337,6 +338,7 @@ class _FtpProxyMixin:
                     conn = self.context.wrap_socket(  # type: ignore[attr-defined]
                         conn,
                         server_hostname=self.host,
+                        session=_control_session(self),
                     )
             except Exception:
                 conn.close()
@@ -402,8 +404,26 @@ class _FTP(_LenientListingMixin, FTP):
     """Plain FTP with lenient listing decoding."""
 
 
+def _control_session(ftp) -> object | None:
+    """The control connection's TLS session, for the data socket to resume.
+
+    Servers that require session reuse (vsftpd's require_ssl_reuse=YES by
+    default, test.rebex.net) refuse a data connection that negotiates a
+    session of its own: "425 ... TLS session resumption required"."""
+    return getattr(getattr(ftp, "sock", None), "session", None)
+
+
 class _FTP_TLS(_LenientListingMixin, FTP_TLS):
-    """FTPS with lenient listing decoding."""
+    """FTPS with lenient listing decoding and TLS session reuse on data."""
+
+    def ntransfercmd(self, cmd, rest=None):
+        # ftplib's FTP_TLS.ntransfercmd wraps without session=.
+        conn, size = FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(
+                conn, server_hostname=self.host, session=_control_session(self)
+            )
+        return conn, size
 
 
 class _ProxyFTP(_FtpProxyMixin, _LenientListingMixin, FTP):
@@ -696,6 +716,10 @@ class FtpSession(SessionLifecycle):
             names = ftp.nlst(path)
         except error_perm as e:
             raise OSError(f"Cannot list {path}: {e}") from e
+        # vsftpd answers NLST of a missing folder with an empty listing,
+        # not 550: an empty answer counts only when CWD reaches the folder.
+        if not names and not self._cwd_reaches(ftp, path):
+            raise FileNotFoundError(errno.ENOENT, "No such directory", path)
 
         # A Unix-style LIST line carries type, mode, owner, size and date,
         # so an entry it names needs no probe of its own; only a regular
@@ -819,23 +843,52 @@ class FtpSession(SessionLifecycle):
                 pass
 
         # Fallback: SIZE + MDTM + CWD probe
+        size_known = False
         try:
             size = ftp.size(path) or 0
+            size_known = True
+        except UnicodeEncodeError:
+            raise  # a name the session encoding cannot carry: not "found"
+        except ValueError:
+            size_known = True  # a 213 reply ftplib cannot parse: the file is there
         except Exception:
             pass
 
-        modified = self._mdtm(ftp, path) or modified
+        mdtm = self._mdtm(ftp, path)
+        modified = mdtm or modified
+        is_dir = self._cwd_reaches(ftp, path)
 
-        # Check if directory
+        # Every probe refused: the path is missing - unless the parent's
+        # listing names it (a server that allows SIZE in binary mode only
+        # and has no MDTM refuses both for an existing file).
+        if not (size_known or mdtm or is_dir) and not self._parent_lists(ftp, path):
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
+
+        return FileItem(name=name, size=size, modified=modified, is_dir=is_dir)
+
+    @staticmethod
+    def _cwd_reaches(ftp: FTP, path: str) -> bool:
+        """True when CWD into *path* succeeds; the working folder is restored."""
         try:
             old_cwd = ftp.pwd()
             ftp.cwd(path)
             ftp.cwd(old_cwd)
-            is_dir = True
+            return True
         except error_perm:
-            is_dir = False
+            return False
 
-        return FileItem(name=name, size=size, modified=modified, is_dir=is_dir)
+    @staticmethod
+    def _parent_lists(ftp: FTP, path: str) -> bool:
+        """True when the NLST of *path*'s parent names it."""
+        trimmed = path.rstrip("/")
+        name = posixpath.basename(trimmed)
+        if not name:
+            return True  # the root
+        try:
+            names = ftp.nlst(posixpath.dirname(trimmed) or "/")
+        except error_perm:
+            return False
+        return any(posixpath.basename(n.rstrip("/")) == name for n in names)
 
     @_ftp_errors_as_oserror
     @serialized
@@ -872,6 +925,8 @@ class FtpSession(SessionLifecycle):
             return True
         except error_perm:
             pass
+        except UnicodeEncodeError:
+            raise  # UnicodeEncodeError is a ValueError, but not a 213 reply
         except ValueError:
             # ftplib's size() int()s the reply text: "213 abc" is a success
             # reply (the file is there) with a size it cannot parse.

@@ -20,6 +20,7 @@ Authentication:
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 import posixpath
@@ -214,11 +215,24 @@ class NntpSession(SessionLifecycle):
         self._group_info_cache[group] = info
         return info
 
-    def _list_articles(self, group: str) -> list[FileItem]:
+    def _select_or_missing(self, group: str) -> tuple[int, int, int]:
+        """``_ensure_group``, with the server's "411 no such newsgroup" as
+        FileNotFoundError and any other failure as OSError."""
+        from core.nntp_lib import NntpResponseError
+
         try:
-            count, low, high = self._ensure_group(group)
+            return self._ensure_group(group)
+        except NntpResponseError as exc:
+            if exc.code == 411:
+                raise FileNotFoundError(errno.ENOENT, "No such newsgroup", "/" + group) from exc
+            raise OSError(f"NNTP GROUP {group}: {exc}") from exc
+        except OSError:
+            raise
         except Exception as exc:
             raise OSError(f"NNTP GROUP {group}: {exc}") from exc
+
+    def _list_articles(self, group: str) -> list[FileItem]:
+        count, low, high = self._select_or_missing(group)
         # Most-recent window: [max(low, high - window + 1) .. high].
         if high < low:
             return []
@@ -256,7 +270,8 @@ class NntpSession(SessionLifecycle):
             )
         parts = path.strip("/").split("/")
         if len(parts) == 1:
-            # Group node
+            # Group node: the server says whether it exists.
+            self._select_or_missing(parts[0])
             return FileItem(
                 name=parts[0],
                 is_dir=True,
@@ -300,7 +315,9 @@ class NntpSession(SessionLifecycle):
 
     def is_dir(self, path: str) -> bool:
         path = self.normalize(path)
-        return path == "/" or "/" not in path.strip("/")
+        if path == "/":
+            return True
+        return "/" not in path.strip("/") and self.exists(path)
 
     def exists(self, path: str) -> bool:
         try:

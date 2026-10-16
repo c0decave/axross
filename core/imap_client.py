@@ -18,6 +18,7 @@ import email.errors
 import email.header
 import email.policy
 import contextlib
+import errno
 import email.utils
 import functools
 import imaplib
@@ -525,6 +526,10 @@ class ImapSession(SessionLifecycle):
             and getattr(self, "_selected_readonly", True) == readonly
         ):
             return
+        # A failed SELECT deselects whatever was selected (RFC 3501
+        # 6.3.1): forget it first, so the next call selects again instead
+        # of sending FETCH in the authenticated state.
+        self._selected_mailbox = None
         typ, data = imap.select(encoded, readonly=readonly)
         if typ != "OK":
             raise OSError(f"Cannot select mailbox {mailbox!r}: {data}")
@@ -694,7 +699,12 @@ class ImapSession(SessionLifecycle):
         if parsed == (None,):
             return self._list_mailboxes()
         if len(parsed) == 1:
-            return self._list_messages(parsed[0])
+            try:
+                return self._list_messages(parsed[0])
+            except OSError:
+                if self._is_hierarchy_only(parsed[0]):
+                    return []
+                raise
         if len(parsed) == 2:
             mailbox, uid = parsed
             if uid is None:
@@ -726,8 +736,11 @@ class ImapSession(SessionLifecycle):
             name = _imap_utf7_decode(name_bytes)
             mailbox_names.add(name)
 
-            # Skip \Noselect mailboxes
-            if "\\Noselect" in flags:
+            # Skip names that cannot be opened: \Noselect, and \NonExistent
+            # (RFC 5258, implies \Noselect) - Dovecot's deleted parent of
+            # living sub-mailboxes.
+            lowered = flags.lower()
+            if "\\noselect" in lowered or "\\nonexistent" in lowered:
                 continue
 
             items.append(
@@ -982,20 +995,30 @@ class ImapSession(SessionLifecycle):
                     raise OSError(f"Cannot stat message UID {uid}: {data}")
                 size = 0
                 modified = datetime.fromtimestamp(0)
+                if not any(part for part in data or ()):
+                    # UID FETCH of a UID that is not there answers OK, no data.
+                    raise FileNotFoundError(errno.ENOENT, "No such message", path)
                 for response_part in data:
+                    # A reply with a literal arrives as a (line, literal)
+                    # tuple; one without - the usual answer to RFC822.SIZE
+                    # INTERNALDATE - as plain bytes.
                     if isinstance(response_part, tuple):
                         line = response_part[0]
-                        if isinstance(line, bytes):
-                            line = line.decode("ascii", errors="replace")
-                        sm = re.search(r"RFC822\.SIZE\s+(\d+)", line)
-                        if sm:
-                            size = int(sm.group(1))
-                        dm = re.search(r'INTERNALDATE\s+"([^"]+)"', line)
-                        if dm:
-                            try:
-                                modified = _internaldate(dm.group(1))
-                            except Exception:
-                                pass
+                    elif isinstance(response_part, (bytes, str)):
+                        line = response_part
+                    else:
+                        continue
+                    if isinstance(line, bytes):
+                        line = line.decode("ascii", errors="replace")
+                    sm = re.search(r"RFC822\.SIZE\s+(\d+)", line)
+                    if sm:
+                        size = int(sm.group(1))
+                    dm = re.search(r'INTERNALDATE\s+"([^"]+)"', line)
+                    if dm:
+                        try:
+                            modified = _internaldate(dm.group(1))
+                        except Exception:
+                            pass
                 return FileItem(name=leaf_name, size=size, modified=modified)
             else:
                 # It's the attachment directory for this UID
@@ -1070,22 +1093,7 @@ class ImapSession(SessionLifecycle):
             raise OSError("Cannot remove root")
 
         if len(parsed) == 1:
-            # Delete mailbox
-            mailbox = parsed[0]
-            imap = self._ensure_connected()
-            # Unselect current mailbox if it's the one being deleted
-            if self._selected_mailbox == mailbox:
-                try:
-                    imap.close()
-                except Exception:
-                    pass
-                self._selected_mailbox = None
-            encoded = _imap_utf7_encode(mailbox).decode("ascii")
-            typ, data = imap.delete(encoded)
-            if typ != "OK":
-                raise OSError(f"Cannot delete mailbox {mailbox!r}: {data}")
-            self._mailbox_cache = None
-            log.info("Deleted mailbox: %s", mailbox)
+            self._remove_mailbox_tree(parsed[0], path, recursive)
             return
 
         if len(parsed) >= 3:
@@ -1112,6 +1120,77 @@ class ImapSession(SessionLifecycle):
             return
 
         raise OSError(f"Cannot remove: {path!r}")
+
+    def _is_hierarchy_only(self, mailbox: str) -> bool:
+        """A name that only holds sub-mailboxes and cannot be opened.
+
+        Another client's single DELETE of a parent leaves one behind; the
+        lab Dovecot lists it as plain \\HasChildren and refuses SELECT.
+        """
+        prefix = mailbox + self._hierarchy_sep
+        if not any(name.startswith(prefix) for name in self._mailbox_names()):
+            return False
+        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        typ, _ = self._ensure_connected().status(encoded, "(MESSAGES)")
+        return typ != "OK"
+
+    def _message_count(self, mailbox: str) -> int:
+        """Messages in *mailbox* by STATUS; 0 for a name that cannot hold any."""
+        imap = self._ensure_connected()
+        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        typ, data = imap.status(encoded, "(MESSAGES)")
+        if typ != "OK":
+            return 0
+        raw = b" ".join(d if isinstance(d, bytes) else str(d).encode() for d in data if d)
+        match = re.search(rb"MESSAGES\s+(\d+)", raw, re.IGNORECASE)
+        return int(match.group(1)) if match else 0
+
+    def _delete_mailbox(self, mailbox: str) -> tuple[str, list]:
+        imap = self._ensure_connected()
+        # Unselect current mailbox if it's the one being deleted
+        if self._selected_mailbox == mailbox:
+            try:
+                imap.close()
+            except Exception:
+                pass
+            self._selected_mailbox = None
+        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        return imap.delete(encoded)
+
+    def _remove_mailbox_tree(self, mailbox: str, path: str, recursive: bool) -> None:
+        """Delete *mailbox*; with *recursive* its sub-mailboxes first.
+
+        A single DELETE leaves the sub-mailboxes behind (RFC 3501 6.3.4),
+        and Dovecot then lists the deleted parent as \\NonExistent.
+        """
+        prefix = mailbox + self._hierarchy_sep
+        children = sorted(
+            (name for name in self._mailbox_names() if name.startswith(prefix)),
+            key=lambda name: name.count(self._hierarchy_sep),
+            reverse=True,
+        )
+        if not recursive and (children or self._message_count(mailbox)):
+            raise OSError(
+                errno.ENOTEMPTY,
+                f"Mailbox {mailbox!r} has messages or sub-mailboxes; remove it recursively",
+                path,
+            )
+        try:
+            for child in children:
+                typ, data = self._delete_mailbox(child)
+                if typ != "OK":
+                    raise OSError(f"Cannot delete mailbox {child!r}: {data}")
+                log.info("Deleted mailbox: %s", child)
+            typ, data = self._delete_mailbox(mailbox)
+        finally:
+            self._mailbox_cache = None
+        if typ != "OK":
+            # A parent that only held the deleted sub-mailboxes is gone
+            # with the last of them.
+            if children and mailbox not in self._mailbox_names():
+                return
+            raise OSError(f"Cannot delete mailbox {mailbox!r}: {data}")
+        log.info("Deleted mailbox: %s", mailbox)
 
     @_imap_errors_as_oserror
     @serialized

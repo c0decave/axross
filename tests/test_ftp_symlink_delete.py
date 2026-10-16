@@ -39,15 +39,30 @@ class _DirFtpServer:
     ``list_style``: ``"unix"`` prints ``ls -l`` lines; ``"dos"`` prints
     IIS-style lines that carry no link information.
     ``mdtm``: answer ``MDTM`` for regular files in UTC, as vsftpd does.
+    ``missing_listing``: ``"error"`` answers a listing of a missing path
+    with 550; ``"empty"`` sends an empty listing, as vsftpd does for NLST.
+    ``size``: False refuses every ``SIZE`` (a server that allows it in
+    binary mode only).
+    ``utf8``: False refuses ``OPTS UTF8 ON``; the client then speaks latin-1.
     """
 
     def __init__(
-        self, root: Path, mlsd: str = "none", list_style: str = "unix", mdtm: bool = False
+        self,
+        root: Path,
+        mlsd: str = "none",
+        list_style: str = "unix",
+        mdtm: bool = False,
+        missing_listing: str = "error",
+        size: bool = True,
+        utf8: bool = True,
     ) -> None:
         self.root = root
         self.mlsd = mlsd
         self.list_style = list_style
         self.mdtm = mdtm
+        self.missing_listing = missing_listing
+        self.size = size
+        self.utf8 = utf8
         self.commands: list[str] = []
         self._lsock = socket.create_server(("127.0.0.1", 0))
         self.port = self._lsock.getsockname()[1]
@@ -127,7 +142,7 @@ class _DirFtpServer:
         conn.sendall(b"220 fake\r\n")
         f = conn.makefile("rb")
         for raw in f:
-            line = raw.decode().rstrip("\r\n")
+            line = raw.decode("utf-8" if self.utf8 else "latin-1").rstrip("\r\n")
             verb, _, arg = line.partition(" ")
             verb = verb.upper()
             self.commands.append(line)
@@ -136,6 +151,8 @@ class _DirFtpServer:
                 conn.sendall(b"331 pw\r\n")
             elif verb == "PASS":
                 conn.sendall(b"230 in\r\n")
+            elif verb == "OPTS" and not self.utf8 and arg.upper().startswith("UTF8"):
+                conn.sendall(b"504 no utf8 here\r\n")
             elif verb in ("OPTS", "TYPE", "NOOP"):
                 conn.sendall(b"200 ok\r\n")
             elif verb == "QUIT":
@@ -168,6 +185,10 @@ class _DirFtpServer:
                     pairs = [(os.path.join(real, n), n) for n in names]
                 elif os.path.lexists(real):
                     pairs = [(real, posixpath.basename(virt))]
+                elif self.missing_listing == "empty":
+                    self._send_data(conn, data_l, [])
+                    data_l = None
+                    continue
                 else:
                     data_l.close()
                     data_l = None
@@ -184,7 +205,7 @@ class _DirFtpServer:
                 self._send_data(conn, data_l, out)
                 data_l = None
             elif verb == "SIZE":
-                if os.path.isfile(real):
+                if self.size and os.path.isfile(real):
                     conn.sendall(f"213 {os.path.getsize(real)}\r\n".encode())
                 else:
                     conn.sendall(b"550 no\r\n")

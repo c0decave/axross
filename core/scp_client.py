@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import errno
 import hashlib
 import io
 import logging
@@ -52,6 +53,7 @@ log = logging.getLogger(__name__)
 # Reuse parsers from telnet_client (they are module-level functions)
 # ---------------------------------------------------------------------------
 from core.telnet_client import (  # noqa: E402 — re-using telnet shell-output parsers
+    SHELL_ENV,
     _parse_df,
     _parse_ls_la,
     _parse_stat_gnu,
@@ -85,8 +87,13 @@ class _Capabilities:
     has_chmod: bool = False
     has_readlink: bool = False
     has_df: bool = False
-    transfer_method: str = "raw"  # "base64", "raw"
+    # "base64" and "raw" (cat) move bytes through the shell; "scp" speaks
+    # the SCP protocol (scp -f / scp -t) where the shell has neither.
+    transfer_method: str = "raw"  # "base64", "raw", "scp"
     os_name: str = "unknown"
+    # Whether "VAR=value command" works. Restricted shells (Rebex's virtual
+    # shell) refuse any command that starts with an assignment.
+    has_env_prefix: bool = True
 
 
 def _probe_capabilities(exec_fn: Callable[[str, float], tuple[str, int]]) -> _Capabilities:
@@ -117,7 +124,17 @@ def _probe_capabilities(exec_fn: Callable[[str, float], tuple[str, int]]) -> _Ca
     os_output, _ = exec_fn("uname -s 2>/dev/null", 5.0)
     os_name = os_output.strip() or "unknown"
 
-    transfer_method = "base64" if has_base64 else "raw"
+    if has_base64:
+        transfer_method = "base64"
+    elif _has("cat"):
+        transfer_method = "raw"
+    else:
+        # A restricted shell (Rebex's virtual shell): no cat, no base64,
+        # but the server runs the SCP protocol itself.
+        transfer_method = "scp"
+
+    env_output, code = exec_fn(f"{SHELL_ENV} echo env-ok", 5.0)
+    has_env_prefix = code == 0 and env_output.strip() == "env-ok"
 
     caps = _Capabilities(
         has_base64=has_base64,
@@ -128,14 +145,56 @@ def _probe_capabilities(exec_fn: Callable[[str, float], tuple[str, int]]) -> _Ca
         has_df=has_df,
         transfer_method=transfer_method,
         os_name=os_name,
+        has_env_prefix=has_env_prefix,
     )
     log.info(
-        "SCP capabilities: transfer=%s, stat_gnu=%s, os=%s",
+        "SCP capabilities: transfer=%s, stat_gnu=%s, env_prefix=%s, os=%s",
         caps.transfer_method,
         caps.has_stat_gnu,
+        caps.has_env_prefix,
         caps.os_name,
     )
     return caps
+
+
+# ---------------------------------------------------------------------------
+# SCP protocol (scp -f / scp -t) for shells without cat and base64
+# ---------------------------------------------------------------------------
+_SCP_LINE_MAX = 4096
+
+
+def _scp_read_line(chan) -> bytes:
+    line = b""
+    while not line.endswith(b"\n"):
+        byte = chan.recv(1)
+        if not byte:
+            raise OSError("SCP: the connection closed in the middle of a message")
+        line += byte
+        if len(line) > _SCP_LINE_MAX:
+            raise OSError("SCP: control line too long")
+    return line
+
+
+def _scp_raise(path: str, message: bytes) -> None:
+    """Raise the error an SCP status message (after its 1/2 byte) reports."""
+    text = message.decode("utf-8", "replace").strip()
+    if "No such file" in text:
+        raise FileNotFoundError(errno.ENOENT, text, path)
+    if "Permission denied" in text:
+        raise PermissionError(errno.EACCES, text, path)
+    raise OSError(text or f"SCP: {path} refused")
+
+
+def _scp_status(chan, path: str) -> None:
+    """Read one status answer: 0 is ok, 1 and 2 carry an error line."""
+    byte = chan.recv(1)
+    if byte == b"\0":
+        return
+    if not byte:
+        raise OSError(f"SCP {path}: the connection closed without an answer")
+    if byte in (b"\1", b"\2"):
+        _scp_raise(path, _scp_read_line(chan))
+    raise OSError(f"SCP {path}: protocol error, got {byte!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +209,10 @@ class _SpooledWriter:
         remote_path: str,
         caps: _Capabilities,
         append: bool = False,
+        scp_upload: Callable[[str, bytes], None] | None = None,
     ):
         self._exec_fn = exec_fn
+        self._scp_upload = scp_upload
         self._remote_path = remote_path
         self._caps = caps
         self._append = append
@@ -183,6 +244,8 @@ class _SpooledWriter:
 
         if self._caps.transfer_method == "base64":
             self._upload_base64(data, qpath)
+        elif self._caps.transfer_method == "scp" and self._scp_upload is not None:
+            self._scp_upload(self._remote_path, data)
         else:
             self._upload_raw(data, qpath)
 
@@ -383,7 +446,8 @@ class SCPSession(SessionLifecycle):
                 self._home_dir = output.strip() or "/"
 
             # Configure locale for predictable output
-            self._exec_raw("export LANG=C LC_ALL=C", 5.0)
+            if self._caps.has_env_prefix:
+                self._exec_raw(f"export {SHELL_ENV}", 5.0)
 
             log.info(
                 "SCP session established. Home: %s, transfer: %s",
@@ -674,11 +738,19 @@ class SCPSession(SessionLifecycle):
             truncated_stderr=truncated_stderr,
         )
 
+    def _env_prefix(self) -> str:
+        """SHELL_ENV in front of a command, where the shell takes it."""
+        return f"{SHELL_ENV} " if self._caps.has_env_prefix else ""
+
     # -- FileBackend interface -----------------------------------------------
 
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
-        output = self._exec(f"LANG=C LC_ALL=C ls -la {shlex.quote(path)}")
+        output = self._exec(f"{self._env_prefix()}ls -la {shlex.quote(path)}")
+        if not output.strip():
+            # ls -la of a folder prints at least "."; Rebex's shell answers a
+            # missing path with nothing and exit 0.
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
         from core.path_policy import drop_unsafe_names
 
         return drop_unsafe_names(_parse_ls_la(output), keep_dots=True, origin=f"SCP {path}")
@@ -690,10 +762,10 @@ class SCPSession(SessionLifecycle):
             output = self._exec(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
             return _parse_stat_gnu(output)
         # Fallback: ls -ld
-        output = self._exec(f"LANG=C LC_ALL=C ls -ld {qpath}")
+        output = self._exec(f"{self._env_prefix()}ls -ld {qpath}")
         items = _parse_ls_la(output)
         if not items:
-            raise OSError(f"Cannot stat {path}: no output from ls -ld")
+            raise FileNotFoundError(errno.ENOENT, f"Cannot stat {path}: no output from ls -ld", path)
         item = items[0]
         return FileItem(
             name=posixpath.basename(path.rstrip("/")) or path,
@@ -741,6 +813,8 @@ class SCPSession(SessionLifecycle):
         bytes rather than round-tripped through ``str``.
         """
         path = self.normalize(path)
+        if self._caps.transfer_method == "scp":
+            return self._scp_read(path)
         qpath = shlex.quote(path)
         use_base64 = self._caps.transfer_method == "base64"
         tool = "base64" if use_base64 else "cat"
@@ -787,6 +861,81 @@ class SCPSession(SessionLifecycle):
         spool.seek(0)
         return spool
 
+    def _scp_channel(self, cmd: str):
+        """An exec channel running *cmd*, for the SCP protocol."""
+        chan = self._client.get_transport().open_session()
+        chan.settimeout(TRANSFER_TIMEOUT)
+        chan.exec_command(cmd)
+        return chan
+
+    def _scp_read(self, path: str) -> IO[bytes]:
+        """Read *path* with ``scp -f`` (source mode) into a spooled file."""
+        if not self._client:
+            raise ConnectionError("Not connected")
+        spool = tempfile.SpooledTemporaryFile(max_size=_READ_SPOOL_MAX)
+        try:
+            with self._lock:
+                chan = self._scp_channel(f"scp -f {shlex.quote(path)}")
+                try:
+                    chan.sendall(b"\0")
+                    header = _scp_read_line(chan)
+                    if header[:1] in (b"\1", b"\2"):
+                        _scp_raise(path, header[1:])
+                    if not header.startswith(b"C"):
+                        raise OSError(f"Cannot read {path}: not a regular file over SCP")
+                    try:
+                        size = int(header.split(b" ", 2)[1])
+                    except (IndexError, ValueError):
+                        raise OSError(f"Cannot read {path}: bad SCP header {header[:80]!r}")
+                    chan.sendall(b"\0")
+                    left = size
+                    while left:
+                        chunk = chan.recv(min(_READ_CHUNK, left))
+                        if not chunk:
+                            raise OSError(
+                                f"Cannot read {path}: the SCP stream ended after "
+                                f"{size - left} of {size} bytes"
+                            )
+                        spool.write(chunk)
+                        left -= len(chunk)
+                    _scp_status(chan, path)
+                    chan.sendall(b"\0")
+                except (paramiko.SSHException, socket.error) as exc:
+                    if isinstance(exc, FileNotFoundError | PermissionError):
+                        raise
+                    raise OSError(f"Cannot read {path}: {exc}") from exc
+                finally:
+                    chan.close()
+        except BaseException:
+            spool.close()
+            raise
+        spool.seek(0)
+        return spool
+
+    def _scp_write(self, path: str, data: bytes) -> None:
+        """Write *data* to *path* with ``scp -t`` (sink mode)."""
+        name = posixpath.basename(path)
+        if "\n" in name or "\r" in name:
+            raise OSError(f"SCP cannot carry a file name with a line break: {path!r}")
+        if not self._client:
+            raise ConnectionError("Not connected")
+        with self._lock:
+            chan = self._scp_channel(f"scp -t {shlex.quote(path)}")
+            try:
+                _scp_status(chan, path)
+                chan.sendall(b"C0644 %d %s\n" % (len(data), name.encode("utf-8")))
+                _scp_status(chan, path)
+                chan.sendall(data)
+                chan.sendall(b"\0")
+                _scp_status(chan, path)
+                chan.shutdown_write()
+            except (paramiko.SSHException, socket.error) as exc:
+                if isinstance(exc, FileNotFoundError | PermissionError):
+                    raise
+                raise OSError(f"Cannot write {path}: {exc}") from exc
+            finally:
+                chan.close()
+
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         path = self.normalize(path)
         if append:
@@ -801,10 +950,12 @@ class SCPSession(SessionLifecycle):
             )
             if len(existing) > cap:
                 raise OSError(f"SCP append: existing file exceeds {cap // (1024 * 1024)} MiB cap")
-            writer = _SpooledWriter(self._exec, path, self._caps, append=False)
+            writer = _SpooledWriter(
+                self._exec, path, self._caps, append=False, scp_upload=self._scp_write
+            )
             writer.write(existing)
             return writer
-        return _SpooledWriter(self._exec, path, self._caps)
+        return _SpooledWriter(self._exec, path, self._caps, scp_upload=self._scp_write)
 
     def normalize(self, path: str) -> str:
         return posixpath.normpath(path) or "/"

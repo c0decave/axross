@@ -36,6 +36,14 @@ except ImportError:
     ShareDirectoryClient = None  # type: ignore[assignment,misc]
 
 
+def _is_folder_placeholder(metadata) -> bool:
+    """True for the 0-byte blob a hierarchical-namespace (Data Lake)
+    account keeps for every folder: metadata hdi_isfolder=true."""
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("hdi_isfolder", "")).strip().lower() == "true"
+
+
 def _each_page_once(paged, what: str):
     """The items of an SDK listing, page by page.
 
@@ -308,9 +316,20 @@ class AzureBlobSession(SessionLifecycle):
                 credential={"account_name": account_name, "account_key": account_key},
                 **ua_kwargs,
             )
+        elif account_name:
+            # No key and no SAS: anonymous read of a public container
+            # (Microsoft's Open Datasets, any container whose access level
+            # allows it). A private container answers the first request
+            # with an authorisation error.
+            self._service = BlobServiceClient(
+                account_url=f"https://{account_name}.blob.core.windows.net",
+                credential=None,
+                **ua_kwargs,
+            )
         else:
             raise ValueError(
-                "Provide connection_string, or account_name with account_key or sas_token"
+                "Provide connection_string, or account_name (with account_key or "
+                "sas_token, or neither for a public container)"
             )
 
         try:
@@ -351,22 +370,32 @@ class AzureBlobSession(SessionLifecycle):
     def list_dir(self, path: str) -> list[FileItem]:
         prefix = self._to_prefix(path)
         items: list[FileItem] = []
+        folders: set[str] = set()
+
+        def add_folder(name: str) -> None:
+            # A hierarchical-namespace folder comes twice: as the prefix
+            # "name/" and as its placeholder blob "name".
+            if name and name not in folders:
+                folders.add(name)
+                items.append(FileItem(name=name, is_dir=True))
 
         try:
             for item in _each_page_once(
-                self._container.walk_blobs(name_starts_with=prefix, delimiter="/"),
+                self._container.walk_blobs(
+                    name_starts_with=prefix, delimiter="/", include=["metadata"]
+                ),
                 f"Cannot list {path}",
             ):
                 # item can be BlobPrefix (virtual dir) or BlobProperties (file)
                 if hasattr(item, "prefix"):
-                    # Virtual directory
-                    dir_name = item.prefix[len(prefix) :].rstrip("/")
-                    if dir_name:
-                        items.append(FileItem(name=dir_name, is_dir=True))
+                    add_folder(item.prefix[len(prefix) :].rstrip("/"))
                 else:
                     blob_name = item.name[len(prefix) :]
                     if not blob_name or blob_name.endswith("/"):
                         continue  # directory marker or prefix itself
+                    if _is_folder_placeholder(getattr(item, "metadata", None)):
+                        add_folder(blob_name)
+                        continue
                     # Aware UTC from the SDK; FileItem converts it.
                     modified = item.last_modified or datetime.fromtimestamp(0)
                     items.append(
@@ -393,6 +422,8 @@ class AzureBlobSession(SessionLifecycle):
             blob_client = self._container.get_blob_client(key)
             props = blob_client.get_blob_properties()
             modified = props.last_modified or datetime.fromtimestamp(0)
+            if _is_folder_placeholder(getattr(props, "metadata", None)):
+                return FileItem(name=name, is_dir=True, modified=modified)
             return FileItem(
                 name=name,
                 size=as_size(props.size),
@@ -421,7 +452,14 @@ class AzureBlobSession(SessionLifecycle):
             prefix = key.rstrip("/") + "/"
             blobs = self._container.list_blobs(name_starts_with=prefix, results_per_page=1)
             page = next(blobs.by_page(), [])
-            return bool(list(page))
+            if list(page):
+                return True
+        except Exception:
+            return False
+        # An empty Data Lake folder is only its placeholder blob.
+        try:
+            props = self._container.get_blob_client(key.rstrip("/")).get_blob_properties()
+            return _is_folder_placeholder(getattr(props, "metadata", None))
         except Exception:
             return False
 

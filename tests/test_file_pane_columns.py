@@ -394,7 +394,7 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
 
     def test_edge_a_pane_not_yet_shown_keeps_its_stored_widths(self) -> None:
         # Before it is shown a pane has no real width; making room for a
-        # name there cut a stored width (test_hardening_regressions caught it).
+        # name there cut a stored width (a regression test caught it).
         pane, _ = self._pane({"version": CP.VERSION, "widths": {"1": 222}, "hidden": []})
         self._items(pane, [self.LONG * 2])
         self.assertEqual(self._widths(pane)[1], 222)

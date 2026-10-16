@@ -172,7 +172,8 @@ PROTOCOL_VERSION = "2024-11-05"
 # list is ordered newest-first.
 SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05",)
 SERVER_NAME = "axross-mcp"
-SERVER_VERSION = "0.1.0"
+# The package version, so serverInfo and /health name the axross that runs.
+from axross._version import __version__ as SERVER_VERSION  # noqa: E402
 
 # JSON-RPC 2.0 standard error codes. We use these instead of a
 # generic -32000 so MCP clients can distinguish "you sent bad args"
@@ -2303,12 +2304,22 @@ def _build_tools(
             )
             return {"entries": entries, "truncated": truncated}
 
+        def _require_links(backend, kind: str) -> None:
+            # FTP, SMB, S3, WebDAV, rsync ... have no links: say so instead
+            # of letting "object has no attribute 'symlink'" through.
+            if not callable(getattr(backend, kind, None)) or not getattr(
+                backend, f"supports_{kind}s", True
+            ):
+                what = "symbolic" if kind == "symlink" else "hard"
+                raise OSError(f"{type(backend).__name__} has no {what} links")
+
         def _symlink(args, ctx):
             backend = _resolve_backend(args)
             target = args.get("target")
             link_path = args.get("link_path")
             if not target or not link_path:
                 raise ValueError("symlink requires target + link_path")
+            _require_links(backend, "symlink")
             # The link itself must live under the root. The target is
             # intentionally allowed to be dangling or outside-root,
             # but later read/write tools resolve symlinks with
@@ -2337,6 +2348,7 @@ def _build_tools(
             link_path = args.get("link_path")
             if not target or not link_path:
                 raise ValueError("hardlink requires target + link_path")
+            _require_links(backend, "hardlink")
             # Unlike symlinks, hardlinks have no path indirection to
             # resolve later. Allowing an outside-root target would
             # create an inside-root alias to data the MCP server was

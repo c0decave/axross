@@ -20,6 +20,7 @@ working out cleanly.
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 import posixpath
@@ -206,6 +207,19 @@ def _parse_menu(raw: bytes) -> list[dict]:
             }
         )
     return entries
+
+
+#: Hosts a server puts on its own entries when it does not know its name.
+_SELF_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
+
+
+def _norm_host(host: str) -> str:
+    return (host or "").strip().lower().rstrip(".")
+
+
+def _entry_url(entry: dict) -> str:
+    """The gopher:// URL of a menu entry (RFC 4266)."""
+    return f"gopher://{entry['host']}:{entry['port']}/{entry['type']}{entry['selector']}"
 
 
 def _clean_component(text: str) -> str:
@@ -447,11 +461,23 @@ class GopherSession(SessionLifecycle):
             selector = ""
         else:
             parent_entry = self._entry_for_path(path)
-            if parent_entry is not None and parent_entry["selector"]:
+            if parent_entry is not None:
+                self._refuse_foreign(parent_entry, path)
+                # An empty selector is the server's root, not "unknown".
                 selector = parent_entry["selector"]
             else:
                 selector = self._path_to_selector(path)
         entries = self._fetch_menu(selector)
+        if path == "/":
+            self._learn_own_name(entries)
+        # A server answers a selector it does not have with an error line
+        # (type 3) and info lines: nothing to list, so the path is missing.
+        # Not cached - the selector may appear later.
+        if any(e["type"] == "3" for e in entries) and all(
+            e["type"] in _INFO_TYPES for e in entries
+        ):
+            reason = next(e["display"] for e in entries if e["type"] == "3").strip()
+            raise FileNotFoundError(errno.ENOENT, reason or "No such selector", path)
         # LRU-trim so a long browsing session against a hostile / huge
         # server doesn't grow the cache without bound.
         if len(self._dir_cache) >= DIR_CACHE_LIMIT:
@@ -506,11 +532,13 @@ class GopherSession(SessionLifecycle):
             if idx not in names:
                 continue
             is_dir = entry["type"] in _DIR_TYPES
+            foreign = self._is_foreign(entry)
             items.append(
                 FileItem(
                     name=names[idx],
                     is_dir=is_dir,
-                    is_link=False,
+                    is_link=foreign,
+                    link_target=_entry_url(entry) if foreign else "",
                     size=0,  # Gopher menus don't carry sizes
                     modified=datetime.fromtimestamp(0),
                     permissions=0o555 if is_dir else 0o444,
@@ -531,7 +559,7 @@ class GopherSession(SessionLifecycle):
             )
         entry = self._entry_for_path(path)
         if entry is None:
-            raise OSError(f"Gopher stat({path}): not found in parent menu")
+            raise FileNotFoundError(errno.ENOENT, "Not found in the parent menu", path)
         is_dir = entry["type"] in _DIR_TYPES
         return FileItem(
             name=posixpath.basename(path),
@@ -565,6 +593,7 @@ class GopherSession(SessionLifecycle):
         else:
             if entry["type"] in _DIR_TYPES:
                 raise OSError(f"Gopher: {path} is a directory")
+            self._refuse_foreign(entry, path)
             selector = entry["selector"] or self._path_to_selector(path)
         try:
             blob = self._fetch_file(selector)
@@ -573,7 +602,60 @@ class GopherSession(SessionLifecycle):
         return io.BytesIO(blob)
 
     def readlink(self, path: str) -> str:
+        """The gopher:// URL of an entry on another server."""
+        entry = self._entry_for_path(self.normalize(path))
+        if entry is not None and self._is_foreign(entry):
+            return _entry_url(entry)
         raise OSError("Gopher does not expose symlinks")
+
+    # -- entries on other servers --------------------------------------------
+    def _own_endpoints(self) -> set[tuple[str, int]]:
+        own = getattr(self, "_learned_endpoints", None)
+        if own is None:
+            own = self._learned_endpoints = {(_norm_host(self._host), self._port)}
+        return own
+
+    @staticmethod
+    def _endpoint(entry: dict) -> tuple[str, int]:
+        try:
+            port = int(entry.get("port") or 70)
+        except (TypeError, ValueError):
+            port = 70
+        return _norm_host(entry.get("host", "")), port
+
+    def _is_foreign(self, entry: dict) -> bool:
+        """True when *entry* lives on another server (host or port)."""
+        host, port = self._endpoint(entry)
+        if host in _SELF_HOSTS:
+            return False
+        return (host, port) not in self._own_endpoints()
+
+    def _refuse_foreign(self, entry: dict, path: str) -> None:
+        # Never fetched: a menu could otherwise steer axross to any host
+        # and port (gopher:// SSRF against internal services).
+        if self._is_foreign(entry):
+            raise OSError(
+                errno.EXDEV,
+                f"Points to another server ({entry['host']}:{entry['port']}); "
+                f"open a connection there: {_entry_url(entry)}",
+                path,
+            )
+
+    def _learn_own_name(self, root: list[dict]) -> None:
+        """When no root entry names the host and port axross connected to
+        (an IP, an alias, a mapped port), the root's most frequent host and
+        port is this server's own name for itself."""
+        counts: dict[tuple[str, int], int] = {}
+        own = self._own_endpoints()
+        for e in root:
+            if e["type"] in _INFO_TYPES:
+                continue
+            endpoint = self._endpoint(e)
+            if endpoint[0] in _SELF_HOSTS or endpoint in own:
+                return
+            counts[endpoint] = counts.get(endpoint, 0) + 1
+        if counts:
+            own.add(max(counts, key=counts.get))
 
     def list_versions(self, path: str) -> list:
         return []

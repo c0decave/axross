@@ -17,8 +17,8 @@ from fuzz_testkit import ScriptedServer, recv_line, stall
 STALL = object()
 
 _WRAPPED = re.compile(
-    r"^echo '(?P<start>__AXX_CMD_START_[0-9a-f]+__)'; (?P<cmd>.*) 2>&1; "
-    r'echo "(?P<exit>__AXX_CMD_EXIT_[0-9a-f]+_)\$\?__"$'
+    r"^echo '(?P<start>__AXX_CMD_START_[0-9a-f]+(?:_\d+)?__)'; (?P<cmd>.*) 2>&1; "
+    r'echo "(?P<exit>__AXX_CMD_EXIT_[0-9a-f]+(?:_\d+)?_)\$\?__"$'
 )
 
 

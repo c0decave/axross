@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend_registry import all_backends, init_registry
-from core.profiles import ConnectionProfile, ProfileManager
+from core.profiles import SIMPLE_PASSWORD_PROTOCOLS, ConnectionProfile, ProfileManager
 from core.ssh_client import SSHSession, UnknownHostKeyError
 from ui.close_corner import add_close_corner
 from ui.network_proxy_dialog import (
@@ -306,6 +306,11 @@ class ConnectionDialog(QDialog):
         self._imap_ssl.setChecked(True)
         conn_form.addRow("", self._imap_ssl)
 
+        # --- NNTP fields ---
+        self._nntp_ssl = QCheckBox("Use SSL/TLS (NNTPS, port 563)")
+        self._nntp_ssl.setChecked(True)
+        conn_form.addRow("", self._nntp_ssl)
+
         # Simple password field for non-SSH protocols
         self._simple_password = QLineEdit()
         self._simple_password.setEchoMode(QLineEdit.EchoMode.Password)
@@ -516,24 +521,7 @@ class ConnectionDialog(QDialog):
         self._btn_deploy_key.setVisible(is_ssh)
 
         # Simple password field — show for protocols that need a password/secret
-        needs_simple_pw = proto in (
-            "ftp",
-            "ftps",
-            "smb",
-            "webdav",
-            "s3",
-            "dfsn",
-            "rsync",
-            "azure_blob",
-            "azure_files",
-            "iscsi",
-            "imap",
-            "pop3",
-            "nntp",
-            "telnet",
-            "cisco-telnet",
-            "winrm",
-        )
+        needs_simple_pw = proto in SIMPLE_PASSWORD_PROTOCOLS
         self._set_form_row_visible(self._simple_password, needs_simple_pw)
         self._set_form_row_visible(self._simple_store_pw, needs_simple_pw)
         if is_s3:
@@ -594,9 +582,21 @@ class ConnectionDialog(QDialog):
 
         # IMAP
         self._set_form_row_visible(self._imap_ssl, is_imap)
+        self._set_form_row_visible(self._nntp_ssl, proto == "nntp")
 
         # Host/Port visibility
-        no_host_protos = ("webdav", "s3", "onedrive", "sharepoint", "gdrive", "dropbox")
+        # Azure: the endpoint comes from the account name or the connection
+        # string (BlobEndpoint=...); the backend never reads a host.
+        no_host_protos = (
+            "webdav",
+            "s3",
+            "onedrive",
+            "sharepoint",
+            "gdrive",
+            "dropbox",
+            "azure_blob",
+            "azure_files",
+        )
         needs_host = proto not in no_host_protos
         self._set_form_row_visible(self._host, needs_host)
         self._set_form_row_visible(self._port, needs_host)
@@ -745,6 +745,7 @@ class ConnectionDialog(QDialog):
         self._iscsi_mount_point.setText(p.iscsi_mount_point)
         # IMAP
         self._imap_ssl.setChecked(p.imap_ssl)
+        self._nntp_ssl.setChecked(p.nntp_ssl)
 
         mode = getattr(p, "proxy_mode", "custom")
         self._reset_proxy_fields()
@@ -850,6 +851,7 @@ class ConnectionDialog(QDialog):
         self._iscsi_target_iqn.clear()
         self._iscsi_mount_point.clear()
         self._imap_ssl.setChecked(True)
+        self._nntp_ssl.setChecked(True)
 
     def _build_profile(self) -> ConnectionProfile:
         """Build a ConnectionProfile from current field values."""
@@ -974,6 +976,7 @@ class ConnectionDialog(QDialog):
             iscsi_mount_point=self._iscsi_mount_point.text().strip(),
             # IMAP
             imap_ssl=self._imap_ssl.isChecked(),
+            nntp_ssl=self._nntp_ssl.isChecked(),
         )
         if self._loaded_profile is None:
             return ConnectionProfile(**fields)

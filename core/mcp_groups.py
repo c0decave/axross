@@ -1467,28 +1467,12 @@ INTERACTIVE_PROTOCOLS = frozenset({"dropbox", "gdrive", "onedrive", "sharepoint"
 def password_prompt_needed(profile) -> bool:
     """Whether the GUI asks for a password before connecting this profile.
 
-    Mirrors the protocol table of ``MainWindow._connect_profile``
-    (ui/main_window.py), which is Qt code: SFTP/SCP with password auth, S3
-    with an access key, WebDAV, FTP(S), SMB, native rsync, Azure, iSCSI and
-    IMAP. Over MCP that password can only come from the keyring.
+    The decision Quick Connect makes (core.profiles.password_needed); over
+    MCP that password can only come from the keyring.
     """
-    proto = getattr(profile, "protocol", "")
-    if proto in ("sftp", "scp"):
-        return getattr(profile, "auth_type", "password") == "password"
-    if proto == "s3":
-        return bool(getattr(profile, "username", ""))
-    if proto == "rsync":
-        return not getattr(profile, "rsync_ssh", False)
-    return proto in (
-        "webdav",
-        "ftp",
-        "ftps",
-        "smb",
-        "azure_blob",
-        "azure_files",
-        "iscsi",
-        "imap",
-    )
+    from core.profiles import password_needed
+
+    return password_needed(profile)
 
 
 def openable(profile) -> tuple[bool, str]:

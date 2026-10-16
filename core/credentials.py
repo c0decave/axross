@@ -23,7 +23,9 @@ _keyring_checked = False
 _keyring_usable: bool = False
 _keyring_backend_id: str = "unknown"
 
-_UNUSABLE_MARKERS = ("chainer", "null", "fail", "plaintextkey", "nokeyring")
+# "encryptedkeyring": keyrings.alt asks for its master password with
+# getpass on the terminal, which nobody sees behind the GUI.
+_UNUSABLE_MARKERS = ("chainer", "null", "fail", "plaintextkey", "encryptedkeyring", "nokeyring")
 
 
 def _backend_identifier(backend) -> str:
@@ -32,6 +34,23 @@ def _backend_identifier(backend) -> str:
 
 def _is_unusable(backend) -> bool:
     return any(marker in _backend_identifier(backend) for marker in _UNUSABLE_MARKERS)
+
+
+def _first_usable_in_chain(backend):
+    """The chain's highest-priority usable backend, or None.
+
+    keyring picks its ChainerBackend whenever more than one backend is
+    viable; the chain writes to its first backend, so that one is used
+    directly - minus the backends that cannot work non-interactively.
+    """
+    if "chainer" not in _backend_identifier(backend):
+        return None
+    try:
+        members = list(getattr(type(backend), "backends", ()))
+    except Exception as exc:
+        log.debug("Keyring chain members not readable: %s", exc)
+        return None
+    return next((member for member in members if not _is_unusable(member)), None)
 
 
 def _try_set_real_backend() -> bool:
@@ -74,6 +93,12 @@ def _ensure_non_interactive_keyring() -> None:
             backend = keyring.get_keyring()
         finally:
             keyring_logger.setLevel(prev_level)
+
+        member = _first_usable_in_chain(backend)
+        if member is not None:
+            keyring.set_keyring(member)
+            backend = member
+            log.debug("Keyring: chain resolved to its first usable backend")
 
         ident = _backend_identifier(backend)
         # PYTHON_KEYRING_BACKEND is an explicit choice ("this backend and no
@@ -133,7 +158,8 @@ def keyring_status_message() -> str:
     return (
         f"No usable system keyring (active backend: {_keyring_backend_id}). "
         "Passwords will not be persisted until a Secret-Service or KWallet "
-        "provider is reachable. Install or unlock gnome-keyring, KWallet, "
+        "provider, or another keyring backend that needs no terminal input, "
+        "is reachable. Install or unlock gnome-keyring, KWallet, "
         "or KeePassXC Secret Service integration, then re-check the keyring."
     )
 

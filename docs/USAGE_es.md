@@ -372,8 +372,14 @@ aquí" que una pane SSH, sobre la misma conexión.
 Las contraseñas guardadas van al keyring del sistema (Secret-
 Service / KWallet / Windows Credential Locker / macOS Keychain /
 plug-in Secret-Service de KeePassXC). Axross sondea un backend
-funcional al primer uso; sin demonio, "Save in keyring" queda
-deshabilitado con una pista accionable:
+funcional al primer uso. Cualquier otro backend de keyring sirve
+también, siempre que no pida nada en la terminal (por ejemplo
+keyring-pass o keyrings.cryptfile configurados en ``keyringrc.cfg``);
+con varios instalados se usa el que keyring mismo pone primero. Los
+ficheros en claro (``PlaintextKeyring``) y el ``EncryptedKeyring`` de
+keyrings.alt, que pide su contraseña maestra en la terminal, no se
+usan. Sin un backend utilizable, "Save in keyring" queda deshabilitado
+con una pista accionable:
 
 - **Arch:** ``sudo pacman -S gnome-keyring`` (o kwallet, o keepassxc)
 - **Debian:** ``sudo apt install gnome-keyring``

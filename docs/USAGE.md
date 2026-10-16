@@ -473,8 +473,14 @@ right-click as an SSH pane, on the same connection.
 Saved passwords go to the OS keyring (Secret-Service / KWallet /
 Windows Credential Locker / macOS Keychain / KeePassXC's Secret-
 Service plug-in). Axross probes for a working backend on first
-use; on systems with no daemon running, "Save in keyring" is
-disabled with an actionable hint:
+use. Any other keyring backend works as well, as long as it needs
+no terminal input (for example keyring-pass or keyrings.cryptfile set
+up through ``keyringrc.cfg``); when several are installed, the one
+keyring itself ranks first is used. Clear-text files
+(``PlaintextKeyring``) and keyrings.alt's ``EncryptedKeyring``, which
+asks for its master password on the terminal, are not used. On
+systems with no usable backend, "Save in keyring" is disabled with an
+actionable hint:
 
 - **Arch:** ``sudo pacman -S gnome-keyring`` (or kwallet, or keepassxc)
 - **Debian:** ``sudo apt install gnome-keyring``

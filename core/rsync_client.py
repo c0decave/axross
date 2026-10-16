@@ -561,7 +561,10 @@ class RsyncSession(SessionLifecycle):
     def _base_args(self) -> list[str]:
         """Return base rsync arguments common to all commands."""
         assert self._rsync_bin is not None
-        args: list[str] = [self._rsync_bin]
+        # -8 (--8-bit-output): without a UTF-8 locale - a service, a
+        # container, an MCP server started with a bare environment - rsync
+        # prints every non-ASCII byte of a name as "\#ooo".
+        args: list[str] = [self._rsync_bin, "-8"]
 
         if self._ssh_mode:
             ssh_cmd = "ssh"
@@ -636,6 +639,10 @@ class RsyncSession(SessionLifecycle):
                 env=self._build_env(),
                 capture_output=capture,
                 text=True,
+                # UTF-8 whatever the caller's locale; a name that is not
+                # UTF-8 survives the round trip back onto the command line.
+                encoding="utf-8",
+                errors="surrogateescape",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
@@ -798,6 +805,27 @@ class RsyncSession(SessionLifecycle):
                 self._run_rsync(
                     ["-r", "--delete", tmpdir + "/", url],
                     timeout=120,
+                )
+                # Then the folder itself, now empty: deleted from its
+                # parent like a file, by an include of just its name.
+                parent_url = self._build_url(self.parent(path))
+                if not parent_url.endswith("/"):
+                    parent_url += "/"
+                name = posixpath.basename(path.rstrip("/"))
+                if not name:  # the module root itself stays
+                    return
+                self._run_rsync(
+                    [
+                        "-r",
+                        "--delete",
+                        "--include",
+                        _escape_rsync_pattern(name) + "/",
+                        "--exclude",
+                        "*",
+                        tmpdir + "/",
+                        parent_url,
+                    ],
+                    timeout=60,
                 )
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)

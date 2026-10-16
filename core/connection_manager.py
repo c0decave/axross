@@ -720,6 +720,7 @@ class ConnectionManager:
                 port=profile.port,
                 username=profile.username,
                 password=password,
+                use_tls=profile.nntp_ssl,
                 **proxy_kw,
             )
 

@@ -109,6 +109,57 @@ VALID_PROTOCOLS = {
     "mtp",
 }
 
+#: Protocols with the one plain secret field - password, S3 secret key or
+#: Azure account key. The connection dialog shows the field for exactly
+#: these, and Quick Connect asks for (or reads the saved) secret of exactly
+#: these; two hand-kept lists had drifted apart before.
+SIMPLE_PASSWORD_PROTOCOLS = frozenset(
+    {
+        "ftp",
+        "ftps",
+        "smb",
+        "webdav",
+        "s3",
+        "dfsn",
+        "rsync",
+        "azure_blob",
+        "azure_files",
+        "iscsi",
+        "imap",
+        "pop3",
+        "nntp",
+        "telnet",
+        "cisco-telnet",
+        "winrm",
+    }
+)
+
+
+
+def password_needed(profile) -> bool:
+    """Whether connecting *profile* takes a password (or secret key).
+
+    One decision for Quick Connect (asks for it) and the MCP server (needs
+    it from the keyring, it never asks). No password where nothing would
+    use one: SSH key or agent auth, anonymous S3 and NNTP (no user), rsync
+    over SSH, Azure with a connection string or SAS token of its own.
+    """
+    proto = getattr(profile, "protocol", "")
+    if proto in ("sftp", "scp"):
+        return getattr(profile, "auth_type", "password") == "password"
+    if proto not in SIMPLE_PASSWORD_PROTOCOLS:
+        return False
+    if proto in ("s3", "nntp"):
+        return bool(getattr(profile, "username", ""))
+    if proto == "rsync":
+        return not getattr(profile, "rsync_ssh", False)
+    if proto in ("azure_blob", "azure_files"):
+        return not (
+            getattr(profile, "azure_connection_string", "") or getattr(profile, "azure_sas_token", "")
+        )
+    return True
+
+
 SENSITIVE_PROFILE_FIELDS = (
     "azure_connection_string",
     "azure_sas_token",
@@ -210,6 +261,9 @@ class ConnectionProfile:
 
     # POP3 (read-only)
     pop3_ssl: bool = True
+
+    # NNTP: implicit TLS (NNTPS, 563) or plain (119)
+    nntp_ssl: bool = True
 
     # TFTP (UDP — no proxy support; opt-in file-list since TFTP
     # has no native LIST). ``tftp_filelist`` is a comma-separated
@@ -405,6 +459,9 @@ class ConnectionProfile:
         elif proto == "pop3":
             d["pop3_ssl"] = self.pop3_ssl
 
+        elif proto == "nntp":
+            d["nntp_ssl"] = self.nntp_ssl
+
         elif proto == "tftp":
             if self.tftp_filelist:
                 d["tftp_filelist"] = self.tftp_filelist
@@ -545,6 +602,8 @@ class ConnectionProfile:
             imap_ssl=_boolean("imap_ssl", True),
             # POP3 (read-only)
             pop3_ssl=_boolean("pop3_ssl", True),
+            # NNTP
+            nntp_ssl=_boolean("nntp_ssl", True),
             # TFTP
             tftp_filelist=_string("tftp_filelist"),
             tftp_filelist_enabled=_boolean("tftp_filelist_enabled"),
