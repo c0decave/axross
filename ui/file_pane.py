@@ -357,12 +357,20 @@ class _DragTableView(QTableView):
         self._pane.dragEnterEvent(event)
 
     def dragMoveEvent(self, event) -> None:
-        self._pane.dragMoveEvent(event, self._pane._folder_at(event.position().toPoint()))
+        pos = event.position().toPoint()
+        folder = self._pane._folder_at(pos)
+        self._pane.dragMoveEvent(event, folder)
+        if event.isAccepted() and not event.mimeData().hasFormat(PANE_MIME_TYPE):
+            self._pane._show_drop_hint(pos, folder, event.dropAction())
+        else:
+            self._pane._hide_drop_hint()
 
     def dragLeaveEvent(self, event) -> None:
+        self._pane._hide_drop_hint()
         self._pane.dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
+        self._pane._hide_drop_hint()
         self._pane.dropEvent(event, self._pane._folder_at(event.position().toPoint()))
 
 
@@ -408,6 +416,51 @@ def decode_transfer_payload(mime: QMimeData | None) -> dict[str, object] | None:
 
 
 _DRAG_THRESHOLD = 10  # pixels before header drag starts
+
+#: Widest the drag picture gets (logical pixels); a long name is elided.
+_DRAG_PIXMAP_MAX_WIDTH = 340
+
+
+def drag_pixmap(names: list[str], dirs: int) -> QPixmap:
+    """The picture a file drag carries under the mouse: a folder or file
+    icon, the first name (elided) and "+N more" for several items. *dirs*
+    is how many of *names* are folders."""
+    from PyQt6.QtGui import QColor, QFontMetrics
+
+    from ui.icon_provider import icon
+
+    app = QApplication.instance()
+    font = app.font() if app is not None else QLabel().font()
+    metrics = QFontMetrics(font)
+    palette = app.palette() if app is not None else QLabel().palette()
+    first = names[0] if names else ""
+    extra = f"  +{len(names) - 1} more" if len(names) > 1 else ""
+    pad, icon_size = 6, 20
+    room = _DRAG_PIXMAP_MAX_WIDTH - icon_size - 3 * pad - metrics.horizontalAdvance(extra)
+    text = metrics.elidedText(first, Qt.TextElideMode.ElideMiddle, max(40, room)) + extra
+    width = min(_DRAG_PIXMAP_MAX_WIDTH, icon_size + 3 * pad + metrics.horizontalAdvance(text))
+    height = max(icon_size, metrics.height()) + 2 * pad
+    ratio = app.devicePixelRatio() if app is not None else 1.0
+    pix = QPixmap(int(width * ratio), int(height * ratio))
+    pix.setDevicePixelRatio(ratio)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    back = QColor(palette.highlight().color())
+    back.setAlpha(210)
+    painter.setBrush(back)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawRoundedRect(0, 0, width, height, 5, 5)
+    kind = "folder" if names and dirs == len(names) else "file"
+    if len(names) > 1 and dirs:
+        kind = "folder"
+    painter.drawPixmap(pad, (height - icon_size) // 2, icon(kind, icon_size).pixmap(icon_size, icon_size))
+    painter.setPen(palette.highlightedText().color())
+    painter.setFont(font)
+    painter.drawText(QRect(icon_size + 2 * pad, 0, width - icon_size - 3 * pad, height),
+                     Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+    painter.end()
+    return pix
 
 
 class _DraggableHeader(QLabel):
@@ -783,6 +836,22 @@ class FilePaneWidget(QWidget):
         self._table.viewport().setAcceptDrops(True)
         self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
         self._table.setDropIndicatorShown(True)
+        # While a file drag is over the list: a frame around the row the
+        # drop goes into and "Move to <folder>" beside the cursor - a drop
+        # on ".." goes one folder up, which nothing else shows.
+        viewport = self._table.viewport()
+        self._drop_row_marker = QFrame(viewport)
+        self._drop_row_marker.setObjectName("axDropRowMarker")
+        self._drop_row_marker.setStyleSheet(
+            "#axDropRowMarker { border: 2px solid palette(highlight); border-radius: 3px; }")
+        self._drop_hint = QLabel(viewport)
+        self._drop_hint.setObjectName("axDropHint")
+        self._drop_hint.setStyleSheet(
+            "#axDropHint { background: palette(tooltip-base); color: palette(tooltip-text);"
+            " border: 1px solid palette(highlight); border-radius: 3px; padding: 2px 6px; }")
+        for widget in (self._drop_row_marker, self._drop_hint):
+            widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            widget.hide()
 
         # Column sizing — every divider is draggable. Name takes whatever
         # width the other columns leave, so the columns always fill the
@@ -1387,6 +1456,7 @@ class FilePaneWidget(QWidget):
             only_names=only_names,
             include_hidden=bool(getattr(self._proxy, "show_hidden", False)),
             parent=self.window(),
+            source_pane=self,
         )
         dialog.show()
         dialog.start()
@@ -1815,6 +1885,13 @@ class FilePaneWidget(QWidget):
         mime.setUrls(urls)
         mime.setData(TRANSFER_MIME_TYPE, self._encode_transfer_payload(selected, dirs))
         drag.setMimeData(mime)
+        # What moves travels with the mouse; without a pixmap only the
+        # cursor changes and nothing on screen shows the drag.
+        pix = drag_pixmap([item.name for _path, item in entries], len(dirs))
+        drag.setPixmap(pix)
+        # The cursor tip at the picture's top-left corner: a hot spot
+        # outside the picture is not portable (Windows builds a cursor).
+        drag.setHotSpot(QPoint(0, 0))
         log.debug("Starting drag with %d item(s) from %s", len(selected), self._backend.name)
         # A plain drag moves; Ctrl copies (the drop side decides from the
         # modifiers, this is only what the cursor proposes first).
@@ -1912,6 +1989,41 @@ class FilePaneWidget(QWidget):
     def dragLeaveEvent(self, event) -> None:
         self._drop_overlay.hide()
         super().dragLeaveEvent(event)
+
+    def _show_drop_hint(self, pos: QPoint, folder: str | None, action) -> None:
+        """Frame the row a drop at viewport *pos* goes into and name the
+        folder beside the cursor (*folder* None: this pane's own folder)."""
+        viewport = self._table.viewport()
+        up = False
+        if folder is not None:
+            index = self._table.indexAt(pos)
+            item = self._model.get_item(self._proxy.mapToSource(index).row())
+            up = item is not None and item.name == ".."
+            rect = self._table.visualRect(index)
+            self._drop_row_marker.setGeometry(0, rect.top(), viewport.width(), rect.height())
+            self._drop_row_marker.show()
+            self._drop_row_marker.raise_()
+        else:
+            self._drop_row_marker.hide()
+        verb = tr("Copy to {folder}") if action == Qt.DropAction.CopyAction else tr("Move to {folder}")
+        text = verb.format(folder=folder if folder is not None else self._current_path)
+        if up:
+            text += "  " + tr("(.. = one folder up)")
+        self._drop_hint.setText(text)
+        self._drop_hint.adjustSize()
+        size = self._drop_hint.size()
+        # Above the cursor: the drag picture hangs below and to the right.
+        x = min(pos.x() + 8, max(0, viewport.width() - size.width()))
+        y = pos.y() - size.height() - 8
+        if y < 0:
+            y = min(pos.y() + 40, max(0, viewport.height() - size.height()))
+        self._drop_hint.move(x, y)
+        self._drop_hint.show()
+        self._drop_hint.raise_()
+
+    def _hide_drop_hint(self) -> None:
+        self._drop_row_marker.hide()
+        self._drop_hint.hide()
 
     def dropEvent(self, event, folder: str | None = None) -> None:
         self._drop_overlay.hide()

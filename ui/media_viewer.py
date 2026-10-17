@@ -45,7 +45,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QIcon, QImage, QKeyEvent, QPainter, QPixmap, QTransform
+from PyQt6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut, QTransform
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -75,6 +75,7 @@ from PyQt6.QtWidgets import (
 from core import media_collect as MC
 from core import media_load as ML
 from core.i18n import tr
+from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
@@ -437,6 +438,19 @@ class MediaListModel(QAbstractListModel):
 
     def items(self) -> list[MC.MediaItem]:
         return list(self._items)
+
+    def remove_path(self, path: str) -> bool:
+        """Take the item at *path* out (deleted or moved away)."""
+        row = self._rows.get(path)
+        if row is None:
+            return False
+        self.beginRemoveRows(QModelIndex(), row, row)
+        del self._items[row]
+        self._rows = {item.path: r for r, item in enumerate(self._items)}
+        self._thumbs.pop(path, None)
+        self._failed.pop(path, None)
+        self.endRemoveRows()
+        return True
 
     def thumbnail_count(self) -> int:
         return len(self._thumbs)
@@ -871,6 +885,15 @@ class MediaViewer(QWidget):
             return
         self.show_index(max(0, min(index, len(self._items) - 1)))
 
+    def remove_path(self, path: str) -> None:
+        """Drop the item at *path*; the viewer stays on the next one."""
+        rows = [i for i, item in enumerate(self._items) if item.path == path]
+        if not rows:
+            return
+        items = [item for item in self._items if item.path != path]
+        current = self.current_index - sum(1 for r in rows if r < self.current_index)
+        self.set_items(items, max(0, min(current, len(items) - 1)))
+
     def show_index(self, index: int, *, page: int = 0) -> None:
         if not 0 <= index < len(self._items):
             return
@@ -1245,11 +1268,15 @@ class MediaViewerDialog(QDialog):
         only_names: set[str] | None = None,
         include_hidden: bool = False,
         parent: QWidget | None = None,
+        source_pane=None,
     ) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         VW.allow_maximize(self)
         self._backend = backend
+        # The pane the files belong to: Delete refreshes it, a drag out
+        # moves or copies as if it started there (none: no drag).
+        self._pane = source_pane if source_pane is not None else VFA.owning_pane(parent)
         self._folder = folder
         self._options = options
         self._only_names = set(only_names) if only_names is not None else None
@@ -1297,6 +1324,30 @@ class MediaViewerDialog(QDialog):
         self.stack.addWidget(self.overview)
         self.stack.addWidget(self.viewer)
         root.addWidget(self.stack, stretch=1)
+
+        # The shown file (or the selected tile): Delete, and a drag onto a
+        # pane - move, or copy with Ctrl. A zoomed-in image pans instead.
+        QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), self).activated.connect(
+            self.delete_current
+        )
+        image_view = self.viewer.image_view
+        VFA.DragOut(
+            image_view.viewport(),
+            backend,
+            self._pane,
+            path_at=lambda _pos: self._viewer_path(),
+            done=self._after_drag,
+            allowed=lambda: image_view.horizontalScrollBar().maximum() <= 0
+            and image_view.verticalScrollBar().maximum() <= 0,
+        )
+        tiles = self.overview.view
+        VFA.DragOut(
+            tiles.viewport(),
+            backend,
+            self._pane,
+            path_at=lambda pos: self._tile_path(tiles.indexAt(pos)),
+            done=self._after_drag,
+        )
 
     # -- scan -----------------------------------------------------------------
     def start(self) -> None:
@@ -1412,6 +1463,45 @@ class MediaViewerDialog(QDialog):
                     self.overview.view.scrollTo(index)
                     break
         self.overview.view.setFocus()
+
+    # -- the file itself: delete, drag out -------------------------------------
+    def _viewer_path(self) -> str | None:
+        item = self.viewer.current_item()
+        return item.path if item is not None else None
+
+    @staticmethod
+    def _tile_path(index) -> str | None:
+        item = index.data(MediaListModel.ItemRole) if index.isValid() else None
+        return item.path if item is not None else None
+
+    def current_path(self) -> str | None:
+        """The shown file in the viewer, else the selected tile's."""
+        if self.stack.currentWidget() is self.viewer:
+            return self._viewer_path()
+        return self._tile_path(self.overview.view.currentIndex())
+
+    def drag_surface(self) -> QWidget:
+        """The widget a drag out starts on, for the page that is shown."""
+        if self.stack.currentWidget() is self.viewer:
+            return self.viewer.image_view.viewport()
+        return self.overview.view.viewport()
+
+    def delete_current(self) -> None:
+        path = self.current_path()
+        if path and VFA.delete_file(self, self._backend, path, self._pane):
+            self.remove_path(path)
+
+    def _after_drag(self, path: str, action) -> None:
+        if action == Qt.DropAction.MoveAction:
+            self.remove_path(path)
+
+    def remove_path(self, path: str) -> None:
+        """*path* is gone (deleted, moved): out of the grid and the viewer."""
+        self.model.remove_path(path)
+        if self.stack.currentWidget() is self.viewer:
+            self.viewer.remove_path(path)
+            if self.viewer.current_item() is None:
+                self.show_overview()
 
     # -- teardown ---------------------------------------------------------------
     def _teardown(self) -> None:

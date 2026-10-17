@@ -159,6 +159,7 @@ class TerminalPaneWidget(QWidget):
             theme=theme_name or DEFAULT_TERMINAL_THEME,
         )
         self._terminal.data_ready.connect(self._on_input)
+        self._terminal.grid_resized.connect(self._on_grid_resized)
         inner_layout.addWidget(self._terminal, stretch=1)
 
         # Poll timer
@@ -229,7 +230,7 @@ class TerminalPaneWidget(QWidget):
             if self._profile is not None or self._transport is not None:
                 transport = self._get_transport()
                 if transport is None:
-                    self._terminal.append_output(
+                    self._terminal.message(
                         "\n--- No active connection. Connect to the host first. ---\n"
                     )
                     return
@@ -245,18 +246,23 @@ class TerminalPaneWidget(QWidget):
                             True,
                         )
                     )
+                rows, cols = self._terminal.grid_size()
                 self._session = SSHTerminalSession(
                     transport,
                     suppress_history=suppress,
+                    rows=rows,
+                    cols=cols,
                 )
             else:
                 self._session = LocalTerminalSession(cwd=self._cwd)
             self._session.start()
+            # The shell's idea of the screen is the widget's.
+            self._session.resize(*self._terminal.grid_size())
             self._read_timer.start()
             log.info("Terminal pane started: %s", self._label_text)
         except Exception as e:
             log.error("Failed to start terminal pane: %s", e)
-            self._terminal.append_output(f"\n--- Error: {e} ---\n")
+            self._terminal.message(f"\n--- Error: {e} ---\n")
 
     def _restart_session(self) -> None:
         if self._session:
@@ -323,6 +329,10 @@ class TerminalPaneWidget(QWidget):
         if self._session and self._session.is_active:
             self._session.write(data)
 
+    def _on_grid_resized(self, rows: int, cols: int) -> None:
+        if self._session and self._session.is_active:
+            self._session.resize(rows, cols)
+
     def _poll_output(self) -> None:
         if not self._session:
             return
@@ -330,16 +340,12 @@ class TerminalPaneWidget(QWidget):
             self._session.close()
             self._session = None
             self._read_timer.stop()
-            self._terminal.append_output("\n--- Session ended ---\n")
+            self._terminal.message("\n--- Session ended ---\n")
             return
 
         data = self._session.read()
         if data:
-            try:
-                text = data.decode("utf-8", errors="replace")
-            except Exception:
-                text = data.decode("latin-1")
-            self._terminal.append_output(text)
+            self._terminal.feed_bytes(data)
 
     def shutdown(self) -> None:
         if self._btn_pin.isChecked():

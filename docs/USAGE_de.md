@@ -182,6 +182,11 @@ native Protokoll sie nicht kennt.
 
 ## Editoren und Viewer
 
+Jeder Viewer, Editor und Dialog hat oben rechts zwei Buttons: [x]
+schließt ihn, der Button links daneben maximiert ihn über den ganzen
+Bildschirm und stellt die vorherige Größe wieder her. `Ctrl+M` tut
+dasselbe, ebenso der Maximize-Button der Titelleiste.
+
 - **Texteditor** (built-in) — für Dateien < 1 MB, mit Konflikt-
   Erkennung beim Speichern.
 - **Hex-Editor** — read-only; nützlich für Triage auf Remote-Dateien.
@@ -204,7 +209,12 @@ native Protokoll sie nicht kennt.
   Mausrad oder `+` / `-` Zoom, `F` Fit, `1` 100 %, `R` drehen, `S`
   Slideshow (Intervall in Sekunden; die Slideshow läuft im Kreis,
   ein Video spielt bis zum Ende), Esc zurück zur Overview, nochmal
-  Esc schließt. Funktioniert auf jedem Backend: Remote-Dateien
+  Esc schließt. **Entf** (Delete) löscht die gezeigte Datei (oder
+  das ausgewählte Tile) nach einer Rückfrage; das Bild oder ein Tile
+  auf eine Pane ziehen verschiebt es dorthin, mit Strg wird kopiert -
+  wie ein Drag aus der Pane, aus der der Viewer kam (in einem
+  hineingezoomten Bild pannt der Drag stattdessen). Der
+  Bild-Viewer kann beides auch. Funktioniert auf jedem Backend: Remote-Dateien
   werden bis zum *Open Size Limit* in ein privates Temp-Verzeichnis
   kopiert und danach gelöscht; zu große, verschlüsselte oder kaputte
   Dateien zeigen den Grund statt des Inhalts. SVG wird nur ohne
@@ -271,6 +281,17 @@ Skripte: `axross.metadata`, `axross.remove_metadata`,
   + cleart.
 - Rechtsklick auf einen Transfer für **Cancel**, **Retry**, **Open
   destination folder**.
+- Das Terminal (Dock und Terminal-Pane) ist ein VT100-/xterm-Screen:
+  Carriage Return, Cursor-Bewegungen, Erase, Scroll-Regionen und der
+  Alternate Screen funktionieren, also stehen zsh-Prompts,
+  Zeilen-Editing, `less`, `top` und Editoren an der richtigen Stelle.
+  Die Terminal-Größe der Shell ist die Größe der Terminal-Fläche und
+  folgt jedem Resize (`stty size` zeigt sie). Farben werden nicht
+  angezeigt.
+- Während eines Datei-Drags über einer Pane bekommt die Zeile, in die
+  der Drop geht, einen Rahmen, und ein Hinweis am Cursor nennt den
+  Ordner: *Move to …* oder mit Strg *Copy to …*. Die Zeile `..` ist
+  der Ordner darüber.
 
 ## Scripting & eingebettete REPL
 
@@ -422,6 +443,10 @@ Ordner (dem des aktiven Panes, wenn es lokale Dateien zeigt):
 - Stop beendet den Lauf nach dem aktuellen Schritt; New conversation
   vergisst den Verlauf. Ein anderer Ordner oder Haken startet einen
   neuen Verlauf.
+
+Im Container: `scripts/axross-podman.sh gui --llm-model DATEI.gguf`
+startet axross auf deinem Display, llama.cpp daneben und das Profil
+gleich mit ([PACKAGING.md](PACKAGING.md)).
 
 Ein MCP-Client kann dem gleichen lokalen Modell mit `--mcp-tools agent`
 (`agent_run`) eine Aufgabe übergeben; dieses Modell kann nur lesen

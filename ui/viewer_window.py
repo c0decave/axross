@@ -83,11 +83,26 @@ def _was_maximized_before_fullscreen(window: QWidget) -> bool:
     return bool(window.property(_MAXIMIZED_BEFORE_FULLSCREEN))
 
 
+_MAXIMIZE_SHORTCUT = "axMaximizeShortcut"
+
+
+def maximize_shortcut(window: QWidget) -> QShortcut:
+    """The window's one Ctrl+M shortcut, created on the first call. The
+    close corner and the viewers both ask for it: two shortcuts on one key
+    make Qt report it ambiguous and fire neither."""
+    for existing in window.findChildren(QShortcut, _MAXIMIZE_SHORTCUT):
+        if existing.parent() is window:
+            return existing
+    sc = QShortcut(QKeySequence(MAXIMIZE_KEY), window)
+    sc.setObjectName(_MAXIMIZE_SHORTCUT)
+    sc.activated.connect(lambda: toggle_maximized(window))
+    return sc
+
+
 def install_window_keys(window: QWidget, *, fullscreen: bool) -> list[QShortcut]:
     """Ctrl+M (and F11 when *fullscreen*) as window-wide shortcuts, so they
     work whichever child has the focus."""
-    shortcuts = [QShortcut(QKeySequence(MAXIMIZE_KEY), window)]
-    shortcuts[0].activated.connect(lambda: toggle_maximized(window))
+    shortcuts = [maximize_shortcut(window)]
     if fullscreen:
         sc = QShortcut(QKeySequence(FULLSCREEN_KEY), window)
         sc.activated.connect(lambda: toggle_fullscreen(window))
@@ -224,6 +239,7 @@ __all__ = [
     "install_window_keys",
     "leave_fullscreen",
     "load_state",
+    "maximize_shortcut",
     "restore_window_state",
     "save_window_state",
     "toggle_fullscreen",

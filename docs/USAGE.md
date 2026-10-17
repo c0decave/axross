@@ -209,6 +209,11 @@ native protocol doesn't support them.
 
 ## Editors and viewers
 
+Every viewer, editor and dialog has two buttons in its top-right corner:
+[x] closes it, the one left of it maximizes it over the whole screen and
+restores the size it had before. `Ctrl+M` does the same, and so does
+the title bar's Maximize button.
+
 - **Text editor** (built-in) — with conflict detection on save and
   a close button in the top-right corner.
 - **Hex editor** — useful for triage on remote files.
@@ -233,7 +238,12 @@ native protocol doesn't support them.
   and maximized state for the next open), wheel or
   `+` / `-` zoom, `F` fit, `1` 100 %, `R` rotate, `S` slideshow
   (interval in seconds; the slideshow loops, a video plays to its
-  end), Esc back to the overview, Esc again closes. Works on every
+  end), Esc back to the overview, Esc again closes. **Delete**
+  deletes the shown file (or the selected tile) after a question;
+  dragging the image or a tile onto a pane moves it there, Ctrl
+  copies - the same as a drag out of the pane the viewer came from
+  (a zoomed-in image pans instead). The image viewer does both too.
+  Works on every
   backend: remote files are copied to a private temp directory up
   to the *Open Size Limit* and removed afterwards; an item that is
   too large, encrypted or broken shows the reason instead. SVG is
@@ -298,6 +308,15 @@ Scripts: `axross.metadata`, `axross.remove_metadata`,
   indicator.
 - Right-click a transfer for **Cancel**, **Retry**, **Open
   destination folder**.
+- The terminal (dock and terminal pane) is a VT100 / xterm screen:
+  carriage return, cursor moves, erase, scroll regions and the
+  alternate screen work, so zsh prompts, line editing, `less`, `top`
+  and editors draw where they should. The shell's terminal size is the
+  size of the terminal area and follows every resize (`stty size`
+  shows it). Colours are not shown.
+- While a file drag is over a pane, the row the drop goes into gets a
+  frame and a note beside the cursor names the folder: *Move to …* or,
+  with Ctrl, *Copy to …*. The `..` row means the folder above.
 
 ## Scripting & embedded REPL
 
@@ -533,6 +552,10 @@ active pane's, when it shows local files):
   first, as what the tools read is sent there.
 - Stop ends the run after the current step; New conversation forgets
   the history. Changing the folder or a box starts a new conversation.
+
+In a container: `scripts/axross-podman.sh gui --llm-model FILE.gguf`
+runs axross on your display with llama.cpp beside it and the profile
+already set up ([PACKAGING.md](PACKAGING.md)).
 
 An MCP client can hand a task to the same local model with
 `--mcp-tools agent` (`agent_run`); that model can only read

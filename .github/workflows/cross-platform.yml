@@ -70,6 +70,10 @@ jobs:
       env:
         QT_QPA_PLATFORM: offscreen
       run: python scripts/bundle_smoke.py dist
+    - name: Open the main window on the native platform
+      # Cocoa on macOS, the desktop on Windows: the checks above never open
+      # a window, so a crash on the way to it passed every run before.
+      run: python scripts/bundle_smoke.py --native dist
     - uses: actions/upload-artifact@v4
       with:
         name: axross-slim-${{ runner.os }}-${{ runner.arch }}

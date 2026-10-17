@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
-from ui.close_corner import make_close_corner
+from ui.close_corner import make_close_corner, make_maximize_corner
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -466,6 +466,7 @@ class HexEditorDialog(QDialog):
         self._size_label.setProperty("role", "muted")
         info.addStretch()
         info.addWidget(self._size_label)
+        info.addWidget(make_maximize_corner(self))
         info.addWidget(make_close_corner(self, self._on_close))
         layout.addLayout(info)
 

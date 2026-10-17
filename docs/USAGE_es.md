@@ -190,6 +190,11 @@ cuyo protocolo nativo no las soporta.
 
 ## Editores y visores
 
+Cada visor, editor y diálogo tiene dos botones arriba a la derecha:
+[x] lo cierra, el de su izquierda lo maximiza a toda la pantalla y
+restaura el tamaño que tenía antes. `Ctrl+M` hace lo mismo, igual que
+el botón Maximize de la barra de título.
+
 - **Editor de texto** (incorporado) — para ficheros < 1 MB, con
   detección de conflictos al guardar.
 - **Editor hex** — solo lectura; útil para triage en ficheros
@@ -213,7 +218,12 @@ cuyo protocolo nativo no las soporta.
   apertura), rueda o `+` / `-` zoom, `F` fit, `1`
   100 %, `R` rotar, `S` slideshow (intervalo en segundos; la
   slideshow da la vuelta, un vídeo se reproduce hasta el final), Esc
-  vuelve a la overview, otro Esc cierra. Funciona en cualquier
+  vuelve a la overview, otro Esc cierra. **Supr** (Delete) borra el
+  fichero mostrado (o el tile seleccionado) tras una pregunta;
+  arrastrar la imagen o un tile a un pane lo mueve allí, con Ctrl se
+  copia - igual que un arrastre desde el pane del que salió el visor
+  (una imagen ampliada se desplaza en su lugar). El visor de imágenes
+  hace ambas cosas también. Funciona en cualquier
   backend: los ficheros remotos se copian a un directorio temporal
   privado hasta el *Open Size Limit* y se borran después; un
   elemento demasiado grande, cifrado o roto muestra el motivo. El SVG
@@ -282,6 +292,17 @@ sobre el contenido del fichero. Scripts: `axross.metadata`,
   Click la levanta y limpia el indicador.
 - Click derecho en una transferencia para **Cancel**, **Retry**,
   **Open destination folder**.
+- El terminal (dock y pane de terminal) es una pantalla VT100 / xterm:
+  retorno de carro, movimientos del cursor, borrado, regiones de
+  scroll y la pantalla alternativa funcionan, así que los prompts de
+  zsh, la edición de línea, `less`, `top` y los editores dibujan donde
+  deben. El tamaño de terminal de la shell es el del área del terminal
+  y sigue cada cambio de tamaño (`stty size` lo muestra). Los colores
+  no se muestran.
+- Mientras se arrastra un fichero sobre un pane, la fila donde caerá
+  queda enmarcada y una nota junto al cursor nombra la carpeta:
+  *Move to …* o, con Ctrl, *Copy to …*. La fila `..` es la carpeta de
+  arriba.
 
 ## Scripting y REPL embebida
 
@@ -435,6 +456,10 @@ mostrada arriba (la del panel activo, si muestra ficheros locales):
 - Stop termina la ejecución tras el paso actual; New conversation
   olvida el historial. Cambiar la carpeta o una casilla empieza una
   conversación nueva.
+
+En un contenedor: `scripts/axross-podman.sh gui --llm-model FICHERO.gguf`
+arranca axross en tu pantalla con llama.cpp al lado y el perfil ya
+configurado ([PACKAGING.md](PACKAGING.md)).
 
 Un cliente MCP puede pasar una tarea al mismo modelo local con
 `--mcp-tools agent` (`agent_run`); ese modelo solo puede leer

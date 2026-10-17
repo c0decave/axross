@@ -148,6 +148,13 @@ _TOOL_ICONS = {
     "x": _svg(
         '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
     ),
+    # Window corner, left of the [x]: maximize (corners out), restore (corners in).
+    "window-maximize": _svg(
+        '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
+    ),
+    "window-restore": _svg(
+        '<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>',
+    ),
     "refresh": _svg(
         '<polyline points="23 4 23 10 17 10"/>'
         '<polyline points="1 20 1 14 7 14"/>'
@@ -595,6 +602,8 @@ _ICON_COLORS: dict[str, str | None] = {
     "pack": "#d35400",  # burnt orange box
     "extensions": "#8e44ad",  # purple puzzle
     "x": "#95a5a6",  # neutral grey close cross
+    "window-maximize": "#95a5a6",  # same grey as the [x] beside it
+    "window-restore": "#95a5a6",
     # Markers — warm accents.
     "bookmark": "#4a90e2",  # blue
     "star": "#f39c12",  # gold

@@ -33,6 +33,7 @@ source tree:
 | `dist/axross-slim-x86_64.AppImage`       | ~120 MB | `scripts/build_bundle.sh slim --appimage`        |
 | `dist/axross-full-x86_64.AppImage`       | ~140 MB | `scripts/build_bundle.sh full --appimage`        |
 | `axross-mcp:latest` (Docker)             | ~180 MB | `docker build -f Dockerfile.mcp -t axross-mcp:latest .` |
+| `localhost/axross-gui:latest` (podman)   | ~990 MB | `scripts/axross-podman.sh build` (`Dockerfile.gui`) |
 
 **Sizes are realistic measurements** from a clean rebuild in a
 `/tmp` scratch dir, not hand-waves. UPX packs the slim ELF down
@@ -222,6 +223,31 @@ Fresh hosts without `appimagetool` in PATH get the tool
 auto-downloaded to `build/appimagetool-x86_64.AppImage` on first
 run; subsequent builds reuse the cached copy.
 
+### macOS binary: the first start
+
+The macOS binary (`axross-slim-macos-arm64`) is ad-hoc signed, not
+notarized: there is no Apple Developer ID behind it. A browser marks
+the download with `com.apple.quarantine`, and Gatekeeper refuses its
+first start ("Apple could not verify … is free of malware") before any
+axross code runs. Measured on macOS 27.0.1: syspolicyd logs "Prompt
+shown" and then "Adding Gatekeeper denial breadcrumb". Two ways to
+start it anyway:
+
+- After the refused start, open **System Settings → Privacy & Security**
+  and click **Open Anyway**.
+- Or in Terminal, remove only the quarantine attribute:
+
+  ```bash
+  xattr -d com.apple.quarantine ./axross-slim-macos-arm64
+  chmod +x ./axross-slim-macos-arm64
+  ./axross-slim-macos-arm64
+  ```
+
+The window needs the desktop session. Over SSH there is no screen:
+axross then says so and exits 1, where Qt used to abort with crash
+reports. Without a window, `--mcp-server` and `--script FILE` work
+anywhere.
+
 ### Docker image (`Dockerfile.mcp`)
 
 Pure-headless. No PyQt6. Installs only the subset of third-party
@@ -244,6 +270,55 @@ network-facing deploy.
 
 See the in-file comments for mTLS-protected example
 `docker run` invocations.
+
+### GUI image for podman (`Dockerfile.gui`, `scripts/axross-podman.sh`)
+
+The desktop app, the MCP server and the Agent dock in one image
+(`axross[all]`), shown on the host's Wayland or X11 display; a local
+LLM can run beside it.
+
+```bash
+scripts/axross-podman.sh build                       # localhost/axross-gui:latest
+scripts/axross-podman.sh gui                         # the window, on your display
+scripts/axross-podman.sh gui --data ~/work           # + ~/work at /data
+scripts/axross-podman.sh gui --llm-model ~/models/qwen2.5-7b-instruct-q4_k_m.gguf
+scripts/axross-podman.sh gui --llm-url http://host.containers.internal:11434/v1 --llm-name qwen2.5:7b
+scripts/axross-podman.sh mcp --llm-model M.gguf -- --mcp-tools agent --mcp-root /data
+```
+
+* **Display.** `gui` takes Wayland when `$WAYLAND_DISPLAY` names a
+  socket, else X11 (`$DISPLAY`, the socket from `/tmp/.X11-unix`); `--display
+  wayland|x11` chooses. For X11 the script writes a cookie of its own
+  (`xauth`, family "any host") into `$XDG_RUNTIME_DIR/axross-podman/`, so
+  the host's `~/.Xauthority` stays outside. `--gpu` passes `/dev/dri`;
+  without it Qt draws in software.
+* **The image.** Only the wheel built from the tree enters the final
+  stage, never the source. The build fails when a library of the Qt
+  `xcb` or `wayland` platform plugins is missing (an `ldd` check), so the
+  image cannot ship half a desktop.
+* **Isolation.** The container runs as your user (`--userns=keep-id`)
+  with every capability dropped, and sees the display socket, its home
+  (`--home`, default `~/.local/share/axross-podman/home`, mode 0700, kept
+  between runs) and `--data`. `--dbus` passes the session bus, which
+  the Secret Service keyring needs to store passwords (not part of the
+  live checks below: they never touch a real keyring).
+* **A local LLM.** `--llm-model FILE.gguf` starts llama.cpp
+  (`ghcr.io/ggml-org/llama.cpp:server`, `--jinja` for tool calling;
+  `--llm-image` for another) with the model mounted read-only, waits
+  until it has loaded the model and listens, and runs axross in that
+  container's user and network namespaces: the Agent dock and
+  `agent_run` reach it at `http://127.0.0.1:8080/v1`. Not a pod: on
+  podman 6.1 with runc 1.5.2 a pod's infra container did not start. The
+  first start adds the LLM profile `pod-llm` (or, with `--llm-url`, a
+  profile for a server that already runs) - only when the home has no
+  `llm.json` yet. The model container is removed when axross exits.
+* **MCP.** `mcp` runs `axross --mcp-server` on stdio (`podman run -i`),
+  for an MCP client on the host; arguments after `--` go to axross.
+
+Verified with podman 6.1.3: the window on X11 (Xvfb) and on Wayland
+(headless weston), the Agent's MCP tools answering with a local
+Qwen2.5-1.5B through llama.cpp, and `agent_run` from an MCP client on
+stdio.
 
 ## Cross-distro builds (glibc portability)
 

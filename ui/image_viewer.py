@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import previews as P
+from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
 
@@ -49,11 +50,18 @@ class ImageViewerDialog(QDialog):
     siblings : list[str] | None
         Other image paths in the same directory, for Prev/Next. If
         None, Prev/Next are disabled.
+    source_pane : FilePaneWidget | None
+        The pane the images belong to (default: the pane *parent* lies
+        in). Delete refreshes it, and a drag out of the viewer moves or
+        copies as if it started there; without one there is no drag.
     """
 
-    def __init__(self, backend, path: str, siblings: list[str] | None = None, parent=None) -> None:
+    def __init__(
+        self, backend, path: str, siblings: list[str] | None = None, parent=None, *, source_pane=None
+    ) -> None:
         super().__init__(parent)
         self._backend = backend
+        self._pane = source_pane if source_pane is not None else VFA.owning_pane(parent)
         self._siblings = siblings or [path]
         self._idx = self._siblings.index(path) if path in self._siblings else 0
         self._zoom = 1.0
@@ -161,10 +169,19 @@ class ImageViewerDialog(QDialog):
             (QKeySequence("r"), self._rotate_cw),
             (QKeySequence("i"), self.toggle_metadata),
             (QKeySequence("Escape"), self._escape),
+            (QKeySequence(QKeySequence.StandardKey.Delete), self.delete_current),
         ):
             sh = QShortcut(seq, self)
             sh.activated.connect(slot)
         VW.install_window_keys(self, fullscreen=True)
+        # Drag the image onto a pane: move, or copy with Ctrl.
+        VFA.DragOut(
+            self._scroll.viewport(),
+            self._backend,
+            self._pane,
+            path_at=lambda _pos: self.current_path(),
+            done=self._after_drag,
+        )
 
     # ------------------------------------------------------------------
     # Window
@@ -294,6 +311,34 @@ class ImageViewerDialog(QDialog):
     def _rotate_cw(self) -> None:
         self._rotation = (self._rotation + 90) % 360
         self._render()
+
+    # ------------------------------------------------------------------
+    # The file itself: delete, drag out
+    # ------------------------------------------------------------------
+    def current_path(self) -> str:
+        return self._siblings[self._idx]
+
+    def drag_surface(self):
+        """The widget a drag out of the viewer starts on."""
+        return self._scroll.viewport()
+
+    def delete_current(self) -> None:
+        """Delete (after a question) the shown image and go on with the next."""
+        if VFA.delete_file(self, self._backend, self.current_path(), self._pane):
+            self._drop_current()
+
+    def _after_drag(self, path: str, action) -> None:
+        # A move took the file away; a copy or a refused drop leaves it.
+        if action == Qt.DropAction.MoveAction and path == self.current_path():
+            self._drop_current()
+
+    def _drop_current(self) -> None:
+        del self._siblings[self._idx]
+        if not self._siblings:
+            self.reject()
+            return
+        self._idx = min(self._idx, len(self._siblings) - 1)
+        self._load_current()
 
     def _prev(self) -> None:
         if len(self._siblings) < 2:

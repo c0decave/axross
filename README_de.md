@@ -263,7 +263,8 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
     MCP-stdio/HTTP-Server, oder `axross --script <datei>`-CLI-
     Runner. Single-File-Binaries auf der Release-Page: Linux
     (`axross-full`, `axross-slim`), macOS auf Apple Silicon und Windows
-    x64 (`axross-slim`); AppImage und das
+    x64 (`axross-slim`) - das macOS-Binary ist nicht notarisiert, vor dem ersten Start also das Quarantine-Attribut entfernen
+    ([docs/PACKAGING.md](docs/PACKAGING.md#macos-binary-the-first-start)); AppImage und das
     `Dockerfile.mcp`-Image baut man aus dem Source
     ([docs/PACKAGING.md](docs/PACKAGING.md)), und dieses Image schließt
     PyQt6 explizit aus, um copyleft-frei zu bleiben.

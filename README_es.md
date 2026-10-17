@@ -270,7 +270,8 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
     MCP stdio/HTTP, o el ejecutador `axross --script <fichero>`.
     Binarios de un solo archivo en la página de releases: Linux
     (`axross-full`, `axross-slim`), macOS en Apple silicon y Windows x64
-    (`axross-slim`); el AppImage y la imagen `Dockerfile.mcp`
+    (`axross-slim`) - el binario de macOS no está notarizado: antes del primer arranque hay que quitarle el atributo de cuarentena
+    ([docs/PACKAGING.md](docs/PACKAGING.md#macos-binary-the-first-start)); el AppImage y la imagen `Dockerfile.mcp`
     se construyen desde el código ([docs/PACKAGING.md](docs/PACKAGING.md)),
     y esa imagen excluye PyQt6 explícitamente para mantenerse libre de
     copyleft.

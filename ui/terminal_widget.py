@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import logging
 import os
 import select
@@ -11,7 +12,7 @@ import time
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QKeyEvent, QTextCursor
+from PyQt6.QtGui import QFont, QFontMetricsF, QKeyEvent, QTextCursor
 from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
@@ -24,10 +25,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.vt_screen import DEFAULT_SCROLLBACK, MAX_ROWS, VTScreen
+
 if TYPE_CHECKING:
     import paramiko
 
 log = logging.getLogger(__name__)
+
+#: Smallest grid the widget reports to the pty: shells misbehave below it.
+MIN_GRID_COLS = 20
+MIN_GRID_ROWS = 5
 
 # Per-tab buffer cap. A malicious remote (compromised SSH server,
 # local process producing infinite stdout) could otherwise saturate
@@ -77,14 +84,19 @@ FONT_DEFAULT_PT = 10
 
 
 class TerminalEmulator(QPlainTextEdit):
-    """Simple terminal emulator widget using QPlainTextEdit.
+    """Terminal widget: shows a :class:`core.vt_screen.VTScreen`.
 
-    Handles basic ANSI escape sequences for color and cursor control.
-    Supports live font-size zoom (Ctrl+=, Ctrl+-, Ctrl+0) and a
-    pluggable theme (see :data:`TERMINAL_THEMES`).
+    Output goes into the screen (``feed_bytes`` / ``append_output``), the
+    widget shows its scrollback and its rows and puts the caret on its
+    cursor. The grid is as large as the widget: ``grid_resized(rows,
+    cols)`` tells the owner, which passes it on to the pty. Supports live
+    font-size zoom (Ctrl+=, Ctrl+-, Ctrl+0) and a pluggable theme (see
+    :data:`TERMINAL_THEMES`).
     """
 
     data_ready = pyqtSignal(bytes)
+    #: The grid changed size (rows, cols): the pty must follow.
+    grid_resized = pyqtSignal(int, int)
 
     def __init__(self, parent: QWidget | None = None, theme: str = DEFAULT_TERMINAL_THEME):
         super().__init__(parent)
@@ -100,15 +112,53 @@ class TerminalEmulator(QPlainTextEdit):
         self._theme_name = theme if theme in TERMINAL_THEMES else DEFAULT_TERMINAL_THEME
         self._apply_theme(self._theme_name)
 
-        self._input_start = 0  # Position where user input begins
         # Search-in-scrollback overlay (built lazily on first Ctrl+Shift+F)
         self._search_bar = None
+        # Qt drops blocks from the top past this: the screen's scrollback
+        # plus its rows always fit.
+        self.setMaximumBlockCount(DEFAULT_SCROLLBACK + MAX_ROWS + 1)
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._screen = VTScreen(80, 24)
+        # What the document shows: which screen, how much of its
+        # scrollback, how many screen rows at the end, which mode.
+        self._shown: tuple | None = None
+        self._render(full=True)
+
+    @property
+    def screen(self) -> VTScreen:
+        return self._screen
+
+    def attach_screen(self, screen: VTScreen) -> None:
+        """Show *screen* (a dock tab's) from now on, at this widget's size."""
+        self._screen = screen
+        rows, cols = self.grid_size()
+        screen.resize(cols, rows)
+        self._render(full=True)
+
+    def grid_size(self) -> tuple[int, int]:
+        """(rows, cols) of text that fit into the visible area."""
+        metrics = QFontMetricsF(self.font())
+        margin = 2 * self.document().documentMargin()
+        viewport = self.viewport()
+        cell_w = max(1.0, metrics.horizontalAdvance("M"))
+        cell_h = max(1.0, metrics.lineSpacing())
+        cols = int((viewport.width() - margin) // cell_w)
+        rows = int((viewport.height() - margin) // cell_h)
+        return max(MIN_GRID_ROWS, rows), max(MIN_GRID_COLS, cols)
+
+    def _update_grid(self) -> None:
+        rows, cols = self.grid_size()
+        if (rows, cols) != (self._screen.rows, self._screen.cols):
+            self._screen.resize(cols, rows)
+            self._render(full=True)
+            self.grid_resized.emit(rows, cols)
 
     def resizeEvent(self, event):  # noqa: N802 — Qt
         """Re-pin the search bar to the top-right corner whenever the
         emulator resizes — without this, dragging the dock wider while
         the bar is open leaves it glued to the OLD right edge."""
         super().resizeEvent(event)
+        self._update_grid()
         if self._search_bar is not None and self._search_bar.isVisible():
             self._search_bar._reposition()  # noqa: SLF001
 
@@ -145,11 +195,13 @@ class TerminalEmulator(QPlainTextEdit):
             return
         font.setPointSize(new_pt)
         self.setFont(font)
+        self._update_grid()
 
     def reset_font(self) -> None:
         font = self.font()
         font.setPointSize(FONT_DEFAULT_PT)
         self.setFont(font)
+        self._update_grid()
 
     # ------------------------------------------------------------------
     # Search in scrollback (Ctrl+F)
@@ -167,42 +219,65 @@ class TerminalEmulator(QPlainTextEdit):
             self._search_bar.show()
             self._search_bar.focus_input()
 
+    def feed_bytes(self, data: bytes) -> None:
+        """Output of the host as it arrived: a UTF-8 character split
+        between two reads is decoded whole."""
+        self.append_output(self._decoder.decode(data))
+
     def append_output(self, text: str) -> None:
-        """Append output text, stripping ANSI and terminal escape sequences."""
-        import re
+        """Interpret *text* (decoded host output) and show the result.
+        Answers the host asked for (a cursor report) go out on
+        ``data_ready`` like typed input."""
+        self._screen.feed(text)
+        replies = self._screen.take_replies()
+        if replies:
+            self.data_ready.emit(replies)
+        self._render()
 
-        # CSI sequences: ESC [ ... letter
-        clean = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", text)
-        # OSC sequences: ESC ] ... BEL or ESC ] ... ST
-        clean = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", clean)
-        # DCS/PM/APC sequences
-        clean = re.sub(r"\x1b[P_^][^\x1b]*\x1b\\", "", clean)
-        # Remaining standalone ESC sequences
-        clean = re.sub(r"\x1b[()][0-9A-B]", "", clean)
-        clean = re.sub(r"\x1b[=>]", "", clean)
-        # BEL character
-        clean = clean.replace("\x07", "")
-        # Carriage return handling
-        clean = clean.replace("\r\n", "\n").replace("\r", "")
+    def message(self, text: str) -> None:
+        """A note of axross itself ("--- Session ended ---"): each line
+        break starts a fresh line, whatever the cursor did before."""
+        self.append_output(text.replace("\r\n", "\n").replace("\n", "\r\n"))
 
-        if not clean:
-            return
+    def clear(self) -> None:  # noqa: D102 - Qt override: the screen goes too
+        self._screen.feed("\x1b[H\x1b[2J\x1b[3J")
+        self._render(full=True)
 
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-
-        # Process backspace characters (\x08) for proper terminal behavior
-        for ch in clean:
-            if ch == "\x08":
-                # Move cursor one position left (delete previous char visually)
-                cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor)
-                cursor.removeSelectedText()
-            else:
-                cursor.insertText(ch)
-
-        self.setTextCursor(cursor)
+    def _render(self, full: bool = False) -> None:
+        """Bring the document up to the screen: new scrollback lines are
+        added above the rows, the rows replaced; a different screen, a
+        mode switch or lost lines draw everything again."""
+        screen = self._screen
+        lines = [line.rstrip() for line in screen.screen_lines()]
+        row, col = screen.cursor
+        prefix = "".join(screen._grid[row][:col])  # noqa: SLF001 - text left of the cursor
+        if len(lines[row]) < len(prefix):
+            lines[row] = lines[row].ljust(len(prefix))
+        alternate = screen.alternate
+        shown = self._shown
+        doc = self.document()
+        if (
+            full
+            or shown is None
+            or shown[0] is not screen
+            or shown[2] != alternate
+            or not 0 <= screen.scrolled_total - shown[1] <= len(screen.scrollback)
+            or doc.blockCount() < shown[3]
+        ):
+            history = [] if alternate else list(screen.scrollback)
+            self.setPlainText("\n".join(history + lines))
+        else:
+            new = screen.scrolled_total - shown[1]
+            added = list(screen.scrollback)[len(screen.scrollback) - new:] if new else []
+            cursor = QTextCursor(doc.findBlockByNumber(doc.blockCount() - shown[3]))
+            cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+            cursor.insertText("\n".join(added + lines))
+        self._shown = (screen, screen.scrolled_total, alternate, len(lines))
+        block = doc.findBlockByNumber(doc.blockCount() - len(lines) + row)
+        caret = QTextCursor(block)
+        caret.setPosition(block.position() + min(len(prefix), max(0, block.length() - 1)))
+        self.setTextCursor(caret)
         self.ensureCursorVisible()
-        self._input_start = cursor.position()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
@@ -458,8 +533,13 @@ class SSHTerminalSession:
         transport: paramiko.Transport,
         suppress_history: bool = True,
         initial_dir: str | None = None,
+        *,
+        rows: int = 40,
+        cols: int = 120,
     ):
         self._transport = transport
+        # The pty size the shell starts with; resize() follows the widget.
+        self._size = (int(rows), int(cols))
         # Remote folder to cd into once the shell is up (Open Terminal Here).
         self._initial_dir = initial_dir
         self._channel: paramiko.Channel | None = None
@@ -476,7 +556,8 @@ class SSHTerminalSession:
 
     def start(self) -> None:
         self._channel = self._transport.open_session()
-        self._channel.get_pty(term="xterm", width=120, height=40)
+        rows, cols = self._size
+        self._channel.get_pty(term="xterm", width=cols, height=rows)
         self._channel.invoke_shell()
         self._running = True
         # OpSec: suppress shell history right after the shell starts.
@@ -639,6 +720,10 @@ class _TerminalTab:
     def __init__(self, cwd: str | None = None, remote_dir: str | None = None):
         self.session: LocalTerminalSession | SSHTerminalSession | None = None
         self.buffer: str = ""  # accumulated output text
+        # What the tab shows; output of a tab in the background goes here
+        # too, so switching back shows the screen as the host left it.
+        self.screen = VTScreen(80, 24)
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         # Folder a (re)started session begins in: local, or remote via cd.
         self.cwd = cwd
         self.remote_dir = remote_dir
@@ -725,6 +810,7 @@ class TerminalDock(QDockWidget):
         # Terminal emulator
         self._terminal = TerminalEmulator()
         self._terminal.data_ready.connect(self._on_input)
+        self._terminal.grid_resized.connect(self._on_grid_resized)
         layout.addWidget(self._terminal, stretch=1)
 
         self.setWidget(container)
@@ -740,7 +826,14 @@ class TerminalDock(QDockWidget):
     def _get_or_create_tab(self, key: str) -> _TerminalTab:
         if key not in self._tabs:
             self._tabs[key] = _TerminalTab()
+            if key == self._current_key():
+                self._terminal.attach_screen(self._tabs[key].screen)
         return self._tabs[key]
+
+    def _on_grid_resized(self, rows: int, cols: int) -> None:
+        tab = self._tabs.get(self._current_key())
+        if tab is not None and tab.session is not None and tab.session.is_active:
+            tab.session.resize(rows, cols)
 
     def add_ssh_session(self, name: str, transport) -> None:
         """Register an SSH transport as a terminal option."""
@@ -771,7 +864,7 @@ class TerminalDock(QDockWidget):
                                 self._btn_start.setEnabled(True)
                                 self._btn_stop.setEnabled(False)
                                 self._status_label.setText("Disconnected")
-                                self._terminal.append_output(f"\n--- Reconnect failed: {e} ---\n")
+                                self._terminal.message(f"\n--- Reconnect failed: {e} ---\n")
                 for j in range(self._session_combo.count()):
                     if self._ssh_extra.get(self._session_combo.itemText(j)) == name:
                         self._session_combo.setItemData(j, transport)
@@ -806,19 +899,14 @@ class TerminalDock(QDockWidget):
         if key == self._active_key:
             return
 
-        # Save current terminal content to previous tab
-        if self._active_key and self._active_key in self._tabs:
-            self._tabs[self._active_key].buffer = self._terminal.toPlainText()
-
         self._active_key = key
         tab = self._get_or_create_tab(key)
 
-        # Restore buffer for the selected session
-        self._terminal.setPlainText(tab.buffer)
-        cursor = self._terminal.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        self._terminal.setTextCursor(cursor)
-        self._terminal.ensureCursorVisible()
+        # Every tab keeps its own screen; the widget shows the selected one
+        # at its own size, and that session's pty follows.
+        self._terminal.attach_screen(tab.screen)
+        if tab.session is not None and tab.session.is_active:
+            tab.session.resize(*self._terminal.grid_size())
 
         # Update button states
         has_active_session = tab.session is not None and tab.session.is_active
@@ -839,17 +927,21 @@ class TerminalDock(QDockWidget):
         if transport is not None:
             # SSH session
             try:
-                tab.session = SSHTerminalSession(transport, initial_dir=tab.remote_dir)
+                rows, cols = self._terminal.grid_size()
+                tab.session = SSHTerminalSession(
+                    transport, initial_dir=tab.remote_dir, rows=rows, cols=cols
+                )
                 tab.session.start()
                 self._status_label.setText(f"Connected: {key}")
             except Exception as e:
                 log.error("Failed to start SSH terminal: %s", e)
-                self._terminal.append_output(f"\n--- Error: {e} ---\n")
+                self._terminal.message(f"\n--- Error: {e} ---\n")
                 return
         else:
             # Local shell
             tab.session = LocalTerminalSession(cwd=tab.cwd)
             tab.session.start()
+            tab.session.resize(*self._terminal.grid_size())
             self._status_label.setText("Local Shell")
 
         self._active_key = key
@@ -867,7 +959,7 @@ class TerminalDock(QDockWidget):
         self._btn_start.setEnabled(True)
         self._btn_stop.setEnabled(False)
         self._status_label.setText("Disconnected")
-        self._terminal.append_output("\n--- Session ended ---\n")
+        self._terminal.message("\n--- Session ended ---\n")
 
     def _on_input(self, data: bytes) -> None:
         key = self._current_key()
@@ -888,17 +980,16 @@ class TerminalDock(QDockWidget):
                     self._btn_start.setEnabled(True)
                     self._btn_stop.setEnabled(False)
                     self._status_label.setText("Disconnected")
-                    self._terminal.append_output("\n--- Session ended ---\n")
+                    self._terminal.message("\n--- Session ended ---\n")
+                else:
+                    tab.screen.feed("\r\n--- Session ended ---\r\n")
                 log.info("Terminal session ended: %s", key)
                 continue
             any_active = True
 
             data = tab.session.read()
             if data:
-                try:
-                    text = data.decode("utf-8", errors="replace")
-                except Exception:
-                    text = data.decode("latin-1")
+                text = tab.decoder.decode(data)
                 # Cap the buffer so a flooding remote can't saturate RAM.
                 # Keep the trailing half of the cap when we overflow —
                 # the recent output is what the user cares about if the
@@ -910,9 +1001,16 @@ class TerminalDock(QDockWidget):
                 else:
                     tab.buffer += text
 
-                # If this is the currently visible session, show output
-                if key == self._current_key():
+                # The visible tab's screen is the widget's: it renders and
+                # answers the host itself; a background tab's screen only
+                # takes the text and its answers go out here.
+                if key == self._current_key() and self._terminal.screen is tab.screen:
                     self._terminal.append_output(text)
+                else:
+                    tab.screen.feed(text)
+                    replies = tab.screen.take_replies()
+                    if replies:
+                        tab.session.write(replies)
                 # Any session producing output — raised or not — counts
                 # as activity so the dock's tab gets highlighted when
                 # the user is looking at Log or Transfers.
