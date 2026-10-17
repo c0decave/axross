@@ -45,9 +45,20 @@ class _Fake:
                     self.wfile.write(b'{"error": "boom"}')
                     return
                 reply = dict(reply)
-                finish = reply.pop("finish_reason", "tool_calls" if reply.get("tool_calls") else "stop")
-                data = json.dumps({"choices": [{"index": 0, "message": {"role": "assistant", **reply},
-                                                "finish_reason": finish}]})
+                finish = reply.pop(
+                    "finish_reason", "tool_calls" if reply.get("tool_calls") else "stop"
+                )
+                data = json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", **reply},
+                                "finish_reason": finish,
+                            }
+                        ]
+                    }
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -57,7 +68,9 @@ class _Fake:
                 pass
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+        threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
 
     def close(self):
@@ -69,7 +82,14 @@ class _Fake:
 def _no_proxy(monkeypatch):
     # An environment proxy makes even loopback "remote" (the content would
     # pass the proxy) and the agent would ask for consent first.
-    for name in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+    for name in (
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -88,7 +108,11 @@ def fake():
 
 
 def _call(name, args, call_id="c1"):
-    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(args)},
+    }
 
 
 def _agent(server, root, *, confirm=None, api_key="", **cfg):
@@ -117,9 +141,13 @@ def test_happy_a_plain_answer(fake, tmp_path):
 
 def test_happy_a_read_only_tool_call_runs_without_asking(fake, tmp_path):
     (tmp_path / "notes.txt").write_text("x")
-    server = fake({"tool_calls": [_call("list_dir", {"path": str(tmp_path)})]}, {"content": "One file."})
+    server = fake(
+        {"tool_calls": [_call("list_dir", {"path": str(tmp_path)})]}, {"content": "One file."}
+    )
     asked = []
-    result = _agent(server, tmp_path, confirm=lambda n, a: asked.append(n) or True).run("What is here?")
+    result = _agent(server, tmp_path, confirm=lambda n, a: asked.append(n) or True).run(
+        "What is here?"
+    )
     assert result.answer == "One file." and asked == []
     (tool_msg,) = _tool_messages(server.requests[1])
     assert tool_msg["tool_call_id"] == "c1" and "notes.txt" in tool_msg["content"]
@@ -161,7 +189,9 @@ def test_sad_a_declined_write_does_not_run(fake, tmp_path, caplog):
     (tool_msg,) = _tool_messages(server.requests[1])
     assert "declined" in tool_msg["content"]
     assert result.calls[0]["outcome"] == "declined"
-    assert any("tool=write_file" in r.getMessage() and "declined" in r.getMessage() for r in caplog.records)
+    assert any(
+        "tool=write_file" in r.getMessage() and "declined" in r.getMessage() for r in caplog.records
+    )
 
 
 def test_sad_without_a_confirm_callback_nothing_mutating_runs(fake, tmp_path):
@@ -174,21 +204,29 @@ def test_sad_without_a_confirm_callback_nothing_mutating_runs(fake, tmp_path):
 
 
 def test_sad_a_tool_error_goes_back_to_the_model(fake, tmp_path):
-    server = fake({"tool_calls": [_call("read_file", {"path": "/etc/shadow"})]}, {"content": "Cannot."})
+    server = fake(
+        {"tool_calls": [_call("read_file", {"path": "/etc/shadow"})]}, {"content": "Cannot."}
+    )
     result = _agent(server, tmp_path).run("Read it")
     (tool_msg,) = _tool_messages(server.requests[1])
     assert tool_msg["content"].startswith("error:") and result.calls[0]["outcome"] == "error"
 
 
 def test_sad_an_unknown_tool_is_not_run(fake, tmp_path):
-    server = fake({"tool_calls": [_call("write_file", {"path": "/x", "content_b64": ""})]}, {"content": "?"})
+    server = fake(
+        {"tool_calls": [_call("write_file", {"path": "/x", "content_b64": ""})]}, {"content": "?"}
+    )
     result = _agent(server, tmp_path).run("Write")  # write not allowed: not offered
     (tool_msg,) = _tool_messages(server.requests[1])
     assert "not available" in tool_msg["content"] and result.calls[0]["outcome"] == "unavailable"
 
 
 def test_sad_malformed_arguments_are_reported(fake, tmp_path):
-    bad = {"id": "c1", "type": "function", "function": {"name": "list_dir", "arguments": "{not json"}}
+    bad = {
+        "id": "c1",
+        "type": "function",
+        "function": {"name": "list_dir", "arguments": "{not json"},
+    }
     server = fake({"tool_calls": [bad]}, {"content": "?"})
     result = _agent(server, tmp_path).run("List")
     assert "arguments" in _tool_messages(server.requests[1])[0]["content"]
@@ -200,8 +238,11 @@ def test_sad_cut_arguments_do_not_poison_the_history(fake, tmp_path):
     # off; llama.cpp then refused the whole next request (HTTP 500, "Failed
     # to parse tool call arguments as JSON") because the history carried
     # them back. The history keeps valid JSON; the model learns why.
-    cut = {"id": "c1", "type": "function",
-           "function": {"name": "write_file", "arguments": '{"path": "/x", "content": "line\\nline'}}
+    cut = {
+        "id": "c1",
+        "type": "function",
+        "function": {"name": "write_file", "arguments": '{"path": "/x", "content": "line\\nline'},
+    }
     server = fake({"tool_calls": [cut], "finish_reason": "length"}, {"content": "sorry"})
     result = _agent(server, tmp_path, allow_write=True, confirm=lambda n, a: True).run("write")
     history = server.requests[1]["messages"]
@@ -219,7 +260,9 @@ def test_sad_a_server_error_is_an_agent_error(fake, tmp_path):
 
 
 def test_sad_a_remote_endpoint_without_consent_sends_nothing(tmp_path):
-    profile = LLMProfile(name="cloud", provider="openai", endpoint="https://llm.example.com/v1", model="m")
+    profile = LLMProfile(
+        name="cloud", provider="openai", endpoint="https://llm.example.com/v1", model="m"
+    )
     agent = A.Agent(A.AgentConfig(profile=profile, root=str(tmp_path)))
     with pytest.raises(A.AgentError, match="consent"):
         agent.run("Hi")
@@ -238,7 +281,9 @@ def test_edge_the_step_limit_stops_a_looping_model(fake, tmp_path):
 def test_edge_a_large_result_is_cut_for_the_model(fake, tmp_path):
     for i in range(300):
         (tmp_path / f"file-{i:03d}-with-a-long-name.txt").write_text("")
-    server = fake({"tool_calls": [_call("list_dir", {"path": str(tmp_path)})]}, {"content": "Many."})
+    server = fake(
+        {"tool_calls": [_call("list_dir", {"path": str(tmp_path)})]}, {"content": "Many."}
+    )
     _agent(server, tmp_path, max_tool_chars=2000).run("List")
     content = _tool_messages(server.requests[1])[0]["content"]
     assert len(content) <= 2100 and "truncated" in content

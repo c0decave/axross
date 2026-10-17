@@ -40,7 +40,7 @@ def test_happy_message_under_the_cap_is_read_whole(monkeypatch):
     with FakePop3Server(replies={"RETR": _message(100)}) as srv:
         data = _session(srv).open_read("/1_a.eml").read()
     assert data.startswith(b".x" + b"y" * 997 + b"\r\n")  # dot-unstuffed
-    assert data.count(b"\r\n") == 99
+    assert data.count(b"\r\n") == 100  # 100 lines, each ending in CRLF (review B20)
 
 
 def test_sad_endless_message_stops_at_the_cap_with_bounded_memory(monkeypatch):

@@ -209,12 +209,19 @@ Ein LLM (oder Cron, CI, jeder Aufrufer ohne Mensch an der Tastatur)
 braucht Zusagen, die die REPL nie geben musste:
 
 - **Erst nachsehen, dann schreiben.** `axross.api_schema()` (MCP:
-  `script_api_schema`) ist die API als JSON, aus dem Code gebaut: je
-  Funktion Signatur mit Typen, erster Docstring-Absatz, `mutates`
-  (kann Dateien, Remote-Zustand oder Einstellungen ändern) und
-  `prompts` (kann einen Menschen brauchen), dazu die Methoden jeder
-  Backend-Session. `axross.docs(name)` ist der Fließtext zu einer
-  Funktion.
+  `script_api_schema`; eingecheckt als
+  [`scripting-api.json`](scripting-api.json)) ist die API als JSON, aus
+  dem Code gebaut: Regeln und Exceptions für Skripte, die Namen nach
+  Thema, je Funktion Signatur mit Typen, der ganze Docstring, seine
+  Beispiele, was sie wirft, `mutates` (kann Dateien, Remote-Zustand
+  oder Einstellungen ändern) und `prompts` (kann einen Menschen
+  brauchen); dazu die Methoden jeder Backend-Session und die Typen, die
+  die API zurückgibt (`FileItem` und die Ergebnisse).
+  `axross.api_schema(names=[])` ist nur der Index,
+  `axross.api_schema(["copy"])` eine Funktion vollständig.
+  `axross.docs(name)` ist der Fließtext zu einer Funktion;
+  [LLM_GUIDE.md](LLM_GUIDE.md) §9 und §12 sind der kurze Weg für ein
+  Sprachmodell.
 - **Niemand zum Fragen.** Ohne Qt-Fenster und ohne Terminal auf stdin
   — oder mit `AXROSS_NONINTERACTIVE=1`, das `script_run` setzt — wirft
   `axross.confirm()` `axross.NonInteractiveError` (ein

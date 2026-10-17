@@ -299,6 +299,54 @@ def auto_suffix_dir(parent: str, base: str) -> str:
 # --------------------------------------------------------------------------
 
 
+def _write_member_file(dest: str, src, mode: int | None, mtime: float | None) -> None:
+    """Write one member's bytes to *dest* with its stored mode and time.
+
+    The file is created with the member's rwx bits (set-id and sticky
+    bits dropped; the umask applies, as with tar for a normal user), so a
+    0600 member never sits readable by others while it is written. A
+    member without a stored mode gets the default 0666 less the umask.
+    """
+    perm = (mode & 0o777) if mode else 0o666
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    fd = os.open(dest, flags, perm)
+    with os.fdopen(fd, "wb") as dst:
+        shutil.copyfileobj(src, dst, length=64 * 1024)
+    if mtime is not None and mtime > 0:
+        try:
+            os.utime(dest, (mtime, mtime))
+        except (OSError, OverflowError, ValueError) as exc:
+            log.debug("archive: cannot set the time of %s: %s", dest, exc)
+
+
+def _zip_mode(info: zipfile.ZipInfo) -> int | None:
+    """The Unix mode a ZIP made on Unix stores, None for any other maker."""
+    if info.create_system != 3:
+        return None
+    return (info.external_attr >> 16) & 0o7777 or None
+
+
+def _zip_mtime(info: zipfile.ZipInfo) -> float | None:
+    try:
+        return time.mktime(tuple(info.date_time) + (0, 0, -1))
+    except (OverflowError, ValueError):
+        return None
+
+
+def _is_root_dir_entry(member_name: str) -> bool:
+    """True for a directory entry that names the extraction root itself.
+
+    ``tar -C dir -czf x.tgz .`` stores the folder as ``./``, which tarfile
+    reports as ``.``: nothing to create, and no reason to refuse the whole
+    archive. Only relative spellings made of ``.`` segments count; an
+    absolute ``/`` and anything with ``..`` stay with the zip-slip check.
+    """
+    normalised = member_name.replace("\\", "/")
+    if not normalised or normalised.startswith("/"):
+        return False
+    return all(part in ("", ".") for part in normalised.split("/"))
+
+
 def _safe_member_path(target_root: str, member_name: str) -> str:
     """Resolve *member_name* under *target_root* and refuse any
     escape. Returns the absolute path to extract to. Raises
@@ -431,8 +479,8 @@ def _extract_zip(
             _check_duplicate_member(seen_paths, dest, name)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             # Stream decompressed bytes — no whole-file buffer.
-            with zf.open(info) as src, open(dest, "wb") as dst:
-                shutil.copyfileobj(src, dst, length=64 * 1024)
+            with zf.open(info) as src:
+                _write_member_file(dest, src, _zip_mode(info), _zip_mtime(info))
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
@@ -572,6 +620,8 @@ def _extract_tar(
                     f"tar entry has unsupported type {getattr(m, 'type', b'?')!r}: {m.name!r}",
                 )
             if m.isdir():
+                if _is_root_dir_entry(m.name):
+                    continue
                 dest = _safe_member_path(target, m.name)
                 _check_duplicate_member(seen_paths, dest, m.name)
                 os.makedirs(dest, exist_ok=True)
@@ -589,8 +639,7 @@ def _extract_tar(
                 # older Python versions — defensive skip.
                 continue
             try:
-                with open(dest, "wb") as dst:
-                    shutil.copyfileobj(src, dst, length=64 * 1024)
+                _write_member_file(dest, src, m.mode, m.mtime)
             finally:
                 src.close()
             files_done += 1
@@ -848,8 +897,8 @@ def _extract_members_zip(
             dest = _safe_member_path(target, name)
             _check_duplicate_member(seen_paths, dest, name)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with zf.open(info) as src, open(dest, "wb") as dst:
-                shutil.copyfileobj(src, dst, length=64 * 1024)
+            with zf.open(info) as src:
+                _write_member_file(dest, src, _zip_mode(info), _zip_mtime(info))
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
@@ -895,6 +944,8 @@ def _extract_members_tar(
                     f"tar entry has unsupported type {getattr(m, 'type', b'?')!r}: {m.name!r}",
                 )
             if m.isdir():
+                if _is_root_dir_entry(m.name):
+                    continue
                 dest = _safe_member_path(target, m.name)
                 _check_duplicate_member(seen_paths, dest, m.name)
                 os.makedirs(dest, exist_ok=True)
@@ -906,8 +957,7 @@ def _extract_members_tar(
             if src is None:
                 continue
             try:
-                with open(dest, "wb") as dst:
-                    shutil.copyfileobj(src, dst, length=64 * 1024)
+                _write_member_file(dest, src, m.mode, m.mtime)
             finally:
                 src.close()
             files_done += 1

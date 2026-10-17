@@ -11,7 +11,6 @@ Driven end to end against a real ``rsync --daemon`` on 127.0.0.1.
 
 from __future__ import annotations
 
-import os
 import shutil
 import socket
 import subprocess

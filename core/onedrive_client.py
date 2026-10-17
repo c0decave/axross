@@ -7,11 +7,14 @@ Requires: pip install axross[onedrive]  (msal>=1.24, requests>=2.28)
 
 from __future__ import annotations
 
+import errno
 import io
+import json
 import logging
 import os
 import posixpath
 import tempfile
+import time
 from datetime import datetime
 from typing import IO
 from urllib.parse import quote
@@ -19,7 +22,8 @@ from urllib.parse import quote
 from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetime
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
-from core.secure_storage import write_secret_file
+from core.read_spool import spool_response
+from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -57,6 +61,14 @@ def _graph_json(resp, what: str, *, empty_ok: bool = False) -> dict:
     return data
 
 
+#: Above this size a file goes up in an upload session instead of one
+#: ``PUT .../content`` (documented for small files: 4 MB on many drives,
+#: 250 MB at most).
+_SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
+#: Bytes per upload-session request; Graph wants a multiple of 320 KiB.
+_UPLOAD_CHUNK = 32 * 320 * 1024
+
+
 class _SpooledWriter:
     """Write to a temp file, then upload on close via Graph API."""
 
@@ -83,9 +95,12 @@ class _SpooledWriter:
             return
         self._closed = True
         try:
+            size = self._buf.seek(0, io.SEEK_END)
             self._buf.seek(0)
-            data = self._buf.read()
-            self._session._upload_content(self._remote_path, data)
+            if size <= _SIMPLE_UPLOAD_MAX:
+                self._session._upload_content(self._remote_path, self._buf.read())
+            else:
+                self._session._upload_in_session(self._remote_path, self._buf, size)
         finally:
             self._buf.close()
 
@@ -141,6 +156,7 @@ class OneDriveSession(SessionLifecycle):
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        legacy_token_file: str | None = None,
     ):
         if msal is None:
             raise ImportError(
@@ -185,7 +201,15 @@ class OneDriveSession(SessionLifecycle):
         if self._drive_type == "sharepoint":
             self._scopes.append("Sites.ReadWrite.All")
 
-        # Set up MSAL token cache
+        # Set up MSAL token cache. MSAL keys every token by client id;
+        # the cache file is the profile's own, so the first account in it
+        # is this profile's. The file all profiles shared before is taken
+        # over only when it holds tokens of this client id.
+        adopt_legacy_secret_file(
+            self._token_file,
+            os.path.expanduser(legacy_token_file) if legacy_token_file else None,
+            self._cache_has_client,
+        )
         self._cache = msal.SerializableTokenCache()
         if os.path.isfile(self._token_file):
             try:
@@ -252,6 +276,17 @@ class OneDriveSession(SessionLifecycle):
         self._save_cache()
 
         return result["access_token"]
+
+    def _cache_has_client(self, text: str) -> bool:
+        """True when the serialized MSAL cache *text* holds an entry of
+        this client id."""
+        sections = json.loads(text)
+        return any(
+            isinstance(entry, dict) and entry.get("client_id") == self._client_id
+            for section in sections.values()
+            if isinstance(section, dict)
+            for entry in section.values()
+        )
 
     def _save_cache(self) -> None:
         """Persist the MSAL token cache to disk (atomic, 0o600)."""
@@ -349,6 +384,11 @@ class OneDriveSession(SessionLifecycle):
             # Token may have expired between _ensure_token and now
             self._access_token = self._acquire_token()
             resp = self._http.get(url, headers=self._headers(), **kwargs)
+        if resp.status_code == 404:
+            # itemNotFound: the one answer exists() and is_dir() read as False.
+            raise FileNotFoundError(
+                errno.ENOENT, f"Graph API GET {url} failed (404): {resp.text[:500]}", url
+            )
         if resp.status_code >= 400:
             raise OSError(f"Graph API GET {url} failed ({resp.status_code}): {resp.text[:500]}")
         return _graph_json(resp, f"GET {url}")
@@ -410,26 +450,22 @@ class OneDriveSession(SessionLifecycle):
             raise OSError(f"Graph API PUT {url} failed ({resp.status_code}): {resp.text[:500]}")
         return _graph_json(resp, f"PUT {url}")
 
-    def _graph_get_bytes(self, url: str) -> bytes:
-        """Execute a GET request that returns raw bytes (file download)."""
+    def _graph_get_spooled(self, url: str, what: str) -> IO[bytes]:
+        """A file download as a spool: the body is streamed in chunks,
+        not held in RAM as one bytes object."""
         self._ensure_token()
-        resp = self._http.get(
-            url,
-            headers=self._headers(),
-            stream=False,
-            timeout=GRAPH_TIMEOUT,
-        )
+        resp = self._http.get(url, headers=self._headers(), stream=True, timeout=GRAPH_TIMEOUT)
         if resp.status_code == 401:
+            resp.close()
             self._access_token = self._acquire_token()
-            resp = self._http.get(
-                url,
-                headers=self._headers(),
-                stream=False,
-                timeout=GRAPH_TIMEOUT,
-            )
+            resp = self._http.get(url, headers=self._headers(), stream=True, timeout=GRAPH_TIMEOUT)
         if resp.status_code >= 400:
-            raise OSError(f"Graph API GET {url} failed ({resp.status_code}): {resp.text[:500]}")
-        return resp.content
+            try:
+                detail = resp.text[:500]
+            finally:
+                resp.close()
+            raise OSError(f"Graph API GET {url} failed ({resp.status_code}): {detail}")
+        return spool_response(resp, what=what)
 
     # ------------------------------------------------------------------
     # Item parsing
@@ -503,6 +539,36 @@ class OneDriveSession(SessionLifecycle):
         url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/content"
         self._graph_put_bytes(url, data)
 
+    def _upload_in_session(self, path: str, fh: IO[bytes], size: int) -> None:
+        """createUploadSession, then PUT the bytes in Content-Range chunks.
+
+        The upload URL is pre-authenticated: it gets no bearer token, and
+        it must be https - the file's bytes go to it.
+        """
+        prefix = self._drive_prefix()
+        url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/createUploadSession"
+        answer = self._graph_post(
+            url, {"item": {"@microsoft.graph.conflictBehavior": "replace"}}
+        )
+        upload_url = as_str(answer.get("uploadUrl"))
+        if not upload_url.lower().startswith("https://"):
+            raise OSError(f"OneDrive upload of {path}: the upload URL is not https")
+        offset = 0
+        while offset < size:
+            chunk = fh.read(_UPLOAD_CHUNK)
+            if not chunk:
+                raise OSError(f"OneDrive upload of {path}: the spool ended at {offset} bytes")
+            headers = {
+                "Content-Length": str(len(chunk)),
+                "Content-Range": f"bytes {offset}-{offset + len(chunk) - 1}/{size}",
+            }
+            resp = self._http.put(upload_url, headers=headers, data=chunk, timeout=GRAPH_TIMEOUT)
+            if resp.status_code >= 400:
+                raise OSError(
+                    f"OneDrive upload of {path} failed ({resp.status_code}): {resp.text[:500]}"
+                )
+            offset += len(chunk)
+
     # ------------------------------------------------------------------
     # FileBackend protocol
     # ------------------------------------------------------------------
@@ -556,17 +622,22 @@ class OneDriveSession(SessionLifecycle):
         return item
 
     def is_dir(self, path: str) -> bool:
+        """False only for itemNotFound (404); a throttled, failed or
+        dropped request is an OSError."""
         try:
             item = self.stat(path)
-            return item.is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
+        return item.is_dir
 
     def exists(self, path: str) -> bool:
+        """False only for itemNotFound (404); any other failure is an
+        OSError - server_side_copy(overwrite=False) takes False as its
+        go-ahead to write."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def mkdir(self, path: str) -> None:
@@ -586,9 +657,24 @@ class OneDriveSession(SessionLifecycle):
         self._graph_post(parent_url, payload)
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        item_id = self._get_item_id(path)
+        data = self._graph_get(self._item_path_url(path))
+        item_id = as_str(data.get("id"))
+        if not item_id:
+            raise OSError(f"Cannot resolve item ID for: {path}")
         prefix = self._drive_prefix()
         url = f"{GRAPH_BASE}{prefix}/items/{item_id}"
+        # DELETE takes a folder with everything in it, so a non-recursive
+        # remove refuses a folder with children first.
+        folder = data.get("folder")
+        if not recursive and folder is not None:
+            count = as_dict(folder).get("childCount")
+            if isinstance(count, int) and not isinstance(count, bool):
+                full = count > 0
+            else:
+                # No usable count: one entry of the listing decides.
+                full = next(self._pages(f"{url}/children?$top=1"), None) is not None
+            if full:
+                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
         self._graph_delete(url)
 
     def rename(self, src: str, dst: str) -> None:
@@ -620,10 +706,7 @@ class OneDriveSession(SessionLifecycle):
         if not normed:
             raise OSError("Cannot download root")
         url = f"{GRAPH_BASE}{prefix}/root:{self._escape_path(path)}:/content"
-        data = self._graph_get_bytes(url)
-        buf = io.BytesIO(data)
-        buf.seek(0)
-        return buf
+        return self._graph_get_spooled(url, f"Cannot read {path}")
 
     # See core/s3_client.py for the rationale on the cap.
     _MAX_APPEND_EXISTING_SIZE = 256 * 1024 * 1024
@@ -740,27 +823,84 @@ class OneDriveSession(SessionLifecycle):
             f"{quote(version_id, safe='')}/content"
         )
         try:
-            data = self._graph_get_bytes(url)
+            return self._graph_get_spooled(url, f"Cannot read {path}@{version_id}")
         except Exception as exc:
             raise OSError(f"OneDrive open_version_read failed: {exc}") from exc
-        return io.BytesIO(data)
+
+    #: Upper bound on waiting for a server-side copy, and the pause
+    #: between two looks at its monitor.
+    _COPY_TIMEOUT = 300.0
+    _COPY_POLL_INTERVAL = 1.0
 
     def copy(self, src: str, dst: str) -> None:
-        """OneDrive Graph API copy action — asynchronous on the server
-        side but we POST and return immediately; the file appears at
-        dst once the server finishes."""
+        """Graph ``copy`` action. The server answers 202 Accepted with a
+        monitor URL and copies afterwards; copy() returns when the monitor
+        reports the copy completed. A failed copy is an OSError
+        (FileExistsError for a taken name), and so is one still running
+        after ``_COPY_TIMEOUT`` seconds.
+
+        The destination folder is named by ``parentReference {driveId,
+        id}`` - the form rename() uses for its ``{id}`` - not by a path.
+        """
+        what = f"OneDrive copy {src} -> {dst}"
         try:
+            parent = self._graph_get(self._item_path_url(self.parent(dst)))
+            parent_id = as_str(parent.get("id"))
+            if not parent_id:
+                raise OSError(f"Cannot resolve item ID for: {self.parent(dst)}")
+            drive_id = as_str(as_dict(parent.get("parentReference")).get("driveId"))
+            if not drive_id:
+                # The root folder carries no parent: the drive names itself.
+                drive_id = as_str(self._graph_get(f"{GRAPH_BASE}{self._drive_prefix()}").get("id"))
+            reference = {"driveId": drive_id, "id": parent_id} if drive_id else {"id": parent_id}
             src_url = f"{GRAPH_BASE}{self._drive_prefix()}/root:{self._escape_path(src)}:/copy"
-            dst_parent = self.parent(dst)
-            body = {
-                "parentReference": {
-                    "path": f"{self._drive_prefix()}/root:{self._escape_path(dst_parent)}"
-                },
-                "name": posixpath.basename(dst.rstrip("/")),
-            }
-            self._graph_post(src_url, body)
+            body = {"parentReference": reference, "name": posixpath.basename(dst.rstrip("/"))}
+            resp = self._graph_post_response(src_url, body)
         except Exception as exc:
-            raise OSError(f"OneDrive copy {src} -> {dst} failed: {exc}") from exc
+            raise OSError(f"{what} failed: {exc}") from exc
+        if resp.status_code != 202:
+            return  # answered as done right away
+        self._wait_for_copy(as_str(resp.headers.get("Location")), what, dst)
+
+    def _wait_for_copy(self, monitor_url: str, what: str, dst: str) -> None:
+        """Poll the copy's monitor URL until the copy completed or failed.
+
+        The monitor URL is pre-authenticated (like the upload-session URL):
+        it gets no bearer token, it must be https, and its redirect to the
+        new item (when done) is not followed - that one would need a token.
+        """
+        if not monitor_url:
+            raise OSError(f"{what}: the server accepted the copy without a monitor URL")
+        if not monitor_url.lower().startswith("https://"):
+            raise OSError(f"{what}: the copy monitor URL is not https")
+        deadline = time.monotonic() + self._COPY_TIMEOUT
+        while True:
+            try:
+                resp = self._http.get(monitor_url, timeout=GRAPH_TIMEOUT, allow_redirects=False)
+            except Exception as exc:
+                raise OSError(f"{what}: copy monitor: {exc}") from exc
+            if resp.status_code in (301, 302, 303):
+                return  # done: the monitor points at the new item
+            if resp.status_code >= 400:
+                raise OSError(
+                    f"{what}: copy monitor failed ({resp.status_code}): {resp.text[:500]}"
+                )
+            report = _graph_json(resp, f"{what} monitor")
+            status = as_str(report.get("status"))
+            if status == "completed":
+                return
+            if status in ("failed", "deleteFailed", "cancelled"):
+                error = as_dict(report.get("error"))
+                code = as_str(error.get("code")) or status
+                message = as_str(error.get("message"))
+                if code == "nameAlreadyExists":
+                    raise FileExistsError(errno.EEXIST, f"{what}: the target exists", dst)
+                raise OSError(f"{what} failed on the server: {code}: {message}".rstrip(": "))
+            if time.monotonic() >= deadline:
+                raise OSError(
+                    f"{what}: copy timed out after {self._COPY_TIMEOUT}s (status: {status})"
+                )
+            time.sleep(self._COPY_POLL_INTERVAL)
 
     # ------------------------------------------------------------------
     # OneDrive / SharePoint share verbs (slice 5 of API_GAPS)
@@ -809,10 +949,11 @@ class OneDriveSession(SessionLifecycle):
         link = as_str(as_dict(data.get("link")).get("webUrl"))
         if not link:
             raise OSError(f"OneDrive share({path}) returned no webUrl: {data}")
+        # The path, never the link: an anonymous link opens the file for
+        # whoever reads the log.
         log.info(
-            "OneDrive share: %s -> %s (type=%s scope=%s%s%s)",
+            "OneDrive share: %s (type=%s scope=%s%s%s)",
             path,
-            link,
             link_type,
             scope,
             " password=set" if password else "",
@@ -959,6 +1100,12 @@ class OneDriveSession(SessionLifecycle):
     def _graph_post(self, url: str, body: dict) -> dict:
         """POST a JSON body to the Graph API. Mirrors _graph_get's
         auth + error-mapping pattern."""
+        resp = self._graph_post_response(url, body)
+        return _graph_json(resp, f"POST {url}", empty_ok=True)
+
+    def _graph_post_response(self, url: str, body: dict):
+        """POST a JSON body; the response itself (status and headers), an
+        OSError for an error status."""
         self._ensure_token()
         resp = self._http.post(
             url,
@@ -982,7 +1129,7 @@ class OneDriveSession(SessionLifecycle):
             )
         if resp.status_code >= 400:
             raise OSError(f"Graph POST {url} → {resp.status_code}: {resp.text[:500]}")
-        return _graph_json(resp, f"POST {url}", empty_ok=True)
+        return resp
 
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return OneDrive's file.hashes.

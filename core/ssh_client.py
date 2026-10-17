@@ -5,11 +5,13 @@ from __future__ import annotations
 import functools
 import hashlib
 import logging
+import os
 import posixpath
 import shlex
 import socket
 import stat as stat_module
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +21,7 @@ import paramiko
 
 from core.backend import SessionLifecycle
 from core.client_identity import SSH_LOCAL_VERSION, apply_paramiko_banner_override
+from core.exec_util import COMMAND_NOT_FOUND, digest_from_sum_output
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from core.profiles import ConnectionProfile
 from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
@@ -116,6 +119,92 @@ def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAtt
     return entries
 
 
+#: known_hosts key type -> the host key algorithms that verify such a key.
+#: An "ssh-rsa" entry is negotiated as rsa-sha2-512/256 (same key, SHA-2
+#: signatures); paramiko no longer offers SHA-1 "ssh-rsa" by default.
+_HOST_KEY_ALGORITHMS = {
+    "ssh-rsa": ("rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"),
+}
+
+
+def drain_exec_channel(
+    chan,
+    *,
+    timeout: float | None,
+    stdout_cap: int,
+    stderr_cap: int,
+    label: str,
+) -> "ExecResult":
+    """Read an exec channel's stdout and stderr to the end, each clipped
+    at its cap, and return the :class:`~models.exec_result.ExecResult`.
+
+    Both streams are drained together with select(): reading one to its
+    end while the other is unread deadlocks once the remote fills the
+    channel window. Bytes above a cap are read and discarded so the
+    remote can finish. Raises ``TimeoutError`` (an OSError) when the
+    command has not exited after *timeout* seconds - the channel timeout
+    only bounds a blocking recv, which this loop never makes.
+    """
+    import select as _select
+
+    from models.exec_result import ExecResult
+
+    stdout_buf = bytearray()
+    stderr_buf = bytearray()
+    stdout_truncated = False
+    stderr_truncated = False
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    while True:
+        if chan.exit_status_ready() and not chan.recv_ready() and not chan.recv_stderr_ready():
+            break
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError(f"{label}: the command did not finish within {timeout:g} s")
+        rlist, _, _ = _select.select([chan], [], [], 0.1)
+        if chan in rlist:
+            if chan.recv_ready():
+                room = stdout_cap - len(stdout_buf)
+                if room > 0:
+                    chunk = chan.recv(min(65536, room))
+                    if chunk:
+                        stdout_buf.extend(chunk)
+                else:
+                    # Cap reached — drain to keep the remote
+                    # from blocking on a full pipe, but discard.
+                    chan.recv(65536)
+                    stdout_truncated = True
+            if chan.recv_stderr_ready():
+                room = stderr_cap - len(stderr_buf)
+                if room > 0:
+                    chunk = chan.recv_stderr(min(65536, room))
+                    if chunk:
+                        stderr_buf.extend(chunk)
+                else:
+                    chan.recv_stderr(65536)
+                    stderr_truncated = True
+    # Final drain after exit-status arrives.
+    while chan.recv_ready():
+        room = stdout_cap - len(stdout_buf)
+        if room <= 0:
+            chan.recv(65536)
+            stdout_truncated = True
+            continue
+        stdout_buf.extend(chan.recv(min(65536, room)))
+    while chan.recv_stderr_ready():
+        room = stderr_cap - len(stderr_buf)
+        if room <= 0:
+            chan.recv_stderr(65536)
+            stderr_truncated = True
+            continue
+        stderr_buf.extend(chan.recv_stderr(min(65536, room)))
+    return ExecResult(
+        returncode=chan.recv_exit_status(),
+        stdout=bytes(stdout_buf),
+        stderr=bytes(stderr_buf),
+        truncated_stdout=stdout_truncated,
+        truncated_stderr=stderr_truncated,
+    )
+
+
 class HostKeyVerificationError(paramiko.SSHException):
     """Base class for SSH host key verification errors."""
 
@@ -138,6 +227,174 @@ class HostKeyMismatchError(HostKeyVerificationError):
         self.host = host
         self.key_type = key_type
         self.fingerprint_sha256 = fingerprint_sha256
+
+
+class RevokedHostKeyError(HostKeyMismatchError):
+    """Raised when known_hosts marks the server host key ``@revoked``."""
+
+    def __init__(self, host: str, key_type: str, fingerprint_sha256: str):
+        super().__init__(host, key_type, fingerprint_sha256)
+        self.args = (f"Host key for {host} is revoked ({key_type}, SHA256:{fingerprint_sha256})",)
+
+
+class KnownHosts(paramiko.HostKeys):
+    """An OpenSSH known_hosts file, read line by line.
+
+    paramiko's HostKeys.load raises InvalidHostKey for a line with a
+    marker (``@cert-authority``, ``@revoked``) or a broken key, which
+    failed every connect. Here a broken line is skipped, a
+    ``@cert-authority`` line too (paramiko cannot check host
+    certificates), and a ``@revoked`` key is remembered and refused for
+    every host, never loaded as a trusted key. Lookup semantics stay
+    paramiko's: the first key of a type listed for a host wins.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._revoked: set[bytes] = set()
+
+    def load(self, filename) -> None:
+        trusted: list[paramiko.hostkeys.HostKeyEntry] = []
+        with open(filename, encoding="utf-8", errors="replace") as fh:
+            for lineno, raw in enumerate(fh, 1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                marker = None
+                if line.startswith("@"):
+                    marker, _, line = line.partition(" ")
+                    line = line.strip()
+                entry = self._parse(line, lineno)
+                if entry is None:
+                    continue
+                if marker == "@revoked":
+                    self._revoked.add(entry.key.asbytes())
+                elif marker is None:
+                    trusted.append(entry)
+                else:
+                    log.debug("known_hosts line %d: %s line skipped", lineno, marker)
+        for entry in trusted:
+            if self.is_revoked(entry.key):
+                continue
+            key_type = entry.key.get_name()
+            for host in entry.hostnames:
+                known = self.lookup(host)
+                if known is None or key_type not in known:
+                    self.add(host, key_type, entry.key)
+
+    @staticmethod
+    def _parse(line: str, lineno: int):
+        try:
+            entry = paramiko.hostkeys.HostKeyEntry.from_line(line, lineno)
+        except Exception as exc:  # noqa: BLE001 - one bad line must not void the file
+            log.debug("known_hosts line %d skipped: %s", lineno, exc)
+            return None
+        if entry is None or entry.key is None:
+            return None
+        return entry
+
+    def is_revoked(self, key: paramiko.PKey) -> bool:
+        return key.asbytes() in self._revoked
+
+    def save(self, filename) -> None:
+        # Rewriting would drop comments, marker lines and key types
+        # paramiko does not know; append_known_host adds a line instead.
+        raise NotImplementedError("known_hosts is only appended to")
+
+
+def load_known_hosts(path: Path) -> KnownHosts:
+    """The known_hosts at *path*; empty when it is missing or unreadable."""
+    host_keys = KnownHosts()
+    if not path.exists():
+        return host_keys
+    try:
+        host_keys.load(str(path))
+        log.debug("Loaded known_hosts from %s", path)
+    except OSError as e:
+        log.warning("Could not load known_hosts: %s", e)
+    return host_keys
+
+
+def _hashes_host_names(path: Path) -> bool:
+    """True when known_hosts already stores hashed host names (HashKnownHosts)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                fields = raw.split()
+                if fields and fields[0].startswith("@"):
+                    fields = fields[1:]
+                if fields and fields[0].startswith("|1|"):
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def append_known_host(path: Path, alias: str, key: paramiko.PKey) -> None:
+    """Add one ``alias keytype base64`` line at the end of known_hosts.
+
+    The rest of the file and its mode stay as they are; a new file is
+    created 0600 (a new parent folder 0700). The host name is hashed
+    when the file already hashes its host names.
+    """
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    name = paramiko.HostKeys.hash_host(alias) if _hashes_host_names(path) else alias
+    line = f"{name} {key.get_name()} {key.get_base64()}\n".encode()
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        size = os.fstat(fd).st_size
+        if size and os.pread(fd, 1, size - 1) != b"\n":
+            line = b"\n" + line
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+
+
+def _private_key_classes() -> list[type[paramiko.PKey]]:
+    classes = [paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey]
+    # DSSKey was removed in paramiko 4.x
+    if hasattr(paramiko, "DSSKey"):
+        classes.append(paramiko.DSSKey)
+    return classes
+
+
+def load_private_key(path: str, passphrase: str) -> paramiko.PKey:
+    """Load the private key at *path*, trying every key format.
+
+    An encrypted key without its passphrase, or with a wrong one, raises
+    PasswordRequiredException (naming the file), so a caller can ask for
+    the passphrase; any other unreadable key raises SSHException. Both
+    used to end in one "Cannot load key", and Quick Connect never knew a
+    passphrase was what was missing."""
+    passphrase_arg = passphrase or None
+    encrypted = False
+    for cls in _private_key_classes():
+        try:
+            return cls.from_private_key_file(path, password=passphrase_arg)
+        except paramiko.PasswordRequiredException:
+            encrypted = True
+        except paramiko.SSHException:
+            continue
+    if passphrase_arg is not None and not encrypted:
+        # A wrong passphrase fails like a damaged file ("Bad password or
+        # corrupt", "checkints do not match"); without one, an encrypted
+        # key says so.
+        for cls in _private_key_classes():
+            try:
+                cls.from_private_key_file(path, password=None)
+            except paramiko.PasswordRequiredException:
+                encrypted = True
+                break
+            except paramiko.SSHException:
+                continue
+            break  # it loads without a passphrase: not an encrypted key
+    if encrypted:
+        if passphrase_arg is None:
+            raise paramiko.PasswordRequiredException(
+                f"The key {path} is encrypted: it needs its passphrase"
+            )
+        raise paramiko.PasswordRequiredException(f"Wrong passphrase for the key {path}")
+    raise paramiko.SSHException(f"Cannot load key from {path}")
 
 
 class SSHSession(SessionLifecycle):
@@ -220,6 +477,7 @@ class SSHSession(SessionLifecycle):
             log.info("Creating SSH transport to %s:%d", profile.host, profile.port)
             self._transport = paramiko.Transport(sock)
             self._transport.local_version = SSH_LOCAL_VERSION
+            self._prefer_known_host_key_types()
             self._transport.start_client(timeout=10.0)
             self._verify_host_key(on_unknown_host=on_unknown_host)
             # Keepalive off by default — a fixed 30-s cadence is a
@@ -253,21 +511,44 @@ class SSHSession(SessionLifecycle):
             "ipv6": socket.AF_INET6,
         }.get(self._profile.address_family, socket.AF_UNSPEC)
 
-    def _load_host_keys(self) -> paramiko.HostKeys:
-        host_keys = paramiko.HostKeys()
-        if not self._known_hosts_path.exists():
-            return host_keys
-        try:
-            host_keys.load(str(self._known_hosts_path))
-            log.debug("Loaded known_hosts from %s", self._known_hosts_path)
-        except (OSError, paramiko.SSHException) as e:
-            log.warning("Could not load known_hosts: %s", e)
-        return host_keys
+    def _load_host_keys(self) -> KnownHosts:
+        return load_known_hosts(self._known_hosts_path)
 
     def _host_key_aliases(self) -> list[str]:
         if self._profile.port == 22:
             return [self._profile.host]
         return [f"[{self._profile.host}]:{self._profile.port}"]
+
+    def _prefer_known_host_key_types(self) -> None:
+        """Offer the host key types known_hosts holds for this host first.
+
+        A server has several host keys; paramiko's default order picks
+        ECDSA/Ed25519 before RSA. With only the (correct) RSA key on
+        record the negotiated ECDSA key then failed the check as a false
+        mismatch. OpenSSH (HostKeyAlgorithms) and paramiko's SSHClient do
+        the same reordering. Only the ORDER changes: a server without
+        the known type still negotiates another one, and the check after
+        start_client still refuses it.
+        """
+        if not self._transport:
+            return
+        host_keys = self._load_host_keys()
+        known: set[str] = set()
+        for alias in self._host_key_aliases():
+            entry = host_keys.lookup(alias)
+            if entry is None:
+                continue
+            for key_type in entry.keys():
+                known.update(_HOST_KEY_ALGORITHMS.get(key_type, (key_type,)))
+            # _verify_host_key decides on the first alias with an entry.
+            break
+        if not known:
+            return
+        options = self._transport.get_security_options()
+        offered = list(options.key_types)
+        first = [k for k in offered if k in known]
+        if first:
+            options.key_types = first + [k for k in offered if k not in known]
 
     @staticmethod
     def _fingerprint_sha256(key: paramiko.PKey) -> str:
@@ -288,6 +569,8 @@ class SSHSession(SessionLifecycle):
         key_type = remote_key.get_name()
         fingerprint = self._fingerprint_sha256(remote_key)
         host_keys = self._load_host_keys()
+        if host_keys.is_revoked(remote_key):
+            raise RevokedHostKeyError(self._host_key_aliases()[0], key_type, fingerprint)
 
         for alias in self._host_key_aliases():
             known = host_keys.lookup(alias)
@@ -318,17 +601,7 @@ class SSHSession(SessionLifecycle):
             raise ConnectionError("Transport not initialized")
 
         remote_key = self._transport.get_remote_server_key()
-        host_keys = self._load_host_keys()
-        aliases = self._host_key_aliases()
-
-        self._known_hosts_path.parent.mkdir(parents=True, exist_ok=True)
-        for alias in aliases[:1]:
-            host_keys.add(alias, remote_key.get_name(), remote_key)
-        host_keys.save(str(self._known_hosts_path))
-        try:
-            self._known_hosts_path.chmod(0o600)
-        except OSError:
-            log.debug("Could not set permissions on %s", self._known_hosts_path, exc_info=True)
+        append_known_host(self._known_hosts_path, self._host_key_aliases()[0], remote_key)
 
     def _authenticate(self, password: str, key_passphrase: str) -> None:
         """Authenticate using the method specified in the profile."""
@@ -370,23 +643,7 @@ class SSHSession(SessionLifecycle):
 
     def _load_private_key(self, path: str, passphrase: str) -> paramiko.PKey:
         """Load a private key, trying multiple formats."""
-        key_classes = [
-            paramiko.Ed25519Key,
-            paramiko.ECDSAKey,
-            paramiko.RSAKey,
-        ]
-        # DSSKey was removed in paramiko 4.x
-        if hasattr(paramiko, "DSSKey"):
-            key_classes.append(paramiko.DSSKey)
-        passphrase_arg = passphrase or None
-
-        for cls in key_classes:
-            try:
-                return cls.from_private_key_file(path, password=passphrase_arg)
-            except (paramiko.SSHException, paramiko.PasswordRequiredException):
-                continue
-
-        raise paramiko.SSHException(f"Cannot load key from {path}")
+        return load_private_key(path, passphrase)
 
     def disconnect(self) -> None:
         """Close SFTP channel and SSH transport."""
@@ -466,11 +723,14 @@ class SSHSession(SessionLifecycle):
 
     @_sftp_errors_as_oserror
     def is_dir(self, path: str) -> bool:
+        """False only for "not found" (or a file on the way); a refused,
+        failed or timed-out lstat is an OSError - the transfer manager
+        and remove() pick folder or file from this answer."""
         try:
             attr = self.sftp.lstat(path)
-            return stat_module.S_ISDIR(attr.st_mode or 0)
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
             return False
+        return stat_module.S_ISDIR(attr.st_mode or 0)
 
     @_sftp_errors_as_oserror
     def exists(self, path: str) -> bool:
@@ -694,9 +954,8 @@ class SSHSession(SessionLifecycle):
 
         Raises ``OSError`` on transport failure, NOT on a non-zero
         remote exit code; use ``.check()`` on the result for the latter.
+        A command that outlives *timeout* raises ``TimeoutError``.
         """
-        from models.exec_result import ExecResult
-
         if not self._transport or not self._transport.is_active():
             raise OSError("SSH exec: transport not active")
         log.info(
@@ -747,72 +1006,18 @@ class SSHSession(SessionLifecycle):
                     chan.shutdown_write()
                 except OSError:
                     pass
-            # Read stdout + stderr concurrently up to their caps. We do
-            # this with select() to avoid the deadlock where a chatty
-            # remote fills its stderr pipe while we're blocked on stdout.
-            import select as _select
-
-            stdout_buf = bytearray()
-            stderr_buf = bytearray()
-            stdout_truncated = False
-            stderr_truncated = False
-            while True:
-                if (
-                    chan.exit_status_ready()
-                    and not chan.recv_ready()
-                    and not chan.recv_stderr_ready()
-                ):
-                    break
-                rlist, _, _ = _select.select([chan], [], [], 0.1)
-                if chan in rlist:
-                    if chan.recv_ready():
-                        room = stdout_cap - len(stdout_buf)
-                        if room > 0:
-                            chunk = chan.recv(min(65536, room))
-                            if chunk:
-                                stdout_buf.extend(chunk)
-                        else:
-                            # Cap reached — drain to keep the remote
-                            # from blocking on a full pipe, but discard.
-                            chan.recv(65536)
-                            stdout_truncated = True
-                    if chan.recv_stderr_ready():
-                        room = stderr_cap - len(stderr_buf)
-                        if room > 0:
-                            chunk = chan.recv_stderr(min(65536, room))
-                            if chunk:
-                                stderr_buf.extend(chunk)
-                        else:
-                            chan.recv_stderr(65536)
-                            stderr_truncated = True
-            # Final drain after exit-status arrives.
-            while chan.recv_ready():
-                room = stdout_cap - len(stdout_buf)
-                if room <= 0:
-                    chan.recv(65536)
-                    stdout_truncated = True
-                    continue
-                stdout_buf.extend(chan.recv(min(65536, room)))
-            while chan.recv_stderr_ready():
-                room = stderr_cap - len(stderr_buf)
-                if room <= 0:
-                    chan.recv_stderr(65536)
-                    stderr_truncated = True
-                    continue
-                stderr_buf.extend(chan.recv_stderr(min(65536, room)))
-            rc = chan.recv_exit_status()
+            return drain_exec_channel(
+                chan,
+                timeout=timeout,
+                stdout_cap=stdout_cap,
+                stderr_cap=stderr_cap,
+                label="SSH exec",
+            )
         finally:
             try:
                 chan.close()
             except Exception:  # noqa: BLE001
                 pass
-        return ExecResult(
-            returncode=rc,
-            stdout=bytes(stdout_buf),
-            stderr=bytes(stderr_buf),
-            truncated_stdout=stdout_truncated,
-            truncated_stderr=stderr_truncated,
-        )
 
     def interactive_shell(
         self,
@@ -908,7 +1113,10 @@ class SSHSession(SessionLifecycle):
             raise ConnectionError("SSH transport not active")
         try:
             chan = self._transport.open_session()
-            chan.exec_command(f"cp -p -- {shlex.quote(src)} {shlex.quote(dst)}")
+            # Plain cp copies INTO an existing folder dst (review B6 twin).
+            from core.telnet_client import copy_command
+
+            chan.exec_command(copy_command(src, dst, preserve=True))
             stderr = _read_limited_stream(
                 chan.makefile_stderr("rb"),
                 HELPER_STDERR_CAP,
@@ -956,12 +1164,17 @@ class SSHSession(SessionLifecycle):
             ).decode("utf-8", errors="replace")
             rc = chan.recv_exit_status()
             chan.close()
+            if rc in COMMAND_NOT_FOUND:
+                # No such tool on this host: "" lets the caller hash the
+                # stream, as documented above.
+                log.debug("%s unavailable on %s: %s", tool, self._profile.host, stderr.strip())
+                return ""
             if rc != 0:
                 raise OSError(f"{tool} failed on {path}: rc={rc} stderr={stderr!r}")
-            hex_digest = output.split()[0] if output else ""
+            hex_digest = digest_from_sum_output(output, algorithm)
             if not hex_digest:
                 return ""
-            return f"{algorithm}:{hex_digest.lower()}"
+            return f"{algorithm}:{hex_digest}"
         except paramiko.SSHException as exc:
             raise OSError(f"checksum failed: {exc}") from exc
 

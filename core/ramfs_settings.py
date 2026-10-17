@@ -9,8 +9,13 @@ control:
 * ``ramfs_max_bytes`` — per-RamFsSession byte cap. Default 256 MiB.
 * ``ramfs_system_reserve_bytes`` — refuse RamFS writes when the
   OS has less than this free. Default 256 MiB.
-* ``tmpfs_enabled`` — should atomic_io / archive / fuse_mount
-  prefer detected tmpfs over /tmp. Default ON.
+* ``tmpfs_enabled`` — point the process-wide temp directory
+  (``tempfile.tempdir``) at a detected tmpfs. Default OFF: every temp
+  file the process makes then lands in RAM - download and upload spools
+  past 8 MiB, archive extraction, FUSE write buffers - on a RAM disk of
+  about a tenth of the memory (/run/user/$UID). An opt-in for a host
+  whose temp files must not touch a disk; an explicit ``TMPDIR`` still
+  wins (see :func:`core.tmpfs_detect.apply_tempdir_preference`).
 
 Settings live in ``~/.config/axross/ramfs.json`` (single small
 file rather than a giant ``settings.json``) so a future general
@@ -40,7 +45,7 @@ class RamFsSettings:
     ramfs_enabled: bool = True
     ramfs_max_bytes: int = 256 * 1024 * 1024
     ramfs_system_reserve_bytes: int = 256 * 1024 * 1024
-    tmpfs_enabled: bool = True
+    tmpfs_enabled: bool = False
 
     @classmethod
     def load(cls) -> RamFsSettings:

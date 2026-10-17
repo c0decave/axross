@@ -1,0 +1,28 @@
+# The axross agent worker in a container: core.agent_worker, the loop of
+# core.agent.Agent and the MCP tools it calls - nothing else (no GUI, no
+# protocol backends). axross starts it with --network=none, --read-only,
+# no capabilities and only the agent's folder mounted, and talks to it
+# over stdin/stdout (core.agent_sandbox).
+#
+# Build (the tag axross looks for by default):
+#   scripts/axross-podman.sh agent-image
+#   podman build -f Dockerfile.agent -t localhost/axross-agent:<version> .
+#   docker build -f Dockerfile.agent -t localhost/axross-agent:<version> .
+
+FROM python:3.12-slim
+
+# What the read-only tool groups use (metadata, file types, archives,
+# duplicates, crypto); pip runs here, in the build container.
+RUN pip install --no-cache-dir \
+        "Pillow>=12.3.0" "pypdf>=6.4.0" "py7zr>=1.1.3" "rarfile>=4.0" \
+        "puremagic>=1.20" "chardet>=5.2" "defusedxml>=0.7" \
+        "cryptography>=41" "paramiko>=5.0,<6.0" "keyring>=25.0" \
+    && useradd --uid 10001 --no-create-home --home-dir /tmp agent
+
+COPY core/ /opt/axross/core/
+COPY models/ /opt/axross/models/
+COPY axross/ /opt/axross/axross/
+
+ENV PYTHONPATH=/opt/axross PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
+USER 10001
+ENTRYPOINT ["python", "-m", "core.agent_worker"]

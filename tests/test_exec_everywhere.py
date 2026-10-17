@@ -253,8 +253,13 @@ def test_sad_cisco_refuses_output_modifiers_that_write_files(cmd):
 
 def test_edge_cisco_keeps_the_filtering_modifiers():
     s = _cisco()
-    for cmd in ("show running-config | include hostname", "show ip interface brief | i up",
-                "show running-config | section interface", "show log | begin Oct", "show users | count"):
+    for cmd in (
+        "show running-config | include hostname",
+        "show ip interface brief | i up",
+        "show running-config | section interface",
+        "show log | begin Oct",
+        "show users | count",
+    ):
         assert s.exec(cmd).returncode == 0
     assert len(s.shown) == 5
 

@@ -365,7 +365,9 @@ def _write_zip(backend, entries, out_path, opts, step, cancel) -> None:
 def _compressor(fmt: str, raw, opts: PackOptions):
     codec = fmt.split(".")[-1]
     if codec == "gz":
-        return gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=opts.level_for("deflate"), mtime=0)
+        return gzip.GzipFile(
+            fileobj=raw, mode="wb", compresslevel=opts.level_for("deflate"), mtime=0
+        )
     if codec == "bz2":
         return bz2.BZ2File(raw, "wb", compresslevel=opts.level_for("bz2"))
     if codec == "xz":

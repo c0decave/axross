@@ -50,7 +50,7 @@ class _Base:
 
     def start(self, backend, root: str) -> None:
         serve = reverse_serve.serve_s3 if self.flavour == "s3" else reverse_serve.serve_webdav
-        self.srv = serve(backend, bind="127.0.0.1", port=0, root_path=root)
+        self.srv = serve(backend, bind="127.0.0.1", port=0, root_path=root, auth_token=None)
         self.addCleanup(self.srv.shutdown)
 
     def url_path(self, name: str) -> str:

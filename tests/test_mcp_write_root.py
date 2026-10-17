@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -74,6 +75,10 @@ def _main_in_process(*argv: str, env: dict | None = None):
         stack.enter_context(mock.patch("core.tmpfs_detect.apply_tempdir_preference"))
         serve = stack.enter_context(mock.patch.object(M, "serve", return_value=0))
         serve_http = stack.enter_context(mock.patch.object(MH, "serve_http"))
+        # The bearer token file of --mcp-http stays out of the runtime dir.
+        stack.enter_context(
+            mock.patch.object(MH, "publish_token", return_value=Path("/nonexistent/token"))
+        )
         stack.enter_context(contextlib.redirect_stderr(stderr))
         code = axross_main.main()
     return code, stderr.getvalue(), serve, serve_http

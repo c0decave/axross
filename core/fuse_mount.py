@@ -11,9 +11,10 @@ Read-only by default; writeable opt-in
 a mount at a production bucket without an "oops" risk. Passing
 ``writeable=True`` enables create / write / truncate / unlink /
 mkdir / rmdir / rename. The writeable path buffers file writes in a
-per-handle tempfile and flushes to the backend on ``release`` (= the
-kernel-side ``close``). That matches how most remote backends think
-about mutation: whole-file overwrite, not random-access edits. S3
+per-handle tempfile and commits it to the backend on ``flush`` (= every
+kernel-side ``close``, whose result the writer sees) and ``fsync``.
+That matches how most remote backends think about mutation:
+whole-file overwrite, not random-access edits. S3
 has no in-place writes; IMAP has no rename; FTP can't truncate. The
 temp-file-at-close strategy keeps us out of per-protocol contracts
 we'd have to bend.
@@ -53,6 +54,7 @@ from __future__ import annotations
 import errno
 import logging
 import os
+import posixpath
 import stat as stat_mod
 import threading
 import time
@@ -172,7 +174,7 @@ class _WriteSession:
 
     * ``mode == "buffer"`` — default. Writes land in ``tmp`` (a
       NamedTemporaryFile) as the kernel chunks them in; on
-      ``release`` the whole tempfile is streamed to
+      ``flush`` / ``fsync`` the whole tempfile is streamed to
       ``backend.open_write`` at once. Works for any write pattern
       (random-access edits, partial overwrites, editors) at the
       cost of needing local disk space equal to the file size.
@@ -185,14 +187,14 @@ class _WriteSession:
       fresh files (O_CREAT / O_TRUNC) — opens of existing files
       silently fall back to buffer mode for that one session.
 
-    ``dirty=False`` means we opened the file read-only (no pre-
-    fetch) or the kernel never issued a write — the release path
-    can skip the flush.
+    ``dirty=False`` means the backend already holds the buffer:
+    nothing was written since the open (pre-fetched content) or since
+    the last successful commit — flush can skip the backend.
 
-    ``errored=True`` is a sticky flag: once we've reported a write
-    failure (out-of-order offset, backend refused a chunk) the
-    release path skips the commit and returns EIO to the kernel,
-    so an earlier EIO on write isn't silently lost.
+    ``errored=True`` is a sticky flag for stream sessions: once we've
+    reported a write failure (out-of-order offset, backend refused a
+    chunk or the commit) every later write and flush returns EIO, so
+    an earlier EIO isn't silently lost.
     """
 
     path: str
@@ -202,6 +204,19 @@ class _WriteSession:
     stream_handle: object | None = None
     expected_offset: int = 0
     errored: bool = False
+    #: A flush() / fsync() already returned this session's commit failure
+    #: to the writer: release() then cleans up without repeating it.
+    failure_reported: bool = False
+
+
+@dataclass
+class _SessionItem:
+    """The stat fields of a file open for writing, in the shape
+    :func:`_stat_dict` reads; ``modified=None`` means "now"."""
+
+    size: int
+    is_dir: bool = False
+    modified: object = None
 
 
 @dataclass
@@ -222,7 +237,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
     """fusepy adapter that proxies into a FileBackend.
 
     Writeable when ``writeable=True``. The mutation methods then
-    buffer per-handle to a tempfile and flush on release; dir ops
+    buffer per-handle to a tempfile and commit on flush; dir ops
     (mkdir / rmdir / unlink / rename) go through to the backend
     directly.
 
@@ -273,7 +288,38 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         return 0
 
     def getattr(self, path, fh=None):
+        # While a file is open for writing, the session -- not the
+        # backend -- holds its content until the next commit: a created
+        # file is not on the backend yet, an appended one is longer
+        # there. Answering from the backend made create() fail with
+        # ENOENT and let the kernel shrink i_size under an O_APPEND
+        # writer, whose next write then overwrote the earlier ones.
+        session = self._write_session_for(path, fh)
+        if session is not None:
+            return self._session_stat(session)
         return _stat_for(self, path, writeable=self.writeable)
+
+    def _write_session_for(self, path, fh) -> _WriteSession | None:
+        """The write session that speaks for *path*: the one behind *fh*
+        when it is one, else the most recently opened one on *path*."""
+        if fh is not None:
+            session = self._writes.get(fh)
+            if session is not None and session.path == path:
+                return session
+        newest = None
+        for key, session in list(self._writes.items()):
+            if session.path == path and (newest is None or key > newest[0]):
+                newest = (key, session)
+        return newest[1] if newest is not None else None
+
+    def _session_stat(self, session: _WriteSession) -> dict:
+        if session.mode == "stream":
+            size = session.expected_offset
+        else:
+            session.tmp.flush()
+            size = os.fstat(session.tmp.fileno()).st_size
+        item = _SessionItem(size=size)
+        return _stat_dict(item, writeable=self.writeable)
 
     # ---- directory ----------------------------------------------------
     def readdir(self, path, fh):
@@ -301,6 +347,8 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 name = getattr(it, "name", "")
                 if not name or name in (".", ".."):
                     continue
+                if getattr(it, "is_link", False) is True:
+                    continue  # getattr follows it to the target
                 self._stat.put(
                     _join(path, name),
                     _stat_dict(it, writeable=self.writeable),
@@ -500,8 +548,8 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         caller — create()/open() — can propagate cleanly.
 
         Streaming sessions never allocate a tempfile; they hold the
-        open ``backend.open_write`` handle for the whole lifetime
-        of the kernel fh and commit on release.
+        open ``backend.open_write`` handle until a flush commits it
+        (close of the handle).
         """
         full = _to_backend_path(path, self.root)
         try:
@@ -572,7 +620,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 pre_fetched = True
             except OSError as exc:
                 if self._may_exist(full):
-                    # The buffer is empty or cut short, and release
+                    # The buffer is empty or cut short, and flush
                     # would commit it over the file the read failed on.
                     log.warning("open(%s) pre-fetch failed: %s — EIO", full, exc)
                     self._discard_tempfile(tmp)
@@ -616,6 +664,8 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     session.expected_offset,
                 )
                 raise FuseOSError(errno.EIO)
+            if session.stream_handle is None:
+                self._reopen_stream(session)
             try:
                 session.stream_handle.write(data)
             except OSError as exc:
@@ -718,10 +768,126 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         self._refresh_readers(path)
 
     def flush(self, path, fh):
-        # Kernel may call flush() as part of close. The real flush
-        # to the backend happens in release(); here we just return
-        # success so the kernel doesn't think a write is stuck.
+        # The kernel calls flush() from every close(2) of a descriptor
+        # on this handle and hands its result to that close(). This is
+        # therefore where the commit happens: release() comes after the
+        # last close, asynchronously, and the kernel discards its return
+        # value -- a commit failure there never reaches the writer.
+        session = self._writes.get(fh)
+        if session is not None:
+            self._commit_reported(session, "flush")
         return 0
+
+    def fsync(self, path, datasync, fh):
+        session = self._writes.get(fh)
+        if session is not None:
+            self._commit_reported(session, "fsync")
+        return 0
+
+    def _commit_reported(self, session: _WriteSession, caller: str) -> None:
+        try:
+            self._commit(session, caller)
+        except FuseOSError:
+            session.failure_reported = True
+            raise
+
+    def _commit(self, session: _WriteSession, caller: str) -> None:
+        """Bring the backend up to the session's content.
+
+        Raises FuseOSError(EIO) when the backend refuses, so flush() /
+        fsync() report the failure to the writing program. A buffer
+        session stays dirty after a failure: the next flush retries.
+        """
+        if session.mode == "stream":
+            self._commit_stream(session, caller)
+            return
+        if not session.dirty:
+            return
+        tmp = session.tmp
+        tmp.flush()
+        tmp.seek(0)
+        full = _to_backend_path(session.path, self.root)
+        try:
+            from core.atomic_io import atomic_write_stream
+
+            atomic_write_stream(
+                self.backend,
+                full,
+                tmp,
+                chunk_size=64 * 1024,
+            )
+        except OSError as exc:
+            log.warning("FUSE %s(%s) commit failed: %s", caller, full, exc)
+            raise FuseOSError(errno.EIO)
+        session.dirty = False
+        self._stat.invalidate_all()
+        self._listing.invalidate_all()
+        self._refresh_readers(session.path)
+
+    def _commit_stream(self, session: _WriteSession, caller: str) -> None:
+        """Close (= commit) the backend handle of a stream session.
+
+        The handle is gone afterwards; a later sequential write on the
+        same fh reopens the file (see :meth:`_reopen_stream`). If the
+        session already errored (non-sequential write earlier), prefer
+        ``discard()`` when available so the backend doesn't quietly
+        materialise a partial file as the committed state.
+        """
+        if session.errored:
+            handle, session.stream_handle = session.stream_handle, None
+            if handle is not None:
+                discard = getattr(handle, "discard", None)
+                try:
+                    if callable(discard):
+                        discard()
+                    else:
+                        # No discard -- close anyway and leave commit or
+                        # rollback to the backend; EIO keeps the caller
+                        # from thinking success.
+                        handle.close()
+                except Exception as exc:  # noqa: BLE001
+                    log.debug(
+                        "FUSE stream close-after-error(%s): %s",
+                        session.path,
+                        exc,
+                    )
+            raise FuseOSError(errno.EIO)
+        handle, session.stream_handle = session.stream_handle, None
+        if handle is None:
+            return
+        try:
+            handle.close()
+        except OSError as exc:
+            session.errored = True
+            log.warning(
+                "FUSE stream %s(%s) commit failed: %s",
+                caller,
+                session.path,
+                exc,
+            )
+            raise FuseOSError(errno.EIO)
+        self._stat.invalidate_all()
+        self._listing.invalidate_all()
+        self._refresh_readers(session.path)
+
+    def _reopen_stream(self, session: _WriteSession) -> None:
+        """A write after a flush committed the stream: open the backend
+        file again and continue where it ended. From offset 0 that is a
+        plain open_write; past it the backend must support append."""
+        full = _to_backend_path(session.path, self.root)
+        try:
+            if session.expected_offset:
+                session.stream_handle = self.backend.open_write(full, append=True)
+            else:
+                session.stream_handle = self.backend.open_write(full)
+        except (OSError, TypeError, NotImplementedError) as exc:
+            session.errored = True
+            log.warning(
+                "FUSE stream write(%s) after a commit cannot continue the file: %s",
+                session.path,
+                exc,
+            )
+            raise FuseOSError(errno.EIO)
 
     def release(self, path, fh):
         reader = self._reads.pop(fh, None)
@@ -732,89 +898,20 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
         session = self._writes.pop(fh, None)
         if session is None:
             return 0
-        if session.mode == "stream":
-            # Streaming: the backend handle has been accepting
-            # bytes all along. Close it to commit. If the session
-            # already errored (non-sequential write earlier), prefer
-            # ``discard()`` when available so the backend doesn't
-            # quietly materialise a partial file as the committed
-            # state.
-            handle = session.stream_handle
-            if handle is None:
-                return 0
-            try:
-                if session.errored:
-                    discard = getattr(handle, "discard", None)
-                    if callable(discard):
-                        try:
-                            discard()
-                        except Exception as exc:  # noqa: BLE001
-                            log.debug(
-                                "FUSE stream discard(%s) raised: %s",
-                                session.path,
-                                exc,
-                            )
-                    else:
-                        # No discard — close anyway but leave the
-                        # backend's own commit/rollback logic to
-                        # decide. EIO back to the kernel keeps the
-                        # caller from thinking success.
-                        try:
-                            handle.close()
-                        except Exception as exc:  # noqa: BLE001
-                            log.debug(
-                                "FUSE stream close-after-error(%s): %s",
-                                session.path,
-                                exc,
-                            )
-                    raise FuseOSError(errno.EIO)
-                try:
-                    handle.close()
-                except OSError as exc:
-                    log.warning(
-                        "FUSE stream release(%s) close failed: %s",
-                        session.path,
-                        exc,
-                    )
-                    raise FuseOSError(errno.EIO)
-                self._stat.invalidate_all()
-                self._listing.invalidate_all()
-                self._refresh_readers(session.path)
-            finally:
-                session.stream_handle = None
-            return 0
-        # Buffer mode.
-        tmp = session.tmp
+        # flush() already committed on close(). What is left is content
+        # that reached us after the last close (mmap write-back) or a
+        # stream nobody flushed. The kernel discards release's answer:
+        # a failure flush() already returned is not raised again, any
+        # other one is (fusepy logs it; callers outside the kernel see it).
         try:
-            if session.dirty:
-                tmp.flush()
-                tmp.seek(0)
-                full = _to_backend_path(path, self.root)
-                try:
-                    from core.atomic_io import atomic_write_stream
-
-                    atomic_write_stream(
-                        self.backend,
-                        full,
-                        tmp,
-                        chunk_size=64 * 1024,
-                    )
-                except OSError as exc:
-                    log.warning("release(%s) flush failed: %s", full, exc)
-                    raise FuseOSError(errno.EIO)
-                self._stat.invalidate_all()
-                self._listing.invalidate_all()
-                self._refresh_readers(path)
+            self._commit(session, "release")
+        except FuseOSError:
+            if not session.failure_reported:
+                raise
+            log.debug("FUSE release(%s): final commit failed again", session.path)
         finally:
-            # Always clean up the temp file, even on EIO.
-            try:
-                tmp.close()
-            except Exception:
-                pass
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
+            if session.tmp is not None:
+                self._discard_tempfile(session.tmp)
         return 0
 
     def unlink(self, path):
@@ -825,7 +922,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             self.backend.remove(full, recursive=False)
         except OSError as exc:
             log.debug("unlink(%s) failed: %s", full, exc)
-            raise FuseOSError(errno.EIO)
+            raise FuseOSError(_mutation_errno(exc))
         self._stat.invalidate_all()
         self._listing.invalidate_all()
         self._refresh_readers(path)
@@ -838,7 +935,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             self.backend.mkdir(full)
         except OSError as exc:
             log.debug("mkdir(%s) failed: %s", full, exc)
-            raise FuseOSError(errno.EIO)
+            raise FuseOSError(_mutation_errno(exc))
         self._listing.invalidate_all()
 
     def rmdir(self, path):
@@ -849,7 +946,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             self.backend.remove(full, recursive=False)
         except OSError as exc:
             log.debug("rmdir(%s) failed: %s", full, exc)
-            raise FuseOSError(errno.EIO)
+            raise FuseOSError(_mutation_errno(exc))
         self._listing.invalidate_all()
 
     def rename(self, old, new):
@@ -869,7 +966,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     new_full,
                     rename_exc,
                 )
-                raise FuseOSError(errno.EIO)
+                raise FuseOSError(_mutation_errno(rename_exc))
             try:
                 server_side_move(self.backend, old_full, new_full)
             except OSError as move_exc:
@@ -880,7 +977,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     rename_exc,
                     move_exc,
                 )
-                raise FuseOSError(errno.EIO)
+                raise FuseOSError(_mutation_errno(move_exc))
         self._stat.invalidate_all()
         self._listing.invalidate_all()
         self._refresh_readers(old)
@@ -941,12 +1038,88 @@ def _stat_for(adapter, path: str, *, writeable: bool = False) -> dict:
     full = _to_backend_path(path, adapter.root)
     try:
         item = adapter.backend.stat(full)
+        if getattr(item, "is_link", False) is True:
+            item = _link_target_item(adapter.backend, full, item)
     except OSError as exc:
         log.debug("stat(%s) failed: %s", full, exc)
-        raise FuseOSError(errno.ENOENT)
+        raise FuseOSError(_stat_errno(exc))
     result = _stat_dict(item, writeable=writeable)
     adapter._stat.put(path, result)
     return result
+
+
+#: Symlinks followed before a chain counts as a loop (the kernel's limit).
+MAX_LINK_HOPS = 40
+
+
+def _link_target_item(backend, full: str, link_item):
+    """The stat of what the link at *full* finally points to.
+
+    Backends answer stat() with an lstat: a link's own size is the length
+    of its target text, but reads follow the link, so the kernel cut every
+    read at that size. The mount shows the target, like sshfs does. A
+    backend that cannot read links keeps *link_item*.
+    """
+    current = full
+    for _hop in range(MAX_LINK_HOPS):
+        try:
+            target = backend.readlink(current)
+        except (AttributeError, NotImplementedError):
+            return link_item
+        if not target:
+            raise OSError(errno.ENOENT, "empty symlink", current)
+        if not target.startswith("/"):
+            target = posixpath.join(posixpath.dirname(current), target)
+        current = posixpath.normpath(target)
+        item = backend.stat(current)
+        if getattr(item, "is_link", False) is not True:
+            return item
+    raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), full)
+
+
+#: The errno of an OSError subclass a backend raised without one.
+_ERRNO_OF_CLASS = (
+    (PermissionError, errno.EACCES),
+    (FileNotFoundError, errno.ENOENT),
+    (FileExistsError, errno.EEXIST),
+    (NotADirectoryError, errno.ENOTDIR),
+    (IsADirectoryError, errno.EISDIR),
+)
+
+
+def _mutation_errno(exc: OSError) -> int:
+    """The errno unlink / mkdir / rmdir / rename report for a backend
+    failure: the backend's own, so ``rmdir`` of a non-empty folder is
+    ENOTEMPTY and ``mkdir -p`` sees the EEXIST it skips. An error without
+    one is EIO, unless its class says what it is."""
+    code = getattr(exc, "errno", None)
+    if isinstance(code, int) and code in errno.errorcode:
+        return code
+    for cls, mapped in _ERRNO_OF_CLASS:
+        if isinstance(exc, cls):
+            return mapped
+    return errno.EIO
+
+
+def _stat_errno(exc: OSError) -> int:
+    """The errno getattr reports for a failed backend stat.
+
+    Only "not found" may be ENOENT: the kernel then lets O_CREAT create
+    the name, and create() starts an empty buffer whose commit replaces
+    the file that was there all along. A timeout or a dropped connection
+    is EIO. A bare OSError without errno stays ENOENT: several backends
+    say "not found" that way.
+    """
+    if isinstance(exc, PermissionError):
+        return errno.EACCES
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return errno.EIO
+    code = getattr(exc, "errno", None)
+    if code is None or code in (errno.ENOENT, errno.ENOTDIR):
+        return errno.ENOENT
+    if code == errno.ELOOP:
+        return errno.ELOOP
+    return errno.EIO
 
 
 # --------------------------------------------------------------------------
@@ -1013,7 +1186,7 @@ def mount(
     ``writeable=True``:
 
     * ``"buffer"`` (default) — per-open tempfile on local disk,
-      flushed on release. Works for any write pattern including
+      committed on flush (close) and fsync. Works for any write pattern including
       random-access edits, at the cost of local disk space equal
       to the file size. Good for interactive editing.
     * ``"stream"`` — per-open ``backend.open_write`` handle that

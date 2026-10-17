@@ -94,12 +94,16 @@ def validate_remote_name(
     *,
     max_bytes: int = MAX_REMOTE_NAME_BYTES,
     allow_separators: bool = False,
+    allow_backslash: bool = False,
 ) -> None:
     """Raise :class:`RemoteNameError` if *name* is unsafe.
 
     *name* is expected to be a **single path component** — pass
     ``allow_separators=True`` to validate a whole path instead
-    (still rejects traversal and NUL bytes).
+    (still rejects traversal and NUL bytes). ``allow_backslash=True``
+    accepts a backslash inside one component: only for a backend that
+    treats it as an ordinary character (a POSIX filesystem), never for
+    one where it may be a separator (Windows, SMB, an unknown server).
     """
     if not isinstance(name, str):
         raise RemoteNameError(f"name must be str, got {type(name).__name__}")
@@ -132,7 +136,7 @@ def validate_remote_name(
         return
 
     # Single-component validation.
-    if "/" in name or "\\" in name:
+    if "/" in name or ("\\" in name and not allow_backslash):
         raise RemoteNameError("name contains path separator")
     if name in (".", ".."):
         raise RemoteNameError(f"name is reserved: {name!r}")

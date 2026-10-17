@@ -7,8 +7,15 @@ pane runs the same move / copy as a drag that started in the pane: Ctrl
 copies, anything else moves, the destination is checked for conflicts,
 and a move removes the source only after the copy arrived.
 
+The drag's MoveAction only says the drop was accepted: the destination
+check, a conflict question and the transfer run afterwards and may be
+cancelled or fail. :class:`MoveWatch` therefore takes a moved file out of
+a viewer only once the source pane's next listing shows it is gone.
+
 A viewer without a pane (opened on its own) offers no drag: the drop
-side resolves the source by its pane and would refuse it anyway.
+side resolves the source by its pane and would refuse it anyway. A pane
+that was closed while the viewer stayed open counts as no pane
+(:func:`live_pane`).
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ import logging
 from collections.abc import Callable
 from html import escape
 
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QMimeData, QObject, QPoint, Qt, QUrl
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
@@ -35,6 +43,15 @@ def owning_pane(widget: QWidget | None):
     return None
 
 
+def live_pane(pane):
+    """*pane*, or None when there is none or it was closed (deleted) while
+    the viewer stayed open: its payload would name a pane the drop side
+    cannot find, and a refresh of it raises RuntimeError."""
+    if pane is None or sip.isdeleted(pane):
+        return None
+    return pane
+
+
 def _name(backend, path: str) -> str:
     try:
         return backend.basename(path) if hasattr(backend, "basename") else path.rsplit("/", 1)[-1]
@@ -45,6 +62,7 @@ def _name(backend, path: str) -> str:
 def start_file_drag(source: QWidget, backend, path: str, pane) -> Qt.DropAction:
     """Drag *path* out of a viewer as if from *pane*. Returns what the
     drop did: MoveAction, CopyAction, or IgnoreAction (refused / no pane)."""
+    pane = live_pane(pane)
     if pane is None:
         return Qt.DropAction.IgnoreAction
     from core.local_fs import LocalFS
@@ -80,12 +98,50 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
         backend.remove(path)
     except OSError as exc:
         log.error("Delete failed for %s: %s", path, exc)
-        QMessageBox.warning(parent, "Delete", f"Could not delete {escape(name)}:\n{escape(str(exc))}")
+        QMessageBox.warning(
+            parent, "Delete", f"Could not delete {escape(name)}:\n{escape(str(exc))}"
+        )
         return False
     log.info("Deleted: %s", path)
+    pane = live_pane(pane)
     if pane is not None:
         pane.refresh_after_change()
     return True
+
+
+class MoveWatch(QObject):
+    """Tells a viewer when a file it saw dragged off as a move is gone.
+
+    *gone(path)* is called once the backend no longer has *path*, checked
+    whenever the source pane shows a listing - the main window refreshes
+    it when the move has finished. A file that is still there (the
+    conflict prompt was cancelled, the transfer failed) stays in the
+    viewer. A child of the viewer: the watch ends with it.
+    """
+
+    def __init__(self, owner: QObject, backend, pane, gone: Callable[[str], None]) -> None:
+        super().__init__(owner)
+        self._backend = backend
+        self._gone = gone
+        self._pending: list[str] = []
+        pane = live_pane(pane)
+        if pane is not None:
+            pane.path_changed.connect(self._check)
+
+    def watch(self, path: str) -> None:
+        if path not in self._pending:
+            self._pending.append(path)
+
+    def _check(self, *_args) -> None:
+        for path in list(self._pending):
+            try:
+                still_there = self._backend.exists(path)
+            except Exception as exc:  # noqa: BLE001 - unknown: keep showing it
+                log.debug("Viewer: cannot check the moved %s: %s", path, exc)
+                continue
+            if still_there is False:
+                self._pending.remove(path)
+                self._gone(path)
 
 
 class DragOut(QObject):
@@ -127,7 +183,7 @@ class DragOut(QObject):
             if moved < QApplication.startDragDistance():
                 return False
             press, self._press = self._press, None
-            if self._pane is None or not self._allowed():
+            if live_pane(self._pane) is None or not self._allowed():
                 return False
             path = self._path_at(press)
             if not path:
@@ -138,4 +194,11 @@ class DragOut(QObject):
         return False
 
 
-__all__ = ["DragOut", "delete_file", "owning_pane", "start_file_drag"]
+__all__ = [
+    "DragOut",
+    "MoveWatch",
+    "delete_file",
+    "live_pane",
+    "owning_pane",
+    "start_file_drag",
+]

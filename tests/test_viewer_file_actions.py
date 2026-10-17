@@ -88,9 +88,17 @@ def _media_dialog(folder: Path, pane=None):
 def _mouse_drag(widget, start=(20, 20), end=(80, 80)):
     """Press, move past the drag distance, release - on *widget*."""
     def send(kind, pos, buttons):
-        button = Qt.MouseButton.LeftButton if kind != QEvent.Type.MouseMove else Qt.MouseButton.NoButton
-        event = QMouseEvent(kind, QPointF(*pos), QPointF(widget.mapToGlobal(QPointF(*pos).toPoint())),
-                            button, buttons, Qt.KeyboardModifier.NoModifier)
+        button = (
+            Qt.MouseButton.LeftButton if kind != QEvent.Type.MouseMove else Qt.MouseButton.NoButton
+        )
+        event = QMouseEvent(
+            kind,
+            QPointF(*pos),
+            QPointF(widget.mapToGlobal(QPointF(*pos).toPoint())),
+            button,
+            buttons,
+            Qt.KeyboardModifier.NoModifier,
+        )
         QApplication.sendEvent(widget, event)
 
     L = Qt.MouseButton.LeftButton
@@ -138,9 +146,21 @@ def test_happy_dragging_the_image_out_moves_it_through_the_pane_payload(pics, pa
     fake = _Exec(Qt.DropAction.MoveAction)
     with fake.patch():
         _mouse_drag(dlg.drag_surface())
-    assert fake.payloads == [{"paths": [str(pics[0])], "source_pane_id": str(id(pane)), "dirs": []}]
-    # A move took the file away: the viewer goes on with the next one.
-    assert dlg.current_path() == str(pics[1])
+    assert fake.payloads == [
+        {
+            "paths": [str(pics[0])],
+            "source_pane_id": str(id(pane)),
+            "dirs": [],
+            "filesystem": "Local",
+        }
+    ]
+    # The drop was accepted as a move; the move runs afterwards. Once it
+    # took the file away and the pane shows that, the viewer goes on with
+    # the next one (tests/test_viewer_drag_move_confirmed.py).
+    assert dlg.current_path() == str(pics[0])
+    pics[0].rename(pics[0].parent.parent / pics[0].name)
+    pane.refresh_after_change()
+    assert wait_until(lambda: dlg.current_path() == str(pics[1]))
     dlg.reject()
 
 
@@ -171,7 +191,9 @@ def test_happy_a_tile_of_the_overview_drags_and_deletes(pics, pane):
         _mouse_drag(view.viewport(), (tile.x(), tile.y()), (tile.x() + 60, tile.y() + 60))
     assert fake.payloads and len(fake.payloads[0]["paths"]) == 1
     moved = fake.payloads[0]["paths"][0]
-    assert moved not in [i.path for i in dlg.model.items()]
+    Path(moved).rename(Path(moved).parent.parent / Path(moved).name)
+    pane.refresh_after_change()
+    assert wait_until(lambda: moved not in [i.path for i in dlg.model.items()])
     view.setCurrentIndex(dlg.overview.proxy.index(0, 0))
     with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
         dlg.delete_current()
@@ -244,10 +266,18 @@ def test_edge_the_delete_key_reaches_it(pics, pane):
     from PyQt6.QtGui import QKeySequence, QShortcut
 
     dlg = _image_viewer(pics, pane)
-    keys = [s for s in dlg.findChildren(QShortcut) if s.key() == QKeySequence(QKeySequence.StandardKey.Delete)]
+    keys = [
+        s
+        for s in dlg.findChildren(QShortcut)
+        if s.key() == QKeySequence(QKeySequence.StandardKey.Delete)
+    ]
     assert len(keys) == 1
     media = _media_dialog(pics[0].parent, pane)
-    keys = [s for s in media.findChildren(QShortcut) if s.key() == QKeySequence(QKeySequence.StandardKey.Delete)]
+    keys = [
+        s
+        for s in media.findChildren(QShortcut)
+        if s.key() == QKeySequence(QKeySequence.StandardKey.Delete)
+    ]
     assert len(keys) == 1
     dlg.reject()
     media.reject()
@@ -283,3 +313,78 @@ class ViewerDropOnPaneTest(_Panes):
         self.drop(self.right, mime, self.point(self.right, "inbox"), ctrl=True)
         self.assertEqual((self.a / "f.txt").read_text(), "payload")
         self.assertEqual((self.b / "inbox" / "f.txt").read_text(), "payload")
+
+
+# -- the pane was closed while the viewer stayed open ----------------------------
+#
+# Reproduced 2026-10-17: the media viewer outlives the pane it was opened
+# from (its [x], a layout preset). Delete then removed the file and raised
+# "wrapped C/C++ object ... has been deleted" from the pane refresh - the
+# viewer kept showing the deleted file under an error dialog. A drag out
+# still carried the dead pane's payload, a pane accepted it as a move that
+# nobody ran, and the viewer dropped the file from its list.
+
+
+def _closed_pane(folder: Path) -> FilePaneWidget:
+    from PyQt6.QtWidgets import QWidget
+
+    host = QWidget()
+    gone = FilePaneWidget(LocalFS(), parent=host)
+    gone.navigate(str(folder))
+    gone.setParent(None)
+    gone.deleteLater()
+    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    host.deleteLater()
+    from PyQt6 import sip
+
+    assert sip.isdeleted(gone)
+    return gone
+
+
+def test_happy_delete_after_the_pane_was_closed_removes_the_file_and_the_item(pics, tmp_path):
+    pane = FilePaneWidget(LocalFS())
+    pane.navigate(str(pics[0].parent))
+    dlg = _media_dialog(pics[0].parent, pane)
+    pane.setParent(None)
+    pane.deleteLater()
+    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    dlg.open_viewer(0)
+    first = dlg.viewer.current_item().path
+    with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+        dlg.delete_current()
+    assert not Path(first).exists()
+    assert first not in [i.path for i in dlg.model.items()]
+    dlg.reject()
+
+
+def test_sad_no_drag_starts_once_the_pane_was_closed(pics):
+    pane = FilePaneWidget(LocalFS())
+    pane.navigate(str(pics[0].parent))
+    dlg = _media_dialog(pics[0].parent, pane)
+    pane.setParent(None)
+    pane.deleteLater()
+    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    dlg.open_viewer(0)
+    shown = dlg.viewer.current_item().path
+    fake = _Exec(Qt.DropAction.MoveAction)
+    with fake.patch():
+        _mouse_drag(dlg.drag_surface())
+    assert fake.payloads == []
+    assert shown in [i.path for i in dlg.model.items()]
+    assert Path(shown).exists()
+    dlg.reject()
+
+
+def test_edge_the_actions_take_a_closed_pane_for_no_pane(pics):
+    from ui import viewer_file_actions as VFA
+
+    gone = _closed_pane(pics[0].parent)
+    assert VFA.live_pane(gone) is None
+    assert VFA.live_pane(None) is None
+    fake = _Exec(Qt.DropAction.MoveAction)
+    with fake.patch():
+        action = VFA.start_file_drag(QApplication.activeWindow(), LocalFS(), str(pics[1]), gone)
+    assert action == Qt.DropAction.IgnoreAction and fake.payloads == []
+    with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+        assert VFA.delete_file(None, LocalFS(), str(pics[0]), gone) is True
+    assert not pics[0].exists()

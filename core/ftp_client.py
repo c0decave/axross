@@ -13,14 +13,16 @@ import re
 import select
 import socket
 import tempfile
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from ftplib import FTP, FTP_TLS, error_perm  # nosec B402
 from ftplib import Error as _FtpLibError  # nosec B402
-from typing import IO
+from typing import IO, NoReturn
 
 from core.backend import SessionLifecycle
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
+from core.read_spool import READ_CHUNK, new_read_spool
 from core.session_lock import io_lock, liveness_check, serialized
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -186,6 +188,13 @@ def _unix_entry(
     return found.pop() if len(found) == 1 else None
 
 
+def _is_not_found_reply(exc: BaseException) -> bool:
+    """True for 550, the reply FTP gives for a path that is not there
+    ("file unavailable"; RFC 959). Every other 5xx - 530 not logged in,
+    500 / 502 not understood, 534 policy - says nothing about the path."""
+    return str(exc)[:3] == "550"
+
+
 def _ftp_errors_as_oserror(fn):
     """Re-raise ftplib protocol errors from ``fn`` as ``OSError``."""
 
@@ -206,6 +215,22 @@ def _ftp_errors_as_oserror(fn):
             ) from exc
 
     return wrapper
+
+
+def _quit_quietly(ftp) -> None:
+    """QUIT a control connection; close it when QUIT fails."""
+    try:
+        ftp.quit()
+    except Exception:  # noqa: BLE001 - a dead connection is closed anyway
+        _close_quietly(ftp)
+
+
+def _close_quietly(ftp) -> None:
+    """Close a control connection without a QUIT round trip."""
+    try:
+        ftp.close()
+    except Exception:  # noqa: BLE001 - nothing left to report it to
+        pass
 
 
 class _SpooledWriter:
@@ -259,6 +284,150 @@ class _SpooledWriter:
             self.discard()
         else:
             self.close()
+
+
+class _StreamedDownload(io.RawIOBase):
+    """``open_read``'s handle when the session could open a second control
+    connection for it: the RETR runs while the caller reads.
+
+    The whole download used to run inside ``open_read`` on the shared
+    connection, under the session lock - Cancel and the progress bar of a
+    transfer only ran once it was over, and every other call on the
+    session waited for it. Here a transfer reads block by block, checking
+    cancel and reporting progress in between, while the shared connection
+    stays free.
+
+    Received bytes go to a spool, so seek() back works as on the spool of
+    old; a read past them receives up to there. ``read(n)`` returns ``n``
+    bytes unless the file ends first (FUSE passes it to the kernel, which
+    takes a short read for the end of the file). Not bound to a thread:
+    FUSE opens, reads and releases on different ones.
+    """
+
+    _BLOCK = 64 * 1024
+
+    def __init__(self, ftp: FTP, conn, path: str, done) -> None:
+        super().__init__()
+        self._ftp = ftp
+        self._conn = conn
+        self._path = path
+        # Called with the control connection after a complete transfer.
+        self._done = done
+        self._spool = new_read_spool()
+        self._received = 0
+        self._pos = 0
+        self._failed: OSError | None = None
+        self._lock = threading.Lock()
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._pos
+
+    def seek(self, pos: int, whence: int = 0) -> int:
+        with self._lock:
+            self._checked()
+            if whence == io.SEEK_SET:
+                target = pos
+            elif whence == io.SEEK_CUR:
+                target = self._pos + pos
+            elif whence == io.SEEK_END:
+                self._receive(None)
+                target = self._received + pos
+            else:
+                raise ValueError(f"invalid whence ({whence})")
+            if target < 0:
+                raise ValueError(f"negative seek position {target}")
+            self._pos = target
+            return target
+
+    def readinto(self, buffer) -> int:
+        with self._lock:
+            self._checked()
+            view = memoryview(buffer).cast("B")
+            self._receive(self._pos + len(view))
+            if self._pos >= self._received:
+                return 0
+            self._spool.seek(self._pos)
+            data = self._spool.read(min(len(view), self._received - self._pos))
+            view[: len(data)] = data
+            self._pos += len(data)
+            return len(data)
+
+    def readall(self) -> bytes:
+        chunks = []
+        while chunk := self.read(READ_CHUNK):
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    def _checked(self) -> None:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        if self._failed is not None:
+            raise OSError(f"FTP read {self._path}: download failed: {self._failed}")
+
+    def _receive(self, upto: int | None) -> None:
+        """Receive until ``upto`` bytes are in the spool (None: all)."""
+        while self._conn is not None and (upto is None or self._received < upto):
+            try:
+                data = self._conn.recv(self._BLOCK)
+                if not data:
+                    self._finish()
+                    return
+            except _FTP_PROTOCOL_ERRORS as exc:
+                detail = str(exc) or "connection closed by server"
+                self._fail(OSError(f"FTP read {self._path}: {detail}"))
+            except OSError as exc:
+                self._fail(exc)
+            self._spool.seek(self._received)
+            self._spool.write(data)
+            self._received += len(data)
+
+    def _finish(self) -> None:
+        """The data connection ended: the server's reply says whether the
+        file did. A 4xx/5xx there is a failed download, not a short file."""
+        conn, self._conn = self._conn, None
+        unwrap = getattr(conn, "unwrap", None)  # TLS: close as retrbinary does
+        try:
+            if unwrap is not None:
+                unwrap()
+        finally:
+            conn.close()
+        self._ftp.voidresp()
+        ftp, self._ftp = self._ftp, None
+        self._done(ftp)
+
+    def _fail(self, exc: OSError) -> NoReturn:
+        self._failed = exc
+        self._drop()
+        raise exc
+
+    def _drop(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        ftp, self._ftp = self._ftp, None
+        if ftp is not None:
+            # Mid-transfer or failed: its control channel is not in a
+            # state to send the next command on.
+            _close_quietly(ftp)
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        with self._lock:
+            try:
+                self._drop()
+            finally:
+                self._spool.close()
+                super().close()
 
 
 class _FtpProxyMixin:
@@ -486,6 +655,9 @@ class FtpSession(SessionLifecycle):
     Uses ftplib (stdlib). Supports both plain FTP and explicit FTPS.
     """
 
+    #: False for a session built without ``__init__``: no login parameters.
+    _separate_downloads = False
+
     def __init__(
         self,
         host: str,
@@ -534,6 +706,11 @@ class FtpSession(SessionLifecycle):
         )
         self._ftp: FTP | None = None
         self._has_mlsd = False
+        # Downloads run on a control connection of their own (see
+        # _StreamedDownload); the last finished one is kept for the next.
+        self._separate_downloads = True
+        self._spare_ftp: FTP | None = None
+        self._spare_lock = threading.Lock()
 
         if self._proxy.enabled and not self._passive:
             log.warning(
@@ -546,71 +723,7 @@ class FtpSession(SessionLifecycle):
 
     def _connect(self) -> None:
         """Establish FTP connection."""
-        if self._tls:
-            import ssl
-
-            if self._verify_tls:
-                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                context.verify_mode = ssl.CERT_REQUIRED
-                context.check_hostname = True
-                context.load_default_certs()
-            else:
-                # Explicit opt-out: used for self-signed / lab servers.
-                log.warning(
-                    "FTPS connection to %s:%d with TLS verification DISABLED "
-                    "— subject to MITM attacks",
-                    self._host,
-                    self._port,
-                )
-                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-            ftp = (
-                _ProxyFTP_TLS(context=context) if self._proxy.enabled else _FTP_TLS(context=context)
-            )
-        else:
-            ftp = _ProxyFTP() if self._proxy.enabled else _FTP()  # nosec B321
-
-        if self._proxy.enabled:
-            _ftp_connect_via_proxy(
-                ftp,
-                self._host,
-                self._port,
-                self._proxy,
-                timeout=15.0,
-            )
-        else:
-            ftp.connect(self._host, self._port, timeout=15)
-        ftp.login(self._username, self._password)
-
-        if self._tls and isinstance(ftp, FTP_TLS):
-            ftp.prot_p()  # Protect data channel
-
-        ftp.set_pasv(self._passive)
-
-        # Try UTF-8
-        try:
-            ftp.sendcmd("OPTS UTF8 ON")
-            ftp.encoding = "utf-8"
-        except error_perm:
-            ftp.encoding = "latin-1"
-
-        # Harden the response reader against encoding mismatches: even
-        # when the server accepts OPTS UTF8 ON it may still echo paths
-        # back in latin-1 (vsftpd/pure-ftpd both do this for non-ASCII
-        # names on certain builds). A raw UnicodeDecodeError inside
-        # ftplib.getline() aborts the control session; switching the
-        # decoder to errors='replace' keeps the channel alive while
-        # logging what happened.
-        try:
-            raw = ftp.sock.makefile(
-                "r",
-                encoding=ftp.encoding,
-                errors="replace",
-            )
-            ftp.file = raw
-        except Exception as exc:
-            log.debug("Could not harden FTP response decoder: %s", exc)
+        ftp = self._login()
 
         # Probe MLSD support. _ProxyFTP/_ProxyFTP_TLS override
         # ntransfercmd(), so PASV data channels used by MLSD are
@@ -631,6 +744,82 @@ class FtpSession(SessionLifecycle):
             self._has_mlsd,
         )
 
+    def _login(self, *, announce: bool = True) -> FTP:
+        """A new control connection, logged in and set up. ``announce``
+        False keeps the TLS opt-out warning of a download's own
+        connection at debug level: the session's login already warned."""
+        if self._tls:
+            import ssl
+
+            if self._verify_tls:
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                context.verify_mode = ssl.CERT_REQUIRED
+                context.check_hostname = True
+                context.load_default_certs()
+            else:
+                # Explicit opt-out: used for self-signed / lab servers.
+                (log.warning if announce else log.debug)(
+                    "FTPS connection to %s:%d with TLS verification DISABLED "
+                    "— subject to MITM attacks",
+                    self._host,
+                    self._port,
+                )
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+            ftp = (
+                _ProxyFTP_TLS(context=context) if self._proxy.enabled else _FTP_TLS(context=context)
+            )
+        else:
+            ftp = _ProxyFTP() if self._proxy.enabled else _FTP()  # nosec B321
+
+        try:
+            if self._proxy.enabled:
+                _ftp_connect_via_proxy(
+                    ftp,
+                    self._host,
+                    self._port,
+                    self._proxy,
+                    timeout=15.0,
+                )
+            else:
+                ftp.connect(self._host, self._port, timeout=15)
+            ftp.login(self._username, self._password)
+
+            if self._tls and isinstance(ftp, FTP_TLS):
+                ftp.prot_p()  # Protect data channel
+
+            ftp.set_pasv(self._passive)
+
+            # Try UTF-8
+            try:
+                ftp.sendcmd("OPTS UTF8 ON")
+                ftp.encoding = "utf-8"
+            except error_perm:
+                ftp.encoding = "latin-1"
+
+            # Harden the response reader against encoding mismatches: even
+            # when the server accepts OPTS UTF8 ON it may still echo paths
+            # back in latin-1 (vsftpd/pure-ftpd both do this for non-ASCII
+            # names on certain builds). A raw UnicodeDecodeError inside
+            # ftplib.getline() aborts the control session; switching the
+            # decoder to errors='replace' keeps the channel alive while
+            # logging what happened.
+            try:
+                raw = ftp.sock.makefile(
+                    "r",
+                    encoding=ftp.encoding,
+                    errors="replace",
+                )
+                ftp.file = raw
+            except Exception as exc:
+                log.debug("Could not harden FTP response decoder: %s", exc)
+        except BaseException:
+            # A refused login must not leave its socket open.
+            _close_quietly(ftp)
+            raise
+        return ftp
+
     @property
     @liveness_check
     def connected(self) -> bool:
@@ -644,6 +833,9 @@ class FtpSession(SessionLifecycle):
 
     @serialized
     def disconnect(self) -> None:
+        spare = self._take_spare()
+        if spare is not None:
+            _quit_quietly(spare)
         if self._ftp:
             log.info("FTP disconnecting from %s@%s", self._username, self._host)
             try:
@@ -866,16 +1058,6 @@ class FtpSession(SessionLifecycle):
 
         return FileItem(name=name, size=size, modified=modified, is_dir=is_dir)
 
-    @staticmethod
-    def _cwd_reaches(ftp: FTP, path: str) -> bool:
-        """True when CWD into *path* succeeds; the working folder is restored."""
-        try:
-            old_cwd = ftp.pwd()
-            ftp.cwd(path)
-            ftp.cwd(old_cwd)
-            return True
-        except error_perm:
-            return False
 
     @staticmethod
     def _parent_lists(ftp: FTP, path: str) -> bool:
@@ -886,61 +1068,64 @@ class FtpSession(SessionLifecycle):
             return True  # the root
         try:
             names = ftp.nlst(posixpath.dirname(trimmed) or "/")
-        except error_perm:
-            return False
+        except error_perm as e:
+            if _is_not_found_reply(e):
+                return False  # no parent folder
+            raise
         return any(posixpath.basename(n.rstrip("/")) == name for n in names)
 
-    @_ftp_errors_as_oserror
-    @serialized
-    def is_dir(self, path: str) -> bool:
-        ftp = self._ensure_connected()
+    @staticmethod
+    def _cwd_reaches(ftp: FTP, path: str) -> bool:
+        """True when CWD into *path* succeeds (the working folder is
+        restored), False for 550. Any other refusal is raised: it says
+        nothing about the path."""
         try:
             old_cwd = ftp.pwd()
             ftp.cwd(path)
             ftp.cwd(old_cwd)
             return True
-        except error_perm:
-            return False
-        except UnicodeDecodeError:
-            # Some FTP servers echo the path back in the error response
-            # using a different encoding than the one we negotiated
-            # (vsftpd/pure-ftpd with non-ASCII names and failed OPTS UTF8).
-            # Python's ftplib then throws while decoding the server
-            # response. Treat as "not a directory" so callers (remove,
-            # list) can proceed rather than propagating the decode
-            # failure.
-            log.warning(
-                "FTP server returned a response we could not decode while "
-                "probing is_dir(%r); assuming not a directory",
-                path,
-            )
-            return False
+        except error_perm as e:
+            if _is_not_found_reply(e):
+                return False
+            raise
+        except UnicodeDecodeError as e:
+            # A reply in another encoding than the negotiated one; the
+            # control channel normally reads with errors="replace"
+            # (_connect), so this is a reader that could not be
+            # hardened. Its code is unknown: no answer, not "no".
+            raise OSError(f"FTP CWD {path}: reply could not be decoded: {e}") from e
+
+    @_ftp_errors_as_oserror
+    @serialized
+    def is_dir(self, path: str) -> bool:
+        """False only for 550; any other refusal is an OSError - remove()
+        and the transfer manager pick folder or file from this answer."""
+        return self._cwd_reaches(self._ensure_connected(), path)
 
     @_ftp_errors_as_oserror
     @serialized
     def exists(self, path: str) -> bool:
+        """False only when SIZE is refused, CWD answers 550 and the parent
+        listing lacks the name; any other refusal is an OSError -
+        server_side_copy(overwrite=False) takes False as its go-ahead to
+        write."""
         ftp = self._ensure_connected()
         try:
             ftp.size(path)
             return True
         except error_perm:
-            pass
+            pass  # SIZE is optional and refused for a folder: CWD decides
         except UnicodeEncodeError:
             raise  # UnicodeEncodeError is a ValueError, but not a 213 reply
         except ValueError:
             # ftplib's size() int()s the reply text: "213 abc" is a success
             # reply (the file is there) with a size it cannot parse.
             return True
-        try:
-            old_cwd = ftp.pwd()
-            ftp.cwd(path)
-            ftp.cwd(old_cwd)
+        if self._cwd_reaches(ftp, path):
             return True
-        except error_perm:
-            return False
-        except UnicodeDecodeError:
-            # See is_dir() for the pure-ftpd/vsftpd encoding mismatch.
-            return False
+        # CWD answers 550 for a file too, and a refused SIZE may be the
+        # same 550 (vsftpd in ASCII mode): the parent listing decides.
+        return self._parent_lists(ftp, path)
 
     @_ftp_errors_as_oserror
     @serialized
@@ -1031,14 +1216,83 @@ class FtpSession(SessionLifecycle):
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
 
     @_ftp_errors_as_oserror
-    @serialized
     def open_read(self, path: str) -> IO[bytes]:
+        ftp = self._download_connection()
+        if ftp is None:
+            return self._open_read_shared(path)
+        try:
+            ftp.voidcmd("TYPE I")
+            conn = ftp.transfercmd(f"RETR {path}")
+        except error_perm as e:
+            # "550 No such file": answered, the connection is fine.
+            self._keep_spare(ftp)
+            raise OSError(f"Cannot read {path}: {e}") from e
+        except BaseException:
+            _close_quietly(ftp)
+            raise
+        return _StreamedDownload(ftp, conn, path, self._keep_spare)
+
+    def _download_connection(self) -> FTP | None:
+        """A logged-in control connection of its own for one download, or
+        None to download on the shared one: a session built without its
+        ``__init__`` has nothing to log in with, and a server that refused
+        a second connection is not asked again."""
+        if not self._separate_downloads:
+            return None
+        ftp = self._take_spare()
+        if ftp is not None:
+            try:
+                ftp.voidcmd("NOOP")
+                return ftp
+            except (*_FTP_PROTOCOL_ERRORS, OSError):
+                _close_quietly(ftp)
+        try:
+            return self._login(announce=False)
+        except _FtpLibError as exc:
+            # "421 Too many connections", "530 ... maximum number of
+            # clients": the server allows this user one connection.
+            log.info(
+                "FTP %s refused a second connection (%s); downloads use the session's",
+                self._host,
+                exc,
+            )
+            self._separate_downloads = False
+        except (OSError, EOFError) as exc:
+            log.debug("FTP %s: no second connection for a download: %s", self._host, exc)
+        return None
+
+    def _take_spare(self) -> FTP | None:
+        lock = self.__dict__.get("_spare_lock")
+        if lock is None:
+            return None
+        with lock:
+            ftp, self._spare_ftp = self._spare_ftp, None
+        return ftp
+
+    def _keep_spare(self, ftp: FTP) -> None:
+        """Keep a finished download's connection for the next download,
+        so a run of them logs in once; one spare is enough."""
+        with self._spare_lock:
+            if self._spare_ftp is None and self._ftp is not None:
+                self._spare_ftp, ftp = ftp, None
+        if ftp is not None:
+            _quit_quietly(ftp)
+
+    @serialized
+    def _open_read_shared(self, path: str) -> IO[bytes]:
+        """The whole download on the shared connection, under the session
+        lock: for a server that allows one connection per user."""
         ftp = self._ensure_connected()
-        buf = io.BytesIO()
+        # Spooled, not a BytesIO: the whole file used to sit in RAM.
+        buf = new_read_spool()
         try:
             ftp.retrbinary(f"RETR {path}", buf.write)
         except error_perm as e:
+            buf.close()
             raise OSError(f"Cannot read {path}: {e}") from e
+        except BaseException:
+            buf.close()
+            raise
         buf.seek(0)
         return buf
 

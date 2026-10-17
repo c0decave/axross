@@ -34,6 +34,7 @@ internally. The subclass overrides ``name`` (to surface "MTP:
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import re
@@ -243,8 +244,8 @@ class MtpSession(LocalFS):
     2. Allocate a tempdir under ``tempfile.gettempdir()``.
     3. Run the mounter with the device id + tempdir. Timeout at
        ``MOUNT_TIMEOUT_SECONDS``.
-    4. Delegate every subsequent FileBackend call to LocalFS rooted
-       at the tempdir.
+    4. Delegate every subsequent FileBackend call to LocalFS, confined
+       to the tempdir (each path is checked: _PATH_ARGUMENTS).
 
     The tempdir is removed on ``close()`` AFTER a best-effort
     ``fusermount -u`` tears down the mount. A double-close is a
@@ -466,6 +467,31 @@ class MtpSession(LocalFS):
     def home(self) -> str:
         return self._mount_dir
 
+    def _inside(self, path) -> bool:
+        """Whether *path* - '..' and symlinks resolved - is in the mount."""
+        root = os.path.realpath(self._mount_dir)
+        try:
+            real = os.path.realpath(os.fspath(path))
+        except (TypeError, ValueError):
+            return False
+        return real == root or real.startswith(root.rstrip(os.sep) + os.sep)
+
+    def _check_inside(self, path) -> None:
+        if not self._inside(path):
+            raise PermissionError(f"MTP: {path} is outside the device ({self._mount_dir})")
+
+    def is_dir(self, path: str) -> bool:
+        return self._inside(path) and super().is_dir(path)
+
+    def exists(self, path: str) -> bool:
+        return self._inside(path) and super().exists(path)
+
+    def symlink(self, target: str, link_path: str) -> None:
+        raise OSError("MTP devices have no symbolic links")
+
+    def hardlink(self, target: str, link_path: str) -> None:
+        raise OSError("MTP devices have no hard links")
+
     @property
     def mount_dir(self) -> str:
         """Read-only accessor for the underlying mount path. Handy
@@ -530,6 +556,33 @@ class MtpSession(LocalFS):
                 }
             )
         return out
+
+
+# LocalFS has no root: every path-taking method of the session checks its
+# paths against the mount folder (review B14, 2026-10-17: /etc was listed
+# and /etc/hostname read through an MTP session). name -> path arguments.
+_PATH_ARGUMENTS = {
+    "list_dir": 1, "stat": 1, "mkdir": 1, "remove": 1, "rename": 2, "open_read": 1, "open_write": 1,
+    "chmod": 1, "set_modified": 1, "readlink": 1, "disk_usage": 1, "list_versions": 1,
+    "open_version_read": 1, "copy": 2, "local_path": 1, "same_file": 2, "checksum": 1,
+}
+_PATH_KEYWORDS = ("path", "src", "dst", "a", "b")
+
+
+def _confined(name: str, count: int):
+    base = getattr(LocalFS, name)
+
+    @functools.wraps(base)
+    def method(self, *args, **kwargs):
+        for path in (*args[:count], *(kwargs[k] for k in _PATH_KEYWORDS if k in kwargs)):
+            self._check_inside(path)
+        return base(self, *args, **kwargs)
+
+    return method
+
+
+for _name, _count in _PATH_ARGUMENTS.items():
+    setattr(MtpSession, _name, _confined(_name, _count))
 
 
 __all__ = [

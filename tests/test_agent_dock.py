@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core import llm_profiles as LP  # noqa: E402
+from core.agent_session import SessionStore  # noqa: E402
 from tests.test_agent_loop import _call, _Fake  # noqa: E402
 
 _PROXIES = ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
@@ -36,7 +37,9 @@ class _Base(unittest.TestCase):
 
         self._saved_env = {k: os.environ.pop(k) for k in _PROXIES if k in os.environ}
         self.tmp = tempfile.TemporaryDirectory(prefix="axross-agent-dock-")
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name) / "work"
+        self.root.mkdir()
+        self.sessions = Path(self.tmp.name) / "sessions"
         self.servers: list[_Fake] = []
         self.asked: list[tuple[str, dict]] = []
         self.answer = True
@@ -68,6 +71,7 @@ class _Base(unittest.TestCase):
             confirm_remote=lambda p, h: self.remote_ok,
             confirm_call=lambda n, a: self.asked.append((n, a)) or self.answer,
             root_provider=lambda: str(self.root),
+            session_store=SessionStore(self.sessions),
         )
         return server
 
@@ -91,7 +95,11 @@ class HappyTest(_Base):
     def test_happy_a_question_is_answered_in_the_transcript(self) -> None:
         (self.root / "notes.txt").write_text("Friday 10:00\n")
         server = self.make(
-            {"tool_calls": [_call("read_file", {"path": str(self.root / "notes.txt"), "encoding": "text"})]},
+            {
+                "tool_calls": [
+                    _call("read_file", {"path": str(self.root / "notes.txt"), "encoding": "text"})
+                ]
+            },
             {"content": "The meeting is on Friday at 10."},
         )
         self.say("When is the meeting?")
@@ -103,8 +111,14 @@ class HappyTest(_Base):
         self.assertEqual(self.asked, [])
 
     def test_happy_a_change_runs_after_yes(self) -> None:
-        self.make({"tool_calls": [_call("write_file", {"path": str(self.root / "a.txt"), "content": "hi"})]},
-                  {"content": "Done."})
+        self.make(
+            {
+                "tool_calls": [
+                    _call("write_file", {"path": str(self.root / "a.txt"), "content": "hi"})
+                ]
+            },
+            {"content": "Done."},
+        )
         self.dock.allow_write.setChecked(True)
         self.say("Write hi to a.txt")
         self.assertEqual((self.root / "a.txt").read_text(), "hi")
@@ -120,8 +134,14 @@ class HappyTest(_Base):
 
 class SadTest(_Base):
     def test_sad_no_means_nothing_changes(self) -> None:
-        self.make({"tool_calls": [_call("write_file", {"path": str(self.root / "a.txt"), "content": "hi"})]},
-                  {"content": "Not written."})
+        self.make(
+            {
+                "tool_calls": [
+                    _call("write_file", {"path": str(self.root / "a.txt"), "content": "hi"})
+                ]
+            },
+            {"content": "Not written."},
+        )
         self.dock.allow_write.setChecked(True)
         self.answer = False
         self.say("Write hi")
@@ -152,8 +172,14 @@ class SadTest(_Base):
 
 class EdgeTest(_Base):
     def test_edge_the_secret_arguments_are_masked_in_the_question(self) -> None:
-        self.make({"tool_calls": [_call("encrypt", {"path": str(self.root / "a.txt"), "passphrase": "s3cret"})]},
-                  {"content": "ok"})
+        self.make(
+            {
+                "tool_calls": [
+                    _call("encrypt", {"path": str(self.root / "a.txt"), "passphrase": "s3cret"})
+                ]
+            },
+            {"content": "ok"},
+        )
         (self.root / "a.txt").write_text("x")
         self.dock.allow_write.setChecked(True)
         item = next(self.dock.groups.item(i) for i in range(self.dock.groups.count())
@@ -178,13 +204,18 @@ class EdgeTest(_Base):
         self.wait_idle()
         self.assertIn("Stopped", self.dock.transcript.toPlainText())
 
-    def test_edge_new_settings_start_a_new_conversation(self) -> None:
+    def test_edge_new_settings_keep_the_conversation(self) -> None:
+        # A tab is one conversation: ticking "Allow changes" after a plan
+        # must not make the model forget the plan.
         server = self.make({"content": "a"}, {"content": "b"})
         self.say("one")
         self.dock.allow_write.setChecked(True)
         self.say("two")
         roles = [m["role"] for m in server.requests[1]["messages"]]
-        self.assertEqual(roles, ["system", "user"])
+        self.assertEqual(roles, ["system", "user", "assistant", "user"])
+        names = {t["function"]["name"] for t in server.requests[1]["tools"]}
+        self.assertIn("write_file", names)
+        self.assertIn("continues with them", self.dock.transcript.toPlainText())
 
     def test_edge_html_in_the_answer_is_shown_as_text(self) -> None:
         self.make({"content": "<img src=http://evil/x> <b>bold</b>"})

@@ -29,13 +29,28 @@ def _repo(tmp_path, *branches, head=None):
     subprocess.run(["git", "init", "-q", "-b", first, str(repo)], check=True)
     if branches:
         subprocess.run(
-            ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q", "--allow-empty", "-m", "i"],
+            [
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@x",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
             check=True,
         )
         for b in branches[1:]:
             subprocess.run(["git", "-C", str(repo), "branch", b], check=True)
     if head:
-        subprocess.run(["git", "-C", str(repo), "symbolic-ref", "HEAD", f"refs/heads/{head}"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "symbolic-ref", "HEAD", f"refs/heads/{head}"], check=True
+        )
     return str(repo)
 
 

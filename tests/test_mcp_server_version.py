@@ -31,17 +31,30 @@ def test_happy_a_headless_server_reports_the_package_version(tmp_path):
 
     probe = (
         "import atexit, runpy, sys;"
-        "atexit.register(lambda: sys.stderr.write('QT=%s\\n' % any(m.startswith('PyQt6') for m in sys.modules)));"
+        "atexit.register(lambda: sys.stderr.write("
+        "'QT=%s\\n' % any(m.startswith('PyQt6') for m in sys.modules)));"
         "sys.argv = ['axross', '--mcp-server'];"
         "runpy.run_module('axross', run_name='__main__')"
     )
     lines = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-         "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "t", "version": "0"},
+            },
+        },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     ]
-    env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM")
+    }
     env["HOME"] = str(tmp_path)
     proc = subprocess.run(
         [sys.executable, "-c", probe],
@@ -60,4 +73,6 @@ def test_sad_the_version_is_not_the_old_placeholder():
 
 
 def test_edge_the_version_is_dotted_numbers():
-    assert all(part.isdigit() for part in M.SERVER_VERSION.split(".")) and json.dumps(M.SERVER_VERSION)
+    assert all(part.isdigit() for part in M.SERVER_VERSION.split(".")) and json.dumps(
+        M.SERVER_VERSION
+    )

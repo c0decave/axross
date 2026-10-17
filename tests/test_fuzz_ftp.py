@@ -134,11 +134,17 @@ def test_edge_pasv_to_foreign_ip_is_not_followed(mlsd_server):
     assert s._ftp.trust_server_pasv_ipv4_address is False
 
 
+def _read_all(s, path):
+    """A download streams: a stalled data channel shows on the read."""
+    with s.open_read(path) as fh:
+        return fh.read()
+
+
 @pytest.mark.parametrize("verb", ["MLSD", "RETR"])
 def test_sad_stalled_data_channel_times_out(mlsd_server, verb):
     s = _session(mlsd_server)
     mlsd_server.data[verb] = STALL
-    op = (lambda: s.list_dir("/")) if verb == "MLSD" else (lambda: s.open_read("/f"))
+    op = (lambda: s.list_dir("/")) if verb == "MLSD" else (lambda: _read_all(s, "/f"))
     result = _contract(op, f"stalled {verb}")
     assert isinstance(result, OSError)
 

@@ -92,11 +92,16 @@ def test_sad_library_failure_is_an_oserror(smb, exc, op):
         call()
 
 
-def test_edge_is_dir_and_exists_read_a_library_failure_as_no(smb):
+def test_edge_is_dir_and_exists_report_a_library_failure(smb):
+    """A closed connection says nothing about the path: "no" would be
+    the no-clobber check's go-ahead to write (see
+    tests/test_smb_exists_only_not_found_is_false.py)."""
     fake, s = smb
     fake.fail = SMBException("closed")
-    assert s.is_dir("/sub") is False
-    assert s.exists("/a.txt") is False
+    with pytest.raises(OSError):
+        s.is_dir("/sub")
+    with pytest.raises(OSError):
+        s.exists("/a.txt")
 
 
 @pytest.mark.parametrize(

@@ -20,6 +20,7 @@ Authentication:
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import io
 import logging
@@ -29,6 +30,7 @@ from datetime import datetime
 from typing import IO
 
 from core.backend import SessionLifecycle
+from core.session_lock import io_lock, serialized
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -42,6 +44,9 @@ DEFAULT_WINDOW = 200
 # Sanitise subjects for filenames.
 _FILENAME_BAD = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
 _MSG_PATH_RE = re.compile(r"^/(?P<group>[^/]+)/(?P<msgno>\d+)_[^/]*\.eml$")
+# RFC 3977: 423 no article with that number (or none in the range, for
+# OVER), 430 no article with that message-id.
+_NO_SUCH_ARTICLE = (423, 430)
 
 
 def _sanitize(name: str, max_len: int = 80) -> str:
@@ -138,8 +143,12 @@ class NntpSession(SessionLifecycle):
 
     @property
     def connected(self) -> bool:
-        return self._client is not None
+        # nntp_lib closes a connection whose response broke off (the stream
+        # is out of step); the client object outlives its socket.
+        client = self._client
+        return client is not None and not client.closed
 
+    @serialized
     def close(self) -> None:
         if getattr(self, "_client", None) is not None:
             self._client.quit()
@@ -178,6 +187,7 @@ class NntpSession(SessionLifecycle):
     # FileBackend — read surface
     # ------------------------------------------------------------------
 
+    @serialized
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
         if path == "/":
@@ -203,25 +213,27 @@ class NntpSession(SessionLifecycle):
             )
         return items
 
-    def _ensure_group(self, group: str) -> tuple[int, int, int]:
+    def _ensure_group(self, group: str, *, fresh: bool = False) -> tuple[int, int, int]:
         """Make ``group`` the server's current group. Article numbers are
         per group, so the cached GROUP answer only spares the round trip
         when the server still has this group selected - another listing
-        or a scripting verb may have switched it since."""
+        or a scripting verb may have switched it since. ``fresh`` sends
+        GROUP regardless: only its answer carries the current article
+        range (a listing / refresh needs it)."""
         info = self._group_info_cache.get(group)
-        if info is not None and self._client.current_group == group:
+        if not fresh and info is not None and self._client.current_group == group:
             return info
         info = self._client.select_group(group)
         self._group_info_cache[group] = info
         return info
 
-    def _select_or_missing(self, group: str) -> tuple[int, int, int]:
+    def _select_or_missing(self, group: str, *, fresh: bool = False) -> tuple[int, int, int]:
         """``_ensure_group``, with the server's "411 no such newsgroup" as
         FileNotFoundError and any other failure as OSError."""
         from core.nntp_lib import NntpResponseError
 
         try:
-            return self._ensure_group(group)
+            return self._ensure_group(group, fresh=fresh)
         except NntpResponseError as exc:
             if exc.code == 411:
                 raise FileNotFoundError(errno.ENOENT, "No such newsgroup", "/" + group) from exc
@@ -232,7 +244,9 @@ class NntpSession(SessionLifecycle):
             raise OSError(f"NNTP GROUP {group}: {exc}") from exc
 
     def _list_articles(self, group: str) -> list[FileItem]:
-        count, low, high = self._select_or_missing(group)
+        # A listing is also the refresh: articles that arrived since the
+        # last GROUP answer are only in a new one.
+        count, low, high = self._select_or_missing(group, fresh=True)
         # Most-recent window: [max(low, high - window + 1) .. high].
         if high < low:
             return []
@@ -257,6 +271,7 @@ class NntpSession(SessionLifecycle):
             )
         return items
 
+    @serialized
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
         if path == "/":
@@ -282,7 +297,10 @@ class NntpSession(SessionLifecycle):
             )
         m = _MSG_PATH_RE.match(path)
         if not m:
-            raise OSError(f"NNTP stat({path}): not a recognised group/article path")
+            # Articles are addressed by number only: nothing can be here.
+            raise FileNotFoundError(
+                errno.ENOENT, "NNTP: not a group or article path", path
+            )
         group = m.group("group")
         msgno = int(m.group("msgno"))
         # Find in cached overview if possible.
@@ -298,18 +316,32 @@ class NntpSession(SessionLifecycle):
                     modified=parse_overview_date(rec.get("date", "")),
                     permissions=0o444,
                 )
-        # Fallback: cheap HEAD to confirm existence.
+        # Not listed yet: the overview of this one article, as the listing
+        # would show it (HEAD only gave the headers' length). A server
+        # without an overview record for it: the article's own length.
+        from core.nntp_lib import NntpResponseError, parse_overview_date
+
+        self._select_or_missing(group)
         try:
-            self._ensure_group(group)
-            head = self._client.head(msgno)
+            records = [r for r in self._client.over(msgno, msgno) if r.get("msgno") == msgno]
+            if records:
+                size = int(records[0].get("bytes") or 0)
+                modified = parse_overview_date(records[0].get("date", ""))
+            else:
+                size = len(self._client.article(msgno))
+                modified = datetime.fromtimestamp(0)
+        except NntpResponseError as exc:
+            if exc.code in _NO_SUCH_ARTICLE:
+                raise FileNotFoundError(errno.ENOENT, f"No such article: {exc}", path) from exc
+            raise OSError(f"NNTP stat {group}/{msgno}: {exc}") from exc
         except Exception as exc:
-            raise OSError(f"NNTP HEAD {group}/{msgno}: {exc}") from exc
+            raise OSError(f"NNTP stat {group}/{msgno}: {exc}") from exc
         return FileItem(
             name=posixpath.basename(path),
             is_dir=False,
             is_link=False,
-            size=len(head),
-            modified=datetime.fromtimestamp(0),
+            size=size,
+            modified=modified,
             permissions=0o444,
         )
 
@@ -320,12 +352,17 @@ class NntpSession(SessionLifecycle):
         return "/" not in path.strip("/") and self.exists(path)
 
     def exists(self, path: str) -> bool:
+        """False only for "no such group / article" (411, 423, 430) or a
+        path that names neither. A refused, dropped or timed-out request,
+        or a connection nntp_lib closed, is an OSError: the transfer
+        worker takes False as the go-ahead to write."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
+    @serialized
     def open_read(self, path: str) -> IO[bytes]:
         m = _MSG_PATH_RE.match(self.normalize(path))
         if not m:
@@ -354,7 +391,7 @@ class NntpSession(SessionLifecycle):
         if len(parts) != 2:
             raise OSError("NNTP write must target /<group>/<filename>.eml")
         group = parts[0]
-        return _NntpPoster(self._client, group)
+        return _NntpPoster(self._client, group, io_lock(self))
 
     def remove(self, path: str, recursive: bool = False) -> None:
         # NNTP has no client-side DELE. Some servers expose CANCEL-style
@@ -404,6 +441,7 @@ class NntpSession(SessionLifecycle):
                 f"NNTP {label} must not contain CR/LF (would smuggle a second NNTP command). F33."
             )
 
+    @serialized
     def groups_list(self, prefix: str = "") -> list[dict]:
         """``LIST ACTIVE [<prefix>*]`` — return every (or every-prefix-
         matching) newsgroup the server publishes.
@@ -430,6 +468,7 @@ class NntpSession(SessionLifecycle):
             )
         return out
 
+    @serialized
     def xover(
         self,
         group: str,
@@ -462,6 +501,7 @@ class NntpSession(SessionLifecycle):
                 break
         return out
 
+    @serialized
     def article_headers(self, group: str, msg_no: int) -> dict[str, str]:
         """``HEAD`` — return only the headers of one article, parsed
         into a dict ``{header_name_lower: value}``. Multi-line headers
@@ -473,6 +513,7 @@ class NntpSession(SessionLifecycle):
         raw = self._client.head(int(msg_no))
         return _parse_headers(raw)
 
+    @serialized
     def raw_head(self, group: str, msg_no: int) -> bytes:
         """Bytes-level escape hatch — the unparsed ``HEAD`` response
         for callers that need every duplicate header line."""
@@ -517,9 +558,11 @@ def _parse_headers(raw: bytes) -> dict[str, str]:
 
 
 class _NntpPoster:
-    def __init__(self, client, group: str):
+    def __init__(self, client, group: str, lock=None):
         self._client = client
         self._group = group
+        # The session's I/O lock: POST is a command exchange like any other.
+        self._lock = lock if lock is not None else contextlib.nullcontext()
         self._buf = io.BytesIO()
         self._closed = False
 
@@ -543,7 +586,8 @@ class _NntpPoster:
                 # the path target so a typo doesn't quietly post into the
                 # wrong group.
                 self._warn_on_group_disagreement(article)
-            self._client.post(article)
+            with self._lock:
+                self._client.post(article)
         finally:
             self._buf.close()
 

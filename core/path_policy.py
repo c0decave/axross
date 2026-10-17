@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import posixpath
 from dataclasses import dataclass
@@ -30,6 +31,10 @@ class BackendPathPolicy:
     separator: str = "/"
     allow_backslash_separator: bool = False
     case_sensitive: bool = True
+    # True only for a backend that declares a backslash an ordinary name
+    # character (``literal_backslash_in_names``: LocalFS on POSIX). Every
+    # other backend may hand it to a server that splits on it.
+    literal_backslash: bool = False
 
     @classmethod
     def for_backend(cls, backend) -> "BackendPathPolicy":
@@ -42,10 +47,16 @@ class BackendPathPolicy:
             separator=sep or "/",
             allow_backslash_separator=(sep == "\\"),
             case_sensitive=bool(getattr(backend, "case_sensitive", True)),
+            literal_backslash=(
+                (sep or "/") == "/"
+                and getattr(backend, "literal_backslash_in_names", False) is True
+            ),
         )
 
     def validate_leaf(self, name: str) -> str:
-        validate_remote_name(name, max_bytes=MAX_REMOTE_NAME_BYTES)
+        validate_remote_name(
+            name, max_bytes=MAX_REMOTE_NAME_BYTES, allow_backslash=self.literal_backslash
+        )
         return name
 
     def validate_path(self, path: str) -> str:
@@ -72,9 +83,46 @@ class BackendPathPolicy:
         return posixpath.normpath(rooted) or "/"
 
 
+#: One name on most filesystems (ext4, XFS, Btrfs, APFS) is at most 255
+#: bytes; a temp or backup file next to a file must fit too.
+MAX_FS_NAME_BYTES = 255
+_NAME_DIGEST_LEN = 8
+
+
+def utf8_head(text: str, limit: int) -> str:
+    """The longest prefix of *text* whose UTF-8 form fits in *limit* bytes,
+    never ending inside a character."""
+    raw = text.encode("utf-8", "surrogateescape")[: max(0, limit)]
+    return raw.decode("utf-8", "ignore")
+
+
+def hidden_sibling_name(name: str, suffix: str, *, reserve: int = 0) -> str:
+    """``.<name><suffix>``: the name of a temp or backup file next to
+    *name*. When that plus *reserve* more bytes would not fit in
+    :data:`MAX_FS_NAME_BYTES`, *name* is cut and ``~<digest of the whole
+    name>`` keeps two long names that share a beginning apart."""
+    full = f".{name}{suffix}"
+    if len(full.encode("utf-8", "surrogateescape")) + reserve <= MAX_FS_NAME_BYTES:
+        return full
+    digest = hashlib.sha256(name.encode("utf-8", "surrogateescape")).hexdigest()
+    budget = (
+        MAX_FS_NAME_BYTES - reserve - len(suffix.encode("utf-8")) - 2 - _NAME_DIGEST_LEN
+    )
+    return f".{utf8_head(name, budget)}~{digest[:_NAME_DIGEST_LEN]}{suffix}"
+
+
 def safe_join(backend, parent: str, leaf: str) -> str:
     """Join one backend path component after validating it."""
     return BackendPathPolicy.for_backend(backend).join(parent, leaf)
+
+
+def transfer_leaf(source_backend, dest_backend, name: str) -> str:
+    """*name* when it is one safe component on both ends of a transfer;
+    :class:`ValueError` otherwise (a backslash passes only where both
+    backends treat it as an ordinary character)."""
+    BackendPathPolicy.for_backend(source_backend).validate_leaf(name)
+    BackendPathPolicy.for_backend(dest_backend).validate_leaf(name)
+    return name
 
 
 def safe_leaf(name: str) -> str:
@@ -82,17 +130,21 @@ def safe_leaf(name: str) -> str:
     return name
 
 
-def drop_unsafe_names(items, *, keep_dots: bool = False, origin: str = ""):
+def drop_unsafe_names(items, *, keep_dots: bool = False, origin: str = "", backend=None):
     """Drop listing entries whose name is not a single safe path component.
 
     A remote server controls ``item.name``. Consumers join it onto local
     destinations (mirror scripts, compare/sync, downloads); ``../../x`` or
     ``a/b`` would then land outside the target. Validating once at the
     listing is the choke point every consumer shares. ``.`` and ``..`` are
-    kept only when the caller's own parser emits them on purpose.
+    kept only when the caller's own parser emits them on purpose. With
+    *backend*, its own name rules apply (a backslash on LocalFS/POSIX).
     """
     import logging
 
+    allow_backslash = (
+        BackendPathPolicy.for_backend(backend).literal_backslash if backend is not None else False
+    )
     kept = []
     for item in items:
         name = getattr(item, "name", "")
@@ -100,7 +152,7 @@ def drop_unsafe_names(items, *, keep_dots: bool = False, origin: str = ""):
             kept.append(item)
             continue
         try:
-            validate_remote_name(name)
+            validate_remote_name(name, allow_backslash=allow_backslash)
         except ValueError:
             logging.getLogger(__name__).warning(
                 "dropping unsafe remote name %r%s", name, f" from {origin}" if origin else ""
@@ -152,4 +204,5 @@ __all__ = [
     "drop_unsafe_names",
     "safe_join",
     "safe_leaf",
+    "transfer_leaf",
 ]

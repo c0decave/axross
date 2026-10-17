@@ -57,7 +57,13 @@ class ImageViewerDialog(QDialog):
     """
 
     def __init__(
-        self, backend, path: str, siblings: list[str] | None = None, parent=None, *, source_pane=None
+        self,
+        backend,
+        path: str,
+        siblings: list[str] | None = None,
+        parent=None,
+        *,
+        source_pane=None,
     ) -> None:
         super().__init__(parent)
         self._backend = backend
@@ -182,6 +188,7 @@ class ImageViewerDialog(QDialog):
             path_at=lambda _pos: self.current_path(),
             done=self._after_drag,
         )
+        self._move_watch = VFA.MoveWatch(self, self._backend, self._pane, self._moved_away)
 
     # ------------------------------------------------------------------
     # Window
@@ -328,9 +335,21 @@ class ImageViewerDialog(QDialog):
             self._drop_current()
 
     def _after_drag(self, path: str, action) -> None:
-        # A move took the file away; a copy or a refused drop leaves it.
-        if action == Qt.DropAction.MoveAction and path == self.current_path():
+        # A drop accepted as a move has not moved anything yet: the file
+        # leaves the viewer when the source pane shows it gone.
+        if action == Qt.DropAction.MoveAction:
+            self._move_watch.watch(path)
+
+    def _moved_away(self, path: str) -> None:
+        if path not in self._siblings:
+            return
+        idx = self._siblings.index(path)
+        if idx == self._idx:
             self._drop_current()
+            return
+        del self._siblings[idx]
+        if idx < self._idx:
+            self._idx -= 1
 
     def _drop_current(self) -> None:
         del self._siblings[self._idx]

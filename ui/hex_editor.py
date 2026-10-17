@@ -323,8 +323,16 @@ class HexWidget(QWidget):
             super().keyPressEvent(event)
             return
 
+        # Only a typed character writes. Backspace, Enter, Esc and Ctrl+C
+        # carry control characters as their text, Ctrl / Cmd + letter is a
+        # command: those go on to the dialog (Esc closes it). Ctrl+Alt is
+        # AltGr on Windows and types a character.
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        command = bool(mods & ctrl) and not mods & Qt.KeyboardModifier.AltModifier
+        typed = len(text) == 1 and text.isprintable() and not command
+
         # Editing in hex mode
-        if self._editing_hex and text and len(text) == 1:
+        if self._editing_hex and typed:
             if not self._data:
                 return
             ch = text.upper()
@@ -347,7 +355,7 @@ class HexWidget(QWidget):
                 return
 
         # Editing in ASCII mode
-        if not self._editing_hex and text and len(text) == 1:
+        if not self._editing_hex and typed:
             if not self._data:
                 return
             byte_val = ord(text)

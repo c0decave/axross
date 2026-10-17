@@ -28,6 +28,7 @@ gigabytes.
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 import posixpath
@@ -77,6 +78,8 @@ _VOLUME_RE = re.compile(r"^[0-9A-Za-z]:?$")
 
 
 # The size a device declares in its FSUPLOAD answer line.
+#: The FSUPLOAD answer line, up to and including its line end.
+_FSUPLOAD_LINE_RE = re.compile(rb"@PJL\s+FSUPLOAD[^\r\n]*\r?\n", re.IGNORECASE)
 _FSUPLOAD_SIZE_RE = re.compile(
     rb"@PJL\s+FSUPLOAD[^\r\n]*?\bSIZE\s*=\s*([0-9]{1,12})", re.IGNORECASE
 )
@@ -352,6 +355,8 @@ class PjlSession(SessionLifecycle):
                 continue
             # Strip surrounding quotes if present.
             name = parts[0].strip('"')
+            if name in (".", ".."):
+                continue  # the folder itself and its parent (review B28)
             type_field = ""
             size = 0
             for token in parts[1:]:
@@ -393,19 +398,27 @@ class PjlSession(SessionLifecycle):
         for item in self.list_dir(parent):
             if item.name == leaf:
                 return item
-        raise OSError(f"PJL stat({path}): not found")
+        # The listing arrived and has no such entry (a missing parent
+        # answers FILEERROR and no entries). A failed connection or a
+        # non-PJL answer raised OSError in list_dir() above.
+        raise FileNotFoundError(errno.ENOENT, f"PJL stat({path}): not found", path)
 
     def is_dir(self, path: str) -> bool:
+        """False only for a name the listing lacks; a failed request is
+        an OSError (transfer_manager recurses on True)."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def exists(self, path: str) -> bool:
+        """False only when the parent's listing lacks the name. A refused
+        or dropped connection or a non-PJL answer is an OSError:
+        server_side_copy(overwrite=False) takes False as its go-ahead."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def open_read(self, path: str) -> IO[bytes]:
@@ -422,14 +435,27 @@ class PjlSession(SessionLifecycle):
         finally:
             sock.close()
         self._per_op_revalidate(blob)
-        # The response carries an "@PJL FSUPLOAD ..." header line then
-        # the bytes; isolate the content after the first blank line.
-        marker = b"\r\n\r\n"
-        idx = blob.find(marker)
-        if idx == -1:
-            marker = b"\n\n"
+        # The answer is the "@PJL FSUPLOAD ... SIZE=N" line, then the
+        # bytes (some devices put a blank line between). The body starts
+        # right after that line: the first blank line of the whole answer
+        # was taken before, which handed a device's header back as content
+        # when it sent none, or cut data with a blank line in it (review
+        # B33, 2026-10-17).
+        header = _FSUPLOAD_LINE_RE.search(blob)
+        if header is not None:
+            start = header.end()
+            for blank in (b"\r\n", b"\n"):
+                if blob.startswith(blank, start):
+                    start += len(blank)
+                    break
+            body = blob[start:]
+        else:
+            marker = b"\r\n\r\n"
             idx = blob.find(marker)
-        body = blob if idx == -1 else blob[idx + len(marker) :]
+            if idx == -1:
+                marker = b"\n\n"
+                idx = blob.find(marker)
+            body = blob if idx == -1 else blob[idx + len(marker) :]
         # ``rstrip(UEL)`` would treat UEL as a SET of byte values and
         # strip any of {0x1B, 0x25, 0x2D, 0x31..0x35, 0x58} from the
         # tail — silently corrupting binaries that happen to end in
@@ -446,6 +472,10 @@ class PjlSession(SessionLifecycle):
                 f"PJL read({path}): transfer truncated - device declared "
                 f"{int(declared.group(1))} bytes, received {len(body)}"
             )
+        if declared is not None:
+            # What follows the declared bytes (a form feed, CRLF) is the
+            # answer's framing, not the file (review B28).
+            body = body[: int(declared.group(1))]
         return io.BytesIO(body)
 
     def readlink(self, path: str) -> str:

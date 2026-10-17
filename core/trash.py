@@ -31,6 +31,7 @@ multi-bucket S3 wrappers).
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -217,7 +218,9 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
 
         server_side_move(backend, path, dst)
     except OSError as exc:
-        _finish_journal(op_id, "trash", backend=label, status="error", source=path, dest=dst, error=str(exc))
+        _finish_journal(
+            op_id, "trash", backend=label, status="error", source=path, dest=dst, error=str(exc)
+        )
         raise OSError(f"trash: move {path} -> {dst} failed: {exc}") from exc
 
     payload = {
@@ -244,11 +247,19 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
                 "trash: sidecar write failed AND rollback failed; data is at %s with no metadata",
                 dst,
             )
-        _finish_journal(op_id, "trash", backend=label, status="error", source=path, dest=dst, error=str(exc))
+        _finish_journal(
+            op_id, "trash", backend=label, status="error", source=path, dest=dst, error=str(exc)
+        )
         raise OSError(f"trash: metadata write failed: {exc}") from exc
 
     _finish_journal(
-        op_id, "trash", backend=label, status="done", source=path, dest=dst, details={"trash_id": trash_id}
+        op_id,
+        "trash",
+        backend=label,
+        status="done",
+        source=path,
+        dest=dst,
+        details={"trash_id": trash_id},
     )
     return trash_id
 
@@ -342,6 +353,18 @@ def trash_copy(
     return trash_id
 
 
+def entry_exists(backend, trash_id: str, root: str | None = None) -> bool:
+    """Whether trash entry *trash_id* is still there to restore. False for
+    an id that is not a safe name; raises OSError when the backend cannot
+    tell."""
+    trash_root = _resolve_root(backend, root)
+    try:
+        data_file = _data_path(backend, trash_root, trash_id)
+    except ValueError:
+        return False
+    return bool(backend.exists(data_file))
+
+
 def discard(backend, trash_id: str, root: str | None = None) -> None:
     """Remove one trash entry for good (a kept copy that is not needed after
     all, because the replacement it guarded never happened)."""
@@ -353,6 +376,24 @@ def discard(backend, trash_id: str, root: str | None = None) -> None:
         raise OSError(f"discard: unsafe trash id {trash_id!r}: {exc}") from exc
     _remove_quietly(backend, data_file)
     _remove_quietly(backend, meta_file)
+
+
+def _replace_across_devices(backend, data_file: str, target: str) -> None:
+    """Put local *data_file* over *target* on another file system: copy it
+    (data, mode, times) to a temp sibling of *target*, rename that over
+    *target* - atomic on the target's file system, as the rename would
+    have been - and drop *data_file*. ``trash_copy`` copies for the same
+    reason on the way in (a USB stick, a data disk)."""
+    from core.atomic_io import _temp_sibling
+
+    tmp = _temp_sibling(backend, target)
+    try:
+        shutil.copy2(data_file, tmp, follow_symlinks=False)
+        os.replace(tmp, target)
+    except BaseException:
+        _remove_quietly(backend, tmp)
+        raise
+    _remove_quietly(backend, data_file)
 
 
 def restore_over(
@@ -396,7 +437,12 @@ def restore_over(
                 "original back would discard that change. The original is still in the trash."
             )
     if _is_local(backend):
-        os.replace(data_file, target)
+        try:
+            os.replace(data_file, target)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            _replace_across_devices(backend, data_file, target)
     else:
         from core.atomic_io import atomic_write_stream
 

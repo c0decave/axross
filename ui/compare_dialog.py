@@ -134,6 +134,9 @@ class CompareDialog(QDialog):
         self._right_pane = right_pane
         self._compare_fn = compare_fn or self._default_compare
         self._entries: list[ComparedEntry] = []
+        # Roots of the comparison the rows come from; see refresh().
+        self._left_root = self._right_root = ""
+        self._pending_roots = ("", "")
         self._error = ""
         self._filter = DEFAULT_FILTER
         self._policy = ConflictPolicy.ASK
@@ -234,13 +237,19 @@ class CompareDialog(QDialog):
         self._refresh_btn.setEnabled(False)
         self._summary.setText("comparing…")
 
-        self._left_root = getattr(self._left_pane, "current_path", "/")
-        self._right_root = getattr(self._right_pane, "current_path", "/")
+        # The roots of THIS walk become the dialog's roots only when its
+        # result replaces the rows: until then the table shows the rows of
+        # the previous comparison, and every action resolves them against
+        # the roots they were compared under.
+        self._pending_roots = (
+            getattr(self._left_pane, "current_path", "/"),
+            getattr(self._right_pane, "current_path", "/"),
+        )
         args = (
             getattr(self._left_pane, "backend", None),
-            self._left_root,
+            self._pending_roots[0],
             getattr(self._right_pane, "backend", None),
-            self._right_root,
+            self._pending_roots[1],
         )
         self._thread = QThread(self)
         self._worker = _CompareWorker(self._compare_fn, args)
@@ -250,6 +259,7 @@ class CompareDialog(QDialog):
         self._thread.start()
 
     def _on_result(self, entries, error: str) -> None:
+        self._left_root, self._right_root = self._pending_roots
         self._entries = list(entries) if entries is not None else []
         self._error = error
         self._populate()

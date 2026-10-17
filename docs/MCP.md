@@ -71,8 +71,9 @@ not imported — the server runs cleanly on a headless host.
 ### 1.2 HTTP (+ optional mTLS)
 
 ```bash
-# Loopback HTTP (non-loopback without TLS is refused):
+# Loopback HTTP (non-loopback without TLS is refused), bearer token required:
 axross --mcp-server --mcp-http 127.0.0.1:7331
+# [::1]:7331 for IPv6 loopback
 
 # mTLS — all three files required:
 axross --mcp-server --mcp-http 0.0.0.0:7331 \
@@ -87,6 +88,22 @@ Endpoints:
 | `GET /messages` (SSE)                | Open an event-stream for notifications scoped to a session. |
 | `DELETE /messages`                   | Explicitly terminate a session.                             |
 | `GET /health`                        | Unauthenticated; returns `{server, version}`.               |
+
+**Bearer token on plain HTTP.** Loopback is not a credential: every
+local user and process reaches `127.0.0.1`. A server without mTLS
+therefore answers every request except `GET /health` with `401` unless
+it carries `Authorization: Bearer <token>`. At start the token is shown
+once on stderr and written to
+`$XDG_RUNTIME_DIR/axross/mcp-http-PORT.token` (else `~/.config/axross/`;
+the file is mode 0600, its folder 0700). It is new on every start; set
+`AXROSS_MCP_HTTP_TOKEN` to keep one fixed for a client config. axross'
+own MCP client (the agent's external MCP servers, docs/USAGE.md) sends
+the token stored for that server in the keyring. With mTLS the client
+certificate authenticates; the token is demanded there only when
+`AXROSS_MCP_HTTP_TOKEN` is set. Earlier versions let a plain loopback
+server accept any local process without a credential - with `--mcp-tools
+remote,exec --mcp-allow-exec` another user on the machine could open the
+saved profiles and run commands.
 
 Sessions are required on HTTP. The first `POST /messages` carrying
 `initialize` gets a fresh session id back in the `Mcp-Session-Id`
@@ -151,7 +168,7 @@ bytes.
 | Name                          | Description                                                       |
 |-------------------------------|-------------------------------------------------------------------|
 | `script_list()`               | Names of the saved scripts in `~/.config/axross/scripts/`.        |
-| `script_api_schema()`         | The `axross.*` API as JSON (same as `axross.api_schema()`): per function signature, typed parameters, return type, summary, `mutates`, `prompts`; the public classes; the methods of every backend session. Read-only. |
+| `script_api_schema(names?)`   | The `axross.*` API as JSON (same as `axross.api_schema(names)` and [`scripting-api.json`](scripting-api.json)): rules and errors for scripts; per function signature, typed parameters, return type, whole docstring, examples, `raises`, `mutates`, `prompts`; the public classes, the types the API returns and the methods of every backend session. `names: []` gives the index alone, a list of names only those. Read-only. |
 | `script_read(name)`           | Source of one saved script.                                       |
 | `script_write(name, source)`  | Save `<name>.py` (mode 0600); overwrites.                         |
 | `script_delete(name)`         | Remove a saved script; idempotent.                                |
@@ -447,6 +464,7 @@ we've thought about. The MCP tests live in `tests/test_mcp_*.py`:
 |------|--------|
 | `tests/test_mcp_error_redaction.py` | Secrets in backend error text are redacted (tools/call, tasks, recursive_checksum). |
 | `tests/test_mcp_http_hardening.py` | DNS rebinding (Host/Origin), session cap and idle eviction, malformed params/ids, partial TLS flags, idle TCP client vs. accept. |
+| `tests/test_mcp_http_bearer_token.py` | Plain HTTP refuses requests without the bearer token (401, `/health` exempt), the token file is 0600 and never written through a symlink, `--mcp-http` always serves with one. |
 | `tests/test_mcp_http_sse_lifecycle.py` | One SSE stream per session, DELETE/idle eviction end it, replay on reconnect. |
 | `tests/test_mcp_search_root.py` | `search` never returns indexed paths outside the root. |
 | `tests/test_mcp_tasks_limits.py` | `tasks/start` rate limit, running-task cap, tool timeout. |
@@ -491,6 +509,12 @@ configured root (either externally or by the LLM using the
 rejected with `PermissionError`, answered as -32603 with
 `data.type = "PermissionError"` and a message naming the root. The
 capability groups (§9) run every local path through the same check.
+
+`remove`, `rename` and `transfer_move` act on the directory entry
+itself: after the same check they resolve only the parent
+(`_enforce_root_entry`), so on a symlink they remove or move the
+link, never the folder or file it points to. A link that points out
+of the root stays refused.
 
 ### 7.2 Log demux — no cross-session leak
 
@@ -557,7 +581,8 @@ subsequent POST / DELETE / SSE connection re-derives the
 fingerprint and rejects with 403 on mismatch. A leaked
 `Mcp-Session-Id` header is worthless to anyone presenting a
 different cert. Non-TLS (loopback) sessions have no fingerprint
-and no binding — explicit trade-off for local-dev ergonomics.
+and no binding; every request of theirs must carry the bearer token
+instead (§1.2), so a leaked session id alone is worthless there too.
 
 ### 7.9 Audit "attempt" before the backend call
 
@@ -915,7 +940,10 @@ active LLM profile of the axross GUI (LM Studio, Ollama, vLLM,
 llama.cpp; any OpenAI-compatible server) or the one named. That model
 works with axross' read-only file tools inside the MCP root, plus the
 read-only tools of the groups listed in `groups`, and the call returns
-`{answer, stopped, calls, profile, model}`.
+`{answer, stopped, calls, profile, model}`. `remote` and `extensions`
+reach beyond the root (saved connections with their stored
+credentials, the extensions' code): `groups` may name them only when
+the server itself was started with them in `--mcp-tools`.
 
 * **It changes nothing.** The inner agent gets no write, exec, script
   or agent tool: on a headless server nobody could confirm a change.

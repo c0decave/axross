@@ -209,6 +209,10 @@ class PropertiesDialog(QDialog):
         buttons = QDialogButtonBox(flags)
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
+        if self._permissions is not None:
+            # An octal field that holds no mode must not be "applied".
+            ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+            self._permissions.validity_changed.connect(ok.setEnabled)
         layout.addWidget(buttons)
 
     def _build_general(self) -> QWidget:

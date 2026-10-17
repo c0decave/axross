@@ -12,6 +12,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from core.secure_storage import locked_store_update
+
 log = logging.getLogger(__name__)
 
 # The module-level constants are kept so existing test fixtures that
@@ -145,6 +147,10 @@ class BookmarkManager:
 
     def __init__(self):
         self._root: list[Node] = []
+        # The tree as this manager last read or wrote the file (dumped
+        # form). save() compares the file against it to tell what another
+        # writer (a script, a second window) changed in the meantime.
+        self._base: list[dict] = []
         self.load()
 
     # ------------------------------------------------------------------
@@ -230,6 +236,7 @@ class BookmarkManager:
             if not isinstance(data, list):
                 raise TypeError("Bookmarks JSON must be a list")
             self._root = self._load_nodes(data, 0)
+            self._base = self._dump_nodes(self._root)
             log.info("Loaded %d bookmarks", len(self.all()))
         except (ValueError, OSError, TypeError) as e:
             # ValueError covers JSONDecodeError and UnicodeDecodeError.
@@ -237,6 +244,105 @@ class BookmarkManager:
             # The next save writes the (now empty) tree to this path; move
             # the unreadable file out of the way so it cannot be destroyed.
             _set_aside(bf)
+
+    @classmethod
+    def _read_disk(cls, bf: Path) -> list[dict] | None:
+        """The file's tree in dumped form; ``[]`` when there is no file and
+        ``None`` when it cannot be read (it is then set aside)."""
+        try:
+            raw = bf.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        except OSError as e:
+            log.error("Failed to re-read bookmarks: %s", e)
+            return None
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, list):
+                raise TypeError("Bookmarks JSON must be a list")
+        except (ValueError, TypeError) as e:
+            log.error("Failed to re-read bookmarks: %s", e)
+            _set_aside(bf)
+            return None
+        return cls._dump_nodes(cls._load_nodes(data, 0))
+
+    @staticmethod
+    def _flatten(dumped: list[dict]) -> tuple[dict, dict]:
+        """Bookmarks of a dumped tree keyed by ``(backend_name, path)`` as
+        ``key -> (group path, fields)``, plus its groups as
+        ``group path -> fields``. A group path is the tuple of group names."""
+        marks: dict[tuple[str, str], tuple[tuple[str, ...], dict]] = {}
+        groups: dict[tuple[str, ...], dict] = {}
+
+        def walk(nodes: list[dict], gpath: tuple[str, ...]) -> None:
+            for item in nodes:
+                if item.get("type") == "group":
+                    sub = gpath + (item["name"],)
+                    groups.setdefault(sub, item)
+                    walk(item["children"], sub)
+                else:
+                    marks.setdefault((item["backend_name"], item["path"]), (gpath, item))
+
+        walk(dumped, ())
+        return marks, groups
+
+    def _group_at(self, gpath: tuple[str, ...], fields: dict[tuple[str, ...], dict]):
+        """The group at name path *gpath*, created (with the attributes in
+        *fields*) where it is missing. ``()`` is the top level (``None``)."""
+        parent: BookmarkGroup | None = None
+        for depth in range(len(gpath)):
+            name = gpath[depth]
+            found = next(
+                (
+                    n
+                    for n in self._siblings(parent)
+                    if isinstance(n, BookmarkGroup) and n.name == name
+                ),
+                None,
+            )
+            if found is None:
+                attrs = fields.get(gpath[: depth + 1], {})
+                found = BookmarkGroup(
+                    name=name,
+                    icon_name=attrs.get("icon_name", _GROUP_ICON_DEFAULT),
+                    color=attrs.get("color", ""),
+                    expanded=attrs.get("expanded", True),
+                )
+                self._siblings(parent).append(found)
+            parent = found
+        return parent
+
+    def _merge_from_disk(self, bf: Path) -> None:
+        """Fold in what another writer changed in the file since this
+        manager last read or wrote it. Bookmarks are matched by
+        ``(backend_name, path)``: one the other writer added is added
+        here, one it removed is removed here unless this manager changed
+        it, and one it edited takes the edit unless this manager edited
+        it too. Removals made here are never undone."""
+        disk = self._read_disk(bf)
+        if disk is None or disk == self._base:
+            return
+        base_marks, base_groups = self._flatten(self._base)
+        disk_marks, disk_groups = self._flatten(disk)
+        for mark in self.all():
+            key = (mark.backend_name, mark.path)
+            if key not in base_marks or asdict(mark) != base_marks[key][1]:
+                continue  # added or changed here: this manager's version wins
+            if key not in disk_marks:
+                siblings = self._siblings(self.parent_of(mark))
+                siblings.pop(_index_by_identity(siblings, mark))
+            elif disk_marks[key][1] != base_marks[key][1]:
+                for name, value in disk_marks[key][1].items():
+                    setattr(mark, name, value)
+        known = {(m.backend_name, m.path) for m in self.all()}
+        for gpath in disk_groups:
+            if gpath not in base_groups:
+                self._group_at(gpath, disk_groups)
+        for key, (gpath, fields) in disk_marks.items():
+            if key in base_marks or key in known:
+                continue
+            self._siblings(self._group_at(gpath, disk_groups)).append(Bookmark(**fields))
+            known.add(key)
 
     @classmethod
     def _load_nodes(cls, data: list, depth: int) -> list[Node]:
@@ -299,42 +405,51 @@ class BookmarkManager:
         return out
 
     def save(self) -> None:
+        """Write the tree, first merging what another writer changed in the
+        file meanwhile (see :meth:`_merge_from_disk`), under a file lock."""
         bf = _bookmarks_file()
         target_dir = bf.parent
-        target_dir.mkdir(parents=True, exist_ok=True)
         try:
-            data = self._dump_nodes(self._root)
-            try:
-                os.chmod(target_dir, 0o700)
-            except OSError:
-                log.debug("Could not set permissions on %s", target_dir, exc_info=True)
-            payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-            # mkstemp creates the file 0o600 from birth — no brief
-            # world-readable window like NamedTemporaryFile.
-            fd, temp_name = tempfile.mkstemp(
-                dir=target_dir,
-                prefix=".bookmarks.",
-                suffix=".tmp",
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-                    fd = -1
-                    tmp.write(payload)
-                os.replace(temp_name, bf)
-                os.chmod(bf, 0o600)
-            except BaseException:
-                if fd != -1:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                try:
-                    os.unlink(temp_name)
-                except OSError:
-                    pass
-                raise
+            target_dir.mkdir(parents=True, exist_ok=True)
+            with locked_store_update(bf):
+                self._merge_from_disk(bf)
+                self._write(bf)
         except OSError as e:
             log.error("Failed to save bookmarks: %s", e)
+
+    def _write(self, bf: Path) -> None:
+        target_dir = bf.parent
+        data = self._dump_nodes(self._root)
+        try:
+            os.chmod(target_dir, 0o700)
+        except OSError:
+            log.debug("Could not set permissions on %s", target_dir, exc_info=True)
+        payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        # mkstemp creates the file 0o600 from birth — no brief
+        # world-readable window like NamedTemporaryFile.
+        fd, temp_name = tempfile.mkstemp(
+            dir=target_dir,
+            prefix=".bookmarks.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                fd = -1
+                tmp.write(payload)
+            os.replace(temp_name, bf)
+            os.chmod(bf, 0o600)
+        except BaseException:
+            if fd != -1:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+            raise
+        self._base = data
 
     # ------------------------------------------------------------------
     # Mutation

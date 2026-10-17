@@ -75,7 +75,12 @@ class ResultParsingTest(unittest.TestCase):
     def test_port_with_non_ascii_digits_is_a_pac_error(self) -> None:
         # str.isdigit() accepts "²" (int() then raised ValueError past the
         # PacError contract) and "٣" (int() made it port 3).
-        for bad in ("PROXY h:\u00b2", "PROXY h:8\u00b980", "PROXY h:\u0663", "SOCKS5 h:\uff18\uff10"):
+        for bad in (
+            "PROXY h:\u00b2",
+            "PROXY h:8\u00b980",
+            "PROXY h:\u0663",
+            "SOCKS5 h:\uff18\uff10",
+        ):
             with self.assertRaises(pac.PacError, msg=repr(bad)):
                 pac.parse_result(bad)
 

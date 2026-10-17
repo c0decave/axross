@@ -16,6 +16,7 @@ reaches Qt, which would abort the application.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import threading
 import traceback
@@ -38,6 +39,8 @@ log = logging.getLogger(__name__)
 EVENTS = ("selection_changed", "path_changed", "pane_activated")
 #: What a context action can apply to (``applies_to``).
 APPLIES_TO = ("any", "folder", "selection", "files", "folders", "single_file")
+#: An agent tool's own name (the agent sees ``ext_<module>__<name>``).
+_AGENT_TOOL_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 _ACTIVE_HOST: weakref.ReferenceType | None = None
 
@@ -77,6 +80,9 @@ class _Registered:
     context: list[tuple[str, Callable, str, tuple[str, ...]]] = field(default_factory=list)
     docks: list[QDockWidget] = field(default_factory=list)
     handlers: dict[str, list[Callable]] = field(default_factory=dict)
+    agent_tools: list = field(default_factory=list)
+    agent_topics: list = field(default_factory=list)
+    agent_handlers: list[Callable] = field(default_factory=list)
 
 
 class ExtensionAPI:
@@ -151,6 +157,92 @@ class ExtensionAPI:
             raise ValueError(f"unknown event {event!r}; known: {', '.join(EVENTS)}")
         self._reg.handlers.setdefault(event, []).append(callback)
 
+    # -- the agent ------------------------------------------------------------
+    def add_agent_tool(
+        self,
+        name: str,
+        description: str,
+        handler: Callable[[dict], Any],
+        *,
+        parameters: dict | None = None,
+        required: tuple[str, ...] | list[str] = (),
+        writes: bool = False,
+    ) -> str:
+        """A tool for the agent, named ``ext_<module>__<name>`` there.
+
+        *parameters* are the JSON-schema properties of its arguments,
+        *required* the names that must be given. *handler(args)* runs on
+        the agent's thread (not the GUI's) and returns a string or anything
+        JSON can hold; an exception becomes an error the model reads. With
+        *writes* every call asks the user first (as in Ask mode). A tab
+        offers the tool when "ext:<this extension>" is ticked in its Tools
+        list - tabs started with :meth:`run_agent` tick it.
+        """
+        from core.agent import FunctionTool
+
+        if not isinstance(name, str) or not _AGENT_TOOL_NAME.match(name):
+            raise ValueError(
+                f"an agent tool name is 1-32 of a-z, 0-9 and _, starting with a letter: {name!r}"
+            )
+        props = parameters if parameters is not None else {}
+        if not isinstance(props, dict) or not all(isinstance(v, dict) for v in props.values()):
+            raise ValueError("parameters must map argument names to JSON schemas")
+        missing = [r for r in required if r not in props]
+        if missing:
+            raise ValueError(f"required names no parameter: {missing}")
+        full = f"ext_{self.info.module_name}__{name}"[:64]
+        tool = FunctionTool(
+            name=full, description=f"[{self.info.name}] {description}"[:2000],
+            schema={"type": "object", "properties": dict(props), "required": list(required)},
+            handler=handler, write=bool(writes), always_ask=bool(writes),
+            alive=lambda: self._host._loaded.get(self.info.ext_id, (None, None))[1] is self,
+        )
+        self._reg.agent_tools = [t for t in self._reg.agent_tools if t.name != full] + [tool]
+        self._host.agent_tools_changed.emit()
+        return full
+
+    def add_agent_topic(self, title: str, task: str, *, description: str = "",
+                        mode: str | None = None, needs: tuple[str, ...] = ()) -> None:
+        """A prepared task in every Agent tab's Topics menu (core.agent_topics:
+        ``{folder}`` and ``{backend}`` are filled in)."""
+        from core.agent_topics import Topic
+
+        self._reg.agent_topics.append(Topic(str(title)[:80], str(task), str(description)[:200],
+                                            mode, tuple(needs), source=self.info.ext_id))
+        self._host.agent_tools_changed.emit()
+
+    def on_agent_event(self, callback: Callable[[str, dict], Any]) -> None:
+        """Call *callback(session id, event)* on the GUI thread for every
+        event of every Agent tab: run_started, assistant, tool_call,
+        tool_result, confirmation, usage, run_finished, ..."""
+        self._reg.agent_handlers.append(callback)
+
+    def _agent_dock(self):
+        dock = getattr(self._host.window, "_agent_dock", None)
+        if dock is None:
+            raise RuntimeError("this window has no Agent panel")
+        return dock
+
+    def run_agent(self, task: str, *, folder: str | None = None, mode: str | None = None,
+                  on_done: Callable[[str, str], Any] | None = None) -> str:
+        """Start *task* in a new Agent tab (with this extension's tools) and
+        return the tab's session id. *on_done(answer, error)* runs on the GUI
+        thread when the task ends ("" for the one that is not there)."""
+        done = None
+        if on_done is not None:
+            def done(answer, error, _cb=on_done):
+                self._host.call(self, _cb, answer, error)
+        tab = self._agent_dock().start_task(str(task), folder=folder, mode=mode,
+                                            groups=(f"ext:{self.info.ext_id}",), on_done=done)
+        return tab.session.id
+
+    def open_agent_tab(self, task: str = "", *, folder: str | None = None) -> str:
+        """A new Agent tab with *task* typed in but not sent; its session id."""
+        dock = self._agent_dock()
+        dock.show()
+        tab = dock.new_tab(task=str(task) or None, folder=folder)
+        return tab.session.id
+
     # -- helpers --------------------------------------------------------------
     def current(self) -> ExtensionContext | None:
         """The active pane's context, or None without a file pane."""
@@ -177,6 +269,7 @@ class ExtensionAPI:
 
     # -- host side ------------------------------------------------------------
     def _remove_all(self) -> None:
+        had_agent = bool(self._reg.agent_tools or self._reg.agent_topics)
         for action in self._reg.actions:
             for widget in action.associatedObjects():
                 if isinstance(widget, QMenu):
@@ -185,12 +278,16 @@ class ExtensionAPI:
             self._host.window.removeDockWidget(dock)
             dock.deleteLater()
         self._reg = _Registered()
+        if had_agent:
+            self._host.agent_tools_changed.emit()
 
 
 class ExtensionHost(QObject):
     """Loads the switched-on extensions into *window*."""
 
     _result = pyqtSignal(object, object, object, object)  # api, callback, value, is_error
+    #: An extension added or lost agent tools or topics.
+    agent_tools_changed = pyqtSignal()
 
     def __init__(self, window, menu: QMenu) -> None:
         super().__init__(window)
@@ -266,6 +363,9 @@ class ExtensionHost(QObject):
             return False
         self._loaded[info.ext_id] = (module, api)
         log.info("Extension loaded: %s (%s)", info.name, info.ext_id)
+        if api._reg.agent_tools or api._reg.agent_topics:
+            # What activate() registered counts only now that it is loaded.
+            self.agent_tools_changed.emit()
         return True
 
     def unload(self, ext_id: str) -> None:
@@ -315,6 +415,28 @@ class ExtensionHost(QObject):
                 if context is None:
                     context = context_of(pane)
                 self.call(api, handler, context)
+
+    # -- the agent ------------------------------------------------------------------
+    def emit_agent_event(self, session_id: str, event: dict) -> None:
+        for _module, api in list(self._loaded.values()):
+            for handler in list(api._reg.agent_handlers):
+                self.call(api, handler, session_id, dict(event))
+
+    def agent_tool_owners(self) -> list[tuple[str, str]]:
+        """``(ext_id, name)`` of the loaded extensions with agent tools."""
+        return [
+            (ext_id, api.info.name)
+            for ext_id, (_m, api) in self._loaded.items()
+            if api._reg.agent_tools
+        ]
+
+    def agent_tools(self, ext_ids) -> list:
+        wanted = set(ext_ids)
+        return [t for ext_id, (_m, api) in self._loaded.items() if ext_id in wanted
+                for t in api._reg.agent_tools]
+
+    def agent_topics(self) -> list:
+        return [t for _m, api in self._loaded.values() for t in api._reg.agent_topics]
 
     def run_in_background(self, api, work, on_done, on_error) -> None:
         def runner():

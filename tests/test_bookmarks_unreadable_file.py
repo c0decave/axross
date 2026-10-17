@@ -34,7 +34,9 @@ class UnreadableBookmarksTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _set_aside(self) -> list[Path]:
-        return sorted(p for p in self.tmp.iterdir() if p.name.startswith("bookmarks.json.unreadable-"))
+        return sorted(
+            p for p in self.tmp.iterdir() if p.name.startswith("bookmarks.json.unreadable-")
+        )
 
     def test_happy_a_valid_file_loads_and_saves_without_a_side_copy(self) -> None:
         mgr = BM.BookmarkManager()

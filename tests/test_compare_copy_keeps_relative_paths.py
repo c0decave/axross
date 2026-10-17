@@ -49,6 +49,12 @@ class _Manager:
         self.calls.append((list(kw["source_paths"]), kw["dest_dir"]))
         return []
 
+    def transfer_files_in_background(self, on_done=None, **kw):
+        # The window walks off the GUI thread; the jobs are the same.
+        jobs = self.transfer_files(**kw)
+        if on_done is not None:
+            on_done(jobs)
+
 
 class _StatusBar:
     def showMessage(self, *a):  # noqa: N802 - Qt name

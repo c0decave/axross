@@ -44,9 +44,11 @@ Default-Verhalten:
   den Operator zumüllen. Nach einem Trigger läuft das Pane normal
   weiter.
 * **Headless / REPL** schreibt nach stderr, akzeptiert Ctrl-C.
-  **GUI** kann den Renderer mit
-  `core.safety_tarpit.set_countdown_renderer` auf einen QDialog
-  umlenken.
+  **GUI**: Delete, Move to Trash, Rename, Batch Rename, Change
+  Permissions und Move (F6) im File-Pane zeigen einen Countdown-Dialog
+  (`ui/production_gate.py`); Esc oder Cancel bricht ab. Anderer
+  Qt-Code kann mit `core.safety_tarpit.set_countdown_renderer` einen
+  eigenen Renderer setzen.
 * **CI deaktivieren** mit `AXROSS_TARPIT_DISABLE=1` — flag ist
   prozess-lokal; setze niemals `production=False` am Profil nur damit
   CI durchläuft.

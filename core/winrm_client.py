@@ -31,6 +31,7 @@ Not implemented in V1
 from __future__ import annotations
 
 import base64
+import errno
 import io
 import logging
 import secrets
@@ -128,6 +129,11 @@ def _ps_decode(b64: str) -> str:
     return f"[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{b64}'))"
 
 
+# What the stat script answers for Get-Item's ItemNotFoundException; JSON
+# never reads like this.
+_NOT_FOUND = "AXROSS-NOT-FOUND"
+
+
 def _b64(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
@@ -169,17 +175,6 @@ class WinRMSession(SessionLifecycle):
         self._host = host
         self._username = username
         self._endpoint = f"{scheme}://{host}:{port}/wsman"
-        try:
-            self._session = winrm.Session(  # type: ignore[union-attr]
-                self._endpoint,
-                auth=(username, password),
-                transport=transport,
-                server_cert_validation=("validate" if verify_ssl else "ignore"),
-                operation_timeout_sec=operation_timeout_sec,
-                read_timeout_sec=int(operation_timeout_sec) + _READ_TIMEOUT_MARGIN_SEC,
-            )
-        except (InvalidCredentialsError, WinRMTransportError, WinRMError, ValueError, OSError) as exc:
-            raise OSError(f"WinRM connect to {host}: {exc}") from exc
         from core.proxy import build_requests_proxies
 
         proxies = build_requests_proxies(
@@ -189,6 +184,27 @@ class WinRMSession(SessionLifecycle):
             proxy_username,
             proxy_password,
         )
+        try:
+            self._session = winrm.Session(  # type: ignore[union-attr]
+                self._endpoint,
+                auth=(username, password),
+                transport=transport,
+                server_cert_validation=("validate" if verify_ssl else "ignore"),
+                operation_timeout_sec=operation_timeout_sec,
+                read_timeout_sec=int(operation_timeout_sec) + _READ_TIMEOUT_MARGIN_SEC,
+                # pywinrm's own proxy setting covers the requests it sends
+                # while building its session (the encryption setup);
+                # None: no proxy from the environment either.
+                proxy=proxies.get(scheme) or None,
+            )
+        except (
+            InvalidCredentialsError,
+            WinRMTransportError,
+            WinRMError,
+            ValueError,
+            OSError,
+        ) as exc:
+            raise OSError(f"WinRM connect to {host}: {exc}") from exc
         self._apply_session_overrides(self._session, proxies)
         # Endpoint goes to INFO (operational); the username is PII —
         # keep it at DEBUG so it doesn't ship to centralised logs by
@@ -198,19 +214,21 @@ class WinRMSession(SessionLifecycle):
 
     @staticmethod
     def _apply_session_overrides(session, proxies: dict | None = None) -> None:
-        """Walk pywinrm's ``Session → Protocol → Transport → session``
-        chain and override the underlying :class:`requests.Session`:
-        uniform ``User-Agent`` (per docs/OPSEC.md #4) and per-profile
-        proxy dict if any.
+        """Override the :class:`requests.Session` pywinrm sends with:
+        uniform ``User-Agent`` (per docs/OPSEC.md #4), no environment
+        proxies, and the per-profile proxy dict if any.
+
+        pywinrm builds that session lazily, on its first message - right
+        after construction there is none yet. So the overrides wrap
+        ``Session → Protocol → Transport.build_session`` and run every
+        time it hands out its session.
 
         If a proxy was configured, this is fail-closed: an unexpected
         pywinrm layout must not continue with direct WinRM traffic.
         """
-        from core.client_identity import HTTP_USER_AGENT
-        from core.proxy import lock_requests_session_to_profile_proxy
-
         try:
-            req_session = session.protocol.transport.session
+            transport = session.protocol.transport
+            build = transport.build_session
         except AttributeError as exc:
             if proxies:
                 raise OSError(
@@ -218,6 +236,19 @@ class WinRMSession(SessionLifecycle):
                     "session hook is unavailable; refusing direct traffic."
                 ) from exc
             return
+
+        def build_with_overrides():
+            req_session = build()
+            WinRMSession._override_requests_session(req_session, proxies)
+            return req_session
+
+        transport.build_session = build_with_overrides
+
+    @staticmethod
+    def _override_requests_session(req_session, proxies: dict | None) -> None:
+        from core.client_identity import HTTP_USER_AGENT
+        from core.proxy import lock_requests_session_to_profile_proxy
+
         if req_session is None or not hasattr(req_session, "headers"):
             if proxies:
                 raise OSError(
@@ -313,10 +344,16 @@ class WinRMSession(SessionLifecycle):
         return [item for item in items if item.name]  # a row without a name names nothing
 
     def stat(self, path: str) -> FileItem:
+        """The entry at *path*. FileNotFoundError only for Get-Item's
+        ItemNotFoundException; any other failure ends the script with an
+        error, which _run_ps raises as OSError."""
         path_b64 = _b64(self.normalize(path))
         script = f"""
             $p = {_ps_decode(path_b64)}
-            $item = Get-Item -Force -LiteralPath $p -ErrorAction Stop
+            $item = $null
+            try {{ $item = Get-Item -Force -LiteralPath $p -ErrorAction Stop }}
+            catch [System.Management.Automation.ItemNotFoundException] {{ }}
+            if ($null -eq $item) {{ Write-Output '{_NOT_FOUND}' }} else {{
             [PSCustomObject]@{{
               Name = $item.Name
               IsDir = $item.PSIsContainer
@@ -324,29 +361,38 @@ class WinRMSession(SessionLifecycle):
               Mtime = $item.LastWriteTimeUtc.ToString('o')
               IsLink = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
             }} | ConvertTo-Json -Compress -Depth 2
+            }}
         """
         out = self._run_ps(script)
+        if out.strip() == _NOT_FOUND:
+            raise FileNotFoundError(errno.ENOENT, f"WinRM stat({path}): not found", path)
         rows = self._parse_json_array(out)
         if not rows:
             raise OSError(f"WinRM stat({path}) returned no data")
         return self._parse_listing_row(rows[0])
 
     def is_dir(self, path: str) -> bool:
+        """False only for a missing path; a failed call is an OSError
+        (transfer_manager recurses on True)."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def exists(self, path: str) -> bool:
+        """False only for Get-Item's ItemNotFoundException. A transport
+        error, a refused permission (Test-Path said $false to that too)
+        or an answer that is neither YES nor NO is an OSError:
+        server_side_copy(overwrite=False) takes False as its go-ahead."""
         path_b64 = _b64(self.normalize(path))
         script = (
-            f"if (Test-Path -LiteralPath {_ps_decode(path_b64)}) "
-            f"{{ Write-Output 'YES' }} else {{ Write-Output 'NO' }}"
+            f"try {{ $null = Get-Item -Force -LiteralPath {_ps_decode(path_b64)} "
+            f"-ErrorAction Stop; Write-Output 'YES' }} "
+            f"catch [System.Management.Automation.ItemNotFoundException] {{ Write-Output 'NO' }}"
         )
-        try:
-            out = self._run_ps(script).strip()
-        except OSError:
-            return False
+        out = self._run_ps(script).strip()
+        if out not in ("YES", "NO"):
+            raise OSError(f"WinRM exists({path}): unexpected answer {out[:200]!r}")
         return out == "YES"
 
     # ------------------------------------------------------------------
@@ -487,7 +533,9 @@ class WinRMSession(SessionLifecycle):
             )
         except OSError:
             try:
-                self._run_ps(f"Remove-Item -Force -LiteralPath {part_expr} -ErrorAction SilentlyContinue")
+                self._run_ps(
+                    f"Remove-Item -Force -LiteralPath {part_expr} -ErrorAction SilentlyContinue"
+                )
             except OSError:
                 log.warning("WinRM write %s: could not remove part file %s", path, part)
             raise

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.redaction import redact
+from core.redaction import _is_sensitive_key, redact, redact_path
 from core.structured_log import log_event
 
 log = logging.getLogger(__name__)
@@ -65,16 +65,40 @@ class JournalEvent:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+#: Fields that hold the paths undo acts on (top level and inside
+#: ``details``, at any depth). They keep their real value: the journal is
+#: the user's own file (mode 0600), and a path ``redact_text`` had
+#: rewritten ("Basic Course" -> "Basic <redacted>") made undo restore a
+#: trashed file under the rewritten name. Only URL credentials go.
+_PATH_FIELDS = frozenset({"source", "dest", "path", "output", "temp"})
+
+
+def _redact_event(value: Any, key: str | None = None) -> Any:
+    """``redact`` for a journal event, except for the path fields."""
+    if isinstance(value, str) and key in _PATH_FIELDS:
+        return redact_path(value)
+    if isinstance(value, dict):
+        return {
+            k: "<redacted>" if _is_sensitive_key(k) else _redact_event(v, str(k))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_event(item) for item in value]
+    return redact(value)
+
+
 def new_operation_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
 def append_event(event: JournalEvent, *, journal_path: Path | None = None) -> None:
-    """Append one redacted JSONL event to the operation journal."""
+    """Append one redacted JSONL event to the operation journal. Paths
+    keep their real names (see ``_PATH_FIELDS``); the log line about the
+    event is redacted in full."""
     if not _journal_enabled(journal_path):
         return
     path = _target_path(journal_path)
-    payload = redact(asdict(event))
+    payload = _redact_event(asdict(event))
     line = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     data = (line + "\n").encode("utf-8")
     with _LOCK:

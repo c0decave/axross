@@ -73,6 +73,17 @@ except ImportError as exc:  # pragma: no cover
     SMBException = OSError  # type: ignore[assignment,misc]
     _SMB_IMPORT_ERROR = exc
 
+# A link smbclient cannot follow (to another server or a local drive).
+# Looked up on its own: test doubles of smbprotocol.exceptions lack it.
+_LINK_REDIRECTION: tuple[type[BaseException], ...] = ()
+try:
+    from smbprotocol.exceptions import SMBLinkRedirectionError as _Redirection
+
+    if isinstance(_Redirection, type) and issubclass(_Redirection, BaseException):
+        _LINK_REDIRECTION = (_Redirection,)
+except ImportError:  # pragma: no cover - smbprotocol absent
+    pass
+
 # Every way an smbclient call fails: OSError / SMBOSError for an error
 # status; SMBException (not an OSError) for a message whose signature
 # does not verify or a closed connection; and whatever parsing a server
@@ -90,6 +101,136 @@ _SMB_FAILURES: tuple[type[BaseException], ...] = (
     ValueError,
     struct.error,
 )
+
+
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    """True for an SMB answer that nothing is at the path: ENOENT
+    (STATUS_OBJECT_NAME_NOT_FOUND / _PATH_NOT_FOUND / STATUS_NOT_FOUND)
+    or ENOTDIR (STATUS_NOT_A_DIRECTORY: a file where the path needs a
+    folder). STATUS_ACCESS_DENIED and the rest map to errno 0."""
+    return isinstance(exc, OSError) and exc.errno in (errno.ENOENT, errno.ENOTDIR)
+
+
+# acl_get: the parts of a security descriptor asked for ([MS-DTYP]
+# 2.4.7 SECURITY_INFORMATION; smbprotocol spells OWNER "SECURTIY").
+_SD_OWNER, _SD_GROUP, _SD_DACL = 0x1, 0x2, 0x4
+_SD_MAX_BYTES = 64 * 1024
+# dfs_referrals: the statuses of a path that is no DFS path
+# (STATUS_NOT_FOUND, STATUS_FS_DRIVER_REQUIRED, STATUS_OBJECT_PATH_NOT_FOUND,
+# STATUS_OBJECT_NAME_NOT_FOUND, STATUS_DFS_UNAVAILABLE).
+_NOT_DFS = frozenset({0xC0000225, 0xC000019C, 0xC000003A, 0xC0000034, 0xC000026D})
+
+_ACE_TYPES = {0x00: "allow", 0x01: "deny", 0x02: "audit", 0x03: "alarm", 0x05: "allow_object",
+              0x06: "deny_object", 0x07: "audit_object", 0x09: "allow_callback",
+              0x0A: "deny_callback", 0x11: "mandatory_label"}
+_ACE_FLAGS = ((0x01, "OBJECT_INHERIT"), (0x02, "CONTAINER_INHERIT"), (0x04, "NO_PROPAGATE_INHERIT"),
+              (0x08, "INHERIT_ONLY"), (0x10, "INHERITED"), (0x40, "SUCCESSFUL_ACCESS"),
+              (0x80, "FAILED_ACCESS"))
+# [MS-DTYP] 2.4.3 ACCESS_MASK, file rights of [MS-SMB2] 2.2.13.1.1.
+_FULL_CONTROL = 0x001F01FF
+_RIGHTS = (
+    (0x00000001, "READ_DATA"),
+    (0x00000002, "WRITE_DATA"),
+    (0x00000004, "APPEND_DATA"),
+    (0x00000008, "READ_EA"),
+    (0x00000010, "WRITE_EA"),
+    (0x00000020, "EXECUTE"),
+    (0x00000040, "DELETE_CHILD"),
+    (0x00000080, "READ_ATTRIBUTES"),
+    (0x00000100, "WRITE_ATTRIBUTES"),
+    (0x00010000, "DELETE"),
+    (0x00020000, "READ_CONTROL"),
+    (0x00040000, "WRITE_DAC"),
+    (0x00080000, "WRITE_OWNER"),
+    (0x00100000, "SYNCHRONIZE"),
+    (0x01000000, "ACCESS_SYSTEM_SECURITY"),
+    (0x02000000, "MAXIMUM_ALLOWED"),
+    (0x10000000, "GENERIC_ALL"),
+    (0x20000000, "GENERIC_EXECUTE"),
+    (0x40000000, "GENERIC_WRITE"),
+    (0x80000000, "GENERIC_READ"),
+)
+_SD_CONTROL = (
+    (0x0001, "OWNER_DEFAULTED"),
+    (0x0002, "GROUP_DEFAULTED"),
+    (0x0004, "DACL_PRESENT"),
+    (0x0008, "DACL_DEFAULTED"),
+    (0x0010, "SACL_PRESENT"),
+    (0x0020, "SACL_DEFAULTED"),
+    (0x0400, "DACL_AUTO_INHERITED"),
+    (0x0800, "SACL_AUTO_INHERITED"),
+    (0x1000, "DACL_PROTECTED"),
+    (0x2000, "SACL_PROTECTED"),
+    (0x8000, "SELF_RELATIVE"),
+)
+_WELL_KNOWN_SIDS = {
+    "S-1-1-0": "Everyone",
+    "S-1-3-0": "CREATOR OWNER",
+    "S-1-3-1": "CREATOR GROUP",
+    "S-1-5-7": "ANONYMOUS LOGON",
+    "S-1-5-11": "Authenticated Users",
+    "S-1-5-18": "NT AUTHORITY\\SYSTEM",
+    "S-1-5-19": "NT AUTHORITY\\LOCAL SERVICE",
+    "S-1-5-20": "NT AUTHORITY\\NETWORK SERVICE",
+    "S-1-5-32-544": "BUILTIN\\Administrators",
+    "S-1-5-32-545": "BUILTIN\\Users",
+    "S-1-5-32-546": "BUILTIN\\Guests",
+}
+
+
+def _names(value: int, table) -> list[str]:
+    return [name for bit, name in table if value & bit]
+
+
+def _describe_security(raw: bytes, path: str) -> dict:
+    """acl_get's dict of a self-relative security descriptor."""
+    from smbprotocol.security_descriptor import SMB2CreateSDBuffer
+
+    try:
+        sd = SMB2CreateSDBuffer()
+        sd.unpack(raw)
+        control = int(sd["control"].get_value())
+        owner, group = sd.get_owner(), sd.get_group()
+        dacl = sd.get_dacl()
+        aces = []
+        for ace in (dacl["aces"].get_value() if dacl is not None else []):
+            mask = int(ace["mask"].get_value())
+            flags = int(ace["ace_flags"].get_value())
+            sid = str(ace["sid"].get_value())
+            kind = int(ace["ace_type"].get_value())
+            aces.append(
+                {
+                    "type": _ACE_TYPES.get(kind, f"type_{kind:#x}"),
+                    "sid": sid,
+                    "name": _WELL_KNOWN_SIDS.get(sid, ""),
+                    "mask": mask,
+                    "rights": ["FULL_CONTROL"]
+                    if mask & _FULL_CONTROL == _FULL_CONTROL and not mask & ~_FULL_CONTROL
+                    else _names(mask, _RIGHTS),
+                    "flags": flags,
+                    "flag_names": _names(flags, _ACE_FLAGS),
+                }
+            )
+    except (ValueError, KeyError, IndexError, TypeError, struct.error, AttributeError) as exc:
+        raise OSError(
+            f"SMB acl_get {path}: the server's security descriptor cannot be read ({exc})"
+        ) from exc
+    if dacl is None:
+        note = "no DACL: everyone has full access"
+    elif not aces:
+        note = "an empty DACL: no access for anyone but the owner's right to change it"
+    else:
+        note = ""
+    return {
+        "owner": str(owner) if owner is not None else "",
+        "group": str(group) if group is not None else "",
+        "control": control,
+        "control_flags": _names(control, _SD_CONTROL),
+        "dacl": aces if dacl is not None else None,
+        "note": note,
+    }
 
 
 # Per-host lock registry so concurrent SmbSession constructors don't
@@ -341,16 +482,30 @@ class SmbSession(SessionLifecycle):
             raise OSError(f"Cannot stat {path}: {e}") from e
 
     def is_dir(self, path: str) -> bool:
+        """False only for "not found" (smbclient answers ENOENT with
+        False itself) or a file on the way; access denied, a dropped
+        connection or a garbled message is an OSError - remove() and the
+        transfer layer pick their action from this answer."""
         try:
             return smbclient.path.isdir(self._unc(path), **self._kw)
-        except _SMB_FAILURES:
+        except _LINK_REDIRECTION:
+            # A link to another server: no folder of this share (and
+            # remove() deletes the link itself).
             return False
+        except _SMB_FAILURES as e:
+            if _is_not_found(e):
+                return False
+            raise OSError(f"Cannot check {path}: {e}") from e
 
     def exists(self, path: str) -> bool:
+        """False only for "not found"; any other failure is an OSError -
+        server_side_copy(overwrite=False) takes False as its go-ahead."""
         try:
             return smbclient.path.exists(self._unc(path), **self._kw)
-        except _SMB_FAILURES:
-            return False
+        except _SMB_FAILURES as e:
+            if _is_not_found(e):
+                return False
+            raise OSError(f"Cannot check {path}: {e}") from e
 
     def mkdir(self, path: str) -> None:
         try:
@@ -531,36 +686,90 @@ class SmbSession(SessionLifecycle):
             )
         return out
 
-    def acl_get(self, path: str) -> dict:
-        """SMB security descriptor for ``path``. NOT IMPLEMENTED in
-        this round — the SMB2 QUERY_SECURITY_INFO IOCTL has no public
-        smbprotocol shortcut, so wiring it up is several hundred LOC
-        of DCE-RPC ceremony. Tracked as a follow-up.
-
-        Use the following pattern to pull it directly via smbprotocol
-        in the meantime::
-
-            from smbprotocol.open import Open, FilePipePrinterAccessMask
-            # ... open the file with READ_CONTROL access ...
-            # ... issue QUERY_SECURITY_INFORMATION request ...
-        """
-        raise NotImplementedError(
-            "acl_get is a follow-up — issue smbprotocol QUERY_SECURITY_INFO "
-            "directly for now (see docstring)"
+    def _query_security(self, unc: str) -> bytes:
+        """The raw security descriptor of *unc* (owner, group, DACL):
+        an SMB2 QUERY_INFO of type SECURITY on a READ_CONTROL handle."""
+        from smbclient._io import SMBFileTransaction, SMBRawIO
+        from smbprotocol.file_info import InfoType
+        from smbprotocol.open import (
+            FilePipePrinterAccessMask,
+            SMB2QueryInfoRequest,
+            SMB2QueryInfoResponse,
         )
+
+        raw = SMBRawIO(unc, mode="rb", share_access="rwd",
+                       desired_access=FilePipePrinterAccessMask.READ_CONTROL, **self._kw)
+        with SMBFileTransaction(raw) as transaction:
+            request = SMB2QueryInfoRequest()
+            request["info_type"] = InfoType.SMB2_0_INFO_SECURITY
+            request["output_buffer_length"] = _SD_MAX_BYTES
+            request["additional_information"] = _SD_OWNER | _SD_GROUP | _SD_DACL
+            request["file_id"] = raw.fd.file_id
+
+            def receive(sent):
+                response = raw.fd.connection.receive(sent)
+                answer = SMB2QueryInfoResponse()
+                answer.unpack(response["data"].get_value())
+                return answer["buffer"].get_value()
+
+            transaction += (request, receive)
+        return transaction.results[0]
+
+    def acl_get(self, path: str) -> dict:
+        """The security descriptor of *path*: ``{owner, group, control,
+        control_flags, dacl, note}``. ``dacl`` is a list of ACEs
+        ``{type, sid, name, mask, rights, flags, flag_names}`` (``name``
+        for well-known SIDs), or None when the object has no DACL
+        (everyone has full access); an empty list denies everyone."""
+        unc = self._unc(path)
+        try:
+            raw = self._query_security(unc)
+        except _SMB_FAILURES as exc:
+            errno_value = getattr(exc, "errno", None)
+            if isinstance(errno_value, int) and errno_value:
+                raise OSError(errno_value, f"SMB acl_get {path}: {exc}") from exc
+            raise OSError(f"SMB acl_get {path}: {exc}") from exc
+        return _describe_security(raw, path)
+
+    def _dfs_lookup(self, unc: str) -> list[tuple[str, str, bool, int]] | None:
+        """The DFS referral entries for *unc* as ``(dfs path, target,
+        root, ttl)``, the server's preferred target first; None when the
+        server has no DFS namespace there."""
+        from smbclient._pool import dfs_request, get_smb_tree
+        from smbprotocol.dfs import DFSServerTypes
+        from smbprotocol.exceptions import SMBResponseException
+
+        tree, _path = get_smb_tree(f"\\\\{self._host}\\IPC$", **self._kw)
+        try:
+            response = dfs_request(tree, unc)
+        except SMBResponseException as exc:
+            if exc.status in _NOT_DFS:
+                return None
+            raise
+        out = []
+        for entry in response["referral_entries"].get_value() or ():
+            ttl = entry["time_to_live"].get_value() if "time_to_live" in entry.fields else 0
+            out.append(
+                (
+                    str(entry.dfs_path) if hasattr(entry, "dfs_path") else unc.lstrip("\\"),
+                    str(entry.network_address),
+                    entry["server_type"].has_flag(DFSServerTypes.ROOT_TARGETS),
+                    int(ttl or 0),
+                )
+            )
+        return out or None
 
     def dfs_referrals(self, path: str = "/") -> list[dict]:
-        """DFS namespace resolution for ``path``. NOT IMPLEMENTED in
-        this round — needs FSCTL_DFS_GET_REFERRALS over an IOCTL,
-        which smbprotocol exposes structurally (smbprotocol.dfs.*) but
-        without a high-level method.
-
-        Tracked as a follow-up alongside ``acl_get``.
-        """
-        raise NotImplementedError(
-            "dfs_referrals is a follow-up — issue FSCTL_DFS_GET_REFERRALS "
-            "via smbprotocol directly for now"
-        )
+        """Where the DFS path *path* leads: one ``{dfs_path, target, root,
+        link, ttl}`` per target, the server's preferred one first; [] when
+        it is no DFS path (FSCTL_DFS_GET_REFERRALS on IPC$)."""
+        unc = self._unc(path)
+        try:
+            entries = self._dfs_lookup(unc)
+        except _SMB_FAILURES as exc:
+            raise OSError(f"SMB dfs_referrals {path}: {exc}") from exc
+        return [{"dfs_path": dfs_path, "target": target, "root": root, "link": not root, "ttl": ttl}
+                for dfs_path, target, root, ttl in entries or ()]
 
     def list_versions(self, path: str) -> list:
         return []

@@ -7,7 +7,6 @@ read/write call (SMB through smbclient, ...) paid one round trip per
 
 from __future__ import annotations
 
-import os
 import random
 import shutil
 import sys
@@ -89,7 +88,8 @@ class ChunkTest(unittest.TestCase):
         self.assertEqual((self.tmp / "dst.bin").read_bytes(), self.data)
 
     def test_edge_resume_from_an_odd_offset(self) -> None:
-        partial = self.tmp / ".dst.bin.part-x"
+        fp = TW.source_fingerprint(LocalFS().stat(str(self.src)))
+        partial = self.tmp / TW.partial_name("dst.bin", "1a2b3c4d", fp)
         partial.write_bytes(self.data[:123457])
         job = self.run_job(resume=True, temp_path=str(partial))
         self.assertEqual(job.status, TW.TransferStatus.DONE)

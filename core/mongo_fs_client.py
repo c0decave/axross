@@ -46,6 +46,21 @@ def _utc(value):
     return value
 
 
+def _url_options(query: str) -> dict:
+    """The MongoClient options of a URL query, validated by pymongo: an
+    unknown option or a bad value is an OSError instead of being dropped.
+    Parsed against a fixed host, so no SRV / DNS lookup happens."""
+    if not query:
+        return {}
+    from pymongo import uri_parser
+
+    try:
+        parsed = uri_parser.parse_uri("mongodb://localhost/?" + query)
+    except Exception as exc:  # noqa: BLE001 - ConfigurationError, ValueError, OSError
+        raise OSError(f"MongoDB URL option: {exc}") from exc
+    return dict(parsed["options"])
+
+
 class MongoFsSession(DbFsBackend):
     """MongoDB-backed FileBackend (GridFS for content, axross_dirs
     for the synthetic tree)."""
@@ -68,6 +83,7 @@ class MongoFsSession(DbFsBackend):
             raise ImportError(
                 "MongoDB backend requires pymongo. Install with: pip install axross[mongo]",
             )
+        url_options: dict = {}
         if url:
             parts = urlsplit(url)
             host = host or (parts.hostname or "127.0.0.1")
@@ -76,6 +92,7 @@ class MongoFsSession(DbFsBackend):
             password = password or (parts.password or "")
             if parts.path and parts.path != "/":
                 database = parts.path.lstrip("/")
+            url_options = _url_options(parts.query)
 
         from core import proxy as proxy_mod
 
@@ -84,13 +101,15 @@ class MongoFsSession(DbFsBackend):
         # driver from "discovering" the real replica-set member names and
         # dialling those around the proxy.
         self._tunnel = proxy_mod.open_tunnel(_ignored, host, int(port))
-        client_kwargs: dict = {"host": host, "port": int(port)}
+        # The URL's options (tls, tlsCAFile, authSource, ...) - dropping
+        # them turned "tls=true" into a plaintext connection.
+        client_kwargs: dict = {**url_options, "host": host, "port": int(port)}
         if self._tunnel is not None:
-            client_kwargs = {
-                "host": self._tunnel.host,
-                "port": self._tunnel.port,
-                "directConnection": True,
-            }
+            client_kwargs.update(
+                host=self._tunnel.host,
+                port=self._tunnel.port,
+                directConnection=True,
+            )
         if username:
             client_kwargs["username"] = username
         if password:

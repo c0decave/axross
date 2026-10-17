@@ -99,6 +99,13 @@ def _segment_name(rdn: str) -> str:
     return rdn.replace("/", "\\2F")
 
 
+#: Simple Paged Results (RFC 2696): its control OID, the page size asked
+#: for (below Active Directory's MaxPageSize of 1000) and a bound on pages.
+_PAGED_OID = "1.2.840.113556.1.4.319"
+_PAGE_SIZE = 500
+_MAX_PAGES = 2000
+
+
 class LdapFsSession(SessionLifecycle):
     """Read-only LDAP-as-FileBackend.
 
@@ -302,8 +309,8 @@ class LdapFsSession(SessionLifecycle):
         if not dn:
             # Root → namingContexts.
             return [FileItem(name=_segment_name(nc), is_dir=True) for nc in self._naming_contexts]
-        # SCOPE=LEVEL — direct children only.
-        _ok, entries = self._search(
+        # SCOPE=LEVEL — direct children only, every page of them.
+        entries = self._search_all(
             f"LDAP search {dn}",
             search_base=dn,
             search_filter="(objectClass=*)",
@@ -500,6 +507,29 @@ class LdapFsSession(SessionLifecycle):
                 f"{what}: malformed answer from the server ({type(exc).__name__}: {exc})"
             ) from exc
         return bool(ok), entries
+
+    def _search_all(self, what: str, **kwargs) -> list:
+        """Every entry of a search, page by page (RFC 2696). A server that
+        still ends with anything but success - sizeLimitExceeded where it
+        ignores paging - gave a cut listing that looked complete (review
+        B7, 2026-10-17): that is an OSError now."""
+        entries: list = []
+        cookie = None
+        for _page in range(_MAX_PAGES):
+            _ok, page = self._search(what, paged_size=_PAGE_SIZE, paged_cookie=cookie, **kwargs)
+            entries.extend(page)
+            result = getattr(self._conn, "result", None) or {}
+            code = result.get("result", 0)
+            if code not in (0, None):
+                raise OSError(f"{what}: the listing is incomplete - the server stopped after "
+                              f"{len(entries)} entries ({result.get('description') or code})")
+            try:
+                cookie = result["controls"][_PAGED_OID]["value"]["cookie"]
+            except (KeyError, TypeError):
+                cookie = None
+            if not cookie:
+                return entries
+        raise OSError(f"{what}: more than {_MAX_PAGES} pages of {_PAGE_SIZE} entries")
 
     def _entry_to_item(self, entry, name: str) -> FileItem:
         """Turn an ldap3 entry into a FileItem. Children-presence is a

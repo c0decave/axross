@@ -8,7 +8,6 @@ without a terminal (cron, a pipe) have nobody to stop it: the gate refuses.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path

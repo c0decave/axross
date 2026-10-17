@@ -104,7 +104,8 @@ def _all_ops(s, ctx, only=None):
 
 def test_happy_listing_and_read(pjl):
     s = _session(pjl)
-    assert [i.name for i in s.list_dir("/")] == [".", "..", "PJL", "report.txt"]
+    # "." and ".." of the device are not entries of the folder (review B28)
+    assert [i.name for i in s.list_dir("/")] == ["PJL", "report.txt"]
     assert s.open_read("/report.txt").read() == b"hello"
 
 

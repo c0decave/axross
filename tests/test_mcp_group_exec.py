@@ -18,7 +18,6 @@ import hashlib
 
 import pytest
 
-from core import mcp_server as M
 from core import security_mode
 from core.backend import SessionLifecycle
 from models.exec_result import ExecResult
@@ -32,10 +31,16 @@ class _Shell(SessionLifecycle):
         self.calls = []
         self.rc, self.out, self.err = rc, out, err
 
-    def exec(self, cmd, *, timeout=30.0, stdin=None, stdout_cap=1 << 20, stderr_cap=1 << 16, env=None):
-        self.calls.append({"cmd": cmd, "timeout": timeout, "stdin": stdin, "env": env, "cap": stdout_cap})
+    def exec(
+        self, cmd, *, timeout=30.0, stdin=None, stdout_cap=1 << 20, stderr_cap=1 << 16, env=None
+    ):
+        self.calls.append(
+            {"cmd": cmd, "timeout": timeout, "stdin": stdin, "env": env, "cap": stdout_cap}
+        )
         out = self.out
-        return ExecResult(self.rc, out[:stdout_cap], self.err, truncated_stdout=len(out) > stdout_cap)
+        return ExecResult(
+            self.rc, out[:stdout_cap], self.err, truncated_stdout=len(out) > stdout_cap
+        )
 
 
 class _WinRM(_Shell):
@@ -86,7 +91,11 @@ def test_happy_exec_backends_lists_what_can_run_commands(tmp_path):
 def test_happy_powershell_scripts_run_on_winrm(tmp_path):
     win = _WinRM()
     tools = _tools(tmp_path, win=win)
-    T.call(tools, "remote_script", {"backend": "win", "script": "Get-Date", "interpreter": "powershell"})
+    T.call(
+        tools,
+        "remote_script",
+        {"backend": "win", "script": "Get-Date", "interpreter": "powershell"},
+    )
     assert win.calls[0]["cmd"] == "Get-Date" and win.calls[0]["stdin"] is None
 
 
@@ -115,7 +124,11 @@ def test_sad_the_interpreter_must_fit_the_backend(tmp_path):
     tools = _tools(tmp_path, box=_Shell(), win=_WinRM())
     for backend, interpreter in (("box", "powershell"), ("win", "bash")):
         with pytest.raises(T.RpcError):
-            T.call(tools, "remote_script", {"backend": backend, "script": "x", "interpreter": interpreter})
+            T.call(
+                tools,
+                "remote_script",
+                {"backend": backend, "script": "x", "interpreter": interpreter},
+            )
 
 
 def test_sad_paranoid_mode_builds_no_exec_tools(tmp_path, monkeypatch):
@@ -141,7 +154,9 @@ def test_sad_a_production_profile_runs_nothing(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(P, "PROFILES_FILE", path)
     ran = []
     # Give the RAM backend a shell, so the production check is what refuses.
-    monkeypatch.setattr(RamFsSession, "exec", lambda self, cmd, **kw: ran.append(cmd), raising=False)
+    monkeypatch.setattr(
+        RamFsSession, "exec", lambda self, cmd, **kw: ran.append(cmd), raising=False
+    )
     root = tmp_path / "root"
     root.mkdir()
     tools = T.build(root, ("remote", "exec"), allow_exec=True)
@@ -197,7 +212,9 @@ def test_edge_env_is_inlined_for_posix_shells(tmp_path, caplog):
 def test_edge_env_stays_a_mapping_for_powershell(tmp_path):
     win = _WinRM()
     tools = _tools(tmp_path, win=win)
-    T.call(tools, "remote_exec", {"backend": "win", "command": "Get-Date", "env": {"LANG": "C.UTF-8"}})
+    T.call(
+        tools, "remote_exec", {"backend": "win", "command": "Get-Date", "env": {"LANG": "C.UTF-8"}}
+    )
     assert win.calls[0]["cmd"] == "Get-Date" and win.calls[0]["env"] == {"LANG": "C.UTF-8"}
 
 
@@ -213,8 +230,9 @@ def test_edge_the_manifest_names_both_flags(tmp_path):
     tools = list(_tools(tmp_path).values())
     from core import mcp_groups
 
-    manifest = mcp_groups.tool_manifest(tools, groups={"exec"}, allow_write=False, allow_scripts=False,
-                                        allow_exec=True)
+    manifest = mcp_groups.tool_manifest(
+        tools, groups={"exec"}, allow_write=False, allow_scripts=False, allow_exec=True
+    )
     entry = next(t for t in manifest["tools"] if t["name"] == "remote_exec")
     assert entry["mutating"] is True
     assert entry["required_flags"] == ["--mcp-tools exec", "--mcp-allow-exec"]
@@ -252,8 +270,23 @@ def test_sad_paranoid_mode_refuses_the_flag(monkeypatch):
 def test_edge_list_tools_shows_exec_only_with_the_flag(capsys):
     import json
 
-    for flags, expected in ((("--mcp-tools", "all"), False), (("--mcp-tools", "all", "--mcp-allow-exec"), True)):
+    for flags, expected in (
+        (("--mcp-tools", "all"), False),
+        (("--mcp-tools", "all", "--mcp-allow-exec"), True),
+    ):
         code, err, _s, _h = _cli("--mcp-server", "--mcp-list-tools", *flags)
         assert code == 0, err
         names = [t["name"] for t in json.loads(capsys.readouterr().out)["tools"]]
         assert ("remote_exec" in names) is expected
+
+
+def test_sad_switching_to_paranoid_stops_tools_built_before(tmp_path, monkeypatch):
+    """The security mode can change while an agent (or server) holds tools
+    built earlier: a remote command checks it at the call, not only when the
+    tools were built."""
+    tools = _tools(tmp_path)
+    assert "remote_exec" in tools
+    monkeypatch.setattr(security_mode, "_CURRENT", security_mode.PARANOID)
+    with pytest.raises(T.RpcError) as info:
+        T.call(tools, "remote_exec", {"backend": "box", "command": "id"})
+    assert "security mode" in str(info.value)

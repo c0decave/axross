@@ -153,9 +153,15 @@ def test_edge_stdio_text_stream_without_a_byte_buffer():
 # -- HTTP transport -----------------------------------------------------------
 
 
+# A plain-HTTP server demands a bearer token (see test_mcp_http_bearer_token).
+_TOKEN = "malformed-test-token-0123456789abcdef"
+
+
 @pytest.fixture
 def http_port():
-    config = mcp_http.HTTPServerConfig(backend=LocalFS(), host="127.0.0.1", port=0)
+    config = mcp_http.HTTPServerConfig(
+        backend=LocalFS(), host="127.0.0.1", port=0, auth_token=_TOKEN
+    )
     server = mcp_http.build_server(config)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -171,7 +177,8 @@ def _post(port: int, body: bytes) -> bytes:
     with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
         s.sendall(
             b"POST /messages HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-            b"Content-Type: application/json\r\nContent-Length: "
+            + f"Authorization: Bearer {_TOKEN}\r\n".encode()
+            + b"Content-Type: application/json\r\nContent-Length: "
             + str(len(body)).encode()
             + b"\r\n\r\n"
             + body

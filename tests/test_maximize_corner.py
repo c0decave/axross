@@ -145,8 +145,11 @@ def test_sad_every_module_with_a_bare_close_corner_also_has_the_maximize_corner(
     for path in sorted((ROOT / "ui").glob("*.py")):
         if path.name == "close_corner.py":
             continue
-        calls = {ast.unparse(n.func).split(".")[-1] for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-                 if isinstance(n, ast.Call)}
+        calls = {
+            ast.unparse(n.func).split(".")[-1]
+            for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(n, ast.Call)
+        }
         if "make_close_corner" in calls and "make_maximize_corner" not in calls:
             missing.append(path.name)
     assert missing == []

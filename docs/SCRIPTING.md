@@ -314,11 +314,18 @@ An LLM (or cron, CI, any caller without a human at the keyboard) needs
 a few guarantees the REPL never had to give. What the API offers:
 
 - **Discover before you write.** `axross.api_schema()` (MCP:
-  `script_api_schema`) is the API as JSON, built from the code: per
-  function the signature with types, the first docstring paragraph,
-  `mutates` (can change files, remote state or settings) and `prompts`
-  (can need a human). It also lists the methods every backend session
-  has. `axross.docs(name)` is the prose for one function.
+  `script_api_schema`; committed as
+  [`scripting-api.json`](scripting-api.json)) is the API as JSON,
+  built from the code: rules and errors for scripts, the names by
+  topic, per function the signature with types, the whole docstring,
+  its examples, what it raises, `mutates` (can change files, remote
+  state or settings) and `prompts` (can need a human); the methods every
+  backend session has and the types the API returns (`FileItem` and the
+  results). `axross.api_schema(names=[])` is the index alone,
+  `axross.api_schema(["copy"])` one function in full.
+  `axross.docs(name)` is the prose for one function;
+  [LLM_GUIDE.md](LLM_GUIDE.md) §9 and §12 are the short path for a
+  language model.
 - **Nobody to ask.** Without a Qt window and without a terminal on
   stdin — or with `AXROSS_NONINTERACTIVE=1`, which `script_run` sets —
   `axross.confirm()` raises `axross.NonInteractiveError` (a

@@ -22,7 +22,14 @@ from tests.test_agent_loop import _call, _Fake
 
 @pytest.fixture(autouse=True)
 def _no_proxy(monkeypatch):
-    for name in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+    for name in (
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -34,7 +41,9 @@ def llm(tmp_path, monkeypatch):
     def make(*replies, endpoint=None, consent=False):
         server = _Fake(replies)
         servers.append(server)
-        profile = LP.LLMProfile(name="local", provider="lmstudio", endpoint=endpoint or server.url, model="tiny")
+        profile = LP.LLMProfile(
+            name="local", provider="lmstudio", endpoint=endpoint or server.url, model="tiny"
+        )
         if consent:
             profile.consent()
         path = tmp_path / "llm.json"
@@ -57,8 +66,14 @@ def _tools(root, write=False):
 
 def test_happy_the_local_model_answers_with_the_tools(tmp_path, llm):
     (tmp_path / "notes.txt").write_text("Meeting Friday 10:00\n")
-    server = llm({"tool_calls": [_call("read_file", {"path": str(tmp_path / "notes.txt"), "encoding": "text"})]},
-                 {"content": "Friday at 10."})
+    server = llm(
+        {
+            "tool_calls": [
+                _call("read_file", {"path": str(tmp_path / "notes.txt"), "encoding": "text"})
+            ]
+        },
+        {"content": "Friday at 10."},
+    )
     r = T.call(_tools(tmp_path), "agent_run", {"task": "When is the meeting?"})
     assert r["answer"] == "Friday at 10." and r["stopped"] == "answered"
     assert r["profile"] == "local" and r["calls"] == [{"name": "read_file", "outcome": "ok"}]
@@ -107,20 +122,43 @@ def test_sad_groups_outside_the_read_only_list_are_refused(tmp_path, llm):
 
 
 def test_edge_the_inner_agent_can_change_nothing(tmp_path, llm):
-    server = llm({"tool_calls": [_call("write_file", {"path": str(tmp_path / "x"), "content": "y"})]},
-                 {"content": "could not"})
+    server = llm(
+        {"tool_calls": [_call("write_file", {"path": str(tmp_path / "x"), "content": "y"})]},
+        {"content": "could not"},
+    )
     r = T.call(_tools(tmp_path, write=True), "agent_run", {"task": "write x", "groups": ["packer"]})
     names = {t["function"]["name"] for t in server.requests[0]["tools"]}
     assert not names & {"write_file", "remove", "pack", "remote_exec", "script_run", "agent_run"}
-    assert r["calls"] == [{"name": "write_file", "outcome": "unavailable"}] and not (tmp_path / "x").exists()
+    assert (
+        r["calls"] == [{"name": "write_file", "outcome": "unavailable"}]
+        and not (tmp_path / "x").exists()
+    )
 
 
 def test_edge_the_tool_is_read_only_in_the_manifest(tmp_path):
     from core import mcp_groups
 
     tools = list(_tools(tmp_path).values())
-    manifest = mcp_groups.tool_manifest(tools, groups={"agent"}, allow_write=False, allow_scripts=False)
+    manifest = mcp_groups.tool_manifest(
+        tools, groups={"agent"}, allow_write=False, allow_scripts=False
+    )
     entry = next(t for t in manifest["tools"] if t["name"] == "agent_run")
     assert entry["mutating"] is False and entry["required_flags"] == ["--mcp-tools agent"]
     assert entry["timeout_class"] == "long"
     assert json.dumps(entry["input_schema"]).count('"backend"') == 0
+
+
+def test_sad_groups_beyond_the_root_need_the_server_to_offer_them(tmp_path, llm):
+    """remote opens saved connections with their stored credentials and
+    extensions lists code: agent_run may only pass them on when the server
+    itself was started with them (--mcp-tools)."""
+    server = llm({"content": "ok"}, {"content": "ok"})
+    for group in ("remote", "extensions"):
+        with pytest.raises(T.RpcError) as info:
+            T.call(_tools(tmp_path), "agent_run", {"task": "x", "groups": [group]})
+        assert "--mcp-tools" in str(info.value)
+    assert server.requests == []
+    both = T.build(tmp_path, {"agent", "remote"})
+    T.call(both, "agent_run", {"task": "x", "groups": ["remote"]})
+    names = {t["function"]["name"] for t in server.requests[0]["tools"]}
+    assert "remote_profiles" in names

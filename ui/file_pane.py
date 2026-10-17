@@ -383,13 +383,28 @@ TRANSFER_MIME_TYPE = "application/x-axross-transfer"
 PANE_MIME_TYPE = "application/x-axross-pane-drag"
 
 
+def filesystem_key(backend) -> str:
+    """Which filesystem *backend* shows, for comparing two panes: every
+    local pane shares the local disk, a remote one is named by its backend
+    (as ``MainWindow._pane_serves_bookmark`` does). Names and types only,
+    no backend call - safe in drag handlers."""
+    from core.local_fs import LocalFS
+
+    if isinstance(backend, LocalFS):
+        return "Local"
+    return f"remote:{backend.name}"
+
+
 def decode_transfer_payload(mime: QMimeData | None) -> dict[str, object] | None:
-    """The pane drag payload as ``{"paths", "source_pane_id", "dirs"}``, or
-    ``None`` for anything else (another program's text or URLs, garbage).
+    """The pane drag payload as ``{"paths", "source_pane_id", "dirs",
+    "filesystem"}``, or ``None`` for anything else (another program's text
+    or URLs, garbage).
 
     ``dirs`` is the subset of ``paths`` the source listing showed as
-    folders; a missing or malformed field means no folders. Pure parsing:
-    nothing here touches a filesystem, so it is safe in drag handlers."""
+    folders; a missing or malformed field means no folders. ``filesystem``
+    is the source pane's :func:`filesystem_key`, None when the payload does
+    not name one. Pure parsing: nothing here touches a filesystem, so it is
+    safe in drag handlers."""
     if mime is None or not mime.hasFormat(TRANSFER_MIME_TYPE):
         return None
     try:
@@ -412,7 +427,15 @@ def decode_transfer_payload(mime: QMimeData | None) -> dict[str, object] | None:
         dirs = [d for d in dirs if isinstance(d, str) and d in dragged]
     else:
         dirs = []
-    return {"paths": paths, "source_pane_id": source_pane_id, "dirs": dirs}
+    filesystem = payload.get("filesystem")
+    if not isinstance(filesystem, str):
+        filesystem = None
+    return {
+        "paths": paths,
+        "source_pane_id": source_pane_id,
+        "dirs": dirs,
+        "filesystem": filesystem,
+    }
 
 
 _DRAG_THRESHOLD = 10  # pixels before header drag starts
@@ -454,7 +477,9 @@ def drag_pixmap(names: list[str], dirs: int) -> QPixmap:
     kind = "folder" if names and dirs == len(names) else "file"
     if len(names) > 1 and dirs:
         kind = "folder"
-    painter.drawPixmap(pad, (height - icon_size) // 2, icon(kind, icon_size).pixmap(icon_size, icon_size))
+    painter.drawPixmap(
+        pad, (height - icon_size) // 2, icon(kind, icon_size).pixmap(icon_size, icon_size)
+    )
     painter.setPen(palette.highlightedText().color())
     painter.setFont(font)
     painter.drawText(QRect(icon_size + 2 * pad, 0, width - icon_size - 3 * pad, height),
@@ -551,6 +576,18 @@ _MEASURE_ROWS = 5000
 _MEASURE_LONGEST = 8
 
 
+#: Steps of a byte-count progress bar (see :func:`_progress_units`).
+_PROGRESS_UNITS = 1000
+
+
+def _progress_units(done: int, total: int) -> int:
+    """*done* of *total* bytes as 0.._PROGRESS_UNITS, for a Qt progress
+    range (a C int, which a byte count over 2 GiB overflows)."""
+    if total <= 0:
+        return 0
+    return min(_PROGRESS_UNITS, max(0, done) * _PROGRESS_UNITS // total)
+
+
 class FilePaneWidget(QWidget):
     """Reusable file browser pane, works with any FileBackend."""
 
@@ -579,6 +616,9 @@ class FilePaneWidget(QWidget):
     # Open Terminal Here: the folder to open a shell in. The main window owns
     # the terminal dock and decides between a local and an SSH shell.
     open_terminal_requested = pyqtSignal(str)
+    #: Send to Agent: the selected paths (or the folder shown) for the
+    #: Agent dock's current tab. The main window owns the dock.
+    send_to_agent_requested = pyqtSignal(list)
     # Emitted from the watcher background thread so the GUI thread
     # owns the actual list refresh. Internal: connect via Qt's auto
     # cross-thread queueing (PyQt does this when the receiver lives
@@ -979,6 +1019,7 @@ class FilePaneWidget(QWidget):
         elif isinstance(history, int):
             self._history_pos = history
         self._current_path = path
+        self._retire_stale_menus()
         self._path_edit.setText(path)
         real_count = sum(1 for i in items if i.name != "..")
         self._status.setText(f"{real_count} items")
@@ -1486,8 +1527,15 @@ class FilePaneWidget(QWidget):
     def _move_to_target(self) -> None:
         """Move selected items to the target pane (F6)."""
         selected = self.selected_items()
-        if selected:
+        if selected and self._production_ok(f"move {len(selected)} item(s) away"):
             self.move_requested.emit(selected)
+
+    def _production_ok(self, op_desc: str) -> bool:
+        """The production tarpit for a destructive entry of this pane
+        (see ui.production_gate): False when the user stopped it."""
+        from ui.production_gate import confirm_production
+
+        return confirm_production(self, self._backend, op_desc)
 
     def _select_all(self) -> None:
         """Select all items except '..' (Ctrl+A)."""
@@ -1627,8 +1675,13 @@ class FilePaneWidget(QWidget):
         return [path for path, _item in self._selected_entries()]
 
     def _selected_entries(self) -> list[tuple[str, FileItem]]:
-        """``(full path, listing item)`` of every selected row but ".."."""
+        """``(full path, listing item)`` of every selected row but "..".
+
+        A row whose name cannot be joined safely on this backend is left
+        out, and the status line says so: a copy that silently misses a
+        selected file looks complete."""
         entries = []
+        left_out = []
         for index in self._table.selectionModel().selectedRows(COL_NAME):
             source_idx = self._proxy.mapToSource(index)
             item = self._model.get_item(source_idx.row())
@@ -1636,6 +1689,15 @@ class FilePaneWidget(QWidget):
                 path = self._safe_item_path(item, warn=False)
                 if path is not None:
                     entries.append((path, item))
+                else:
+                    left_out.append(item.name)
+        if left_out:
+            self._status.setText(
+                tr("{count} selected item(s) left out: name not usable here ({names})").format(
+                    count=len(left_out),
+                    names=", ".join(repr(n) for n in left_out[:3]),
+                )
+            )
         return entries
 
     def _selection_by_name(self) -> tuple[set[str], str | None] | None:
@@ -1704,6 +1766,7 @@ class FilePaneWidget(QWidget):
         self._stop_watcher()
         self._backend = backend
         self._current_path = backend.home()
+        self._retire_stale_menus()
         self._history = []
         self._history_pos = 0
         self._model.set_items([])
@@ -1945,6 +2008,12 @@ class FilePaneWidget(QWidget):
         same_pane = payload.get("source_pane_id") == str(id(self))
         if folder is None:
             return None if same_pane else ""
+        # The paths are the source pane's: on another filesystem the same
+        # path string is another folder. A payload that does not say keeps
+        # the guard below.
+        source_fs = payload.get("filesystem")
+        if not same_pane and source_fs is not None and source_fs != filesystem_key(self._backend):
+            return folder
         for path in paths:
             if self.is_within(folder, path):
                 return None  # onto itself or into itself
@@ -2005,7 +2074,9 @@ class FilePaneWidget(QWidget):
             self._drop_row_marker.raise_()
         else:
             self._drop_row_marker.hide()
-        verb = tr("Copy to {folder}") if action == Qt.DropAction.CopyAction else tr("Move to {folder}")
+        verb = (
+            tr("Copy to {folder}") if action == Qt.DropAction.CopyAction else tr("Move to {folder}")
+        )
         text = verb.format(folder=folder if folder is not None else self._current_path)
         if up:
             text += "  " + tr("(.. = one folder up)")
@@ -2073,6 +2144,7 @@ class FilePaneWidget(QWidget):
             "paths": paths,
             "source_pane_id": str(id(self)),
             "dirs": list(dirs or []),
+            "filesystem": filesystem_key(self._backend),
         }
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -2407,7 +2479,44 @@ class FilePaneWidget(QWidget):
         from ui import extension_host
 
         extension_host.add_context_actions(self, menu)
+        self._track_menu(menu)
         return menu
+
+    def _track_menu(self, menu: QMenu) -> None:
+        """Remember the folder and connection *menu* was built for.
+
+        Its entries captured the selection (and some the FileItem) of that
+        folder; :meth:`_retire_stale_menus` disables them once the pane
+        shows another one."""
+        from PyQt6 import sip
+
+        menus = [m for m in getattr(self, "_menus", []) if not sip.isdeleted(m[0])]
+        menus.append((menu, self._backend, self._current_path))
+        self._menus = menus
+
+    def _retire_stale_menus(self) -> None:
+        """Disable every entry of a menu built for another folder or connection.
+
+        A folder load can finish while the right-click menu (or the menu
+        bar's Actions menu, which shows the same actions) is open. Encrypt,
+        Checksum and friends then joined the old item's name onto the new
+        folder, and Rename/Delete read a selection the menu never showed."""
+        from PyQt6 import sip
+
+        keep = []
+        for menu, backend, path in getattr(self, "_menus", []):
+            if sip.isdeleted(menu):
+                continue
+            if backend is self._backend and path == self._current_path:
+                keep.append((menu, backend, path))
+                continue
+            stack = [menu]
+            while stack:
+                for action in stack.pop().actions():
+                    if action.menu() is not None:
+                        stack.append(action.menu())
+                    action.setEnabled(False)
+        self._menus = keep
 
     def _build_base_context_menu(self) -> QMenu:
         menu = QMenu(self)
@@ -2438,6 +2547,7 @@ class FilePaneWidget(QWidget):
         bookmark_action.triggered.connect(self._add_bookmark)
 
         self._add_terminal_actions(menu)
+        self._add_agent_action(menu)
 
         xlink_action = menu.addAction(tr("Create XLink…"))
         xlink_action.triggered.connect(self._create_xlink)
@@ -2671,6 +2781,19 @@ class FilePaneWidget(QWidget):
             external = menu.addAction(tr("Open External Terminal Here"))
             external.setToolTip(tr("Start your terminal emulator ($TERMINAL) in this folder"))
             external.triggered.connect(lambda _checked=False: self.open_external_terminal_here())
+
+    def _add_agent_action(self, menu: QMenu) -> None:
+        """Send to Agent: the selection, or the folder on empty space."""
+        if self.receivers(self.send_to_agent_requested) == 0:
+            return
+        action = menu.addAction(tr("Send to Agent"))
+        action.setToolTip(tr("Attach the selection (or this folder) to the Agent's current tab"))
+        action.triggered.connect(lambda _checked=False: self.send_to_agent())
+
+    def send_to_agent(self) -> None:
+        paths = self.selected_items() or ([self._current_path] if self._current_path else [])
+        if paths:
+            self.send_to_agent_requested.emit(paths)
 
     def terminal_directory(self) -> str:
         """The folder Open Terminal Here acts on: a single selected folder,
@@ -3052,28 +3175,35 @@ class FilePaneWidget(QWidget):
                     "separators, no '..', no NUL bytes.",
                 )
                 return
+            from core.server_ops import rename_target_taken, server_side_move
+
             try:
                 new_path = self._backend.join(folder, new_name)
-                if self._backend.exists(new_path):
+                # Case-aware: "Report.txt" for "report.txt" on a
+                # case-insensitive backend finds the file itself.
+                if rename_target_taken(self._backend, old_path, new_path):
                     QMessageBox.warning(
                         self,
                         "Rename",
                         f"Target already exists:\n{new_name}",
                     )
                     return
-                from core.server_ops import server_side_move
-
+                if not self._production_ok(f"rename {old_path} to {new_name}"):
+                    return
                 server_side_move(self._backend, old_path, new_path)
                 log.info("Renamed %s -> %s", old_path, new_path)
                 self.refresh_after_change()
             except OSError as e:
                 log.error("Rename failed: %s", e)
+                QMessageBox.warning(
+                    self, "Rename", f"Could not rename {item.name} to {new_name}:\n{e}"
+                )
 
     def _batch_rename(self) -> None:
         from ui.batch_rename_dialog import BatchRenameDialog
 
         items = self.selected_file_items()
-        if not items:
+        if not items or not self._production_ok(f"rename {len(items)} item(s)"):
             return
         dialog = BatchRenameDialog(self._backend, self._current_path, items, parent=self)
         if dialog.exec():
@@ -3129,6 +3259,8 @@ class FilePaneWidget(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            if not self._production_ok(f"delete {len(selected)} item(s) in {self._current_path}"):
+                return
             errors = list(unsafe)
             for item, path in selected:
                 try:
@@ -3156,7 +3288,7 @@ class FilePaneWidget(QWidget):
             return
         item = items[0]
         path = self._safe_item_path(item)
-        if path is None:
+        if path is None or not self._production_ok(f"change permissions of {path}"):
             return
         dialog = PermissionsDialog(self._backend, path, item, parent=self)
         if dialog.exec():
@@ -3391,13 +3523,15 @@ class FilePaneWidget(QWidget):
 
         chunk_size = 1024 * 1024
         # Use a determinate range only when total_size > 0; otherwise
-        # the dialog renders as a busy indicator (range 0..0).
+        # the dialog renders as a busy indicator (range 0..0). The range
+        # is per mille of the size: Qt's maximum is a C int, and a byte
+        # count over 2 GiB overflowed it before a byte was read.
         if total_size and total_size > 0:
             progress = QProgressDialog(
                 f"Hashing {path}…",
                 "Cancel",
                 0,
-                total_size,
+                _PROGRESS_UNITS,
                 self,
             )
         else:
@@ -3425,7 +3559,7 @@ class FilePaneWidget(QWidget):
                     h.update(chunk)
                     bytes_done += len(chunk)
                     if total_size and total_size > 0:
-                        progress.setValue(min(bytes_done, total_size))
+                        progress.setValue(_progress_units(bytes_done, total_size))
                     QApplication.processEvents()
                     if progress.wasCanceled():
                         cancelled = True
@@ -3940,6 +4074,8 @@ class FilePaneWidget(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
+            return
+        if not self._production_ok(f"move {len(selected)} item(s) to the trash"):
             return
         errors: list[str] = list(unsafe)
         moved = 0

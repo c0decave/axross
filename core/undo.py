@@ -51,6 +51,7 @@ the journal.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -283,6 +284,7 @@ def apply_undo(
                 "undoing a cross-backend move needs the source backend and a "
                 "transfer callable; the journal records only the destination host"
             )
+        _recreate_parent(source_backend, plan.source)
         result = transfer(
             src_backend=backend,
             src_path=plan.dest,
@@ -307,6 +309,36 @@ def apply_undo(
         return _restore_metadata(plan, backend, trash_module)
 
     raise ValueError(f"unknown undo action: {plan.action!r}")
+
+
+def _recreate_parent(backend, path: str) -> None:
+    """Make the folder *path* belongs in, with any missing above it.
+
+    A folder move removes every source folder it emptied, and its journal
+    holds one entry per FILE. The way back for each file therefore leads
+    into a folder that is gone, and the transfer engine creates folders
+    only for a folder it copies, not for a single file. Raises OSError
+    when something that is not a folder holds the place.
+    """
+    parent = backend.parent(path)
+    missing: list[str] = []
+    current = parent
+    while current and not backend.exists(current):
+        missing.append(current)
+        above = backend.parent(current)
+        if above == current:
+            break
+        current = above
+    for folder in reversed(missing):
+        backend.mkdir(folder)
+        log.info("undo: recreated the folder %s", folder)
+    if missing:
+        return
+    info = backend.stat(parent)
+    # A link (to a folder, as ~/Pictures -> /data/pics) is left to the
+    # transfer: LocalFS reports it by lstat, i.e. as not a folder.
+    if not getattr(info, "is_dir", False) and not getattr(info, "is_link", False):
+        raise OSError(f"{parent} is not a folder any more; undo cannot put the file back.")
 
 
 def _restore_metadata(plan: UndoPlan, backend, trash_module) -> str:
@@ -341,12 +373,22 @@ def _restore_metadata(plan: UndoPlan, backend, trash_module) -> str:
     return plan.source or (plan.items[0].path if plan.items else "")
 
 
-def record_undone(plan: UndoPlan) -> None:
+def record_undone(plan: UndoPlan, *, by: Iterable[str] = ()) -> None:
     """Journal that *plan* was carried out, so :func:`undoable` stops
     offering it - a second Ctrl+Z then reaches the operation before it
-    instead of failing on the one already reversed."""
+    instead of failing on the one already reversed.
+
+    *by* names the journal operations the undo itself ran (the transfer
+    engine journals a move back as a new "move"). They are dropped from
+    the history too: offered as the newest entry, the next Ctrl+Z would
+    redo what was just undone, and the one after that undo it again.
+    """
     from core.operation_journal import finish_operation, new_operation_id
 
+    details: dict = {"undone": plan.operation_id, "reversed": plan.operation}
+    reverse = [op for op in by if isinstance(op, str) and op]
+    if reverse:
+        details["by"] = reverse
     finish_operation(
         new_operation_id(),
         "undo",
@@ -354,7 +396,7 @@ def record_undone(plan: UndoPlan) -> None:
         source=plan.source,
         dest=plan.dest,
         backend=plan.backend,
-        details={"undone": plan.operation_id, "reversed": plan.operation},
+        details=details,
     )
 
 
@@ -405,6 +447,9 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
             target = details.get("undone")
             if isinstance(target, str) and target:
                 undone.add(target)
+            reverse = details.get("by")
+            if isinstance(reverse, list):
+                undone.update(op for op in reverse if isinstance(op, str) and op)
         try:
             plans.append(plan_undo(_with_start_fields(event, starts)))
         except Exception as exc:  # noqa: BLE001 — a bad row must not kill the list
@@ -414,7 +459,33 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
     return plans
 
 
-def pick_undoable(plans: list[UndoPlan], available_backends) -> UndoPlan | None:
+def gone_reason(plan: UndoPlan, backend) -> str:
+    """Why *plan* can no longer be carried out on *backend* because what
+    it would put back is gone, or "" (also when the backend cannot tell:
+    then apply_undo reports the real error).
+
+    A trash entry disappears without a journal entry - restored or
+    deleted in the Trash window, the trash emptied, another tool - and an
+    undo that keeps offering it would hide every older operation.
+    """
+    if plan.action != "restore_from_trash" or not plan.trash_id:
+        return ""
+    from core import trash as trash_module
+
+    try:
+        if trash_module.entry_exists(backend, plan.trash_id):
+            return ""
+    except OSError as exc:
+        log.debug("undo: cannot check trash entry %s: %s", plan.trash_id, exc)
+        return ""
+    return "its trash entry is gone (restored or deleted from the trash since)"
+
+
+def pick_undoable(
+    plans: list[UndoPlan],
+    available_backends,
+    gone: Callable[[UndoPlan], bool] | None = None,
+) -> UndoPlan | None:
     """The newest plan that can actually be carried out right now.
 
     The journal is global: it spans every connection the app has ever
@@ -424,7 +495,9 @@ def pick_undoable(plans: list[UndoPlan], available_backends) -> UndoPlan | None:
     currently open are skipped rather than failing at the last moment.
 
     Non-reversible entries are skipped too — a copy sitting on top of
-    the stack should not block undoing the move underneath it.
+    the stack should not block undoing the move underneath it — and so
+    is a plan *gone* says can no longer be carried out (see
+    :func:`gone_reason`).
     """
     labels = set(available_backends)
     if not labels:
@@ -437,6 +510,8 @@ def pick_undoable(plans: list[UndoPlan], available_backends) -> UndoPlan | None:
             continue
         if plan.backend and plan.backend not in labels:
             continue
+        if gone is not None and gone(plan):
+            continue
         return plan
     return None
 
@@ -445,6 +520,7 @@ __all__ = [
     "MetadataUndoItem",
     "UndoPlan",
     "apply_undo",
+    "gone_reason",
     "pick_undoable",
     "plan_undo",
     "record_undone",

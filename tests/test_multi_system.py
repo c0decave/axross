@@ -1544,7 +1544,7 @@ class ReverseS3Tests(unittest.TestCase):
             self.b,
             bind="127.0.0.1",
             port=0,
-            root_path="/",
+            root_path="/", auth_token=None,
         )
 
     def tearDown(self) -> None:
@@ -1590,20 +1590,28 @@ class ReverseS3Tests(unittest.TestCase):
             def stat(self, path: str) -> FileItem:
                 return _make_file_item(path.rsplit("/", 1)[-1] or "/", is_dir=True)
 
+        # Pages are cut from the sorted whole bucket: a walk that stopped
+        # at the folder cap answers with an error, never with a page that
+        # claims IsTruncated=false (or one that would skip unseen keys).
         srv = reverse_serve.serve_s3(
             ManyDirsBackend(),
             bind="127.0.0.1",
             port=0,
-            root_path="/",
+            root_path="/", auth_token=None,
         )
         try:
-            with urllib.request.urlopen(f"{srv.base_url}/mybucket?max-keys=1") as r:
-                body = r.read().decode()
+            with mock.patch.object(
+                reverse_serve, "MAX_WALK_DIR_VISITS", reverse_serve.MIN_WALK_DIR_VISITS
+            ):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(f"{srv.base_url}/mybucket?max-keys=1")
+                body = ctx.exception.read().decode()
         finally:
             srv.shutdown()
 
-        self.assertIn("<IsTruncated>true</IsTruncated>", body)
-        self.assertNotIn("<Contents>", body)
+        self.assertEqual(ctx.exception.code, 500)
+        self.assertNotIn("<IsTruncated>false</IsTruncated>", body)
+        self.assertIn("walk limits", body)
 
     def test_put_then_get(self) -> None:
         req = urllib.request.Request(
@@ -1667,7 +1675,7 @@ class ReverseS3Tests(unittest.TestCase):
                 b,
                 bind="127.0.0.1",
                 port=0,
-                root_path="/safe/../oops",
+                root_path="/safe/../oops", auth_token=None,
             )
 
 
@@ -1887,7 +1895,7 @@ class ReverseS3ReadOnlyTests(unittest.TestCase):
             self.b,
             bind="127.0.0.1",
             port=0,
-            read_only=True,
+            read_only=True, auth_token=None,
         )
 
     def tearDown(self) -> None:
@@ -1916,7 +1924,7 @@ class ReverseWebDAVTests(unittest.TestCase):
             self.b,
             bind="127.0.0.1",
             port=0,
-            root_path="/",
+            root_path="/", auth_token=None,
         )
 
     def tearDown(self) -> None:
@@ -1977,8 +1985,8 @@ class ReverseServeDnsRebindingTests(unittest.TestCase):
         fh = self.b.open_write("/bucket/secret.txt")
         fh.write(b"private bytes")
         fh.close()
-        self.dav = reverse_serve.serve_webdav(self.b, bind="127.0.0.1", port=0)
-        self.s3 = reverse_serve.serve_s3(self.b, bind="127.0.0.1", port=0)
+        self.dav = reverse_serve.serve_webdav(self.b, bind="127.0.0.1", port=0, auth_token=None)
+        self.s3 = reverse_serve.serve_s3(self.b, bind="127.0.0.1", port=0, auth_token=None)
 
     def tearDown(self) -> None:
         self.dav.shutdown()
@@ -1999,7 +2007,10 @@ class ReverseServeDnsRebindingTests(unittest.TestCase):
             conn.close()
 
     def test_foreign_host_is_refused_on_both_flavours(self) -> None:
-        for port, path in ((self.dav.port, "/bucket/secret.txt"), (self.s3.port, "/bucket/secret.txt")):
+        for port, path in (
+            (self.dav.port, "/bucket/secret.txt"),
+            (self.s3.port, "/bucket/secret.txt"),
+        ):
             status, body = self._status(port, "GET", path, {"Host": f"evil.example:{port}"})
             self.assertEqual(status, 403)
             self.assertNotIn(b"private bytes", body)

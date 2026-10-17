@@ -376,6 +376,7 @@ def http_server(root):
         root=root,
         rate_limit_enabled=False,
         http_ip_rate_enabled=False,
+        auth_token=_HTTP_TOKEN,
     )
     server = mcp_http.build_server(config)
     crashes: list[str] = []
@@ -413,9 +414,15 @@ def _exchange(port: int, raw: bytes, timeout: float = 10.0) -> bytes:
     return data
 
 
+# A plain-HTTP server demands a bearer token; the fuzz requests carry it
+# so that their bodies and headers reach the parser behind the check.
+_HTTP_TOKEN = "fuzz-test-token-0123456789abcdef"
+
+
 def _http(method: str, path: str, body: bytes = b"", headers: bytes = b"") -> bytes:
     return (
         f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n".encode()
+        + f"Authorization: Bearer {_HTTP_TOKEN}\r\n".encode()
         + headers
         + (b"Content-Type: application/json\r\nContent-Length: %d\r\n" % len(body) if body else b"")
         + b"\r\n"

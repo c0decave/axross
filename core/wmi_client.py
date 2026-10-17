@@ -33,6 +33,7 @@ DCOM stack is the whole point.
 
 from __future__ import annotations
 
+import errno
 import logging
 import re
 from datetime import datetime
@@ -173,6 +174,16 @@ def _compose(drive: str, path: str, name: str, ext: str) -> str:
 # --------------------------------------------------------------------------
 
 
+# WBEM_S_FALSE: IEnumWbemClassObject::Next returned fewer objects than
+# asked for - the enumeration is over ([MS-WMI] IEnumWbemClassObject::Next). impacket's
+# DCE/RPC layer raises it like an error (rpcrt.py: any non-zero status).
+_WBEM_S_FALSE = 0x1
+
+
+def _is_enum_end(exc: Exception) -> bool:
+    return getattr(exc, "error_code", None) == _WBEM_S_FALSE or "WBEM_S_FALSE" in str(exc)
+
+
 class WMISession(SessionLifecycle):
     """DCOM-WMI backend (FileBackend). Metadata-only.
 
@@ -265,10 +276,20 @@ class WMISession(SessionLifecycle):
     # Enumeration
     # ------------------------------------------------------------------
     def list_dir(self, path: str) -> list[FileItem]:
-        drive, dir_path, name, ext = _split_wmi(self.join(path, ""))
-        # If the input named a single file, list its parent.
-        if name:
-            drive, dir_path, name, ext = _split_wmi(self.parent(path))
+        norm = _normalise(path)
+        try:
+            drive = _split_wmi(norm)[0]
+        except ValueError as exc:
+            raise OSError(f"WMI list_dir({path}): {exc}") from exc
+        # WMI's Path of a folder's entries is the folder itself, bracketed
+        # with backslashes ("\\Windows\\" for C:\Windows, "\\" for the
+        # root). A folder used to be taken for a file here and its PARENT
+        # listed (review B1, 2026-10-17); a file or a missing folder is
+        # an error, not some other listing.
+        rest = norm[2:].rstrip("\\")
+        if rest and not self.stat(norm).is_dir:
+            raise NotADirectoryError(f"WMI list_dir({path}): not a folder")
+        dir_path = rest + "\\" if rest else "\\"
         wbem = self._connect()
         results: list[FileItem] = []
         # Escape every user-derived value before inlining into WQL.
@@ -277,7 +298,8 @@ class WMISession(SessionLifecycle):
         # would defeat the purpose; doing it here keeps a hostile
         # directory name from pivoting the WHERE clause.
         drive_q = _wql_escape(drive)
-        dir_q = _wql_escape(dir_path)
+        # Backslashes doubled as in stat: WQL string literals escape them.
+        dir_q = _wql_escape(dir_path.replace("\\", "\\\\"))
         for cls, is_dir in (("Win32_Directory", True), ("CIM_DataFile", False)):
             query = (
                 f"SELECT Name, FileName, Extension, FileSize, "
@@ -303,22 +325,29 @@ class WMISession(SessionLifecycle):
                 f"LastModified, Drive, Path FROM {cls} "
                 f"WHERE Name = '{full_name}'"
             )
-            rows = list(self._exec_query(wbem, query))
+            # A row that cannot be read is not "no row": strict.
+            rows = list(self._exec_query(wbem, query, strict=True))
             if rows:
                 return self._row_to_item(rows[0], is_dir=is_dir)
-        raise OSError(f"WMI stat({path}): not found")
+        raise FileNotFoundError(errno.ENOENT, f"WMI stat({path}): not found", path)
 
     def is_dir(self, path: str) -> bool:
+        """False only when neither WQL class has the path; a failed
+        connect or query is an OSError (transfer_manager recurses on
+        True)."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def exists(self, path: str) -> bool:
+        """False only when both WQL classes answer with no row. A failed
+        DCOM connect, a refused or dropped query is an OSError:
+        server_side_copy(overwrite=False) takes False as its go-ahead."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
     # ------------------------------------------------------------------
@@ -477,9 +506,17 @@ class WMISession(SessionLifecycle):
         except Exception as exc:  # noqa: BLE001
             raise OSError(f"WMI namespace switch to {namespace}: {exc}") from exc
 
-    def _exec_query(self, wbem, query: str):
+    def _exec_query(self, wbem, query: str, *, strict: bool = False):
         """Yield row dicts {prop_name: value} until the enumerator
-        signals end. Wraps the impacket Next() pattern."""
+        signals end. Wraps the impacket Next() pattern.
+
+        The end is an empty batch or WBEM_S_FALSE, which impacket raises
+        as an error with code 0x1 once fewer objects than asked for are
+        left. Any other error of Next() - a dropped connection, an access
+        denied - is an OSError: it used to end the rows silently, so a
+        cut query read as "no such file". A row whose properties cannot
+        be read is skipped, or with *strict* an OSError.
+        """
         try:
             enumer = wbem.ExecQuery(query)
         except Exception as exc:  # noqa: BLE001
@@ -488,14 +525,18 @@ class WMISession(SessionLifecycle):
             while True:
                 try:
                     pairs = enumer.Next(0xFFFFFFFF, 1)
-                except Exception:
-                    break
+                except Exception as exc:  # noqa: BLE001
+                    if _is_enum_end(exc):
+                        break
+                    raise OSError(f"WMI query failed while reading rows: {exc}") from exc
                 if not pairs:
                     break
                 obj = pairs[0]
                 try:
                     props = obj.getProperties()
-                except Exception:
+                except Exception as exc:  # noqa: BLE001
+                    if strict:
+                        raise OSError(f"WMI query: unreadable row: {exc}") from exc
                     continue
                 # impacket's getProperties returns
                 # {prop_name: {'value': ..., ...}}

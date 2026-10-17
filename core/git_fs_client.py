@@ -157,6 +157,12 @@ def _object_errors_as_oserror(method):
 
 from core.git_fs_writer_helper import _GitWriter  # noqa: E402
 
+#: The most versions list_versions returns: a file of a long history
+#: would otherwise load every blob of it.
+MAX_VERSIONS = 200
+#: A commit id: SHA-1 (40) or SHA-256 (64) hex.
+_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
 
 def _is_gitlink(mode: int) -> bool:
     return (mode & 0o170000) == _GITLINK_MODE
@@ -522,11 +528,12 @@ class GitFsSession(SessionLifecycle):
         where ``tree`` is the directory tree containing ``name`` and
         ``name`` is the leaf (or empty when sub_path is empty).
 
-        Raises :class:`OSError` for any missing intermediate."""
+        Raises :class:`FileNotFoundError` for a missing branch or
+        intermediate (or a file in its place)."""
         with self._lock:
             tip = self._branch_tips.get(branch)
             if tip is None:
-                raise OSError(f"No such branch: {branch}")
+                raise FileNotFoundError(errno.ENOENT, f"No such branch: {branch}")
             commit = self._repo[tip]
             tree = self._repo[commit.tree]
             if not sub_path:
@@ -535,7 +542,9 @@ class GitFsSession(SessionLifecycle):
             for i, part in enumerate(parts[:-1]):
                 entry = self._tree_entry(tree, part)
                 if entry is None or not st_mod.S_ISDIR(entry[0]):
-                    raise OSError(f"Path component not a directory: {part}")
+                    raise FileNotFoundError(
+                        errno.ENOENT, f"Path component not a directory: {part}"
+                    )
                 tree = self._repo[entry[1]]
             return tree, parts[-1]
 
@@ -629,7 +638,7 @@ class GitFsSession(SessionLifecycle):
             )
         if branch and not sub:
             if branch not in self._branch_tips:
-                raise OSError(f"No such branch: {branch}")
+                raise FileNotFoundError(errno.ENOENT, f"No such branch: {branch}")
             return FileItem(
                 name=posixpath.basename(branch),
                 is_dir=True,
@@ -678,17 +687,21 @@ class GitFsSession(SessionLifecycle):
         )
 
     def is_dir(self, path: str) -> bool:
+        """False only for "not found"; an object the repository lacks or
+        cannot read is an OSError."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def exists(self, path: str) -> bool:
+        """False only for "not found"; any other failure is an OSError -
+        server_side_copy(overwrite=False) takes False as its go-ahead."""
         try:
             self.stat(path)
-            return True
-        except OSError:
+        except FileNotFoundError:
             return False
+        return True
 
     @_object_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
@@ -779,9 +792,14 @@ class GitFsSession(SessionLifecycle):
             raise OSError("Git: cross-branch rename is not supported (use copy)")
         with self.open_read(src) as fh:
             data = fh.read()
+        mode = self._file_mode(src_branch, src_sub)
         # Two commits to keep the diff readable: write to dst, then rm src.
         self._commit_modification(
-            dst_branch, dst_sub, blob_data=data, message=f"axross: mv {src_sub} → {dst_sub} (a)"
+            dst_branch,
+            dst_sub,
+            blob_data=data,
+            message=f"axross: mv {src_sub} → {dst_sub} (a)",
+            blob_mode=mode,
         )
         self._commit_modification(
             src_branch, src_sub, blob_data=None, message=f"axross: mv {src_sub} → {dst_sub} (b)"
@@ -793,9 +811,14 @@ class GitFsSession(SessionLifecycle):
         dst = self.normalize(dst)
         with self.open_read(src) as fh:
             data = fh.read()
+        src_branch, src_sub = self._split_branch(src)
         dst_branch, dst_sub = self._split_branch(dst)
         self._commit_modification(
-            dst_branch, dst_sub, blob_data=data, message=f"axross: cp {src} → {dst}"
+            dst_branch,
+            dst_sub,
+            blob_data=data,
+            message=f"axross: cp {src} → {dst}",
+            blob_mode=self._file_mode(src_branch, src_sub),
         )
 
     @_object_errors_as_oserror
@@ -814,13 +837,98 @@ class GitFsSession(SessionLifecycle):
             blob_mode=new_mode,
         )
 
-    def list_versions(self, path: str) -> list:
-        # TODO: walk the commit history along the branch and surface
-        # one entry per commit that touched the file. For now, return [].
-        return []
+    def _entry_at(self, tree_sha: bytes, sub: str):
+        """``(mode, sha)`` of *sub* in the tree *tree_sha*, or None."""
+        tree = self._repo[tree_sha]
+        parts = sub.split("/")
+        for part in parts[:-1]:
+            entry = self._tree_entry(tree, part)
+            if entry is None or not st_mod.S_ISDIR(entry[0]):
+                return None
+            tree = self._repo[entry[1]]
+        return self._tree_entry(tree, parts[-1])
 
+    def _version_tip(self, path: str) -> tuple[str, bytes]:
+        """``(sub path, branch tip)`` of a versioned path."""
+        branch, sub = self._split_branch(self.normalize(path))
+        with self._lock:
+            tip = self._branch_tips.get(branch) if branch else None
+        if branch and tip is None:
+            self._refresh_branch_tips()
+            with self._lock:
+                tip = self._branch_tips.get(branch)
+        if tip is None:
+            raise OSError(f"No such branch: {branch or path}")
+        return sub, tip
+
+    @_object_errors_as_oserror
+    def list_versions(self, path: str) -> list:
+        """One version per commit of the branch that changed the file,
+        newest first (at most :data:`MAX_VERSIONS`); the id is the commit
+        sha. A deleted file keeps its history; a folder has none."""
+        from datetime import timezone
+
+        from dulwich.walk import Walker
+
+        from models.file_version import FileVersion
+
+        sub, tip = self._version_tip(path)
+        if not sub:
+            return []
+        current = self._entry_at(self._repo[tip].tree, sub)
+        if current is not None and (st_mod.S_ISDIR(current[0]) or _is_gitlink(current[0])):
+            return []
+        out = []
+        for walked in Walker(self._repo.object_store, include=[tip], paths=[sub.encode("utf-8")]):
+            commit = walked.commit
+            entry = self._entry_at(commit.tree, sub)
+            if entry is None or st_mod.S_ISDIR(entry[0]) or _is_gitlink(entry[0]):
+                continue  # the commit that deleted it, or a folder of that name then
+            sha = commit.id.decode("ascii")
+            subject = commit.message.decode("utf-8", "replace").strip().splitlines()
+            out.append(FileVersion(
+                version_id=sha,
+                modified=datetime.fromtimestamp(int(commit.commit_time), timezone.utc),
+                size=len(self._repo[entry[1]].data),
+                is_current=not out and current is not None and entry[1] == current[1],
+                label=f"{sha[:10]} {subject[0][:72] if subject else ''}".rstrip(),
+            ))
+            if len(out) >= MAX_VERSIONS:
+                break
+        return out
+
+    @_object_errors_as_oserror
     def open_version_read(self, path: str, version_id: str):
-        raise OSError("Git version-walk not yet implemented in v1")
+        """The file as the commit *version_id* had it. Only commits in
+        the branch's history count: another branch's commit is read
+        through that branch's path."""
+        from dulwich.objects import Commit
+
+        text = str(version_id or "").strip().lower()
+        if not _SHA.fullmatch(text):
+            raise OSError(f"Git version of {path}: {version_id!r} is not a commit sha")
+        sub, tip = self._version_tip(path)
+        if not sub:
+            raise IsADirectoryError(f"Is a directory: {path}")
+        sha = text.encode("ascii")
+        try:
+            commit = self._repo[sha]
+        except KeyError:
+            raise FileNotFoundError(f"Git version of {path}: no commit {text}") from None
+        if not isinstance(commit, Commit):
+            raise OSError(f"Git version of {path}: {text} is not a commit")
+        if not self._is_ancestor(sha, tip):
+            raise OSError(f"Git version of {path}: {text} is not in the history of its branch")
+        entry = self._entry_at(commit.tree, sub)
+        if entry is None:
+            raise FileNotFoundError(f"Git version of {path}: not in commit {text}")
+        if st_mod.S_ISDIR(entry[0]):
+            raise IsADirectoryError(f"Is a directory: {path}")
+        if _is_gitlink(entry[0]):
+            raise OSError(f"Git read: {path} is a submodule, not a file")
+        blob = self._repo[entry[1]]
+        blob.check()
+        return io.BytesIO(blob.data)
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         return (0, 0, 0)
@@ -1085,12 +1193,14 @@ class GitFsSession(SessionLifecycle):
         sub: str,
         blob_data: bytes | None,
         message: str,
-        blob_mode: int = _DEFAULT_BLOB_MODE,
+        blob_mode: int | None = None,
     ) -> None:
         """Build a new tree on ``branch`` with ``sub`` set to
         ``blob_data`` (or removed if None) and commit it. Refuses if
         the local branch ref is behind a known remote tip
-        (fast-forward only)."""
+        (fast-forward only), or if a work tree has the branch checked
+        out. ``blob_mode`` None keeps the mode of the file it replaces
+        (100644 for a new file)."""
         if not self._author_name or not self._author_email:
             raise OSError(
                 "Git commit refused: no author identity. Set "
@@ -1098,6 +1208,16 @@ class GitFsSession(SessionLifecycle):
                 "~/.gitconfig.",
             )
         with self._lock, _as_oserror("write", f"/{branch}/{sub}"):
+            if branch in self._checked_out_branches():
+                # Moving the ref would leave that work tree's index and
+                # files at the old commit: git status shows the change
+                # reverted and the next git commit undoes it.
+                raise OSError(
+                    errno.EBUSY,
+                    f"Git: branch {branch} is checked out in a work tree; axross does "
+                    "not commit to it (git refuses such a push too). Write to another "
+                    "branch or a bare clone.",
+                )
             tip_sha = self._branch_tips.get(branch)
             if tip_sha is None:
                 # Brand-new branch: empty tree, no parent.
@@ -1141,12 +1261,38 @@ class GitFsSession(SessionLifecycle):
             self._branch_tips[branch] = commit.id
             log.info("Git-FS commit %s on %s: %s", commit.id.decode()[:8], branch, message)
 
+    def _checked_out_branches(self) -> set[str]:
+        """Branches a work tree of this repo has checked out: the HEAD of
+        a non-bare repo and the HEAD of every linked worktree."""
+        control = self._repo.controldir()
+        heads = [] if self._repo.bare else [os.path.join(control, "HEAD")]
+        linked = os.path.join(control, "worktrees")
+        if os.path.isdir(linked):
+            heads += [os.path.join(linked, name, "HEAD") for name in sorted(os.listdir(linked))]
+        branches: set[str] = set()
+        for head in heads:
+            try:
+                with open(head, "rb") as fh:
+                    text = fh.read(4096).strip()
+            except OSError:
+                continue
+            if text.startswith(b"ref: refs/heads/"):
+                branches.add(text[len(b"ref: refs/heads/") :].decode("utf-8", "replace"))
+        return branches
+
+    def _file_mode(self, branch: str, sub: str) -> int:
+        """The commit mode of the file ``sub`` on ``branch``: 100755 for
+        an executable, else 100644."""
+        tree, name = self._walk_tree_to(branch, sub)
+        entry = self._tree_entry(tree, name)
+        return _EXEC_BLOB_MODE if entry and entry[0] == _EXEC_BLOB_MODE else _DEFAULT_BLOB_MODE
+
     def _build_modified_tree(
         self,
         root_tree: Tree,
         sub: str,
         blob_data: bytes | None,
-        blob_mode: int,
+        blob_mode: int | None,
     ) -> Tree:
         """Recursively rebuild ``root_tree`` so that ``sub`` points at
         ``blob_data`` (or is absent when blob_data is None). Returns
@@ -1159,7 +1305,7 @@ class GitFsSession(SessionLifecycle):
         tree: Tree,
         parts: list[str],
         blob_data: bytes | None,
-        blob_mode: int,
+        blob_mode: int | None,
     ) -> Tree:
         new_tree = Tree()
         # Copy every entry that we're not modifying.
@@ -1175,6 +1321,10 @@ class GitFsSession(SessionLifecycle):
                 if existing and st_mod.S_ISDIR(existing[0]):
                     # Writing a blob here would drop the whole subtree.
                     raise IsADirectoryError(errno.EISDIR, f"Is a directory: {parts[0]}")
+                if blob_mode is None:
+                    # A save keeps the file's mode: an executable stays one.
+                    keep = existing is not None and existing[0] == _EXEC_BLOB_MODE
+                    blob_mode = _EXEC_BLOB_MODE if keep else _DEFAULT_BLOB_MODE
                 blob = Blob.from_string(blob_data)
                 self._repo.object_store.add_object(blob)
                 new_tree.add(head, blob_mode, blob.id)

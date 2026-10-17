@@ -112,6 +112,11 @@ class _Stdio:
             self.proc.stderr.close()
 
 
+# --mcp-http demands a bearer token; a fixed one comes in through the
+# environment so the client can send it.
+_HTTP_TOKEN = "e2e-test-token-0123456789abcdef"
+
+
 class _Http:
     def __init__(self, home: Path, root: Path) -> None:
         with socket.socket() as s:
@@ -122,7 +127,7 @@ class _Http:
              f"127.0.0.1:{self.port}", "--mcp-tools", "all", "--mcp-write", "--mcp-root", str(root),
              "--mcp-allow-exec"],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=_child_env(home), cwd=REPO,
+            env={**_child_env(home), "AXROSS_MCP_HTTP_TOKEN": _HTTP_TOKEN}, cwd=REPO,
         )
         self.session = None
         self._id = 0
@@ -142,7 +147,7 @@ class _Http:
                            "params": params or {}}).encode()
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/messages", data=body, method="POST",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {_HTTP_TOKEN}"},
         )
         if self.session:
             req.add_header("Mcp-Session-Id", self.session)
@@ -185,9 +190,15 @@ def _drive(client, root: Path) -> None:
     # duplicates
     _call(client, "duplicates_scan", {"path": str(root)})
     groups = _call(client, "duplicates_groups", {})["groups"]
-    assert any({os.path.basename(c["path"]) for c in g["copies"]} == {"a.txt", "b.txt"} for g in groups)
+    assert any(
+        {os.path.basename(c["path"]) for c in g["copies"]} == {"a.txt", "b.txt"} for g in groups
+    )
     # packer + archive
-    packed = _call(client, "pack", {"folder": str(root), "names": ["a.txt", "photo.jpg"], "archive_name": "e2e"})
+    packed = _call(
+        client,
+        "pack",
+        {"folder": str(root), "names": ["a.txt", "photo.jpg"], "archive_name": "e2e"},
+    )
     with zipfile.ZipFile(packed["path"]) as zf:
         assert sorted(zf.namelist()) == ["a.txt", "photo.jpg"]
     listed = _call(client, "archive_list", {"path": packed["path"]})
@@ -208,14 +219,18 @@ def _drive(client, root: Path) -> None:
     assert [p["name"] for p in _call(client, "remote_profiles", {})["profiles"]] == ["ram"]
     bid = _call(client, "remote_open", {"profile": "ram"})["backend"]
     assert bid in {b["id"] for b in _call(client, "list_backends", {})}
-    copied = _call(client, "transfer_copy", {"src": str(root / "b.txt"), "dst_backend": bid, "dst": "/b.txt"})
+    copied = _call(
+        client, "transfer_copy", {"src": str(root / "b.txt"), "dst_backend": bid, "dst": "/b.txt"}
+    )
     assert copied["copied"] == 1
     back = _call(client, "read_file", {"backend": bid, "path": "/b.txt"})
     assert base64.b64decode(back["content_b64"]) == b"twin\n"
     # exec: no backend here has a remote shell (the lab run covers real
     # ones), so the group answers with an empty list and a clear refusal.
     assert _call(client, "exec_backends", {}) == {"backends": []}
-    refused = client.rpc("tools/call", {"name": "remote_exec", "arguments": {"backend": bid, "command": "id"}})
+    refused = client.rpc(
+        "tools/call", {"name": "remote_exec", "arguments": {"backend": bid, "command": "id"}}
+    )
     assert "no remote shell" in refused["error"]["message"]
     # agent: the child has no LLM profile, so the hand-off says how to get one
     refused = client.rpc("tools/call", {"name": "agent_run", "arguments": {"task": "summarise"}})
@@ -238,7 +253,9 @@ def _drive(client, root: Path) -> None:
         assert time.monotonic() < deadline, "the cancelled task never stopped"
         time.sleep(0.05)
     assert status["status"] == "cancelled", status
-    assert not list((root / "big").glob("slow*")) and not list((root / "big").glob(".axross-pack-*"))
+    assert not list((root / "big").glob("slow*")) and not list(
+        (root / "big").glob(".axross-pack-*")
+    )
 
 
 def test_happy_stdio_server_serves_every_group(world):

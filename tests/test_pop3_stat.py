@@ -50,6 +50,10 @@ class _FakePop3:
                     conn.sendall(f"+OK {n} {len(_MESSAGES[n])}\r\n".encode())
                 else:
                     conn.sendall(b"-ERR no such message\r\n")
+            elif cmd == "LIST":
+                # The listing decides whether a refused "LIST n" means absent.
+                rows = "".join(f"{n} {len(m)}\r\n" for n, m in _MESSAGES.items())
+                conn.sendall(f"+OK {len(_MESSAGES)} messages\r\n{rows}.\r\n".encode())
             elif cmd == "QUIT":
                 conn.sendall(b"+OK bye\r\n")
                 break

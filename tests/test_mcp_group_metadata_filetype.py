@@ -93,7 +93,9 @@ def test_happy_metadata_read_folder_recursive(tree):
 
 def test_edge_metadata_read_folder_caps_files(tree):
     root, _ = tree
-    out = T.call(_meta(root), "metadata_read", {"path": str(root), "recursive": True, "max_files": 1})
+    out = T.call(
+        _meta(root), "metadata_read", {"path": str(root), "recursive": True, "max_files": 1}
+    )
     assert len(out["files"]) == 1 and out["truncated"] is True
 
 
@@ -288,7 +290,11 @@ def test_happy_file_type_scan_lists_only_mismatches(tmp_path):
     (tmp_path / "d" / "c.jpg").write_bytes(png)
     tools = _ft(tmp_path)
     everything = T.call(tools, "file_type_scan", {"path": str(tmp_path)})
-    assert {os.path.basename(e["path"]) for e in everything["entries"]} == {"a.png", "b.txt", "c.jpg"}
+    assert {os.path.basename(e["path"]) for e in everything["entries"]} == {
+        "a.png",
+        "b.txt",
+        "c.jpg",
+    }
     only = T.call(tools, "file_type_scan", {"path": str(tmp_path), "mismatches_only": True})
     assert {os.path.basename(e["path"]) for e in only["entries"]} == {"b.txt", "c.jpg"}
     assert only["files_scanned"] == 3

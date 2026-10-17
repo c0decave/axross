@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import email
+import errno
 import email.errors
 import email.header
 import email.policy
@@ -152,9 +153,14 @@ _MSG_PATH_RE = re.compile(r"^/(?P<msgno>\d+)_[^/]*\.eml$")
 
 
 def _msgno_from_path(path: str) -> int:
+    """The message number in *path*. A path that names no message is
+    FileNotFoundError: the mailbox is flat and only holds messages, so
+    nothing can be there."""
     m = _MSG_PATH_RE.match(path)
     if not m:
-        raise OSError(f"POP3 path does not look like a message: {path!r}")
+        raise FileNotFoundError(
+            errno.ENOENT, "POP3 path does not look like a message", path
+        )
     return int(m.group("msgno"))
 
 
@@ -246,6 +252,10 @@ class Pop3Session(SessionLifecycle):
 
             self._pop.user(self._username)
             self._pop.pass_(self._password)
+            # POP3 numbers messages per connection: a new one may number
+            # them differently (_resolve).
+            self._generation = getattr(self, "_generation", 0) + 1
+            self._pending_deletes = 0
             log.info(
                 "POP3%s connected: %s@%s:%d",
                 "S" if self._use_ssl else "",
@@ -353,6 +363,8 @@ class Pop3Session(SessionLifecycle):
             raise OSError(f"POP3 LIST failed: {exc}") from exc
 
         items: list[FileItem] = []
+        uids = self._uid_map(pop)
+        listed: dict[int, tuple[str, str, int]] = {}
         for raw in lines:
             text = raw.decode("ascii", errors="replace") if isinstance(raw, bytes) else raw
             parts = text.strip().split()
@@ -366,6 +378,7 @@ class Pop3Session(SessionLifecycle):
             subject = self._fetch_subject(msgno)
             safe_subj = _sanitize_filename(subject) if subject else "untitled"
             name = f"{msgno}_{safe_subj}.eml"
+            listed[msgno] = (uids.get(msgno, ""), safe_subj, size)
             items.append(
                 FileItem(
                     name=name,
@@ -376,7 +389,59 @@ class Pop3Session(SessionLifecycle):
                     permissions=0o400,
                 )
             )
+        self._listed = listed
+        self._listing_generation = self._generation
         return items
+
+    def _uid_map(self, pop) -> dict[int, str]:
+        """``UIDL``: message number -> unique id; {} without UIDL."""
+        try:
+            _resp, lines, _octets = pop.uidl()
+        except (poplib.error_proto, OSError) as exc:
+            log.debug("POP3 UIDL failed: %s", exc)
+            return {}
+        out: dict[int, str] = {}
+        for raw in lines:
+            text = raw.decode("ascii", "replace") if isinstance(raw, bytes) else raw
+            parts = text.split()
+            if len(parts) >= 2 and parts[0].isdigit():
+                out[int(parts[0])] = parts[1]
+        return out
+
+    def _resolve(self, path: str) -> int:
+        """The number of the message *path* names ON THIS CONNECTION.
+
+        POP3 numbers per connection: after a reconnect the number in a
+        listed path may name another message - removing the listed
+        "world" deleted "salary-letter" (review B4, 2026-10-17). On the
+        listing's connection the number holds; otherwise the message is
+        found by its UIDL id, or - without UIDL - the number is used only
+        if its subject still matches the path."""
+        msgno = _msgno_from_path(path)
+        pop = self._ensure_connected()
+        listing = getattr(self, "_listing_generation", -1)
+        if listing < 0 or listing == getattr(self, "_generation", 0):
+            # Never listed (a path from elsewhere: its number is all there
+            # is), or still the listing's connection: the number holds.
+            return msgno
+        uid, _subject, _size = getattr(self, "_listed", {}).get(msgno, ("", "", 0))
+        if uid:
+            current = self._uid_map(pop)
+            if current:
+                found = next((n for n, u in current.items() if u == uid), None)
+                if found is None:
+                    raise FileNotFoundError(
+                        errno.ENOENT, "POP3: the message is no longer in the mailbox", path
+                    )
+                return found
+        expected = _MSG_PATH_RE.match(path).group(0).split("_", 1)[1][: -len(".eml")]
+        now = _sanitize_filename(self._fetch_subject(msgno)) or "untitled"
+        if now != expected:
+            raise OSError(
+                f"POP3 {path}: message numbers changed since the listing (the connection "
+                "was renewed); list the mailbox again"
+            )
+        return msgno
 
     def _fetch_subject(self, msgno: int) -> str:
         """Best-effort: TOP <msgno> 0 returns headers only; parse
@@ -415,6 +480,8 @@ class Pop3Session(SessionLifecycle):
             parts = text.strip().split()
             size = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
         except poplib.error_proto as exc:
+            if not self._listed_now(pop, msgno):
+                raise FileNotFoundError(errno.ENOENT, "POP3: no such message", path) from exc
             raise OSError(f"POP3 stat({path}): {exc}") from exc
         return FileItem(
             name=path.lstrip("/"),
@@ -425,29 +492,71 @@ class Pop3Session(SessionLifecycle):
             permissions=0o400,
         )
 
+    @staticmethod
+    def _listed_now(pop, msgno: int) -> bool:
+        """Whether the mailbox listing carries *msgno*.
+
+        ``-ERR`` to ``LIST n`` has no standard wording, and a dropped
+        connection reaches poplib as ``-ERR EOF`` too. Only the listing
+        (which leaves out what this session deleted) tells "no such
+        message" apart; a listing that fails is an OSError."""
+        try:
+            _resp, lines, _octets = pop.list()
+        except poplib.error_proto as exc:
+            raise OSError(f"POP3 LIST failed: {exc}") from exc
+        for raw in lines:
+            text = raw.decode("ascii", errors="replace") if isinstance(raw, bytes) else raw
+            parts = text.split()
+            if parts and parts[0] == str(msgno):
+                return True
+        return False
+
     def is_dir(self, path: str) -> bool:
         return self.normalize(path) == "/"
 
     def exists(self, path: str) -> bool:
+        """False only when the message is not in the mailbox. A refused,
+        dropped or timed-out request is an OSError: the transfer worker
+        and server_side_copy(overwrite=False) take False as the go-ahead
+        to write."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
     @serialized
     def open_read(self, path: str, mode: str = "rb") -> IO:
         path = self.normalize(path)
-        msgno = _msgno_from_path(path)
+        msgno = self._resolve(path)
         pop = self._ensure_connected()
+        # The size LIST reports first: over the cap, RETR would have to
+        # drop the connection mid-answer - and with it every DELE sent on
+        # it (review B4). The cap inside the read stays for a server whose
+        # LIST does not tell the truth.
+        if self._known_size(msgno) > MAX_MESSAGE_BYTES:
+            raise OSError(
+                f"POP3 message {msgno} exceeds the {MAX_MESSAGE_BYTES} byte cap. "
+                "Use a mail client to fetch.",
+            )
         try:
             lines = self._retr_capped(pop, msgno, MAX_MESSAGE_BYTES)
         except poplib.error_proto as exc:
             raise OSError(f"POP3 RETR({path}): {exc}") from exc
-        blob = b"\r\n".join(
-            line if isinstance(line, bytes) else line.encode("utf-8", "replace") for line in lines
+        # Every line ends in CRLF, the last one too: the bytes LIST counts
+        # (2 were missing, review B20).
+        blob = b"".join(
+            (line if isinstance(line, bytes) else line.encode("utf-8", "replace")) + b"\r\n"
+            for line in lines
         )
         return io.BytesIO(blob)
+
+    def _known_size(self, msgno: int) -> int:
+        """The size the listing on THIS connection gave message *msgno*; 0
+        when there is none (the cap inside the read still holds)."""
+        if getattr(self, "_listing_generation", -1) != getattr(self, "_generation", 0):
+            return 0
+        return getattr(self, "_listed", {}).get(msgno, ("", "", 0))[2]
 
     def _retr_capped(self, pop, msgno: int, cap: int) -> list[bytes]:
         """``RETR msgno`` with the size cap applied while reading.
@@ -473,6 +582,11 @@ class Pop3Session(SessionLifecycle):
                 log.warning(
                     "POP3 message %d exceeds the %d byte cap; dropping the connection", msgno, cap
                 )
+                if getattr(self, "_pending_deletes", 0):
+                    log.warning(
+                        "POP3: %d deletion(s) on this connection are lost with it (no QUIT)",
+                        self._pending_deletes,
+                    )
                 with contextlib.suppress(Exception):
                     pop.close()
                 self._pop = None
@@ -501,12 +615,13 @@ class Pop3Session(SessionLifecycle):
         show the message.
         """
         path = self.normalize(path)
-        msgno = _msgno_from_path(path)
+        msgno = self._resolve(path)
         pop = self._ensure_connected()
         try:
             pop.dele(msgno)
         except poplib.error_proto as exc:
             raise OSError(f"POP3 DELE({path}): {exc}") from exc
+        self._pending_deletes = getattr(self, "_pending_deletes", 0) + 1
 
     def open_write(self, path: str, append: bool = False) -> IO:
         raise OSError(

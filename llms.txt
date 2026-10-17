@@ -4,8 +4,9 @@
 
 ## Start here
 
-- [LLM guide](docs/LLM_GUIDE.md): how to drive axross correctly - flags, first calls, paths and backends, errors, long jobs, remote commands, scripts, do and don't, and the full tool catalog.
+- [LLM guide](docs/LLM_GUIDE.md): how to drive axross correctly - flags, first calls, paths and backends, errors, long jobs, remote commands, scripts, do and don't, the full tool catalog and the scripting catalog.
 - [Tool manifest](docs/mcp-tools.json): every MCP tool with its JSON schema, required flags, transports and timeout, as `axross --mcp-list-tools` prints it.
+- [Scripting API manifest](docs/scripting-api.json): the `axross.*` scripting API as JSON, as `axross.api_schema()` and the MCP tool `script_api_schema` return it - rules, errors, every function with parameters, whole docstring, examples, `raises`, `mutates` and `prompts`, the session methods every backend has, and the types they return.
 
 ## Reference
 

@@ -25,7 +25,7 @@ import socket
 import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -377,7 +377,8 @@ def test_winrm_listing_row_is_utc(berlin):
 
 
 @pytest.mark.parametrize(
-    "internaldate", ["01-Jul-2026 11:00:00 +0200", "01-Jul-2026 05:00:00 -0400", "01-Jul-2026 09:00:00 +0000"]
+    "internaldate",
+    ["01-Jul-2026 11:00:00 +0200", "01-Jul-2026 05:00:00 -0400", "01-Jul-2026 09:00:00 +0000"],
 )
 def test_imap_stat_honours_the_internaldate_zone(berlin, internaldate):
     from core.imap_client import ImapSession

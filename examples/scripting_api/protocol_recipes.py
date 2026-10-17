@@ -192,11 +192,19 @@ def run(base_dir: str | os.PathLike[str] | None = None) -> dict:
         webdav = axross.serve_webdav(ram, port=0, read_only=True)
         s3 = axross.serve_s3(ram, port=0, read_only=True)
         try:
-            with urllib.request.urlopen(f"{webdav.base_url}/hello.txt", timeout=3) as resp:
-                assert resp.read() == b"hello reverse server"
+            # Each server made its own token (.auth_token): sent as Bearer here;
+            # S3 SDKs send it as their access key id, WebDAV clients as password.
+            def get(server, path):
+                req = urllib.request.Request(
+                    f"{server.base_url}{path}",
+                    headers={"Authorization": f"Bearer {server.auth_token}"},
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    return resp.read()
+
+            assert get(webdav, "/hello.txt") == b"hello reverse server"
             # Minimum S3 path style: /bucket/key maps key under root.
-            with urllib.request.urlopen(f"{s3.base_url}/bucket/hello.txt", timeout=3) as resp:
-                assert resp.read() == b"hello reverse server"
+            assert get(s3, "/bucket/hello.txt") == b"hello reverse server"
         finally:
             webdav.shutdown()
             s3.shutdown()

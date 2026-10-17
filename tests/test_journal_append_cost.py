@@ -162,7 +162,9 @@ class AppendTest(unittest.TestCase):
 
     def test_edge_large_line_is_written_whole(self) -> None:
         path = self.tmp / "j.jsonl"
-        ev = OJ.JournalEvent(operation_id="x", phase="p", operation="o", details={"k": "v" * 300_000})
+        ev = OJ.JournalEvent(
+            operation_id="x", phase="p", operation="o", details={"k": "v" * 300_000}
+        )
         OJ.append_event(ev, journal_path=path)
         self.assertEqual(json.loads(path.read_text())["details"]["k"], "v" * 300_000)
 

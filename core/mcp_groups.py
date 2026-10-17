@@ -160,6 +160,9 @@ class GroupEnv:
     scope_path: Callable[[str, Any], str]
     #: ``write_path(path, backend)`` - confinement of what a tool writes.
     write_path: Callable[[str, Any], str]
+    #: ``entry_path(path, backend)`` - confinement of an entry that is itself
+    #: removed or moved (a symlink there is acted on, not its target).
+    entry_path: Callable[[str, Any], str]
     #: ``refuse_root(path, backend, operation)`` - no mutation of the root itself.
     refuse_root: Callable[[str, Any, str], None]
     #: The metadata-index id the search tool reads for a backend.
@@ -176,6 +179,8 @@ class GroupEnv:
     allow_exec: bool = False
     #: ``all_backends()`` - every addressable backend by id.
     all_backends: Callable[[], dict] | None = None
+    #: The groups this server offers (``--mcp-tools``).
+    groups: frozenset = frozenset()
 
 
 def _tool(
@@ -1521,6 +1526,8 @@ def check_remote_path(path) -> str:
 class OpenedBackend:
     backend: Any
     profile: Any
+    #: False for a connection lent by the GUI (attach): never released here.
+    owned: bool = True
 
 
 class RemoteRegistry:
@@ -1530,14 +1537,22 @@ class RemoteRegistry:
     or ``""`` on stdio, so one HTTP client never sees or closes another's
     connections. Connections go through one ConnectionManager - the GUI's
     connect path, with its keyring, proxy and security-mode handling.
+
+    :meth:`attach` lends a connection the GUI already holds (a pane's) to
+    every scope; it stays the GUI's and is never released here. *gate*,
+    when given, is asked with the profile before every use and every
+    open - it raises PermissionError to refuse (the agent sandbox's
+    allowed hosts, which may change at run time).
     """
 
     #: Every live registry, so tests and shutdown can close what is open.
     _live: weakref.WeakSet = weakref.WeakSet()
 
-    def __init__(self) -> None:
+    def __init__(self, gate: Callable[[Any], None] | None = None) -> None:
         self._lock = threading.Lock()
         self._scopes: dict[str, dict[str, OpenedBackend]] = {}
+        self._attached: dict[str, OpenedBackend] = {}
+        self._gate = gate
         self._manager = None
         RemoteRegistry._live.add(self)
 
@@ -1559,14 +1574,25 @@ class RemoteRegistry:
             self._manager.set_profile_resolver(lambda name: ProfileManager().get(name))
         return self._manager
 
+    def attach(self, bid: str, backend, profile) -> None:
+        """Lend *backend* (with its *profile*, or None) under *bid*."""
+        with self._lock:
+            if bid in self._attached or any(bid in scope for scope in self._scopes.values()):
+                raise ValueError(f"the backend id {bid!r} is taken")
+            self._attached[bid] = OpenedBackend(backend=backend, profile=profile, owned=False)
+
     def get(self, bid: str):
         with self._lock:
-            opened = self._scopes.get(self._scope(), {}).get(bid)
-        return opened.backend if opened is not None else None
+            opened = self._scopes.get(self._scope(), {}).get(bid) or self._attached.get(bid)
+        if opened is None:
+            return None
+        if self._gate is not None:
+            self._gate(opened.profile)
+        return opened.backend
 
     def entries(self) -> list[tuple[str, OpenedBackend]]:
         with self._lock:
-            return sorted(self._scopes.get(self._scope(), {}).items())
+            return sorted({**self._attached, **self._scopes.get(self._scope(), {})}.items())
 
     def holds(self, backend) -> bool:
         return self._find(backend) is not None
@@ -1575,7 +1601,7 @@ class RemoteRegistry:
         if backend is None:
             return None
         with self._lock:
-            for scope in self._scopes.values():
+            for scope in (self._attached, *self._scopes.values()):
                 for opened in scope.values():
                     if opened.backend is backend:
                         return opened
@@ -1610,6 +1636,8 @@ class RemoteRegistry:
         profile = ProfileManager().get(name)
         if profile is None:
             raise ValueError(f"no saved profile named {name!r}; call remote_profiles")
+        if self._gate is not None:
+            self._gate(profile)
         require_protocol_allowed(profile.protocol)
         ok, reason = openable(profile)
         if not ok:
@@ -1657,6 +1685,8 @@ class RemoteRegistry:
 
     def close(self, bid: str) -> bool:
         with self._lock:
+            if bid in self._attached:
+                raise ValueError(f"{bid!r} is the connection of an axross pane; it stays open")
             opened = self._scopes.get(self._scope(), {}).pop(bid, None)
         if opened is None:
             return False
@@ -1665,6 +1695,8 @@ class RemoteRegistry:
 
     def _release(self, opened_backends) -> None:
         for opened in opened_backends:
+            if not opened.owned:
+                continue
             try:
                 self._connections().release(opened.profile)
             except Exception as exc:  # noqa: BLE001 - closing is best effort
@@ -1674,6 +1706,7 @@ class RemoteRegistry:
         with self._lock:
             everything = [o for scope in self._scopes.values() for o in scope.values()]
             self._scopes.clear()
+            self._attached.clear()  # the GUI's: dropped, never released
         self._release(everything)
 
     def _close_scope(self, scope: str) -> int:
@@ -1862,7 +1895,7 @@ def _build_transfer(env: GroupEnv) -> list:
         dst_backend = env.backend_by_id(args.get("dst_backend"))
         raw_src = _str_arg(args, "src")
         if mutate_source:
-            src = env.write_path(raw_src, src_backend)
+            src = env.entry_path(raw_src, src_backend)
             env.refuse_root(src, src_backend, "transfer source")
         else:
             src = env.scope_path(raw_src, src_backend)
@@ -2252,6 +2285,11 @@ def _build_exec(env: GroupEnv) -> list:
         return timeout, cap, variables or None
 
     def run(tool, args, backend, kind, command, stdin, timeout, cap, variables):
+        from core.security_mode import current_policy
+
+        # Checked at the call too: the mode can change after the tools were built.
+        if not current_policy().allow_remote_exec:
+            raise PermissionError("the security mode does not allow remote commands")
         sent = command
         if kind == "posix-shell" and variables:
             # Exported in the command line: SSH's env requests are dropped
@@ -2293,7 +2331,9 @@ def _build_exec(env: GroupEnv) -> list:
             raise ValueError("stdin must be a string")
         timeout, cap, variables = common(args)
         data = stdin.encode("utf-8") if stdin is not None else None
-        return _exec_result(run("remote_exec", args, backend, kind, command, data, timeout, cap, variables))
+        return _exec_result(
+            run("remote_exec", args, backend, kind, command, data, timeout, cap, variables)
+        )
 
     def _remote_script(args, ctx):
         backend, kind = target(args)
@@ -2307,9 +2347,13 @@ def _build_exec(env: GroupEnv) -> list:
             raise ValueError("a Cisco device runs single show commands only; use remote_exec")
         if kind == "powershell":
             if interpreter != "powershell":
-                raise ValueError("a WinRM host runs PowerShell scripts only (interpreter=powershell)")
+                raise ValueError(
+                    "a WinRM host runs PowerShell scripts only (interpreter=powershell)"
+                )
             if extra:
-                raise ValueError("PowerShell scripts take no args here; put the values into the script")
+                raise ValueError(
+                    "PowerShell scripts take no args here; put the values into the script"
+                )
             return _exec_result(
                 run("remote_script", args, backend, kind, script, None, timeout, cap, variables)
             )
@@ -2319,7 +2363,17 @@ def _build_exec(env: GroupEnv) -> list:
             )
         command = " ".join([_POSIX_INTERPRETERS[interpreter], *map(shlex.quote, extra)])
         return _exec_result(
-            run("remote_script", args, backend, kind, command, script.encode("utf-8"), timeout, cap, variables)
+            run(
+                "remote_script",
+                args,
+                backend,
+                kind,
+                command,
+                script.encode("utf-8"),
+                timeout,
+                cap,
+                variables,
+            )
         )
 
     def _exec_backends(args, ctx):
@@ -2335,7 +2389,9 @@ def _build_exec(env: GroupEnv) -> list:
         "additionalProperties": {"type": "string"},
         "description": "Environment variables for the command (names [A-Za-z_][A-Za-z0-9_]*).",
     }
-    timeout_prop = _int_prop("Seconds before the command is given up.", minimum=1, maximum=3600, default=60)
+    timeout_prop = _int_prop(
+        "Seconds before the command is given up.", minimum=1, maximum=3600, default=60
+    )
     cap_prop = _int_prop(
         "Bytes of stdout kept (stderr: at most 1 MiB); truncated_* tells when output was cut.",
         minimum=1,
@@ -2351,7 +2407,10 @@ def _build_exec(env: GroupEnv) -> list:
             "commands only. WinRM: PowerShell.",
             {
                 "command": {"type": "string", "minLength": 1, "description": "The command line."},
-                "stdin": {"type": "string", "description": "Text fed to the command's stdin (not on WinRM/Cisco)."},
+                "stdin": {
+                    "type": "string",
+                    "description": "Text fed to the command's stdin (not on WinRM/Cisco).",
+                },
                 "env": env_prop,
                 "timeout": timeout_prop,
                 "max_output": cap_prop,
@@ -2365,7 +2424,8 @@ def _build_exec(env: GroupEnv) -> list:
         _tool(
             "remote_script",
             "Run a script on a remote host: POSIX hosts get it on stdin of sh, bash, python3 or "
-            "perl with args after it; WinRM hosts run it as PowerShell. Same result as remote_exec.",
+            "perl with args after it; WinRM hosts run it as PowerShell. "
+            "Same result as remote_exec.",
             {
                 "script": {"type": "string", "minLength": 1, "description": "The script text."},
                 "interpreter": {
@@ -2373,7 +2433,11 @@ def _build_exec(env: GroupEnv) -> list:
                     "enum": sorted([*_POSIX_INTERPRETERS, "powershell"]),
                     "description": "sh by default; powershell on WinRM.",
                 },
-                "args": {"type": "array", "items": {"type": "string"}, "description": "Script arguments."},
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Script arguments.",
+                },
                 "env": env_prop,
                 "timeout": timeout_prop,
                 "max_output": cap_prop,
@@ -2404,6 +2468,10 @@ def _build_exec(env: GroupEnv) -> list:
 #: inner agent never gets a write, exec, script or agent tool.
 AGENT_GROUPS = ("metadata", "duplicates", "packer", "archive", "index", "filetype", "remote",
                 "extensions")
+#: Groups that reach beyond the MCP root (saved connections with their
+#: stored credentials, the extensions' code): agent_run passes them on only
+#: when the server itself offers them.
+AGENT_GROUPS_SERVER_ONLY = frozenset({"remote", "extensions"})
 
 
 def _build_agent(env: GroupEnv) -> list:
@@ -2425,6 +2493,12 @@ def _build_agent(env: GroupEnv) -> list:
         groups = args.get("groups") or []
         if not isinstance(groups, list) or not all(g in AGENT_GROUPS for g in groups):
             raise ValueError(f"groups must be a list of {', '.join(AGENT_GROUPS)}")
+        beyond = sorted(set(groups) & AGENT_GROUPS_SERVER_ONLY - env.groups)
+        if beyond:
+            raise PermissionError(
+                f"the group(s) {', '.join(beyond)} reach beyond the MCP root: "
+                "this server offers them only when started with them (--mcp-tools)"
+            )
         max_steps = _int_arg(args, "max_steps", 10, 1, 30)
         if profile.needs_consent():
             raise PermissionError(
@@ -2457,12 +2531,24 @@ def _build_agent(env: GroupEnv) -> list:
             "It cannot change files or run commands. Use it to keep file content on the user's "
             "machine, e.g. to summarise documents with a local model.",
             {
-                "task": {"type": "string", "minLength": 1, "maxLength": 20000,
-                         "description": "What the local model should do, in plain language."},
-                "profile": {"type": "string", "description": "An LLM profile name; default: the active one."},
-                "groups": {"type": "array", "items": {"type": "string", "enum": list(AGENT_GROUPS)},
-                           "description": "Extra tool groups the model may use (read-only tools only)."},
-                "max_steps": _int_prop("Most model requests for this task.", minimum=1, maximum=30, default=10),
+                "task": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20000,
+                    "description": "What the local model should do, in plain language.",
+                },
+                "profile": {
+                    "type": "string",
+                    "description": "An LLM profile name; default: the active one.",
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(AGENT_GROUPS)},
+                    "description": "Extra tool groups the model may use (read-only tools only).",
+                },
+                "max_steps": _int_prop(
+                    "Most model requests for this task.", minimum=1, maximum=30, default=10
+                ),
             },
             _agent_run,
             group="agent",
@@ -2543,7 +2629,12 @@ def _required_flags(tool) -> list[str]:
 
 
 def tool_manifest(
-    tools, *, groups: Iterable[str], allow_write: bool, allow_scripts: bool, allow_exec: bool = False
+    tools,
+    *,
+    groups: Iterable[str],
+    allow_write: bool,
+    allow_scripts: bool,
+    allow_exec: bool = False,
 ) -> dict:
     """The manifest of *tools* (as built by ``_build_tools`` for these flags):
     everything a client needs to call each tool, and nothing about the

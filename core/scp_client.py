@@ -15,7 +15,6 @@ import base64
 import binascii
 import errno
 import hashlib
-import io
 import logging
 import posixpath
 import re
@@ -37,8 +36,12 @@ from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
 from core.redaction import redact_text
 from core.ssh_client import (
     HostKeyMismatchError,
+    RevokedHostKeyError,
     UnknownHostKeyError,
     _read_limited_stream,
+    append_known_host,
+    drain_exec_channel,
+    load_known_hosts,
 )
 from core.ssh_config import expand_proxy_command
 from models.file_item import FileItem
@@ -57,6 +60,7 @@ from core.telnet_client import (  # noqa: E402 — re-using telnet shell-output 
     _parse_df,
     _parse_ls_la,
     _parse_stat_gnu,
+    copy_command,
     rename_command,
 )
 
@@ -308,6 +312,8 @@ class SCPSession(SessionLifecycle):
         self._caps: _Capabilities = _Capabilities()
         self._lock = threading.Lock()
         self._known_hosts_path = Path.home() / ".ssh" / "known_hosts"
+        # Read at connect; the host key policy consults its @revoked keys.
+        self._known_hosts = None
 
     # -- Properties ----------------------------------------------------------
 
@@ -392,12 +398,13 @@ class SCPSession(SessionLifecycle):
             self._client = paramiko.SSHClient()
             self._client.set_missing_host_key_policy(_HostKeyPolicy(self, on_unknown_host))
 
-            # Load known hosts
-            if self._known_hosts_path.exists():
-                try:
-                    self._client.load_host_keys(str(self._known_hosts_path))
-                except (OSError, paramiko.SSHException) as exc:
-                    log.warning("Could not load known_hosts: %s", exc)
+            # Load known hosts line by line (marker lines, revoked keys);
+            # SSHClient.load_host_keys raised InvalidHostKey on them.
+            self._known_hosts = load_known_hosts(self._known_hosts_path)
+            client_keys = self._client.get_host_keys()
+            for host in self._known_hosts.keys():
+                for key_type, key in self._known_hosts.lookup(host).items():
+                    client_keys.add(host, key_type, key)
 
             # Build auth kwargs
             auth_kw: dict = {
@@ -479,23 +486,11 @@ class SCPSession(SessionLifecycle):
 
     @staticmethod
     def _load_private_key(path: str, passphrase: str) -> paramiko.PKey:
-        """Load a private key, trying multiple formats."""
-        key_classes = [
-            paramiko.Ed25519Key,
-            paramiko.ECDSAKey,
-            paramiko.RSAKey,
-        ]
-        if hasattr(paramiko, "DSSKey"):
-            key_classes.append(paramiko.DSSKey)
-        passphrase_arg = passphrase or None
+        """Load a private key, trying multiple formats (as SFTP does: an
+        encrypted key without its passphrase says so)."""
+        from core.ssh_client import load_private_key
 
-        for cls in key_classes:
-            try:
-                return cls.from_private_key_file(path, password=passphrase_arg)
-            except (paramiko.SSHException, paramiko.PasswordRequiredException):
-                continue
-
-        raise paramiko.SSHException(f"Cannot load key from {path}")
+        return load_private_key(path, passphrase)
 
     def _host_key_aliases(self) -> list[str]:
         if self._profile.port == 22:
@@ -516,21 +511,7 @@ class SCPSession(SessionLifecycle):
             raise ConnectionError("Transport not initialized")
 
         remote_key = transport.get_remote_server_key()
-        host_keys = paramiko.HostKeys()
-        if self._known_hosts_path.exists():
-            try:
-                host_keys.load(str(self._known_hosts_path))
-            except (OSError, paramiko.SSHException):
-                pass
-
-        self._known_hosts_path.parent.mkdir(parents=True, exist_ok=True)
-        for alias in self._host_key_aliases()[:1]:
-            host_keys.add(alias, remote_key.get_name(), remote_key)
-        host_keys.save(str(self._known_hosts_path))
-        try:
-            self._known_hosts_path.chmod(0o600)
-        except OSError:
-            pass
+        append_known_host(self._known_hosts_path, self._host_key_aliases()[0], remote_key)
 
     def _exec_raw(
         self, cmd: str, timeout: float = CMD_TIMEOUT, stdin_data: bytes | None = None
@@ -682,8 +663,6 @@ class SCPSession(SessionLifecycle):
         terms of paramiko's stream API so we can cap stdout/stderr and
         pipe stdin in, just like ``SSHSession.exec``.
         """
-        from models.exec_result import ExecResult
-
         if not self._client:
             raise OSError("SCP exec: not connected")
         log.info(
@@ -708,35 +687,39 @@ class SCPSession(SessionLifecycle):
                     )
         with self._lock:
             try:
-                stdin_chan, stdout_chan, stderr_chan = self._client.exec_command(
+                stdin_chan, stdout_chan, _stderr_chan = self._client.exec_command(
                     cmd,
                     timeout=timeout,
                     environment=env or None,
                 )
-                if stdin:
-                    try:
-                        stdin_chan.write(stdin)
-                        stdin_chan.flush()
-                    except OSError:
-                        pass
-                    try:
-                        stdin_chan.channel.shutdown_write()
-                    except Exception:  # noqa: BLE001
-                        pass
-                stdout_buf = stdout_chan.read(stdout_cap + 1)
-                stderr_buf = stderr_chan.read(stderr_cap + 1)
-                rc = stdout_chan.channel.recv_exit_status()
+                chan = stdout_chan.channel
+                try:
+                    if stdin:
+                        try:
+                            stdin_chan.write(stdin)
+                            stdin_chan.flush()
+                        except OSError:
+                            pass
+                        try:
+                            chan.shutdown_write()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    # Both streams together, like SSHSession.exec: reading
+                    # stdout to its cap and then waiting for stderr's end
+                    # deadlocked once the unread stdout filled the window.
+                    return drain_exec_channel(
+                        chan,
+                        timeout=timeout,
+                        stdout_cap=stdout_cap,
+                        stderr_cap=stderr_cap,
+                        label="SCP exec",
+                    )
+                finally:
+                    chan.close()
+            except TimeoutError:
+                raise
             except (paramiko.SSHException, socket.error) as exc:
                 raise OSError(f"SCP exec failed: {exc}") from exc
-        truncated_stdout = len(stdout_buf) > stdout_cap
-        truncated_stderr = len(stderr_buf) > stderr_cap
-        return ExecResult(
-            returncode=rc,
-            stdout=bytes(stdout_buf[:stdout_cap]),
-            stderr=bytes(stderr_buf[:stderr_cap]),
-            truncated_stdout=truncated_stdout,
-            truncated_stderr=truncated_stderr,
-        )
 
     def _env_prefix(self) -> str:
         """SHELL_ENV in front of a command, where the shell takes it."""
@@ -746,7 +729,9 @@ class SCPSession(SessionLifecycle):
 
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
-        output = self._exec(f"{self._env_prefix()}ls -la {shlex.quote(path)}")
+        from core.exec_util import ls_dir_operand
+
+        output = self._exec(f"{self._env_prefix()}ls -la {shlex.quote(ls_dir_operand(path))}")
         if not output.strip():
             # ls -la of a folder prints at least "."; Rebex's shell answers a
             # missing path with nothing and exit 0.
@@ -765,7 +750,9 @@ class SCPSession(SessionLifecycle):
         output = self._exec(f"{self._env_prefix()}ls -ld {qpath}")
         items = _parse_ls_la(output)
         if not items:
-            raise FileNotFoundError(errno.ENOENT, f"Cannot stat {path}: no output from ls -ld", path)
+            raise FileNotFoundError(
+                errno.ENOENT, f"Cannot stat {path}: no output from ls -ld", path
+            )
         item = items[0]
         return FileItem(
             name=posixpath.basename(path.rstrip("/")) or path,
@@ -779,13 +766,22 @@ class SCPSession(SessionLifecycle):
             group=item.group,
         )
 
+    def _path_kind(self, path: str) -> str | None:
+        """"dir", "other" or None (not there). ``test -e`` read every
+        non-zero exit as "no", a folder it may not search included;
+        server_side_copy(overwrite=False) and the transfer worker take
+        False from exists() as the go-ahead to write."""
+        from core.exec_util import path_kind, path_kind_command
+
+        path = self.normalize(path)
+        out, code = self._exec_raw(path_kind_command(path))
+        return path_kind(f"SCP {path}", out, code)
+
     def is_dir(self, path: str) -> bool:
-        _, code = self._exec_raw(f"test -d {shlex.quote(self.normalize(path))}")
-        return code == 0
+        return self._path_kind(path) == "dir"
 
     def exists(self, path: str) -> bool:
-        _, code = self._exec_raw(f"test -e {shlex.quote(self.normalize(path))}")
-        return code == 0
+        return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
         self._exec(f"mkdir -p {shlex.quote(self.normalize(path))}")
@@ -996,7 +992,7 @@ class SCPSession(SessionLifecycle):
         """Server-side shell cp via SSH exec_command."""
         src = self.normalize(src)
         dst = self.normalize(dst)
-        output, code = self._exec_raw(f"cp -p -- {shlex.quote(src)} {shlex.quote(dst)} 2>&1")
+        output, code = self._exec_raw(f"{copy_command(src, dst, preserve=True)} 2>&1")
         if code != 0:
             raise OSError(f"cp {src} -> {dst} failed: {output.strip()!r}")
 
@@ -1013,10 +1009,10 @@ class SCPSession(SessionLifecycle):
         output, code = self._exec_raw(f"{tool} {shlex.quote(path)} 2>/dev/null")
         if code != 0 or not output:
             return ""
-        digest = output.split()[0] if output.split() else ""
-        if digest and all(c in "0123456789abcdef" for c in digest.lower()):
-            return f"{algorithm}:{digest.lower()}"
-        return ""
+        from core.exec_util import digest_from_sum_output
+
+        digest = digest_from_sum_output(output, algorithm)
+        return f"{algorithm}:{digest}" if digest else ""
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         if not self._caps.has_df:
@@ -1061,6 +1057,10 @@ class _HostKeyPolicy(paramiko.MissingHostKeyPolicy):
         key_type = key.get_name()
         fingerprint = self._session._fingerprint_sha256(key)
         alias = self._session._host_key_aliases()[0]
+
+        known_hosts = getattr(self._session, "_known_hosts", None)
+        if known_hosts is not None and known_hosts.is_revoked(key):
+            raise RevokedHostKeyError(alias, key_type, fingerprint)
 
         # Check for mismatch against loaded keys
         host_keys = client.get_host_keys()

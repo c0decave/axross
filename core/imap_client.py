@@ -39,8 +39,10 @@ log = logging.getLogger(__name__)
 # Characters not allowed in filenames — replaced with underscore
 _FILENAME_BAD_CHARS = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
 
-# Matches IMAP LIST response:  (\HasChildren) "/" "INBOX"
-_LIST_RE = re.compile(rb'\((?P<flags>[^)]*)\)\s+"?(?P<sep>[^"]*)"?\s+"?(?P<name>[^"]*)"?')
+# The announcement of an IMAP literal: {<octets>} CRLF (RFC 3501 4.3).
+_LITERAL_RE = re.compile(rb"\{(\d{1,10})\+?\}\r\n")
+_IMAP_SPACE = b" \t\r\n"
+_ATOM_END = b" \t\r\n()"
 
 # Matches quota response values like (STORAGE 1234 5678)
 _QUOTA_RE = re.compile(r"\(STORAGE\s+(\d+)\s+(\d+)\)", re.IGNORECASE)
@@ -139,6 +141,156 @@ def _search_uids(raw: bytes | str) -> list[bytes]:
     return [tok for tok in raw.split() if tok.isdigit()]  # bytes.isdigit(): ASCII only
 
 
+def _as_bytes(value) -> bytes:
+    return value if isinstance(value, bytes) else str(value).encode("utf-8", "replace")
+
+
+def _imap_responses(data) -> list[bytes]:
+    """imaplib's reply *data* as one bytes value per untagged response.
+
+    imaplib splits a response at every literal: ``(line ending in {n},
+    literal)``, then the rest of the line as the next element (another
+    tuple when it ends in a literal again). The parts are joined back
+    into wire form, ``line CRLF literal rest``, so one parser reads the
+    whole response.
+    """
+    out: list[bytes] = []
+    pending: bytes | None = None
+    for item in data or ():
+        if isinstance(item, tuple):
+            head = _as_bytes(item[0]) if item else b""
+            literal = _as_bytes(item[1]) if len(item) > 1 else b""
+            pending = (pending or b"") + head + b"\r\n" + literal
+        elif item is not None:
+            out.append((pending or b"") + _as_bytes(item))
+            pending = None
+    if pending is not None:
+        out.append(pending)
+    return out
+
+
+def _imap_scalar(raw: bytes, i: int) -> tuple[bytes | None, int]:
+    """The string or atom at ``raw[i]``: quoted, literal, NIL (None) or atom."""
+    if raw[i : i + 1] == b'"':
+        out = bytearray()
+        i += 1
+        while i < len(raw):
+            ch = raw[i]
+            if ch == 0x5C and i + 1 < len(raw):  # backslash escapes the next octet
+                out.append(raw[i + 1])
+                i += 2
+                continue
+            if ch == 0x22:
+                return bytes(out), i + 1
+            out.append(ch)
+            i += 1
+        return bytes(out), i  # unterminated: what arrived
+    literal = _LITERAL_RE.match(raw, i)
+    if literal:
+        start = literal.end()
+        end = min(len(raw), start + int(literal.group(1)))
+        return raw[start:end], end
+    j = i + 1
+    while j < len(raw) and raw[j] not in _ATOM_END:
+        j += 1
+    token = raw[i:j]
+    return (None if token.upper() == b"NIL" else token), j
+
+
+def _imap_value(raw: bytes, i: int = 0):
+    """Read one IMAP value from ``raw[i:]``; return ``(value, end)``.
+
+    A parenthesised list is a Python list, NIL is None, a quoted string,
+    literal or atom is bytes. Malformed or truncated input yields what was
+    readable - a hostile server must not raise anything here. Iterative,
+    so deep nesting cannot exhaust the stack.
+    """
+    stack: list[list] = []
+    while True:
+        while i < len(raw) and raw[i] in _IMAP_SPACE:
+            i += 1
+        if i >= len(raw):
+            return (stack[0] if stack else None), i
+        ch = raw[i]
+        if ch == 0x28:  # "("
+            new: list = []
+            if stack:
+                stack[-1].append(new)
+            stack.append(new)
+            i += 1
+            continue
+        if ch == 0x29:  # ")"
+            if not stack:
+                return None, i  # a stray ")": nothing to read here
+            done = stack.pop()
+            i += 1
+            if not stack:
+                return done, i
+            continue
+        value, i = _imap_scalar(raw, i)
+        if not stack:
+            return value, i
+        stack[-1].append(value)
+
+
+def _parse_list_entry(raw: bytes) -> tuple[str, str, bytes] | None:
+    """``(flags, separator, name)`` of one LIST / LSUB response, or None.
+
+    The name is still modified UTF-7; the separator is "" for NIL.
+    """
+    flags, i = _imap_value(raw)
+    if not isinstance(flags, list):
+        return None
+    sep, i = _imap_value(raw, i)
+    name, _ = _imap_value(raw, i)
+    if isinstance(sep, list) or not isinstance(name, bytes):
+        return None
+    flag_text = " ".join(f.decode("ascii", "replace") for f in flags if isinstance(f, bytes))
+    return flag_text, (sep or b"").decode("ascii", "replace"), name
+
+
+def _fetch_attributes(raw: bytes) -> dict[bytes, object]:
+    """The ``KEY value`` pairs of one FETCH response (``n (KEY value ...)``).
+
+    Keys are upper-cased; values as :func:`_imap_value` reads them, so a
+    string that merely contains ``RFC822.SIZE 1`` is never read as one.
+    """
+    start = raw.find(b"(")
+    if start < 0:
+        return {}
+    items, _ = _imap_value(raw, start)
+    if not isinstance(items, list):
+        return {}
+    out: dict[bytes, object] = {}
+    for k in range(0, len(items) - 1, 2):
+        key = items[k]
+        if isinstance(key, bytes):
+            out.setdefault(key.upper(), items[k + 1])
+    return out
+
+
+def _fetch_number(attrs: dict, key: bytes) -> int | None:
+    value = attrs.get(key)
+    return int(value) if isinstance(value, bytes) and value.isdigit() else None
+
+
+def _fetch_date(attrs: dict) -> datetime:
+    value = attrs.get(b"INTERNALDATE")
+    if isinstance(value, bytes):
+        try:
+            return _internaldate(value.decode("ascii", "replace"))
+        except Exception:  # noqa: BLE001 - the server's date, any shape
+            pass
+    return datetime.fromtimestamp(0)
+
+
+def _envelope_subject(envelope) -> str:
+    """The decoded subject of a parsed ENVELOPE list (its second field)."""
+    if isinstance(envelope, list) and len(envelope) > 1 and isinstance(envelope[1], bytes):
+        return _decode_header(envelope[1]) or "no_subject"
+    return "no_subject"
+
+
 def _imap_errors_as_oserror(fn):
     """Re-raise imaplib's protocol errors from ``fn`` as ``OSError``.
 
@@ -165,7 +317,8 @@ def _expunge_one(imap, uid) -> tuple[str, list]:
     ``\\Deleted`` in the selected mailbox, including ones the user
     flagged in another client. Prefer ``UID EXPUNGE`` (UIDPLUS); without
     it, expunge only when ours is the sole flagged message and otherwise
-    leave the flag in place.
+    leave the flag in place - answered as "NO", since the message is still
+    there.
     """
     uid = str(uid)
     caps = getattr(imap, "capabilities", ()) or ()
@@ -180,7 +333,10 @@ def _expunge_one(imap, uid) -> tuple[str, list]:
         "and other messages are flagged too",
         uid,
     )
-    return "OK", []
+    return "NO", [
+        f"UID {uid} is flagged \\Deleted but not expunged: the server lacks UIDPLUS "
+        "and an EXPUNGE would also remove the other messages flagged \\Deleted".encode()
+    ]
 
 
 def _decode_header(raw: str | bytes | None) -> str:
@@ -477,13 +633,12 @@ class ImapSession(SessionLifecycle):
             # Detect hierarchy separator from LIST
             try:
                 typ, data = self._imap.list('""', '""')
-                if typ == "OK" and data and data[0]:
-                    raw = data[0] if isinstance(data[0], bytes) else data[0].encode()
-                    m = _LIST_RE.match(raw)
-                    if m:
-                        sep = m.group("sep").decode("ascii", errors="replace").strip()
-                        if sep:
-                            self._hierarchy_sep = sep
+                responses = _imap_responses(data) if typ == "OK" else []
+                entry = _parse_list_entry(responses[0]) if responses else None
+                if entry is not None:
+                    sep = entry[1].strip()
+                    if sep:
+                        self._hierarchy_sep = sep
             except Exception as exc:
                 log.debug("Could not detect hierarchy separator: %s", exc)
 
@@ -536,29 +691,89 @@ class ImapSession(SessionLifecycle):
         self._selected_mailbox = mailbox
         self._selected_readonly = readonly
 
-    def _mailbox_names(self) -> set[str]:
-        """Return known mailbox names, refreshing from IMAP when needed."""
-        if self._mailbox_cache is not None:
-            return set(self._mailbox_cache)
-
+    def _list_entries(self) -> list[tuple[str, bool]]:
+        """``(name, selectable)`` of every mailbox LIST returns; refreshes
+        the name cache. \\Noselect and \\NonExistent (RFC 5258, implies
+        \\Noselect - Dovecot's deleted parent of living sub-mailboxes)
+        mark a name that cannot be opened."""
         imap = self._ensure_connected()
         typ, data = imap.list()
         if typ != "OK":
             raise OSError(f"IMAP LIST failed: {data}")
 
-        names: set[str] = set()
-        for entry in data:
+        entries: list[tuple[str, bool]] = []
+        for raw in _imap_responses(data):
+            entry = _parse_list_entry(raw)
             if entry is None:
+                log.debug("Unparseable LIST entry: %r", raw)
                 continue
-            raw = entry if isinstance(entry, bytes) else entry.encode()
-            match = _LIST_RE.match(raw)
-            if not match:
-                log.debug("Unparseable LIST entry: %r", entry)
-                continue
-            names.add(_imap_utf7_decode(match.group("name")))
+            flags = entry[0].lower()
+            selectable = "\\noselect" not in flags and "\\nonexistent" not in flags
+            entries.append((_imap_utf7_decode(entry[2]), selectable))
 
-        self._mailbox_cache = names
-        return set(names)
+        self._mailbox_cache = {name for name, _ in entries}
+        return entries
+
+    def _mailbox_names(self) -> set[str]:
+        """Return known mailbox names, refreshing from IMAP when needed."""
+        if self._mailbox_cache is None:
+            self._list_entries()
+        return set(self._mailbox_cache or ())
+
+    def _mailbox_nodes(self) -> set[str]:
+        """Known mailbox names plus every parent level above them.
+
+        A server need not list the parent of a nested mailbox (or lists
+        it \\Noselect); its path is still a folder on the way down.
+        """
+        sep = self._hierarchy_sep
+        nodes = self._mailbox_names()
+        for name in list(nodes):
+            pieces = name.split(sep)
+            for depth in range(1, len(pieces)):
+                nodes.add(sep.join(pieces[:depth]))
+        return nodes
+
+    @property
+    def _tree_view(self) -> bool:
+        """Whether nested mailboxes are listed level by level.
+
+        With "/" as the hierarchy separator a full name ("Work/2025") is
+        no single path component, so each directory lists only its
+        first-level sub-mailboxes. Any other separator keeps the flat
+        listing: "box.sub" is a valid name at the root.
+        """
+        return self._hierarchy_sep == "/"
+
+    @staticmethod
+    def _sub_mailboxes(entries: list[tuple[str, bool]], parent: str) -> list[FileItem]:
+        """The first-level folders below *parent* ("" for the root).
+
+        One per child name, shown when it, or a mailbox below it, can be
+        opened. A name with an empty level ("a//b") is unreachable by any
+        normalised path and is left out.
+        """
+        prefix = f"{parent}/" if parent else ""
+        children: dict[str, None] = {}
+        for name, selectable in entries:
+            if not selectable or not name.startswith(prefix):
+                continue
+            levels = name[len(prefix) :].split("/")
+            if "" in levels:
+                log.debug("Skipping mailbox with an empty level: %r", name)
+                continue
+            children.setdefault(levels[0])
+        return [FileItem(name=child, is_dir=True) for child in children]
+
+    def _split_mailbox(self, parts: list[str]) -> tuple[str | None, list[str]]:
+        """The longest leading run of *parts* that names a known mailbox
+        (or a parent level of one), and the parts after it."""
+        nodes = self._mailbox_nodes()
+        for index in range(len(parts), 0, -1):
+            candidate = self._hierarchy_sep.join(parts[:index])
+            if candidate in nodes:
+                return candidate, parts[index:]
+        return None, parts
 
     def _virtual_path_to_mailbox(self, path: str) -> str:
         """Map a virtual path like ``/Inbox/Sub`` to an IMAP mailbox name."""
@@ -582,6 +797,40 @@ class ImapSession(SessionLifecycle):
         ext = content_type.split("/")[-1] if "/" in content_type else "bin"
         return f"attachment.{ext}"
 
+    @classmethod
+    def _named_attachments(cls, msg) -> list[tuple[str, object]]:
+        """``(name, part)`` for every attachment of *msg*, names unique.
+
+        Two attachments may carry the same file name (or sanitise to it).
+        Later ones get ``.1``, ``.2`` ... before the extension, skipping
+        any name another attachment really carries, so listing, stat and
+        open_read address each part by one name of its own.
+        """
+        parts = [(cls._attachment_name(part), part) for part in msg.walk()]
+        parts = [(name, part) for name, part in parts if name is not None]
+        carried = {name for name, _ in parts}
+        used: set[str] = set()
+        out: list[tuple[str, object]] = []
+        for base, part in parts:
+            name = base
+            if name in used:
+                root, dot, ext = base.rpartition(".")
+                n = 0
+                while name in used or name in carried:
+                    n += 1
+                    name = f"{root}.{n}.{ext}" if dot and root else f"{base}.{n}"
+            used.add(name)
+            out.append((name, part))
+        return out
+
+    @classmethod
+    def _find_attachment(cls, msg, att_name: str):
+        """The part listed as *att_name*, or None."""
+        for name, part in cls._named_attachments(msg):
+            if name == att_name:
+                return part
+        return None
+
     # ------------------------------------------------------------------
     # Path parsing
     # ------------------------------------------------------------------
@@ -601,16 +850,7 @@ class ImapSession(SessionLifecycle):
         if not parts:
             return (None,)
 
-        mailbox_names = self._mailbox_names()
-        mailbox: str | None = None
-        remainder: list[str] = []
-        for index in range(len(parts), 0, -1):
-            candidate = self._hierarchy_sep.join(parts[:index])
-            if candidate in mailbox_names:
-                mailbox = candidate
-                remainder = parts[index:]
-                break
-
+        mailbox, remainder = self._split_mailbox(parts)
         if mailbox is None:
             mailbox = parts[0]
             remainder = parts[1:]
@@ -632,7 +872,10 @@ class ImapSession(SessionLifecycle):
             # so callers can handle it gracefully.
             if len(remainder) == 1:
                 return (mailbox, None)
-            raise OSError(f"Invalid message identifier in path: {name_part!r}")
+            # A message is named by its UID: nothing can be below this name.
+            raise FileNotFoundError(
+                errno.ENOENT, f"Invalid message identifier in path: {name_part!r}", path
+            )
         uid = uid_match.group(1)
 
         if len(remainder) == 1:
@@ -647,7 +890,7 @@ class ImapSession(SessionLifecycle):
             attachment_name = remainder[1]
             return (mailbox, uid, attachment_name)
 
-        raise OSError(f"Path too deep: {path!r}")
+        raise FileNotFoundError(errno.ENOENT, "Path too deep", path)
 
     # ------------------------------------------------------------------
     # FileBackend interface
@@ -699,11 +942,19 @@ class ImapSession(SessionLifecycle):
         if parsed == (None,):
             return self._list_mailboxes()
         if len(parsed) == 1:
+            mailbox = parsed[0]
+            folders: list[FileItem] = []
+            if self._tree_view:
+                entries = self._list_entries()
+                folders = self._sub_mailboxes(entries, mailbox)
+                if folders and (mailbox, True) not in entries:
+                    # \Noselect or not listed: a folder of folders only.
+                    return folders
             try:
-                return self._list_messages(parsed[0])
+                return folders + self._list_messages(mailbox)
             except OSError:
-                if self._is_hierarchy_only(parsed[0]):
-                    return []
+                if self._is_hierarchy_only(mailbox):
+                    return folders
                 raise
         if len(parsed) == 2:
             mailbox, uid = parsed
@@ -714,44 +965,15 @@ class ImapSession(SessionLifecycle):
         raise OSError(f"Cannot list: {path!r} is a file, not a directory")
 
     def _list_mailboxes(self) -> list[FileItem]:
-        """List all mailboxes as directory entries."""
-        imap = self._ensure_connected()
-        typ, data = imap.list()
-        if typ != "OK":
-            raise OSError(f"IMAP LIST failed: {data}")
+        """List the mailboxes at the root as directory entries.
 
-        items: list[FileItem] = []
-        mailbox_names: set[str] = set()
-        for entry in data:
-            if entry is None:
-                continue
-            raw = entry if isinstance(entry, bytes) else entry.encode()
-            m = _LIST_RE.match(raw)
-            if not m:
-                log.debug("Unparseable LIST entry: %r", entry)
-                continue
-
-            flags = m.group("flags").decode("ascii", errors="replace")
-            name_bytes = m.group("name")
-            name = _imap_utf7_decode(name_bytes)
-            mailbox_names.add(name)
-
-            # Skip names that cannot be opened: \Noselect, and \NonExistent
-            # (RFC 5258, implies \Noselect) - Dovecot's deleted parent of
-            # living sub-mailboxes.
-            lowered = flags.lower()
-            if "\\noselect" in lowered or "\\nonexistent" in lowered:
-                continue
-
-            items.append(
-                FileItem(
-                    name=name,
-                    is_dir=True,
-                )
-            )
-
-        self._mailbox_cache = mailbox_names
-        return items
+        Names that cannot be opened (\\Noselect, \\NonExistent) are left
+        out - in the tree view unless a mailbox below them can be opened.
+        """
+        entries = self._list_entries()
+        if self._tree_view:
+            return self._sub_mailboxes(entries, "")
+        return [FileItem(name=name, is_dir=True) for name, selectable in entries if selectable]
 
     def _list_messages(self, mailbox: str) -> list[FileItem]:
         """List messages in a mailbox as file entries."""
@@ -780,154 +1002,36 @@ class ImapSession(SessionLifecycle):
                 log.warning("FETCH failed for UIDs %s: %s", batch, fetch_data)
                 continue
 
-            for response_part in fetch_data:
-                if isinstance(response_part, tuple):
-                    header_line = response_part[0]
-                elif isinstance(response_part, bytes):
-                    header_line = response_part
-                else:
+            for response in _imap_responses(fetch_data):
+                attrs = _fetch_attributes(response)
+                uid = attrs.get(b"UID")
+                if not isinstance(uid, bytes) or not uid.isdigit():
                     continue
-                if isinstance(header_line, bytes):
-                    header_line = header_line.decode("ascii", errors="replace")
-
-                # Extract UID
-                uid_match = re.search(r"UID\s+(\d+)", header_line)
-                if not uid_match:
-                    continue
-                uid = uid_match.group(1)
-
-                # Extract RFC822.SIZE
-                size = 0
-                size_match = re.search(r"RFC822\.SIZE\s+(\d+)", header_line)
-                if size_match:
-                    size = int(size_match.group(1))
-
-                # Extract INTERNALDATE
-                modified = datetime.fromtimestamp(0)
-                date_match = re.search(r'INTERNALDATE\s+"([^"]+)"', header_line)
-                if date_match:
-                    try:
-                        modified = _internaldate(date_match.group(1))
-                    except Exception:
-                        pass
-
-                # Extract subject from ENVELOPE
-                subject = "no_subject"
-                env_match = re.search(r"ENVELOPE\s+\(", header_line)
-                if env_match:
-                    subject = self._extract_envelope_subject(header_line[env_match.start() :])
-
+                uid = uid.decode("ascii")
+                subject = _envelope_subject(attrs.get(b"ENVELOPE"))
                 sanitized_subject = _sanitize_filename(subject, max_len=80)
-                eml_name = f"{uid}_{sanitized_subject}.eml"
-
-                # Add the message as a file
                 items.append(
                     FileItem(
-                        name=eml_name,
-                        size=size,
-                        modified=modified,
+                        name=f"{uid}_{sanitized_subject}.eml",
+                        size=_fetch_number(attrs, b"RFC822.SIZE") or 0,
+                        modified=_fetch_date(attrs),
                     )
                 )
 
         return items
 
     def _extract_envelope_subject(self, envelope_str: str) -> str:
-        """Extract the subject field from an IMAP ENVELOPE response.
+        """The decoded subject of an ``ENVELOPE (...)`` text.
 
-        The ENVELOPE is structured as:
-            (date subject from sender reply-to to cc bcc in-reply-to message-id)
-        where subject is the second field (index 1), a quoted string or NIL.
+        The ENVELOPE is ``(date subject from sender reply-to to cc bcc
+        in-reply-to message-id)``; the subject is a quoted string, a
+        literal or NIL.
         """
-        # Find opening paren of ENVELOPE
-        start = envelope_str.index("(")
-        # Skip the date field (first element)
-        i = start + 1
-
-        # Skip whitespace
-        while i < len(envelope_str) and envelope_str[i] == " ":
-            i += 1
-
-        # Skip the date field (a quoted string or NIL)
-        i = self._skip_envelope_field(envelope_str, i)
-
-        # Skip whitespace
-        while i < len(envelope_str) and envelope_str[i] == " ":
-            i += 1
-
-        # Now we're at the subject field
-        if i >= len(envelope_str):
+        raw = envelope_str.encode("utf-8", "replace")
+        start = raw.find(b"(")
+        if start < 0:
             return "no_subject"
-
-        if envelope_str[i : i + 3].upper() == "NIL":
-            return "no_subject"
-
-        if envelope_str[i] == '"':
-            # Quoted string — find the closing quote (handle escapes)
-            j = i + 1
-            while j < len(envelope_str):
-                if envelope_str[j] == "\\":
-                    j += 2
-                    continue
-                if envelope_str[j] == '"':
-                    break
-                j += 1
-            raw_subject = envelope_str[i + 1 : j]
-            # Unescape
-            raw_subject = raw_subject.replace('\\"', '"').replace("\\\\", "\\")
-            return _decode_header(raw_subject) or "no_subject"
-
-        if envelope_str[i] == "{":
-            # Literal string — this is uncommon in ENVELOPE, but handle it
-            return "no_subject"
-
-        return "no_subject"
-
-    @staticmethod
-    def _skip_envelope_field(s: str, i: int) -> int:
-        """Skip one ENVELOPE field (quoted string, NIL, or parenthesized list)."""
-        if i >= len(s):
-            return i
-
-        if s[i : i + 3].upper() == "NIL":
-            return i + 3
-
-        if s[i] == '"':
-            j = i + 1
-            while j < len(s):
-                if s[j] == "\\":
-                    j += 2
-                    continue
-                if s[j] == '"':
-                    return j + 1
-                j += 1
-            return j
-
-        if s[i] == "(":
-            depth = 1
-            j = i + 1
-            while j < len(s) and depth > 0:
-                if s[j] == "(":
-                    depth += 1
-                elif s[j] == ")":
-                    depth -= 1
-                elif s[j] == '"':
-                    # Skip quoted string inside parens
-                    j += 1
-                    while j < len(s):
-                        if s[j] == "\\":
-                            j += 2
-                            continue
-                        if s[j] == '"':
-                            break
-                        j += 1
-                j += 1
-            return j
-
-        # Unknown token — skip to whitespace
-        j = i
-        while j < len(s) and s[j] not in (" ", ")"):
-            j += 1
-        return j
+        return _envelope_subject(_imap_value(raw, start)[0])
 
     def _list_attachments(self, mailbox: str, uid: str) -> list[FileItem]:
         """List MIME attachments of a specific message as file entries."""
@@ -935,10 +1039,7 @@ class ImapSession(SessionLifecycle):
         msg = email.message_from_bytes(raw, policy=email.policy.default)
         items: list[FileItem] = []
 
-        for part in msg.walk():
-            attachment_name = self._attachment_name(part)
-            if attachment_name is None:
-                continue
+        for attachment_name, part in self._named_attachments(msg):
             payload = part.get_payload(decode=True)
             size = len(payload) if payload else 0
             items.append(
@@ -950,9 +1051,27 @@ class ImapSession(SessionLifecycle):
 
         return items
 
+    def _select_existing(self, mailbox: str, path: str) -> None:
+        """``_select_mailbox`` (read-only), with a mailbox that is not
+        there as FileNotFoundError.
+
+        A refused SELECT says nothing by itself - its wording is free, and
+        a locked or busy mailbox is refused too. A fresh LIST decides: a
+        mailbox it does not carry as selectable holds no message. A LIST
+        that fails, or one that carries the mailbox, leaves the OSError."""
+        try:
+            self._select_mailbox(mailbox, readonly=True)
+        except OSError as exc:
+            if (mailbox, True) not in self._list_entries():
+                raise FileNotFoundError(
+                    errno.ENOENT, f"No such mailbox: {mailbox}", path
+                ) from exc
+            raise
+
     def _fetch_raw_message(self, mailbox: str, uid: str) -> bytes:
         """Fetch the full RFC822 body of a message by UID."""
-        self._select_mailbox(mailbox, readonly=True)
+        where = f"/{mailbox}/{uid}"
+        self._select_existing(mailbox, where)
         imap = self._ensure_connected()
         typ, data = imap.uid("FETCH", uid, "(RFC822)")
         if typ != "OK":
@@ -960,6 +1079,9 @@ class ImapSession(SessionLifecycle):
         for response_part in data:
             if isinstance(response_part, tuple):
                 return response_part[1]
+        if not any(part for part in data or ()):
+            # UID FETCH of a UID that is not there answers OK, no data.
+            raise FileNotFoundError(errno.ENOENT, "No such message", where)
         raise OSError(f"No RFC822 body returned for UID {uid} in {mailbox!r}")
 
     @_imap_errors_as_oserror
@@ -972,11 +1094,11 @@ class ImapSession(SessionLifecycle):
             return FileItem(name="/", is_dir=True)
 
         if len(parsed) == 1:
-            # Mailbox
+            # Mailbox, or a parent level of one
             mailbox = parsed[0]
-            if mailbox not in self._mailbox_names():
+            if mailbox not in self._mailbox_nodes():
                 raise FileNotFoundError(f"Mailbox not found: {mailbox}")
-            return FileItem(name=mailbox, is_dir=True)
+            return FileItem(name=posixpath.basename(self.normalize(path)), is_dir=True)
 
         if len(parsed) == 2:
             mailbox, uid = parsed
@@ -988,7 +1110,7 @@ class ImapSession(SessionLifecycle):
             leaf_name = parts[-1] if parts else path
             if leaf_name.lower().endswith(".eml"):
                 # It's a message file
-                self._select_mailbox(mailbox, readonly=True)
+                self._select_existing(mailbox, path)
                 imap = self._ensure_connected()
                 typ, data = imap.uid("FETCH", uid, "(RFC822.SIZE INTERNALDATE)")
                 if typ != "OK":
@@ -998,27 +1120,15 @@ class ImapSession(SessionLifecycle):
                 if not any(part for part in data or ()):
                     # UID FETCH of a UID that is not there answers OK, no data.
                     raise FileNotFoundError(errno.ENOENT, "No such message", path)
-                for response_part in data:
-                    # A reply with a literal arrives as a (line, literal)
-                    # tuple; one without - the usual answer to RFC822.SIZE
-                    # INTERNALDATE - as plain bytes.
-                    if isinstance(response_part, tuple):
-                        line = response_part[0]
-                    elif isinstance(response_part, (bytes, str)):
-                        line = response_part
-                    else:
-                        continue
-                    if isinstance(line, bytes):
-                        line = line.decode("ascii", errors="replace")
-                    sm = re.search(r"RFC822\.SIZE\s+(\d+)", line)
-                    if sm:
-                        size = int(sm.group(1))
-                    dm = re.search(r'INTERNALDATE\s+"([^"]+)"', line)
-                    if dm:
-                        try:
-                            modified = _internaldate(dm.group(1))
-                        except Exception:
-                            pass
+                for response in _imap_responses(data):
+                    # A reply with a literal arrives split into a (line,
+                    # literal) tuple and the rest of the line; joined here.
+                    attrs = _fetch_attributes(response)
+                    found = _fetch_number(attrs, b"RFC822.SIZE")
+                    if found is not None:
+                        size = found
+                    if b"INTERNALDATE" in attrs:
+                        modified = _fetch_date(attrs)
                 return FileItem(name=leaf_name, size=size, modified=modified)
             else:
                 # It's the attachment directory for this UID
@@ -1029,12 +1139,14 @@ class ImapSession(SessionLifecycle):
             # Stat an attachment
             raw = self._fetch_raw_message(mailbox, uid)
             msg = email.message_from_bytes(raw, policy=email.policy.default)
-            for part in msg.walk():
-                if self._attachment_name(part) == att_name:
-                    payload = part.get_payload(decode=True)
-                    size = len(payload) if payload else 0
-                    return FileItem(name=att_name, size=size)
-            raise OSError(f"Attachment {att_name!r} not found in UID {uid}")
+            part = self._find_attachment(msg, att_name)
+            if part is not None:
+                payload = part.get_payload(decode=True)
+                size = len(payload) if payload else 0
+                return FileItem(name=att_name, size=size)
+            raise FileNotFoundError(
+                errno.ENOENT, f"Attachment {att_name!r} not found in UID {uid}", path
+            )
 
         raise OSError(f"Invalid path: {path!r}")
 
@@ -1045,7 +1157,7 @@ class ImapSession(SessionLifecycle):
         if parsed == (None,):
             return True
         if len(parsed) == 1:
-            return parsed[0] in self._mailbox_names()
+            return parsed[0] in self._mailbox_nodes()
         if len(parsed) == 2:
             mailbox, uid = parsed
             if uid is None:
@@ -1059,11 +1171,13 @@ class ImapSession(SessionLifecycle):
         return False  # Attachment file
 
     def exists(self, path: str) -> bool:
-        """Check if the given path exists."""
+        """False only when the mailbox, message or attachment is not there.
+        A refused, dropped or timed-out request is an OSError: the transfer
+        worker takes False as the go-ahead to write."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
     @_imap_errors_as_oserror
@@ -1113,9 +1227,15 @@ class ImapSession(SessionLifecycle):
             if typ != "OK":
                 raise OSError(f"Cannot mark UID {uid} as deleted in {mailbox!r}: {data}")
             typ, data = _expunge_one(imap, uid)
-            if typ != "OK":
-                log.warning("Expunge failed in %s: %s", mailbox, data)
             self._selected_mailbox = None  # State may have changed
+            if typ != "OK":
+                # The message is still in the mailbox (flagged \Deleted):
+                # reporting success would make it reappear on the next
+                # listing. An expunge from any client completes it.
+                raise OSError(
+                    f"Cannot remove message UID {uid} from {mailbox!r}: "
+                    + b" ".join(_as_bytes(d) for d in data or ()).decode("utf-8", "replace")
+                )
             log.info("Deleted message UID %s from %s", uid, mailbox)
             return
 
@@ -1285,12 +1405,12 @@ class ImapSession(SessionLifecycle):
             mailbox, uid, att_name = parsed
             raw = self._fetch_raw_message(mailbox, uid)
             msg = email.message_from_bytes(raw, policy=email.policy.default)
-            for part in msg.walk():
-                if self._attachment_name(part) == att_name:
-                    payload = part.get_payload(decode=True)
-                    if payload is None:
-                        payload = b""
-                    return io.BytesIO(payload)
+            part = self._find_attachment(msg, att_name)
+            if part is not None:
+                payload = part.get_payload(decode=True)
+                if payload is None:
+                    payload = b""
+                return io.BytesIO(payload)
             raise OSError(f"Attachment {att_name!r} not found in UID {uid} of {mailbox!r}")
 
         raise OSError(f"Cannot read: {path!r} is a directory")
@@ -1304,11 +1424,12 @@ class ImapSession(SessionLifecycle):
             /INBOX              — write raw RFC 822 bytes directly
             /INBOX/readme.txt   — wrap arbitrary file in an RFC 822 email
             /INBOX/5_sub.eml    — write raw RFC 822 bytes directly
+            /Work/2025/note.eml — the same into a nested mailbox
 
         The transfer worker may create temp paths like
         ``/INBOX/.readme.txt.part-<id>`` which are not valid UID references.
-        We handle those by parsing the path manually instead of relying on
-        ``_parse_path()`` (which expects a numeric UID prefix).
+        So the mailbox is resolved like ``_parse_path()`` does it, but the
+        rest is kept as a file name instead of being read as a UID.
         """
         normalized = self.normalize(path)
         parts = [p for p in normalized.split("/") if p]
@@ -1316,21 +1437,27 @@ class ImapSession(SessionLifecycle):
         if not parts:
             raise OSError(f"Cannot write to root: {path!r}")
 
-        mailbox = parts[0]
         imap = self._ensure_connected()
+        # The mailbox is the longest leading run of the path that names one,
+        # as for every other path ("/Work/2025/note.eml" -> "Work/2025").
+        mailbox, rest = self._split_mailbox(parts)
 
-        if len(parts) == 1:
-            # Single component — could be a write to root like "/bigfile.bin"
-            # or a legitimate mailbox name like "INBOX" or "Sent.Items".
-            # Check if a mailbox with this name actually exists; if not,
-            # treat it as a filename and write to INBOX.
+        if mailbox is None and len(parts) == 1:
+            # Single unknown component — could be a write to root like
+            # "/bigfile.bin" or a mailbox the cached LIST does not know yet.
+            # Check whether it exists; if not, treat it as a filename and
+            # write to INBOX.
+            # The probe goes through _select_mailbox so the session's idea of
+            # what is selected, and how, stays the server's: a successful
+            # EXAMINE is read-only, a failed one deselects (RFC 3501 6.3.1).
+            # A mailbox that is selected already exists; no probe needed.
+            mailbox = parts[0]
+            if self._selected_mailbox == mailbox:
+                return _SpooledWriter(imap, mailbox, lock=io_lock(self))
             try:
-                imap_enc = _imap_utf7_encode(mailbox).decode("ascii")
-                typ, _ = imap.select(imap_enc, readonly=True)
-                if typ == "OK":
-                    self._selected_mailbox = mailbox
-                    return _SpooledWriter(imap, mailbox, lock=io_lock(self))
-            except Exception:
+                self._select_mailbox(mailbox, readonly=True)
+                return _SpooledWriter(imap, mailbox, lock=io_lock(self))
+            except (OSError, imaplib.IMAP4.error):
                 pass
             # Mailbox doesn't exist — treat as filename, write to INBOX
             filename = mailbox
@@ -1338,10 +1465,16 @@ class ImapSession(SessionLifecycle):
             log.info("IMAP write to root-level file %r — using mailbox INBOX", filename)
             return _SpooledWriter(imap, mailbox, filename=filename, lock=io_lock(self))
 
-        if len(parts) == 2:
-            filename = parts[1]
+        if mailbox is None:
+            mailbox, rest = parts[0], parts[1:]
+
+        if not rest:
+            # The mailbox itself: raw RFC 822 bytes
+            return _SpooledWriter(imap, mailbox, lock=io_lock(self))
+
+        if len(rest) == 1:
             # Pass filename so _SpooledWriter can wrap non-.eml data
-            return _SpooledWriter(imap, mailbox, filename=filename, lock=io_lock(self))
+            return _SpooledWriter(imap, mailbox, filename=rest[0], lock=io_lock(self))
 
         raise OSError(f"Cannot write to {path!r}: only message-level writes are supported")
 

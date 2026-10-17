@@ -100,8 +100,10 @@ class _FakePowerShell:
         import base64
         import re
 
-        if "Test-Path" in script:
-            return SimpleNamespace(status_code=0, std_out=b"YES" if self.exists else b"NO", std_err=b"")
+        if "Write-Output 'YES'" in script:  # the exists() probe
+            return SimpleNamespace(
+                status_code=0, std_out=b"YES" if self.exists else b"NO", std_err=b""
+            )
         if "ReadAllBytes" in script:
             if self.read_error:
                 return SimpleNamespace(status_code=1, std_out=b"", std_err=self.read_error.encode())

@@ -95,7 +95,11 @@ def test_happy_required_flags_follow_group_and_mutation():
     assert tools["script_run"]["required_flags"] == ["--mcp-allow-scripts"]
     assert tools["script_run"]["transports"] == ["stdio"]
     assert tools["pack_formats"]["required_flags"] == ["--mcp-tools packer"]
-    assert tools["pack"]["required_flags"] == ["--mcp-tools packer", "--mcp-write", "--mcp-root DIR"]
+    assert tools["pack"]["required_flags"] == [
+        "--mcp-tools packer",
+        "--mcp-write",
+        "--mcp-root DIR",
+    ]
     assert tools["pack"]["mutating"] is True and tools["pack_formats"]["mutating"] is False
     assert tools["list_backends"]["group"] == "remote"
     assert tools["remote_exec"]["required_flags"] == ["--mcp-tools exec", "--mcp-allow-exec"]

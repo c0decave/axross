@@ -44,6 +44,7 @@ import secrets
 import shlex
 import shutil
 import subprocess
+from dataclasses import replace
 from datetime import datetime
 from typing import IO, TYPE_CHECKING
 
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
 
 from core.backend import SessionLifecycle
 from core.subprocess_env import clean_child_env
+from core.telnet_client import copy_command, rename_command
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -317,37 +319,15 @@ class RshSession(SessionLifecycle):
         # ``ls -la --time-style=long-iso`` would be nicer but isn't
         # universal on AIX / Solaris. Keep the safer plain ``ls -la``
         # and parse defensively.
-        out = self._run_remote(f"ls -la {shlex.quote(path)}")
+        from core.exec_util import ls_dir_operand
+
+        out = self._run_remote(f"ls -la {shlex.quote(ls_dir_operand(path))}")
         items: list[FileItem] = []
         for raw in split_lf_only_stream(out.decode("utf-8", "replace")):
-            line = raw.strip()
-            if not line or line.startswith("total ") or line.startswith("ls:"):
+            item = _parse_ls_line(raw)
+            if item is None or item.name in (".", ".."):
                 continue
-            m = _LS_RE.match(line)
-            if not m:
-                continue
-            name = m.group("name")
-            if name in (".", ".."):
-                continue
-            perms_text = m.group("perms")
-            # Strip ``-> target`` for symlinks; we don't model them.
-            if perms_text.startswith("l"):
-                name = name.split(" -> ", 1)[0]
-            is_dir = perms_text.startswith("d")
-            try:
-                size = int(m.group("size"))
-            except ValueError:
-                size = 0
-            items.append(
-                FileItem(
-                    name=name,
-                    is_dir=is_dir,
-                    is_link=perms_text.startswith("l"),
-                    size=size,
-                    modified=datetime.fromtimestamp(0),
-                    permissions=_perms_to_octal(perms_text),
-                )
-            )
+            items.append(item)
         return items
 
     def stat(self, path: str) -> FileItem:
@@ -361,24 +341,40 @@ class RshSession(SessionLifecycle):
                 modified=datetime.fromtimestamp(0),
                 permissions=0o755,
             )
-        parent = self.parent(path)
-        leaf = posixpath.basename(path)
-        for item in self.list_dir(parent):
-            if item.name == leaf:
-                return item
-        raise OSError(f"rsh stat({path}): not found")
+        # The entry itself (-d: a folder is not expanded). It used to be
+        # looked up in a listing of the parent, where a cut connection, a
+        # refused parent and a missing parent all ended as "not found".
+        from core.exec_util import ls_error
+
+        # LC_ALL=C: rshd runs the command in the user's locale, and only the
+        # C wording of "No such file or directory" is told apart (it also
+        # outranks a LANGUAGE setting).
+        status, out, err = self._run_status(f"LC_ALL=C ls -la -d {shlex.quote(path)}")
+        if status != 0:
+            raise ls_error(f"rsh stat({path})", err.decode("utf-8", "replace").strip())
+        for raw in split_lf_only_stream(out.decode("utf-8", "replace")):
+            item = _parse_ls_line(raw)
+            if item is not None and item.name == path:
+                return replace(item, name=posixpath.basename(path))
+        raise OSError(f"rsh stat({path}): unreadable answer from ls: {out[:200]!r}")
 
     def is_dir(self, path: str) -> bool:
+        """False for a missing path or one below a file; any other
+        failure is an OSError (transfer_manager recurses on True)."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
             return False
 
     def exists(self, path: str) -> bool:
+        """False only when ``ls`` reports the path missing. A timeout, a
+        cut connection, a refused permission or an unreadable answer is
+        an OSError: server_side_copy(overwrite=False) and the transfer
+        worker take False as the go-ahead to write."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
             return False
 
     def open_read(self, path: str) -> IO[bytes]:
@@ -424,7 +420,8 @@ class RshSession(SessionLifecycle):
     def rename(self, src: str, dst: str) -> None:
         src = _validate_path(self.normalize(src))
         dst = _validate_path(self.normalize(dst))
-        self._run_remote(f"mv -- {shlex.quote(src)} {shlex.quote(dst)}")
+        # Plain mv moves src INTO an existing folder dst (review B6 twin).
+        self._run_remote(rename_command(src, dst))
 
     def chmod(self, path: str, mode: int) -> None:
         path = _validate_path(self.normalize(path))
@@ -436,7 +433,7 @@ class RshSession(SessionLifecycle):
         systems anyway)."""
         src = _validate_path(self.normalize(src))
         dst = _validate_path(self.normalize(dst))
-        self._run_remote(f"cp -p -- {shlex.quote(src)} {shlex.quote(dst)}")
+        self._run_remote(copy_command(src, dst, preserve=True))
 
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         path = _validate_path(self.normalize(path))
@@ -473,10 +470,12 @@ class RshSession(SessionLifecycle):
             out = self._run_remote(f"{tool} -- {shlex.quote(path)}").decode("utf-8", "replace")
         except RshError:
             return ""
-        digest = out.split()[0] if out.strip() else ""
+        from core.exec_util import digest_from_sum_output
+
+        digest = digest_from_sum_output(out, algorithm)
         if not digest:
             return ""
-        return f"{algorithm}:{digest.lower()}"
+        return f"{algorithm}:{digest}"
 
     # ------------------------------------------------------------------
     # Internal: actual upload (called by writer.close)
@@ -486,6 +485,34 @@ class RshSession(SessionLifecycle):
         op = ">>" if append else ">"
         cmd = f"cat {op} {shlex.quote(path)}"
         self._run_remote(cmd, stdin=data)
+
+
+def _parse_ls_line(raw: str) -> FileItem | None:
+    """One ``ls -la`` line as a FileItem; None for the ``total`` line,
+    an ``ls:`` message and anything else the pattern does not match."""
+    line = raw.strip()
+    if not line or line.startswith("total ") or line.startswith("ls:"):
+        return None
+    m = _LS_RE.match(line)
+    if not m:
+        return None
+    name = m.group("name")
+    perms_text = m.group("perms")
+    # Strip ``-> target`` for symlinks; we don't model them.
+    if perms_text.startswith("l"):
+        name = name.split(" -> ", 1)[0]
+    try:
+        size = int(m.group("size"))
+    except ValueError:
+        size = 0
+    return FileItem(
+        name=name,
+        is_dir=perms_text.startswith("d"),
+        is_link=perms_text.startswith("l"),
+        size=size,
+        modified=datetime.fromtimestamp(0),
+        permissions=_perms_to_octal(perms_text),
+    )
 
 
 def _perms_to_octal(text: str) -> int:

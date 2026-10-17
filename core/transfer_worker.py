@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import string
 import time
 import uuid
 from collections import deque
@@ -14,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from core.path_policy import safe_join
+from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:
     pass
@@ -28,6 +31,95 @@ SPEED_WINDOW = 3.0  # Seconds for rolling speed average
 CHUNK_SIZE = 1024 * 1024
 # Bytes compared at each end of a partial before a resume appends to it.
 RESUME_VERIFY_WINDOW = 64 * 1024
+
+
+# A partial is named ``.<name>.part-<job id>-<source fingerprint>``. The
+# fingerprint records which version of the source its bytes came from, so
+# a resume never appends a changed source to an older version's head.
+PARTIAL_MARK = ".part-"
+FINGERPRINT_LEN = 8
+JOB_ID_LEN = 8
+_PARTIAL_TAIL_BYTES = JOB_ID_LEN + 1 + FINGERPRINT_LEN
+
+
+def source_fingerprint(item) -> str:
+    """Short digest of a source's size and modification time, or "" when
+    the backend reports no modification time (then nothing is resumed).
+
+    A symlink's own time does not change with its target's content, so a
+    link has no fingerprint either."""
+    if item is None or getattr(item, "is_link", False):
+        return ""
+    size = int(getattr(item, "size", 0) or 0)
+    modified = getattr(item, "modified", None)
+    try:
+        stamp = float(modified.timestamp()) if modified is not None else 0.0
+    except (AttributeError, OSError, OverflowError, ValueError):
+        stamp = 0.0
+    if stamp <= 0:
+        return ""
+    text = f"{size}:{round(stamp * 1_000_000)}"
+    return hashlib.sha256(text.encode("ascii")).hexdigest()[:FINGERPRINT_LEN]
+
+
+def partial_prefix(filename: str) -> str:
+    """``.<filename>.part-``; for a name near the 255-byte limit the name
+    is cut and a digest of the whole name keeps it unique."""
+    return hidden_sibling_name(filename, PARTIAL_MARK, reserve=_PARTIAL_TAIL_BYTES)
+
+
+def partial_name(filename: str, job_id: str, fingerprint: str) -> str:
+    """The temp file name a transfer of *filename* writes to."""
+    tail = f"{job_id}-{fingerprint}" if fingerprint else job_id
+    return partial_prefix(filename) + tail
+
+
+def partial_fingerprint(name: str, filename: str) -> str:
+    """The source fingerprint recorded in partial *name*, "" when none."""
+    prefix = partial_prefix(filename)
+    if not name.startswith(prefix):
+        return ""
+    _, sep, fingerprint = name[len(prefix):].rpartition("-")
+    if (
+        sep
+        and len(fingerprint) == FINGERPRINT_LEN
+        and all(c in string.hexdigits for c in fingerprint)
+    ):
+        return fingerprint.lower()
+    return ""
+
+
+_FALLBACK_UMASK: int | None = None
+
+
+def process_umask() -> int:
+    """This process's umask, read without changing it where possible.
+
+    os.umask() can only be read by setting it, which for a moment lets
+    another thread create a file with the wrong mode; /proc avoids that.
+    """
+    global _FALLBACK_UMASK
+    try:
+        with open("/proc/self/status", encoding="ascii", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("Umask:"):
+                    return int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        pass
+    if _FALLBACK_UMASK is None:
+        current = os.umask(0o022)
+        os.umask(current)
+        _FALLBACK_UMASK = current
+    return _FALLBACK_UMASK
+
+
+def copy_mode(source_mode: int | None) -> int | None:
+    """The permission bits a copy of a *source_mode* file gets, like cp:
+    the source's rwx bits less the umask, never set-id or sticky bits.
+    ``None`` when the source's mode is unknown (the backend default)."""
+    if not source_mode:
+        return None
+    return source_mode & 0o777 & ~process_umask()
 
 
 def _read_exact(handle, size: int) -> bytes:
@@ -66,12 +158,27 @@ class TransferStatus(Enum):
     CANCELLED = "cancelled"
 
 
+#: Checksum prefixes that fingerprint one stored copy, not its content:
+#: the same bytes stored twice can carry different values (an S3
+#: multipart / SSE-KMS / SSE-C ETag, a WebDAV getetag). Comparing them
+#: after a copy reported identical files as corrupt, so they are never
+#: compared; forced verification streams both sides instead.
+_STORAGE_FINGERPRINTS = frozenset({"s3-etag", "etag"})
+
+
 class _ChecksumMismatch(Exception):
     """Raised by _verify_integrity when source and destination
     checksums disagree after a completed transfer. Caught by the
     worker loop and surfaced as a regular TransferStatus.ERROR with
     a specific error message so the UI can distinguish data-corruption
     from other failure modes."""
+
+
+class _SameEntry(OSError):
+    """Source and destination turned out to be one file under two paths.
+
+    Raised before the temp file replaces the destination; a move would
+    otherwise delete "the source", which is the only copy."""
 
 
 class _DestinationKept(Exception):
@@ -116,6 +223,16 @@ class TransferJob:
     # True when "newer" found a destination at least as new: nothing was
     # written and a move kept its source.
     skipped: bool = False
+    # source_fingerprint() of the source when the job was queued; named in
+    # the temp file so a later resume can tell whether the source changed.
+    source_fingerprint: str = ""
+    # The source's permission bits and modification time (epoch seconds)
+    # when queued, None when unknown: the copy gets them (see copy_mode).
+    source_mode: int | None = None
+    source_mtime: float | None = None
+    # False for a failed row that no retry can fix (a name that cannot be
+    # joined safely); retry_job refuses it.
+    retryable: bool = True
 
     @property
     def eta_seconds(self) -> float:
@@ -345,6 +462,9 @@ class TransferWorker(QObject):
         - Composite S3 multipart ETag (``s3-etag:...``) against a
           plain ``md5:`` from a non-multipart source — incomparable,
           skip.
+        - Two storage fingerprints (``s3-etag:`` / ``etag:``, see
+          :data:`_STORAGE_FINGERPRINTS`) — they differ for identical
+          bytes, so they are not compared either.
 
         Cancel: the streaming fallback honours ``job.cancel_event``;
         setting it between chunks raises :class:`InterruptedError`
@@ -369,7 +489,7 @@ class TransferWorker(QObject):
         if src_cs and dst_cs:
             src_algo, _, src_hex = src_cs.partition(":")
             dst_algo, _, dst_hex = dst_cs.partition(":")
-            if src_algo == dst_algo:
+            if src_algo == dst_algo and src_algo not in _STORAGE_FINGERPRINTS:
                 if src_hex != dst_hex:
                     raise _ChecksumMismatch(
                         f"Integrity FAIL for {job.filename}: source {src_cs} != dest {dst_cs}"
@@ -380,10 +500,11 @@ class TransferWorker(QObject):
                     src_algo,
                 )
                 return
-            # Algo mismatch (e.g. md5 vs sha256). Fall through to the
-            # streaming path iff forced; otherwise skip as before.
+            # Algo mismatch (e.g. md5 vs sha256) or a storage fingerprint
+            # that is no content hash. Fall through to the streaming path
+            # iff forced; otherwise skip as before.
             log.debug(
-                "Native algo mismatch for %s: src=%s dst=%s",
+                "Native checksums not comparable for %s: src=%s dst=%s",
                 job.filename,
                 src_algo,
                 dst_algo,
@@ -610,37 +731,57 @@ class TransferWorker(QObject):
 
         try:
             resume_offset = 0
+            live_size = 0
             if job.resume and dest_backend.exists(temp_path):
-                # Resume from existing partial file
-                try:
-                    partial_stat = dest_backend.stat(temp_path)
-                    resume_offset = partial_stat.size
-                    log.info("Resuming transfer at offset %d for %s", resume_offset, job.filename)
-                except OSError:
-                    resume_offset = 0
+                live_source = self._live_source_item(job)
+                live_size = int(getattr(live_source, "size", 0) or 0) if live_source else 0
+                if live_size:
+                    # The size the job carries can be stale: a retry copies
+                    # it from the failed job.
+                    job.total_bytes = live_size
+                if not self._partial_is_of_this_source(job, temp_path, live_source):
+                    # A partial is adopted by its name; only the fingerprint
+                    # in that name says it was written from the source as it
+                    # is now. Another version (or no record) means restart.
+                    log.warning(
+                        "Partial %s was not written from %s as it is now; "
+                        "restarting transfer",
+                        temp_path,
+                        job.source_path,
+                    )
+                    dest_backend.remove(temp_path)
+                    job.temp_path = ""
+                    job.source_fingerprint = source_fingerprint(live_source)
+                    temp_path = self._temp_destination_path(job)
+                    if dest_backend.exists(temp_path):
+                        dest_backend.remove(temp_path)
+                else:
+                    try:
+                        partial_stat = dest_backend.stat(temp_path)
+                        resume_offset = partial_stat.size
+                        log.info(
+                            "Resuming transfer at offset %d for %s", resume_offset, job.filename
+                        )
+                    except OSError:
+                        resume_offset = 0
             elif dest_backend.exists(temp_path):
                 dest_backend.remove(temp_path)
 
-            if resume_offset > 0:
-                # The size the job carries can be stale: a retry copies it
-                # from the failed job, and the source may have been rewritten
-                # since. Resuming past the live end would read nothing and
-                # finalize the old partial as the file.
-                source_size = self._live_source_size(job)
-                if source_size:
-                    job.total_bytes = source_size
-                limit = source_size if source_size is not None else job.total_bytes
-                if (source_size is not None or limit > 0) and resume_offset > limit:
-                    log.warning(
-                        "Discarding oversized partial %s (%d > %d bytes) "
-                        "for %s; restarting transfer",
-                        temp_path,
-                        resume_offset,
-                        limit,
-                        job.filename,
-                    )
-                    dest_backend.remove(temp_path)
-                    resume_offset = 0
+            if resume_offset > live_size:
+                # Only a partial with the live source's fingerprint gets an
+                # offset, so live_size is the source's size right now.
+                # Resuming past its end would read nothing and finalize the
+                # old partial as the file.
+                log.warning(
+                    "Discarding oversized partial %s (%d > %d bytes) "
+                    "for %s; restarting transfer",
+                    temp_path,
+                    resume_offset,
+                    live_size,
+                    job.filename,
+                )
+                dest_backend.remove(temp_path)
+                resume_offset = 0
 
             with source_backend.open_read(job.source_path) as src:
                 if resume_offset > 0 and not self._partial_matches_source(
@@ -665,8 +806,11 @@ class TransferWorker(QObject):
                         job.filename,
                         temp_path,
                     )
+                    self._refuse_aliased_source(job, temp_path)
                     self._check_existing_destination(job)
+                    self._apply_source_mode(job, temp_path)
                     self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
+                    self._apply_source_mtime(job)
                     cleanup_temp = False
                     return
                 if resume_offset > 0:
@@ -682,6 +826,9 @@ class TransferWorker(QObject):
                             exc,
                         )
                         resume_offset = 0
+                mode_set = False
+                if resume_offset == 0:
+                    mode_set = self._precreate_private_temp(job, temp_path)
                 dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
 
                 try:
@@ -700,11 +847,15 @@ class TransferWorker(QObject):
                 finally:
                     dst.close()
 
+            self._refuse_aliased_source(job, temp_path)
             self._check_existing_destination(job)
+            if not mode_set:
+                self._apply_source_mode(job, temp_path)
             self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
+            self._apply_source_mtime(job)
 
             cleanup_temp = False
-        except (_DestinationKept, FileExistsError):
+        except (_DestinationKept, FileExistsError, _SameEntry):
             # Refused to replace the destination: the partial is of no
             # use to a retry, which would be refused the same way.
             raise
@@ -721,6 +872,80 @@ class TransferWorker(QObject):
                         dest_backend.remove(temp_path)
                 except OSError:
                     log.warning("Could not remove partial transfer %s", temp_path)
+
+    @staticmethod
+    def _precreate_private_temp(job: TransferJob, temp_path: str) -> bool:
+        """Give a fresh temp file the source's mode BEFORE any data lands
+        when that mode is narrower than a default file's (a 0600 key):
+        written first and chmod-ed after, the bytes would sit group- or
+        world-readable for the whole transfer. True when the mode is set."""
+        mode = copy_mode(job.source_mode)
+        if mode is None or mode & 0o044 == 0o044:
+            return False
+        from core.atomic_io import _precreate_with_mode
+
+        _precreate_with_mode(job.dest_backend, temp_path, mode)
+        return True
+
+    @staticmethod
+    def _apply_source_mode(job: TransferJob, temp_path: str) -> None:
+        """Best effort: a backend without chmod keeps its own default."""
+        mode = copy_mode(job.source_mode)
+        if mode is None:
+            return
+        from core.atomic_io import _restore_mode
+
+        _restore_mode(job.dest_backend, temp_path, mode)
+
+    @staticmethod
+    def _apply_source_mtime(job: TransferJob) -> None:
+        """Give the copy the source's modification time where the backend
+        can set one, so a later compare sees "same size and time"."""
+        setter = getattr(job.dest_backend, "set_modified", None)
+        if not job.source_mtime or not callable(setter):
+            return
+        try:
+            setter(job.dest_path, job.source_mtime)
+        except (OSError, NotImplementedError, ValueError) as exc:
+            log.debug("cannot set the modification time of %s: %s", job.dest_path, exc)
+
+    @staticmethod
+    def _refuse_aliased_source(job: TransferJob, temp_path: str) -> None:
+        """Raise :class:`_SameEntry` when a move's source folder shows the
+        temp file just written into the destination folder.
+
+        The temp name carries this job's id, so seeing it next to the
+        source proves both folders are one folder under two paths (sshfs
+        of localhost, one share over two protocols, a bind mount), which
+        no path or inode comparison can always tell. With the same name
+        (case-insensitively) the destination then IS the source, and the
+        move's final delete would remove the only copy. A probe that
+        fails proves nothing either way, so it refuses too: a kept source
+        costs a second copy, a wrong delete costs the file.
+        """
+        if not job.move:
+            return
+        src_backend, dest_backend = job.source_backend, job.dest_backend
+        dest_sep = dest_backend.separator() or "/"
+        src_sep = src_backend.separator() or "/"
+        dest_name = job.dest_path.rsplit(dest_sep, 1)[-1]
+        src_name = job.source_path.rsplit(src_sep, 1)[-1]
+        if dest_name.casefold() != src_name.casefold():
+            return
+        temp_name = temp_path.rsplit(dest_sep, 1)[-1]
+        try:
+            probe = safe_join(src_backend, src_backend.parent(job.source_path), temp_name)
+            visible = src_backend.exists(probe)
+        except Exception as exc:  # noqa: BLE001 - unprovable means keep the source
+            raise _SameEntry(
+                f"cannot rule out that {job.source_path} and {job.dest_path} "
+                f"are one file ({exc}); nothing was replaced"
+            ) from exc
+        if visible:
+            raise _SameEntry(
+                f"source and destination are the same: {job.dest_path} "
+                f"(the source folder is the destination folder under another path)"
+            )
 
     @staticmethod
     def _partial_matches_source(src, dest_backend, temp_path: str, offset: int) -> bool:
@@ -756,13 +981,25 @@ class TransferWorker(QObject):
         return False
 
     @staticmethod
-    def _live_source_size(job: TransferJob) -> int | None:
-        """The source's size right now, or ``None`` when it cannot be read."""
+    def _live_source_item(job: TransferJob):
+        """The source's stat right now, or ``None`` when it cannot be read."""
         try:
-            return int(getattr(job.source_backend.stat(job.source_path), "size", 0) or 0)
+            return job.source_backend.stat(job.source_path)
         except (OSError, TypeError, ValueError) as exc:
             log.debug("Resume: cannot stat source %s: %s", job.source_path, exc)
             return None
+
+    @staticmethod
+    def _partial_is_of_this_source(job: TransferJob, temp_path: str, live_source) -> bool:
+        """True when the fingerprint in the partial's name is the live
+        source's: same size and modification time as when it was written."""
+        live = source_fingerprint(live_source)
+        if not live:
+            return False
+        sep = job.dest_backend.separator() or "/"
+        dest_name = job.dest_path.rsplit(sep, 1)[-1]
+        temp_name = temp_path.rsplit(sep, 1)[-1]
+        return partial_fingerprint(temp_name, dest_name) == live
 
     @staticmethod
     def _temp_destination_path(job: TransferJob) -> str:
@@ -777,7 +1014,9 @@ class TransferWorker(QObject):
         filename = (
             job.dest_path.rsplit(separator, 1)[-1] if separator in job.dest_path else job.dest_path
         )
-        temp_name = f".{filename}.part-{job.job_id}"
+        if not job.source_fingerprint and job.source_backend is not None:
+            job.source_fingerprint = source_fingerprint(TransferWorker._live_source_item(job))
+        temp_name = partial_name(filename, job.job_id, job.source_fingerprint)
         job.temp_path = safe_join(dest_backend, parent, temp_name)
         return job.temp_path
 

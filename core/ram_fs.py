@@ -19,7 +19,8 @@ independent caps prevent that:
 
 1. **Per-instance cap** ``max_bytes`` (default 256 MiB) —
    set at construction time. Every write that would push
-   ``RamFS.size_bytes`` past it raises ``OSError``.
+   ``RamFS.size_bytes`` plus what open writers have buffered past
+   it raises ``OSError`` at ``write()``, not only at ``close()``.
 2. **System-pressure guard** — before each write we check
    the OS-reported free memory. On Linux we parse
    ``/proc/meminfo`` directly (no dep). On other platforms
@@ -206,6 +207,11 @@ class RamFsSession(SessionLifecycle):
         # Sum of all file sizes in _tree, kept in step by every mutation
         # (summing the tree per write made n writes cost O(n^2)).
         self._used_bytes = 0
+        # Growth buffered by open writers and not committed yet. It is
+        # RAM all the same, so the per-instance cap counts it: checking
+        # only committed bytes let one writer buffer 64 MiB into a
+        # 10 MiB RamFS before close() refused.
+        self._reserved_bytes = 0
         log.info(
             "RamFsSession opened: label=%s, max=%d B, system-reserve=%d B",
             label,
@@ -239,6 +245,7 @@ class RamFsSession(SessionLifecycle):
             self._tree.clear()
             self._tree["/"] = _Entry(is_dir=True, mode=0o755)
             self._used_bytes = 0
+            self._reserved_bytes = 0
         log.info("RamFsSession closed: %s — all bytes discarded", self._label)
 
     def close(self) -> None:
@@ -280,17 +287,24 @@ class RamFsSession(SessionLifecycle):
     # Capacity guards
     # ------------------------------------------------------------------
 
-    def _check_capacity(self, additional_bytes: int) -> None:
+    def _check_capacity(self, additional_bytes: int, *, memory: bool = True) -> None:
         """Raise :class:`RamFsCapacityError` if accepting
-        *additional_bytes* would push us past either cap."""
+        *additional_bytes* would push us past either cap.
+
+        The per-instance cap counts committed bytes plus what open
+        writers reserved. ``memory=False`` skips the free-memory probe,
+        for bytes that are already in RAM (a commit of a buffer)."""
         if additional_bytes <= 0:
             return
-        new_total = self.size_bytes + int(additional_bytes)
+        with self._lock:
+            new_total = self._used_bytes + self._reserved_bytes + int(additional_bytes)
         if new_total > self._max_bytes:
             raise RamFsCapacityError(
                 f"RamFS({self._label}) per-instance cap reached: "
                 f"{new_total} > {self._max_bytes} bytes",
             )
+        if not memory:
+            return
         avail = _available_memory_bytes()
         if avail >= 0 and avail - additional_bytes < self._system_reserve:
             raise RamFsCapacityError(
@@ -298,6 +312,21 @@ class RamFsSession(SessionLifecycle):
                 f"write: would leave only {avail - additional_bytes} B "
                 f"system-free (reserve={self._system_reserve} B)",
             )
+
+    def _reserve(self, nbytes: int) -> None:
+        """Book *nbytes* of writer growth against the cap, or refuse."""
+        if nbytes <= 0:
+            return
+        with self._lock:
+            self._check_capacity(nbytes)
+            self._reserved_bytes += nbytes
+
+    def _release(self, nbytes: int) -> None:
+        if nbytes <= 0:
+            return
+        with self._lock:
+            # disconnect() zeroes the counter under writers still open.
+            self._reserved_bytes = max(0, self._reserved_bytes - nbytes)
 
     # ------------------------------------------------------------------
     # FileBackend — read surface
@@ -518,7 +547,10 @@ class RamFsSession(SessionLifecycle):
                 raise OSError(f"RamFS({self._label}): target is a directory: {path}")
             old_size = len(old.data) if old and not old.is_dir else 0
             delta = len(data) - old_size
-            self._check_capacity(delta)
+            # The buffer is in RAM already: the free-memory probe ran
+            # per chunk in write(), and counting it again here refused
+            # a buffer that fit.
+            self._check_capacity(delta, memory=False)
             # An overwrite keeps the file's mode, as on POSIX: atomic_write
             # pre-creates its temp file with the target's mode for exactly
             # that reason.
@@ -548,28 +580,43 @@ class _RamFsWriter:
         self._buffered_size = len(initial)
         self._buf.seek(0, io.SEEK_END)
         self._closed = False
+        # Growth beyond base_size booked in the session (see _reserve).
+        self._reserved = 0
 
     def write(self, data: bytes) -> int:
         if self._closed:
             raise OSError("RamFS writer already closed")
-        # Eagerly check the incremental growth beyond the file size
-        # observed at open(). Overwrites within the existing size do
-        # not consume extra RamFS capacity; appends do.
+        # Book the growth beyond the file size observed at open() before
+        # buffering it. Overwrites within the existing size do not
+        # consume extra RamFS capacity; appends do. The session counts
+        # what this and every other open writer booked, so the cap
+        # bounds the buffers, not only what close() commits.
         before = self._buffered_size
         after = before + len(data)
         before_delta = max(0, before - self._base_size)
         after_delta = max(0, after - self._base_size)
-        self._session._check_capacity(after_delta - before_delta)
+        growth = after_delta - before_delta
+        self._session._reserve(growth)
+        self._reserved += max(0, growth)
         written = self._buf.write(data)
         self._buffered_size += written
         return written
+
+    def _drop_reservation(self) -> None:
+        reserved, self._reserved = self._reserved, 0
+        self._session._release(reserved)
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         try:
-            self._session._commit_write(self._path, self._buf.getvalue())
+            with self._session._lock:
+                # The booking turns into committed bytes (or into nothing
+                # when the commit fails); one lock so no other writer
+                # takes the room in between.
+                self._drop_reservation()
+                self._session._commit_write(self._path, self._buf.getvalue())
         finally:
             self._buf.close()
 
@@ -577,7 +624,18 @@ class _RamFsWriter:
         if self._closed:
             return
         self._closed = True
+        self._drop_reservation()
         self._buf.close()
+
+    def __del__(self) -> None:
+        # A writer dropped without close()/discard() must not keep its
+        # booking: the RamFS would shrink until it is closed.
+        try:
+            if not self._closed:
+                self._closed = True
+                self._drop_reservation()
+        except Exception:  # noqa: BLE001 - interpreter shutdown
+            pass
 
     def __enter__(self):
         return self

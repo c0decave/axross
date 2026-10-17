@@ -178,6 +178,65 @@ def _install_excepthook() -> None:
     sys.excepthook = _hook
 
 
+MCP_HTTP_TOKEN_ENV = "AXROSS_MCP_HTTP_TOKEN"
+
+
+def _parse_mcp_http(value: str) -> tuple[str, int]:
+    """``HOST:PORT`` of --mcp-http as (host, port); an IPv6 host goes in
+    brackets (``[::1]:7331``), an empty host is 127.0.0.1. ValueError
+    with the one-line message otherwise."""
+    if value.startswith("["):
+        host, sep, rest = value[1:].partition("]")
+        if not sep or not rest.startswith(":"):
+            raise ValueError(f"--mcp-http expects [IPV6]:PORT, got {value!r}")
+        port_str = rest[1:]
+    else:
+        if ":" not in value:
+            raise ValueError(f"--mcp-http expects HOST:PORT, got {value!r}")
+        host, _, port_str = value.rpartition(":")
+        if ":" in host:
+            raise ValueError(
+                f"--mcp-http: an IPv6 address goes in brackets ([::1]:7331), got {value!r}"
+            )
+    if not port_str:
+        raise ValueError(f"--mcp-http expects HOST:PORT, got {value!r}")
+    try:
+        port = int(port_str)
+    except ValueError:
+        raise ValueError(f"--mcp-http port {port_str!r} is not an integer") from None
+    # Port 0 means "OS picks an ephemeral port" which is pointless for a
+    # server you want to connect to; negative and >65535 are invalid by
+    # the TCP spec. Reject up-front rather than letting bind() surface a
+    # cryptic error.
+    if not (1 <= port <= 65535):
+        raise ValueError(f"--mcp-http port must be 1..65535, got {port}")
+    return host or "127.0.0.1", port
+
+
+def _mcp_http_token(args, port: int) -> str | None:
+    """The bearer token of an ``--mcp-http`` server.
+
+    Plain HTTP (no mTLS) always gets one: ``$AXROSS_MCP_HTTP_TOKEN`` when
+    set, else a fresh random token. It is written to a 0600 file and
+    shown once on stderr, for the client's ``Authorization: Bearer``
+    header. An mTLS server uses the variable only when it is set."""
+    import secrets
+
+    from core import mcp_http as MH
+
+    token = os.environ.get(MCP_HTTP_TOKEN_ENV, "").strip()
+    if args.mcp_cert and args.mcp_key and args.mcp_ca:
+        return token or None
+    token = token or secrets.token_urlsafe(32)
+    path = MH.publish_token(token, port)
+    print(
+        "MCP HTTP: every request needs the header 'Authorization: Bearer <token>'.\n"
+        f"Token: {token}\n(also in {path}, readable only by you)",
+        file=sys.stderr,
+    )
+    return token
+
+
 def _resolve_mcp_root(backend, raw_root: str | None) -> str:
     if not raw_root:
         return backend.home()
@@ -225,13 +284,21 @@ def _no_screen_message(app) -> str | None:
     """
     if app.screens():
         return None
-    return (f"axross: no screen to open the window on (Qt platform '{app.platformName()}'). "
-            "Start axross from a desktop session - an SSH login on macOS has none - "
-            "or run it without a window: --mcp-server, --script FILE, "
-            "or QT_QPA_PLATFORM=offscreen.")
+    return (
+        f"axross: no screen to open the window on (Qt platform '{app.platformName()}'). "
+        "Start axross in a desktop session - over SSH on macOS only the user logged in "
+        "at the screen has one - or run it without a window: --mcp-server, --script FILE, "
+        "or QT_QPA_PLATFORM=offscreen."
+    )
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--agent-worker"]:
+        # The agent in its own process (core.agent_sandbox starts it, mostly
+        # in a sandbox): no GUI, no log files, stdin/stdout are its channel.
+        from core.agent_worker import main as agent_worker_main
+
+        return agent_worker_main()
     parser = argparse.ArgumentParser(description="Axross File Manager")
     from axross._version import __version__
 
@@ -286,7 +353,7 @@ def main() -> int:
         help="Add optional MCP capability groups on top of the file tools; "
         "repeatable or comma-separated, also via AXROSS_MCP_TOOLS. Groups: "
         "metadata, duplicates, packer, archive, crypto, index, filetype, "
-        "transfer, remote, exec, extensions; 'all' is every group. Mutating tools "
+        "transfer, remote, exec, agent, extensions; 'all' is every group. Mutating tools "
         "of a group additionally need --mcp-write (exec: --mcp-allow-exec). "
         "Default: no group (the file tools only).",
     )
@@ -310,8 +377,9 @@ def main() -> int:
     parser.add_argument(
         "--mcp-http",
         default=None,
-        help="Run the MCP server as HTTP on HOST:PORT (e.g. 127.0.0.1:7331) "
-        "instead of stdio. Non-loopback hosts require TLS flags.",
+        help="Run the MCP server as HTTP on HOST:PORT (e.g. 127.0.0.1:7331, "
+        "[::1]:7331) instead of stdio. Non-loopback hosts require TLS flags; "
+        "without TLS every request needs the bearer token printed at start.",
     )
     parser.add_argument(
         "--mcp-cert",
@@ -355,10 +423,11 @@ def main() -> int:
 
     apply_paramiko_banner_override()
 
-    # Route tempfile to tmpfs if the user opted in and tmpfs is
-    # available. Affects every subsequent tempfile / NamedTemporaryFile
-    # / mkdtemp call (archive extracts, FUSE flush buffers, …) so
-    # short-lived temp data doesn't land on disk.
+    # Route tempfile to tmpfs if the user opted in (off by default),
+    # tmpfs is available and TMPDIR is not set. Affects every subsequent
+    # tempfile / NamedTemporaryFile / mkdtemp call (archive extracts,
+    # FUSE flush buffers, download spools, …) so temp data doesn't land
+    # on disk - and takes RAM, which is why it is an opt-in.
     try:
         from core.tmpfs_detect import apply_tempdir_preference
 
@@ -456,51 +525,37 @@ def main() -> int:
             return 2
         root = _resolve_mcp_root(backend, args.mcp_root)
         if args.mcp_http:
-            host, _, port_str = args.mcp_http.partition(":")
-            if not port_str:
-                # CLI-usage errors go to stderr regardless of the
-                # logging config — the user may not have --debug on,
-                # and a silent failure with exit 2 is worse than a
-                # one-line complaint.
-                print(
-                    f"--mcp-http expects HOST:PORT, got {args.mcp_http!r}",
-                    file=sys.stderr,
-                )
-                return 2
+            # CLI-usage errors go to stderr regardless of the logging
+            # config - the user may not have --debug on, and a silent
+            # failure with exit 2 is worse than a one-line complaint. A
+            # refusal is one line, never a traceback.
             try:
-                port = int(port_str)
-            except ValueError:
-                print(
-                    f"--mcp-http port {port_str!r} is not an integer",
-                    file=sys.stderr,
-                )
-                return 2
-            # Port 0 means "OS picks an ephemeral port" which is
-            # pointless for a server you want to connect to; negative
-            # and >65535 are invalid by the TCP spec. Reject up-front
-            # rather than letting bind() surface a cryptic error.
-            if not (1 <= port <= 65535):
-                print(
-                    f"--mcp-http port must be 1..65535, got {port}",
-                    file=sys.stderr,
-                )
+                host, port = _parse_mcp_http(args.mcp_http)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
                 return 2
             from core import mcp_http as MH
 
-            MH.serve_http(
-                MH.HTTPServerConfig(
-                    backend=backend,
-                    host=host or "127.0.0.1",
-                    port=port,
-                    allow_write=allow_write,
-                    root=root,
-                    cert_file=args.mcp_cert,
-                    key_file=args.mcp_key,
-                    ca_file=args.mcp_ca,
-                    tool_groups=tool_groups,
-                    allow_exec=args.mcp_allow_exec,
-                )
+            config = MH.HTTPServerConfig(
+                backend=backend,
+                host=host,
+                port=port,
+                allow_write=allow_write,
+                root=root,
+                cert_file=args.mcp_cert,
+                key_file=args.mcp_key,
+                ca_file=args.mcp_ca,
+                tool_groups=tool_groups,
+                allow_exec=args.mcp_allow_exec,
             )
+            try:
+                # Refused before a token is handed out for nothing.
+                MH.check_config(config)
+                config.auth_token = _mcp_http_token(args, port)
+                MH.serve_http(config)
+            except (ValueError, OSError) as exc:
+                print(f"--mcp-http {args.mcp_http}: {exc}", file=sys.stderr)
+                return 2
             return 0
         return M.serve(
             M.ServerConfig(

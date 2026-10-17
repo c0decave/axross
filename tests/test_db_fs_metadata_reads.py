@@ -31,8 +31,9 @@ FILES = {"/a.bin": b"x" * 1000, "/empty.bin": b"", "/d/inner.txt": b"hello"}
 
 def _old_items(backend, path, paths=tuple(FILES)):
     """The listing and stats as the full-row path builds them."""
-    with mock.patch.object(type(backend), "_db_list_meta", type(backend)._db_list), mock.patch.object(
-        type(backend), "_db_get_meta", type(backend)._db_get
+    with (
+        mock.patch.object(type(backend), "_db_list_meta", type(backend)._db_list),
+        mock.patch.object(type(backend), "_db_get_meta", type(backend)._db_get),
     ):
         return backend.list_dir(path), {p: backend.stat(p) for p in paths}
 
@@ -133,7 +134,9 @@ class PostgresMetaTest(unittest.TestCase):
             ("/e.bin", "/", False, 0o644, mtime, None),
             ("/d", "/", True, 0o755, mtime, None),
         ]
-        self.meta = [(p, par, d, m, t, None if c is None else len(c)) for p, par, d, m, t, c in self.full]
+        self.meta = [
+            (p, par, d, m, t, None if c is None else len(c)) for p, par, d, m, t, c in self.full
+        ]
         self.s = object.__new__(PG.PostgresFsSession)
         self.s._lock = mock.MagicMock()
 
@@ -259,8 +262,12 @@ class MongoMetaTest(unittest.TestCase):
         self.s = object.__new__(MC.MongoFsSession)
         self.s._lock = mock.MagicMock()
         self.s._dirs = SimpleNamespace(
-            find_one=lambda q: {"path": "/d", "parent": "/", "mode": 0o755} if q["path"] == "/d" else None,
-            find=lambda q: [{"path": "/d", "parent": "/", "mode": 0o755}] if q["parent"] == "/" else [],
+            find_one=lambda q: (
+                {"path": "/d", "parent": "/", "mode": 0o755} if q["path"] == "/d" else None
+            ),
+            find=lambda q: (
+                [{"path": "/d", "parent": "/", "mode": 0o755}] if q["parent"] == "/" else []
+            ),
         )
         self.s._fs = SimpleNamespace(
             find_one=lambda q: next((f for f in files if f.filename == q["filename"]), None),
@@ -269,7 +276,9 @@ class MongoMetaTest(unittest.TestCase):
 
     def test_happy_stat_and_listing_give_real_sizes_without_reading(self) -> None:
         self.assertEqual(self.s.stat("/a.bin").size, 1000)
-        self.assertEqual({i.name: i.size for i in self.s.list_dir("/")}, {"d": 0, "a.bin": 1000, "e.bin": 0})
+        self.assertEqual(
+            {i.name: i.size for i in self.s.list_dir("/")}, {"d": 0, "a.bin": 1000, "e.bin": 0}
+        )
 
     def test_sad_missing_path(self) -> None:
         with self.assertRaises(OSError):

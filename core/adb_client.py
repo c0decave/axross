@@ -518,24 +518,47 @@ class AdbSession(SessionLifecycle):
     # Listing / stat
     # ------------------------------------------------------------------
     def list_dir(self, path: str) -> list[FileItem]:
-        out = self._shell(f"ls -la {self._shell_q(path)}")
+        from core.exec_util import ls_dir_operand, ls_error
+
+        # /sdcard itself is a symlink on Android: list through it.
+        out = self._shell(f"ls -la {self._shell_q(ls_dir_operand(path))}")
         items: list[FileItem] = []
+        listed = False
+        errors: list[str] = []
         for line in split_lf_only_stream(out):
             fi = _parse_ls_line(line)
             if fi is None:
+                if line.startswith("ls:"):
+                    errors.append(line.strip())
                 continue
+            listed = True  # "." and ".." too: the folder is there
             if fi.name in (".", ".."):
                 continue
             items.append(fi)
+        if errors and not listed:
+            # ls refused the folder itself; an unparsable answer used to
+            # be an empty listing (review B13, 2026-10-17). An entry ls
+            # could not stat beside a listing stays a partial listing.
+            raise ls_error(f"ADB list_dir({path})", errors[0])
         return items
 
     def stat(self, path: str) -> FileItem:
+        """The entry at *path*. FileNotFoundError only when ``ls`` says
+        "No such file or directory"; a dropped transport, a refused
+        permission or an answer without a listing line is another
+        OSError - exists() and is_dir() answer False from the first
+        alone."""
+        from core.exec_util import ls_error
+
         # Use ``ls -la -d <path>`` — -d prevents directories from
         # expanding their contents.
         out = self._shell(f"ls -la -d {self._shell_q(path)}")
+        errors: list[str] = []
         for line in split_lf_only_stream(out):
             fi = _parse_ls_line(line)
             if fi is None:
+                if line.startswith("ls:"):
+                    errors.append(line.strip())
                 continue
             # ls -d echoes the path as the name; reduce to basename
             # so callers comparing against FileItem.name aren't
@@ -547,19 +570,29 @@ class AdbSession(SessionLifecycle):
                 fi,
                 name=os.path.basename(path.rstrip("/")) or path,
             )
-        raise OSError(f"ADB stat({path}): not found")
+        if errors:
+            raise ls_error(f"ADB stat({path})", errors[0])
+        # adb shell carries no exit status: an answer with neither a
+        # listing line nor an ls error says nothing about the path.
+        raise OSError(f"ADB stat({path}): unreadable answer from ls: {out[:200]!r}")
 
     def is_dir(self, path: str) -> bool:
+        """False for a missing path or one below a file; any other
+        failure is an OSError (transfer_manager recurses on True)."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
             return False
 
     def exists(self, path: str) -> bool:
+        """False only when ``ls`` reports the path missing. A dropped
+        connection, a refused permission or an unreadable answer is an
+        OSError: server_side_copy(overwrite=False) and the transfer
+        worker take False as the go-ahead to write."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
             return False
 
     # ------------------------------------------------------------------
@@ -629,9 +662,11 @@ class AdbSession(SessionLifecycle):
             raise OSError(f"ADB mkdir({path}): {out.strip()}")
 
     def rename(self, src: str, dst: str) -> None:
-        out = self._shell(
-            f"mv {self._shell_q(src)} {self._shell_q(dst)}",
-        )
+        # Plain mv moves src INTO an existing folder dst and says nothing
+        # (review B6, 2026-10-17); the guard's message is the error.
+        from core.telnet_client import rename_command
+
+        out = self._shell(rename_command(src, dst))
         if out.strip():
             raise OSError(f"ADB mv({src}→{dst}): {out.strip()}")
 
@@ -651,9 +686,9 @@ class AdbSession(SessionLifecycle):
         return out
 
     def copy(self, src: str, dst: str) -> None:
-        out = self._shell(
-            f"cp {self._shell_q(src)} {self._shell_q(dst)}",
-        )
+        from core.telnet_client import copy_command
+
+        out = self._shell(copy_command(src, dst))
         if out.strip():
             raise OSError(f"ADB cp({src}→{dst}): {out.strip()}")
 
@@ -675,15 +710,16 @@ class AdbSession(SessionLifecycle):
         ).strip()
         if not out:
             return ""
-        # `sha256sum` prints "<hex>  <path>" — keep just the hex.
-        first = out.split()[0]
-        # Sanity: hex only, correct length for the algorithm.
-        expected_len = {"sha256": 64, "sha1": 40, "md5": 32}[algorithm]
-        if len(first) != expected_len or not all(c in "0123456789abcdefABCDEF" for c in first):
+        from core.exec_util import digest_from_sum_output
+
+        # `sha256sum` prints "<hex>  <path>" (a leading backslash when the
+        # name is escaped) — keep just the hex, of the algorithm's length.
+        first = digest_from_sum_output(out, algorithm)
+        if not first:
             return ""
         # "<algo>:<hex>" like every other backend: the transfer worker
         # compares the algorithm part before it compares digests.
-        return f"{algorithm}:{first.lower()}"
+        return f"{algorithm}:{first}"
 
     def list_versions(self, path: str) -> list:
         return []

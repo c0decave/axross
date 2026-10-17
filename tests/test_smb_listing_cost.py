@@ -23,7 +23,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 try:
-    from smbprotocol.file_info import FileAttributes
+    from smbprotocol.file_info import FileAttributes  # noqa: F401 - availability probe
 
     from core import smb_client as SC
 except ImportError:  # pragma: no cover

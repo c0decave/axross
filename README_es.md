@@ -11,7 +11,7 @@ superficie de herramientas MCP para que un LLM lo controle todo.**
 - **Copia entre dos backends cualesquiera** — S3 → SFTP, WebDAV → SMB, directo, sin pasar por el disco local.
 - **Paneles múltiples estilo Commander** — tantos split panes como quieras, presets de layout, drag & drop.
 - **Scripting en Python integrado** — REPL, dock de Scripts y 32 scripts listos sobre una sola API `axross.*`.
-- **Listo para LLMs vía MCP** — un agente controla axross por stdio o HTTP, read-only salvo que permitas escribir.
+- **Un agente LLM integrado** — dock Agent con tabs y sandboxes, MCP por stdio o HTTP, read-only por defecto.
 - **Busca duplicados, quita metadatos** — Duplicate Finder por hash de contenido, fuera EXIF/GPS antes de compartir.
 - **Cifrado sin texto plano en disco** — overlay `.axenc` en cualquier backend, descifrado solo en RAM.
 - **Seguro por defecto** — preview antes de delete/move, journal de operaciones, modo `paranoid`, proxies con guard SSRF.
@@ -71,9 +71,37 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 *Dock Log.* Cada copy y move queda registrado con su comprobación de integridad (sha256) y una entrada en el journal de operaciones.
 
+![El dock Agent: un modelo local lee un archivo desde un sandbox bubblewrap](docs/screenshots/agent-dock.png)
+
+*Dock Agent.* Un modelo local (aquí Qwen 2.5 en llama.cpp) lee un archivo por ti. El tab corre en el sandbox `Normal` (bubblewrap), el modo es `Ask` y cada tool call aparece en el transcript.
+
+![El menú Topics de un tab de Agent](docs/screenshots/agent-topics.png)
+
+*Topics.* Tareas listas — inventario, servicios, logs, uso de disco, resumen de una carpeta — rellenan la petición; cada tab es su propia sesión.
+
+![El agente lee un archivo de un panel remoto](docs/screenshots/agent-remote-pane.png)
+
+*La conexión de un panel, prestada al agente.* El panel izquierdo está conectado a un almacenamiento remoto; el agente lee `/reports/q3.txt` a través de él, sin login propio.
+
+![Agent Settings, página Sandboxes](docs/screenshots/agent-sandboxes.png)
+
+*Perfiles de sandbox.* Engine (bubblewrap, podman, docker), nivel de `lax` a `paranoid`, hosts permitidos y carpetas extra — aplicados antes de cada tarea.
+
+![El diálogo Access de un tab de Agent](docs/screenshots/agent-access.png)
+
+*Access por tab.* Qué funciones de axross puede usar el agente, qué hosts alcanza y qué carpetas ve, read-only o con escritura.
+
+![Agent Settings, página MCP Servers](docs/screenshots/agent-mcp-servers.png)
+
+*Servidores MCP.* Más servidores MCP para el agente — aquí el propio axross por stdio, probado: 11 tools.
+
+![La ventana Agent Stats sobre la ventana principal](docs/screenshots/agent-stats.png)
+
+*Agent Stats.* La extensión incluida cuenta tareas, tool calls, errores y tokens, de todos los tabs y del último.
+
 ---
 
-## 23 puntos fuertes
+## 26 puntos fuertes
 
 1. **Más de 30 protocolos, una UI consistente.** SFTP/SCP, FTP/FTPS,
    SMB/CIFS, WebDAV, S3-compatible, Rsync, NFS, Azure Blob/Files,
@@ -193,7 +221,7 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
     funcionan sin más — toda herramienta que ya hable S3 o WebDAV
     accede al instante al protocolo que axross esté fronteando
     (SFTP, SMB, RamFS, Postgres-FS, IMAP-as-FS, …). Bind localhost
-    por defecto + auth Bearer-token + modo read-only + rechazo de
+    por defecto + auth por token por defecto + modo read-only + rechazo de
     path-traversal. Ver
     [docs/REVERSE_SERVE.md](docs/REVERSE_SERVE.md).
 
@@ -279,8 +307,32 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 23. **Extensions.** Plugins en Python añaden entradas al menú Extensions,
     acciones del clic derecho y paneles (**Extensions → Manage
     Extensions…**). Cada extensión empieza desactivada, encontrarla nunca
-    la ejecuta y el modo `paranoid` no carga ninguna. Cinco ejemplos
+    la ejecuta y el modo `paranoid` no carga ninguna. Seis ejemplos
     incluidos. Ver [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+
+24. **Un agente LLM en su propio dock.** **View → Panels → Agent** habla
+    con el modelo que eliges en **Agent Settings** (Ollama, LM Studio,
+    MLX-LM o cualquier endpoint compatible con OpenAI, como llama.cpp).
+    Cada tab es una sesión, guardada como un archivo JSON; los
+    protection modes `ask`, `plan`, `auto` y `bypass` deciden qué corre
+    sin preguntar; **Topics** ofrece tareas listas; **+** y drag & drop
+    desde un panel le pasan archivos, y las conexiones remotas abiertas
+    en los paneles se le pueden prestar. La extensión incluida
+    **Agent Stats** cuenta runs, tool calls y tokens.
+
+25. **Agentes en un sandbox.** Cada tab puede ejecutar su agente en
+    bubblewrap, podman o docker, con el nivel `lax`, `normal`, `high` o
+    `paranoid` (paranoid: el LLM es el único peer, todas las carpetas
+    read-only). La API key nunca entra en el sandbox. Por tab,
+    **Access…** concede la red (ninguna, una lista `host:port` o toda,
+    nunca por encima del nivel) y carpetas read-only o con escritura, y
+    activa o desactiva las funciones de axross que el agente puede usar
+    fuera del sandbox.
+
+26. **También un cliente MCP.** **Agent Settings → MCP Servers** conecta
+    más servidores MCP (stdio o HTTP); sus tools aparecen en la lista
+    **Tools** del tab y preguntan antes de cada llamada o solo antes de
+    escribir.
 
 ---
 

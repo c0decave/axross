@@ -124,6 +124,10 @@ def _parse_status_line(line: bytes) -> tuple[int, str]:
 class NntpClient:
     """Stateful NNTP client. One instance per server connection."""
 
+    #: Set once the socket is closed - by quit(), or by _drop_connection()
+    #: when a response broke off and the stream is out of step.
+    _closed = False
+
     def __init__(
         self,
         host: str,
@@ -207,14 +211,28 @@ class NntpClient:
     def _send_line(self, line: str) -> None:
         if "\r" in line or "\n" in line:
             raise NntpError("command must not contain CR/LF")
+        if self._closed:
+            raise NntpError(f"NNTP connection to {self._host} is closed")
         log.debug("NNTP > %s", line)
-        self._reader.write(line.encode("utf-8") + b"\r\n")
+        try:
+            self._reader.write(line.encode("utf-8") + b"\r\n")
+        except BaseException:
+            # Part of the line may be out: what the server answers is unknown.
+            self._drop_connection()
+            raise
 
     def _read_status(self) -> tuple[int, str]:
-        line = self._reader.readline()
-        if not line:
-            raise NntpError("connection closed unexpectedly")
-        code, msg = _parse_status_line(line)
+        try:
+            line = self._reader.readline()
+            if not line:
+                raise NntpError("connection closed unexpectedly")
+            code, msg = _parse_status_line(line)
+        except BaseException:
+            # A timeout, an oversized or a malformed line: the server's reply
+            # (or its rest) still arrives, and the next command would read it
+            # as its own. Only a status line read whole keeps the connection.
+            self._drop_connection()
+            raise
         log.debug("NNTP < %d %s", code, msg)
         return code, msg
 
@@ -274,9 +292,15 @@ class NntpClient:
         except Exception:  # noqa: BLE001 - any failure leaves it unframed
             self._drop_connection()
 
+    @property
+    def closed(self) -> bool:
+        """True once this connection can carry no further command."""
+        return self._closed
+
     def _drop_connection(self) -> None:
         log.warning("NNTP: response stream out of step with %s; closing the connection", self._host)
         self.current_group = None
+        self._closed = True
         try:
             self._sock.close()
         except OSError:
@@ -447,8 +471,13 @@ class NntpClient:
         # bare \r/\n. Use LF-only split + strip CRLF artefact so an
         # article carrying \v in content (e.g. a binary attachment header)
         # cannot fan out into multiple dot-stuffed wire-lines.
+        lines = raw_article.split(b"\n")
+        if len(lines) > 1 and lines[-1] == b"":
+            # The article's own final line ending, not one more empty line:
+            # every line below gets its CRLF.
+            lines.pop()
         out = bytearray()
-        for line in raw_article.split(b"\n"):
+        for line in lines:
             line = line.rstrip(b"\r")
             if line.startswith(b"."):
                 out.extend(b"." + line)
@@ -474,9 +503,11 @@ class NntpClient:
 
     def quit(self) -> None:
         try:
-            self._command("QUIT")
+            if not self._closed:
+                self._command("QUIT")
         except Exception:  # noqa: BLE001
             pass
+        self._closed = True
         try:
             self._sock.close()
         except Exception:  # noqa: BLE001

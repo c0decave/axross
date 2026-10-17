@@ -183,7 +183,8 @@ den OS-Keyring (GNOME Keyring, KWallet, macOS Keychain).
 
 ## 5. Verbindungen einrichten
 
-`Ctrl+N` öffnet den Connection-Dialog. Wähle ein Protokoll aus dem
+`Ctrl+Shift+N` öffnet den Connection-Manager (`Ctrl+N`: Quick Connect zu
+einem gespeicherten Profil). Wähle ein Protokoll aus dem
 Dropdown — die restlichen Felder ändern sich entsprechend.
 
 ### SFTP (Standard)
@@ -297,8 +298,8 @@ Protokolle nutzt.
 - **Doppelklick** / **Enter** auf einem Verzeichnis → hineinnavigieren
 - **`..`** am Anfang der Liste → hoch
 - **Alt+Left** / **Alt+Right** → Pfad-Historie zurück/vor
-- **Ctrl+Tab** → zum nächsten Pane wechseln
-- **F2** → Pane aktualisieren (list_dir neu ausführen)
+- **Tab** / **Shift+Tab** → zum nächsten / vorigen Pane wechseln
+- **Ctrl+R** → Pane aktualisieren (list_dir neu ausführen)
 
 ### Erstellen
 
@@ -453,7 +454,9 @@ Online-Abfrage sobald einmal indiziert.
 Rechtsklick → "Show Versions…". Funktioniert für Backends mit
 nativer Versionierung: S3 (ObjectVersions), Dropbox (rev-Chain),
 Google Drive (revision-history), OneDrive (history), Azure Blob
-(snapshots), WebDAV (DeltaV wenn verfügbar).
+(snapshots), WebDAV (DeltaV wenn verfügbar), Git (eine Version je
+Commit des Branches, der die Datei geändert hat; die Version-ID ist der
+Commit-SHA).
 
 - **Save Version As** → Eine spezifische alte Version als neue Datei
   lokal speichern.
@@ -674,7 +677,8 @@ gehen.
 
 | Kürzel             | Aktion                                |
 |--------------------|---------------------------------------|
-| `Ctrl+N`           | Neue Verbindung (Connection-Dialog)   |
+| `Ctrl+N`           | Quick Connect (gespeichertes Profil)  |
+| `Ctrl+Shift+N`     | Connection-Manager                    |
 | `Ctrl+W`           | Aktives Pane schließen                |
 | `Ctrl+H`           | Versteckte Dateien umschalten         |
 | `Ctrl+Shift+H`     | Pane horizontal splitten              |
@@ -682,11 +686,12 @@ gehen.
 | `Ctrl+Shift+F`     | Find in Index (Metadata-Search)       |
 | `F3` / Doppelklick | Viewer (Bild / Text / Hex)            |
 | `F5`               | Dateien zum Ziel-Pane kopieren        |
-| `F2`               | Aktives Pane aktualisieren            |
+| `F2`               | Umbenennen                            |
+| `Ctrl+R`           | Aktives Pane aktualisieren            |
 | `Ctrl+S`           | Datei im Editor speichern             |
 | `Alt+Left`         | Pfad-Historie: zurück                 |
 | `Alt+Right`        | Pfad-Historie: vor                    |
-| `Ctrl+Tab`         | Zum nächsten Pane wechseln            |
+| `Tab`              | Zum nächsten Pane wechseln            |
 
 ---
 

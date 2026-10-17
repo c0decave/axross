@@ -9,7 +9,9 @@ RUN apk add --no-cache samba samba-common-tools && \
     echo "Hello from SMB" > /home/${USERNAME}/share/readme.txt && \
     echo "nested file" > /home/${USERNAME}/share/subdir/nested.txt && \
     dd if=/dev/urandom of=/home/${USERNAME}/share/bigfile.bin bs=1k count=64 2>/dev/null && \
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} && \
+    mkdir -p /srv/dfsroot && \
+    ln -s 'msdfs:10.99.0.31\testshare,10.99.0.31\testshare' /srv/dfsroot/docs
 
 COPY smb.conf /etc/samba/smb.conf
 

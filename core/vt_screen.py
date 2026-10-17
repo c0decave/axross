@@ -16,7 +16,8 @@ editors and ``top`` actually send:
   M (reverse index), c (reset), charset designations (ignored).
 * CSI: cursor moves A B C D E F G H f d, erase J K X, insert / delete
   @ P L M, scroll S T, region r, save / restore s u, modes h l
-  (?1049 / ?1047 / ?47 alternate screen, ?7 autowrap), device status n
+  (?1049 / ?1047 / ?47 alternate screen, ?1 cursor keys mode, ?7
+  autowrap), device status n
   (the cursor report goes to ``take_replies``); SGR m is accepted and
   ignored - the widget shows text, not colours.
 * OSC, DCS, PM and APC strings are consumed and dropped.
@@ -43,6 +44,10 @@ _MAX_PARAMS = 32
 
 _GROUND, _ESC, _ESC_INTER, _CSI, _STRING, _STRING_ESC = range(6)
 
+#: CSI finals that move the cursor (A B C D E F G ` H f d a, r homes, u
+#: restores) or edit the screen (J K X P @ L M): they end a pending wrap.
+_ENDS_PENDING_WRAP = frozenset("ABCDEFG`HfdaruJKXP@LM")
+
 
 def _width(ch: str) -> int:
     """Columns *ch* takes: 0 for combining marks, 2 for wide, else 1."""
@@ -54,7 +59,9 @@ def _width(ch: str) -> int:
 class VTScreen:
     """The screen state of one terminal session."""
 
-    def __init__(self, cols: int = 80, rows: int = 24, *, scrollback: int = DEFAULT_SCROLLBACK) -> None:
+    def __init__(
+        self, cols: int = 80, rows: int = 24, *, scrollback: int = DEFAULT_SCROLLBACK
+    ) -> None:
         self.cols = max(1, min(int(cols), MAX_COLS))
         self.rows = max(1, min(int(rows), MAX_ROWS))
         self.scrollback: deque[str] = deque(maxlen=max(0, int(scrollback)))
@@ -78,6 +85,8 @@ class VTScreen:
         self._bottom = self.rows - 1
         self._autowrap = True
         self._saved = (0, 0)
+        # DECCKM (?1h): cursor keys send ESC O A instead of ESC [ A.
+        self._app_cursor_keys = False
 
     def _blank_line(self) -> list[str]:
         return [" "] * self.cols
@@ -100,6 +109,13 @@ class VTScreen:
         character's second cell is not repeated)."""
         return ["".join(line) for line in self._grid]
 
+    @property
+    def application_cursor_keys(self) -> bool:
+        """True while the host asked for cursor keys in application mode
+        (``CSI ? 1 h``, what curses sends for ``keypad(TRUE)``): the keys
+        must go out as ``ESC O A`` instead of ``ESC [ A``."""
+        return self._app_cursor_keys
+
     def take_replies(self) -> bytes:
         """Answers the host asked for (cursor reports); empty when none."""
         out = bytes(self._replies)
@@ -107,33 +123,45 @@ class VTScreen:
         return out
 
     def resize(self, cols: int, rows: int) -> None:
-        """New grid size. Text is kept (cut at the right edge); rows that
-        no longer fit above the cursor go to the scrollback."""
+        """New grid size. Text is kept (cut at the right edge); rows of the
+        shell's screen that no longer fit above its cursor go to the
+        scrollback, also while the alternate screen is shown. Every cursor
+        - the live one, the shell's one saved by the alternate screen and
+        the one saved by ESC 7 / CSI s - moves with its text and stays on
+        the grid."""
         cols = max(1, min(int(cols), MAX_COLS))
         rows = max(1, min(int(rows), MAX_ROWS))
         if (cols, rows) == (self.cols, self.rows):
             return
 
-        def fit(grid: list[list[str]], keep_scrollback: bool) -> list[list[str]]:
+        def fit(
+            grid: list[list[str]], row: int, keep_scrollback: bool
+        ) -> tuple[list[list[str]], int]:
+            """*grid* at the new size and how many rows left it at the top;
+            blank rows below the cursor *row* go first."""
             grid = [(line + [" "] * cols)[:cols] for line in grid]
-            while len(grid) > rows and not "".join(grid[-1]).strip() and len(grid) - 1 > self._row:
+            while len(grid) > rows and not "".join(grid[-1]).strip() and len(grid) - 1 > row:
                 grid.pop()
-            while len(grid) > rows:
-                top = grid.pop(0)
+            dropped = max(0, len(grid) - rows)
+            for top in grid[:dropped]:
                 if keep_scrollback:
                     self._push_scrollback(top)
-                self._row = max(0, self._row - 1)
+            del grid[:dropped]
             while len(grid) < rows:
                 grid.append([" "] * cols)
-            return grid
+            return grid, dropped
+
+        def clamp(row: int, col: int) -> tuple[int, int]:
+            return max(0, min(row, rows - 1)), max(0, min(col, cols - 1))
 
         if self._main is not None:
-            saved_grid, saved_cursor = self._main
-            self._main = (fit(saved_grid, False), saved_cursor)
-        self._grid = fit(self._grid, self._main is None)
+            saved_grid, (saved_row, saved_col) = self._main
+            saved_grid, dropped = fit(saved_grid, saved_row, True)
+            self._main = (saved_grid, clamp(saved_row - dropped, saved_col))
+        self._grid, dropped = fit(self._grid, self._row, self._main is None)
         self.cols, self.rows = cols, rows
-        self._row = min(self._row, rows - 1)
-        self._col = min(self._col, cols - 1)
+        self._row, self._col = clamp(self._row - dropped, self._col)
+        self._saved = clamp(self._saved[0] - dropped, self._saved[1])
         self._wrap_pending = False
         self._top, self._bottom = 0, rows - 1
 
@@ -306,12 +334,17 @@ class VTScreen:
                     self._private_mode(mode, final == "h")
             return
 
-        self._wrap_pending = False
+        # Only a cursor move or an edit of the screen ends a pending wrap;
+        # SGR, modes, save and reports leave it, as xterm does.
+        if final in _ENDS_PENDING_WRAP:
+            self._wrap_pending = False
         rows, cols = self.rows, self.cols
         if final == "A":
             self._row = max(self._top if self._row >= self._top else 0, self._row - arg())
         elif final == "B":
-            self._row = min(self._bottom if self._row <= self._bottom else rows - 1, self._row + arg())
+            self._row = min(
+                self._bottom if self._row <= self._bottom else rows - 1, self._row + arg()
+            )
         elif final in "Ca":
             self._col = min(cols - 1, self._col + arg())
         elif final == "D":
@@ -392,6 +425,8 @@ class VTScreen:
                 self._main = None
                 self._top, self._bottom = 0, self.rows - 1
             self._wrap_pending = False
+        elif mode == 1:
+            self._app_cursor_keys = on
         elif mode == 7:
             self._autowrap = on
             if not on:

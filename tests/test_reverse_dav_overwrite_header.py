@@ -33,7 +33,7 @@ class DavOverwriteHeaderTest(unittest.TestCase):
         (self.tmp / "a.txt").write_bytes(b"A")
         (self.tmp / "b.txt").write_bytes(b"B")
         self.srv = reverse_serve.serve_webdav(
-            LocalFS(), bind="127.0.0.1", port=0, root_path=str(self.tmp)
+            LocalFS(), bind="127.0.0.1", port=0, root_path=str(self.tmp), auth_token=None
         )
         self.addCleanup(self.srv.shutdown)
 

@@ -148,7 +148,7 @@ class _Conn:
     def __init__(self) -> None:
         self.entries = []
 
-    def search(self, search_base, search_filter, search_scope, attributes=None):
+    def search(self, search_base, search_filter, search_scope, attributes=None, **_paging):
         from ldap3 import BASE, LEVEL
 
         want = _canonical(search_base)

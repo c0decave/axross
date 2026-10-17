@@ -47,7 +47,9 @@ class _GridFS:
     def find(self, q):
         if "filename" in q:
             return [f for f in list(self.files.values()) if f.filename == q["filename"]]
-        return [f for f in list(self.files.values()) if f.metadata["parent"] == q["metadata.parent"]]
+        return [
+            f for f in list(self.files.values()) if f.metadata["parent"] == q["metadata.parent"]
+        ]
 
     def find_one(self, q):
         hits = self.find(q)

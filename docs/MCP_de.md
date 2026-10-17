@@ -74,8 +74,9 @@ PyQt nicht importiert — der Server läuft sauber auf Headless-Hosts.
 ### 1.2 HTTP (+ optional mTLS)
 
 ```bash
-# Loopback-HTTP (ohne TLS auf Nicht-Loopback verweigert):
+# Loopback-HTTP (ohne TLS auf Nicht-Loopback verweigert), Bearer-Token Pflicht:
 axross --mcp-server --mcp-http 127.0.0.1:7331
+# [::1]:7331 für IPv6-Loopback
 
 # mTLS — alle drei Dateien nötig:
 axross --mcp-server --mcp-http 0.0.0.0:7331 \
@@ -90,6 +91,23 @@ Endpoints:
 | `GET /messages` (SSE)                | Event-Stream für Notifications, session-gebunden.                |
 | `DELETE /messages`                   | Session explizit beenden.                                        |
 | `GET /health`                        | Unauthentifiziert; liefert `{server, version}`.                  |
+
+**Bearer-Token auf reinem HTTP.** Loopback ist kein Credential: jeder
+lokale Benutzer und Prozess erreicht `127.0.0.1`. Ein Server ohne mTLS
+beantwortet deshalb jeden Request außer `GET /health` mit `401`, wenn er
+nicht `Authorization: Bearer <token>` mitbringt. Beim Start wird der
+Token einmal auf stderr gezeigt und nach
+`$XDG_RUNTIME_DIR/axross/mcp-http-PORT.token` geschrieben (sonst
+`~/.config/axross/`; Datei Mode 0600, Ordner 0700). Er ist bei jedem
+Start neu; `AXROSS_MCP_HTTP_TOKEN` hält ihn für eine
+Client-Konfiguration fest. Der eigene MCP-Client von axross (die
+externen MCP-Server des Agenten, docs/USAGE.md) schickt den im Keyring
+gespeicherten Token. Mit mTLS authentifiziert das Client-Zertifikat; der
+Token wird dort nur verlangt, wenn `AXROSS_MCP_HTTP_TOKEN` gesetzt ist.
+Frühere Versionen nahmen bei einem Loopback-Server ohne TLS jeden
+lokalen Prozess ohne Credential an - mit `--mcp-tools remote,exec
+--mcp-allow-exec` konnte ein anderer Benutzer der Maschine die
+gespeicherten Profile öffnen und Befehle ausführen.
 
 Sessions sind auf HTTP Pflicht. Der erste `POST /messages` mit
 `initialize` bekommt eine frische Session-ID im Response-Header
@@ -155,7 +173,7 @@ niemals mit den Payload-Bytes.
 | Name                          | Beschreibung                                                      |
 |-------------------------------|-------------------------------------------------------------------|
 | `script_list()`               | Namen der gespeicherten Skripte in `~/.config/axross/scripts/`.   |
-| `script_api_schema()`         | Die `axross.*`-API als JSON (wie `axross.api_schema()`): je Funktion Signatur, typisierte Parameter, Rückgabetyp, Kurzbeschreibung, `mutates`, `prompts`; die öffentlichen Klassen; die Methoden jeder Backend-Session. Read-only. |
+| `script_api_schema(names?)`   | Die `axross.*`-API als JSON (wie `axross.api_schema(names)` und [`scripting-api.json`](scripting-api.json)): Regeln und Exceptions für Skripte; je Funktion Signatur, typisierte Parameter, Rückgabetyp, ganzer Docstring, Beispiele, `raises`, `mutates`, `prompts`; die öffentlichen Klassen, die Typen, die die API zurückgibt, und die Methoden jeder Backend-Session. `names: []` liefert nur den Index, eine Liste von Namen nur diese. Read-only. |
 | `script_read(name)`           | Quelltext eines gespeicherten Skripts.                            |
 | `script_write(name, source)`  | `<name>.py` speichern (Mode 0600); überschreibt.                  |
 | `script_delete(name)`         | Gespeichertes Skript entfernen; idempotent.                       |
@@ -460,6 +478,7 @@ Red-Team-Szenario. Die MCP-Tests liegen in `tests/test_mcp_*.py`:
 | Datei | Deckt ab |
 |-------|----------|
 | `tests/test_mcp_error_redaction.py` | Secrets in Backend-Fehlertexten werden redigiert (tools/call, Tasks, recursive_checksum). |
+| `tests/test_mcp_http_bearer_token.py` | Reines HTTP lehnt Requests ohne Bearer-Token ab (401, `/health` ausgenommen), die Token-Datei ist 0600 und wird nie durch einen Symlink geschrieben, `--mcp-http` serviert immer mit Token. |
 | `tests/test_mcp_http_hardening.py` | DNS-Rebinding (Host/Origin), Session-Cap und Idle-Eviction, kaputte Params/IDs, unvollständige TLS-Flags, idle TCP-Client vs. accept. |
 | `tests/test_mcp_http_sse_lifecycle.py` | Ein SSE-Stream pro Session, DELETE/Idle-Eviction beenden ihn, Replay beim Reconnect. |
 | `tests/test_mcp_search_root.py` | `search` liefert nie indizierte Pfade außerhalb der Root. |
@@ -506,6 +525,12 @@ Symlink unter der Root (extern oder vom LLM selbst über das
 `data.type = "PermissionError"` und einer Message, die die Root nennt.
 Die Capability-Gruppen (§9) schicken jeden lokalen Pfad durch
 denselben Check.
+
+`remove`, `rename` und `transfer_move` wirken auf den Verzeichnis-
+eintrag selbst: nach demselben Check lösen sie nur den Parent auf
+(`_enforce_root_entry`). Auf einem Symlink löschen oder verschieben
+sie also den Link, nie den Ordner oder die Datei, auf die er zeigt.
+Ein Link, der aus der Root hinauszeigt, bleibt abgelehnt.
 
 ### 7.2 Log-Demux — keine Cross-Session-Leckage
 
@@ -572,8 +597,9 @@ des Peers auf `_HttpSession.cert_fingerprint`. Jeder folgende POST
 / DELETE / SSE derriviert den Fingerprint erneut und lehnt bei
 Mismatch mit 403 ab. Ein geleakter `Mcp-Session-Id`-Header ist
 wertlos für jemanden mit anderem Cert. Non-TLS-Sessions (Loopback)
-haben keinen Fingerprint und keine Bindung — explizite Trade-Off
-für lokale-Dev-Ergonomie.
+haben keinen Fingerprint und keine Bindung; jeder ihrer Requests muss
+stattdessen den Bearer-Token tragen (§1.2), eine geleakte Session-ID
+allein ist auch dort wertlos.
 
 ### 7.9 Audit "attempt" vor dem Backend-Call
 
@@ -943,7 +969,11 @@ Studio, Ollama, vLLM, llama.cpp; jeder OpenAI-kompatible Server) oder
 das genannte. Dieses Modell arbeitet mit den Read-only-Datei-Tools von
 axross innerhalb der MCP-Root, dazu den Read-only-Tools der in `groups`
 genannten Gruppen, und der Call liefert
-`{answer, stopped, calls, profile, model}`.
+`{answer, stopped, calls, profile, model}`. `remote` und `extensions`
+reichen über die Root hinaus (gespeicherte Verbindungen mit ihren
+gespeicherten Zugangsdaten, der Code der Extensions): `groups` darf sie
+nur nennen, wenn der Server selbst mit ihnen in `--mcp-tools` gestartet
+wurde.
 
 * **Es ändert nichts.** Der innere Agent bekommt kein Write-, Exec-,
   Script- oder Agent-Tool: auf einem headless Server könnte niemand

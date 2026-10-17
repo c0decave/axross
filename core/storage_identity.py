@@ -183,17 +183,14 @@ def _same_entry(backend_a, path_a: str, backend_b, path_b: str) -> bool:
         entry_a, entry_b = _local_entry(local_a), _local_entry(local_b)
         if entry_a == entry_b:
             return True
-        # A case-insensitive filesystem (vfat, exfat, SMB mounts) shows
-        # File.txt and file.txt as one entry.
-        if (
-            os.path.dirname(entry_a) == os.path.dirname(entry_b)
-            and os.path.basename(entry_a).casefold() == os.path.basename(entry_b).casefold()
-        ):
-            try:
-                return os.path.samefile(local_a, local_b)
-            except OSError:
-                return False
-        return False
+        # One file has more than one path: a bind mount, a share mounted
+        # twice, a case-insensitive filesystem (Docs/File.txt and
+        # docs/file.txt), a hard link. Paths cannot tell; the device and
+        # inode of the entries can. lstat, so a symlink stays its own entry.
+        try:
+            return os.path.samestat(os.lstat(entry_a), os.lstat(entry_b))
+        except OSError:
+            return False
     if local_a or local_b or not _same_view(backend_a, backend_b):
         return False
     return _norm_view_path(backend_a, path_a) == _norm_view_path(backend_b, path_b)
@@ -216,12 +213,34 @@ def _is_within(backend_a, root_a: str, backend_b, path_b: str) -> bool:
     local_b = _strict_local_path(backend_b, path_b)
     if local_a and local_b:
         root, target = os.path.realpath(local_a), os.path.realpath(local_b)
-        return target == root or target.startswith(root.rstrip(os.sep) + os.sep)
+        if target == root or target.startswith(root.rstrip(os.sep) + os.sep):
+            return True
+        return _local_ancestor_is(root, target)
     if local_a or local_b or not _same_view(backend_a, backend_b):
         return False
     root = _norm_view_path(backend_a, root_a)
     target = _norm_view_path(backend_b, path_b)
     return target == root or target.startswith(root.rstrip("/") + "/")
+
+
+def _local_ancestor_is(root: str, target: str) -> bool:
+    """True when *target* or one of its existing ancestors is the folder
+    *root* under another path (bind mount, case-insensitive spelling)."""
+    try:
+        root_st = os.stat(root)
+    except OSError:
+        return False
+    path = target
+    while True:
+        try:
+            if os.path.samestat(os.stat(path), root_st):
+                return True
+        except OSError:
+            pass  # not created yet: its parent decides
+        parent = os.path.dirname(path)
+        if parent == path:
+            return False
+        path = parent
 
 
 def may_be_same_file(backend_a, path_a: str, backend_b, path_b: str) -> bool:

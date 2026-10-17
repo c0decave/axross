@@ -13,6 +13,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.profiles import ConnectionProfile, ProfileManager
+from tests.svn_fake import popen_from_run
 
 
 def load_connection_manager_class():
@@ -425,14 +426,19 @@ class ImapRegressionTests(unittest.TestCase):
         session._mailbox_cache = None
         return session
 
-    def test_nested_mailboxes_keep_full_names_and_are_parseable(self) -> None:
+    def test_nested_mailboxes_list_level_by_level_and_are_parseable(self) -> None:
         session = self._make_imap_session(
             b'(\\HasNoChildren) "/" "INBOX"',
             b'(\\HasNoChildren) "/" "Projects/2025"',
         )
 
+        # With "/" as separator the root lists the first level: a name holding
+        # "/" is no path component a pane can join (safe_join refuses it).
         items = session._list_mailboxes()
-        self.assertEqual([item.name for item in items], ["INBOX", "Projects/2025"])
+        self.assertEqual([item.name for item in items], ["INBOX", "Projects"])
+        self.assertTrue(session.is_dir("/Projects"))
+        below = session._sub_mailboxes(session._list_entries(), "Projects")
+        self.assertEqual([item.name for item in below], ["2025"])
         self.assertEqual(
             session._parse_path("/Projects/2025/123_report.eml"),
             ("Projects/2025", "123"),
@@ -3134,7 +3140,11 @@ class SvnFsSessionTests(unittest.TestCase):
 
     def test_open_read_returns_blob(self) -> None:
         sess, svn_mod = self._make_session()
-        with mock.patch("subprocess.run") as run:
+        # svn cat streams through Popen (SvnFsSession._run_capped).
+        with (
+            mock.patch("subprocess.run") as run,
+            mock.patch("subprocess.Popen", popen_from_run(run)),
+        ):
             run.return_value = mock.MagicMock(
                 returncode=0,
                 stdout=b"hello world\n",
@@ -3146,7 +3156,11 @@ class SvnFsSessionTests(unittest.TestCase):
     def test_open_read_rejects_oversized_blob(self) -> None:
         sess, svn_mod = self._make_session()
         # Patch _MAX_CAT_BYTES down to something testable.
-        with mock.patch.object(svn_mod, "_MAX_CAT_BYTES", 16), mock.patch("subprocess.run") as run:
+        with (
+            mock.patch.object(svn_mod, "_MAX_CAT_BYTES", 16),
+            mock.patch("subprocess.run") as run,
+            mock.patch("subprocess.Popen", popen_from_run(run)),
+        ):
             run.return_value = mock.MagicMock(
                 returncode=0,
                 stdout=b"x" * 32,

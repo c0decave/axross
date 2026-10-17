@@ -2,7 +2,7 @@
 
 Backends with native versioning (S3 with bucket versioning enabled,
 Azure Blob versioning, Dropbox, Google Drive, OneDrive, WebDAV with
-RFC 3253 DeltaV) return a list of these from
+RFC 3253 DeltaV, Git) return a list of these from
 ``FileBackend.list_versions(path)``. The Virtual Snapshot Browser
 (phase 4e) shows them as a uniform timeline across protocols.
 """
@@ -19,7 +19,7 @@ class FileVersion:
 
     # Backend-specific handle used to fetch this version's bytes.
     # S3 VersionId, Dropbox rev, Drive revision id, Azure x-ms-version-id,
-    # OneDrive itemId:versionId, WebDAV DAV:version-name.
+    # OneDrive itemId:versionId, WebDAV DAV:version-name, Git commit sha.
     version_id: str
     # When this version was committed on the server.
     modified: datetime = field(default_factory=lambda: datetime.fromtimestamp(0))

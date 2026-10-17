@@ -209,6 +209,14 @@ def _parse_menu(raw: bytes) -> list[dict]:
     return entries
 
 
+def _raise_if_missing(entries: list[dict], path: str) -> None:
+    """A server answers a selector it does not have with an error line
+    (type 3) and info lines, nothing else: that path is missing."""
+    if any(e["type"] == "3" for e in entries) and all(e["type"] in _INFO_TYPES for e in entries):
+        reason = next(e["display"] for e in entries if e["type"] == "3").strip()
+        raise FileNotFoundError(errno.ENOENT, reason or "No such selector", path)
+
+
 #: Hosts a server puts on its own entries when it does not know its name.
 _SELF_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
 
@@ -473,11 +481,7 @@ class GopherSession(SessionLifecycle):
         # A server answers a selector it does not have with an error line
         # (type 3) and info lines: nothing to list, so the path is missing.
         # Not cached - the selector may appear later.
-        if any(e["type"] == "3" for e in entries) and all(
-            e["type"] in _INFO_TYPES for e in entries
-        ):
-            reason = next(e["display"] for e in entries if e["type"] == "3").strip()
-            raise FileNotFoundError(errno.ENOENT, reason or "No such selector", path)
+        _raise_if_missing(entries, path)
         # LRU-trim so a long browsing session against a hostile / huge
         # server doesn't grow the cache without bound.
         if len(self._dir_cache) >= DIR_CACHE_LIMIT:
@@ -599,6 +603,11 @@ class GopherSession(SessionLifecycle):
             blob = self._fetch_file(selector)
         except GopherProtocolError as exc:
             raise OSError(f"Gopher read({path}): {exc}") from exc
+        if entry is None and blob[:1] == b"3":
+            # Unlisted, fetched verbatim: the server's "doesn't exist"
+            # menu is no file (review B26, 2026-10-17). A listed file is
+            # its bytes, whatever they look like.
+            _raise_if_missing(_parse_menu(blob), path)
         return io.BytesIO(blob)
 
     def readlink(self, path: str) -> str:
@@ -757,6 +766,10 @@ class GopherSession(SessionLifecycle):
                 if idx not in names:
                     continue
                 t = e.get("type") or ""
+                if self._is_foreign(e):
+                    # Another server's entry: its selector means nothing
+                    # here, and open_read refuses it (review B25).
+                    continue
                 child_path = self.join(p, names[idx])
                 if on_visit is not None:
                     try:

@@ -157,7 +157,9 @@ class CostTest(unittest.TestCase):
         logger.setLevel(logging.DEBUG)
         with self.assertLogs(logger, logging.INFO) as cm:
             SL.log_event(logger, logging.INFO, "operation_start", password="hunter2", b="c")
-        self.assertEqual(cm.records[0].getMessage(), "event=operation_start b='c' password='<redacted>'")
+        self.assertEqual(
+            cm.records[0].getMessage(), "event=operation_start b='c' password='<redacted>'"
+        )
 
 
 if __name__ == "__main__":

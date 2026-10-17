@@ -164,9 +164,13 @@ def apply_tempdir_preference() -> str | None:
     buffers, ``core.fuse_mount`` per-handle flush staging, and any
     future temp-using code without per-site plumbing.
 
-    Returns the chosen path, or ``None`` when tmpfs is disabled or
-    not present. Idempotent: calling twice doesn't change anything
-    once ``tempfile.tempdir`` is already set.
+    Off by default (``tmpfs_enabled``): it moves large buffers into RAM
+    too. An explicit, non-empty ``TMPDIR`` always wins - the user chose
+    where temp files go.
+
+    Returns the chosen path, or ``None`` when tmpfs is disabled, not
+    present, or ``TMPDIR`` is set. Idempotent: calling twice doesn't
+    change anything once ``tempfile.tempdir`` is already set.
     """
     import tempfile
 
@@ -174,6 +178,9 @@ def apply_tempdir_preference() -> str | None:
 
     settings = get_settings()
     if not settings.tmpfs_enabled:
+        return None
+    if os.environ.get("TMPDIR", "").strip():
+        log.info("tmpfs routing skipped: TMPDIR is set (%s)", os.environ["TMPDIR"])
         return None
     chosen = preferred_tmpfs_dir()
     if chosen is None:

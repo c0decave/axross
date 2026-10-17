@@ -36,7 +36,9 @@ class _FakeS3:
 
     def get_object(self, Bucket, Key):  # noqa: N803 - boto3 names
         if not self.readable:
-            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}, "GetObject")
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}, "GetObject"
+            )
         if Key not in self.objects:
             raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
         return {"Body": io.BytesIO(self.objects[Key])}

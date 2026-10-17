@@ -28,15 +28,29 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from core.secure_storage import locked_store_update, write_secret_file
 
 log = logging.getLogger(__name__)
 
 #: Consecutive failures after which a job disables itself. A schedule
 #: that fails every time is not a schedule, it is a retry loop.
 MAX_CONSECUTIVE_FAILURES = 10
+
+#: Wall-clock limit of one scheduled script run. Generous on purpose (a
+#: nightly mirror may take hours); it exists so a hung script ends as a
+#: recorded failure instead of blocking its job forever ("a running job is
+#: not started again").
+SCRIPT_TIMEOUT_S = 24 * 3600
+
+#: Characters of stdout (and of stderr) a scheduled run may produce before
+#: it is stopped. Nobody watches the output; only its tail reaches the
+#: job's detail on failure.
+SCRIPT_OUTPUT_CHARS = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -193,6 +207,16 @@ class JobStore:
             return
         log.warning("scheduler: unreadable job store kept as %s", aside)
 
+    def update(self, change: Callable[[list[Job]], list[Job]]) -> list[Job]:
+        """Load, apply ``change`` and save, under a file lock, and return
+        the saved jobs. Every writer of the store (the main window
+        recording a run, the Scheduler dialog) goes through here, so none
+        writes back a list that is older than the file."""
+        with locked_store_update(self.path):
+            jobs = change(self.load())
+            self.save(jobs)
+            return jobs
+
     def save(self, jobs: list[Job]) -> None:
         payload = [
             {
@@ -210,12 +234,9 @@ class JobStore:
             }
             for j in jobs
         ]
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # Write-then-rename: a crash mid-write must not leave the user
-        # with a half-written schedule.
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        # Write-then-rename (a crash mid-write must not leave the user
+        # with a half-written schedule), 0o600 like every other store.
+        write_secret_file(str(self.path), json.dumps(payload, indent=2))
 
 
 def run_job(job: Job, *, runner, on_finished) -> None:
@@ -233,10 +254,73 @@ def run_job(job: Job, *, runner, on_finished) -> None:
     """
     try:
         detail = runner(job)
-        on_finished(job, True, str(detail) if detail else "")
-    except Exception as exc:  # noqa: BLE001 — a bad job must not escape
-        log.warning("scheduler: job %s failed: %s", job.name, exc)
-        on_finished(job, False, str(exc))
+    except BaseException as exc:  # noqa: BLE001 — a bad job must not escape
+        # BaseException, not Exception: this is the top of a worker
+        # thread, and a SystemExit leaving it took the whole app down.
+        log.warning("scheduler: job %s failed: %r", job.name, exc)
+        on_finished(job, False, str(exc) or type(exc).__name__)
+        return
+    on_finished(job, True, str(detail) if detail else "")
+
+
+def script_target(target: str) -> str:
+    """The saved-script name a script job runs. A trailing ``.py`` is
+    dropped (scripts are listed and run by name, but the file on disk is
+    ``<name>.py``); raises ``ValueError`` for a name scripts refuse."""
+    from core import scripting
+
+    name = target.strip()
+    if name.endswith(".py"):
+        name = name[: -len(".py")]
+    return scripting._validate_script_name(name)  # noqa: SLF001
+
+
+def run_script_job(
+    job: Job,
+    *,
+    cancel_event=None,
+    timeout_s: float = SCRIPT_TIMEOUT_S,
+) -> str:
+    """Run a job: a script job runs its saved script in a child process,
+    as the Scripts dock and the MCP ``script_run`` tool do
+    (:func:`core.script_runner.run_bounded`). Whatever the script does -
+    ``sys.exit()``, a crash, an endless loop - stays in the child. Returns
+    the success detail; raises with the failure detail.
+
+    The child is not interactive: a prompt or a production-profile
+    countdown refuses instead of waiting for someone who is not there.
+    """
+    if job.kind != "script":
+        raise ValueError(f"unknown job kind {job.kind!r}")
+    from core import script_runner, scripting
+    from core.security_mode import current_policy, require
+    from core.ui_helpers import ENV_NONINTERACTIVE
+
+    require("saved script execution", current_policy().allow_scripts)
+    name = script_target(job.target)
+    scripting.load_script(name)  # a missing script fails here, before a child starts
+    run = script_runner.run_bounded(
+        name,
+        timeout_s=timeout_s,
+        max_output_chars=SCRIPT_OUTPUT_CHARS,
+        cancel_event=cancel_event,
+        env_overrides={ENV_NONINTERACTIVE: "1"},
+    )
+    if run.cancelled:
+        raise RuntimeError("cancelled: the application closed during the run")
+    if run.timed_out:
+        raise RuntimeError(f"timed out after {timeout_s:g} s")
+    if run.output_exceeded:
+        raise RuntimeError(
+            f"{run.output_exceeded} exceeded {SCRIPT_OUTPUT_CHARS} characters; "
+            "the script was stopped"
+        )
+    if run.error_type:
+        raise RuntimeError(f"{run.error_type}: {run.error or ''}".rstrip(": "))
+    if run.exit != 0:
+        last = run.stderr.strip().splitlines()[-1:] if run.stderr.strip() else []
+        raise RuntimeError(f"exited with status {run.exit}" + (f": {last[0]}" if last else ""))
+    return f"ran {name}"
 
 
 def _parse_dt(value) -> datetime | None:
@@ -256,4 +340,6 @@ __all__ = [
     "next_run_at",
     "record_result",
     "run_job",
+    "run_script_job",
+    "script_target",
 ]

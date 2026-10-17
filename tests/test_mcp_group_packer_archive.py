@@ -118,7 +118,11 @@ def test_sad_password_needs_7z(tree, caplog):
 def test_sad_pack_outside_root_and_bad_names(tree):
     tools = _pk(tree)
     with pytest.raises(T.RpcError) as err:
-        T.call(tools, "pack", {"folder": str(tree.parent), "names": ["outside.txt"], "archive_name": "x"})
+        T.call(
+            tools,
+            "pack",
+            {"folder": str(tree.parent), "names": ["outside.txt"], "archive_name": "x"},
+        )
     assert "escapes" in err.value.message
     for names, archive in ((["../outside.txt"], "x"), (["nope"], "x"), (["docs"], "a/b")):
         with pytest.raises(T.RpcError):
@@ -142,8 +146,16 @@ def test_edge_symlink_to_outside_is_skipped_not_packed(tree):
 
 def test_edge_single_file_format_refuses_a_folder(tree):
     with pytest.raises(T.RpcError):
-        T.call(_pk(tree), "pack", {"folder": str(tree), "names": ["docs"], "archive_name": "g", "format": "gz"})
-    out = T.call(_pk(tree), "pack", {"folder": str(tree), "names": ["single.txt"], "archive_name": "g", "format": "gz"})
+        T.call(
+            _pk(tree),
+            "pack",
+            {"folder": str(tree), "names": ["docs"], "archive_name": "g", "format": "gz"},
+        )
+    out = T.call(
+        _pk(tree),
+        "pack",
+        {"folder": str(tree), "names": ["single.txt"], "archive_name": "g", "format": "gz"},
+    )
     assert out["path"] == str(tree / "g.gz")
 
 
@@ -151,7 +163,12 @@ def test_edge_pack_honours_cancel_and_leaves_nothing(tree):
     cancel = threading.Event()
     cancel.set()
     with pytest.raises(M.CancelledError):
-        T.run_handler(_pk(tree), "pack", {"folder": str(tree), "names": ["docs"], "archive_name": "c"}, cancel=cancel)
+        T.run_handler(
+            _pk(tree),
+            "pack",
+            {"folder": str(tree), "names": ["docs"], "archive_name": "c"},
+            cancel=cancel,
+        )
     assert not list(tree.glob("c*")) and not list(tree.glob(".axross-pack-*"))
 
 
@@ -210,7 +227,9 @@ def test_happy_extract_into_a_fresh_folder_each_time(tree, caplog):
 
 def test_happy_extract_into_dest_dir(tree):
     _zip(tree / "x.zip", {"one.txt": "1"})
-    out = T.call(_ar(tree), "archive_extract", {"path": str(tree / "x.zip"), "dest_dir": str(tree / "docs")})
+    out = T.call(
+        _ar(tree), "archive_extract", {"path": str(tree / "x.zip"), "dest_dir": str(tree / "docs")}
+    )
     assert out["path"] == str(tree / "docs" / "x")
 
 
@@ -230,7 +249,11 @@ def test_sad_zip_slip_is_refused_and_leaves_nothing(tree, caplog):
 def test_sad_extract_dest_outside_root(tree):
     _zip(tree / "x.zip", {"one.txt": "1"})
     with pytest.raises(T.RpcError) as err:
-        T.call(_ar(tree), "archive_extract", {"path": str(tree / "x.zip"), "dest_dir": str(tree.parent)})
+        T.call(
+            _ar(tree),
+            "archive_extract",
+            {"path": str(tree / "x.zip"), "dest_dir": str(tree.parent)},
+        )
     assert "escapes" in err.value.message
     assert not (tree.parent / "x").exists()
 

@@ -109,7 +109,8 @@ def test_built_wheel_contains_runtime_resources() -> None:
     wheels = _wheels_for(__version__)
     if not wheels:
         pytest.skip(
-            f"no wheel for {__version__} in dist/; run `python -m build` for artifact smoke coverage"
+            f"no wheel for {__version__} in dist/; "
+            "run `python -m build` for artifact smoke coverage"
         )
 
     wheel = wheels[-1]

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from core.path_policy import safe_join, safe_leaf
+from core.path_policy import safe_join, transfer_leaf
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # ``TransferJob.if_exists`` values.
-IF_EXISTS_OVERWRITE = "overwrite"  # replace whatever is there (scripting, compare/sync)
+IF_EXISTS_OVERWRITE = "overwrite"  # replace whatever is there (scripting, sync overwrites)
 IF_EXISTS_FAIL = "fail"  # never replace: an existing destination fails the job
 IF_EXISTS_NEWER = "newer"  # replace only an older file; otherwise skip the job
 
@@ -69,8 +69,9 @@ class TransferConflict:
 @dataclass
 class ConflictScan:
     conflicts: list[TransferConflict] = field(default_factory=list)
-    # Names present in each destination folder the scan listed; renames
-    # pick a name free in here.
+    # Names present in each destination folder the scan listed, plus the
+    # names this transfer itself creates there; renames pick a name free
+    # in here, so a renamed item never lands on another item of the batch.
     taken: dict[str, set[str]] = field(default_factory=dict)
 
 
@@ -140,6 +141,7 @@ def scan_conflicts(
 
     def visit(items: list[tuple[str, str, object]], folder: str) -> None:
         existing = listing(folder)
+        scan.taken[folder].update(name for name, _path, _item in items)
         for name, src_path, src_item in sorted(items, key=lambda t: t[0]):
             if cancel():
                 raise ScanCancelled()
@@ -150,7 +152,7 @@ def scan_conflicts(
             dest_is_dir = bool(getattr(dest_item, "is_dir", False))
             dest_path = safe_join(dest_backend, folder, name)
             if src_is_dir and dest_is_dir:
-                visit(_children(source_backend, src_path), dest_path)
+                visit(_children(source_backend, src_path, dest_backend), dest_path)
                 continue
             scan.conflicts.append(
                 TransferConflict(
@@ -170,7 +172,7 @@ def scan_conflicts(
     top: list[tuple[str, str, object]] = []
     for path in source_paths:
         try:
-            name = safe_leaf(_leaf(source_backend, path))
+            name = transfer_leaf(source_backend, dest_backend, _leaf(source_backend, path))
         except ValueError:
             continue  # transfer_files skips it as well
         try:
@@ -184,12 +186,18 @@ def scan_conflicts(
     return scan
 
 
-def _children(backend: FileBackend, folder: str) -> list[tuple[str, str, object]]:
+def _children(
+    backend: FileBackend, folder: str, dest_backend: FileBackend
+) -> list[tuple[str, str, object]]:
     out = []
     for item in backend.list_dir(folder):
         name = getattr(item, "name", "")
+        if getattr(item, "is_dir", False) and getattr(item, "is_link", False):
+            continue  # _transfer_directory does not follow it either
         try:
-            out.append((safe_leaf(name), safe_join(backend, folder, name), item))
+            out.append(
+                (transfer_leaf(backend, dest_backend, name), safe_join(backend, folder, name), item)
+            )
         except ValueError:
             continue  # _transfer_directory skips it as well
     return out
@@ -206,6 +214,14 @@ class ConflictPlan:
         self._backend = dest_backend
         self._taken = {folder: set(names) for folder, names in scan.taken.items()}
         self._decisions: dict[str, tuple[str | None, str]] = {}
+
+    @classmethod
+    def never_replace(cls, dest_backend: FileBackend) -> ConflictPlan:
+        """A plan without answers: every job, folder contents included,
+        refuses to replace a destination that exists when it runs. For
+        copies whose caller established the destination was free (the
+        compare window's one-sided rows, a sync's "missing" files)."""
+        return cls(dest_backend, ConflictScan())
 
     def decide(self, conflict: TransferConflict, action: ConflictAction) -> None:
         if action is ConflictAction.SKIP:

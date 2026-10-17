@@ -491,7 +491,7 @@
       ]
     },
     {
-      "description": "List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV). Empty list on backends with no native versioning.",
+      "description": "List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV, Git: one per commit that changed the file). Empty list on backends with no native versioning.",
       "group": "core",
       "input_schema": {
         "properties": {
@@ -729,7 +729,7 @@
       ]
     },
     {
-      "description": "Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is \"copied\", \"skipped\" (reason: \"too-large\" or \"exists\"), or \"error\". Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false. Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.",
+      "description": "Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is \"copied\", \"skipped\" (reason: \"too-large\", \"exists\", \"unsafe-name\", or \"max-depth\" for a folder below max_depth), or \"error\" (folder: true for a folder that could not be listed). \"truncated\" is true when max_files or max_depth cut the walk; \"complete\" is true only when every file was copied or already existed. Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false. Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.",
       "group": "write",
       "input_schema": {
         "properties": {
@@ -911,10 +911,18 @@
       ]
     },
     {
-      "description": "Describe the ``axross`` scripting API that script_run gives a script, as JSON built from the live code: per public function its signature, parameters with types and defaults, return type, first docstring paragraph, group, ``mutates`` (can change files, remote state or settings) and ``prompts`` (needs a human: under script_run it raises NonInteractiveError unless the script opts in, e.g. confirm(assume_yes=True)); the public classes; and the methods every backend session has (with close() and the with statement). Same data as axross.api_schema().",
+      "description": "Describe the ``axross`` scripting API that script_run gives a script, as JSON built from the live code: rules and errors (the conventions and exceptions a script meets), groups (the names by topic), per public function its signature, parameters with types and defaults, return type, whole docstring, examples, ``raises``, ``mutates`` (can change files, remote state or settings) and ``prompts`` (needs a human: under script_run it raises NonInteractiveError unless the script opts in, e.g. confirm(assume_yes=True)); the public classes; the types the API returns (FileItem, results) with fields and methods; the methods every backend session has (with close() and the with statement); and a legend of every field. Same data as axross.api_schema(names) and docs/scripting-api.json. The whole API is large: call it with names=[] for the index, then with the names you need.",
       "group": "scripts",
       "input_schema": {
-        "properties": {},
+        "properties": {
+          "names": {
+            "description": "Only these functions, classes and types, plus the types they use; [] gives the index alone. Default: everything.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
         "type": "object"
       },
       "mutating": false,

@@ -154,7 +154,9 @@ def test_sad_unknown_group_via_env_exits_2():
 
 
 def test_happy_groups_reach_the_stdio_config():
-    code, err, serve, _ = _main("--mcp-server", "--mcp-tools", "packer,archive", "--mcp-tools", "crypto")
+    code, err, serve, _ = _main(
+        "--mcp-server", "--mcp-tools", "packer,archive", "--mcp-tools", "crypto"
+    )
     assert code == 0, err
     config = serve.call_args.args[0]
     assert config.tool_groups == frozenset({"packer", "archive", "crypto"})
@@ -192,19 +194,25 @@ def test_happy_every_group_has_a_builder_and_all_builds():
     groups = {t.group for t in tools}
     assert set(G.GROUPS) <= groups
     # exec needs its own flag, also under "all"
-    without = M._build_tools(LocalFS(), allow_write=True, root="/tmp", tool_groups=frozenset(G.GROUPS))
+    without = M._build_tools(
+        LocalFS(), allow_write=True, root="/tmp", tool_groups=frozenset(G.GROUPS)
+    )
     assert set(G.GROUPS) - {t.group for t in without} == {"exec"}
     names = [t.name for t in tools]
     assert len(names) == len(set(names)), "tool names must be unique"
 
 
 def test_sad_read_only_all_registers_no_mutating_tool():
-    tools = M._build_tools(LocalFS(), allow_write=False, root="/tmp", tool_groups=frozenset(G.GROUPS))
+    tools = M._build_tools(
+        LocalFS(), allow_write=False, root="/tmp", tool_groups=frozenset(G.GROUPS)
+    )
     assert [t.name for t in tools if t.write] == []
 
 
 def test_edge_every_group_tool_has_a_strict_schema_and_a_known_timeout_class():
-    tools = M._build_tools(LocalFS(), allow_write=True, root="/tmp", tool_groups=frozenset(G.GROUPS))
+    tools = M._build_tools(
+        LocalFS(), allow_write=True, root="/tmp", tool_groups=frozenset(G.GROUPS)
+    )
     for tool in tools:
         assert tool.timeout_class in M.TIMEOUT_CLASSES, tool.name
         assert tool.timeout_seconds == M.TIMEOUT_CLASSES[tool.timeout_class], tool.name

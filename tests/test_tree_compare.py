@@ -183,7 +183,11 @@ def test_edge_mtime_within_tolerance_counts_as_same():
 
 
 def test_edge_directory_present_on_both_sides_is_same_and_never_hashed():
-    entries = _pair([_f("d", is_dir=True)], [_f("d", is_dir=True)])
+    # Both folders list (empty); a folder whose listing FAILS is unknown,
+    # see tests/test_compare_unlisted_folder.py.
+    left = _Tree({"/l": [_f("d", is_dir=True)], "/l/d": []})
+    right = _Tree({"/r": [_f("d", is_dir=True)], "/r/d": []})
+    entries = compare_trees(left, "/l", right, "/r", hasher=_hasher)
     assert _entry(entries, "d").status == Status.SAME
 
 

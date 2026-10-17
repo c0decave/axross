@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -167,6 +168,12 @@ class GuiCopyPathTest(_Base):
         src, dst = _Pane(self.fs, str(self.src)), _Pane(self.fs, str(self.dst))
         with mock.patch("core.destructive_preview.preview_transfer") as preview:
             MainWindow._start_transfer_between(fake, src, dst, [str(self.src / "f1.bin")])
+            # The walk runs off the GUI thread; its jobs arrive through
+            # the event loop.
+            deadline = time.monotonic() + 10
+            while not self.mgr.all_jobs() and time.monotonic() < deadline:
+                self.app.processEvents()
+                time.sleep(0.005)
         preview.assert_not_called()
         self.assertEqual([j.dest_path for j in self.mgr.all_jobs()], [str(self.dst / "f1.bin")])
         self.assertIn(dst, fake._transfer_target_panes)

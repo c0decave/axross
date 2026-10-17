@@ -327,6 +327,18 @@ STREAM_HASH_PROGRESS_EVERY = 4
 # quietly pull a multi-GB VM image through a WAN backend. Callers
 # that really want to hash those can bump ``max_file_bytes`` per-call.
 RECURSIVE_CHECKSUM_MAX_FILE_BYTES = 1 << 30  # 1 GiB
+def _bulk_copy_complete(entries: list[dict], truncated: bool) -> bool:
+    """Whether a bulk_copy left nothing out: the walk ran to the end and
+    every record is a copy or a requested "exists" skip."""
+    if truncated:
+        return False
+    return all(
+        e.get("action") == "copied"
+        or (e.get("action") == "skipped" and e.get("reason") == "exists")
+        for e in entries
+    )
+
+
 # Default per-file size ceiling for ``bulk_copy``. Looser than
 # ``recursive_checksum`` because copy is the user's explicit intent
 # to move the bytes — a user who wants to hash 50 GiB usually means
@@ -1036,6 +1048,32 @@ def _enforce_root(path: str, root: str) -> str:
     )
 
 
+def _enforce_root_entry(path: str, root: str) -> str:
+    """Like :func:`_enforce_root`, for an operation on the entry itself.
+
+    remove / rename / move act on the directory entry *path* names. When
+    that entry is a symlink, resolving it (as :func:`_enforce_root` does)
+    hands the link's TARGET to the backend: ``remove(link, recursive)``
+    deleted the folder the link points to. Here only the parent is
+    resolved and confined; the final name is joined back unresolved.
+
+    The whole-path check still runs first as a second gate, so a link
+    that points out of the root stays refused exactly as before.
+    """
+    import os.path as op
+
+    resolved = _enforce_root(path, root)
+    abs_root = op.abspath(root or "/")
+    abs_path = op.abspath(op.join(abs_root, path) if not op.isabs(path) else path)
+    name = op.basename(abs_path)
+    if abs_path == abs_root or not name:
+        # The root itself (or "/"): there is no parent inside the root;
+        # the caller's root refusal decides.
+        return resolved
+    parent = _enforce_root(op.dirname(abs_path), root)
+    return op.join(parent, name)
+
+
 def _refuse_configured_root(path: str, root: str, operation: str) -> None:
     """Refuse write operations that target the MCP root object itself."""
     import os.path as op
@@ -1065,8 +1103,19 @@ def _build_tools(
     allow_scripts: bool = False,
     tool_groups: frozenset[str] | None = None,
     allow_exec: bool = False,
+    extra_roots: tuple = (),
+    remote_registry=None,
 ) -> list[_Tool]:
     """Build the catalogue. Write tools are added only when allowed.
+
+    *remote_registry* is a :class:`core.mcp_groups.RemoteRegistry` the
+    caller owns - with connections it lent (``attach``) and its gate -
+    instead of the one the ``remote`` group makes for itself. The caller
+    closes it.
+
+    *extra_roots* are further ``(folder, writable)`` pairs beside *root*
+    (the agent's extra folders): tools read in every one and write only in
+    *root* and the writable ones. A relative path belongs to *root*.
 
     *tool_groups* names the optional capability groups
     (:data:`core.mcp_groups.GROUPS`) to add on top of the file tools;
@@ -1096,6 +1145,27 @@ def _build_tools(
     server_backend_id = backend_id or _backend_id_for(backend)
     read_root = root
     write_root = root or "/"
+    extras = tuple((str(path), bool(writable)) for path, writable in (extra_roots or ()))
+    if extras and root is None:
+        raise ValueError("extra_roots need a root")
+    read_roots = (root, *(path for path, _ in extras)) if root is not None else ()
+    write_roots = (write_root, *(path for path, writable in extras if writable))
+
+    def _confined(path: str, roots: tuple, enforce=None) -> str:
+        """*enforce* (default _enforce_root) against the first root that
+        holds *path*; a relative path is only ever the main root's."""
+        import os.path as op
+
+        enforce = enforce or _enforce_root
+        if len(roots) == 1 or not isinstance(path, str) or not op.isabs(path):
+            return enforce(path, roots[0])
+        first: PermissionError | None = None
+        for candidate in roots:
+            try:
+                return enforce(path, candidate)
+            except PermissionError as exc:
+                first = first or exc
+        raise first
 
     # Per-call backend selector. When a registry is configured, tool
     # callers can pass ``{"backend": "<id>"}`` to route the invocation
@@ -1108,7 +1178,8 @@ def _build_tools(
     # a per-session registry beside the static ``backends`` one, and the
     # static registry gains the default backend as "local" so every
     # backend has an id.
-    remote_registry = _groups.RemoteRegistry() if "remote" in groups else None
+    if remote_registry is None and "remote" in groups:
+        remote_registry = _groups.RemoteRegistry()
     if remote_registry is not None:
         backends = dict(backends or {})
         if not any(b is backend for b in backends.values()):
@@ -1164,7 +1235,27 @@ def _build_tools(
             return _groups.check_remote_path(path)
         if read_root is None:
             return path
-        return _enforce_root(path, read_root)
+        return _confined(path, read_roots)
+
+    def _refuse_read_only(path: str) -> str:
+        """A path whose nearest folder is a read-only extra one is not
+        written, even when a writable folder around it holds it too."""
+        import os.path as op
+
+        if not extras:
+            return path
+        here = {op.abspath(path), op.realpath(path)}
+        best: tuple[int, bool] | None = None
+        for folder, writable in ((write_root, True), *extras):
+            for base in {op.abspath(folder), op.realpath(folder)}:
+                base = base.rstrip(op.sep) or op.sep
+                if any(h == base or h.startswith(base + op.sep) for h in here):
+                    depth = base.count(op.sep)
+                    if best is None or depth > best[0] or (depth == best[0] and not writable):
+                        best = (depth, writable)
+        if best is not None and not best[1]:
+            raise PermissionError(f"{path} is in a read-only folder")
+        return path
 
     def _write_path(path: str, active_backend) -> str:
         """Confine a path a mutating tool writes, moves or deletes. On a
@@ -1173,13 +1264,22 @@ def _build_tools(
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
             return _groups.check_remote_path(path)
-        return _enforce_root(path, write_root)
+        return _refuse_read_only(_confined(path, write_roots))
+
+    def _entry_path(path: str, active_backend) -> str:
+        """Confine a path whose directory entry itself is removed or
+        moved: a symlink there is acted on, never its target."""
+        if _is_remote(active_backend):
+            remote_registry.refuse_production(active_backend)
+            return _groups.check_remote_path(path)
+        return _refuse_read_only(_confined(path, write_roots, _enforce_root_entry))
 
     def _refuse_root(path: str, active_backend, operation: str) -> None:
         """Refuse a mutation of the configured root object itself."""
         if _is_remote(active_backend):
             return
-        _refuse_configured_root(path, write_root, operation)
+        for configured in (write_root, *(p for p, _ in extras)):
+            _refuse_configured_root(path, configured, operation)
 
     def _safe_child_path(active_backend, parent: str, name: str) -> str | None:
         from core.path_policy import safe_join
@@ -1245,7 +1345,9 @@ def _build_tools(
 
             # A cut inside a multi-byte character is the cap, not a bad
             # byte: final=False keeps that tail out of the text.
-            text = codecs.getincrementaldecoder("utf-8")("replace").decode(data, final=not truncated)
+            text = codecs.getincrementaldecoder("utf-8")("replace").decode(
+                data, final=not truncated
+            )
             strict = codecs.getincrementaldecoder("utf-8")("strict")
             try:
                 strict.decode(data, final=not truncated)
@@ -1942,8 +2044,9 @@ def _build_tools(
                 description=(
                     "List historical versions of a file (S3 ObjectVersions, "
                     "Dropbox revisions, GDrive revision-history, Azure blob "
-                    "snapshots, WebDAV DeltaV). Empty list on backends with "
-                    "no native versioning."
+                    "snapshots, WebDAV DeltaV, Git: one per commit that "
+                    "changed the file). Empty list on backends with no native "
+                    "versioning."
                 ),
                 schema={
                     "type": "object",
@@ -2044,7 +2147,7 @@ def _build_tools(
             recursive = bool(args.get("recursive", False))
             _audit("remove", "attempt", path=path, recursive=recursive)
             try:
-                safe = _write_path(path, backend)
+                safe = _entry_path(path, backend)
                 _refuse_root(safe, backend, "remove")
                 backend.remove(safe, recursive=recursive)
             except BaseException as exc:
@@ -2063,9 +2166,9 @@ def _build_tools(
                 raise ValueError("rename requires src + dst")
             _audit("rename", "attempt", src=src, dst=dst)
             try:
-                safe_src = _write_path(src, backend)
+                safe_src = _entry_path(src, backend)
                 _refuse_root(safe_src, backend, "rename source")
-                safe_dst = _write_path(dst, backend)
+                safe_dst = _entry_path(dst, backend)
                 _refuse_root(safe_dst, backend, "rename destination")
                 if backend.exists(safe_dst):
                     raise OSError(f"rename target already exists: {safe_dst}")
@@ -2132,6 +2235,16 @@ def _build_tools(
             * ``{src, dst, size, action: "skipped",
                 reason: "too-large" | "exists"}``
             * ``{src, dst, size, action: "error", error: "<msg>"}``
+            * ``{src, dst, size: 0, action: "error", error, folder: true}``
+              for a folder that could not be listed
+            * ``{src, dst, size: 0, action: "skipped", reason: "max-depth"}``
+              for a folder below ``max_depth`` (also sets ``truncated``)
+            * ``{src, dst, size, action: "skipped", reason: "unsafe-name"}``
+
+            ``complete`` is true only when the whole tree was walked and
+            every file was copied or skipped as already existing. A walk
+            that left something out used to answer ``truncated: false``
+            with no record of it.
 
             Progress is emitted once per copied file
             (``files_copied/max_files``). Cancel is checked before
@@ -2299,7 +2412,11 @@ def _build_tools(
                 )
                 copied = sum(1 for e in entries if e.get("action") == "copied")
                 _audit("bulk_copy", "ok", src=src, dst=dst, files_copied=copied)
-                return {"entries": entries, "truncated": False}
+                return {
+                    "entries": entries,
+                    "truncated": False,
+                    "complete": _bulk_copy_complete(entries, False),
+                }
 
             # Directory: BFS walk of src, mirror under dst.
             _ensure_dir(backend, safe_dst)
@@ -2313,7 +2430,20 @@ def _build_tools(
                 cur_src, cur_dst, depth = queue.pop(0)
                 try:
                     children = backend.list_dir(cur_src)
-                except OSError:
+                except OSError as exc:
+                    _audit(
+                        "bulk_copy.folder", "error", src=cur_src, error=type(exc).__name__
+                    )
+                    entries.append(
+                        {
+                            "src": cur_src,
+                            "dst": cur_dst,
+                            "size": 0,
+                            "action": "error",
+                            "error": redact_text(str(exc)),
+                            "folder": True,
+                        }
+                    )
                     continue
                 for child in children:
                     copied = sum(1 for e in entries if e.get("action") == "copied")
@@ -2326,11 +2456,32 @@ def _build_tools(
                     full_src = _safe_child_path(backend, cur_src, name)
                     full_dst = _safe_child_path(backend, cur_dst, name)
                     if full_src is None or full_dst is None:
+                        entries.append(
+                            {
+                                "src": cur_src,
+                                "dst": cur_dst,
+                                "size": int(getattr(child, "size", 0) or 0),
+                                "action": "skipped",
+                                "reason": "unsafe-name",
+                                "name": redact_text(repr(name)),
+                            }
+                        )
                         continue
                     is_dir = bool(getattr(child, "is_dir", False))
                     if is_dir:
                         if depth + 1 < max_depth:
                             queue.append((full_src, full_dst, depth + 1))
+                        else:
+                            truncated = True
+                            entries.append(
+                                {
+                                    "src": full_src,
+                                    "dst": full_dst,
+                                    "size": 0,
+                                    "action": "skipped",
+                                    "reason": "max-depth",
+                                }
+                            )
                         continue
                     _copy_one(
                         full_src,
@@ -2342,7 +2493,11 @@ def _build_tools(
             _audit(
                 "bulk_copy", "ok", src=src, dst=dst, files_copied=copied_total, truncated=truncated
             )
-            return {"entries": entries, "truncated": truncated}
+            return {
+                "entries": entries,
+                "truncated": truncated,
+                "complete": _bulk_copy_complete(entries, truncated),
+            }
 
         def _require_links(backend, kind: str) -> None:
             # FTP, SMB, S3, WebDAV, rsync ... have no links: say so instead
@@ -2456,8 +2611,14 @@ def _build_tools(
                         "type": "object",
                         "properties": {
                             "path": {"type": "string"},
-                            "content": {"type": "string", "description": "The new content as UTF-8 text."},
-                            "content_b64": {"type": "string", "description": "The new content as base64 bytes."},
+                            "content": {
+                                "type": "string",
+                                "description": "The new content as UTF-8 text.",
+                            },
+                            "content_b64": {
+                                "type": "string",
+                                "description": "The new content as base64 bytes.",
+                            },
                         },
                         "required": ["path"],
                     },
@@ -2530,7 +2691,12 @@ def _build_tools(
                         "Copy a file OR directory tree from src into dst. "
                         "Per-file records: {src, dst, size, action} where "
                         'action is "copied", "skipped" (reason: '
-                        '"too-large" or "exists"), or "error". Emits '
+                        '"too-large", "exists", "unsafe-name", or '
+                        '"max-depth" for a folder below max_depth), or '
+                        '"error" (folder: true for a folder that could not '
+                        'be listed). "truncated" is true when max_files or '
+                        'max_depth cut the walk; "complete" is true only '
+                        "when every file was copied or already existed. Emits "
                         "one progress notification per copied file; a "
                         "notifications/cancelled stops within one file. "
                         "Defaults: max_files=1000, max_depth=10, "
@@ -2638,9 +2804,9 @@ def _build_tools(
             return {"scripts": _scripting.list_scripts()}
 
         def _script_api_schema(args, ctx):
-            # Read-only: built with inspect from the scripting module the
-            # server already imported; no user code runs.
-            return _scripting.api_schema()
+            # Read-only: built with inspect and ast from the scripting module
+            # the server already imported; no user code runs.
+            return _scripting.api_schema(names=args.get("names"))
 
         def _script_read(args, ctx):
             name = args.get("name")
@@ -2752,16 +2918,34 @@ def _build_tools(
                     name="script_api_schema",
                     description=(
                         "Describe the ``axross`` scripting API that script_run gives a "
-                        "script, as JSON built from the live code: per public function "
-                        "its signature, parameters with types and defaults, return type, "
-                        "first docstring paragraph, group, ``mutates`` (can change files, "
-                        "remote state or settings) and ``prompts`` (needs a human: under "
-                        "script_run it raises NonInteractiveError unless the script opts "
-                        "in, e.g. confirm(assume_yes=True)); the public classes; and the "
-                        "methods every backend session has (with close() and the with "
-                        "statement). Same data as axross.api_schema()."
+                        "script, as JSON built from the live code: rules and errors (the "
+                        "conventions and exceptions a script meets), groups (the names by "
+                        "topic), per public function its signature, parameters with types "
+                        "and defaults, return type, whole docstring, examples, ``raises``, "
+                        "``mutates`` (can change files, remote state or settings) and "
+                        "``prompts`` (needs a human: under script_run it raises "
+                        "NonInteractiveError unless the script opts in, e.g. "
+                        "confirm(assume_yes=True)); the public classes; the types the API "
+                        "returns (FileItem, results) with fields and methods; the methods "
+                        "every backend session has (with close() and the with statement); "
+                        "and a legend of every field. Same data as axross.api_schema(names) "
+                        "and docs/scripting-api.json. The whole API is large: call it with "
+                        "names=[] for the index, then with the names you need."
                     ),
-                    schema={"type": "object", "properties": {}},
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "names": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Only these functions, classes and types, plus the "
+                                    "types they use; [] gives the index alone. Default: "
+                                    "everything."
+                                ),
+                            },
+                        },
+                    },
                     handler=_script_api_schema,
                 ),
                 _Tool(
@@ -2871,6 +3055,7 @@ def _build_tools(
                     resolve_backend=_resolve_backend,
                     scope_path=_scope_path,
                     write_path=_write_path,
+                    entry_path=_entry_path,
                     refuse_root=_refuse_root,
                     index_backend_id=lambda b: (
                         server_backend_id if b is _default_backend else _backend_id_for(b)
@@ -2889,6 +3074,7 @@ def _build_tools(
                             else {}
                         ),
                     },
+                    groups=frozenset(groups),
                 ),
             )
         )

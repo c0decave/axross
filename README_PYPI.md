@@ -11,7 +11,7 @@ and MCP workflows.**
 - **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
 - **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
 - **Built-in Python scripting** — REPL, Scripts dock and 32 ready-made scripts on one `axross.*` API.
-- **LLM-ready via MCP** — an agent drives axross over stdio or HTTP, read-only unless you allow writes.
+- **An LLM agent built in** — Agent dock with tabs and sandboxes, MCP over stdio or HTTP, read-only by default.
 - **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
 - **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
 - **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.

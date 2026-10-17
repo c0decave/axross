@@ -51,6 +51,13 @@ class ResumeOffsetTest(unittest.TestCase):
         self.worker = TW.TransferWorker()
 
     def run_job(self, source_fs=None, **kw) -> TW.TransferJob:
+        if self.partial.exists():
+            # Named as written from the source as it is now: the offset
+            # checks below the version check are what these tests are about.
+            fp = TW.source_fingerprint(LocalFS().stat(str(self.src)))
+            versioned = self.tmp / TW.partial_name("dst.bin", "1a2b3c4d", fp)
+            self.partial.rename(versioned)
+            self.partial = versioned
         fs = _NoChecksumFS()
         job = TW.TransferJob(
             source_path=str(self.src),

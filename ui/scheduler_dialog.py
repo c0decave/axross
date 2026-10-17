@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.scheduler import Job, JobStore, next_run_at
+from core.scheduler import Job, JobStore, next_run_at, script_target
 from ui.close_corner import add_close_corner
 
 log = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ class SchedulerDialog(QDialog):
         form.addWidget(self._name_edit)
 
         self._target_edit = QLineEdit(self)
-        self._target_edit.setPlaceholderText("Script name, e.g. mirror.py")
+        self._target_edit.setPlaceholderText("Saved script name, e.g. mirror")
         form.addWidget(self._target_edit)
 
         self._interval_box = QComboBox(self)
@@ -194,6 +194,8 @@ class SchedulerDialog(QDialog):
     def add_job(self, *, name: str, kind: str, target: str, interval_s: int) -> Job:
         # Job.__post_init__ rejects a non-positive interval; letting it
         # raise here keeps the invalid job out of the store entirely.
+        if kind == "script":
+            target = script_target(target)  # ValueError for a name scripts refuse
         job = Job(
             job_id=uuid.uuid4().hex[:12],
             name=name,
@@ -201,23 +203,24 @@ class SchedulerDialog(QDialog):
             target=target,
             interval_s=interval_s,
         )
-        self._jobs = [*self._jobs, job]
-        self.store.save(self._jobs)
-        self._populate()
+        self._change(lambda jobs: [*jobs, job])
         return job
 
     def remove_job(self, job_id: str) -> None:
-        self._jobs = [j for j in self._jobs if j.job_id != job_id]
-        self.store.save(self._jobs)
-        self._populate()
+        self._change(lambda jobs: [j for j in jobs if j.job_id != job_id])
 
     def set_enabled(self, job_id: str, enabled: bool) -> None:
         from dataclasses import replace
 
-        self._jobs = [
-            replace(j, enabled=enabled) if j.job_id == job_id else j for j in self._jobs
-        ]
-        self.store.save(self._jobs)
+        self._change(
+            lambda jobs: [replace(j, enabled=enabled) if j.job_id == job_id else j for j in jobs]
+        )
+
+    def _change(self, change) -> None:
+        """Apply *change* to the jobs as the store holds them now, not to
+        this dialog's copy: a run that finished while the dialog was open
+        recorded its result in the store, and saving the copy would erase it."""
+        self._jobs = self.store.update(change)
         self._populate()
 
     # -- handlers --------------------------------------------------------

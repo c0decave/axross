@@ -79,7 +79,12 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Window", ("Ctrl+=", "Ctrl+-", "Ctrl+0"), "Zoom in / out / reset"),
     ("Window", ("Ctrl+Q",), "Quit"),
     ("Window", ("F1",), "This list"),
-    ("Viewers", ("Ctrl+M",), "Maximize / restore the window: viewers, editors and dialogs (also the button left of the [x])"),
+    (
+        "Viewers",
+        ("Ctrl+M",),
+        "Maximize / restore the window: viewers, editors and dialogs "
+        "(also the button left of the [x])",
+    ),
     ("Viewers", ("F11",), "Fullscreen on / off (image and media viewer)"),
     ("Viewers", ("Delete",), "Delete the shown file (image and media viewer)"),
     ("Scripting", ("Ctrl+S",), "Save the script (Scripts panel)"),
@@ -94,8 +99,9 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Scripting", (".open",), "Console: show the script directory"),
     ("Terminal pane", ("Ctrl+Shift+P",), "Pin: capture all keyboard input"),
     ("Terminal pane", ("Ctrl+A..Z",), "Terminal control characters (while pinned)"),
-    ("Drag and drop", ("Drag",), "Copy"),
-    ("Drag and drop", ("Ctrl+Drag",), "Move"),
+    # Matches file_pane._drop_action (tests/test_shortcuts_drag_matches_drop.py).
+    ("Drag and drop", ("Drag",), "Move"),
+    ("Drag and drop", ("Ctrl+Drag",), "Copy"),
     ("Drag and drop", ("Header drag",), "Rearrange panes"),
 ]
 

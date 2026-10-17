@@ -12,7 +12,12 @@ from core import mcp_http
 from core.local_fs import LocalFS
 
 
+# A plain-HTTP server demands a bearer token (see test_mcp_http_bearer_token).
+_TOKEN = "hardening-test-token-0123456789abcdef"
+
+
 def _start(**overrides):
+    overrides.setdefault("auth_token", _TOKEN)
     config = mcp_http.HTTPServerConfig(
         backend=LocalFS(), host="127.0.0.1", port=0, **overrides
     )
@@ -44,7 +49,7 @@ _INIT = json.dumps(
 
 def _post(port: int, headers: dict[str, str] | None = None, body: str = _INIT):
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-    hdrs = {"Content-Type": "application/json"}
+    hdrs = {"Content-Type": "application/json", "Authorization": f"Bearer {_TOKEN}"}
     hdrs.update(headers or {})
     conn.request("POST", "/messages", body=body, headers=hdrs)
     resp = conn.getresponse()

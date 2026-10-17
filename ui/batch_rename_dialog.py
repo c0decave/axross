@@ -25,6 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.path_policy import hidden_sibling_name
+from core.server_ops import rename_target_taken
 from ui.close_corner import add_close_corner
 
 if TYPE_CHECKING:
@@ -162,7 +164,7 @@ class BatchRenameDialog(QDialog):
 
     def _unique_temp_path(self, old_name: str) -> str:
         for _ in range(32):
-            temp_name = f".{old_name}.rename-{uuid.uuid4().hex[:12]}"
+            temp_name = hidden_sibling_name(old_name, f".rename-{uuid.uuid4().hex[:12]}")
             temp_path = self._backend.join(self._base_path, temp_name)
             if not self._backend.exists(temp_path):
                 return temp_path
@@ -240,7 +242,12 @@ class BatchRenameDialog(QDialog):
                 )
                 return
             new_path = self._backend.join(self._base_path, new_name)
-            if new_name not in selected_old_names and self._backend.exists(new_path):
+            old_path = self._backend.join(self._base_path, old_name)
+            # Case-aware: on a case-insensitive backend "Report.txt" for
+            # "report.txt" finds the file itself, not another one.
+            if new_name not in selected_old_names and rename_target_taken(
+                self._backend, old_path, new_path
+            ):
                 QMessageBox.warning(
                     self,
                     "Conflict",

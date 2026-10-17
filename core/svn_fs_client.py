@@ -39,17 +39,19 @@ shows up as unavailable.
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 import os
 import posixpath
+import re
 import shlex
 import shutil
 import subprocess
 import threading
 import urllib.parse
 from datetime import datetime
-from typing import IO, cast
+from typing import IO
 from xml.etree import ElementTree as ET
 
 from core.backend import SessionLifecycle
@@ -77,6 +79,15 @@ _DEFAULT_TIMEOUT = 60.0
 # so we have to load the full file. 256 MiB is the same ceiling we
 # use for in-memory archive inspection.
 _MAX_CAT_BYTES = 256 * 1024 * 1024
+#: Bytes per read of svn cat's output, and of its stderr kept for the error.
+_CAT_CHUNK = 256 * 1024
+_STDERR_KEEP = 64 * 1024
+# SVN_ERR_FS_NOT_FOUND: "URL '...' non-existent in revision N". svn ls
+# prints it as a warning (W160013) ahead of E200009, others as E160013.
+_SVN_NOT_FOUND = re.compile(r"\b[EW]160013\b")
+#: What stays unencoded in a path of an SVN URL: "/" and the sub-delims
+#: ("@" for the peg revision rule of _full_url).
+_URL_SAFE = "/@!$&'()*+,;=:~"
 
 
 def _svn_available() -> bool:
@@ -298,7 +309,14 @@ class SvnFsSession(SessionLifecycle):
         path = self.normalize(path)
         if path == "/":
             return self._connect_url
-        return self._connect_url.rstrip("/") + path
+        # svn decodes %XX in a URL: the raw name "100%25.txt" read the
+        # file "100%.txt" (measured with svn 1.14). Every name is sent
+        # percent-encoded; "@" stays as it is for the peg rule below.
+        url = self._connect_url.rstrip("/") + urllib.parse.quote(path, safe=_URL_SAFE)
+        # svn reads what follows the last "@" of a target as a peg
+        # revision ("icon@2x.png" -> "icon" at revision "2x.png"); a
+        # trailing "@" (empty peg) keeps the "@" in the name.
+        return url + "@" if "@" in path else url
 
     # ------------------------------------------------------------------
     # Subprocess helper
@@ -348,17 +366,7 @@ class SvnFsSession(SessionLifecycle):
         except FileNotFoundError as exc:
             raise OSError("svn binary disappeared mid-session") from exc
         if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", "replace").strip()
-            if self._password and "password-from-stdin" in stderr:
-                raise OSError(
-                    "svn client is too old: password authentication needs "
-                    "svn 1.10 or newer (--password-from-stdin)"
-                )
-            # SVN error codes worth surfacing distinctly:
-            # E170000-range = remote-side errors (bad URL / 404)
-            # E215004 = no creds
-            # E230001 = SSL
-            raise OSError(f"svn {args[0]} failed: {stderr or '(no stderr)'}")
+            self._raise_failure(args, result.stderr)
         return (
             result.stdout
             if binary
@@ -367,6 +375,89 @@ class SvnFsSession(SessionLifecycle):
                 "replace",
             )
         )
+
+    def _raise_failure(self, args, stderr_raw: bytes) -> None:
+        stderr = stderr_raw.decode("utf-8", "replace").strip()
+        if self._password and "password-from-stdin" in stderr:
+            raise OSError(
+                "svn client is too old: password authentication needs "
+                "svn 1.10 or newer (--password-from-stdin)"
+            )
+        # SVN error codes worth surfacing distinctly:
+        # E170000-range = remote-side errors (bad URL / 404)
+        # E215004 = no creds
+        # E230001 = SSL
+        message = f"svn {args[0]} failed: {stderr or '(no stderr)'}"
+        if _SVN_NOT_FOUND.search(stderr):
+            # The one answer exists() and is_dir() read as "absent".
+            raise FileNotFoundError(errno.ENOENT, message)
+        raise OSError(message)
+
+    def _run_capped(self, *args: str, cap: int, timeout: float = _DEFAULT_TIMEOUT) -> bytes:
+        """``svn ...``'s stdout, read as it comes and refused - the
+        process killed - as soon as it passes *cap* bytes. subprocess.run
+        would collect all of it (and wait for svn) before a cap could be
+        checked."""
+        argv = self._build_argv(*args)
+        log.debug("SVN exec: %s", argv)
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE if self._password else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=clean_child_env(**self._child_env),
+            )
+        except FileNotFoundError as exc:
+            raise OSError("svn binary disappeared mid-session") from exc
+        out = bytearray()
+        err = bytearray()
+        over = threading.Event()
+
+        def pump_out() -> None:
+            while True:
+                chunk = proc.stdout.read1(_CAT_CHUNK)
+                if not chunk:
+                    return
+                if len(out) + len(chunk) > cap:
+                    over.set()
+                    return
+                out.extend(chunk)
+
+        def pump_err() -> None:
+            for line in iter(proc.stderr.readline, b""):
+                if len(err) < _STDERR_KEEP:
+                    err.extend(line)
+
+        readers = [
+            threading.Thread(target=pump_out, daemon=True),
+            threading.Thread(target=pump_err, daemon=True),
+        ]
+        try:
+            for reader in readers:
+                reader.start()
+            if self._password:
+                try:
+                    proc.stdin.write((self._password + "\n").encode("utf-8"))
+                    proc.stdin.close()
+                except OSError:
+                    pass  # svn ended early; its exit status says why
+            readers[0].join(timeout)
+            if over.is_set():
+                raise OSError(f"svn {args[0]}: more than the {cap // (1024 * 1024)} MiB read cap")
+            if readers[0].is_alive():
+                raise OSError(f"SVN command timed out after {timeout:.0f}s: {args[0]}")
+            code = proc.wait(timeout=10)
+            readers[1].join(2)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for stream in (proc.stdout, proc.stderr):
+                stream.close()
+        if code != 0:
+            self._raise_failure(args, bytes(err))
+        return bytes(out)
 
     def _info(self) -> dict:
         """Cheap connectivity + auth probe at session start. Parses
@@ -464,39 +555,35 @@ class SvnFsSession(SessionLifecycle):
         raise FileNotFoundError(f"SVN: {path} not found")
 
     def is_dir(self, path: str) -> bool:
+        """False only for "not found"; a listing that failed (server
+        unreachable, credentials refused, timeout) is an OSError."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def exists(self, path: str) -> bool:
+        """False only for "not found"; any other failure is an OSError -
+        server_side_copy(overwrite=False) takes False as its go-ahead."""
         try:
             self.stat(path)
-            return True
-        except OSError:
+        except FileNotFoundError:
             return False
+        return True
 
     def open_read(self, path: str) -> IO[bytes]:
         url = self._full_url(path)
         # svn cat doesn't stream incrementally over the CLI — we get
         # the whole blob in stdout. Cap to _MAX_CAT_BYTES so a hostile
         # repo can't OOM us.
-        data = cast(
-            bytes,
-            self._run(
-                "cat",
-                url,
-                "--revision",
-                self._revision,
-                timeout=_DEFAULT_TIMEOUT,
-                binary=True,
-            ),
-        )
-        if len(data) > _MAX_CAT_BYTES:
-            raise OSError(
-                f"SVN: {path} is {len(data)} bytes — exceeds the "
-                f"{_MAX_CAT_BYTES // (1024 * 1024)} MiB read cap"
-            )
+        try:
+            data = self._run_capped("cat", url, "--revision", self._revision, cap=_MAX_CAT_BYTES)
+        except OSError as exc:
+            if "read cap" in str(exc):
+                raise OSError(
+                    f"SVN: {path} exceeds the {_MAX_CAT_BYTES // (1024 * 1024)} MiB read cap"
+                ) from exc
+            raise
         return io.BytesIO(data)
 
     # ------------------------------------------------------------------

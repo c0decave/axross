@@ -378,7 +378,9 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
                 "path": dst,
                 "parent": dst_parent,
                 "is_dir": row.get("is_dir", False),
-                "mode": row.get("mode", 0o644),
+                # Schemaless stores hand back whatever another client
+                # stored; the adapters' inserts take an int.
+                "mode": parse_mode(row.get("mode"), 0o755 if row.get("is_dir") else 0o644),
                 "mtime": _now(),
                 "content": row.get("content"),
             }
@@ -437,7 +439,7 @@ class DbFsBackend(_RowAdapter, SessionLifecycle):
                 "path": dst,
                 "parent": dst_parent,
                 "is_dir": False,
-                "mode": row.get("mode", 0o644),
+                "mode": parse_mode(row.get("mode"), 0o644),
                 "mtime": _now(),
                 "content": row.get("content"),
             }
@@ -537,7 +539,7 @@ class _DbWriter:
             "path": self._path,
             "parent": self._backend.parent(self._path),
             "is_dir": False,
-            "mode": (existing or {}).get("mode") or 0o644,
+            "mode": parse_mode((existing or {}).get("mode") or None, 0o644),
             "mtime": _now(),
             "content": data,
         }

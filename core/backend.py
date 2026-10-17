@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import IO, Protocol, runtime_checkable
+from typing import IO, TYPE_CHECKING, Protocol, runtime_checkable
 
 from models.file_item import FileItem
+
+if TYPE_CHECKING:  # the name of a type hint only
+    from models.file_version import FileVersion
 
 
 @runtime_checkable
@@ -108,17 +111,18 @@ class FileBackend(Protocol):
         Returns (0, 0, 0) if not supported."""
         ...
 
-    def list_versions(self, path: str) -> list:
+    def list_versions(self, path: str) -> list[FileVersion]:
         """Return historical versions of *path*, newest first.
 
         Backends with native versioning (S3, Azure Blob, Dropbox,
-        GDrive, OneDrive, WebDAV DeltaV) populate this. Backends
+        GDrive, OneDrive, WebDAV DeltaV, Git - one version per commit
+        that changed the file) populate this. Backends
         without versioning return ``[]``. Each element is a
         :class:`models.file_version.FileVersion`.
         """
         ...
 
-    def open_version_read(self, path: str, version_id: str):
+    def open_version_read(self, path: str, version_id: str) -> IO[bytes]:
         """Open a historical version of *path* for streaming read.
 
         Returns a binary file-like handle. The handle MUST be closed
@@ -207,14 +211,16 @@ class SessionLifecycle:
         """Not reported."""
         return (0, 0, 0)
 
-    def list_versions(self, path: str) -> list:
-        """No versioning."""
+    def list_versions(self, path: str) -> list[FileVersion]:
+        """No versioning: an empty list."""
         return []
 
-    def open_version_read(self, path: str, version_id: str):
+    def open_version_read(self, path: str, version_id: str) -> IO[bytes]:
+        """No versioning: raises OSError."""
         raise OSError(f"{type(self).__name__} keeps no file versions")
 
     def readlink(self, path: str) -> str:
+        """No symbolic links: raises OSError."""
         raise OSError(f"{type(self).__name__} has no symbolic links")
 
     def close(self) -> None:
@@ -224,9 +230,12 @@ class SessionLifecycle:
             disconnect()
 
     def __enter__(self):
+        """Return the session itself: ``with axross.open(name) as b:``."""
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        """End the session when the ``with`` block is left, also after an
+        exception, which is never swallowed."""
         try:
             release = vars(self).pop(RELEASE_ATTR, None)
         except TypeError:  # an instance without __dict__ carries no hook

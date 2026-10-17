@@ -68,7 +68,8 @@ def _all_ops(s, ctx, only=None):
 def test_happy_listing_and_dot_unstuffing(pop):
     s = _session(pop)
     assert [i.name for i in s.list_dir("/")] == ["1_hello.eml", "2_hello.eml"]
-    assert s.open_read("/1_hello.eml").read().endswith(b"\r\n.dot-stuffed")
+    # every line ends in CRLF, the last one too (review B20)
+    assert s.open_read("/1_hello.eml").read().endswith(b"\r\n.dot-stuffed\r\n")
 
 
 @pytest.mark.parametrize(

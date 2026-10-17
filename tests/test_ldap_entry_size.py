@@ -101,6 +101,9 @@ def test_edge_non_ascii_values_count_in_bytes():
 
 
 def test_edge_a_container_stays_size_zero():
-    entry = _Entry("ou=scientists,dc=example,dc=com", {"objectClass": ["organizationalUnit"], "ou": ["scientists"]})
+    entry = _Entry(
+        "ou=scientists,dc=example,dc=com",
+        {"objectClass": ["organizationalUnit"], "ou": ["scientists"]},
+    )
     item = _session(entry)._entry_to_item(entry, "ou=scientists")
     assert item.is_dir and item.size == 0

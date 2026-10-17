@@ -138,7 +138,9 @@ def test_happy_open_and_address_a_profile(root, saved):
     T.call(tools, "write_file", {"backend": bid, "path": "/note.txt", "content_b64": _b64(b"hi")})
     got = T.call(tools, "read_file", {"backend": bid, "path": "/note.txt"})
     assert base64.b64decode(got["content_b64"]) == b"hi"
-    assert [e["name"] for e in T.call(tools, "list_dir", {"backend": bid, "path": "/"})] == ["note.txt"]
+    assert [e["name"] for e in T.call(tools, "list_dir", {"backend": bid, "path": "/"})] == [
+        "note.txt"
+    ]
     # ... the local backend still is.
     with pytest.raises(T.RpcError) as err:
         T.call(tools, "read_file", {"backend": "local", "path": str(root.parent / "outside.txt")})
@@ -323,9 +325,13 @@ def test_happy_copy_a_file_to_a_remote_and_back(root, saved, caplog):
     T.capture_audit(caplog)
     tools = _tr(root)
     bid = T.call(tools, "remote_open", {"profile": "ram1"})["backend"]
-    out = T.call(tools, "transfer_copy", {"src": str(root / "a.txt"), "dst_backend": bid, "dst": "/a.txt"})
+    out = T.call(
+        tools, "transfer_copy", {"src": str(root / "a.txt"), "dst_backend": bid, "dst": "/a.txt"}
+    )
     assert out["copied"] == 1 and out["entries"][0]["action"] == "copied"
-    back = T.call(tools, "transfer_copy", {"src_backend": bid, "src": "/a.txt", "dst": str(root / "b.txt")})
+    back = T.call(
+        tools, "transfer_copy", {"src_backend": bid, "src": "/a.txt", "dst": str(root / "b.txt")}
+    )
     assert back["copied"] == 1
     assert (root / "b.txt").read_bytes() == b"alpha bytes\n"
     lines = T.audit_lines(caplog)
@@ -349,7 +355,11 @@ def test_happy_copy_a_tree_and_skip_existing(root, saved):
 def test_edge_tree_copy_caps_files(root, saved):
     tools = _tr(root)
     bid = T.call(tools, "remote_open", {"profile": "ram1"})["backend"]
-    out = T.call(tools, "transfer_copy", {"src": str(root / "dir"), "dst_backend": bid, "dst": "/d", "max_files": 1})
+    out = T.call(
+        tools,
+        "transfer_copy",
+        {"src": str(root / "dir"), "dst_backend": bid, "dst": "/d", "max_files": 1},
+    )
     assert out["copied"] == 1 and out["truncated"] is True
 
 
@@ -357,7 +367,9 @@ def test_happy_move_from_remote_to_local(root, saved):
     tools = _tr(root)
     bid = T.call(tools, "remote_open", {"profile": "ram1"})["backend"]
     T.call(tools, "write_file", {"backend": bid, "path": "/m.txt", "content_b64": _b64(b"moved")})
-    out = T.call(tools, "transfer_move", {"src_backend": bid, "src": "/m.txt", "dst": str(root / "m.txt")})
+    out = T.call(
+        tools, "transfer_move", {"src_backend": bid, "src": "/m.txt", "dst": str(root / "m.txt")}
+    )
     assert out["bytes"] == 5
     assert (root / "m.txt").read_bytes() == b"moved"
     assert T.call(tools, "list_dir", {"backend": bid, "path": "/"}) == []
@@ -367,18 +379,32 @@ def test_sad_transfer_confinement_and_refusals(root, saved):
     tools = _tr(root)
     bid = T.call(tools, "remote_open", {"profile": "ram1"})["backend"]
     with pytest.raises(T.RpcError) as err:
-        T.call(tools, "transfer_copy", {"src": str(root.parent / "outside.txt"), "dst_backend": bid, "dst": "/o"})
+        T.call(
+            tools,
+            "transfer_copy",
+            {"src": str(root.parent / "outside.txt"), "dst_backend": bid, "dst": "/o"},
+        )
     assert "escapes" in err.value.message
     T.call(tools, "write_file", {"backend": bid, "path": "/r.txt", "content_b64": _b64(b"r")})
     with pytest.raises(T.RpcError) as err:
-        T.call(tools, "transfer_copy", {"src_backend": bid, "src": "/r.txt", "dst": str(root.parent / "planted.txt")})
+        T.call(
+            tools,
+            "transfer_copy",
+            {"src_backend": bid, "src": "/r.txt", "dst": str(root.parent / "planted.txt")},
+        )
     assert "escapes" in err.value.message
     assert not (root.parent / "planted.txt").exists()
     with pytest.raises(T.RpcError) as err:
-        T.call(tools, "transfer_copy", {"src": str(root / "a.txt"), "dst_backend": "profile:nope", "dst": "/a"})
+        T.call(
+            tools,
+            "transfer_copy",
+            {"src": str(root / "a.txt"), "dst_backend": "profile:nope", "dst": "/a"},
+        )
     assert "unknown backend" in err.value.message
     with pytest.raises(T.RpcError) as err:
-        T.call(tools, "transfer_move", {"src": str(root / "dir"), "dst_backend": bid, "dst": "/dir"})
+        T.call(
+            tools, "transfer_move", {"src": str(root / "dir"), "dst_backend": bid, "dst": "/dir"}
+        )
     assert "file" in err.value.message
     assert (root / "dir").is_dir()
     with pytest.raises(T.RpcError) as err:
@@ -390,7 +416,9 @@ def test_sad_transfer_to_a_production_profile(root, saved):
     tools = _tr(root)
     bid = T.call(tools, "remote_open", {"profile": "prod"})["backend"]
     with pytest.raises(T.RpcError) as err:
-        T.call(tools, "transfer_copy", {"src": str(root / "a.txt"), "dst_backend": bid, "dst": "/a"})
+        T.call(
+            tools, "transfer_copy", {"src": str(root / "a.txt"), "dst_backend": bid, "dst": "/a"}
+        )
     assert "production" in err.value.message
 
 
@@ -433,7 +461,9 @@ def test_happy_ending_a_session_closes_its_profiles(root, saved):
     assert mcp_groups.RemoteRegistry.close_session("S1") == 1
     with pytest.raises(T.RpcError):
         T.call(tools, "list_dir", {"backend": bid, "path": "/"}, session_id="S1")
-    assert [b["id"] for b in T.call(tools, "list_backends", {}, session_id="S2")][-1] == "profile:ram2"
+    assert [b["id"] for b in T.call(tools, "list_backends", {}, session_id="S2")][
+        -1
+    ] == "profile:ram2"
 
 
 def test_edge_closing_an_unknown_session_is_a_no_op(root, saved):

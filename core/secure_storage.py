@@ -18,10 +18,18 @@ import os
 import shutil
 import stat
 import tempfile
+import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from core import posix_compat
+
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    _fcntl = None
 
 log = logging.getLogger(__name__)
 
@@ -115,6 +123,38 @@ def write_secret_file(path: str, data: str | bytes) -> None:
         raise
 
 
+def adopt_legacy_secret_file(path: str, legacy: str | None, belongs) -> bool:
+    """Move the shared *legacy* token file to *path* when it is this
+    profile's: *path* does not exist yet and ``belongs(text)`` says the
+    legacy content was issued to the profile's OAuth client.
+
+    A legacy file of another client stays where it is, for the profile
+    it belongs to. Returns True when the file was moved.
+    """
+    if not legacy or os.path.lexists(path) or not os.path.isfile(legacy):
+        return False
+    try:
+        with open(legacy, encoding="utf-8") as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        log.warning("Could not read the shared token file %s: %s", legacy, exc)
+        return False
+    try:
+        mine = bool(belongs(text))
+    except (ValueError, TypeError, AttributeError):
+        mine = False
+    if not mine:
+        return False
+    ensure_private_dir(os.path.dirname(os.path.abspath(path)))
+    os.replace(legacy, path)
+    try:
+        os.chmod(path, _FILE_MODE)
+    except OSError as exc:
+        log.debug("Could not chmod %s: %s", path, exc)
+    log.info("Token file %s moved to the profile's own %s", legacy, path)
+    return True
+
+
 def keep_unreadable_copy(path: str | os.PathLike) -> bool:
     """Copy a store file its loader could not take in completely next to
     it, as ``<name>.unreadable-<time>-<hex>`` (``0o600``), before a save
@@ -159,3 +199,55 @@ def keep_unreadable_copy(path: str | os.PathLike) -> bool:
 def file_mode(path: str) -> int:
     """Return the POSIX permission bits (0o777 mask) of *path*."""
     return os.stat(path).st_mode & 0o777
+
+
+class _StoreLock:
+    """Per-path in-process lock; ``depth`` counts nested entries of the
+    owning thread so only the outermost one takes the file lock (a second
+    ``flock`` on a new descriptor would wait for the first forever)."""
+
+    def __init__(self) -> None:
+        self.rlock = threading.RLock()
+        self.depth = 0
+
+
+_STORE_LOCKS: dict[str, _StoreLock] = {}
+_STORE_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def locked_store_update(path: str | os.PathLike) -> Iterator[None]:
+    """Serialize a read-merge-write of the store file *path* across the
+    threads of this process and across processes.
+
+    Holds a per-path in-process lock plus, where ``fcntl`` exists, an
+    exclusive ``flock`` on ``<path>.lock`` (created ``0o600``). A lock
+    file that cannot be opened (read-only config dir) degrades to the
+    in-process lock: the write that follows fails on its own then.
+    """
+    key = os.path.abspath(os.fspath(path))
+    with _STORE_LOCKS_GUARD:
+        entry = _STORE_LOCKS.setdefault(key, _StoreLock())
+    with entry.rlock:
+        lock_fd = -1
+        entry.depth += 1
+        try:
+            if _fcntl is not None and entry.depth == 1:
+                try:
+                    os.makedirs(os.path.dirname(key), mode=_DIR_MODE, exist_ok=True)
+                    lock_fd = os.open(key + ".lock", os.O_RDWR | os.O_CREAT, _FILE_MODE)
+                    _fcntl.flock(lock_fd, _fcntl.LOCK_EX)
+                except OSError as exc:
+                    log.debug("No file lock for %s: %s", key, exc)
+                    if lock_fd != -1:
+                        os.close(lock_fd)
+                        lock_fd = -1
+            yield
+        finally:
+            entry.depth -= 1
+            if lock_fd != -1:
+                try:
+                    _fcntl.flock(lock_fd, _fcntl.LOCK_UN)
+                except OSError as exc:
+                    log.debug("Could not unlock %s: %s", key, exc)
+                os.close(lock_fd)

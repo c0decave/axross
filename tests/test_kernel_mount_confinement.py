@@ -16,7 +16,6 @@ The export is a temp directory standing in for the mounted file system;
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 

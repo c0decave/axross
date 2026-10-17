@@ -117,7 +117,9 @@ def test_edge_recursive_delete_failure_inside_the_walk_is_an_oserror(monkeypatch
         {"PWD": '257 "/"\r\n', "CWD": "250 ok\r\n", "DELE": "550 Permission denied\r\n"}
     ).session()
     monkeypatch.setattr(
-        FC.FtpSession, "list_dir", lambda self, path: [FC.FileItem(name="x")] if path == "/d" else []
+        FC.FtpSession,
+        "list_dir",
+        lambda self, path: [FC.FileItem(name="x")] if path == "/d" else [],
     )
     with pytest.raises(OSError):
         s.remove("/d", recursive=True)

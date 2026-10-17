@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import shutil
@@ -69,6 +70,29 @@ def clear_name_cache() -> None:
 
 log = logging.getLogger(__name__)
 
+# The errors that say nothing is at a path: it is missing, a file stands
+# where a folder of the path should be, or the name is one the
+# filesystem cannot hold.
+_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ENAMETOOLONG})
+
+
+def entry_stat(path: str, *, follow: bool = False) -> os.stat_result | None:
+    """``os.lstat`` (``os.stat`` with ``follow``) of *path*, or None when
+    nothing is there.
+
+    ``os.path.lexists`` / ``isdir`` answer False for EVERY error: a soft
+    NFS mount that timed out, a stale file handle, a FUSE mount whose
+    transport is gone, a folder without search permission. exists() and
+    is_dir() must not: the no-clobber checks take "absent" as the
+    go-ahead to write. Any other failure is raised.
+    """
+    try:
+        return os.stat(path) if follow else os.lstat(path)
+    except OSError as exc:
+        if exc.errno in _ABSENT_ERRNOS:
+            return None
+        raise
+
 
 class LocalFS(SessionLifecycle):
     """Local filesystem backend implementing the FileBackend protocol."""
@@ -78,6 +102,9 @@ class LocalFS(SessionLifecycle):
     # Hardlink…" context-menu entries.
     supports_symlinks = True
     supports_hardlinks = True
+    # A POSIX kernel never splits a name on a backslash: "a\\b.txt" is one
+    # legal name there (core.path_policy). On Windows it is a separator.
+    literal_backslash_in_names = os.sep == "/"
 
     # Walking a directory tree here is local syscalls, not network round
     # trips, so the UI may total up a directory's size without asking
@@ -110,13 +137,18 @@ class LocalFS(SessionLifecycle):
         return self._stat_to_item(name, st)
 
     def is_dir(self, path: str) -> bool:
-        try:
-            return stat_module.S_ISDIR(os.lstat(path).st_mode)
-        except OSError:
-            return False
+        """A folder itself, not a link to one. False only when nothing is
+        there; a failed lstat is an OSError (see entry_stat)."""
+        st = entry_stat(path)
+        return st is not None and stat_module.S_ISDIR(st.st_mode)
 
     def exists(self, path: str) -> bool:
-        return os.path.lexists(path)
+        """The entry itself (a dangling link is there). False only when
+        nothing is there; a failed lstat is an OSError."""
+        try:
+            return entry_stat(path) is not None
+        except ValueError:
+            return False  # an embedded NUL: no name on disk has one
 
     def mkdir(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
@@ -137,7 +169,34 @@ class LocalFS(SessionLifecycle):
         os.rename(src, dst)
 
     def open_read(self, path: str) -> IO[bytes]:
-        return open(path, "rb")
+        """Open a regular file (through symlinks) for reading.
+
+        A named pipe without a writer blocks a plain ``open()`` forever
+        (and with it the only transfer worker); a socket, a device or a
+        folder is no file content either. The node is opened non-blocking
+        and refused unless it is a regular file.
+        """
+        nonblock = getattr(os, "O_NONBLOCK", 0)
+        if not nonblock:  # Windows: no FIFOs on a plain filesystem
+            return open(path, "rb")
+        fd = os.open(path, os.O_RDONLY | nonblock | getattr(os, "O_CLOEXEC", 0))
+        try:
+            mode = os.fstat(fd).st_mode
+            if stat_module.S_ISDIR(mode):
+                raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
+            if not stat_module.S_ISREG(mode):
+                from core.file_type import _special_description
+
+                raise OSError(
+                    errno.EINVAL,
+                    f"not a regular file ({_special_description(mode)}); not read",
+                    path,
+                )
+            os.set_blocking(fd, True)
+            return os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         return open(path, "ab" if append else "wb")
@@ -159,6 +218,11 @@ class LocalFS(SessionLifecycle):
 
     def chmod(self, path: str, mode: int) -> None:
         os.chmod(path, mode)
+
+    def set_modified(self, path: str, mtime: float) -> None:
+        """Set *path*'s modification time (epoch seconds); the access time
+        stays. Used to give a copy its source's time."""
+        os.utime(path, (os.stat(path).st_atime, mtime))
 
     def readlink(self, path: str) -> str:
         return os.readlink(path)

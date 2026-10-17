@@ -63,7 +63,9 @@ def nntp():
 def test_happy_imap_stat_has_the_size_and_date(reply):
     item = _imap(reply).stat("/Inbox/100003_Hello.eml")
     assert item.size == 1157
-    assert item.modified.astimezone(timezone.utc) == datetime(2013, 11, 1, 12, 34, 52, tzinfo=timezone.utc)
+    assert item.modified.astimezone(timezone.utc) == datetime(
+        2013, 11, 1, 12, 34, 52, tzinfo=timezone.utc
+    )
 
 
 def test_happy_nntp_an_existing_group_is_a_folder(nntp):

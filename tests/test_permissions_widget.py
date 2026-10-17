@@ -192,11 +192,14 @@ def test_edge_the_dialog_keeps_the_sticky_bit_on_a_real_directory(tmp_path):
         APP.processEvents()
 
 
-def test_edge_octal_above_777_is_rejected(widget):
+def test_edge_four_digit_octal_sets_the_special_bits(widget):
+    """This used to assert that 7777 is ignored; while the user typed it,
+    the prefix 777 had already been applied, so OK wrote 0777. Four
+    digits are now the full mode (tests/test_permissions_link_and_special_bits.py)."""
     w = widget(0o644)
     w._octal_edit.setText("7777")
-    # Ignored: the checkboxes keep the previous value.
-    assert w.selected_mode() == 0o644
+    assert w.selected_mode() == 0o777
+    assert w.full_mode() == 0o7777
 
 
 def test_edge_non_octal_text_is_ignored(widget):

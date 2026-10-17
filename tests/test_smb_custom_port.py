@@ -93,8 +93,11 @@ def test_sad_every_operation_reaches_the_configured_port(pool_ports, op):
 
 def test_sad_is_dir_and_exists_use_the_configured_port(pool_ports):
     s = _session()
-    assert s.is_dir("/d") is False
-    assert s.exists("/d") is False
+    # The pool refuses the connection: an OSError, not "absent".
+    with pytest.raises(OSError):
+        s.is_dir("/d")
+    with pytest.raises(OSError):
+        s.exists("/d")
     assert pool_ports.ports and set(pool_ports.ports) == {PORT}
 
 

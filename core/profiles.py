@@ -25,6 +25,7 @@ from core.credentials import (
     store_proxy_password,
     store_secret,
 )
+from core.secure_storage import locked_store_update
 
 log = logging.getLogger(__name__)
 
@@ -155,7 +156,8 @@ def password_needed(profile) -> bool:
         return not getattr(profile, "rsync_ssh", False)
     if proto in ("azure_blob", "azure_files"):
         return not (
-            getattr(profile, "azure_connection_string", "") or getattr(profile, "azure_sas_token", "")
+            getattr(profile, "azure_connection_string", "")
+            or getattr(profile, "azure_sas_token", "")
         )
     return True
 
@@ -194,6 +196,10 @@ class ConnectionProfile:
 
     # SSH ProxyCommand (alternative to SOCKS/HTTP proxy)
     proxy_command: str = ""  # e.g. "ssh -W %h:%p jumphost"
+    # False for a ProxyCommand that came in through a profile import: it
+    # is a shell command from someone else and runs only after the user
+    # saw and confirmed it (ConnectionManager refuses it until then).
+    proxy_command_confirmed: bool = True
     # Set only on the transient copy ConnectionManager resolves for a
     # connection: the password of the proxy that was chosen for it.
     _proxy_password_override: str | None = field(default=None, repr=False, compare=False)
@@ -383,6 +389,8 @@ class ConnectionProfile:
         # SSH ProxyCommand (only if set)
         if self.proxy_command:
             d["proxy_command"] = self.proxy_command
+            if not self.proxy_command_confirmed:
+                d["proxy_command_confirmed"] = False
 
         # Address family (only if not default)
         if self.address_family != "auto":
@@ -563,6 +571,7 @@ class ConnectionProfile:
             proxy_username=_string("proxy_username"),
             store_proxy_password=_boolean("store_proxy_password"),
             proxy_command=_string("proxy_command"),
+            proxy_command_confirmed=_boolean("proxy_command_confirmed", True),
             address_family=address_family,
             # Protocol-specific
             ftp_passive=_boolean("ftp_passive", True),
@@ -681,37 +690,83 @@ class ProfileManager:
         # completely. The next save() would replace that file with only
         # what is in memory, so it first keeps a copy of the original.
         self._file_not_fully_loaded = False
+        # The profiles as this manager last read or wrote the file
+        # (``name -> to_dict()``). save() compares the file against it to
+        # tell what another writer (a script, the MCP server) changed.
+        self._base: dict[str, dict] = {}
         self.load()
+
+    @staticmethod
+    def _read_file() -> tuple[dict[str, ConnectionProfile], bool]:
+        """Parse PROFILES_FILE: the valid profiles (sensitive fields not
+        yet restored) and whether entries were skipped. Raises on a file
+        that cannot be read at all."""
+        if PROFILES_FILE.stat().st_size > MAX_PROFILES_FILE_BYTES:
+            raise OSError(f"profile file exceeds {MAX_PROFILES_FILE_BYTES} bytes")
+        data = json.loads(PROFILES_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("profile file root must be a JSON object")
+        loaded: dict[str, ConnectionProfile] = {}
+        skipped = False
+        for name, profile in data.items():
+            if not isinstance(name, str) or not isinstance(profile, dict):
+                log.warning("Skipping invalid profile entry %r", name)
+                skipped = True
+                continue
+            try:
+                loaded[name] = ConnectionProfile.from_dict(profile)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Skipping invalid profile %r: %s", name, exc)
+                skipped = True
+        return loaded, skipped
 
     def load(self) -> None:
         if not PROFILES_FILE.exists():
             return
         try:
-            if PROFILES_FILE.stat().st_size > MAX_PROFILES_FILE_BYTES:
-                raise OSError(f"profile file exceeds {MAX_PROFILES_FILE_BYTES} bytes")
-            data = json.loads(PROFILES_FILE.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError("profile file root must be a JSON object")
-            loaded: dict[str, ConnectionProfile] = {}
-            skipped = False
-            for name, profile in data.items():
-                if not isinstance(name, str) or not isinstance(profile, dict):
-                    log.warning("Skipping invalid profile entry %r", name)
-                    skipped = True
-                    continue
-                try:
-                    loaded[name] = self._restore_sensitive_fields(
-                        ConnectionProfile.from_dict(profile),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("Skipping invalid profile %r: %s", name, exc)
-                    skipped = True
-            self._profiles = loaded
+            loaded, skipped = self._read_file()
+            self._base = {name: p.to_dict() for name, p in loaded.items()}
+            self._profiles = {
+                name: self._restore_sensitive_fields(p) for name, p in loaded.items()
+            }
             self._file_not_fully_loaded = skipped
             log.info("Loaded %d profiles from %s", len(self._profiles), PROFILES_FILE)
         except (json.JSONDecodeError, OSError, ValueError) as e:
             self._file_not_fully_loaded = True
             log.error("Failed to load profiles: %s", e)
+
+    def _merge_from_disk(self) -> None:
+        """Fold in what another writer changed in the file since this
+        manager last read or wrote it: a profile it added is added here,
+        one it deleted is dropped here unless this manager changed it, and
+        one it edited takes the edit unless this manager edited it too. A
+        profile deleted here stays deleted. The other writer already
+        stored or deleted the keyring entries of what it changed."""
+        if not PROFILES_FILE.exists():
+            disk: dict[str, ConnectionProfile] = {}
+        else:
+            try:
+                disk, skipped = self._read_file()
+            except (json.JSONDecodeError, OSError, ValueError) as e:
+                log.error("Failed to re-read profiles: %s", e)
+                self._file_not_fully_loaded = True
+                return
+            if skipped:
+                self._file_not_fully_loaded = True
+        disk_dicts = {name: p.to_dict() for name, p in disk.items()}
+        if disk_dicts == self._base:
+            return
+        for name in list(self._profiles):
+            base = self._base.get(name)
+            if base is None or self._profiles[name].to_dict() != base:
+                continue  # added or changed here: this manager's version wins
+            if name not in disk:
+                del self._profiles[name]
+            elif disk_dicts[name] != base:
+                self._profiles[name] = self._restore_sensitive_fields(disk[name])
+        for name, profile in disk.items():
+            if name not in self._base and name not in self._profiles:
+                self._profiles[name] = self._restore_sensitive_fields(profile)
 
     def _preserve_unloaded_file(self) -> bool:
         """Copy the profile file load() could not take in completely
@@ -750,12 +805,20 @@ class ProfileManager:
         return False
 
     def save(self) -> None:
+        """Write the profiles, first merging what another writer changed in
+        the file meanwhile (see :meth:`_merge_from_disk`), under a file lock."""
         target_dir = PROFILES_FILE.parent
         target_dir.mkdir(parents=True, exist_ok=True)
         try:
             os.chmod(target_dir, 0o700)
         except OSError:
             log.debug("Could not set permissions on %s", target_dir, exc_info=True)
+        with locked_store_update(PROFILES_FILE):
+            self._merge_from_disk()
+            self._write()
+
+    def _write(self) -> None:
+        target_dir = PROFILES_FILE.parent
         if not self._preserve_unloaded_file():
             log.error("Not saving profiles: %s would be overwritten", PROFILES_FILE)
             return
@@ -778,6 +841,7 @@ class ProfileManager:
                     tmp.write(payload)
                 os.replace(temp_name, PROFILES_FILE)
                 os.chmod(PROFILES_FILE, 0o600)
+                self._base = data
                 log.info(
                     "Saved %d profiles to %s",
                     len(self._profiles),

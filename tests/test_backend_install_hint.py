@@ -24,7 +24,9 @@ sys.path.insert(0, str(ROOT))
 
 from core import backend_registry as R  # noqa: E402
 
-EXTRAS = set(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"])
+EXTRAS = set(
+    tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+)
 
 
 @pytest.fixture
@@ -59,7 +61,11 @@ def test_happy_svn_names_the_svn_command(unavailable):
 
 def test_sad_every_required_extra_exists_in_pyproject():
     R.init_registry()
-    missing = {b.protocol_id: b.required_extra for b in R.all_backends() if b.required_extra and b.required_extra not in EXTRAS}
+    missing = {
+        b.protocol_id: b.required_extra
+        for b in R.all_backends()
+        if b.required_extra and b.required_extra not in EXTRAS
+    }
     assert not missing
 
 
@@ -76,7 +82,13 @@ def test_sad_no_backend_hint_names_an_extra_pyproject_lacks(unavailable):
 
 @pytest.mark.parametrize(
     "protocol_id, command",
-    [("rsync", "rsync"), ("nfs", "mount"), ("iscsi", "iscsiadm"), ("rsh", "rsh"), ("mtp", "jmtpfs")],
+    [
+        ("rsync", "rsync"),
+        ("nfs", "mount"),
+        ("iscsi", "iscsiadm"),
+        ("rsh", "rsh"),
+        ("mtp", "jmtpfs"),
+    ],
 )
 def test_edge_system_command_backends_name_their_commands(unavailable, protocol_id, command):
     message = unavailable(protocol_id)

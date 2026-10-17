@@ -55,7 +55,9 @@ def _normal_mode_and_limit(tmp_path, monkeypatch):
 
 
 def _item(path: str, kind: str, size: int) -> MediaItem:
-    return MediaItem(path=path, name=os.path.basename(path), folder="", kind=kind, size=size, mtime=0.0)
+    return MediaItem(
+        path=path, name=os.path.basename(path), folder="", kind=kind, size=size, mtime=0.0
+    )
 
 
 def _local_item(path: Path, kind: str) -> MediaItem:

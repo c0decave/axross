@@ -112,7 +112,9 @@ def test_happy_native_opens_the_window(tmp_path):
 
 def test_sad_native_reports_a_crash_on_the_way_to_the_window(tmp_path):
     # What a crashing GUI start looks like: Qt aborts, no window line.
-    _fake_binary(tmp_path / "dist", 'echo "Cannot create window: no screens available" >&2; kill -ABRT $$')
+    _fake_binary(
+        tmp_path / "dist", 'echo "Cannot create window: no screens available" >&2; kill -ABRT $$'
+    )
     r = _native(tmp_path / "dist")
     assert r.returncode != 0
     assert "no window" in r.stdout and "no screens available" in r.stdout

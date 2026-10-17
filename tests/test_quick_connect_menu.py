@@ -231,7 +231,9 @@ def test_edge_the_keyboard_menu_key_opens_the_profile_menu(window, calls, monkey
     menu = _menu(window)
     opened = []
     monkeypatch.setattr(
-        menu, "exec_profile_menu", lambda sub, _pos: opened.append([a.text() for a in sub.actions()])
+        menu,
+        "exec_profile_menu",
+        lambda sub, _pos: opened.append([a.text() for a in sub.actions()]),
     )
     menu.setActiveAction(_entry(menu, "beta"))
     QTest.keyClick(menu, Qt.Key.Key_Menu)

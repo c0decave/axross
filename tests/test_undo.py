@@ -61,7 +61,22 @@ class _Backend:
         self.renames: list[tuple[str, str]] = []
 
     def exists(self, path: str) -> bool:
-        return path in self.existing
+        return path == "/" or path in self.existing
+
+    def parent(self, path: str) -> str:
+        return path.rsplit("/", 1)[0] or "/"
+
+    def mkdir(self, path: str) -> None:
+        # A transfer back recreates the folder a folder move removed.
+        self.existing.add(path)
+
+    def stat(self, path: str):
+        from types import SimpleNamespace
+
+        if not self.exists(path):
+            raise OSError(f"no such file: {path}")
+        is_dir = path == "/" or any(p.startswith(path + "/") for p in self.existing)
+        return SimpleNamespace(is_dir=is_dir, is_link=False)
 
     def rename(self, src: str, dst: str) -> None:
         if src not in self.existing:

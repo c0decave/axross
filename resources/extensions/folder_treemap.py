@@ -189,7 +189,9 @@ def activate(api):
         api.run_in_background(
             lambda: folder_sizes(ctx.backend, ctx.folder),
             on_done=done,
-            on_error=lambda exc: setattr(view, "message", f"Cannot measure: {exc}") or view.update(),
+            on_error=lambda exc: (
+                setattr(view, "message", f"Cannot measure: {exc}") or view.update()
+            ),
         )
 
     api.on("path_changed", refresh)

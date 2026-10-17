@@ -44,8 +44,13 @@ def _stream_threads() -> int:
     return sum(1 for t in threading.enumerate() if "process_request" in t.name and t.is_alive())
 
 
+# A plain-HTTP server demands a bearer token (see test_mcp_http_bearer_token).
+_TOKEN = "sse-test-token-0123456789abcdef"
+
+
 class _Server:
     def __init__(self, **overrides) -> None:
+        overrides.setdefault("auth_token", _TOKEN)
         config = mcp_http.HTTPServerConfig(backend=LocalFS(), host="127.0.0.1", port=0, **overrides)
         self.server = mcp_http.build_server(config)
         self.port = self.server.server_address[1]
@@ -68,7 +73,7 @@ class _Server:
 
     def request(self, method: str, headers: dict[str, str] | None = None, body: str | None = None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        hdrs = {"Content-Type": "application/json"}
+        hdrs = {"Content-Type": "application/json", "Authorization": f"Bearer {_TOKEN}"}
         hdrs.update(headers or {})
         conn.request(method, "/messages", body=body, headers=hdrs)
         resp = conn.getresponse()
@@ -91,7 +96,8 @@ class _Server:
         sock.sendall(
             (
                 f"GET /messages HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
-                f"Accept: text/event-stream\r\nMcp-Session-Id: {sid}\r\n{extra}\r\n"
+                f"Accept: text/event-stream\r\nMcp-Session-Id: {sid}\r\n"
+                f"Authorization: Bearer {_TOKEN}\r\n{extra}\r\n"
             ).encode("ascii")
         )
         head = b""

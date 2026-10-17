@@ -19,7 +19,7 @@ boundary), so we refuse to fall back to the stdlib parser.
 
 from __future__ import annotations
 
-import io
+import errno
 import logging
 import posixpath
 import tempfile
@@ -698,13 +698,21 @@ class WebDavSession(SessionLifecycle):
         return self._client.check(self._norm(path))
 
     def open_read(self, path: str) -> IO[bytes]:
-        buf = io.BytesIO()
+        from core.read_spool import new_read_spool
+
+        # Spooled, not a BytesIO: the whole file used to sit in RAM.
+        buf = new_read_spool()
         try:
             self._client.download_to(buf, self._norm(path))
         except FileNotFoundError as e:
+            buf.close()
             raise OSError(f"Cannot read {path}: {e}") from e
         except WebDavRequestError as e:
+            buf.close()
             raise OSError(f"Cannot read {path}: {e}") from e
+        except BaseException:
+            buf.close()
+            raise
         buf.seek(0)
         return buf
 
@@ -719,11 +727,15 @@ class WebDavSession(SessionLifecycle):
             raise OSError(f"Cannot create directory {path}: {e}") from e
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        # WebDAV DELETE on a collection removes the tree by default —
-        # there's no "non-recursive" knob in the spec, so the
-        # ``recursive`` flag is ignored (matches webdavclient3 behaviour).
+        # WebDAV DELETE on a collection always removes the whole tree
+        # (RFC 4918 9.6.1: Depth infinity is the only depth), so a
+        # non-recursive remove has to refuse a collection with members
+        # itself, the way rmdir does.
+        target = self._norm(path)
         try:
-            self._client.delete(self._norm(path))
+            if not recursive and self._client.is_dir(target) and self._client.list(target):
+                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
+            self._client.delete(target)
         except WebDavRequestError as e:
             raise OSError(f"Cannot remove {path}: {e}") from e
 

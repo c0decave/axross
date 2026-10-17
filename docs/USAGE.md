@@ -24,7 +24,8 @@ built around three ideas:
 
 ## Connections
 
-The Connection Manager (Ctrl+N) is where you create profiles. Each
+The Connection Manager (Ctrl+Shift+N) is where you create profiles;
+Quick Connect (Ctrl+N) opens a saved one. Each
 profile selects a protocol and stores host / username / auth /
 proxy / per-protocol options. Sensitive fields (passwords, OAuth
 secrets, Azure connection strings) go to the OS keyring; profile
@@ -54,7 +55,7 @@ JSON itself never carries plaintext credentials.
 
 ## Multi-pane layout
 
-- Add panes with **Ctrl+T**, split with **Ctrl+Shift+H** /
+- Add panes by splitting with **Ctrl+Shift+H** /
   **Ctrl+Shift+V**, close with **Ctrl+W**.
 - Active pane gets a blue border; the **target** pane (where copies
   land) gets a green border. Last-focused pane becomes target.
@@ -62,8 +63,8 @@ JSON itself never carries plaintext credentials.
   **View → Activate Pane** sets 1, 2 or 3 s, or **On Click**. Keyboard
   focus follows only from another pane's file list, never out of a text
   field.
-- **Alt+Left / Alt+Right** walk through pane history; **Ctrl+Tab**
-  cycles.
+- **Alt+Left / Alt+Right** walk through pane history; **Tab** /
+  **Shift+Tab** in a file list cycle the panes.
 - Drag-and-drop between panes initiates a transfer (works for
   local↔remote, remote↔remote, cross-protocol).
 
@@ -314,6 +315,12 @@ Scripts: `axross.metadata`, `axross.remove_metadata`,
   and editors draw where they should. The shell's terminal size is the
   size of the terminal area and follows every resize (`stty size`
   shows it). Colours are not shown.
+- Keys typed in the terminal go to the shell: Ctrl+letter (on macOS
+  the Control key), function keys, arrows and editing keys — so Ctrl+W,
+  Ctrl+Q or F6 there never close a pane, quit or move files. Paste with
+  Ctrl+Shift+V (macOS: Command+V), a middle click or the context menu;
+  the text goes to the shell. Command shortcuts on macOS and the zoom
+  keys stay with axross.
 - While a file drag is over a pane, the row the drop goes into gets a
   frame and a note beside the cursor names the folder: *Move to …* or,
   with Ctrl, *Copy to …*. The `..` row means the folder above.
@@ -534,28 +541,126 @@ For LLM clients: [LLM_GUIDE.md](LLM_GUIDE.md).
 
 ## Agent dock — a local LLM works with axross
 
-View > Panels > Agent opens a chat with the active LLM profile (the
-profiles of the Analysis dock: LM Studio, Ollama, vLLM, llama.cpp or
-any OpenAI-compatible server; LLM… manages them). The model works with
-the same tools as the MCP server, in the folder shown at the top (the
-active pane's, when it shows local files):
+View > Panels > Agent (Ctrl+Shift+A) opens a chat with an LLM profile
+(the profiles of the Analysis dock: LM Studio, Ollama, vLLM, llama.cpp
+or any OpenAI-compatible server; LLM… manages them). The model works
+with the same tools as the MCP server, in the folder shown at the top
+(the active pane's, when it shows local files).
 
-- **Reading** — the file tools, plus the groups ticked in the list
-  (metadata, file types and archives by default).
-- **Changes** — only with *Allow changes to files* ticked, and then
-  every single change (write, remove, rename, pack, …) waits for Yes in
-  a dialog that shows the tool and its arguments; passphrases are
-  masked.
-- **Remote commands** — only with *Allow remote commands* ticked (not
-  in the paranoid security mode), asked one by one the same way.
-- A profile whose server is not on this machine or its network asks
-  first, as what the tools read is sent there.
-- Stop ends the run after the current step; New conversation forgets
-  the history. Changing the folder or a box starts a new conversation.
+**Tabs.** Every tab is a conversation of its own with its own model,
+protection mode, sandbox, folder and tools: "+" or Ctrl+T opens one,
+a double-click renames it. With *Keep tabs* on (Tools > Agent
+Settings…) each tab is one JSON file in `~/.config/axross/agent/sessions/`
+(`0o600`) and comes back at the next start. Ctrl+Enter sends, Esc
+stops, Up/Down bring back earlier tasks.
+
+**Protection modes** (per tab):
+
+- **Ask** — every change and every remote command waits for Yes in a
+  dialog that shows the tool and its arguments (passphrases masked).
+- **Plan** — the agent only reads and writes a plan; *Run this plan*
+  then runs it in Ask mode.
+- **Auto** — changes run without asking; remote commands
+  and tools of an MCP server set to "always" still ask.
+- **Bypass** — nothing asks. Only offered when switched on in Agent
+  Settings, never in the paranoid security mode, and marked red.
+
+**Giving it files.** The "+" menu attaches the active pane's selection
+or folder, files from a dialog or a path from the clipboard; drag files
+from a pane onto the tab, or use *Send to Agent* in the pane's
+right-click menu. A local file outside the tab's folder makes its
+folder readable (read-only) for that tab.
+
+**Tools** (Tools ▸ in the tab): the file tools, the ticked groups
+(metadata, file types, archives, …), *Allow changes to files*, *Allow
+remote commands*, one line `mcp:<name>` per MCP server and `ext:<id>`
+per extension with agent tools. Always there: `ask_user` (the agent
+asks you something) and `update_plan` (a checklist above the task
+field).
+
+**Topics ▸** fills the task field with a prepared task — System
+inventory, Install or update software (in Plan mode), Service status,
+Collect logs, Disk usage, Summarise a folder, Read data out — for you
+to complete and send. Extensions can add their own.
+
+**axross functions** are the tools axross runs itself on the agent's
+behalf — outside the agent's sandbox, with axross's own rights: *Remote
+files* (the connections open in the panes, backend `pane:<name>`),
+*Saved connections* (saved profiles the agent opens itself), *Remote
+commands* (SSH/WinRM/… hosts), *MCP servers* and *extension tools*.
+They are a way out of a sandbox, so a master switch guards them and is
+**off by default**. A production profile refuses every change.
+
+**What a tab may reach** — two layers, both must allow it:
+
+- *Agent Settings > Access* is the ceiling of every tab: the master
+  switch *Let agents use axross functions* and each function. Off there
+  means off in every tab.
+- *Access…* in the tab (or *Agent Settings > Sessions* for all tabs at
+  once) is the tab's own choice within it: its master switch and
+  functions, its **network** and its **folders**. A new tab starts with
+  the master switch as Agent Settings has it.
+
+| Network of a tab | Meaning |
+|---|---|
+| As the sandbox profile says | the profile's level and allowed hosts (no sandbox: no limit) |
+| None | no host at all |
+| Only these hosts | the tab's own `host:port` list |
+| All hosts | lax sandbox or no sandbox only |
+
+The sandbox level stays the ceiling: a tab only narrows what its level
+can do (paranoid offers only *None*, normal and high no *All*). The
+network gates the sandbox's own connections, remote work in axross and
+http MCP servers alike, and is checked at every connection. A tab's
+**folders** are read-only or read-write; read-write only where the
+level lets extra folders be (lax, normal) and with *Allow changes to
+files*. The tab's *Access…* tooltip sums it up.
+
+**Sandboxes** (Agent Settings > Sandboxes): a tab can run its agent in
+bubblewrap, podman or docker. A sandbox profile has a level:
+
+| Level | Network | Folder | Extra folders |
+|---|---|---|---|
+| lax | the host's | as set | as set |
+| normal | allowed hosts only | as set | as set |
+| high | allowed hosts only | as set | read-only |
+| paranoid | only the LLM | read-only | read-only |
+
+The model's requests, the API key and the consent stay outside: the
+sandbox has no network of its own, axross sends for it. Allowed hosts
+(`host:port`) are reached through axross and checked on every
+connection — a change applies at once. Remote connections, saved
+profiles, MCP servers and extension tools also run in axross, outside
+the sandbox, so their credentials never enter it; the sandbox's level
+and allowed hosts decide whether the agent may use them (paranoid:
+none), and so do the axross functions of the tab (above). The level's memory, task and CPU limits hold for podman and
+docker; bubblewrap gets them from a systemd user scope (without one only
+the memory, through `prlimit`). podman and docker need the image:
+`scripts/axross-podman.sh agent-image` ([PACKAGING.md](PACKAGING.md)).
+
+**MCP servers** (Agent Settings > MCP Servers): further MCP servers —
+a program (stdio) or an http endpoint — whose tools a tab may offer as
+`<server>__<tool>`. *Test* lists their tools. A server set to "always"
+asks for every call; "writes" lets tools the server marks read-only run
+without asking. A program can run in a sandbox profile; an http
+server's token is kept in the keyring.
+
+**Extensions** can start the agent (`api.run_agent`,
+`api.open_agent_tab`), give it tools (`api.add_agent_tool`), add topics
+(`api.add_agent_topic`) and follow its events (`api.on_agent_event`).
+The bundled *Agent Stats* extension shows a small window, on top and
+movable, with tasks, answers, tool calls, errors, tokens and time.
+
+A profile whose server is not on this machine or its network asks
+first, as what the tools read is sent there.
 
 In a container: `scripts/axross-podman.sh gui --llm-model FILE.gguf`
 runs axross on your display with llama.cpp beside it and the profile
-already set up ([PACKAGING.md](PACKAGING.md)).
+already set up ([PACKAGING.md](PACKAGING.md)). Add `--agent-sandbox`
+for the bubblewrap sandbox in there: podman masks `/proc`, which
+bubblewrap needs to mount its own; without the option the tab says so.
+Inside a container use bubblewrap - podman cannot start containers of
+its own there.
 
 An MCP client can hand a task to the same local model with
 `--mcp-tools agent` (`agent_run`); that model can only read
@@ -568,9 +673,19 @@ An MCP client can hand a task to the same local model with
 - `~/.config/axross/session.json` — pane layout, window geometry and
   dock layout at last close; restored on start unless File > Restore
   Layout on Start is off.
-- `~/.config/axross/column_prefs.json` — per-pane column widths.
+- `~/.config/axross/column_prefs.json` — column widths and hidden
+  columns, one file shared by all panes.
 - `~/.config/axross/settings.json` — small preferences (open size limit).
+- `~/.config/axross/agent/settings.json` — Agent Settings (modes, access,
+  sandbox profiles, MCP servers; `0o600`).
+- `~/.config/axross/agent/sessions/` — one JSON file per kept Agent tab (`0o600`).
 - `~/.config/axross/<provider>_token.json` — OAuth refresh tokens (`0o600`).
+- `~/.config/axross/ramfs.json` — RAM workspace settings. `"tmpfs_enabled": true`
+  sends every temp file of the process (download/upload buffers past
+  8 MiB, archive extraction, FUSE write buffers) to a RAM disk
+  (`/run/user/$UID`, else `/dev/shm`) instead of the disk: nothing lands
+  on disk, but it takes RAM, so it is off by default. A `TMPDIR` set in
+  the environment always wins.
 - `~/.local/state/axross/logs/axross.log` — rotating log file (5 MB, 3 backups).
 
 ## Where to go next

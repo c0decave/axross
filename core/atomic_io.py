@@ -26,13 +26,26 @@ supports:
   module.
 
 Unknown backend classes take the temp-file route.
+
+A LOCAL file is written in place instead when a rename would lose
+something the user did not ask to lose (vim's ``backupcopy=auto`` rule):
+other hard links (they would keep the old text), a folder the user may
+not create files in (the save would fail although the file is
+writable), another owner, or extended attributes / a group the new file
+cannot be given. In place keeps the old bytes recoverable - a backup
+copy beside the file when the folder is writable, otherwise in memory -
+and writes them back when the save fails part-way. It is not atomic
+against a crash; that is the price of keeping the file's identity.
+``atomic_write_stream`` (transfers, restores) keeps the rename route.
 """
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import secrets
+import stat as stat_module
 from typing import TYPE_CHECKING
 
 from core import backend_registry
@@ -123,20 +136,59 @@ def _temp_sibling(backend, path: str) -> str:
     return os.path.join(parent, name)
 
 
-def _existing_mode(backend, path: str) -> int | None:
-    """The target's permission bits, or ``None``.
+#: Symlinks followed before a save gives up with ELOOP (Linux MAXSYMLINKS).
+MAX_LINK_HOPS = 40
 
-    ``None`` covers both "the file is new" (it should get the default
-    mode, not an inherited one) and "this backend does not report a
-    mode" — S3, IMAP and the cloud stores have no such concept, and
-    inventing one would be worse than leaving it alone.
+
+def _link_destination(backend, link: str, target: str) -> str:
+    """The path a symlink at *link* with content *target* names. Not
+    normalised: ``..`` must be resolved after the links, by the backend."""
+    sep = backend.separator() if hasattr(backend, "separator") else "/"
+    if target.startswith(sep) or (sep == os.sep and os.path.isabs(target)):
+        return target
+    parent = backend.parent(link) if hasattr(backend, "parent") else os.path.dirname(link)
+    if hasattr(backend, "join"):
+        return backend.join(parent, target)
+    return os.path.join(parent, target)
+
+
+def _resolve_destination(backend, path: str) -> tuple[str, int | None] | None:
+    """The file a save to *path* replaces, and its permission bits.
+
+    The temp-file route renames a fresh file over the destination. Over
+    a symlink that replaced the LINK with a regular file, left the real
+    target untouched and gave the new file the link's lstat mode (0777),
+    so a symlink is followed to the file it names first.
+
+    The mode is ``None`` both for "the file is new" (it should get the
+    default mode, not an inherited one) and for "this backend does not
+    report a mode" — S3, IMAP and the cloud stores have no such concept,
+    and inventing one would be worse than leaving it alone.
+
+    Returns ``None`` for a link the backend reports but cannot read; the
+    caller writes through it then instead of replacing it. A chain longer
+    than :data:`MAX_LINK_HOPS` (a loop) raises ``ELOOP``.
     """
-    try:
-        info = backend.stat(path)
-    except OSError:
-        return None
-    mode = getattr(info, "permissions", 0)
-    return int(mode) & 0o7777 if mode else None
+    current = path
+    for _hop in range(MAX_LINK_HOPS + 1):
+        try:
+            info = backend.stat(current)
+        except OSError:
+            return current, None
+        # ``is not True``: FileItem.is_link is a bool; anything else
+        # (a stand-in object) is no link to follow.
+        if getattr(info, "is_link", False) is not True:
+            mode = getattr(info, "permissions", 0)
+            return current, (int(mode) & 0o7777 if mode else None)
+        try:
+            target = backend.readlink(current)
+        except (OSError, AttributeError, NotImplementedError) as exc:
+            log.debug("atomic_write: cannot read the link %s: %s", current, exc)
+            return None
+        if not target:
+            return None
+        current = _link_destination(backend, current, target)
+    raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), path)
 
 
 def _restore_mode(backend, path: str, mode: int) -> None:
@@ -159,6 +211,160 @@ def _precreate_with_mode(backend, tmp: str, mode: int) -> None:
     _restore_mode(backend, tmp, mode)
 
 
+#: Added to the temp file's mode while the data goes in: a read-only
+#: target (0444) gave its temp 0444 before the write, and the write was
+#: refused. Only the owner gains a bit; the final mode is restored after.
+_OWNER_WRITE = 0o200
+
+
+def _is_local(backend) -> bool:
+    try:
+        from core.local_fs import LocalFS
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(backend, LocalFS)
+
+
+def _keep_identity_reason(backend, path: str) -> str | None:
+    """Why a save to the local file *path* must write INTO the file
+    instead of renaming a new one over it; ``None`` when a rename loses
+    nothing. Paths of any other backend are not paths on this machine."""
+    if not _is_local(backend):
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None  # a new file: nothing to keep
+    if not stat_module.S_ISREG(st.st_mode):
+        return None
+    if st.st_nlink > 1:
+        return "the file has other hard links"
+    folder = os.path.dirname(os.path.abspath(path))
+    if not os.access(folder, os.W_OK):
+        return "its folder is not writable"
+    if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+        return "it belongs to another user"
+    return None
+
+
+def _carry_local_attributes(backend, src: str, dst: str) -> bool:
+    """Give the local temp *dst* the group and extended attributes of
+    *src*. False when one of them cannot be carried over: the rename
+    would drop it, so the caller writes in place instead."""
+    if not _is_local(backend):
+        return True
+    try:
+        st_src, st_dst = os.stat(src), os.stat(dst)
+    except OSError:
+        return True  # a new file: nothing to carry
+    if hasattr(os, "chown") and st_src.st_gid != st_dst.st_gid:
+        try:
+            os.chown(dst, -1, st_src.st_gid)
+        except OSError as exc:
+            log.debug("atomic_write: cannot give %s the group of %s: %s", dst, src, exc)
+            return False
+    if not hasattr(os, "listxattr"):
+        return True
+    try:
+        names = os.listxattr(src)
+    except OSError:
+        return True  # the file system has no xattrs
+    for name in names:
+        try:
+            value = os.getxattr(src, name)
+            try:
+                if os.getxattr(dst, name) == value:
+                    continue  # e.g. the security label the folder gave it
+            except OSError:
+                pass
+            os.setxattr(dst, name, value)
+        except OSError as exc:
+            log.debug("atomic_write: cannot carry xattr %s to %s: %s", name, dst, exc)
+            return False
+    return True
+
+
+def _overwrite_local(path: str, data: bytes) -> None:
+    """Write *data* into the existing local file *path* (same inode)."""
+    with open(path, "r+b") as fh:
+        fh.write(data)
+        fh.truncate()
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def _write_in_place(path: str, data: bytes) -> None:
+    """Overwrite the local file *path*, keeping inode, links, owner and
+    attributes, with the old bytes recoverable until the write is done."""
+    import shutil
+
+    from core.path_policy import hidden_sibling_name
+
+    if not os.access(path, os.W_OK):
+        # Refused before anything is touched (a read-only file in a
+        # read-only folder): the same error a direct open would give.
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+    folder = os.path.dirname(os.path.abspath(path))
+    backup = None
+    old = None
+    if os.access(folder, os.W_OK):
+        backup = os.path.join(
+            folder,
+            hidden_sibling_name(os.path.basename(path), f".{secrets.token_hex(6)}.bak"),
+        )
+        shutil.copyfile(path, backup)
+    else:
+        with open(path, "rb") as fh:
+            old = fh.read()
+    try:
+        _overwrite_local(path, data)
+    except BaseException:
+        try:
+            if backup is not None:
+                with open(backup, "rb") as fh:
+                    old = fh.read()
+            _overwrite_local(path, old)
+        except Exception as undo_exc:  # noqa: BLE001 - the original error is raised
+            kept = f"; the old content is in {backup}" if backup else ""
+            log.error(
+                "atomic_write: could not restore %s after a failed save%s: %s",
+                path,
+                kept,
+                undo_exc,
+            )
+        else:
+            if backup is not None:
+                os.remove(backup)
+        raise
+    if backup is not None:
+        os.remove(backup)
+
+
+def _in_place_journaled(op_id: str, path: str, data: bytes, reason: str) -> None:
+    log.info("atomic_write: writing %s in place: %s", path, reason)
+    try:
+        _write_in_place(path, data)
+    except BaseException as exc:
+        _finish_journal(
+            op_id,
+            "atomic_write",
+            status="error",
+            dest=path,
+            bytes_total=len(data),
+            error=str(exc),
+        )
+        raise
+    _finish_journal(
+        op_id,
+        "atomic_write",
+        status="done",
+        dest=path,
+        bytes_total=len(data),
+        bytes_done=len(data),
+        details={"in_place": reason},
+    )
+
+
 def atomic_write(backend, path: str, data: bytes) -> None:
     """Write *data* to *path* atomically.
 
@@ -177,7 +383,31 @@ def atomic_write(backend, path: str, data: bytes) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         log.debug("atomic_write: journal start failed: %s", exc)
-    if _is_native_atomic(backend) or _cannot_rename(backend):
+    direct = _is_native_atomic(backend) or _cannot_rename(backend)
+    if not direct:
+        try:
+            resolved = _resolve_destination(backend, path)
+        except BaseException as exc:
+            _finish_journal(
+                op_id,
+                "atomic_write",
+                status="error",
+                dest=path,
+                bytes_total=len(data),
+                error=str(exc),
+            )
+            raise
+        if resolved is None:
+            # A link we cannot read: open_write follows it, renaming
+            # over it would replace it.
+            direct = True
+        else:
+            path, previous_mode = resolved
+            reason = _keep_identity_reason(backend, path)
+            if reason is not None:
+                _in_place_journaled(op_id, path, data, reason)
+                return
+    if direct:
         try:
             with backend.open_write(path) as f:
                 f.write(data)
@@ -207,26 +437,31 @@ def atomic_write(backend, path: str, data: bytes) -> None:
     # target's mode does not survive on its own — the replacement
     # carries whatever the umask gave the temp file. For an executable
     # that is not cosmetic: saving ~/.xinitrc at 0755 handed it back as
-    # 0644 and the next X session would not start.
-    previous_mode = _existing_mode(backend, path)
+    # 0644 and the next X session would not start. ``previous_mode``
+    # comes from _resolve_destination, i.e. from the file, not a link.
+    carried = True
     try:
         if previous_mode is not None:
-            _precreate_with_mode(backend, tmp, previous_mode)
+            _precreate_with_mode(backend, tmp, previous_mode | _OWNER_WRITE)
         with backend.open_write(tmp) as f:
             f.write(data)
-        from core.server_ops import _finalize_temp_destination
+        if previous_mode is not None and not previous_mode & _OWNER_WRITE:
+            _restore_mode(backend, tmp, previous_mode)
+        carried = _carry_local_attributes(backend, path, tmp)
+        if carried:
+            from core.server_ops import _finalize_temp_destination
 
-        _finalize_temp_destination(backend, tmp, path)
-        log.debug("atomic_write: rename-based commit for %s", path)
-        _finish_journal(
-            op_id,
-            "atomic_write",
-            status="done",
-            dest=path,
-            bytes_total=len(data),
-            bytes_done=len(data),
-            details={"temp": tmp},
-        )
+            _finalize_temp_destination(backend, tmp, path)
+            log.debug("atomic_write: rename-based commit for %s", path)
+            _finish_journal(
+                op_id,
+                "atomic_write",
+                status="done",
+                dest=path,
+                bytes_total=len(data),
+                bytes_done=len(data),
+                details={"temp": tmp},
+            )
     except BaseException:
         # Best-effort cleanup — if the write didn't complete, remove the
         # temp so we don't leak. Swallow errors from the cleanup
@@ -250,6 +485,13 @@ def atomic_write(backend, path: str, data: bytes) -> None:
             details={"temp": tmp},
         )
         raise
+    if not carried:
+        # The rename would drop the file's group or an extended attribute.
+        try:
+            backend.remove(tmp)
+        except Exception as cleanup_exc:  # noqa: BLE001
+            log.debug("atomic_write: cleanup of %s failed: %s", tmp, cleanup_exc)
+        _in_place_journaled(op_id, path, data, "an attribute would not survive a rename")
 
 
 def atomic_write_stream(
@@ -267,7 +509,15 @@ def atomic_write_stream(
     successful chunk write.
     """
     bytes_done = 0
-    if _is_native_atomic(backend) or _cannot_rename(backend):
+    direct = _is_native_atomic(backend) or _cannot_rename(backend)
+    previous_mode = None
+    if not direct:
+        resolved = _resolve_destination(backend, path)
+        if resolved is None:
+            direct = True  # a link we cannot read: write through it
+        else:
+            path, previous_mode = resolved
+    if direct:
         with backend.open_write(path) as f:
             while True:
                 chunk = reader.read(chunk_size)
@@ -280,10 +530,9 @@ def atomic_write_stream(
         return bytes_done
 
     tmp = _temp_sibling(backend, path)
-    previous_mode = _existing_mode(backend, path)
     try:
         if previous_mode is not None:
-            _precreate_with_mode(backend, tmp, previous_mode)
+            _precreate_with_mode(backend, tmp, previous_mode | _OWNER_WRITE)
         with backend.open_write(tmp) as f:
             while True:
                 chunk = reader.read(chunk_size)
@@ -293,6 +542,8 @@ def atomic_write_stream(
                 bytes_done += len(chunk)
                 if on_chunk:
                     on_chunk(bytes_done)
+        if previous_mode is not None and not previous_mode & _OWNER_WRITE:
+            _restore_mode(backend, tmp, previous_mode)
         from core.server_ops import _finalize_temp_destination
 
         _finalize_temp_destination(backend, tmp, path)

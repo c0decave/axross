@@ -1985,7 +1985,8 @@ def recovery_scan(backend: FileBackend, root: str | None = None) -> str:
 
 @_api(mutates=False)
 def recent_operations(limit: int = 20) -> list[dict]:
-    """Return recent redacted operation-journal events."""
+    """Return recent operation-journal events: secrets redacted, paths
+    as they are on disk (undo needs them)."""
     from core.operation_journal import read_recent
 
     return read_recent(limit=limit)
@@ -2550,16 +2551,22 @@ def serve_s3(
     bind: str = "127.0.0.1",
     port: int = 9000,
     read_only: bool = False,
-    auth_token: str = "",
+    auth_token: str | None = "",
     root_path: str = "/",
 ) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable S3 endpoint so any
     existing S3 client (aws-cli / restic / rclone / terraform) can
     speak to it.
 
-    Localhost-bound by default. Pass ``bind="0.0.0.0"`` only when you
-    intentionally want LAN access; non-local binds without
-    ``auth_token=…`` are refused. Returns a live
+    Localhost-bound by default, and with a token by default: the
+    handle's ``.auth_token`` is what clients send - as the AWS access
+    key id (``AWS_ACCESS_KEY_ID=<token>``, any secret: aws-cli, restic,
+    rclone, boto3), as ``Authorization: Bearer <token>`` or as the Basic
+    password. ``auth_token="…"`` sets your own; ``auth_token=None``
+    turns auth off - on loopback only, as every local user can then
+    reach the backend.
+    Pass ``bind="0.0.0.0"`` only when you intentionally want LAN access;
+    non-local binds need an explicit ``auth_token``. Returns a live
     :class:`core.reverse_serve.ReverseServer` handle; call
     ``.shutdown()`` to stop.
     """
@@ -2582,13 +2589,14 @@ def serve_webdav(
     bind: str = "127.0.0.1",
     port: int = 8080,
     read_only: bool = False,
-    auth_token: str = "",
+    auth_token: str | None = "",
     root_path: str = "/",
 ) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable WebDAV endpoint —
     ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser
-    read-only listings all work. Same OPSEC rules as
-    :func:`serve_s3`. Returns a :class:`core.reverse_serve.ReverseServer`.
+    read-only listings all work; they ask for the token as the password
+    (any user name). Same token rules as :func:`serve_s3`. Returns a
+    :class:`core.reverse_serve.ReverseServer`.
     """
     from core.reverse_serve import serve_webdav as _impl
 
@@ -3452,7 +3460,9 @@ def docs(name: str | None = None) -> str:
 
 
 #: Version of the api_schema() layout; raised when a field changes meaning.
-API_SCHEMA_VERSION = 1
+#: 2: full docstrings, examples, raises, session-method traits and
+#: parameters, the types the API returns, groups, rules, errors, legend.
+API_SCHEMA_VERSION = 2
 
 _PARAMETER_KINDS = {
     "POSITIONAL_ONLY": "positional_only",
@@ -3461,6 +3471,276 @@ _PARAMETER_KINDS = {
     "KEYWORD_ONLY": "keyword_only",
     "VAR_KEYWORD": "var_keyword",
 }
+
+#: What each session method can change: True when it can change files or
+#: remote state. A protocol method missing here is reported as ``None``
+#: (unknown, not safe); tests/test_scripting_api_schema.py fails for it.
+_SESSION_METHOD_MUTATES = {
+    "name": False,
+    "list_dir": False,
+    "stat": False,
+    "is_dir": False,
+    "exists": False,
+    "mkdir": True,
+    "remove": True,
+    "rename": True,
+    "open_read": False,
+    "open_write": True,
+    "normalize": False,
+    "separator": False,
+    "join": False,
+    "parent": False,
+    "home": False,
+    "chmod": True,
+    "readlink": False,
+    "symlink": True,
+    "hardlink": True,
+    "disk_usage": False,
+    "list_versions": False,
+    "open_version_read": False,
+    "copy": True,
+    "checksum": False,
+    "close": False,
+    "__enter__": False,
+    "__exit__": False,
+}
+
+#: Protocol methods only some sessions have: callers test ``hasattr``
+#: (core.backend.SessionLifecycle leaves them out on purpose).
+_SESSION_OPTIONAL_METHODS = frozenset({"copy", "symlink", "hardlink"})
+
+#: The data attributes of the protocol (core/backend.py), described here
+#: because an attribute has no docstring.
+_SESSION_ATTRIBUTES = {
+    "supports_symlinks": (
+        "True when this session can create symbolic links with symlink(); "
+        "read it with getattr(b, 'supports_symlinks', False)."
+    ),
+    "supports_hardlinks": (
+        "True when this session can create hard links with hardlink(); "
+        "read it with getattr(b, 'supports_hardlinks', False)."
+    ),
+}
+
+#: Capitalised names in annotations that are not described under
+#: ``classes`` or ``types``: the stdlib and typing, and FileBackend, which
+#: ``backend_protocol`` describes.
+_NOT_DESCRIBED_TYPES = frozenset(
+    {"Any", "Callable", "IO", "Iterable", "Iterator", "None", "FileBackend"}
+)
+
+#: Modules whose classes api_schema() describes; anything else (stdlib,
+#: third party) is named by its annotation only.
+_OWN_MODULE_PREFIXES = ("core.", "models.")
+
+#: What every field of api_schema() means, for a reader without this file.
+_LEGEND = {
+    "functions": {
+        "name": "Function name: call it as axross.<name>(...).",
+        "group": "Topic the function belongs to (see groups).",
+        "signature": "Python signature with type hints and defaults.",
+        "parameters": (
+            "One entry per parameter: name, kind (positional_or_keyword, keyword_only, "
+            "var_positional, var_keyword, positional_only), annotation, required, and "
+            "default (JSON value) or default_repr (Python repr) when it has one."
+        ),
+        "returns": "Return type as written in the code; types and classes describe the named ones.",
+        "summary": "First paragraph of the docstring.",
+        "doc": "The whole docstring: rules, return shape, caveats.",
+        "examples": "The literal code blocks of the docstring (may be empty).",
+        "raises": (
+            "Exception classes raised by the axross scripting layer itself on some path "
+            "(found in its source and the same-module helpers it calls). Not exhaustive: "
+            "every call that touches a backend can raise OSError and its subclasses, and a "
+            "function with prompts=true can raise NonInteractiveError (see errors)."
+        ),
+        "mutates": "True when the call can change files, remote state or saved settings.",
+        "prompts": (
+            "True when the call can need a human (a dialog, a terminal prompt, the "
+            "production countdown); without one it raises NonInteractiveError."
+        ),
+    },
+    "backend_protocol": {
+        "name": "Method or attribute name on a session b (what open() and friends return).",
+        "kind": "method, property or attribute.",
+        "signature": "Python signature without self (methods only).",
+        "parameters": "As for functions, without self (methods only).",
+        "returns": "Return type as written in the code.",
+        "annotation": "Type of an attribute.",
+        "default": "Value of an attribute on a session that does not set it.",
+        "summary": "First paragraph of the docstring.",
+        "doc": "The whole docstring.",
+        "mutates": "True when the method can change files or remote state.",
+        "optional": "True when only some sessions have the method: test hasattr(b, name) first.",
+        "fallback": "What a session without support for this method answers instead.",
+    },
+    "types": {
+        "name": "Class name as the annotations use it.",
+        "module": "Module that defines it (import it from there if you need the class itself).",
+        "kind": "class, exception, enum or session (a class implementing backend_protocol).",
+        "bases": "Base classes, nearest first.",
+        "summary": "First paragraph of the class docstring.",
+        "fields": "Dataclass fields: name and annotation.",
+        "properties": "Read-only attributes computed on access: name, returns, summary.",
+        "methods": "Public methods: name, signature without self, returns, summary.",
+        "members": "Enum members.",
+    },
+}
+
+#: Conventions a model writing a script needs, as (id, text). The comment
+#: above each names the code that decides it; change both together.
+_API_RULES = (
+    (
+        # core/script_runner.py (the namespace of a run); axross/__init__.py
+        "namespace",
+        "A script run by script_run, axross --script or the Scripts dock finds the API bound "
+        "as axross; import axross gives the same names.",
+    ),
+    (
+        # core/backend.py SessionLifecycle; tests/test_scripting_session_lifecycle.py
+        "sessions",
+        "open(profile_name), open_url(url), localfs() and ramfs() return a session b with the "
+        "backend_protocol methods. Open it in a with block: leaving the block ends the "
+        "connection, also after an exception; b.close() does the same by hand.",
+    ),
+    (
+        # separator() of core/local_fs.py, core/winrm_client.py, core/wmi_client.py
+        "paths",
+        "Paths are absolute strings in the session's own syntax. Most sessions use '/'; "
+        "localfs() uses the host's separator and WinRM and WMI sessions use '\\'. Build paths "
+        "with b.join() and b.parent() rather than os.path, which follows the host.",
+    ),
+    (
+        # models/file_item.py (the timestamp contract); core/net_helpers.py find_files
+        "listing",
+        "b.list_dir(path) returns a list of FileItem and b.stat(path) one FileItem (see "
+        "types): name is the entry's name inside the directory, not a path - join it to the "
+        "directory; modified is naive local time; is_dir and is_link give the kind. "
+        "find_files(b, root, ...) walks a tree and yields the files as FileItem whose name "
+        "is the full path; it skips folders it cannot read.",
+    ),
+    (
+        # _refuse_existing_target_unless_overwrite, core/server_ops.py, remove/trash,
+        # core/atomic_io.py; {gated} is derived from the code by _gated_functions
+        "helpers-before-session-methods",
+        "Change files with the axross.* helpers, not the raw session methods. copy, move, "
+        "write_bytes, write_text and encrypt refuse an existing target unless "
+        "overwrite=True (move across backends refuses it even then); remove and trash "
+        "refuse without confirm=True; write_bytes writes "
+        "atomically where the backend allows it; {gated} wait for the production countdown "
+        "on a profile flagged production. b.remove(), b.rename(), b.open_write() and the "
+        "other session methods do none of this.",
+    ),
+    (
+        # core/mcp_server.py script_run sets AXROSS_NONINTERACTIVE=1;
+        # core/safety_tarpit.py refuses an unwatched countdown
+        "no-human",
+        "Under script_run nobody can answer: stdin is empty and AXROSS_NONINTERACTIVE=1 is "
+        "set. A function with prompts=true raises NonInteractiveError (a PermissionError) "
+        "instead of asking: confirm() unless assume_yes=True is passed, and a change on a "
+        "production profile unless the operator started axross with "
+        "AXROSS_TARPIT_DISABLE=1. is_interactive() tells a script which case it is in. Pass "
+        "assume_yes=True only for an action the operator asked for.",
+    ),
+    (
+        # MAX_SCRIPT_READ_BYTES and _read_all_capped
+        "bounded-reads",
+        "read_bytes() and read_text() read at most {max_read} bytes unless max_bytes says "
+        "otherwise, and raise OSError above it. Stream bigger files: with b.open_read(path) "
+        "as fh: then fh.read(chunk_size) in a loop.",
+    ),
+    (
+        # core/backend.py open_read/open_write ("Caller must close the returned handle")
+        "handles",
+        "b.open_read() and b.open_write() return file handles the caller must close: use "
+        "them in a with block. b.open_write() has none of write_bytes()'s checks.",
+    ),
+    (
+        # core/backend.py FileBackend.checksum; core/scripting.py checksum/hash_file
+        "checksums",
+        "checksum(b, path) returns the backend's fingerprint marked with its algorithm "
+        "('sha256:<hex>', 'md5:<hex>', 's3-etag:<etag>', ...), which may not be the "
+        "algorithm asked for: "
+        "compare the prefix before the value. hash_file(b, path, algorithm) always streams "
+        "and returns the bare hex digest of that algorithm - use it to compare files across "
+        "backends.",
+    ),
+    (
+        # the hasattr checks of the per-protocol helpers below
+        "wrong-session-kind",
+        "Per-protocol helpers (exec, interactive_shell, query, tables, imap_search, "
+        "ldap_search, share, ...) raise TypeError on a session of another kind.",
+    ),
+    (
+        # core/mcp_server.py script_run (the reply)
+        "output",
+        "print() goes to stdout, which script_run returns with stderr, the exit status and, "
+        "after an uncaught exception, error_type, error and traceback. Print a result a "
+        "machine reads as one JSON document; sys.exit(n) sets the exit status.",
+    ),
+)
+
+#: Exceptions a script meets, what they mean and what to do. The base
+#: class is taken from the class itself.
+_API_ERRORS = (
+    (
+        "OSError",
+        "An I/O operation failed or the session cannot do it: protocol error, connection "
+        "lost, an operation the backend does not support, a read above max_bytes. The "
+        "subclasses below say more.",
+        "Read the message. Do not repeat the same call unchanged.",
+    ),
+    (
+        "FileNotFoundError",
+        "The path does not exist on that session.",
+        "List the parent directory and check the path.",
+    ),
+    (
+        "FileExistsError",
+        "The target exists and overwrite=False (copy, move, write_bytes, write_text, encrypt).",
+        "Choose another path, or pass overwrite=True only when replacing it is intended.",
+    ),
+    (
+        "IsADirectoryError",
+        "A file operation got a folder (for example metadata() on a directory).",
+        "Use the folder variant the message names.",
+    ),
+    (
+        "PermissionError",
+        "A refusal: the server denied access, remove() or trash() was called without "
+        "confirm=True, or the security mode blocks the feature.",
+        "Do not route around it. confirm=True is for deletes the operator asked for.",
+    ),
+    (
+        "NonInteractiveError",
+        "The call needs a human and none can answer: confirm() without assume_yes=True, or "
+        "a change on a production profile.",
+        "Pass assume_yes=True only for what the operator asked for; production changes need "
+        "the operator.",
+    ),
+    (
+        "KeyError",
+        "open() got a profile name that is not saved, or docs() an unknown topic.",
+        "list_profiles() gives the saved names.",
+    ),
+    (
+        "TypeError",
+        "The session is the wrong kind for the helper (exec() on S3, query() on a session "
+        "that is no database) or an argument has the wrong type.",
+        "Check the session's protocol and the signature.",
+    ),
+    (
+        "ValueError",
+        "An argument value is invalid: an unknown URL scheme, a port out of range, a script "
+        "name outside [A-Za-z0-9_-], an unknown mode or format.",
+        "Fix the argument; the message names it.",
+    ),
+    (
+        "KeyboardInterrupt",
+        "Someone stopped the production countdown before a change.",
+        "Do not repeat the change.",
+    ),
+)
 
 
 def _annotation_text(annotation) -> str | None:
@@ -3473,6 +3753,31 @@ def _annotation_text(annotation) -> str | None:
     if isinstance(annotation, str):
         return annotation
     return inspect.formatannotation(annotation)
+
+
+def _annotation_names(text: str) -> set[str]:
+    """The names an annotation text refers to: ``list[FileItem] | None``
+    gives ``{"list", "FileItem", "None"}``; a dotted name stays dotted."""
+    import ast
+
+    if not text:
+        return set()
+    try:
+        tree = ast.parse(text, mode="eval")
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            names.add(ast.unparse(node))
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Constant) and node.value is None:
+            names.add("None")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names |= _annotation_names(node.value)
+    # A Name inside an Attribute (``os`` of ``os.PathLike``) is not a name of its own.
+    return {n for n in names if not any(m.startswith(n + ".") for m in names)}
 
 
 class _RawAnnotation:
@@ -3511,13 +3816,89 @@ def _first_paragraph(obj) -> str:
     return " ".join(doc.split("\n\n", 1)[0].split())
 
 
-def _function_entry(name: str, fn) -> dict:
-    """One function of :func:`api_schema`, built from the live object."""
-    import inspect
+def _docstring_examples(doc: str) -> list[str]:
+    """The literal blocks of a docstring: the indented lines after a line
+    ending in ``::`` (reStructuredText), dedented."""
+    lines = (doc or "").splitlines()
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.rstrip().endswith("::"):
+            i += 1
+            continue
+        indent = len(line) - len(line.lstrip())
+        j = i + 1
+        block: list[str] = []
+        while j < len(lines) and (
+            not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > indent
+        ):
+            block.append(lines[j])
+            j += 1
+        text = _textwrap.dedent("\n".join(block)).strip("\n")
+        if text:
+            out.append(text)
+        i = max(j, i + 1)
+    return out
 
-    sig = inspect.signature(fn)
+
+def _resolve_exception(node, namespace: dict):
+    """The exception class a ``raise`` names, or None for a variable."""
+    import ast
+    import builtins
+
+    if isinstance(node, ast.Call):
+        node = node.func
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.insert(0, node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    obj = namespace.get(node.id, getattr(builtins, node.id, None))
+    for part in parts:
+        obj = getattr(obj, part, None)
+    if isinstance(obj, type) and issubclass(obj, BaseException):
+        return obj
+    return None
+
+
+def _raised_exceptions(fn, _seen: set | None = None) -> list[str]:
+    """Names of the exception classes ``fn`` raises on some path: its own
+    ``raise`` statements and those of the functions of its module it calls
+    by name. A bare ``raise`` and a raised variable are left out."""
+    import ast
+    import inspect
+    import sys as _sys
+
+    seen = _seen if _seen is not None else set()
+    if fn in seen:
+        return []
+    seen.add(fn)
+    try:
+        tree = ast.parse(_textwrap.dedent(inspect.getsource(fn)))
+    except (OSError, TypeError, SyntaxError):
+        return []
+    module = _sys.modules.get(fn.__module__)
+    namespace = vars(module) if module is not None else {}
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and node.exc is not None:
+            cls = _resolve_exception(node.exc, namespace)
+            if cls is not None:
+                found.add(cls.__name__)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            callee = namespace.get(node.func.id)
+            if inspect.isfunction(callee) and callee.__module__ == fn.__module__:
+                found.update(_raised_exceptions(callee, seen))
+    return sorted(found)
+
+
+def _parameter_entries(sig, *, drop_self: bool = False) -> list[dict]:
     parameters = []
     for param in sig.parameters.values():
+        if drop_self and param.name == "self":
+            continue
         entry: dict = {"name": param.name, "kind": _PARAMETER_KINDS[param.kind.name]}
         annotation = _annotation_text(param.annotation)
         if annotation is not None:
@@ -3531,14 +3912,26 @@ def _function_entry(name: str, fn) -> dict:
             else:
                 entry["default_repr"] = repr(default)
         parameters.append(entry)
+    return parameters
+
+
+def _function_entry(name: str, fn) -> dict:
+    """One function of :func:`api_schema`, built from the live object."""
+    import inspect
+
+    sig = inspect.signature(fn)
     traits = getattr(fn, _API_TRAITS_ATTR, None) or {}
+    doc = inspect.getdoc(fn) or ""
     return {
         "name": name,
         "group": _help_group_of(name),
         "signature": _signature_text(name, sig),
-        "parameters": parameters,
+        "parameters": _parameter_entries(sig),
         "returns": _annotation_text(sig.return_annotation),
         "summary": _first_paragraph(fn),
+        "doc": doc,
+        "examples": _docstring_examples(doc),
+        "raises": _raised_exceptions(fn),
         "mutates": traits.get("mutates"),
         "prompts": traits.get("prompts"),
     }
@@ -3551,25 +3944,196 @@ def _help_group_of(name: str) -> str:
     return "Other"
 
 
-def _class_entry(name: str, cls) -> dict:
-    import dataclasses
+def _groups_entries() -> list[dict]:
+    """The topics in ``_HELP_GROUPS`` order, every public name in one."""
+    import inspect
+    import sys as _sys
 
+    me = _sys.modules[__name__]
+    order = [group for group, _ in _HELP_GROUPS] + ["Other"]
+    members: dict[str, dict[str, list[str]]] = {g: {"functions": [], "classes": []} for g in order}
+    for group, names in _HELP_GROUPS:
+        for name in names:
+            if name in __all__:
+                kind = "classes" if inspect.isclass(getattr(me, name)) else "functions"
+                members[group][kind].append(name)
+    listed = {n for group in members.values() for kind in group.values() for n in kind}
+    for name in __all__:
+        if name not in listed:
+            kind = "classes" if inspect.isclass(getattr(me, name)) else "functions"
+            members["Other"][kind].append(name)
+    return [{"name": g, **members[g]} for g in order if any(members[g].values())]
+
+
+def _type_checking_namespace(module) -> dict:
+    """The names a module imports under ``if TYPE_CHECKING:``, imported for
+    real one statement at a time; a statement that fails is skipped."""
+    import ast
+    import builtins
+    import inspect
+
+    namespace: dict = {}
+    try:
+        tree = ast.parse(inspect.getsource(module))
+    except (OSError, TypeError, SyntaxError):
+        return namespace
+    for node in tree.body:
+        if not (
+            isinstance(node, ast.If)
+            and getattr(node.test, "id", "") in {"TYPE_CHECKING", "_TYPE_CHECKING"}
+        ):
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, (ast.Import, ast.ImportFrom)):
+                continue
+            code = compile(ast.Module(body=[stmt], type_ignores=[]), module.__file__, "exec")
+            try:
+                builtins.exec(code, namespace)  # an import statement of axross' own source
+            except Exception as exc:  # noqa: BLE001 - an optional dependency is missing
+                log.debug("api_schema: %s: %s", ast.unparse(stmt), exc)
+    namespace.pop("__builtins__", None)
+    return namespace
+
+
+class _TypeResolver:
+    """Finds the classes an annotation names, in the module that wrote it."""
+
+    def __init__(self) -> None:
+        self._namespaces: dict[str, dict] = {}
+
+    def namespace(self, module_name: str) -> dict:
+        import sys as _sys
+
+        if module_name not in self._namespaces:
+            module = _sys.modules.get(module_name)
+            ns = dict(vars(module)) if module is not None else {}
+            if module is not None:
+                ns.update(_type_checking_namespace(module))
+            self._namespaces[module_name] = ns
+        return self._namespaces[module_name]
+
+    def classes(self, text: str | None, module_name: str) -> list[type]:
+        import builtins
+
+        found = []
+        ns = self.namespace(module_name)
+        for name in sorted(_annotation_names(text or "")):
+            obj = ns.get(name.split(".")[0], getattr(builtins, name.split(".")[0], None))
+            for part in name.split(".")[1:]:
+                obj = getattr(obj, part, None)
+            if isinstance(obj, type):
+                found.append(obj)
+        return found
+
+
+def _is_own_class(cls) -> bool:
+    return cls.__module__.startswith(_OWN_MODULE_PREFIXES)
+
+
+def _is_session_class(cls) -> bool:
+    return all(callable(getattr(cls, m, None)) for m in ("list_dir", "stat", "open_read"))
+
+
+def _type_entry(name: str, cls) -> dict:
+    """A class for :func:`api_schema`: what a script can read and call on it."""
+    import dataclasses
+    import enum
+    import inspect
+
+    from core.backend import FileBackend, SessionLifecycle
+
+    if issubclass(cls, BaseException):
+        kind = "exception"
+    elif issubclass(cls, enum.Enum):
+        kind = "enum"
+    elif _is_session_class(cls):
+        kind = "session"
+    else:
+        kind = "class"
     entry: dict = {
         "name": name,
-        "kind": "exception" if issubclass(cls, BaseException) else "class",
+        "module": cls.__module__,
+        "kind": kind,
         "bases": [base.__name__ for base in cls.__mro__[1:] if base is not object],
         "summary": _first_paragraph(cls),
     }
+    if kind == "enum":
+        entry["members"] = [m.name for m in cls]
+        return entry
+    field_names: set[str] = set()
     if dataclasses.is_dataclass(cls):
+        fields = dataclasses.fields(cls)
+        field_names = {f.name for f in fields}
         entry["fields"] = [
-            {"name": f.name, "annotation": _annotation_text(f.type) or ""}
-            for f in dataclasses.fields(cls)
+            {"name": f.name, "annotation": _annotation_text(f.type) or ""} for f in fields
         ]
+    # The session methods are described once, under backend_protocol.
+    skip = set(vars(FileBackend)) | set(vars(SessionLifecycle)) if kind == "session" else set()
+    properties: list[dict] = []
+    methods: list[dict] = []
+    own = [k for k in cls.__mro__ if k is not object and _is_own_class(k)]
+    seen: set[str] = set()
+    for klass in own:
+        for attr, member in vars(klass).items():
+            if attr.startswith("_") or attr in seen or attr in field_names or attr in skip:
+                continue
+            seen.add(attr)
+            if isinstance(member, property) and member.fget is not None:
+                sig = inspect.signature(member.fget)
+                properties.append({
+                    "name": attr,
+                    "returns": _annotation_text(sig.return_annotation),
+                    "summary": _first_paragraph(member),
+                })
+            elif inspect.isfunction(member):
+                sig = inspect.signature(member)
+                methods.append({
+                    "name": attr,
+                    "signature": _signature_text(attr, sig, drop_self=True),
+                    "returns": _annotation_text(sig.return_annotation),
+                    "summary": _first_paragraph(member),
+                })
+    if properties:
+        entry["properties"] = sorted(properties, key=lambda p: p["name"])
+    if methods:
+        entry["methods"] = sorted(methods, key=lambda m: m["name"])
     return entry
 
 
+def _referenced_types(seeds: list[tuple[str | None, str]], public: set[str]) -> list[dict]:
+    """The axross classes reachable from the annotations ``seeds`` (text,
+    module that wrote it), through their fields, properties and method
+    returns. Public classes (``classes``) and FileBackend are left out."""
+    from core.backend import FileBackend
+
+    resolver = _TypeResolver()
+    found: dict[str, type] = {}
+    queue = list(seeds)
+    while queue:
+        text, module_name = queue.pop()
+        for cls in resolver.classes(text, module_name):
+            name = cls.__name__
+            if not _is_own_class(cls) or cls is FileBackend or name in public:
+                continue
+            if name in found:
+                if found[name] is not cls:
+                    raise RuntimeError(f"api_schema: two classes named {name}")
+                continue
+            found[name] = cls
+            entry = _type_entry(name, cls)
+            for member in entry.get("fields", []):
+                queue.append((member["annotation"], cls.__module__))
+            for member in entry.get("properties", []) + entry.get("methods", []):
+                queue.append((member["returns"], cls.__module__))
+    return [_type_entry(name, found[name]) for name in sorted(found)]
+
+
+def _session_method_mutates(name: str) -> bool | None:
+    return _SESSION_METHOD_MUTATES.get(name)
+
+
 def _backend_protocol_entries() -> list[dict]:
-    """The methods every session has: the FileBackend protocol plus
+    """The members every session has: the FileBackend protocol plus
     ``close`` and the ``with`` statement (core.backend.SessionLifecycle)."""
     import inspect
 
@@ -3578,66 +4142,196 @@ def _backend_protocol_entries() -> list[dict]:
     out: list[dict] = []
     members = [(n, getattr(FileBackend, n)) for n in sorted(vars(FileBackend))]
     members += [(n, getattr(SessionLifecycle, n)) for n in ("close", "__enter__", "__exit__")]
+    lifecycle = {"close", "__enter__", "__exit__"}
     for name, member in members:
         if name.startswith("_") and name not in {"__enter__", "__exit__"}:
             continue
         if isinstance(member, property):
             sig = inspect.signature(member.fget)
-            kind = "property"
+            entry = {"name": name, "kind": "property"}
         elif callable(member):
             sig = inspect.signature(member)
-            kind = "method"
+            entry = {
+                "name": name,
+                "kind": "method",
+                "signature": _signature_text(name, sig, drop_self=True),
+                "parameters": _parameter_entries(sig, drop_self=True),
+            }
+        elif isinstance(member, bool):
+            out.append({
+                "name": name,
+                "kind": "attribute",
+                "annotation": "bool",
+                "default": member,
+                "summary": _SESSION_ATTRIBUTES.get(name, ""),
+                "mutates": False,
+                "optional": False,
+            })
+            continue
         else:
             continue
-        entry = {"name": name, "kind": kind}
-        if kind == "method":
-            entry["signature"] = _signature_text(name, sig, drop_self=True)
+        doc = inspect.getdoc(member) or ""
         entry["returns"] = _annotation_text(sig.return_annotation)
         entry["summary"] = _first_paragraph(member)
+        entry["doc"] = doc
+        entry["mutates"] = _session_method_mutates(name)
+        entry["optional"] = name in _SESSION_OPTIONAL_METHODS
+        if name not in lifecycle and name in vars(SessionLifecycle):
+            entry["fallback"] = _first_paragraph(vars(SessionLifecycle)[name])
         out.append(entry)
     return out
 
 
-@_api(mutates=False)
-def api_schema() -> dict:
-    """Describe the scripting API as JSON-serialisable data, for a machine.
-
-    Built from the live objects with :mod:`inspect`, so it is never out of
-    date: ``functions`` has one entry per public function - ``name``,
-    ``group``, ``signature``, ``parameters`` (``name``, ``kind``,
-    ``annotation``, ``required``, ``default`` or ``default_repr``),
-    ``returns``, ``summary`` (the first docstring paragraph), ``mutates``
-    (can change files, remote state or settings) and ``prompts`` (can
-    wait for a human, or raises :class:`NonInteractiveError` without
-    one); ``classes`` lists the public classes (dataclass fields
-    included); ``backend_protocol`` lists the methods every session from
-    :func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs`
-    has, ``close()`` and the ``with`` statement included.
-
-    The MCP tool ``script_api_schema`` returns the same data. For prose,
-    use :func:`docs`::
-
-        import json
-        print(json.dumps(axross.api_schema()["functions"][0], indent=2))
-    """
+def _gated_functions() -> list[str]:
+    """Public functions of this module that pass the production countdown:
+    they enter ``_mutation_gate`` or call a public function that does."""
+    import ast
     import inspect
     import sys as _sys
 
     me = _sys.modules[__name__]
+    own = {
+        n: getattr(me, n)
+        for n in __all__
+        if inspect.isfunction(getattr(me, n)) and getattr(me, n).__module__ == __name__
+    }
+    calls: dict[str, set[str]] = {}
+    for name, fn in own.items():
+        tree = ast.parse(_textwrap.dedent(inspect.getsource(fn)))
+        calls[name] = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+    gated: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name in own:
+            if name not in gated and ({"_mutation_gate"} | gated) & calls[name]:
+                gated.add(name)
+                changed = True
+    return [n for n in __all__ if n in gated]
+
+
+def _rules_entries() -> list[dict]:
+    gated = _gated_functions()
+    values = {
+        "gated": ", ".join(gated[:-1]) + " and " + gated[-1] if len(gated) > 1 else "".join(gated),
+        "max_read": f"{MAX_SCRIPT_READ_BYTES} ({MAX_SCRIPT_READ_BYTES // (1024 * 1024)} MiB)",
+    }
+    return [{"id": rule_id, "text": text.format(**values)} for rule_id, text in _API_RULES]
+
+
+def _errors_entries() -> list[dict]:
+    import builtins
+    import sys as _sys
+
+    me = _sys.modules[__name__]
+    out = []
+    for name, meaning, action in _API_ERRORS:
+        cls = getattr(builtins, name, None) or getattr(me, name)
+        out.append({
+            "name": name,
+            "base": cls.__mro__[1].__name__,
+            "meaning": meaning,
+            "action": action,
+        })
+    return out
+
+
+@_api(mutates=False)
+def api_schema(names: list[str] | None = None) -> dict:
+    """Describe the scripting API as JSON-serialisable data, for a machine.
+
+    Built from the live objects with :mod:`inspect` and :mod:`ast`, so it
+    is never out of date. ``functions`` has one entry per public function:
+    ``name``, ``group``, ``signature``, ``parameters`` (``name``, ``kind``,
+    ``annotation``, ``required``, ``default`` or ``default_repr``),
+    ``returns``, ``summary`` (the first docstring paragraph), ``doc`` (the
+    whole docstring), ``examples`` (its literal code blocks), ``raises``
+    (what the axross layer raises itself), ``mutates`` (can change files,
+    remote state or settings) and ``prompts`` (can wait for a human, or
+    raises :class:`NonInteractiveError` without one). ``classes`` lists the
+    public classes, ``types`` the other classes the API takes or returns
+    (``FileItem`` and the result types) with fields, properties and
+    methods; ``backend_protocol`` lists what every session from
+    :func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs` has,
+    with ``mutates``, ``optional`` and ``fallback``; ``groups`` orders the
+    names by topic; ``rules`` and ``errors`` are the conventions and the
+    exceptions a script meets; ``legend`` explains every field.
+
+    ``names`` narrows ``functions``, ``classes`` and ``types`` to those
+    names plus the types they and the session methods use; ``names=[]``
+    gives the index alone (groups, rules, errors, session methods). An
+    unknown name raises :class:`ValueError`.
+
+    The MCP tool ``script_api_schema`` returns the same data, and
+    ``docs/scripting-api.json`` is a copy of it. For prose, use
+    :func:`docs`::
+
+        import json
+        print(json.dumps(axross.api_schema(["read_text"]), indent=2))
+    """
+    import inspect
+    import json as _json
+    import sys as _sys
+
+    if names is not None and (
+        isinstance(names, (str, bytes)) or not all(isinstance(n, str) for n in names)
+    ):
+        raise ValueError("axross.api_schema: names must be a list of names, e.g. ['copy']")
+    me = _sys.modules[__name__]
     functions: list[dict] = []
     classes: list[dict] = []
+    seeds_of: dict[str, list[tuple[str | None, str]]] = {}
     for name in __all__:
         obj = getattr(me, name)
         if inspect.isclass(obj):
-            classes.append(_class_entry(name, obj))
+            classes.append(_type_entry(name, obj))
+            seeds_of[name] = [
+                (f["annotation"], obj.__module__) for f in classes[-1].get("fields", [])
+            ]
         elif callable(obj):
-            functions.append(_function_entry(name, obj))
+            entry = _function_entry(name, obj)
+            functions.append(entry)
+            texts = [entry["returns"]] + [p.get("annotation") for p in entry["parameters"]]
+            seeds_of[name] = [(text, obj.__module__) for text in texts]
+    protocol = _backend_protocol_entries()
+    protocol_seeds = [
+        (text, "core.backend")
+        for entry in protocol
+        for text in [entry.get("returns")]
+        + [p.get("annotation") for p in entry.get("parameters", [])]
+    ]
+    public = {c["name"] for c in classes}
+    types = _referenced_types(protocol_seeds + [s for v in seeds_of.values() for s in v], public)
+    if names is not None:
+        wanted = set(names)
+        known = set(seeds_of) | {t["name"] for t in types}
+        unknown = sorted(wanted - known)
+        if unknown:
+            raise ValueError(
+                f"axross.api_schema: unknown names {unknown}; api_schema(names=[])['groups'] "
+                "lists the functions and classes"
+            )
+        seeds = protocol_seeds + [s for n in wanted for s in seeds_of.get(n, [])]
+        seeds += [(t["name"], t["module"]) for t in types if t["name"] in wanted]
+        reached = {t["name"] for t in _referenced_types(seeds, public)}
+        functions = [f for f in functions if f["name"] in wanted]
+        classes = [c for c in classes if c["name"] in wanted]
+        types = [t for t in types if t["name"] in reached]
     return {
         "schema_version": API_SCHEMA_VERSION,
         "module": "axross",
+        "legend": _json.loads(_json.dumps(_LEGEND)),  # a copy the caller may change
+        "rules": _rules_entries(),
+        "errors": _errors_entries(),
+        "groups": _groups_entries(),
         "functions": functions,
         "classes": classes,
-        "backend_protocol": _backend_protocol_entries(),
+        "backend_protocol": protocol,
+        "types": types,
     }
 
 

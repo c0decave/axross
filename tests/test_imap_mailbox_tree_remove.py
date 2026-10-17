@@ -41,7 +41,9 @@ class _Dovecot:
     RFC 5258 server.
     """
 
-    def __init__(self, boxes: dict[str, int], sep: str = ".", dead_flags: str = "\\NonExistent \\HasChildren"):
+    def __init__(
+        self, boxes: dict[str, int], sep: str = ".", dead_flags: str = "\\NonExistent \\HasChildren"
+    ):
         self.boxes = dict(boxes)
         self.dead: set[str] = set()  # deleted parents of living children
         self.sep = sep
@@ -165,7 +167,10 @@ def test_edge_slash_separator_trees_work_the_same():
 
 def test_edge_the_flag_check_ignores_case():
     srv = _Dovecot({"INBOX": 0})
-    srv.list = lambda *a, **k: ("OK", [b'(\\HasNoChildren) "." "INBOX"', b'(\\nonexistent) "." "gone"'])
+    srv.list = lambda *a, **k: (
+        "OK",
+        [b'(\\HasNoChildren) "." "INBOX"', b'(\\nonexistent) "." "gone"'],
+    )
     assert [i.name for i in _session(srv).list_dir("/")] == ["INBOX"]
 
 
@@ -179,6 +184,9 @@ def test_edge_a_dead_parent_listed_as_plain_has_children_opens_empty():
 
 def test_sad_a_missing_mailbox_without_children_is_still_an_error():
     srv = _Dovecot({"INBOX": 0})
-    srv.list = lambda *a, **k: ("OK", [b'(\\HasNoChildren) "." "INBOX"', b'(\\HasNoChildren) "." "ghost"'])
+    srv.list = lambda *a, **k: (
+        "OK",
+        [b'(\\HasNoChildren) "." "INBOX"', b'(\\HasNoChildren) "." "ghost"'],
+    )
     with pytest.raises(OSError):
         _session(srv).list_dir("/ghost")

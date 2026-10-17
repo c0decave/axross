@@ -38,7 +38,9 @@ class _Cursor:
         return False
 
     def execute(self, sql, params=None):
-        self.conn.sql.append(sql.strip().split()[0].upper() + (" regclass" if "to_regclass" in sql else ""))
+        self.conn.sql.append(
+            sql.strip().split()[0].upper() + (" regclass" if "to_regclass" in sql else "")
+        )
         if "to_regclass" in sql:
             self._row = ("axross_files" if self.conn.table_exists else None,)
             return

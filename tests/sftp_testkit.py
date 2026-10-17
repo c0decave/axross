@@ -169,9 +169,11 @@ class _Auth(paramiko.ServerInterface):
 class SftpServer:
     """``SftpServer(root)`` listens on 127.0.0.1:<port>; any password works."""
 
-    def __init__(self, root: str) -> None:
+    def __init__(self, root: str, extra_host_keys: tuple = ()) -> None:
         self.root = root
         self.stats: dict = {}
+        #: Host keys offered beside the RSA one (another key type each).
+        self.extra_host_keys = tuple(extra_host_keys)
         self._sock = socket.socket()
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
@@ -193,6 +195,8 @@ class SftpServer:
                 return
             t = paramiko.Transport(conn)
             t.add_server_key(_host_key())
+            for key in self.extra_host_keys:
+                t.add_server_key(key)
             root, stats = self.root, self.stats
             t.set_subsystem_handler("sftp", SFTPServer, _Sftp, root=root, stats=stats)
             t.start_server(server=_Auth())

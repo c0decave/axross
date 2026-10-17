@@ -150,7 +150,11 @@ def test_sad_the_dialog_hides_host_and_port_for_azure() -> None:
 @pytest.mark.parametrize(
     "extra",
     [
-        {"azure_connection_string": "DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=a2V5;"},
+        {
+            "azure_connection_string": (
+                "DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=a2V5;"
+            )
+        },
         {"azure_sas_token": "sv=2024&sig=x"},
     ],
 )
@@ -175,13 +179,19 @@ def test_edge_the_dialog_password_field_follows_the_same_set() -> None:
     try:
         for proto in dlg._protocol_ids:
             dlg._protocol_combo.setCurrentIndex(dlg._protocol_ids.index(proto))
-            assert dlg._simple_password.isHidden() is (proto not in SIMPLE_PASSWORD_PROTOCOLS), proto
+            assert dlg._simple_password.isHidden() is (proto not in SIMPLE_PASSWORD_PROTOCOLS), (
+                proto
+            )
     finally:
         dlg.deleteLater()
 
 
-@pytest.mark.parametrize("proto", sorted(SIMPLE_PASSWORD_PROTOCOLS | {"sftp", "scp", "nfs", "gopher"}))
-def test_edge_the_mcp_server_needs_a_password_exactly_where_quick_connect_asks(connect, proto) -> None:
+@pytest.mark.parametrize(
+    "proto", sorted(SIMPLE_PASSWORD_PROTOCOLS | {"sftp", "scp", "nfs", "gopher"})
+)
+def test_edge_the_mcp_server_needs_a_password_exactly_where_quick_connect_asks(
+    connect, proto
+) -> None:
     from core.mcp_groups import password_prompt_needed
 
     profile = ConnectionProfile(name="p", host="lab.example", username="u", **_ready(proto))

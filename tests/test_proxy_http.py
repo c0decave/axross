@@ -360,9 +360,13 @@ class HostileResponseFramingTest(unittest.TestCase):
     def test_valid_status_and_framing(self) -> None:
         resp = PH._parse_response(b"HTTP/1.1 407 Auth\r\nContent-Length: 3\r\n\r\n")
         self.assertEqual(resp.status, 407)
-        self.assertTrue(self._discard(b"HTTP/1.1 407 x\r\nContent-Length: 3\r\n\r\n", b"abc").keepalive)
+        self.assertTrue(
+            self._discard(b"HTTP/1.1 407 x\r\nContent-Length: 3\r\n\r\n", b"abc").keepalive
+        )
         chunked = b"HTTP/1.1 407 x\r\nTransfer-Encoding: chunked\r\n\r\n"
-        self.assertTrue(self._discard(chunked, b"3;ext=1\r\nabc\r\nA\r\n0123456789\r\n0\r\n\r\n").keepalive)
+        self.assertTrue(
+            self._discard(chunked, b"3;ext=1\r\nabc\r\nA\r\n0123456789\r\n0\r\n\r\n").keepalive
+        )
 
     def test_non_ascii_digit_status_is_a_connection_error(self) -> None:
         # str.isdigit() accepted latin-1 "²²²"; int() then raised ValueError.

@@ -7,7 +7,7 @@ Requires:
 
 from __future__ import annotations
 
-import io
+import errno
 import logging
 import posixpath
 import tempfile
@@ -19,6 +19,7 @@ from core.answer_fields import as_size
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.path_policy import safe_leaf
+from core.read_spool import spool_chunks
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,24 @@ def _is_folder_placeholder(metadata) -> bool:
     return str(metadata.get("hdi_isfolder", "")).strip().lower() == "true"
 
 
+def _is_not_found(exc: BaseException) -> bool:
+    """True for the SDK's "not found" answer (404: BlobNotFound,
+    ResourceNotFound, ParentNotFound ...). Only that may mean "absent":
+    a throttled, refused or dropped request says nothing about it."""
+    try:
+        from azure.core.exceptions import ResourceNotFoundError
+    except ImportError:  # pragma: no cover - the SDK is required here
+        return False
+    return isinstance(exc, ResourceNotFoundError)
+
+
+def _is_not_a_directory(exc: BaseException) -> bool:
+    """A directory probe of an Azure Files path that is absent, or that is
+    a file (ResourceTypeMismatch)."""
+    code = getattr(exc, "error_code", None)
+    return _is_not_found(exc) or getattr(code, "value", code) == "ResourceTypeMismatch"
+
+
 def _each_page_once(paged, what: str):
     """The items of an SDK listing, page by page.
 
@@ -65,18 +84,22 @@ def _each_page_once(paged, what: str):
             seen.add(token)
 
 
-def _read_all_checked(stream, what: str) -> bytes:
-    """The whole download, or OSError when it is not the size announced.
+def _spool_checked(stream, what: str) -> IO[bytes]:
+    """The whole download as a spool, or OSError when it is not the size
+    announced.
 
     The SDK fetches a blob in ranges and stitches whatever each range
     answer carried, without checking its length: a server answering
     short (or long) ranges produced a complete-looking, wrong file.
+    The chunks go to a spooled file: ``readall()`` held the whole file
+    in RAM.
     """
-    data = stream.readall()
     expected = getattr(stream, "size", None)
-    if isinstance(expected, int) and len(data) != expected:
-        raise OSError(f"{what}: received {len(data)} bytes, the server announced {expected}")
-    return data
+    return spool_chunks(
+        stream.chunks(),
+        expected_size=expected if isinstance(expected, int) else None,
+        what=what,
+    )
 
 
 def _axross_azure_transport_kwargs(
@@ -206,9 +229,11 @@ class _ShareSpooledWriter:
             return
         self._closed = True
         try:
+            # The spool itself with its length: reading it into one bytes
+            # object held the whole file in RAM.
+            size = self._buf.seek(0, 2)
             self._buf.seek(0)
-            data = self._buf.read()
-            self._file_client.upload_file(data)
+            self._file_client.upload_file(self._buf, length=size)
         finally:
             self._buf.close()
 
@@ -235,6 +260,23 @@ class _ShareSpooledWriter:
 # ---------------------------------------------------------------------------
 # AzureBlobSession
 # ---------------------------------------------------------------------------
+
+
+def _wait_for_copy(get_properties, timeout: float = 300.0) -> None:
+    """Poll a server-side copy (``get_properties().copy.status``) until
+    it completes; failed, aborted or still pending at *timeout* is an
+    OSError."""
+    deadline = time.monotonic() + timeout
+    while True:
+        props = get_properties()
+        status = props.copy.status
+        if status == "success":
+            return
+        if status in ("failed", "aborted"):
+            raise OSError(f"Copy failed with status '{status}': {props.copy.status_description}")
+        if time.monotonic() > deadline:
+            raise OSError(f"Copy timed out after {timeout}s (status: {status})")
+        time.sleep(0.5)
 
 
 class AzureBlobSession(SessionLifecycle):
@@ -417,10 +459,15 @@ class AzureBlobSession(SessionLifecycle):
         if not key or key.endswith("/"):
             return FileItem(name=name, is_dir=True)
 
-        # Try as blob
+        # Try as blob. Only "not found" moves on to the folder check: a
+        # throttled or dropped probe of a file "x" beside blobs under "x/"
+        # would otherwise call the file a folder.
         try:
-            blob_client = self._container.get_blob_client(key)
-            props = blob_client.get_blob_properties()
+            props = self._container.get_blob_client(key).get_blob_properties()
+        except Exception as e:
+            if not _is_not_found(e):
+                raise OSError(f"Cannot stat {path}: {e}") from e
+        else:
             modified = props.last_modified or datetime.fromtimestamp(0)
             if _is_folder_placeholder(getattr(props, "metadata", None)):
                 return FileItem(name=name, is_dir=True, modified=modified)
@@ -429,8 +476,6 @@ class AzureBlobSession(SessionLifecycle):
                 size=as_size(props.size),
                 modified=modified,
             )
-        except Exception:
-            pass
 
         # Check as virtual directory
         prefix = key.rstrip("/") + "/"
@@ -442,9 +487,12 @@ class AzureBlobSession(SessionLifecycle):
         except Exception as e:
             raise OSError(f"Cannot stat {path}: {e}") from e
 
-        raise OSError(f"Not found: {path}")
+        raise FileNotFoundError(errno.ENOENT, "Not found", path)
 
     def is_dir(self, path: str) -> bool:
+        """True for a prefix with blobs under it or a Data Lake folder
+        placeholder. A request that fails other than "not found" is an
+        OSError: remove() and rename() pick their action from this."""
         key = self._to_key(path)
         if not key or key == "/":
             return True
@@ -454,16 +502,20 @@ class AzureBlobSession(SessionLifecycle):
             page = next(blobs.by_page(), [])
             if list(page):
                 return True
-        except Exception:
-            return False
+        except Exception as e:
+            raise OSError(f"Cannot check {path}: {e}") from e
         # An empty Data Lake folder is only its placeholder blob.
         try:
             props = self._container.get_blob_client(key.rstrip("/")).get_blob_properties()
-            return _is_folder_placeholder(getattr(props, "metadata", None))
-        except Exception:
-            return False
+        except Exception as e:
+            if _is_not_found(e):
+                return False
+            raise OSError(f"Cannot check {path}: {e}") from e
+        return _is_folder_placeholder(getattr(props, "metadata", None))
 
     def exists(self, path: str) -> bool:
+        """Only "not found" means False; any other failure is an OSError
+        (server_side_copy(overwrite=False) takes False as its go-ahead)."""
         key = self._to_key(path)
         if not key:
             return True
@@ -472,8 +524,9 @@ class AzureBlobSession(SessionLifecycle):
             blob_client = self._container.get_blob_client(key)
             blob_client.get_blob_properties()
             return True
-        except Exception:
-            pass
+        except Exception as e:
+            if not _is_not_found(e):
+                raise OSError(f"Cannot check {path}: {e}") from e
 
         return self.is_dir(path)
 
@@ -492,15 +545,30 @@ class AzureBlobSession(SessionLifecycle):
         key = self._to_key(path)
 
         if self.is_dir(path):
+            prefix = key.rstrip("/") + "/"
+            # "file": a blob "X" beside the prefix "X/"; "folder": the Data
+            # Lake placeholder blob "X" that IS the folder (hierarchical
+            # namespace); None: only the flat-account marker "X/".
+            kind = self._blob_at(key.rstrip("/"), path)
             if not recursive:
+                # The file beside the folder is what a non-recursive remove
+                # means; the folder only when nothing is under its prefix.
+                if kind == "file":
+                    target = key
+                else:
+                    self._refuse_non_empty(prefix, path)
+                    target = key.rstrip("/") if kind == "folder" else prefix
                 try:
-                    blob_client = self._container.get_blob_client(key.rstrip("/") + "/")
+                    blob_client = self._container.get_blob_client(target)
                     blob_client.delete_blob()
                 except Exception as e:
                     raise OSError(f"Cannot remove {path}: {e}") from e
             else:
                 try:
-                    self._remove_prefix(key.rstrip("/") + "/")
+                    self._remove_prefix(prefix)
+                    if kind == "folder":
+                        # Last: the placeholder is the folder itself.
+                        self._container.get_blob_client(key.rstrip("/")).delete_blob()
                 except OSError:
                     raise
                 except Exception as e:
@@ -511,6 +579,32 @@ class AzureBlobSession(SessionLifecycle):
                 blob_client.delete_blob()
             except Exception as e:
                 raise OSError(f"Cannot remove {path}: {e}") from e
+
+    def _refuse_non_empty(self, prefix: str, path: str) -> None:
+        """ENOTEMPTY when any blob besides the folder marker *prefix* lies
+        under it: deleting the marker alone would report a removed folder
+        whose files are all still there."""
+        try:
+            pages = self._container.list_blobs(name_starts_with=prefix, results_per_page=2)
+            page = list(next(pages.by_page(), []))
+        except Exception as e:
+            raise OSError(f"Cannot remove {path}: {e}") from e
+        if any(getattr(blob, "name", None) != prefix for blob in page):
+            raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
+
+    def _blob_at(self, key: str, path: str) -> str | None:
+        """What the blob named exactly *key* is: ``"file"``, ``"folder"``
+        (a Data Lake placeholder, metadata hdi_isfolder=true) or None when
+        there is none. An error other than not-found is an OSError."""
+        if not key or key.endswith("/"):
+            return None
+        try:
+            props = self._container.get_blob_client(key).get_blob_properties()
+        except Exception as e:
+            if _is_not_found(e):
+                return None
+            raise OSError(f"Cannot check {path}: {e}") from e
+        return "folder" if _is_folder_placeholder(getattr(props, "metadata", None)) else "file"
 
     # Blob Batch: at most 256 sub-requests per batch request.
     _DELETE_BATCH = 256
@@ -569,6 +663,27 @@ class AzureBlobSession(SessionLifecycle):
         dst_key = self._to_key(dst)
 
         if self.is_dir(src):
+            kind = self._blob_at(src_key, src)
+            if kind == "file":
+                # Moving the folder tree would leave the file behind and
+                # moving the file would not be what a folder rename means.
+                raise OSError(
+                    f"Cannot rename {src}: both a file and a folder are named "
+                    f"{posixpath.basename(src_key)!r} here; the name does not say which one"
+                )
+            if kind == "folder":
+                # A Data Lake folder IS its placeholder blob: first the new
+                # one (Copy Blob carries the hdi_isfolder metadata), so a
+                # failure moves nothing; the old one goes last, as remove()
+                # deletes it after the folder's contents.
+                try:
+                    placeholder = self._container.get_blob_client(dst_key.rstrip("/"))
+                    placeholder.start_copy_from_url(
+                        self._container.get_blob_client(src_key).url
+                    )
+                    self._wait_for_copy(placeholder)
+                except Exception as e:
+                    raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
             old_prefix = src_key.rstrip("/") + "/"
             new_prefix = dst_key.rstrip("/") + "/"
             try:
@@ -592,6 +707,11 @@ class AzureBlobSession(SessionLifecycle):
                     src_blob.delete_blob()
                 except Exception as e:
                     raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+            if kind == "folder":
+                try:
+                    self._container.get_blob_client(src_key).delete_blob()
+                except Exception as e:
+                    raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
         else:
             try:
                 src_blob = self._container.get_blob_client(src_key)
@@ -605,19 +725,7 @@ class AzureBlobSession(SessionLifecycle):
     @staticmethod
     def _wait_for_copy(dst_blob, timeout: float = 300.0) -> None:
         """Poll the copy status until it completes or fails."""
-        deadline = time.monotonic() + timeout
-        while True:
-            props = dst_blob.get_blob_properties()
-            status = props.copy.status
-            if status == "success":
-                return
-            if status in ("failed", "aborted"):
-                raise OSError(
-                    f"Blob copy failed with status '{status}': {props.copy.status_description}"
-                )
-            if time.monotonic() > deadline:
-                raise OSError(f"Blob copy timed out after {timeout}s (status: {status})")
-            time.sleep(0.5)
+        _wait_for_copy(dst_blob.get_blob_properties, timeout)
 
     # -- read / write --------------------------------------------------------
 
@@ -626,9 +734,7 @@ class AzureBlobSession(SessionLifecycle):
         try:
             blob_client = self._container.get_blob_client(key)
             stream = blob_client.download_blob()
-            buf = io.BytesIO(_read_all_checked(stream, f"Cannot read {path}"))
-            buf.seek(0)
-            return buf
+            return _spool_checked(stream, f"Cannot read {path}")
         except OSError:
             raise
         except Exception as e:
@@ -919,13 +1025,11 @@ class AzureBlobSession(SessionLifecycle):
 
     def open_version_read(self, path: str, version_id: str):
         """Download a specific blob version via version_id."""
-        import io as _io
-
         key = self._to_key(path)
         try:
             blob = self._container.get_blob_client(key)
             stream = blob.download_blob(version_id=version_id)
-            return _io.BytesIO(_read_all_checked(stream, f"Cannot read {path}@{version_id}"))
+            return _spool_checked(stream, f"Cannot read {path}@{version_id}")
         except Exception as exc:
             raise OSError(f"Azure open_version_read failed: {exc}") from exc
 
@@ -934,7 +1038,10 @@ class AzureBlobSession(SessionLifecycle):
         try:
             src_blob = self._container.get_blob_client(self._to_key(src))
             dst_blob = self._container.get_blob_client(self._to_key(dst))
+            # start_copy_from_url only starts the copy: a pending one ends
+            # later, possibly failed - copy() returns when it is done.
             dst_blob.start_copy_from_url(src_blob.url)
+            self._wait_for_copy(dst_blob)
         except Exception as exc:
             raise OSError(f"Azure copy {src} -> {dst} failed: {exc}") from exc
 
@@ -1124,36 +1231,41 @@ class AzureFilesSession(SessionLifecycle):
         if not rel:
             return FileItem(name="/", is_dir=True)
 
-        # Try as file first
+        # Try as file first. Only "no such file" (404, or the type
+        # mismatch of a directory) moves on to the directory check; any
+        # other failure says nothing about what is there.
         parent_dir = posixpath.dirname(rel)
         try:
             file_client = self._share.get_directory_client(parent_dir).get_file_client(base_name)
             props = file_client.get_file_properties()
+        except Exception as e:
+            if not _is_not_a_directory(e):
+                raise OSError(f"Cannot stat {path}: {e}") from e
+        else:
             modified = props.get("last_modified") or datetime.fromtimestamp(0)
             return FileItem(
                 name=base_name,
                 size=as_size(props.get("size")) or as_size(props.get("content_length")),
                 modified=modified,
             )
-        except Exception:
-            pass
 
         # Try as directory
         try:
-            dir_client = self._share.get_directory_client(rel)
-            props = dir_client.get_directory_properties()
-            modified = props.get("last_modified") or datetime.fromtimestamp(0)
-            return FileItem(
-                name=base_name,
-                is_dir=True,
-                modified=modified,
-            )
-        except Exception:
-            pass
-
-        raise OSError(f"Not found: {path}")
+            props = self._share.get_directory_client(rel).get_directory_properties()
+        except Exception as e:
+            if _is_not_a_directory(e):
+                raise FileNotFoundError(errno.ENOENT, "Not found", path) from e
+            raise OSError(f"Cannot stat {path}: {e}") from e
+        modified = props.get("last_modified") or datetime.fromtimestamp(0)
+        return FileItem(
+            name=base_name,
+            is_dir=True,
+            modified=modified,
+        )
 
     def is_dir(self, path: str) -> bool:
+        """False only when the share says there is no directory; any other
+        failure is an OSError (remove() picks its action from this)."""
         rel = self._to_path(path)
         if not rel:
             return True
@@ -1161,31 +1273,28 @@ class AzureFilesSession(SessionLifecycle):
             dir_client = self._share.get_directory_client(rel)
             dir_client.get_directory_properties()
             return True
-        except Exception:
-            return False
+        except Exception as e:
+            if _is_not_a_directory(e):
+                return False
+            raise OSError(f"Cannot check {path}: {e}") from e
 
     def exists(self, path: str) -> bool:
-        rel = self._to_path(path)
-        if not rel:
+        """Only "not found" means False; any other failure is an OSError."""
+        if self.is_dir(path):
             return True
-
-        # Check as directory
-        try:
-            dir_client = self._share.get_directory_client(rel)
-            dir_client.get_directory_properties()
-            return True
-        except Exception:
-            pass
 
         # Check as file
+        rel = self._to_path(path)
         parent_dir = posixpath.dirname(rel)
         file_name = posixpath.basename(rel)
         try:
             file_client = self._share.get_directory_client(parent_dir).get_file_client(file_name)
             file_client.get_file_properties()
             return True
-        except Exception:
-            return False
+        except Exception as e:
+            if _is_not_found(e):
+                return False
+            raise OSError(f"Cannot check {path}: {e}") from e
 
     # -- mutations -----------------------------------------------------------
 
@@ -1274,9 +1383,7 @@ class AzureFilesSession(SessionLifecycle):
         try:
             file_client = self._share.get_directory_client(parent_dir).get_file_client(file_name)
             stream = file_client.download_file()
-            buf = io.BytesIO(_read_all_checked(stream, f"Cannot read {path}"))
-            buf.seek(0)
-            return buf
+            return _spool_checked(stream, f"Cannot read {path}")
         except OSError:
             raise
         except Exception as e:
@@ -1343,7 +1450,10 @@ class AzureFilesSession(SessionLifecycle):
             dst_parent, dst_name = self._split(dst)
             src_file = self._share.get_directory_client(src_parent).get_file_client(src_name)
             dst_file = self._share.get_directory_client(dst_parent).get_file_client(dst_name)
+            # start_copy_from_url only starts the copy: a pending one ends
+            # later, possibly failed - copy() returns when it is done.
             dst_file.start_copy_from_url(src_file.url)
+            _wait_for_copy(dst_file.get_file_properties)
         except Exception as exc:
             raise OSError(f"Azure Files copy {src} -> {dst} failed: {exc}") from exc
 
@@ -1366,3 +1476,10 @@ class AzureFilesSession(SessionLifecycle):
     def _to_path(self, path: str) -> str:
         """Convert a UI path to a relative directory/file path (no leading slash)."""
         return path.strip("/")
+
+    def _split(self, path: str) -> tuple[str, str]:
+        """``(parent directory, file name)`` of *path* inside the share.
+        copy() and checksum() called it, but it did not exist: both
+        always failed with an AttributeError turned OSError."""
+        rel = self._to_path(path)
+        return posixpath.dirname(rel), posixpath.basename(rel)

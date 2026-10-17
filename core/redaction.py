@@ -171,6 +171,17 @@ def _scan_text(value: str) -> str:
     return text
 
 
+def redact_path(value: str) -> str:
+    """Redact a file path: only the credentials of a URL-shaped path
+    (``user:pass@`` and sensitive query fields). Every other character is
+    part of a real file name - "Basic Course" or "Signature: scan.pdf" is a
+    folder or a file, not an auth header - and a caller that has to find
+    the file again (undo) needs it unchanged."""
+    if "://" not in value:
+        return value
+    return redact_url(value)
+
+
 def redact(value):
     """Recursively redact common secret shapes while preserving structure."""
     # Exact-type fast paths for the common shapes; the generic checks
@@ -205,6 +216,7 @@ def redact(value):
 __all__ = [
     "SENSITIVE_KEYS",
     "redact",
+    "redact_path",
     "redact_text",
     "redact_url",
 ]

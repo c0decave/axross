@@ -193,8 +193,24 @@ class SlpSession(SessionLifecycle):
     def _query(self, packet: bytes) -> bytes:
         from core.slp_lib import query_tcp, query_udp
 
-        fn = query_tcp if self._use_tcp else query_udp
-        return fn(self._host, packet, port=self._port, timeout=self._timeout, proxy=self._proxy)
+        from core import slp_lib
+
+        if self._use_tcp:
+            reply = query_tcp(
+                self._host, packet, port=self._port, timeout=self._timeout, proxy=self._proxy
+            )
+        else:
+            reply = query_udp(
+                self._host, packet, port=self._port, timeout=self._timeout, proxy=self._proxy
+            )
+            if slp_lib.is_overflow(reply):
+                # Truncated to fit a datagram (RFC 2608 8.1): the whole
+                # answer comes over TCP. It used to be read as complete.
+                reply = query_tcp(self._host, packet, port=self._port, timeout=self._timeout,
+                                  proxy=self._proxy)
+        if slp_lib.is_overflow(reply):
+            raise OSError(f"SLP reply from {self._host} is truncated (OVERFLOW) even over TCP")
+        return reply
 
     def _fetch_types(self) -> list[str]:
         from core.slp_lib import build_srv_type_req, parse_srv_type_reply

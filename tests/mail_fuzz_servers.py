@@ -93,7 +93,13 @@ class FakeImapServer(_LineServer):
             if reply is None or reply is STALL:
                 self._send(conn, reply)
                 return
-            conn.sendall(reply + f"{tag} OK done\r\n".encode())
+            # A scripted reply that already ends the command (a tagged NO /
+            # BAD) is sent as is; any other gets the tagged OK.
+            completion = f"{tag} ".encode()
+            if reply.startswith(completion) or b"\r\n" + completion in reply:
+                conn.sendall(reply)
+            else:
+                conn.sendall(reply + completion + b"OK done\r\n")
             if verb == "LOGOUT":
                 return
 

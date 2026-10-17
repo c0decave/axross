@@ -1,11 +1,15 @@
-"""Render the tool catalog of docs/LLM_GUIDE.md from docs/mcp-tools.json.
+"""Generate the machine-readable docs: docs/scripting-api.json and the two
+catalogs of docs/LLM_GUIDE.md.
 
-The guide's prose is written by hand; the catalog between the two marker
-lines is generated, so it cannot drift from the manifest (which
-tests/test_mcp_manifest.py holds against the code).
+docs/scripting-api.json is ``axross.api_schema()`` (core.scripting) as
+indented JSON; tests/test_scripting_api_manifest.py holds it against the
+code. The guide's prose is written by hand; the tool catalog (from
+docs/mcp-tools.json, which tests/test_mcp_manifest.py holds against the
+code) and the scripting catalog (from docs/scripting-api.json) between
+their marker lines are generated, so neither can drift.
 
-    python -m core.llm_guide          # rewrite the catalog in place
-    python -m core.llm_guide --check  # exit 1 when it is stale
+    python -m core.llm_guide          # rewrite the manifest and the catalogs
+    python -m core.llm_guide --check  # exit 1 when any of them is stale
 """
 
 from __future__ import annotations
@@ -17,16 +21,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "docs" / "mcp-tools.json"
+SCRIPTING_MANIFEST = ROOT / "docs" / "scripting-api.json"
 GUIDE = ROOT / "docs" / "LLM_GUIDE.md"
 BEGIN = "<!-- BEGIN GENERATED TOOL CATALOG (python -m core.llm_guide) -->"
 END = "<!-- END GENERATED TOOL CATALOG -->"
+SCRIPTING_BEGIN = "<!-- BEGIN GENERATED SCRIPTING CATALOG (python -m core.llm_guide) -->"
+SCRIPTING_END = "<!-- END GENERATED SCRIPTING CATALOG -->"
 
 #: The base tool sets first, then the capability groups alphabetically.
 _BASE_ORDER = ("core", "write", "scripts")
 
 
 def _group_order(groups: dict) -> list[str]:
-    return [g for g in _BASE_ORDER if g in groups] + sorted(g for g in groups if g not in _BASE_ORDER)
+    return [g for g in _BASE_ORDER if g in groups] + sorted(
+        g for g in groups if g not in _BASE_ORDER
+    )
 
 
 def _seconds(value: float) -> str:
@@ -70,7 +79,10 @@ def render_catalog(manifest: dict) -> str:
         "(an id from `list_backends`; omit it for the default backend).",
         "",
         "Timeout classes: "
-        + ", ".join(f"`{name}` {_seconds(secs)}" for name, secs in sorted(classes.items(), key=lambda kv: kv[1]))
+        + ", ".join(
+            f"`{name}` {_seconds(secs)}"
+            for name, secs in sorted(classes.items(), key=lambda kv: kv[1])
+        )
         + ".",
     ]
     for group in _group_order(manifest["groups"]):
@@ -100,7 +112,11 @@ def render_catalog(manifest: dict) -> str:
 
 
 def _flags(generated_for: dict) -> list[str]:
-    flags = ["--mcp-tools " + ",".join(generated_for.get("mcp_tools") or [])] if generated_for.get("mcp_tools") else []
+    flags = (
+        ["--mcp-tools " + ",".join(generated_for.get("mcp_tools") or [])]
+        if generated_for.get("mcp_tools")
+        else []
+    )
     for key, flag in (("mcp_write", "--mcp-write"), ("mcp_allow_scripts", "--mcp-allow-scripts"),
                       ("mcp_allow_exec", "--mcp-allow-exec")):
         if generated_for.get(key):
@@ -108,27 +124,142 @@ def _flags(generated_for: dict) -> list[str]:
     return flags
 
 
-def splice(guide: str, catalog: str) -> str:
+def splice(guide: str, catalog: str, begin: str = BEGIN, end: str = END) -> str:
     """*guide* with the text between the markers replaced by *catalog*."""
-    start = guide.index(BEGIN)
-    end = guide.index(END, start) + len(END)
-    return guide[:start] + catalog + guide[end:]
+    start = guide.index(begin)
+    stop = guide.index(end, start) + len(end)
+    return guide[:start] + catalog + guide[stop:]
+
+
+# -- the scripting API ----------------------------------------------------------------
+
+
+def render_scripting_manifest(schema: dict) -> str:
+    """docs/scripting-api.json for *schema*: indented, keys in schema order."""
+    return json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
+
+
+def _traits(entry: dict) -> str:
+    tags = ["mutates" if entry.get("mutates") else "read-only"]
+    if entry.get("prompts"):
+        tags.append("prompts (NonInteractiveError without a human)")
+    if entry.get("raises"):
+        tags.append("raises " + ", ".join(entry["raises"]))
+    return " · ".join(tags)
+
+
+def _one_line(text: str) -> str:
+    text = " ".join((text or "").split())
+    return text[:-2] + ":" if text.endswith("::") else text
+
+
+def render_scripting_catalog(schema: dict) -> str:
+    """The Markdown catalog of the scripting API, between its markers."""
+    functions = {f["name"]: f for f in schema["functions"]}
+    lines = [
+        SCRIPTING_BEGIN,
+        "",
+        f"{len(functions)} functions, {len(schema['classes'])} classes, "
+        f"{len(schema['backend_protocol'])} session members and {len(schema['types'])} "
+        f"further types, from `docs/scripting-api.json` (schema version "
+        f"{schema['schema_version']}). Each line: signature, then whether the call can "
+        "change something, whether it can need a human, and what the axross layer "
+        "raises itself; then the first paragraph of its docstring. The manifest has "
+        "the whole docstring, the examples and the parameters.",
+        "",
+        "### Rules",
+        "",
+    ]
+    lines += [f"- **{r['id']}**: {r['text']}" for r in schema["rules"]]
+    lines += [
+        "",
+        "### Errors",
+        "",
+        "| Exception | Base | Meaning | What to do |",
+        "|---|---|---|---|",
+    ]
+    lines += [
+        f"| `{e['name']}` | `{e['base']}` | {e['meaning']} | {e['action']} |"
+        for e in schema["errors"]
+    ]
+    for group in schema["groups"]:
+        lines += ["", f"### {group['name']}", ""]
+        for name in group["functions"]:
+            entry = functions.get(name)
+            if entry is None:  # a stale or hand-edited manifest; --check reports it
+                continue
+            lines.append(
+                f"- `axross.{entry['signature']}` — {_traits(entry)}. {_one_line(entry['summary'])}"
+            )
+        for name in group["classes"]:
+            lines.append(f"- class `axross.{name}`")
+    lines += [
+        "",
+        "### Session methods (`b` = what `open`, `open_url`, `localfs` and `ramfs` return)",
+        "",
+    ]
+    for entry in schema["backend_protocol"]:
+        call = entry.get("signature") or entry["name"]
+        notes = [_traits(entry)]
+        if entry.get("optional"):
+            notes.append("only some sessions: test `hasattr(b, name)`")
+        if entry.get("fallback"):
+            notes.append("without support: " + _one_line(entry["fallback"]))
+        lines.append(f"- `b.{call}` — {' · '.join(notes)}. {_one_line(entry['summary'])}")
+    lines += ["", "### Types", ""]
+    public = {c["name"] for c in schema["classes"]}
+    for entry in schema["classes"] + schema["types"]:
+        members = [f["name"] for f in entry.get("fields", [])]
+        members += [p["name"] for p in entry.get("properties", [])]
+        members += [m["name"] + "()" for m in entry.get("methods", [])]
+        members += entry.get("members", [])
+        where = f"`axross.{entry['name']}`" if entry["name"] in public else f"`{entry['name']}`"
+        text = f"- {where} ({entry['kind']}, `{entry['module']}`)"
+        if members:
+            text += ": " + ", ".join(members)
+        summary = _one_line(entry["summary"])
+        lines.append(text + (f" — {summary}" if summary else ""))
+    lines += ["", SCRIPTING_END]
+    return "\n".join(lines)
+
+
+def _live_schema() -> dict:
+    from core import scripting
+
+    return scripting.api_schema()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="exit 1 when the catalog is stale")
+    parser.add_argument("--check", action="store_true", help="exit 1 when anything is stale")
     args = parser.parse_args(argv)
+    stale: list[str] = []
+    wanted_manifest = render_scripting_manifest(_live_schema())
+    current_manifest = (
+        SCRIPTING_MANIFEST.read_text(encoding="utf-8") if SCRIPTING_MANIFEST.exists() else ""
+    )
+    if wanted_manifest != current_manifest:
+        stale.append(SCRIPTING_MANIFEST.name)
+        if not args.check:
+            SCRIPTING_MANIFEST.write_text(wanted_manifest, encoding="utf-8")
+    # The catalogs come from the files, as a reader of the files sees them.
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    scripting = json.loads(
+        SCRIPTING_MANIFEST.read_text(encoding="utf-8")
+        if SCRIPTING_MANIFEST.exists()
+        else wanted_manifest
+    )
     current = GUIDE.read_text(encoding="utf-8")
     wanted = splice(current, render_catalog(manifest))
-    if args.check:
-        if wanted != current:
-            print(f"{GUIDE.relative_to(ROOT)} is stale; run python -m core.llm_guide", file=sys.stderr)
-            return 1
-        return 0
+    wanted = splice(wanted, render_scripting_catalog(scripting), SCRIPTING_BEGIN, SCRIPTING_END)
     if wanted != current:
-        GUIDE.write_text(wanted, encoding="utf-8")
+        stale.append(GUIDE.name)
+        if not args.check:
+            GUIDE.write_text(wanted, encoding="utf-8")
+    if args.check and stale:
+        for name in stale:
+            print(f"{name} is stale; run python -m core.llm_guide", file=sys.stderr)
+        return 1
     return 0
 
 

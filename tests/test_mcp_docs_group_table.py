@@ -28,7 +28,10 @@ DOCS = {
     "MCP_es.md": ("### 9.2 ", "solo lectura", "modifica"),
 }
 
-_ROW = re.compile(r"^\| `(?P<group>[a-z_]+)` \| `(?P<tool>[a-z_]+)` \|(?P<kind>[^|]+)\|(?P<flags>[^|]+)\|(?P<cls>[^|]+)\|$")
+_ROW = re.compile(
+    r"^\| `(?P<group>[a-z_]+)` \| `(?P<tool>[a-z_]+)` "
+    r"\|(?P<kind>[^|]+)\|(?P<flags>[^|]+)\|(?P<cls>[^|]+)\|$"
+)
 
 
 def _section(text: str, heading: str) -> list[str]:

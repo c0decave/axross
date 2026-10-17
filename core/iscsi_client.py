@@ -17,7 +17,6 @@ import re
 import shutil
 import stat as stat_module
 import subprocess
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,8 +24,9 @@ from typing import IO
 
 from core import posix_compat
 from core.backend import SessionLifecycle
-from core.local_fs import group_name, owner_name
+from core.local_fs import entry_stat, group_name, owner_name
 from core.path_policy import confined_path
+from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -105,7 +105,9 @@ class IscsiSession(SessionLifecycle):
         if mount_point:
             self._mount_point = mount_point
         else:
-            self._mount_point = tempfile.mkdtemp(prefix="axross-iscsi-")
+            # Not straight in /tmp: once mounted, the file system's root
+            # mode would let every local user in (core.private_mount_dir).
+            self._mount_point = make_private_mount_point("axross-iscsi-")
             self._tmp_dir_created = True
         try:
             self.connect()
@@ -151,12 +153,9 @@ class IscsiSession(SessionLifecycle):
             self._unmount()
         if self._logged_in:
             self._logout()
-        if self._tmp_dir_created and os.path.isdir(self._mount_point):
-            try:
-                os.rmdir(self._mount_point)
-                log.info("Removed temp mount dir: %s", self._mount_point)
-            except OSError as exc:
-                log.warning("Could not remove temp dir %s: %s", self._mount_point, exc)
+        if self._tmp_dir_created and os.path.isdir(self._mount_point) and not self._mounted:
+            remove_private_mount_point(self._mount_point)
+            log.info("Removed temp mount dir: %s", self._mount_point)
             self._tmp_dir_created = False
         self._close_tunnel()
 
@@ -191,13 +190,20 @@ class IscsiSession(SessionLifecycle):
         return self._stat_to_item(name, st, full_path=real)
 
     def is_dir(self, path: str) -> bool:
+        """False only when nothing is there or the path leaves the
+        mount; a failed lstat (EIO from the LUN, EACCES) is an OSError."""
         try:
-            return stat_module.S_ISDIR(os.lstat(self._real(path, follow=False)).st_mode)
-        except OSError:
-            return False
+            real = self._real(path, follow=False)
+        except PermissionError:
+            return False  # a path out of the mount is no folder of it
+        st = entry_stat(real)
+        return st is not None and stat_module.S_ISDIR(st.st_mode)
 
     def exists(self, path: str) -> bool:
-        return os.path.lexists(self._real(path, follow=False))
+        """False only when nothing is there; any other failure is an
+        OSError - server_side_copy(overwrite=False) takes False as its
+        go-ahead to write."""
+        return entry_stat(self._real(path, follow=False)) is not None
 
     def mkdir(self, path: str) -> None:
         os.makedirs(self._real(path), exist_ok=True)

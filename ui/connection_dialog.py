@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -69,6 +70,11 @@ class _ConnectThread(QThread):
             self.success.emit(home)
         except Exception as e:
             self.error.emit(str(e))
+
+
+def _expand_home(path: str) -> str:
+    """*path* with a leading ``~`` expanded; empty stays empty."""
+    return os.path.expanduser(path) if path.startswith("~") else path
 
 
 class ConnectionDialog(QDialog):
@@ -596,6 +602,8 @@ class ConnectionDialog(QDialog):
             "dropbox",
             "azure_blob",
             "azure_files",
+            # An in-process RAM workspace: nothing to connect to.
+            "ramfs",
         )
         needs_host = proto not in no_host_protos
         self._set_form_row_visible(self._host, needs_host)
@@ -915,6 +923,10 @@ class ConnectionDialog(QDialog):
             auto_name = f"iscsi://{host}/{self._iscsi_target_iqn.text().strip()[:30]}"
         elif proto == "imap":
             auto_name = f"imap://{username}@{host}"
+        elif proto == "ramfs":
+            auto_name = "RAM workspace"
+        elif proto == "tftp":
+            auto_name = f"tftp://{host}"
         else:
             auto_name = f"{username}@{host}"
 
@@ -931,7 +943,9 @@ class ConnectionDialog(QDialog):
             port=self._port.value(),
             username=username,
             auth_type=auth_type,
-            key_file=self._key_file.text().strip(),
+            # Stored as validated (_validate expands "~"): the SSH clients
+            # open the path as given.
+            key_file=_expand_home(self._key_file.text().strip()),
             store_password=store_pw,
             proxy_mode=proxy_mode,
             proxy_type=proxy_type,
@@ -1112,10 +1126,20 @@ class ConnectionDialog(QDialog):
                 label = "DFS namespace" if proto == "dfsn" else "SMB share name"
                 QMessageBox.warning(self, "Validation", f"{label} is required.")
                 return False
-        elif proto in ("gopher", "pjl", "nntp"):
+        elif proto in ("gopher", "pjl", "nntp", "tftp"):
+            # No username (TFTP has no login at all; its row is hidden).
             if not host:
                 QMessageBox.warning(self, "Validation", "Host is required.")
                 return False
+        elif proto in ("telnet", "cisco-telnet"):
+            # The username is optional: telnet_client logs in on a bare
+            # password prompt or a no-auth shell, and IOS line-password
+            # mode has no username at all (core/telnet_cisco.py).
+            if not host:
+                QMessageBox.warning(self, "Validation", "Host is required.")
+                return False
+        elif proto == "ramfs":
+            pass  # an in-process RAM workspace: no host, no login
         else:
             # SFTP, FTP, FTPS need host + username
             if not host:
@@ -1164,6 +1188,23 @@ class ConnectionDialog(QDialog):
         if not self._validate():
             return
         profile = self._build_profile()
+        if (
+            profile.name != self._loaded_profile_name
+            and self._profile_manager.get(profile.name) is not None
+        ):
+            # Another profile has this name (a rename onto it, or a new
+            # connection whose automatic user@host name is taken): saving
+            # replaces it, so ask - default No.
+            reply = QMessageBox.question(
+                self,
+                "Replace Profile",
+                f"A profile named '{profile.name}' already exists.\n\n"
+                "Replace it with this one? Its settings are lost.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         fallback_password = None
         fallback_proxy_password = None
         old_profile_name = self._loaded_profile_name

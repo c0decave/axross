@@ -128,6 +128,9 @@ class OneDrivePathEncodingTest(unittest.TestCase):
             self.graph.requests,
             [
                 ("GET", "/v1.0/me/drive/root:/d/f%231"),
+                # copy() names the target folder by id: it looks it up first.
+                ("GET", "/v1.0/me/drive/root:/e%3F"),
+                ("GET", "/v1.0/me/drive"),
                 ("POST", "/v1.0/me/drive/root:/d/f%231:/copy"),
                 ("GET", "/v1.0/me/drive/root:/d/f%231:/permissions"),
             ],

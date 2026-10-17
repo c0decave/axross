@@ -182,3 +182,116 @@ def test_edge_dock_tabs_keep_their_own_screens(app):
     assert "from a" not in dock._terminal.toPlainText()
     assert b.sizes and b.sizes[-1] == dock._terminal.grid_size()
     dock.shutdown()
+
+
+def test_edge_quitting_less_after_the_widget_shrank_shows_the_prompt(app):
+    """Reproduced 2026-10-17: IndexError in _render when less quit after
+    the dock had been made smaller."""
+    t = _term(app, 900, 600)
+    t.append_output("".join(f"line{i}\r\n" for i in range(60)) + "$ ")
+    t.append_output("\x1b[?1049h\x1b[%d;1H:" % t.screen.rows)
+    t.resize(900, 200)
+    _pump(app)
+    t.append_output("\x1b[?1049l")
+    t.append_output("x")
+    assert _lines(t)[-1] == "$ x"
+    assert t.textCursor().positionInBlock() == len("$ x")
+
+
+# -- an SSH terminal restarted after a reconnect -------------------------------
+#
+# Reproduced 2026-10-17: after an SSH reconnect TerminalDock.add_ssh_session
+# restarted the shell with SSHTerminalSession(transport) - a 40x120 pty
+# whatever the widget showed (19x101 in the probe), so the shell wrapped and
+# placed its prompt for a screen that was not there.
+
+
+class _Channel:
+    closed = False
+
+    def __init__(self, log):
+        self.log = log
+
+    def get_pty(self, term, width, height):
+        self.log.append(("pty", height, width))
+
+    def invoke_shell(self):
+        pass
+
+    def sendall(self, data):
+        pass
+
+    def recv_ready(self):
+        return False
+
+    def resize_pty(self, width, height):
+        self.log.append(("resize", height, width))
+
+    def close(self):
+        self.closed = True
+
+
+class _Transport:
+    def __init__(self, log, fail=False):
+        self.log = log
+        self.fail = fail
+
+    def open_session(self):
+        if self.fail:
+            raise OSError("channel refused")
+        return _Channel(self.log)
+
+
+def _ssh_dock(app):
+    from ui.terminal_widget import TerminalDock
+
+    dock = TerminalDock()
+    dock.resize(700, 300)
+    dock.show()
+    _pump(app)
+    return dock
+
+
+def test_happy_a_reconnected_ssh_terminal_restarts_at_the_widget_size(app):
+    dock = _ssh_dock(app)
+    log = []
+    dock.add_ssh_session("host", _Transport(log))
+    dock._session_combo.setCurrentText("SSH: host")
+    _pump(app)
+    dock._start_session()
+    grid = dock._terminal.grid_size()
+    assert log == [("pty", *grid)]
+    log.clear()
+    dock.add_ssh_session("host", _Transport(log))
+    assert log == [("pty", *grid)]
+    assert dock._tabs["SSH: host"].session.is_active
+    dock.shutdown()
+
+
+def test_sad_a_reconnect_starts_nothing_when_the_terminal_was_not_running(app):
+    dock = _ssh_dock(app)
+    log = []
+    dock.add_ssh_session("host", _Transport(log))
+    dock.add_ssh_session("host", _Transport(log))
+    assert log == []
+    dock.shutdown()
+
+
+def test_edge_a_failed_restart_says_so_and_a_background_tab_gets_the_widget_size(app):
+    dock = _ssh_dock(app)
+    log = []
+    dock.add_ssh_session("host", _Transport(log))
+    dock._session_combo.setCurrentText("SSH: host")
+    _pump(app)
+    dock._start_session()
+    dock._session_combo.setCurrentText("Local Shell")  # the SSH tab goes to the background
+    _pump(app)
+    log.clear()
+    dock.add_ssh_session("host", _Transport(log))
+    assert log == [("pty", *dock._terminal.grid_size())]
+    dock._session_combo.setCurrentText("SSH: host")
+    _pump(app)
+    dock.add_ssh_session("host", _Transport(log, fail=True))
+    assert dock._tabs["SSH: host"].session is None
+    assert "Reconnect failed: channel refused" in dock._terminal.toPlainText()
+    dock.shutdown()

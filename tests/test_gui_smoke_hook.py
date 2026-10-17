@@ -23,10 +23,16 @@ def _run(tmp_path, value, extra_env=None, timeout=120):
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     env = {k: v for k, v in os.environ.items() if not k.startswith("AXROSS_")}
-    env.update(HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"), XDG_DATA_HOME=str(home / "share"),
-               XDG_STATE_HOME=str(home / "state"), QT_QPA_PLATFORM="offscreen",
-               PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring", AXROSS_SMOKE_GUI_MS=value,
-               **(extra_env or {}))
+    env.update(
+        HOME=str(home),
+        XDG_CONFIG_HOME=str(home / ".config"),
+        XDG_DATA_HOME=str(home / "share"),
+        XDG_STATE_HOME=str(home / "state"),
+        QT_QPA_PLATFORM="offscreen",
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        AXROSS_SMOKE_GUI_MS=value,
+        **(extra_env or {}),
+    )
     return subprocess.run([sys.executable, str(ROOT / "main.py")], capture_output=True, text=True,
                           timeout=timeout, env=env, cwd=ROOT)
 

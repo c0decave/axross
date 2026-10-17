@@ -41,7 +41,11 @@ def test_happy_write_text(tmp_path):
 def test_happy_base64_stays_the_default(tmp_path):
     (tmp_path / "b.bin").write_bytes(b"\x00\xff")
     r = T.call(_tools(tmp_path), "read_file", {"path": str(tmp_path / "b.bin")})
-    assert r == {"content_b64": base64.b64encode(b"\x00\xff").decode(), "size": 2, "truncated": False}
+    assert r == {
+        "content_b64": base64.b64encode(b"\x00\xff").decode(),
+        "size": 2,
+        "truncated": False,
+    }
 
 
 # --- sad --------------------------------------------------------------------
@@ -60,7 +64,9 @@ def test_sad_write_needs_exactly_one_content(tmp_path):
 def test_sad_an_unknown_encoding_is_refused(tmp_path):
     (tmp_path / "n.txt").write_text("x")
     with pytest.raises(T.RpcError) as info:
-        T.call(_tools(tmp_path), "read_file", {"path": str(tmp_path / "n.txt"), "encoding": "latin-1"})
+        T.call(
+            _tools(tmp_path), "read_file", {"path": str(tmp_path / "n.txt"), "encoding": "latin-1"}
+        )
     assert info.value.code == -32602
 
 

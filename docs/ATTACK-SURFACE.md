@@ -108,15 +108,17 @@ fresh-name placement of group outputs on remote backends
 **Entry point / route.** `core/mcp_http.py` `_McpHTTPHandler`
 serves `POST|GET|DELETE /messages` and `GET /health`. Non-loopback hosts
 require `--mcp-cert / --mcp-key / --mcp-ca`, enabling mTLS;
-loopback bind is allowed plain.
+loopback bind is allowed plain, behind a bearer token.
 
 **Untrusted input.** HTTP request body (JSON-RPC), URL path, query
-string, headers (`Host`, `Origin`, `Mcp-Session-Id`; there is no
-bearer authentication), client certificate (under mTLS). All values reach the same tool
+string, headers (`Host`, `Origin`, `Mcp-Session-Id`, `Authorization`),
+client certificate (under mTLS). All values reach the same tool
 dispatcher used by stdio.
 
 **Trust boundary.** Network ↔ host. mTLS pins the trust boundary
-at the CA bundle; without TLS, loopback-only by policy.
+at the CA bundle; without TLS, loopback-only by policy and every
+request but `GET /health` needs the bearer token (`hmac.compare_digest`,
+401 otherwise) - loopback alone is reachable by every local user.
 
 **Defenses in place.** `--mcp-http` host check refuses
 non-loopback without TLS; `_make_ssl_context` enforces
@@ -132,8 +134,9 @@ sessions (`MAX_SESSIONS`); partial TLS flags are an error;
 `X-Forwarded-For` is unspoofable only if proxy strips client
 headers; SSE long-poll keepalive may leak side-channel timing;
 under mTLS the session id is bound to the SHA-256 of the peer
-certificate; on plain loopback sessions are unbound, so the
-Host/Origin check is the only guard. `logging/setLevel` acts on the
+certificate; on plain loopback sessions are unbound to a client, the
+bearer token (shown on stderr, 0600 file) and the Host/Origin check
+guard them. `logging/setLevel` acts on the
 one server-wide log forwarder, so any session can change the
 forwarded log level for every session (routing stays per session).
 The script tools are never served over HTTP; `--mcp-allow-scripts`

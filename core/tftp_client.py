@@ -44,6 +44,7 @@ Requires the ``tftpy`` package (``pip install axross[tftp]``).
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import logging
 import os
@@ -91,6 +92,15 @@ def _validate_filename(name: str) -> str:
             f"TFTP filename {name!r} contains characters outside the [A-Za-z0-9._/-] safe set",
         )
     return cleaned
+
+
+def _rrq_error(name: str, exc: Exception) -> OSError:
+    """The OSError for a failed read request: FileNotFoundError only for
+    error code 1 (tftpy's TftpFileNotFoundError); a timeout, an access
+    violation and every other error packet say nothing about the file."""
+    if tftpy is not None and isinstance(exc, tftpy.TftpFileNotFoundError):
+        return FileNotFoundError(errno.ENOENT, f"TFTP RRQ {name!r}: {exc}", name)
+    return OSError(f"TFTP RRQ {name!r}: {exc}")
 
 
 class TftpSession(SessionLifecycle):
@@ -387,14 +397,51 @@ class TftpSession(SessionLifecycle):
         name = _validate_filename(path)
         if self._filelist_enabled:
             return name in self._filelist
-        # TFTP has no metadata operation. A read probe is the only
-        # reliable existence check; the normal read size cap still
-        # applies so this cannot fetch an unbounded file.
+        # TFTP has no metadata operation: a read request is the only
+        # existence check. It stops at the server's first data packet, so
+        # a file of any size costs one block (a file over the read cap
+        # used to fail the read and count as absent). Only error code 1
+        # "File not found" means False; a timeout, an access violation or
+        # any other error packet is an OSError - the transfer worker and
+        # server_side_copy(overwrite=False) take False as the go-ahead.
         try:
-            with self.open_read(path):
-                return True
-        except OSError:
+            self._probe_present(name)
+        except FileNotFoundError:
             return False
+        return True
+
+    def _probe_present(self, name: str) -> None:
+        """Return once the server starts sending *name*; raise
+        FileNotFoundError for error code 1, OSError for anything else."""
+        import tftpy.TftpPacketTypes as packets
+
+        class _Present(Exception):
+            pass
+
+        def _hook(pkt) -> None:
+            # tftpy hands every received packet to the hook, an error
+            # packet too; data or an option acknowledgement means the
+            # server opened the file.
+            if isinstance(pkt, (packets.TftpPacketDAT, packets.TftpPacketOACK)):
+                raise _Present
+
+        client = tftpy.TftpClient(self._host, self._port)  # type: ignore[union-attr]
+        with tempfile.NamedTemporaryFile(delete=True) as tmp:
+            try:
+                with self._udp_scope():
+                    client.download(
+                        name,
+                        tmp.name,
+                        packethook=_hook,
+                        timeout=self._timeout,
+                        retries=self._retries,
+                    )
+            except _Present:
+                return
+            except OSError:
+                raise
+            except Exception as exc:  # tftpy raises tftpy.TftpException
+                raise _rrq_error(name, exc) from exc
 
     def open_read(self, path: str, mode: str = "rb") -> IO:
         path = self.normalize(path)
@@ -431,7 +478,7 @@ class TftpSession(SessionLifecycle):
             except OSError:
                 raise
             except Exception as exc:  # tftpy raises tftpy.TftpException
-                raise OSError(f"TFTP RRQ {name!r}: {exc}") from exc
+                raise _rrq_error(name, exc) from exc
             tmp.seek(0)
             return io.BytesIO(tmp.read())
 

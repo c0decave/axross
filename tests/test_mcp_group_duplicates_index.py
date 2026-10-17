@@ -60,7 +60,10 @@ def test_happy_scan_then_groups(tree):
     assert len(out["groups"]) == 1
     group = out["groups"][0]
     assert sorted(_copies(group)) == ["a.txt", "b.txt", "d.txt"]
-    assert group["copies"][0]["keep"] is True and os.path.basename(group["copies"][0]["path"]) == "a.txt"
+    assert (
+        group["copies"][0]["keep"] is True
+        and os.path.basename(group["copies"][0]["path"]) == "a.txt"
+    )
     assert [c["keep"] for c in group["copies"][1:]] == [False, False]
     scans = T.call(tools, "duplicates_scans", {})
     assert scan["scan_id"] in {s["scan_id"] for s in scans["scans"]}

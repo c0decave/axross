@@ -56,6 +56,15 @@ class _Base(unittest.TestCase):
         with self.lock:
             self.events.append(event)
 
+    def appear(self, name: str, text: str) -> None:
+        """Put a file into the folder in one step. ``write_text`` creates
+        it empty and writes after: a poll tick in between sees a new empty
+        file and, one tick later, a "modified" one."""
+        side = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, side, ignore_errors=True)
+        (side / name).write_text(text)
+        os.replace(side / name, self.tmp / name)
+
     def start(self) -> W.PollingWatcher:
         w = W.watch(self.fs, str(self.tmp), self.cb, interval=0.2, force_polling=True)
         self.addCleanup(w.stop, 2.0)
@@ -76,7 +85,7 @@ class FailedPollTest(_Base):
         self.fs.failure = EOFError("transport closed")
         time.sleep(0.6)
         self.fs.failure = None
-        (self.tmp / "c.txt").write_text("c")
+        self.appear("c.txt", "c")
         self.assertTrue(w.wait_for_tick(2, timeout=5))
         self.assertEqual(self.events, [("created", str(self.tmp / "c.txt"), "file")])
 
@@ -96,9 +105,21 @@ class FailedPollTest(_Base):
         self.fs.failure = None
         self.assertTrue(w.wait_for_tick(2, timeout=5))
         self.assertEqual(self.events, [])  # a.txt / b.txt were there all along
-        (self.tmp / "c.txt").write_text("c")
+        self.appear("c.txt", "c")
         self.assertTrue(w.wait_for_tick(2, timeout=5))
         self.assertEqual(self.events, [("created", str(self.tmp / "c.txt"), "file")])
+
+
+    def test_edge_content_that_arrives_a_tick_later_is_a_modification(self) -> None:
+        """Created empty, written after a tick: two real changes."""
+        w = self.start()
+        self.assertTrue(w.wait_for_tick(1, timeout=5))
+        with open(self.tmp / "c.txt", "w") as handle:
+            self.assertTrue(w.wait_for_tick(1, timeout=5))
+            handle.write("c")
+        self.assertTrue(w.wait_for_tick(2, timeout=5))
+        c = str(self.tmp / "c.txt")
+        self.assertEqual(self.events, [("created", c, "file"), ("modified", c, "file")])
 
 
 class PaneTest(_Base):

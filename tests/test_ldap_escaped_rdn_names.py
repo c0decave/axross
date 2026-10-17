@@ -57,7 +57,7 @@ class _Conn:
         self.entries: list[_Entry] = []
         self.bases: list[str] = []
 
-    def search(self, search_base, search_filter, search_scope, attributes=None):
+    def search(self, search_base, search_filter, search_scope, attributes=None, **_paging):
         self.bases.append(search_base)
         if search_scope == SCOPE_BASE:
             hits = [dn for dn in _DIT if dn == search_base]

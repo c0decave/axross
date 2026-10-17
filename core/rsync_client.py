@@ -15,6 +15,7 @@ installation on the host system.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import posixpath
@@ -43,6 +44,7 @@ _ENV_ALLOWLIST = (
     "LOGNAME",
     "LANG",
     "LC_ALL",
+    "LC_CTYPE",
     "TZ",
     "SSH_AUTH_SOCK",  # required for ssh-agent auth to keep working
 )
@@ -60,6 +62,15 @@ def _build_allowlisted_env() -> dict[str, str]:
         if value is not None:
             env[key] = value
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
+    # rsync groups the digits of every size with the locale's thousands
+    # separator: under de_DE a listing says "123.456". Numbers are parsed,
+    # so they are printed in the C locale. LC_ALL would override
+    # LC_NUMERIC; it is narrowed to LC_CTYPE (where it won over LC_CTYPE
+    # too), which is what names need.
+    lc_all = env.pop("LC_ALL", None)
+    if lc_all:
+        env["LC_CTYPE"] = lc_all
+    env["LC_NUMERIC"] = "C"
     return env
 
 
@@ -293,9 +304,12 @@ log = logging.getLogger(__name__)
 # Module listing (no path yet) returns lines like:
 #   modulename      a description
 # ---------------------------------------------------------------------------
+#: Digits with the thousands separators locales use (",", ".", "'").
+_GROUPED_NUMBER = r"\d[\d,.']*"
+
 _LIST_RE = re.compile(
     r"^(?P<perms>[dlcbps-][rwxstSTlL-]{9})\s+"
-    r"(?P<size>[\d,]+)\s+"
+    rf"(?P<size>{_GROUPED_NUMBER})\s+"
     r"(?P<date>\d{4}/\d{2}/\d{2})\s+"
     r"(?P<time>\d{2}:\d{2}:\d{2})\s+"
     r"(?P<name>.+)$"
@@ -303,9 +317,26 @@ _LIST_RE = re.compile(
 
 _MODULE_RE = re.compile(r"^(?P<name>\S+)\s+(?P<desc>.*)$")
 
+# What the sender prints (exit 23) when the folder to list is not there,
+# or a file stands where it should be - a daemon adds the module:
+# 'change_dir "sub" (in mod) failed: No such file or directory (2)'. The
+# one failure that means "absent"; "Permission denied (13)" and the rest
+# say nothing about it.
+_NOT_THERE_RE = re.compile(
+    r'(?:change_dir|link_stat) ".*" (?:\(in .*\) )?failed: '
+    r"(?:No such file or directory \(2\)|Not a directory \(20\))"
+)
+
 # Regex for parsing ``--progress`` output.
 # Example:   1,234,567  42%   12.34MB/s    0:00:03
-_PROGRESS_RE = re.compile(r"^\s*(?P<bytes>[\d,]+)\s+(?P<pct>\d+)%\s+(?P<rate>\S+)\s+(?P<eta>\S+)")
+_PROGRESS_RE = re.compile(
+    rf"^\s*(?P<bytes>{_GROUPED_NUMBER})\s+(?P<pct>\d+)%\s+(?P<rate>\S+)\s+(?P<eta>\S+)"
+)
+
+
+def _size_from_listing(text: str) -> int:
+    """A size rsync printed, with any digit grouping removed."""
+    return int(re.sub(r"[,.']", "", text))
 
 
 def _parse_permissions(perm_str: str) -> int:
@@ -652,7 +683,10 @@ class RsyncSession(SessionLifecycle):
 
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
-            raise OSError(f"rsync exited with code {result.returncode}: {stderr}")
+            message = f"rsync exited with code {result.returncode}: {stderr}"
+            if result.returncode == 23 and _NOT_THERE_RE.search(stderr):
+                raise FileNotFoundError(errno.ENOENT, message)
+            raise OSError(message)
 
         return result.stdout or ""
 
@@ -667,12 +701,19 @@ class RsyncSession(SessionLifecycle):
         if not url.endswith("/"):
             url += "/"
 
-        output = self._run_rsync(["--list-only", url])
+        # Only the daemon root lists modules; elsewhere a line that is
+        # no listing line is no entry.
+        lists_modules = not self._ssh_mode and not self._module
+        # A daemon prints its MOTD ahead of a module's listing too;
+        # --no-motd keeps it out. Not at the root: there it would also
+        # suppress the module list (an rsync protocol limitation).
+        motd = ["--no-motd"] if not self._ssh_mode and not lists_modules else []
+        output = self._run_rsync([*motd, "--list-only", url])
         items: list[FileItem] = []
 
         for line in split_lf_only_stream(output):
-            line = line.rstrip()
-            if not line:
+            # Not stripped: a name may end in spaces.
+            if not line.strip():
                 continue
 
             m = _LIST_RE.match(line)
@@ -684,7 +725,7 @@ class RsyncSession(SessionLifecycle):
                     continue
 
                 perm_str = m.group("perms")
-                size_str = m.group("size").replace(",", "")
+                size_str = m.group("size")
                 date_str = m.group("date")
                 time_str = m.group("time")
 
@@ -696,7 +737,7 @@ class RsyncSession(SessionLifecycle):
                     entry_name = posixpath.basename(entry_name.rstrip("/"))
 
                 try:
-                    size = int(size_str)
+                    size = _size_from_listing(size_str)
                 except ValueError:
                     size = 0
 
@@ -718,8 +759,8 @@ class RsyncSession(SessionLifecycle):
                         permissions=permissions,
                     )
                 )
-            else:
-                # Might be a module listing line (when listing server root)
+            elif lists_modules:
+                # A module listing line (when listing server root)
                 mm = _MODULE_RE.match(line)
                 if mm and not line.startswith(" "):
                     mod_name = mm.group("name")
@@ -747,21 +788,26 @@ class RsyncSession(SessionLifecycle):
             if entry.name == name:
                 return entry
 
-        raise OSError(f"Not found: {path}")
+        raise FileNotFoundError(errno.ENOENT, f"Not found: {path}", path)
 
     def is_dir(self, path: str) -> bool:
+        """False only for "not found"; a listing that failed (connection
+        refused, permission denied, timeout) is an OSError."""
         try:
             item = self.stat(path)
-            return item.is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
+        return item.is_dir
 
     def exists(self, path: str) -> bool:
+        """False only for "not found"; any other failure is an OSError -
+        server_side_copy(overwrite=False) takes False as its go-ahead,
+        and remove() takes it as proof the entry is gone."""
         try:
             self.stat(path)
-            return True
-        except OSError:
+        except FileNotFoundError:
             return False
+        return True
 
     # --------------------------------------------------------------------- #
     #  FileBackend — mutations                                               #
@@ -787,9 +833,27 @@ class RsyncSession(SessionLifecycle):
         """Remove a remote file or directory.
 
         Uses ``--delete`` with an empty source directory to remove remote
-        content, then removes the directory itself.
+        content, then removes the directory itself. rsync exits 0 also
+        when it deleted nothing (a filter that did not match, "cannot
+        delete non-empty directory"), so the entry is looked up again
+        afterwards and still being there is an error.
         """
-        if self.is_dir(path):
+        # A path that cannot be found is not removed: a failed lookup
+        # must never send a folder down the file branch.
+        try:
+            item = self.stat(path)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(errno.ENOENT, f"Cannot remove {path}: {exc}", path) from exc
+        except OSError as exc:
+            # Not "not found": the lookup itself failed.
+            raise OSError(f"Cannot remove {path}: {exc}") from exc
+        self._remove_entry(path, item.is_dir, recursive)
+        # The module root is only emptied, never removed.
+        if posixpath.basename(path.rstrip("/")) and self.exists(path):
+            raise OSError(f"rsync did not remove {path}")
+
+    def _remove_entry(self, path: str, is_dir: bool, recursive: bool) -> None:
+        if is_dir:
             if not recursive:
                 # Check if directory is empty
                 contents = self.list_dir(path)
@@ -843,12 +907,17 @@ class RsyncSession(SessionLifecycle):
                 url = self._build_url(parent)
                 if not url.endswith("/"):
                     url += "/"
+                pattern = "/" + _escape_rsync_pattern(name)
                 self._run_rsync(
                     [
                         "-r",
                         "--delete",
+                        # A folder of that name stays: a trailing "/" only
+                        # matches folders, and the first matching rule wins.
+                        "--exclude",
+                        pattern + "/",
                         "--include",
-                        _escape_rsync_pattern(name),
+                        pattern,
                         "--exclude",
                         "*",
                         tmpdir + "/",
@@ -1259,7 +1328,7 @@ def _parse_rsync_itemized(out: str) -> dict:
                 line = line.rstrip()
                 m = _PROGRESS_RE.match(line)
                 if m:
-                    transferred = int(m.group("bytes").replace(",", ""))
+                    transferred = _size_from_listing(m.group("bytes"))
                     pct = int(m.group("pct"))
                     rate = m.group("rate")
                     eta = m.group("eta")

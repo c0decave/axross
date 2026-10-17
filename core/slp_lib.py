@@ -21,6 +21,7 @@ References used while writing this:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import secrets
 import socket
@@ -294,6 +295,32 @@ def parse_attr_reply(blob: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: RFC 2608 8.1 header flag O: the reply did not fit, ask again over TCP.
+OVERFLOW_FLAG = 0x8000
+
+
+def is_overflow(blob: bytes) -> bool:
+    """Whether a reply carries the OVERFLOW flag (False if unreadable)."""
+    try:
+        return bool(_parse_header(blob).flags & OVERFLOW_FLAG)
+    except (SlpProtocolError, ValueError, struct.error):
+        return False
+
+
+def _refuse_group_address(host: str) -> None:
+    """Refuse a multicast or broadcast destination: an SLP query to a
+    group is the CVE-2023-29552 amplification. The refusal knew only
+    224.* and 239.255.255.253 (review B27, 2026-10-17); every IPv4/IPv6
+    multicast range and the limited broadcast count now."""
+    try:
+        address = ipaddress.ip_address(str(host).strip("[]"))
+    except ValueError:
+        return  # a name: checked once it is resolved
+    if address.is_multicast or address == ipaddress.IPv4Address("255.255.255.255"):
+        raise OSError(f"SLP backend refuses to query the multicast/broadcast address {host} "
+                      "(CVE-2023-29552 mitigation)")
+
+
 def query_udp(
     host: str,
     packet: bytes,
@@ -306,8 +333,7 @@ def query_udp(
     callers must point at a single host. Validates that the reply
     came from the same host we sent to so an off-path attacker
     spoofing a UDP datagram cannot inject responses."""
-    if host in ("239.255.255.253",) or host.startswith("224."):
-        raise OSError("SLP backend refuses to query multicast (CVE-2023-29552 mitigation)")
+    _refuse_group_address(host)
     if proxy is not None:
         # SOCKS5 UDP relay: the proxy resolves the name (resolving it here
         # would leak the lookup), and the relay reports the remote's
@@ -325,6 +351,8 @@ def query_udp(
         except socket.gaierror as exc:
             raise OSError(f"SLP DNS resolution for {host}: {exc}") from exc
         expected_addrs = {info[4][0] for info in infos}
+        for address in expected_addrs:  # a name may resolve to a group
+            _refuse_group_address(address)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
     try:

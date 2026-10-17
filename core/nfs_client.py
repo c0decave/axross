@@ -15,13 +15,14 @@ import re
 import shutil
 import stat as stat_module
 import subprocess
-import tempfile
 from datetime import datetime
 from typing import IO
 
 from core import posix_compat
 from core.backend import SessionLifecycle
+from core.local_fs import entry_stat
 from core.path_policy import confined_path
+from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
@@ -42,7 +43,9 @@ def _validate_mount_source(host: str, export: str) -> None:
     if not host or host.startswith("-") or not _HOST_RE.fullmatch(host):
         raise ValueError(f"NFS host {host!r} is not a host name or address")
     if not export.startswith("/") or any(ord(c) < 32 or c == "\x7f" for c in export):
-        raise ValueError(f"NFS export {export!r} must be an absolute path without control characters")
+        raise ValueError(
+            f"NFS export {export!r} must be an absolute path without control characters"
+        )
 
 
 def _nfs_available() -> bool:
@@ -107,7 +110,9 @@ class NfsSession(SessionLifecycle):
         if mount_point:
             self._mount_point = mount_point
         else:
-            self._mount_point = tempfile.mkdtemp(prefix="axross-nfs-")
+            # Not straight in /tmp: once mounted, the export's root mode
+            # would let every local user in (core.private_mount_dir).
+            self._mount_point = make_private_mount_point("axross-nfs-")
             self._own_mount = True
 
         self._mounted = False
@@ -189,11 +194,8 @@ class NfsSession(SessionLifecycle):
                 log.info("NFS unmounted: %s", self._mount_point)
             except Exception as e:
                 log.error("Failed to unmount NFS: %s", e)
-        if self._own_mount and os.path.isdir(self._mount_point):
-            try:
-                os.rmdir(self._mount_point)
-            except OSError:
-                pass
+        if self._own_mount and os.path.isdir(self._mount_point) and not self._mounted:
+            remove_private_mount_point(self._mount_point)
         self._close_tunnel()
 
     def _close_tunnel(self) -> None:
@@ -253,13 +255,21 @@ class NfsSession(SessionLifecycle):
             raise OSError(f"Cannot stat {path}: {e}") from e
 
     def is_dir(self, path: str) -> bool:
+        """Follows a link inside the mount. False only when nothing is
+        there or the path leaves the mount; a stat the server did not
+        answer (ETIMEDOUT, EIO, ESTALE) is an OSError."""
         try:
-            return os.path.isdir(self._full_path(path))
+            full = self._full_path(path)
         except PermissionError:
-            return False
+            return False  # a link out of the mount is no folder of it
+        st = entry_stat(full, follow=True)
+        return st is not None and stat_module.S_ISDIR(st.st_mode)
 
     def exists(self, path: str) -> bool:
-        return os.path.lexists(self._full_path(path, follow=False))
+        """False only when nothing is there; a failed lstat is an
+        OSError - server_side_copy(overwrite=False) takes False as its
+        go-ahead to write."""
+        return entry_stat(self._full_path(path, follow=False)) is not None
 
     def mkdir(self, path: str) -> None:
         os.makedirs(self._full_path(path), exist_ok=True)

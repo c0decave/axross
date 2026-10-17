@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import re
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from core.backend_registry import load_backend_class
-from core.profiles import ConnectionProfile
+from core.profiles import ConnectionProfile, password_needed
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -37,6 +39,24 @@ def __getattr__(name: str):
     value = getattr(importlib.import_module(target[0]), target[1])
     globals()[name] = value
     return value
+
+
+def _profile_token_files(stem: str, profile_name: str) -> dict[str, str]:
+    """``token_file`` / ``legacy_token_file`` for an OAuth cloud profile.
+
+    Every profile gets a token file of its own; one file shared by all
+    profiles of a protocol opened the first profile's account for the
+    second. The name keeps a readable part of the profile name and a
+    hash of the whole name, so names that differ only in characters a
+    file name cannot carry still get distinct files.
+    """
+    base = os.path.expanduser("~/.config/axross")
+    readable = re.sub(r"[^A-Za-z0-9_-]", "_", profile_name)[:40] or "profile"
+    digest = hashlib.sha256(profile_name.encode("utf-8")).hexdigest()[:12]
+    return {
+        "token_file": os.path.join(base, f"{stem}.{readable}-{digest}.json"),
+        "legacy_token_file": os.path.join(base, f"{stem}.json"),
+    }
 
 
 def _session_class(name: str):
@@ -166,7 +186,7 @@ def effective_profile(profile: "ConnectionProfile") -> "ConnectionProfile":
     """
     mode = getattr(profile, "proxy_mode", "custom") or "custom"
     if mode == "custom":
-        return profile
+        return _with_expanded_key_file(profile)
     import dataclasses
 
     from core import proxy_settings
@@ -187,7 +207,22 @@ def effective_profile(profile: "ConnectionProfile") -> "ConnectionProfile":
         proxy_command="",
     )
     resolved._proxy_password_override = cfg.password if cfg else ""
-    return resolved
+    return _with_expanded_key_file(resolved)
+
+
+def _with_expanded_key_file(profile: "ConnectionProfile") -> "ConnectionProfile":
+    """*profile*, or a copy whose ``key_file`` has its leading ``~``
+    expanded: the SSH / SCP clients open the path as given, and a key
+    typed as ``~/.ssh/id_x`` (which the connection dialog accepts) was
+    a FileNotFoundError. The caller's profile is never changed."""
+    key_file = getattr(profile, "key_file", "") or ""
+    if not key_file.startswith("~"):
+        return profile
+    import copy
+
+    expanded = copy.copy(profile)  # keeps _proxy_password_override and the like
+    expanded.key_file = os.path.expanduser(key_file)
+    return expanded
 
 
 def _proxy_kind(profile: "ConnectionProfile") -> str:
@@ -304,7 +339,14 @@ class ConnectionManager:
         # the PAC again, whose answer may have changed meanwhile (a new
         # PAC file after the cache TTL, a time-based rule) or which may
         # no longer be readable.
-        self._held: list[tuple[ConnectionProfile, tuple[str, ...]]] = []
+        # Each entry also names the session the reference was taken on:
+        # a stale session that a new connect() replaces lives under the
+        # same key, and its holders must give back THEIR reference, not
+        # one of the new session's.
+        self._held: list[tuple[ConnectionProfile, tuple[str, ...], object]] = []
+        # Replaced (stale) sessions still referenced by an old holder:
+        # id(session) -> [session, references]. Closed at the last release.
+        self._retired: dict[int, list] = {}
         self._profile_resolver: Callable[[str], ConnectionProfile | None] | None = None
 
     def set_profile_resolver(self, resolver: Callable[[str], ConnectionProfile | None]) -> None:
@@ -367,6 +409,10 @@ class ConnectionManager:
             str(profile.telnet_naws_height),
             str(hash(profile.gdrive_client_secret)),
             str(hash(profile.dropbox_app_secret)),
+            # A RAM workspace has no server to tell two of them apart: the
+            # profile name is its identity. Two network profiles to one
+            # server keep sharing a session.
+            profile.name if profile.protocol == "ramfs" else "",
         )
 
     def connect(
@@ -392,23 +438,40 @@ class ConnectionManager:
             self._record_visit(profile)
             return reused
 
+        # No password passed in (a script's axross.open, a terminal
+        # reconnect): use the one the profile stores, for every protocol
+        # that takes one - not only SSH/SCP, whose clients also look it up.
+        if not password and profile.store_password and password_needed(profile):
+            password = profile.get_password() or ""
+
         # Create new session based on protocol. Not under the lock: it is
         # network I/O (and may wait for a host-key prompt).
         session = self._create_session(resolved, password, key_passphrase, on_unknown_host)
 
         # Another thread may have connected the same key meanwhile (two
         # panes opening one profile). Keep the registered session so both
-        # panes share one reference count; close the duplicate.
-        with self._lock:
-            existing = self._sessions.get(key)
-            if existing is not None and self._is_connected(existing):
-                self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
-                duplicate, session = session, existing
-            else:
-                duplicate = None
-                self._sessions[key] = session
-                self._ref_counts[key] = 1
-            self._held.append((profile, key))
+        # panes share one reference count; close the duplicate. Its
+        # liveness is asked outside the lock: for several backends that
+        # is network I/O.
+        duplicate = None
+        stale = None
+        while True:
+            with self._lock:
+                existing = self._sessions.get(key)
+            alive = existing is not None and self._is_connected(existing)
+            with self._lock:
+                if self._sessions.get(key) is not existing:
+                    continue  # changed while we probed: look again
+                if alive:
+                    self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
+                    duplicate, session = session, existing
+                else:
+                    stale = self._retire_locked(key)
+                    self._sessions[key] = session
+                    self._ref_counts[key] = 1
+                self._held.append((profile, key, session))
+            break
+        self._close_unheld(stale)
         if duplicate is not None:
             log.info("Concurrent connect for %s; closing the duplicate session", key[:4])
             try:
@@ -430,24 +493,61 @@ class ConnectionManager:
         self, key: tuple[str, ...], profile: ConnectionProfile | None = None
     ) -> object | None:
         """Take a reference on the live session for *key*, or drop a stale
-        one and return None."""
-        with self._lock:
-            session = self._sessions.get(key)
+        one and return None.
+
+        Whether the session is alive is asked without the lock held: for
+        SMB, WebDAV, NFS, Telnet and FTP that is a round trip to the
+        server, and a server that stopped answering would otherwise make
+        every other connect / release - the GUI thread's too - wait for
+        its timeout."""
+        while True:
+            with self._lock:
+                session = self._sessions.get(key)
             if session is None:
                 return None
-            if self._is_connected(session):
-                self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
-                if profile is not None:
-                    self._held.append((profile, key))
-                log.info(
-                    "Reusing existing session for %s (refs: %d)", key[:4], self._ref_counts[key]
-                )
-                return session
-            log.info("Stale session for %s, reconnecting", key[:4])
-            del self._sessions[key]
-            self._ref_counts.pop(key, None)
+            alive = self._is_connected(session)
+            with self._lock:
+                if self._sessions.get(key) is not session:
+                    continue  # replaced or released while we probed
+                if alive:
+                    self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
+                    if profile is not None:
+                        self._held.append((profile, key, session))
+                    log.info(
+                        "Reusing existing session for %s (refs: %d)",
+                        key[:4],
+                        self._ref_counts[key],
+                    )
+                    return session
+                log.info("Stale session for %s, reconnecting", key[:4])
+                stale = self._retire_locked(key)
+            break
         self._unenroll_health(key)
+        self._close_unheld(stale)
         return None
+
+    def _retire_locked(self, key: tuple[str, ...]) -> object | None:
+        """Take the stale session under *key* out of service (lock held).
+
+        Holders that still reference it keep counting on it, apart from
+        the session that replaces it; the last of them closes it. Returns
+        the session when nobody holds it, for the caller to close."""
+        session = self._sessions.pop(key, None)
+        refs = self._ref_counts.pop(key, 0)
+        if session is None:
+            return None
+        if refs > 0:
+            self._retired[id(session)] = [session, refs]
+            return None
+        return session
+
+    def _close_unheld(self, session: object | None) -> None:
+        if session is None:
+            return
+        try:
+            self._disconnect_session(session)
+        except Exception as exc:  # noqa: BLE001 - it is dead already
+            log.debug("ConnectionManager: closing a stale session failed: %s", exc)
 
     @staticmethod
     def _decorate_session(
@@ -519,6 +619,13 @@ class ConnectionManager:
         _validate_proxy_request(profile)
         # Flag backends that would silently drop a user-configured proxy.
         _warn_unsupported_proxy(profile)
+        if profile.proxy_command and not profile.proxy_command_confirmed:
+            # An imported profile's shell command: the UI asks first.
+            raise PermissionError(
+                f"profile {profile.name!r} came in through an import and its "
+                f"ProxyCommand ({profile.proxy_command!r}) has not been confirmed; "
+                "confirm it in axross before it can run"
+            )
         proto = profile.protocol
         from core.security_mode import require_protocol_allowed
 
@@ -657,6 +764,7 @@ class ConnectionManager:
                 tenant_id=profile.onedrive_tenant_id,
                 drive_type="sharepoint" if proto == "sharepoint" else "personal",
                 site_url=profile.sharepoint_site_url,
+                **_profile_token_files("onedrive_token", profile.name),
                 **proxy_kw,
             )
 
@@ -665,6 +773,7 @@ class ConnectionManager:
             return cls(
                 client_id=profile.gdrive_client_id,
                 client_secret=password or profile.gdrive_client_secret,
+                **_profile_token_files("gdrive_token", profile.name),
                 **proxy_kw,
             )
 
@@ -673,6 +782,7 @@ class ConnectionManager:
             return cls(
                 app_key=profile.dropbox_app_key,
                 app_secret=password or profile.dropbox_app_secret,
+                **_profile_token_files("dropbox_token", profile.name),
                 **proxy_kw,
             )
 
@@ -868,15 +978,39 @@ class ConnectionManager:
     def _held_key_locked(
         self, profile: ConnectionProfile, *, take: bool
     ) -> tuple[str, ...] | None:
-        """Session key of a reference *profile* holds (the same object
-        first, then an equal copy), newest first; *take* removes it."""
+        """Session key of a reference *profile* holds; *take* removes it."""
+        entry = self._held_entry_locked(profile, take=take)
+        return entry[0] if entry is not None else None
+
+    def _held_entry_locked(
+        self, profile: ConnectionProfile, *, take: bool
+    ) -> tuple[tuple[str, ...], object] | None:
+        """(key, session) of a reference *profile* holds: the same object
+        first, then an equal copy; *take* removes it.
+
+        release() names only the profile, and two panes on one profile
+        pass the same object. A reference on a replaced (retired)
+        session is given back before one on the live session: whichever
+        holder is closing, the live session then outlasts every pane
+        that still uses it. Otherwise the newest reference."""
         for same in (lambda held: held is profile, lambda held: held == profile):
+            chosen = None
             for idx in range(len(self._held) - 1, -1, -1):
-                held_profile, key = self._held[idx]
-                if same(held_profile):
-                    if take:
-                        del self._held[idx]
-                    return key
+                held_profile, key, session = self._held[idx]
+                if not same(held_profile):
+                    continue
+                if chosen is None:
+                    chosen = idx
+                if not take:
+                    break
+                if self._sessions.get(key) is not session:
+                    chosen = idx
+                    break
+            if chosen is not None:
+                _held_profile, key, session = self._held[chosen]
+                if take:
+                    del self._held[chosen]
+                return key, session
         return None
 
     def acquire(self, profile: ConnectionProfile) -> bool:
@@ -888,13 +1022,27 @@ class ConnectionManager:
             if key is None or key not in self._sessions:
                 return False
             self._ref_counts[key] = self._ref_counts.get(key, 0) + 1
-            self._held.append((profile, key))
+            self._held.append((profile, key, self._sessions[key]))
             return True
 
     def release(self, profile: ConnectionProfile) -> None:
         """Release a reference to a session. Disconnects when no more references."""
         with self._lock:
-            key = self._held_key_locked(profile, take=True)
+            entry = self._held_entry_locked(profile, take=True)
+            retired = None
+            if entry is not None:
+                key, held_session = entry
+                if self._sessions.get(key) is not held_session:
+                    retired = self._release_retired_locked(held_session)
+                    if retired is None:
+                        return
+            key = entry[0] if entry is not None else None
+        if retired is not None:
+            # The last holder of a replaced session: close it. The key's
+            # health enrolment belongs to the session that replaced it.
+            self._close_unheld(retired)
+            log.info("Disconnected replaced session %s (no more references)", key[:4])
+            return
         if key is None:
             # A reference not taken through connect() / acquire().
             try:
@@ -918,13 +1066,29 @@ class ConnectionManager:
             self._disconnect_session(session)
             log.info("Disconnected session %s (no more references)", key[:4])
 
+    def _release_retired_locked(self, session: object) -> object | None:
+        """Give back one reference on a replaced session (lock held);
+        returns it once the last one is gone, for the caller to close."""
+        record = self._retired.get(id(session))
+        if record is None or record[0] is not session:
+            return None
+        record[1] -= 1
+        if record[1] > 0:
+            return None
+        del self._retired[id(session)]
+        return session
+
     def disconnect_all(self) -> None:
         """Disconnect all sessions."""
         with self._lock:
             sessions = list(self._sessions.items())
+            retired = [record[0] for record in self._retired.values()]
             self._sessions.clear()
             self._ref_counts.clear()
             self._held.clear()
+            self._retired.clear()
+        for session in retired:
+            self._close_unheld(session)
         for key, session in sessions:
             try:
                 self._unenroll_health(key)

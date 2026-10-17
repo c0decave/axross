@@ -58,6 +58,25 @@ def _dsn_quote(value: object) -> str:
     return f"'{text}'"
 
 
+#: Connection parameters a URL names outside its query.
+_URL_BASE_KEYS = frozenset({"host", "port", "user", "password", "dbname"})
+
+
+def _url_query_params(url: str) -> dict[str, str]:
+    """The libpq parameters of *url*'s query (``sslmode``, ...).
+
+    libpq itself parses the URL, so a parameter it does not know is an
+    OSError here instead of being dropped.
+    """
+    from psycopg import conninfo
+
+    try:
+        params = conninfo.conninfo_to_dict(url)
+    except psycopg.Error as exc:
+        raise OSError(f"PostgreSQL URL: {exc}") from exc
+    return {k: str(v) for k, v in params.items() if k not in _URL_BASE_KEYS}
+
+
 class PostgresFsSession(DbFsBackend):
     """PostgreSQL-backed FileBackend."""
 
@@ -78,6 +97,7 @@ class PostgresFsSession(DbFsBackend):
             raise ImportError(
                 "PostgreSQL backend requires psycopg. Install with: pip install axross[postgres]",
             )
+        url_params: dict[str, str] = {}
         if url:
             parts = urlsplit(url)
             host = host or (parts.hostname or "")
@@ -85,6 +105,7 @@ class PostgresFsSession(DbFsBackend):
             username = username or (parts.username or "")
             password = password or (parts.password or "")
             database = database or parts.path.lstrip("/")
+            url_params = _url_query_params(url)
         if not host or not database:
             raise OSError("PostgreSQL backend needs host and database")
         from core import proxy as proxy_mod
@@ -93,6 +114,10 @@ class PostgresFsSession(DbFsBackend):
         # while ``host`` keeps the real name for TLS verification.
         self._tunnel = proxy_mod.open_tunnel(_ignored, host, int(port))
         try:
+            if self._tunnel is not None and "hostaddr" in url_params:
+                raise OSError(
+                    "PostgreSQL URL parameter hostaddr would bypass the proxy tunnel"
+                )
             if self._tunnel is not None:
                 params = [
                     ("host", host),
@@ -102,6 +127,10 @@ class PostgresFsSession(DbFsBackend):
             else:
                 params = [("host", host), ("port", port)]
             params += [("user", username), ("password", password), ("dbname", database)]
+            # The URL's query (sslmode, sslrootcert, ...) - dropping it
+            # turned "sslmode=verify-full" into libpq's plaintext-capable
+            # default "prefer".
+            params += sorted(url_params.items())
             self._dsn = " ".join(f"{k}={_dsn_quote(v)}" for k, v in params)
             self._conn = None
             try:

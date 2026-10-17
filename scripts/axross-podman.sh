@@ -3,6 +3,8 @@
 # MCP server, and optionally a local LLM (llama.cpp) beside it.
 #
 #   scripts/axross-podman.sh build                   build localhost/axross-gui (Dockerfile.gui)
+#   scripts/axross-podman.sh agent-image             build localhost/axross-agent:<version>
+#                                                    (Dockerfile.agent), the agent sandbox image
 #   scripts/axross-podman.sh gui [options] [-- axross args]
 #   scripts/axross-podman.sh mcp [options] [-- axross args]   stdio MCP server (axross --mcp-server)
 #
@@ -20,6 +22,9 @@
 #   --llm-name NAME     the model name the profile asks for (default: the file name)
 #   --gpu               pass /dev/dri for hardware OpenGL
 #   --dbus              pass the host's session bus (the keyring: stored passwords)
+#   --agent-sandbox     let the Agent dock's bubblewrap sandbox start in the container:
+#                       unmasks /proc (--security-opt unmask=/proc/*), which bubblewrap
+#                       needs to mount its own /proc; capabilities stay dropped
 #   --env KEY=VALUE     an environment variable for axross (repeatable)
 #   --image IMAGE       default localhost/axross-gui:latest
 #
@@ -37,11 +42,18 @@ X11_DIR=${AXROSS_X11_DIR:-/tmp/.X11-unix}
 die() { echo "axross-podman: $*" >&2; exit 2; }
 
 mode=${1:-}
-[ -n "$mode" ] || die "usage: $0 build|gui|mcp [options] [-- axross args]"
+[ -n "$mode" ] || die "usage: $0 build|agent-image|gui|mcp [options] [-- axross args]"
 shift
-case "$mode" in build|gui|mcp) ;; *) die "unknown mode '$mode' (build, gui or mcp)" ;; esac
+case "$mode" in build|agent-image|gui|mcp) ;; *) die "unknown mode '$mode' (build, agent-image, gui or mcp)" ;; esac
 
-display=auto home="" data="" llm_model="" llm_url="" llm_name="" gpu=0 dbus=0
+if [ "$mode" = agent-image ]; then
+  cd "$(dirname "$0")/.."
+  version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' axross/_version.py)
+  [ -n "$version" ] || die "no version in axross/_version.py"
+  exec podman build -f Dockerfile.agent -t "localhost/axross-agent:$version" .
+fi
+
+display=auto home="" data="" llm_model="" llm_url="" llm_name="" gpu=0 dbus=0 agent_sandbox=0
 extra_env=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,6 +66,7 @@ while [ $# -gt 0 ]; do
     --llm-name) llm_name=${2:?}; shift 2 ;;
     --gpu) gpu=1; shift ;;
     --dbus) dbus=1; shift ;;
+    --agent-sandbox) agent_sandbox=1; shift ;;
     --image) IMAGE=${2:?}; shift 2 ;;
     --env) case "${2:-}" in [A-Za-z_]*=*) extra_env+=(-e "$2") ;; *) die "--env takes KEY=VALUE, not '${2:-}'" ;; esac; shift 2 ;;
     --) shift; break ;;
@@ -80,6 +93,9 @@ chmod 700 "$home"
 args=(--rm --cap-drop=ALL --security-opt=no-new-privileges --security-opt=label=disable
       -v "$home:~" -e HOME=~)
 [ -z "$data" ] || args+=(-v "$(cd "$data" && pwd):/data")
+# podman masks /proc paths and mounts /proc/sys read-only; bubblewrap's
+# --proc /proc and --disable-userns fail on both (measured 2026-10-17).
+[ "$agent_sandbox" = 0 ] || args+=("--security-opt=unmask=/proc/*")
 
 if [ "$mode" = gui ]; then
   wl=""

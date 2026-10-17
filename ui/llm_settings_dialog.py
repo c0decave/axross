@@ -114,18 +114,29 @@ class LLMSettingsDialog(QDialog):
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)  # server text is not markup
         self.status_label.setWordWrap(True)
 
+        # What every profile needs; the tuning folds away under Advanced.
         form = QFormLayout()
         form.addRow(tr("Name"), self.name_edit)
         form.addRow(tr("Provider"), self.provider_combo)
         form.addRow(tr("Endpoint"), self.endpoint_edit)
         form.addRow(tr("Model"), model_row)
         form.addRow(tr("API key"), self.key_edit)
-        form.addRow(tr("Temperature"), self.temperature_spin)
-        form.addRow(tr("Timeout per call"), self.timeout_spin)
-        form.addRow(tr("Max output tokens"), self.max_tokens_spin)
-        form.addRow("", self.load_check)
+        self.advanced_button = QPushButton(tr("Advanced ▸"))
+        self.advanced_button.setCheckable(True)
+        self.advanced_button.setFlat(True)
+        self.advanced_box = QWidget()
+        advanced = QFormLayout(self.advanced_box)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        advanced.addRow(tr("Temperature"), self.temperature_spin)
+        advanced.addRow(tr("Timeout per call"), self.timeout_spin)
+        advanced.addRow(tr("Max output tokens"), self.max_tokens_spin)
+        advanced.addRow("", self.load_check)
+        self.advanced_box.setVisible(False)
+        self.advanced_button.toggled.connect(self._toggle_advanced)
         right = QVBoxLayout()
         right.addLayout(form)
+        right.addWidget(self.advanced_button, 0, Qt.AlignmentFlag.AlignLeft)
+        right.addWidget(self.advanced_box)
         right.addWidget(self.remote_label)
         right.addWidget(self.status_label)
         right.addStretch(1)
@@ -160,6 +171,10 @@ class LLMSettingsDialog(QDialog):
         else:
             self._show_row(-1)
         add_close_corner(self)
+
+    def _toggle_advanced(self, shown: bool) -> None:
+        self.advanced_box.setVisible(shown)
+        self.advanced_button.setText(tr("Advanced ▾") if shown else tr("Advanced ▸"))
 
     # -- list --------------------------------------------------------------
     def _label(self, p: LP.LLMProfile) -> str:

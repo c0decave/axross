@@ -7,7 +7,7 @@ Works with AWS S3, MinIO, Ceph RGW, Wasabi, Cloudflare R2, etc.
 
 from __future__ import annotations
 
-import io
+import errno
 import logging
 import posixpath
 import tempfile
@@ -16,9 +16,24 @@ from typing import IO
 
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
+from core.read_spool import read_chunks, spool_chunks
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
+
+
+def _spool_body(body, what: str) -> IO[bytes]:
+    """A GetObject body as a spool, not one bytes object in RAM.
+
+    Read in sized chunks to the end, so botocore still checks the bytes
+    against the Content-Length; the body is closed either way.
+    """
+    try:
+        return spool_chunks(read_chunks(body), what=what)
+    finally:
+        close = getattr(body, "close", None)
+        if close is not None:
+            close()
 
 from core.client_identity import HTTP_USER_AGENT  # noqa: E402 — after log= for clean attribution
 
@@ -26,12 +41,20 @@ try:
     import boto3
     from botocore import UNSIGNED
     from botocore.config import Config as BotoConfig
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import BotoCoreError, ClientError
 except ImportError:
     boto3 = None  # type: ignore[assignment]
     UNSIGNED = None  # type: ignore[assignment]
     BotoConfig = None  # type: ignore[assignment]
     ClientError = Exception  # type: ignore[assignment,misc]
+    BotoCoreError = Exception  # type: ignore[assignment,misc]
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """True for the ClientError S3 answers for a missing key (HEAD carries
+    no body, so botocore names it by the status: "404")."""
+    code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
+    return code in ("404", "NoSuchKey", "NotFound")
 
 
 class _SpooledWriter:
@@ -390,6 +413,9 @@ class S3Session(SessionLifecycle):
         raise OSError(f"Not found: {path}")
 
     def is_dir(self, path: str) -> bool:
+        """True when objects exist under ``path/``. A listing that fails
+        (throttled, refused, dropped) is an OSError, never "no folder":
+        remove() and rename() pick their action from this answer."""
         key = self._to_key(path)
         if not key or key == "/":
             return True
@@ -401,11 +427,15 @@ class S3Session(SessionLifecycle):
                 Prefix=key.rstrip("/") + "/",
                 MaxKeys=1,
             )
-            return resp.get("KeyCount", 0) > 0
-        except (ClientError, Exception):
-            return False
+        except Exception as e:
+            raise OSError(f"Cannot check {path}: {e}") from e
+        return resp.get("KeyCount", 0) > 0
 
     def exists(self, path: str) -> bool:
+        """Only a not-found answer means False. Any other failure (503
+        SlowDown, 403, 500, a dropped connection) is an OSError: it says
+        nothing about the object, and server_side_copy(overwrite=False)
+        takes False as the go-ahead to write."""
         key = self._to_key(path)
         if not key:
             return True  # Root always exists
@@ -414,8 +444,9 @@ class S3Session(SessionLifecycle):
         try:
             self._s3.head_object(Bucket=self._bucket, Key=key)
             return True
-        except ClientError:
-            pass
+        except ClientError as e:
+            if not _is_not_found(e):
+                raise OSError(f"Cannot check {path}: {e}") from e
         except Exception as e:
             # An answer botocore cannot parse, or a dropped connection, says
             # nothing about existence (see stat()).
@@ -441,9 +472,17 @@ class S3Session(SessionLifecycle):
 
         if self.is_dir(path):
             if not recursive:
-                # Just remove the directory marker
+                # An object "X" beside the prefix "X/" is the FILE the
+                # caller removes (recursive=False); the folder marker is
+                # only the target when there is no such file - and only
+                # when nothing else is under the prefix.
+                if self._object_beside_prefix(key, path):
+                    target = key
+                else:
+                    target = key.rstrip("/") + "/"
+                    self._refuse_non_empty(target, path)
                 try:
-                    self._s3.delete_object(Bucket=self._bucket, Key=key.rstrip("/") + "/")
+                    self._s3.delete_object(Bucket=self._bucket, Key=target)
                 except (ClientError, Exception) as e:
                     raise OSError(f"Cannot remove {path}: {e}") from e
             else:
@@ -454,18 +493,61 @@ class S3Session(SessionLifecycle):
             except (ClientError, Exception) as e:
                 raise OSError(f"Cannot remove {path}: {e}") from e
 
+    def _refuse_non_empty(self, prefix: str, path: str) -> None:
+        """ENOTEMPTY when any key besides the folder marker *prefix* lies
+        under it: deleting the marker alone would report a removed folder
+        whose files are all still there."""
+        try:
+            resp = self._s3.list_objects_v2(Bucket=self._bucket, Prefix=prefix, MaxKeys=2)
+        except Exception as e:
+            raise OSError(f"Cannot remove {path}: {e}") from e
+        if any(obj.get("Key") != prefix for obj in resp.get("Contents") or []):
+            raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
+
+    def _object_beside_prefix(self, key: str, path: str) -> bool:
+        """True when an object named exactly *key* exists - a file next to
+        the folder ``key/``. A HEAD error other than not-found is an
+        OSError: it says nothing about which of the two is meant."""
+        if not key or key.endswith("/"):
+            return False
+        try:
+            self._s3.head_object(Bucket=self._bucket, Key=key)
+            return True
+        except ClientError as e:
+            if _is_not_found(e):
+                return False
+            raise OSError(f"Cannot check {path}: {e}") from e
+        except Exception as e:
+            raise OSError(f"Cannot check {path}: {e}") from e
+
     def _remove_prefix(self, prefix: str) -> None:
-        """Delete all objects under a prefix."""
+        """Delete all objects under a prefix.
+
+        DeleteObjects answers 200 also when it refused keys (access,
+        object lock): those are listed in ``Errors``. Every page is
+        still deleted; afterwards the refusals fail the remove.
+        """
         paginator = self._s3.get_paginator("list_objects_v2")
         pages = paginator.paginate(Bucket=self._bucket, Prefix=prefix)
 
-        for page in pages:
-            objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-            if objects:
-                self._s3.delete_objects(
-                    Bucket=self._bucket,
-                    Delete={"Objects": objects},
-                )
+        refused: list[str] = []
+        try:
+            for page in pages:
+                objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                if objects:
+                    resp = self._s3.delete_objects(
+                        Bucket=self._bucket,
+                        Delete={"Objects": objects},
+                    )
+                    for err in (resp or {}).get("Errors") or []:
+                        code, message = err.get("Code"), err.get("Message")
+                        refused.append(f"{err.get('Key')} ({code}: {message})")
+        except (ClientError, BotoCoreError) as e:
+            raise OSError(f"Cannot delete under {prefix}: {e}") from e
+        if refused:
+            shown = "; ".join(refused[:5])
+            more = f" and {len(refused) - 5} more" if len(refused) > 5 else ""
+            raise OSError(f"Cannot delete {len(refused)} object(s) under {prefix}: {shown}{more}")
 
     def rename(self, src: str, dst: str) -> None:
         """S3 doesn't support rename — copy + delete."""
@@ -475,6 +557,13 @@ class S3Session(SessionLifecycle):
         dst_key = self._to_key(dst)
 
         if self.is_dir(src):
+            if self._object_beside_prefix(src_key, src):
+                # Moving the folder tree would leave the file behind and
+                # moving the file would not be what a folder rename means.
+                raise OSError(
+                    f"Cannot rename {src}: both a file and a folder are named "
+                    f"{posixpath.basename(src_key)!r} here; the name does not say which one"
+                )
             # Rename all objects under the prefix
             old_prefix = src_key.rstrip("/") + "/"
             new_prefix = dst_key.rstrip("/") + "/"
@@ -509,9 +598,7 @@ class S3Session(SessionLifecycle):
         key = self._to_key(path)
         try:
             resp = self._s3.get_object(Bucket=self._bucket, Key=key)
-            buf = io.BytesIO(resp["Body"].read())
-            buf.seek(0)
-            return buf
+            return _spool_body(resp["Body"], f"Cannot read {path}")
         except (ClientError, Exception) as e:
             raise OSError(f"Cannot read {path}: {e}") from e
 
@@ -623,17 +710,15 @@ class S3Session(SessionLifecycle):
 
     def open_version_read(self, path: str, version_id: str):
         """GET a specific VersionId of an object."""
-        import io
-
         try:
             resp = self._s3.get_object(
                 Bucket=self._bucket,
                 Key=self._to_key(path),
                 VersionId=version_id,
             )
+            return _spool_body(resp["Body"], f"Cannot read {path}@{version_id}")
         except Exception as exc:
             raise OSError(f"S3 get_object {path}@{version_id}: {exc}") from exc
-        return io.BytesIO(resp["Body"].read())
 
     def copy(self, src: str, dst: str) -> None:
         """S3 CopyObject — no client bytes."""
@@ -717,10 +802,12 @@ class S3Session(SessionLifecycle):
     def checksum(self, path: str, algorithm: str = "sha256") -> str:
         """Return the object ETag.
 
-        For non-multipart uploads this IS an MD5 hash of the content.
-        For multipart uploads the ETag is a composite of part-MD5s
-        followed by ``-<partcount>`` — still useful as a stable
-        fingerprint for change detection. Prefix indicates source.
+        ``md5:`` only where the ETag IS the content MD5: a single-part
+        upload, unencrypted or SSE-S3. A multipart ETag (a composite of
+        part MD5s followed by ``-<partcount>``) and the ETag of an SSE-KMS
+        or SSE-C object are ``s3-etag:`` - a stable fingerprint for
+        change detection, but no content hash: the same bytes stored
+        again can carry another one.
         """
         try:
             resp = self._s3.head_object(Bucket=self._bucket, Key=self._to_key(path))
@@ -729,9 +816,16 @@ class S3Session(SessionLifecycle):
         etag = (resp.get("ETag") or "").strip('"')
         if not etag:
             return ""
-        if "-" in etag:
+        sse = str(resp.get("ServerSideEncryption") or "").lower()
+        is_content_md5 = (
+            len(etag) == 32
+            and all(c in "0123456789abcdefABCDEF" for c in etag)
+            and not sse.startswith("aws:kms")
+            and not resp.get("SSECustomerAlgorithm")
+        )
+        if not is_content_md5:
             return f"s3-etag:{etag}"
-        return f"md5:{etag}"
+        return f"md5:{etag.lower()}"
 
     def _to_key(self, path: str) -> str:
         """Convert a UI path to an S3 object key (no leading slash)."""

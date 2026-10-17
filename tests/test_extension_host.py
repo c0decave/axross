@@ -171,7 +171,9 @@ def test_happy_run_in_background_answers_on_the_gui_thread(window) -> None:
             main = threading.get_ident()
             api.run_in_background(
                 lambda: threading.get_ident(),
-                on_done=lambda worker: RESULT.append((worker != main, threading.get_ident() == main)),
+                on_done=lambda worker: RESULT.append(
+                    (worker != main, threading.get_ident() == main)
+                ),
             )
         """,
     )
@@ -255,7 +257,9 @@ def test_sad_a_disabled_extension_never_runs(window) -> None:
 def test_sad_paranoid_mode_loads_nothing(window, monkeypatch) -> None:
     from core import security_mode
 
-    write_ext("hello2", "def activate(api):\n    api.add_menu_action('Paranoid Hello', lambda: None)\n")
+    write_ext(
+        "hello2", "def activate(api):\n    api.add_menu_action('Paranoid Hello', lambda: None)\n"
+    )
     EX.set_enabled("user:hello2", True)
     monkeypatch.setattr(security_mode, "_CURRENT", security_mode.PARANOID)
     window.extension_host.reload()
@@ -294,7 +298,9 @@ def test_edge_reload_picks_up_a_changed_source(window) -> None:
 
 def test_edge_a_user_extension_named_like_a_bundled_one_is_separate(window) -> None:
     bundled = next(e for e in EX.discover() if e.source == "bundled")
-    write_ext(bundled.module_name, "def activate(api):\n    api.add_menu_action('Mine', lambda: None)\n")
+    write_ext(
+        bundled.module_name, "def activate(api):\n    api.add_menu_action('Mine', lambda: None)\n"
+    )
     EX.set_enabled(f"user:{bundled.module_name}", True)
     host = window.extension_host
     host.reload()

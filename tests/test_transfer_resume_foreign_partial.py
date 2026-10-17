@@ -82,6 +82,12 @@ class WorkerTest(unittest.TestCase):
         self.partial = self.tmp / ".dst.bin.part-old"
 
     def run_job(self, src_fs=None, dst_fs=None) -> TW.TransferJob:
+        # Name the partial as written from the source as it is now, so the
+        # content check below the version check is what decides.
+        fp = TW.source_fingerprint(LocalFS().stat(str(self.src)))
+        versioned = self.tmp / TW.partial_name("dst.bin", "1a2b3c4d", fp)
+        self.partial.rename(versioned)
+        self.partial = versioned
         job = TW.TransferJob(
             source_path=str(self.src),
             dest_path=str(self.dst),
@@ -177,6 +183,167 @@ class AutoResumeEndToEndTest(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(jobs[0].status, TW.TransferStatus.DONE, jobs[0].error_message)
         self.assertEqual((tmp / "downloads" / "backup.tar").read_bytes(), new)
+
+
+class _NoMtimeFS(_NoChecksumFS):
+    def stat(self, path):
+        import dataclasses
+
+        return dataclasses.replace(super().stat(path), modified=None)
+
+
+class SourceVersionTest(unittest.TestCase):
+    """A partial records which version of the source it was written from.
+
+    Measured before: a 4 MiB source copied to a destination without a
+    native checksum (SMB) was cancelled after 2 MiB, then changed in the
+    middle. The next copy adopted the partial by name, compared only its
+    first and last 64 KiB, appended the new tail and reported DONE: the
+    destination held the old middle; a move then deleted the source.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.src = self.tmp / "src.bin"
+        self.dst = self.tmp / "dst.bin"
+
+    def _partial_for(self, fingerprint: str) -> Path:
+        return self.tmp / TW.partial_name("dst.bin", "1a2b3c4d", fingerprint)
+
+    def _fingerprint(self) -> str:
+        return TW.source_fingerprint(LocalFS().stat(str(self.src)))
+
+    def run_job(self, partial: Path, src_fs=None, move=False) -> TW.TransferJob:
+        job = TW.TransferJob(
+            source_path=str(self.src), dest_path=str(self.dst),
+            total_bytes=self.src.stat().st_size, filename="src.bin",
+            source_backend=src_fs or _NoChecksumFS(), dest_backend=_NoChecksumFS(),
+            resume=True, temp_path=str(partial), move=move,
+        )
+        TW.TransferWorker()._process_job(job)
+        return job
+
+    def test_sad_a_partial_of_an_older_version_is_not_spliced(self) -> None:
+        old = random.Random(11).randbytes(4 * 1024 * KIB)
+        self.src.write_bytes(old)
+        os.utime(self.src, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+        partial = self._partial_for(self._fingerprint())
+        partial.write_bytes(old[: 2 * 1024 * KIB])
+        new = bytearray(old)
+        new[1024 * KIB: 1024 * KIB + 4096] = b"\xaa" * 4096  # inside the copied part
+        self.src.write_bytes(bytes(new))
+        job = self.run_job(partial, move=True)
+        self.assertEqual(job.status, TW.TransferStatus.DONE, job.error_message)
+        self.assertEqual(self.dst.read_bytes(), bytes(new))
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["dst.bin"])
+
+    def test_happy_a_partial_of_the_unchanged_source_resumes(self) -> None:
+        data = random.Random(12).randbytes(3 * 1024 * KIB)
+        self.src.write_bytes(data)
+        partial = self._partial_for(self._fingerprint())
+        partial.write_bytes(data[: 2 * 1024 * KIB])
+        fs = _CountingFS()
+        job = self.run_job(partial, src_fs=fs)
+        self.assertEqual(job.status, TW.TransferStatus.DONE, job.error_message)
+        self.assertEqual(self.dst.read_bytes(), data)
+        self.assertLess(fs.bytes_read, 1024 * KIB + 256 * KIB)
+
+    def test_edge_a_partial_without_a_recorded_version_restarts(self) -> None:
+        data = random.Random(13).randbytes(3 * 1024 * KIB)
+        self.src.write_bytes(data)
+        partial = self.tmp / ".dst.bin.part-1a2b3c4d"  # named before versions were recorded
+        partial.write_bytes(data[: 2 * 1024 * KIB])
+        fs = _CountingFS()
+        job = self.run_job(partial, src_fs=fs)
+        self.assertEqual(job.status, TW.TransferStatus.DONE, job.error_message)
+        self.assertEqual(self.dst.read_bytes(), data)
+        self.assertGreaterEqual(fs.bytes_read, len(data))
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["dst.bin", "src.bin"])
+
+    def test_edge_a_source_without_a_modification_time_never_resumes(self) -> None:
+        data = random.Random(14).randbytes(1024 * KIB)
+        self.src.write_bytes(data)
+        partial = self._partial_for(self._fingerprint())
+        partial.write_bytes(b"X" * (512 * KIB))  # head and tail would not even match
+        job = self.run_job(partial, src_fs=_NoMtimeFS())
+        self.assertEqual(job.status, TW.TransferStatus.DONE, job.error_message)
+        self.assertEqual(self.dst.read_bytes(), data)
+
+    def test_edge_partial_names_record_and_read_back_the_fingerprint(self) -> None:
+        name = TW.partial_name("a-b.txt", "0123abcd", "deadbeef")
+        self.assertEqual(name, ".a-b.txt.part-0123abcd-deadbeef")
+        self.assertEqual(TW.partial_fingerprint(name, "a-b.txt"), "deadbeef")
+        self.assertEqual(TW.partial_fingerprint(".a-b.txt.part-0123abcd", "a-b.txt"), "")
+        self.assertEqual(TW.partial_fingerprint(".a-b.txt.part-old", "a-b.txt"), "")
+        self.assertEqual(TW.partial_fingerprint(".other.part-0-deadbeef", "a-b.txt"), "")
+
+
+class AutoResumeVersionEndToEndTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        try:
+            from PyQt6.QtWidgets import QApplication
+        except ImportError:
+            raise unittest.SkipTest("PyQt6 not installed")
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _wait(self, jobs) -> None:
+        deadline = time.monotonic() + 20
+        while any(j.status in (TW.TransferStatus.PENDING, TW.TransferStatus.ACTIVE)
+                  for j in jobs):
+            self.app.processEvents()
+            if time.monotonic() > deadline:
+                self.fail("transfer did not finish")
+            time.sleep(0.01)
+
+    def test_sad_a_source_changed_since_the_cancelled_copy_is_copied_whole(self) -> None:
+        from core.transfer_manager import TransferManager
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "src").mkdir()
+        (tmp / "share").mkdir()
+        src = tmp / "src" / "disk.img"
+        old = random.Random(15).randbytes(4 * 1024 * KIB)
+        src.write_bytes(old)
+        os.utime(src, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+        fp = TW.source_fingerprint(LocalFS().stat(str(src)))
+        (tmp / "share" / TW.partial_name("disk.img", "1a2b3c4d", fp)).write_bytes(
+            old[: 2 * 1024 * KIB]
+        )
+        new = bytearray(old)
+        new[1024 * KIB: 1024 * KIB + 4096] = b"\xaa" * 4096
+        src.write_bytes(bytes(new))
+
+        mgr = TransferManager()
+        self.addCleanup(mgr.shutdown)
+        jobs = mgr.transfer_files(_NoChecksumFS(), _NoChecksumFS(), [str(src)],
+                                  str(tmp / "share"), move=True)
+        self._wait(jobs)
+        self.assertEqual(jobs[0].status, TW.TransferStatus.DONE, jobs[0].error_message)
+        self.assertEqual((tmp / "share" / "disk.img").read_bytes(), bytes(new))
+        self.assertEqual(os.listdir(tmp / "share"), ["disk.img"])
+
+    def test_happy_the_probe_prefers_the_partial_of_the_current_version(self) -> None:
+        from core.transfer_manager import TransferManager
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "out").mkdir()
+        src = tmp / "f.bin"
+        data = random.Random(16).randbytes(1024 * KIB)
+        src.write_bytes(data)
+        fp = TW.source_fingerprint(LocalFS().stat(str(src)))
+        (tmp / "out" / TW.partial_name("f.bin", "00000000", "0badf00d")).write_bytes(b"s" * 9)
+        good = tmp / "out" / TW.partial_name("f.bin", "11111111", fp)
+        good.write_bytes(data[:300 * KIB])
+        mgr = TransferManager()
+        self.addCleanup(mgr.shutdown)
+        jobs = mgr.transfer_files(_NoChecksumFS(), _NoChecksumFS(), [str(src)], str(tmp / "out"))
+        self.assertEqual(jobs[0].temp_path, str(good))
+        self._wait(jobs)
+        self.assertEqual((tmp / "out" / "f.bin").read_bytes(), data)
 
 
 if __name__ == "__main__":

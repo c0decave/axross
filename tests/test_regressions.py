@@ -19,7 +19,13 @@ from core.local_fs import LocalFS
 from core.profiles import ConnectionProfile, ProfileManager
 from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
 from core.transfer_manager import TransferManager
-from core.transfer_worker import TransferJob, TransferStatus, TransferWorker
+from core.transfer_worker import (
+    TransferJob,
+    TransferStatus,
+    TransferWorker,
+    partial_name,
+    source_fingerprint,
+)
 from models.file_item import FileItem
 from models.file_table_model import FileTableModel
 from ui.connection_dialog import ConnectionDialog
@@ -141,7 +147,9 @@ class TransferRegressionTests(unittest.TestCase):
             )
             job.source_backend = fs
             job.dest_backend = fs
-            part_path = os.path.join(out_dir, f".src.bin.part-{job.job_id}")
+            part_path = os.path.join(
+                out_dir, partial_name("src.bin", job.job_id, source_fingerprint(fs.stat(src)))
+            )
             Path(part_path).write_bytes(data[:100_000])
 
             worker._do_transfer(job, lambda *_: None)
@@ -166,7 +174,9 @@ class TransferRegressionTests(unittest.TestCase):
             )
             job.source_backend = fs
             job.dest_backend = fs
-            part_path = os.path.join(out_dir, f".src.bin.part-{job.job_id}")
+            part_path = os.path.join(
+                out_dir, partial_name("src.bin", job.job_id, source_fingerprint(fs.stat(src)))
+            )
             Path(part_path).write_bytes(data)
 
             worker._do_transfer(job, lambda *_: None)

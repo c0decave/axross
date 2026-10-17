@@ -9161,24 +9161,24 @@ def test_smb_shares_list_parses_grepable_output(monkeypatch):
     assert "WORKGROUP" not in by_name
 
 
-def test_smb_acl_get_and_dfs_referrals_clearly_not_implemented():
-    """Both raise NotImplementedError with a follow-up pointer so
-    a caller knows it's an explicit gap, not a silent default."""
+def test_smb_acl_get_and_dfs_referrals_are_implemented():
+    """No longer follow-ups that raise NotImplementedError: acl_get
+    reads the security descriptor, dfs_referrals the DFS referrals
+    (tests/test_smb_acl_dfs.py has their cases, live ones included)."""
     from core.smb_client import SmbSession
 
     s = SmbSession.__new__(SmbSession)
+    s._host, s._share, s._port = "h", "s", 445
+    s._prefix = r"\\h\s"
+    s._dfs_lookup = lambda unc: None
+    assert s.dfs_referrals("/") == []
+    s._query_security = lambda unc: b""
     try:
         s.acl_get("/x")
-    except NotImplementedError as e:
-        assert "QUERY_SECURITY_INFO" in str(e)
-    else:
-        raise AssertionError("acl_get should raise NotImplementedError")
-    try:
-        s.dfs_referrals("/")
-    except NotImplementedError as e:
-        assert "FSCTL_DFS_GET_REFERRALS" in str(e)
-    else:
-        raise AssertionError("dfs_referrals should raise NotImplementedError")
+    except NotImplementedError:  # pragma: no cover - the old stub
+        raise AssertionError("acl_get is still a stub")
+    except OSError:
+        pass  # an empty descriptor cannot be read
 
 
 # ════════════════════════════════════════════════════════════

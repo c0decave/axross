@@ -43,6 +43,7 @@ from __future__ import annotations
 import email
 import email.message
 import email.utils
+import errno
 import io
 import logging
 import re
@@ -132,9 +133,38 @@ _NOT_FOUND_MARKERS = (
 )
 
 
+# exchangelib's not-found errors, by class name so the check works with
+# exchangelib absent. Their messages need not say "not found": a folder
+# lookup raises ErrorFolderNotFound("No subfolder with name 'x'"). An id
+# the server rejects as malformed names no item either - "notes.eml" in an
+# upload is parsed as the id "notes".
+_NOT_FOUND_ERRORS = frozenset(
+    {
+        "ErrorFolderNotFound",
+        "ErrorItemNotFound",
+        "ErrorInvalidIdMalformed",
+        "ErrorNonExistentMailbox",
+    }
+)
+
+
 def _is_not_found(exc: BaseException) -> bool:
-    msg = str(exc).lower()
-    return any(marker in msg for marker in _NOT_FOUND_MARKERS)
+    """True when *exc*, or an error it was raised ``from``, says the
+    folder, message or attachment is not there. Only ``__cause__`` is
+    followed: an error raised while handling a not-found one (a reset
+    connection during _child_folder's fallback scan) has it as its
+    ``__context__`` and is not a not-found itself."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, FileNotFoundError) or type(cur).__name__ in _NOT_FOUND_ERRORS:
+            return True
+        msg = str(cur).lower()
+        if any(marker in msg for marker in _NOT_FOUND_MARKERS):
+            return True
+        cur = cur.__cause__
+    return False
 
 
 def _sanitize(name: str, max_len: int = 120) -> str:
@@ -558,41 +588,57 @@ class ExchangeSession(SessionLifecycle):
             except OSError as exc:
                 if not _is_not_found(exc):
                     raise
-        # Message file (.eml) lookup.
-        if parts[-1].endswith(".eml"):
-            folder = self._resolve_folder(parts[:-1])
-            msg = self._fetch_message(folder, head, only=LISTING_FIELDS)
-            return FileItem(
-                name=parts[-1],
-                size=self._estimate_size(msg),
-                modified=self._msg_mtime(msg),
-                is_dir=False,
-            )
-        # Attachment within a message.
-        if len(parts) >= 3:
-            folder = self._resolve_folder(parts[:-2])
-            msg = self._fetch_message(folder, parts[-2], only=ATTACHMENT_FIELDS)
-            for att in getattr(msg, "attachments", None) or []:
-                if _sanitize(getattr(att, "name", "")) == parts[-1]:
-                    return FileItem(
-                        name=parts[-1],
-                        size=int(getattr(att, "size", 0) or 0),
-                        modified=self._msg_mtime(msg),
-                        is_dir=False,
-                    )
-        raise OSError(f"Exchange stat({path}): not found")
+        try:
+            # Message file (.eml) lookup.
+            if parts[-1].endswith(".eml"):
+                folder = self._resolve_folder(parts[:-1])
+                msg = self._fetch_message(folder, head, only=LISTING_FIELDS)
+                return FileItem(
+                    name=parts[-1],
+                    size=self._estimate_size(msg),
+                    modified=self._msg_mtime(msg),
+                    is_dir=False,
+                )
+            # Attachment within a message.
+            if len(parts) >= 3:
+                folder = self._resolve_folder(parts[:-2])
+                msg = self._fetch_message(folder, parts[-2], only=ATTACHMENT_FIELDS)
+                atts = getattr(msg, "attachments", None) or []
+                for att in atts:
+                    # The name the listing shows (duplicates numbered), not
+                    # the raw one: "report.1.pdf" was "not found" (review B24).
+                    if self._unique_attachment_name(atts, att) == parts[-1]:
+                        return FileItem(
+                            name=parts[-1],
+                            size=int(getattr(att, "size", 0) or 0),
+                            modified=self._msg_mtime(msg),
+                            is_dir=False,
+                        )
+        except OSError as exc:
+            if not _is_not_found(exc):
+                raise
+            raise FileNotFoundError(
+                errno.ENOENT, f"Exchange stat({path}): not found: {exc}", path
+            ) from exc
+        raise FileNotFoundError(errno.ENOENT, f"Exchange stat({path}): not found", path)
 
     def is_dir(self, path: str) -> bool:
+        """False only for a path that is not there; a failed EWS call is
+        an OSError (transfer_manager recurses on True)."""
         try:
             return self.stat(path).is_dir
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def exists(self, path: str) -> bool:
+        """False only when EWS answers "not found" for every reading of
+        the path. A reset connection, a timeout, ErrorAccessDenied or a
+        busy server is an OSError: server_side_copy(overwrite=False)
+        takes False as its go-ahead."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
     # ------------------------------------------------------------------
@@ -677,19 +723,19 @@ class ExchangeSession(SessionLifecycle):
         # fallback subject is readable.
         fallback_subject = filename[:-4] if filename.endswith(".eml") else filename
         subject = (parsed.get("Subject") or "").strip() or fallback_subject
-        body = _extract_text_body(parsed)
-        to_addrs = _split_addresses(parsed.get_all("To"))
-        cc_addrs = _split_addresses(parsed.get_all("Cc"))
-        bcc_addrs = _split_addresses(parsed.get_all("Bcc"))
+        mime = raw
+        if not (parsed.get("Subject") or "").strip():
+            clean = "".join(c for c in fallback_subject if c >= " " and c != "\x7f")
+            mime = f"Subject: {clean}\r\n".encode("utf-8") + raw
         try:
+            # The message as it is - attachments, HTML part, From, Date and
+            # every other header. It used to be rebuilt from Subject,
+            # To/Cc/Bcc and the first text part, dropping the rest
+            # silently (review B2, 2026-10-17).
             msg = Message(  # type: ignore[misc]
                 account=self._account,
                 folder=folder,
-                subject=subject,
-                body=body,
-                to_recipients=[Mailbox(email_address=a) for a in to_addrs] or None,  # type: ignore[misc]
-                cc_recipients=[Mailbox(email_address=a) for a in cc_addrs] or None,  # type: ignore[misc]
-                bcc_recipients=[Mailbox(email_address=a) for a in bcc_addrs] or None,  # type: ignore[misc]
+                mime_content=mime,
             )
             msg.save()
         except Exception as exc:  # noqa: BLE001

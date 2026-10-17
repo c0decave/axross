@@ -150,10 +150,12 @@ _TOOL_ICONS = {
     ),
     # Window corner, left of the [x]: maximize (corners out), restore (corners in).
     "window-maximize": _svg(
-        '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
+        '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3'
+        'm0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
     ),
     "window-restore": _svg(
-        '<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>',
+        '<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3'
+        'm0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>',
     ),
     "refresh": _svg(
         '<polyline points="23 4 23 10 17 10"/>'
@@ -194,8 +196,7 @@ _TOOL_ICONS = {
     ),
     # A pie chart: disk usage.
     "disk-usage": _svg(
-        '<path d="M21.2 15.9A10 10 0 1 1 8 2.8"/>'
-        '<path d="M22 12A10 10 0 0 0 12 2v10z"/>',
+        '<path d="M21.2 15.9A10 10 0 1 1 8 2.8"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
     ),
     # An "i" in a circle: show metadata.
     "metadata": _svg(
@@ -210,8 +211,7 @@ _TOOL_ICONS = {
     ),
     # A puzzle piece: extensions.
     "extensions": _svg(
-        '<path d="M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4'
-        'a2 2 0 1 0 0-4z"/>',
+        '<path d="M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z"/>',
     ),
 }
 

@@ -631,7 +631,9 @@ class AnalysisDock(QDockWidget):
                         self._save_settings(settings)
                     except OSError:
                         # The consent still holds for this analysis.
-                        log.warning("Could not remember the consent for %s", profile.name, exc_info=True)
+                        log.warning(
+                            "Could not remember the consent for %s", profile.name, exc_info=True
+                        )
                 profile.consent()
         try:
             key = self._key_lookup(profile.name) or ""

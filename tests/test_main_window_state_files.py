@@ -200,7 +200,11 @@ class SessionSaveTest(_WindowStateTest):
                 }
             )
         )
-        self.make_window()
+        win = self.make_window()
+        # Compact is read at start like the theme (test_compact_mode_persists);
+        # what is saved is the window's state, here switched off again.
+        self.assertTrue(win._compact_mode)
+        win._compact_action.setChecked(False)
         self.close()
         data = json.loads(self.session.read_text())
         self.assertEqual(data["window"]["language"], "sv")

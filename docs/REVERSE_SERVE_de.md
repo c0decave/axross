@@ -33,12 +33,15 @@ bleibt explizit out-of-scope (braucht userspace NFS-Impl).
 >>> srv = axross.serve_s3(backend, port=9000)
 >>> srv.base_url
 'http://127.0.0.1:9000'
+>>> srv.auth_token
+'kX3v…'
 ```
 
-In einem zweiten Terminal:
+In einem zweiten Terminal, mit dem Token als Access Key ID (das Secret
+wird nicht geprüft):
 
 ```bash
-$ export AWS_ACCESS_KEY_ID=anything
+$ export AWS_ACCESS_KEY_ID='<srv.auth_token>'
 $ export AWS_SECRET_ACCESS_KEY=anything
 $ restic -r s3:http://127.0.0.1:9000/restic-backups init
 $ restic -r s3:http://127.0.0.1:9000/restic-backups backup ~/Documents
@@ -67,6 +70,8 @@ In gnome-files in die Pfadleiste:
 davs://127.0.0.1:8080
 ```
 
+gnome-files fragt nach einem User-Namen (beliebig) und einem Passwort: `srv.auth_token`.
+
 Folders = IMAP-Folders, Files = Messages — die gleiche Sicht, die
 axross intern hat, jetzt sichtbar für jedes Tool, das WebDAV spricht.
 
@@ -77,15 +82,16 @@ axross intern hat, jetzt sichtbar für jedes Tool, das WebDAV spricht.
 | Default | Wert | Warum |
 |---|---|---|
 | Bind | `127.0.0.1` | Public-Interface erfordert explizit `bind="0.0.0.0"`. Ein verirrter Reverse-Server soll nie versehentlich dein remote SFTP ins LAN exponieren. |
-| Auth | keine auf localhost | `auth_token="…"` für `Authorization: Bearer <token>`. Non-local Binds wie `0.0.0.0` werden ohne Auth-Token **abgelehnt**. |
+| Auth | ein Token, auch auf localhost | Ein Loopback-Server erzeugt einen (`srv.auth_token`); `auth_token="…"` setzt einen eigenen. Clients senden ihn als `Authorization: Bearer <token>`, als Basic-Passwort (WebDAV-Clients fragen danach) oder als AWS Access Key ID (aws-cli, restic, boto3). `auth_token=None` schaltet Auth ab, nur auf Loopback: dann erreicht jeder lokale User des Hosts das Backend. Non-local Binds wie `0.0.0.0` werden ohne expliziten Token **abgelehnt**. |
 | Read-only | False | `read_only=True` lehnt jeden Mutating-Verb (PUT/DELETE/MKCOL/MOVE/COPY) mit HTTP 403 ab. |
-| Path-Traversal | abgelehnt | Jeder Pfad wird normalisiert; `..`-Segmente liefern 400. |
+| Path-Traversal | abgelehnt | Jeder Pfad wird normalisiert; `..`-Segmente, Segmente mit Backslash und Segmente, die mit einem Laufwerk (`C:`) beginnen, liefern 400, und jeder zusammengesetzte Pfad muss im Pfad-Flavour des Backends unter der Root bleiben (auch Windows-Pfade). |
 | Body-Cap | 8 GiB pro Request | Gegen Content-Length-Lügen. |
 
-Reverse-Server macht **kein** AWS-Signature-V4 — der Path-Style
-Endpoint authent nur per Bearer-Token. restic / rclone / aws-cli
-akzeptieren entweder Dummy-Creds (ohne Auth) oder einen Custom
-`Authorization`-Header.
+Reverse-Server prüft **kein** AWS-Signature-V4 — er liest aus einem
+signierten Request nur die Access Key ID und vergleicht sie mit dem
+Token. aws-cli / restic / rclone / boto3 laufen also mit
+`AWS_ACCESS_KEY_ID=<token>` und beliebigem Secret; curl und andere
+HTTP-Clients senden `Authorization: Bearer <token>`.
 
 Voll-signierten S3-Endpoint? Echtes Gateway (MinIO, SeaweedFS,
 garage). Der axross-Reverse-Server ist **Swiss-Army-Gateway, kein
@@ -151,8 +157,8 @@ Konkret:
   hat den Zugriff dessen, der das Backend geöffnet hat. **Nicht auf
   ein remote SFTP zeigen, das Daten hält, an die der lokale User
   nicht ran soll.**
-* Bearer-Tokens werden mit `hmac.compare_digest` verglichen. Plain
-  `Authorization: Bearer <token>` — kein Replay-Schutz, keine Nonce,
+* Tokens werden mit `hmac.compare_digest` verglichen. Sie gehen im
+  Klartext (Bearer-Header, Basic-Passwort oder AWS Access Key ID) — kein Replay-Schutz, keine Nonce,
   kein Time-Bound. Wie jedes Shared-Secret behandeln: bei Verdacht
   rotieren, nie loggen, jenseits localhost via TLS.
 * Keine TLS-Termination. Bind `0.0.0.0` → TLS-Proxy davor (nginx,

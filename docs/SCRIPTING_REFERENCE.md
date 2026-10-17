@@ -900,7 +900,8 @@ return a plain-text report.
 
 ### `axross.recent_operations(limit: 'int' = 20) -> 'list[dict]'`
 
-Return recent redacted operation-journal events.
+Return recent operation-journal events: secrets redacted, paths
+as they are on disk (undo needs them).
 
 ### `axross.security_mode(name: 'str | None' = None) -> 'str'`
 
@@ -1104,24 +1105,31 @@ modified path lists.
 
 ## Reverse-serve (expose a backend over S3 / WebDAV)
 
-### `axross.serve_s3(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 9000, read_only: 'bool' = False, auth_token: 'str' = '', root_path: 'str' = '/') -> 'ReverseServer'`
+### `axross.serve_s3(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 9000, read_only: 'bool' = False, auth_token: 'str | None' = '', root_path: 'str' = '/') -> 'ReverseServer'`
 
 Expose ``backend`` as a minimum-viable S3 endpoint so any
 existing S3 client (aws-cli / restic / rclone / terraform) can
 speak to it.
 
-Localhost-bound by default. Pass ``bind="0.0.0.0"`` only when you
-intentionally want LAN access; non-local binds without
-``auth_token=…`` are refused. Returns a live
+Localhost-bound by default, and with a token by default: the
+handle's ``.auth_token`` is what clients send - as the AWS access
+key id (``AWS_ACCESS_KEY_ID=<token>``, any secret: aws-cli, restic,
+rclone, boto3), as ``Authorization: Bearer <token>`` or as the Basic
+password. ``auth_token="…"`` sets your own; ``auth_token=None``
+turns auth off - on loopback only, as every local user can then
+reach the backend.
+Pass ``bind="0.0.0.0"`` only when you intentionally want LAN access;
+non-local binds need an explicit ``auth_token``. Returns a live
 :class:`core.reverse_serve.ReverseServer` handle; call
 ``.shutdown()`` to stop.
 
-### `axross.serve_webdav(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 8080, read_only: 'bool' = False, auth_token: 'str' = '', root_path: 'str' = '/') -> 'ReverseServer'`
+### `axross.serve_webdav(backend: 'FileBackend', *, bind: 'str' = '127.0.0.1', port: 'int' = 8080, read_only: 'bool' = False, auth_token: 'str | None' = '', root_path: 'str' = '/') -> 'ReverseServer'`
 
 Expose ``backend`` as a minimum-viable WebDAV endpoint —
 ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser
-read-only listings all work. Same OPSEC rules as
-:func:`serve_s3`. Returns a :class:`core.reverse_serve.ReverseServer`.
+read-only listings all work; they ask for the token as the password
+(any user name). Same token rules as :func:`serve_s3`. Returns a
+:class:`core.reverse_serve.ReverseServer`.
 
 
 ## Result types (dataclasses returned by helpers above)
@@ -1288,27 +1296,38 @@ Return long-form documentation as Markdown.
 The output is plain Markdown. The doc-pane in the GUI calls this
 too — same source-of-truth for the headless and the GUI surface.
 
-### `axross.api_schema() -> 'dict'`
+### `axross.api_schema(names: 'list[str] | None' = None) -> 'dict'`
 
 Describe the scripting API as JSON-serialisable data, for a machine.
 
-Built from the live objects with :mod:`inspect`, so it is never out of
-date: ``functions`` has one entry per public function - ``name``,
-``group``, ``signature``, ``parameters`` (``name``, ``kind``,
+Built from the live objects with :mod:`inspect` and :mod:`ast`, so it
+is never out of date. ``functions`` has one entry per public function:
+``name``, ``group``, ``signature``, ``parameters`` (``name``, ``kind``,
 ``annotation``, ``required``, ``default`` or ``default_repr``),
-``returns``, ``summary`` (the first docstring paragraph), ``mutates``
-(can change files, remote state or settings) and ``prompts`` (can
-wait for a human, or raises :class:`NonInteractiveError` without
-one); ``classes`` lists the public classes (dataclass fields
-included); ``backend_protocol`` lists the methods every session from
-:func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs`
-has, ``close()`` and the ``with`` statement included.
+``returns``, ``summary`` (the first docstring paragraph), ``doc`` (the
+whole docstring), ``examples`` (its literal code blocks), ``raises``
+(what the axross layer raises itself), ``mutates`` (can change files,
+remote state or settings) and ``prompts`` (can wait for a human, or
+raises :class:`NonInteractiveError` without one). ``classes`` lists the
+public classes, ``types`` the other classes the API takes or returns
+(``FileItem`` and the result types) with fields, properties and
+methods; ``backend_protocol`` lists what every session from
+:func:`open`, :func:`open_url`, :func:`localfs` or :func:`ramfs` has,
+with ``mutates``, ``optional`` and ``fallback``; ``groups`` orders the
+names by topic; ``rules`` and ``errors`` are the conventions and the
+exceptions a script meets; ``legend`` explains every field.
 
-The MCP tool ``script_api_schema`` returns the same data. For prose,
-use :func:`docs`::
+``names`` narrows ``functions``, ``classes`` and ``types`` to those
+names plus the types they and the session methods use; ``names=[]``
+gives the index alone (groups, rules, errors, session methods). An
+unknown name raises :class:`ValueError`.
+
+The MCP tool ``script_api_schema`` returns the same data, and
+``docs/scripting-api.json`` is a copy of it. For prose, use
+:func:`docs`::
 
     import json
-    print(json.dumps(axross.api_schema()["functions"][0], indent=2))
+    print(json.dumps(axross.api_schema(["read_text"]), indent=2))
 
 
 ---
@@ -1543,12 +1562,13 @@ Join path components using this backend's separator.
 
 List directory contents. Raises OSError on failure.
 
-### `backend.list_versions(self, path: 'str') -> 'list'`
+### `backend.list_versions(self, path: 'str') -> 'list[FileVersion]'`
 
 Return historical versions of *path*, newest first.
 
 Backends with native versioning (S3, Azure Blob, Dropbox,
-GDrive, OneDrive, WebDAV DeltaV) populate this. Backends
+GDrive, OneDrive, WebDAV DeltaV, Git - one version per commit
+that changed the file) populate this. Backends
 without versioning return ``[]``. Each element is a
 :class:`models.file_version.FileVersion`.
 
@@ -1564,7 +1584,7 @@ Normalize a path (resolve .., ., etc.).
 
 Open a file for reading. Caller must close the returned handle.
 
-### `backend.open_version_read(self, path: 'str', version_id: 'str')`
+### `backend.open_version_read(self, path: 'str', version_id: 'str') -> 'IO[bytes]'`
 
 Open a historical version of *path* for streaming read.
 

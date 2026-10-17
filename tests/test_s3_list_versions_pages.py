@@ -114,7 +114,9 @@ def test_sad_truncated_page_without_a_marker_raises_instead_of_looping():
 
 def test_edge_unversioned_bucket_returns_no_versions():
     s, stub = _session()
-    stub.add_response("list_object_versions", {"IsTruncated": False}, {"Bucket": "b", "Prefix": "a.txt"})
+    stub.add_response(
+        "list_object_versions", {"IsTruncated": False}, {"Bucket": "b", "Prefix": "a.txt"}
+    )
     with stub:
         assert s.list_versions("/a.txt") == []
 

@@ -10,6 +10,7 @@ subsequent sessions authenticate silently.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import logging
@@ -23,7 +24,8 @@ from typing import IO
 
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
-from core.secure_storage import write_secret_file
+from core.read_spool import spool_response
+from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
 
 log = logging.getLogger(__name__)
@@ -31,18 +33,32 @@ log = logging.getLogger(__name__)
 try:
     import dropbox
     from dropbox.exceptions import ApiError, AuthError
-    from dropbox.files import FileMetadata, FolderMetadata, WriteMode
+    from dropbox.files import (
+        CommitInfo,
+        FileMetadata,
+        FolderMetadata,
+        UploadSessionCursor,
+        WriteMode,
+    )
     from dropbox.oauth import DropboxOAuth2FlowNoRedirect
 except ImportError:
     dropbox = None  # type: ignore[assignment]
     FileMetadata = None  # type: ignore[assignment,misc]
     FolderMetadata = None  # type: ignore[assignment,misc]
+    CommitInfo = None  # type: ignore[assignment,misc]
+    UploadSessionCursor = None  # type: ignore[assignment,misc]
     WriteMode = None  # type: ignore[assignment,misc]
     ApiError = Exception  # type: ignore[assignment,misc]
     AuthError = Exception  # type: ignore[assignment,misc]
     DropboxOAuth2FlowNoRedirect = None  # type: ignore[assignment,misc]
 
 _DEFAULT_TOKEN_PATH = os.path.expanduser("~/.config/axross/dropbox_token.json")
+
+#: files/upload takes at most 150 MiB per request; a larger file goes
+#: through an upload session.
+_SINGLE_UPLOAD_MAX = 150 * 1024 * 1024
+#: Bytes per upload-session request (a multiple of 4 MiB, as Dropbox asks).
+_UPLOAD_CHUNK = 8 * 1024 * 1024
 
 # What the SDK raises from inside a call besides ApiError: its other
 # exception classes (HTTP 400 / 401 / 429 / 5xx answers), stone's
@@ -70,11 +86,27 @@ except ImportError:  # pragma: no cover - SDK absent: nothing to guard
     pass
 
 
+def _is_not_found(exc: BaseException) -> bool:
+    """True for the route error that says nothing is at the path:
+    ``path/not_found``, or ``path/not_folder`` (a file where the path
+    needs a folder). restricted_content, locked, malformed_path, a 403
+    and the rest describe a refusal, not an absence."""
+    error = getattr(exc, "error", None)
+    try:
+        if not error.is_path():
+            return False
+        lookup = error.get_path()
+        return bool(lookup.is_not_found() or lookup.is_not_folder())
+    except AttributeError:
+        return False
+
+
 class _GuardedDropbox:
     """The SDK client, with every call failing as ApiError or OSError.
 
     ApiError passes unchanged (the methods below turn it into an OSError
-    with their own message, and is_dir / exists read it as "no"); any
+    with their own message; is_dir / exists read only a not-found
+    ApiError as "no", see _is_not_found); any
     other failure inside an SDK call becomes an OSError, which is what
     the pane and the transfer layer handle. Only the SDK call is
     guarded: errors in this module's own code are not masked.
@@ -125,15 +157,32 @@ class _SpooledWriter:
             return
         self._closed = True
         try:
+            size = self._buf.seek(0, io.SEEK_END)
             self._buf.seek(0)
-            data = self._buf.read()
-            self._dbx.files_upload(
-                data,
-                self._remote_path,
-                mode=WriteMode("overwrite"),
-            )
+            if size <= _SINGLE_UPLOAD_MAX:
+                self._dbx.files_upload(
+                    self._buf.read(),
+                    self._remote_path,
+                    mode=WriteMode("overwrite"),
+                )
+            else:
+                self._upload_in_session(size)
         finally:
             self._buf.close()
+
+    def _upload_in_session(self, size: int) -> None:
+        """start, append_v2 ..., finish: one chunk per request."""
+        chunk = self._buf.read(_UPLOAD_CHUNK)
+        started = self._dbx.files_upload_session_start(chunk)
+        cursor = UploadSessionCursor(session_id=started.session_id, offset=len(chunk))
+        commit = CommitInfo(path=self._remote_path, mode=WriteMode("overwrite"))
+        while True:
+            chunk = self._buf.read(_UPLOAD_CHUNK)
+            if cursor.offset + len(chunk) >= size:
+                self._dbx.files_upload_session_finish(chunk, cursor, commit)
+                return
+            self._dbx.files_upload_session_append_v2(chunk, cursor)
+            cursor.offset += len(chunk)
 
     def discard(self) -> None:
         """Drop the buffered bytes without uploading. Called by
@@ -172,6 +221,7 @@ class DropboxSession(SessionLifecycle):
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        legacy_token_file: str | None = None,
     ):
         if dropbox is None:
             raise ImportError(
@@ -182,6 +232,11 @@ class DropboxSession(SessionLifecycle):
         self._app_key = app_key
         self._app_secret = app_secret
         self._token_file = os.path.expanduser(token_file)
+        # The token file all profiles shared before each got its own: it
+        # is taken over only when it names this app key.
+        self._legacy_token_file = (
+            os.path.expanduser(legacy_token_file) if legacy_token_file else None
+        )
         # Build the requests proxies dict once; apply on every Dropbox()
         # construction in _apply_session_overrides.
         from core.proxy import build_requests_proxies
@@ -330,6 +385,11 @@ class DropboxSession(SessionLifecycle):
 
     def _load_tokens(self) -> dict | None:
         """Load saved tokens from disk (with shape validation)."""
+        adopt_legacy_secret_file(
+            self._token_file,
+            getattr(self, "_legacy_token_file", None),
+            lambda text: json.loads(text).get("app_key") == self._app_key,
+        )
         if not os.path.isfile(self._token_file):
             return None
         try:
@@ -370,6 +430,15 @@ class DropboxSession(SessionLifecycle):
                 self._token_file,
             )
             return None
+        if data.get("app_key") != self._app_key:
+            # A token of another app key - or one saved before the key was
+            # recorded - may open another account.
+            log.warning(
+                "Dropbox: the token in %s was not issued to this app key; "
+                "restarting OAuth flow",
+                self._token_file,
+            )
+            return None
         return data
 
     def _save_tokens(self, access_token: str, refresh_token: str | None) -> None:
@@ -377,6 +446,7 @@ class DropboxSession(SessionLifecycle):
         data = {
             "access_token": access_token,
             "refresh_token": refresh_token or "",
+            "app_key": self._app_key,
         }
         try:
             write_secret_file(self._token_file, json.dumps(data, indent=2))
@@ -482,24 +552,33 @@ class DropboxSession(SessionLifecycle):
             raise OSError(f"Cannot stat {path}: {exc}") from exc
 
     def is_dir(self, path: str) -> bool:
+        """False only for "not found"; any other route error (locked,
+        restricted_content, a 403 ...) is an OSError."""
         api_path = self._api_path(path)
         if not api_path:
             return True
         try:
             md = self._ensure_connected().files_get_metadata(api_path)
-            return isinstance(md, FolderMetadata)
-        except ApiError:
-            return False
+        except ApiError as exc:
+            if _is_not_found(exc):
+                return False
+            raise OSError(f"Cannot check {path}: {exc}") from exc
+        return isinstance(md, FolderMetadata)
 
     def exists(self, path: str) -> bool:
+        """False only for "not found"; any other route error is an
+        OSError - server_side_copy(overwrite=False) takes False as its
+        go-ahead to write."""
         api_path = self._api_path(path)
         if not api_path:
             return True
         try:
             self._ensure_connected().files_get_metadata(api_path)
-            return True
-        except ApiError:
-            return False
+        except ApiError as exc:
+            if _is_not_found(exc):
+                return False
+            raise OSError(f"Cannot check {path}: {exc}") from exc
+        return True
 
     # ------------------------------------------------------------------
     # Mutations
@@ -517,6 +596,12 @@ class DropboxSession(SessionLifecycle):
         dbx = self._ensure_connected()
         api_path = self._api_path(path)
         try:
+            # files/delete_v2 takes a folder with everything in it, so a
+            # non-recursive remove refuses a folder with entries first.
+            if not recursive and isinstance(dbx.files_get_metadata(api_path), FolderMetadata):
+                page = dbx.files_list_folder(api_path, limit=1)
+                if page.entries or page.has_more:
+                    raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}", path)
             dbx.files_delete_v2(api_path)
         except ApiError as exc:
             raise OSError(f"Cannot remove {path}: {exc}") from exc
@@ -537,11 +622,10 @@ class DropboxSession(SessionLifecycle):
         api_path = self._api_path(path)
         try:
             _metadata, response = dbx.files_download(api_path)
-            buf = io.BytesIO(response.content)
-            buf.seek(0)
-            return buf
         except ApiError as exc:
             raise OSError(f"Cannot read {path}: {exc}") from exc
+        # The SDK streams a download: spooled, not one bytes object in RAM.
+        return spool_response(response, what=f"Cannot read {path}")
 
     # See core/s3_client.py for the rationale on the cap.
     _MAX_APPEND_EXISTING_SIZE = 256 * 1024 * 1024
@@ -644,13 +728,13 @@ class DropboxSession(SessionLifecycle):
         return out
 
     def open_version_read(self, path: str, version_id: str):
-        """Download a historical revision as a BytesIO stream."""
+        """Download a historical revision as a spooled stream."""
         dbx = self._ensure_connected()
         try:
             md, resp = dbx.files_download(self._api_path(path), rev=version_id)
+            return spool_response(resp, what=f"Cannot read {path}@{version_id}")
         except Exception as exc:
             raise OSError(f"Dropbox open_version_read failed: {exc}") from exc
-        return io.BytesIO(resp.content)
 
     def copy(self, src: str, dst: str) -> None:
         """Dropbox files_copy_v2 — server-side."""
@@ -694,10 +778,11 @@ class DropboxSession(SessionLifecycle):
                 settings=SharedLinkSettings(requested_visibility=vis),
             )
             url = getattr(link, "url", "") or ""
+            # The path, never the link: a public link opens the file for
+            # whoever reads the log.
             log.info(
-                "Dropbox shared_link_create: %s -> %s (visibility=%s)",
+                "Dropbox shared_link_create: %s (visibility=%s)",
                 path,
-                url,
                 "public" if public else "team_only",
             )
             return url
@@ -710,11 +795,7 @@ class DropboxSession(SessionLifecycle):
                     direct_only=True,
                 )
                 if existing.links:
-                    log.info(
-                        "Dropbox shared_link_create: %s -> %s (re-using existing)",
-                        path,
-                        existing.links[0].url,
-                    )
+                    log.info("Dropbox shared_link_create: %s (re-using existing)", path)
                     return existing.links[0].url
             raise OSError(f"Dropbox shared_link_create({path}): {exc}") from exc
 

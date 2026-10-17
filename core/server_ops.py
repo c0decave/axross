@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import errno
 import logging
+import os
+import shutil
 import tempfile
 import uuid
 from typing import TYPE_CHECKING
 
-from core.path_policy import safe_join
+from core.path_policy import hidden_sibling_name, safe_join
 
 if TYPE_CHECKING:  # pragma: no cover
     pass
@@ -126,7 +128,8 @@ def _rename_fallback_allowed(backend, exc: BaseException) -> bool:
     A plain ``OSError`` can mean "target exists", "permission denied",
     "cross-device link", or "protocol has no rename". Only the last
     category should become copy+delete; otherwise we may turn a refused
-    move into a destructive overwrite.
+    move into a destructive overwrite. (A local cross-device rename takes
+    its own non-overwriting path, see :func:`_move_across_devices`.)
     """
     if isinstance(exc, NotImplementedError):
         return True
@@ -162,14 +165,18 @@ def _temp_destination_path(backend, dst: str) -> str:
     parent = backend.parent(dst)
     separator = backend.separator()
     name = dst.rsplit(separator, 1)[-1] if separator in dst else dst
-    return safe_join(backend, parent, f".{name}.copy-{uuid.uuid4().hex}.tmp")
+    return safe_join(
+        backend, parent, hidden_sibling_name(name, f".copy-{uuid.uuid4().hex}.tmp")
+    )
 
 
 def _replacement_backup_path(backend, dst: str) -> str:
     parent = backend.parent(dst)
     separator = backend.separator()
     name = dst.rsplit(separator, 1)[-1] if separator in dst else dst
-    return safe_join(backend, parent, f".{name}.replace-{uuid.uuid4().hex}.bak")
+    return safe_join(
+        backend, parent, hidden_sibling_name(name, f".replace-{uuid.uuid4().hex}.bak")
+    )
 
 
 def _cleanup_temp_destination(backend, temp_path: str | None) -> None:
@@ -495,6 +502,138 @@ def server_side_copy(
     copy_via_stream(backend, src, dst)
 
 
+def _is_cross_device(backend, exc: BaseException) -> bool:
+    """EXDEV from a backend whose paths are this machine's paths."""
+    if getattr(exc, "errno", None) != errno.EXDEV:
+        return False
+    from core.local_fs import LocalFS
+
+    return isinstance(backend, LocalFS)
+
+
+def _move_across_devices(src: str, dst: str, rename_exc: BaseException) -> None:
+    """Move a local entry to another file system: copy, then remove.
+
+    What ``mv`` does where rename(2) answers EXDEV. A folder keeps its
+    symlinks as links, a link is moved as the link. The destination must
+    be free -- rename would have replaced a file, a copy is not allowed
+    to. A failed copy removes what it wrote and leaves the source as it
+    was; a source that cannot be removed afterwards is reported, and for
+    a single file the copy is taken back so there is one, not two.
+    """
+    if os.path.lexists(dst):
+        raise rename_exc
+    is_tree = os.path.isdir(src) and not os.path.islink(src)
+    try:
+        if is_tree:
+            shutil.copytree(src, dst, symlinks=True)
+        elif os.path.islink(src):
+            os.symlink(os.readlink(src), dst)
+        else:
+            shutil.copy2(src, dst, follow_symlinks=False)
+    except BaseException as exc:
+        try:
+            if is_tree and os.path.isdir(dst) and not os.path.islink(dst):
+                shutil.rmtree(dst)
+            elif os.path.lexists(dst):
+                os.remove(dst)
+        except OSError as cleanup_exc:
+            log.error("move across devices: could not remove the partial copy %s: %s",
+                      dst, cleanup_exc)
+        if isinstance(exc, shutil.Error):
+            raise OSError(f"cannot move {src} to {dst}: {exc}") from exc
+        raise
+    try:
+        if is_tree:
+            shutil.rmtree(src)
+        else:
+            os.remove(src)
+    except OSError as exc:
+        if not is_tree:
+            try:
+                os.remove(dst)
+            except OSError:
+                log.error("move across devices: %s copied to %s but neither removed", src, dst)
+            raise
+        # The copy is complete; part of the source may already be gone,
+        # so the copy is the one to keep.
+        raise OSError(
+            f"moved {src} to {dst}, but the source could not be removed completely: {exc}"
+        ) from exc
+    log.debug("server_side_move: %s -> %s across devices (copy + remove)", src, dst)
+
+
+def _leaf_name(backend, path: str) -> str:
+    separator = backend.separator()
+    return path.rsplit(separator, 1)[-1] if separator in path else path
+
+
+def is_case_only_rename(backend, src: str, dst: str) -> bool:
+    """Whether *dst* differs from *src* only in letter case, in the same folder."""
+    if src == dst:
+        return False
+    try:
+        if backend.parent(src) != backend.parent(dst):
+            return False
+        src_leaf, dst_leaf = _leaf_name(backend, src), _leaf_name(backend, dst)
+    except Exception:  # noqa: BLE001 - not a question this backend can answer
+        return False
+    return src_leaf != dst_leaf and src_leaf.casefold() == dst_leaf.casefold()
+
+
+def rename_target_taken(backend, src: str, dst: str) -> bool:
+    """Whether renaming *src* to *dst* would hit another, existing entry.
+
+    ``exists(dst)`` alone also answers True on a case-insensitive file
+    system (APFS, NTFS, most SMB shares) when *dst* only re-cases *src*:
+    it finds the source itself. For such a case-only rename the folder
+    listing decides - only an entry spelled exactly like *dst* is another
+    file (a case-sensitive folder holding both spellings).
+    """
+    if not _exists_true(backend, dst):
+        return False
+    if not is_case_only_rename(backend, src, dst):
+        return True
+    leaf = _leaf_name(backend, dst)
+    try:
+        listing = backend.list_dir(backend.parent(dst))
+    except OSError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - callers handle OSError
+        raise OSError(f"could not list the folder of {dst}: {exc}") from exc
+    return any(item.name == leaf for item in listing)
+
+
+def _rename_via_temp_name(backend, src: str, dst: str) -> None:
+    """Case-only rename on a case-insensitive backend, in two steps.
+
+    Some servers accept ``rename("a", "A")`` and change nothing, so the
+    name goes through a free temporary name first. When the second step
+    fails, the first is undone and the error raised.
+    """
+    temp = safe_join(
+        backend,
+        backend.parent(src),
+        hidden_sibling_name(_leaf_name(backend, src), f".case-{uuid.uuid4().hex[:12]}.tmp"),
+    )
+    if _exists_true(backend, temp):
+        raise FileExistsError(f"temporary rename name already exists: {temp}")
+    backend.rename(src, temp)
+    try:
+        backend.rename(temp, dst)
+    except BaseException:
+        try:
+            backend.rename(temp, src)
+        except Exception as undo_exc:  # noqa: BLE001 - the original error matters more
+            log.error(
+                "case-only rename: could not put %s back after a failure; it is at %s: %s",
+                src,
+                temp,
+                undo_exc,
+            )
+        raise
+
+
 def server_side_move(
     backend,
     src: str,
@@ -514,16 +653,25 @@ def server_side_move(
     """
     if not overwrite and hasattr(backend, "exists"):
         try:
-            if _exists_true(backend, dst):
+            if rename_target_taken(backend, src, dst):
                 raise FileExistsError(f"move target already exists: {dst}")
         except FileExistsError:
             raise
         except Exception as exc:
             raise OSError(f"move target existence check failed: {dst}") from exc
+    if _exists_true(backend, dst) and is_case_only_rename(backend, src, dst):
+        # The "existing" dst is src itself (rename_target_taken said so).
+        _rename_via_temp_name(backend, src, dst)
+        return
     try:
         backend.rename(src, dst)
         return
     except (OSError, NotImplementedError) as exc:
+        if _is_cross_device(backend, exc):
+            # Two local file systems (a USB stick and the home with the
+            # trash): rename cannot cross them, a move can.
+            _move_across_devices(src, dst, exc)
+            return
         if not _rename_fallback_allowed(backend, exc):
             log.debug(
                 "server_side_move: rename failed (%s); not falling back "

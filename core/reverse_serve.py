@@ -25,11 +25,15 @@ Common behaviour:
 * **localhost binding by default.** Listening on ``0.0.0.0`` requires
   an explicit ``bind="0.0.0.0"`` argument so a stray reverse-server
   never accidentally exposes your remote SFTP to the LAN.
-* **Shared-secret auth for non-local binds.** Pass ``auth_token=…`` and
-  the server enforces it (S3: ``X-Amz-Content-Sha256``-style
-  headerless-V4 won't validate; we accept ``Authorization: Bearer
-  <token>`` instead, which restic / rclone tolerate via ``--header``).
-  Binding to a non-loopback address without a token is refused.
+* **A token on every bind.** Pass ``auth_token=…`` or let a loopback
+  server generate one (``server.auth_token``): every other local user of
+  the host could otherwise reach the exposed backend through the port.
+  Clients send ``Authorization: Bearer <token>`` (curl), Basic auth with
+  the token as the password (davfs2, Finder, gnome-files, cadaver - a
+  WebDAV refusal asks for it), or the token as the AWS access key id
+  (aws-cli, restic, rclone, boto3; the signature itself is not checked).
+  ``auth_token=None`` turns auth off, on loopback only; binding to a
+  non-loopback address without a token is refused.
 * **Read-only mode.** ``read_only=True`` rejects every mutating
   verb with 403.
 * **Path policy.** Every incoming key is normalised; ``..``
@@ -53,9 +57,14 @@ SFTP-server reverse-mode is an obvious next step (paramiko
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import ipaddress
 import logging
+import ntpath
+import posixpath
+import re
 import secrets
 import socket
 import threading
@@ -83,6 +92,13 @@ REQUEST_TIMEOUT_S = 30.0
 MIN_WALK_DIR_VISITS = 128
 MAX_WALK_DIR_VISITS = 50_000
 MAX_WALK_PATH_CHARS = 8_192
+#: Most keys one ListBucket request walks. S3 lists keys sorted and
+#: pages by "after this key", so every page needs the whole key set
+#: below the prefix; a bucket above this answers with an error instead
+#: of a page that would skip keys.
+MAX_LIST_WALK_KEYS = 250_000
+#: S3's ETag of an empty object (MD5 of no bytes), for a folder marker.
+_EMPTY_ETAG = '"d41d8cd98f00b204e9800998ecf8427e"'
 
 
 # ---------------------------------------------------------------------------
@@ -90,15 +106,15 @@ MAX_WALK_PATH_CHARS = 8_192
 # ---------------------------------------------------------------------------
 
 
-def _normalize_key(raw: str) -> str:
-    """Decode + normalise an HTTP path/key into a backend-friendly path.
+#: A segment that starts with a drive (``C:``): ntpath.join drops
+#: everything before it, so it would replace the served root.
+_DRIVE_SEGMENT = re.compile(r"^[A-Za-z]:")
 
-    Rejects path-traversal segments so a hostile client can't escape
-    the rooted backend.
-    """
+
+def _split_segments(raw: str) -> list[str]:
+    """Decoded "/"-segments of *raw* without empty and "." ones; ``..``
+    is a PermissionError."""
     decoded = unquote(raw or "")
-    if not decoded.startswith("/"):
-        decoded = "/" + decoded
     parts = []
     for seg in decoded.split("/"):
         if seg in ("", "."):
@@ -106,6 +122,23 @@ def _normalize_key(raw: str) -> str:
         if seg == "..":
             raise PermissionError(f".. segment in path: {raw!r}")
         parts.append(seg)
+    return parts
+
+
+def _normalize_key(raw: str) -> str:
+    """Decode + normalise an HTTP path/key into a backend-friendly path.
+
+    Rejects path-traversal segments so a hostile client can't escape
+    the rooted backend - also in Windows path semantics, where LocalFS
+    joins with ntpath: a backslash is a separator there (``..%5C..``
+    climbs out) and a drive (``C:``) replaces the root.
+    """
+    parts = _split_segments(raw)
+    for seg in parts:
+        if "\\" in seg:
+            raise PermissionError(f"backslash in path segment: {raw!r}")
+        if _DRIVE_SEGMENT.match(seg):
+            raise PermissionError(f"drive in path segment: {raw!r}")
     return "/" + "/".join(parts)
 
 
@@ -114,8 +147,9 @@ def _normalize_root_path(raw: str) -> str:
 
     The caller is trusted, but accepting ``..`` here would undermine
     the promise that client-supplied paths stay rooted below this path.
+    Backslashes and a drive are the operator's own (a Windows root).
     """
-    return _normalize_key(raw or "/")
+    return "/" + "/".join(_split_segments(raw or "/"))
 
 
 def _is_local_bind(bind: str) -> bool:
@@ -144,6 +178,33 @@ def _backend_join(backend, *parts: str) -> str:
         return backend.join(*parts)
     cleaned = [p.strip("/") for p in parts if p]
     return "/" + "/".join(cleaned)
+
+
+def _path_flavour(backend):
+    """ntpath for a backend with backslash paths (LocalFS on Windows,
+    WinRM), else posixpath."""
+    try:
+        sep = backend.separator() if hasattr(backend, "separator") else "/"
+    except Exception:  # noqa: BLE001 - a separator() that fails says nothing
+        sep = "/"
+    return ntpath if sep == "\\" else posixpath
+
+
+def _rooted_join(backend, root: str, *parts: str) -> str:
+    """Join client-derived *parts* below *root*, refusing a result that
+    leaves it in the backend's own path flavour (second layer behind the
+    segment checks of :func:`_normalize_key`)."""
+    full = _backend_join(backend, root, *parts)
+    flavour = _path_flavour(backend)
+    base = flavour.normcase(flavour.normpath(root or flavour.sep))
+    target = flavour.normcase(flavour.normpath(full))
+    if flavour is ntpath:
+        inside_root = target == base or target.startswith(base.rstrip("\\/") + "\\")
+    else:
+        inside_root = target == base or target.startswith(base.rstrip("/") + "/")
+    if not inside_root:
+        raise PermissionError(f"path leaves the served root: {full!r}")
+    return full
 
 
 def _mkdir_best_effort(backend, path: str) -> None:
@@ -214,7 +275,8 @@ class ServerConfig:
     bind: str = DEFAULT_BIND
     port: int = 0
     read_only: bool = False
-    auth_token: str = ""  # empty → no auth required
+    # "" -> a loopback server generates one; None -> no auth (loopback only)
+    auth_token: str | None = ""
     root_path: str = "/"  # everything is rooted here on the backend
 
 
@@ -241,9 +303,10 @@ class _BaseHandler(BaseHTTPRequestHandler):
     def parse_request(self) -> bool:
         """Refuse DNS rebinding on loopback binds before any verb runs.
 
-        A loopback server needs no token, so the only thing keeping a web
-        page away from the backend is that it cannot forge ``Host``: after
-        a rebind the page's own hostname arrives there (and in ``Origin``).
+        A loopback server may run without a token (``auth_token=None``),
+        and then the only thing keeping a web page away from the backend is
+        that it cannot forge ``Host``: after a rebind the page's own
+        hostname arrives there (and in ``Origin``).
         Non-loopback binds require the bearer token instead and are served
         under whatever name clients use.
         """
@@ -268,17 +331,46 @@ class _BaseHandler(BaseHTTPRequestHandler):
     # --------------------------------- helpers ---------------------------
 
     def _is_authed(self) -> bool:
-        if not self.config.auth_token:
+        """The token as ``Bearer <token>``, as the password of Basic auth
+        (any user name) - what WebDAV clients can send - or as the access
+        key id of an AWS signature (V4 ``Credential=<token>/...`` or V2
+        ``AWS <token>:...``): S3 SDKs (aws-cli, restic) sign every request
+        and own the header. The signature itself is not checked; the key
+        id travels in clear like a Bearer token."""
+        token = self.config.auth_token
+        if not token:
             return True
         header = self.headers.get("Authorization", "")
-        if header.startswith("Bearer "):
-            return hmac.compare_digest(header[7:], self.config.auth_token)
-        return False
+        scheme, _, value = header.partition(" ")
+        presented = ""
+        if scheme.lower() == "bearer":
+            presented = value.strip()
+        elif scheme == "AWS4-HMAC-SHA256":
+            for part in value.split(","):
+                name, _, credential = part.strip().partition("=")
+                if name == "Credential":
+                    presented = credential.split("/", 1)[0]
+        elif scheme == "AWS":
+            presented = value.strip().rpartition(":")[0]
+        elif scheme.lower() == "basic":
+            try:
+                decoded = base64.b64decode(value.strip(), validate=True).decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError):
+                return False
+            _user, colon, presented = decoded.partition(":")
+            if not colon:
+                return False
+        return bool(presented) and hmac.compare_digest(
+            presented.encode("utf-8"), token.encode("utf-8")
+        )
 
     def _send_simple(
         self, code: int, body: bytes = b"", *, content_type: str = "text/plain"
     ) -> None:
         self.send_response(code)
+        if code == 401:
+            # WebDAV clients ask for credentials only when told the scheme.
+            self.send_header("WWW-Authenticate", 'Basic realm="axross", charset="UTF-8"')
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Server", HEAD_BANNER)
@@ -453,6 +545,11 @@ class _S3Handler(_BaseHandler):
         if not bucket or not key:
             self._s3_error(400, "InvalidArgument", "PUT requires bucket and key")
             return
+        if urlparse(self.path).path.endswith("/"):
+            # "dir/" is a folder marker (console "Create folder", rclone
+            # directory markers); _parse_path dropped the slash.
+            self._handle_put_folder(bucket, key)
+            return
         self._handle_put_object(bucket, key)
 
     def do_DELETE(self) -> None:
@@ -486,15 +583,18 @@ class _S3Handler(_BaseHandler):
         if not path:
             return ("", "")
         if "/" not in path:
-            return (path, "")
-        bucket, _, key = path.partition("/")
+            bucket, key = path, ""
+        else:
+            bucket, _, key = path.partition("/")
+        # Second layer: the joined path must stay below the root.
+        _rooted_join(self.config.backend, self.config.root_path, bucket, key)
         return (bucket, key)
 
     def _backend_path_for(self, bucket: str, key: str) -> str:
         """Rooted backend path. The reverse-server treats the *first
         URL segment* as the bucket name; we map it to a top-level
         directory under ``config.root_path``."""
-        return _backend_join(self.config.backend, self.config.root_path, bucket, key)
+        return _rooted_join(self.config.backend, self.config.root_path, bucket, key)
 
     def _s3_error(self, code: int, s3_code: str, message: str) -> None:
         body_xml = (
@@ -532,25 +632,55 @@ class _S3Handler(_BaseHandler):
         self._send_simple(200, body, content_type="application/xml")
 
     def _handle_list_bucket(self, bucket: str) -> None:
+        """ListObjects (v1) and ListObjectsV2 (``list-type=2``): keys in
+        S3 order, paged by marker / start-after / continuation-token,
+        grouped into CommonPrefixes by a delimiter."""
+        v2 = self._query_param("list-type") == "2"
         prefix = self._query_param("prefix") or ""
+        delimiter = self._query_param("delimiter") or ""
         try:
             max_keys = int(self._query_param("max-keys") or "1000")
         except ValueError:
             self._s3_error(400, "InvalidArgument", "max-keys must be an integer")
             return
         max_keys = max(1, min(max_keys, 5000))
-        bucket_root = _backend_join(self.config.backend, self.config.root_path, bucket)
+        token = self._query_param("continuation-token") if v2 else ""
+        start_after = self._query_param("start-after") if v2 else ""
+        if not v2:
+            after = self._query_param("marker")
+        elif token:
+            try:
+                after = _decode_continuation_token(token)
+            except ValueError:
+                self._s3_error(400, "InvalidArgument", "the continuation token is not valid")
+                return
+        else:
+            after = start_after
+        bucket_root = _rooted_join(self.config.backend, self.config.root_path, bucket)
         try:
             entries, walk_truncated = _walk_keys(
-                self.config.backend, bucket_root, prefix, max_keys
+                self.config.backend, bucket_root, prefix, MAX_LIST_WALK_KEYS
             )
         except OSError as exc:
             self._s3_error(404, "NoSuchBucket", str(exc))
             return
+        if walk_truncated:
+            # Pages are cut from the sorted whole: a walk that stopped
+            # early would make "after this key" skip keys it never saw.
+            self._s3_error(
+                500,
+                "InternalError",
+                "the listing exceeds the reverse-server walk limits; list a narrower prefix",
+            )
+            return
+        entries.sort(key=lambda entry: entry[0])
+        contents, prefixes, page_truncated, last = _list_page(
+            entries, prefix, delimiter, after, max_keys
+        )
         # Defense-in-depth: re-enforce listing-size caps at
         # the HTTP boundary so a regression in _walk_keys cannot blow
         # the response body up.
-        entries, defense_truncated = enforce_listing_caps(entries)
+        contents, defense_truncated = enforce_listing_caps(contents)
         contents_xml = "".join(
             f"<Contents>"
             f"<Key>{_xml_escape(rel)}</Key>"
@@ -558,32 +688,55 @@ class _S3Handler(_BaseHandler):
             f"<Size>{item['size']}</Size>"
             f"<StorageClass>STANDARD</StorageClass>"
             f"</Contents>"
-            for rel, item in entries
+            for rel, item in contents
         )
-        # Defense-in-depth: consolidate the three truncation
-        # signals through a single boundary helper so a regression that
-        # drops one signal cannot re-introduce the IsTruncated=false
-        # lie when keys still remain.
+        prefixes_xml = "".join(
+            f"<CommonPrefixes><Prefix>{_xml_escape(cp)}</Prefix></CommonPrefixes>"
+            for cp in prefixes
+        )
+        # Defense-in-depth: consolidate the truncation signals through a
+        # single boundary helper so a regression that drops one signal
+        # cannot re-introduce the IsTruncated=false lie when keys remain.
         truncated = validate_truncation_flag(
-            entry_count=len(entries),
+            entry_count=len(contents) + len(prefixes),
             max_keys=max_keys,
-            claimed_truncated=defense_truncated,
+            claimed_truncated=page_truncated or defense_truncated,
             walk_truncated=walk_truncated,
         )
+        if v2:
+            paging = f"<KeyCount>{len(contents) + len(prefixes)}</KeyCount>"
+            if token:
+                paging += f"<ContinuationToken>{_xml_escape(token)}</ContinuationToken>"
+            if start_after:
+                paging += f"<StartAfter>{_xml_escape(start_after)}</StartAfter>"
+            if truncated and last:
+                paging += (
+                    "<NextContinuationToken>"
+                    f"{_encode_continuation_token(last)}"
+                    "</NextContinuationToken>"
+                )
+        else:
+            paging = f"<Marker>{_xml_escape(after)}</Marker>"
+            if truncated and last:
+                paging += f"<NextMarker>{_xml_escape(last)}</NextMarker>"
+        if delimiter:
+            paging += f"<Delimiter>{_xml_escape(delimiter)}</Delimiter>"
         body = (
             "<?xml version='1.0' encoding='UTF-8'?>"
             "<ListBucketResult xmlns='http://s3.amazonaws.com/doc/2006-03-01/'>"
             f"<Name>{_xml_escape(bucket)}</Name>"
             f"<Prefix>{_xml_escape(prefix)}</Prefix>"
             f"<MaxKeys>{max_keys}</MaxKeys>"
+            f"{paging}"
             f"<IsTruncated>{'true' if truncated else 'false'}</IsTruncated>"
             f"{contents_xml}"
+            f"{prefixes_xml}"
             "</ListBucketResult>"
         ).encode("utf-8")
         self._send_simple(200, body, content_type="application/xml")
 
     def _handle_head_bucket(self, bucket: str) -> None:
-        bucket_root = _backend_join(self.config.backend, self.config.root_path, bucket)
+        bucket_root = _rooted_join(self.config.backend, self.config.root_path, bucket)
         try:
             self.config.backend.stat(bucket_root)
         except OSError:
@@ -673,6 +826,40 @@ class _S3Handler(_BaseHandler):
         self.send_header("Server", HEAD_BANNER)
         self.end_headers()
 
+    def _handle_put_folder(self, bucket: str, key: str) -> None:
+        """A zero-byte PUT of ``key/`` creates the folder ``key``."""
+        try:
+            length = self._content_length(default=0)
+        except ValueError as exc:
+            self._s3_error(400, "InvalidArgument", str(exc))
+            return
+        if length:
+            # The body is not read: the connection cannot carry another
+            # request after it.
+            self.close_connection = True
+            self._s3_error(400, "InvalidArgument", "a key ending in '/' is a folder; no body")
+            return
+        backend = self.config.backend
+        path = self._backend_path_for(bucket, key)
+        parent = backend.parent(path) if hasattr(backend, "parent") else ""
+        if parent:
+            _mkdir_best_effort(backend, parent)
+        _mkdir_best_effort(backend, path)
+        try:
+            is_dir = bool(getattr(backend.stat(path), "is_dir", False))
+        except OSError as exc:
+            log.warning("reverse-s3 folder PUT %s failed: %s", path, exc)
+            self._s3_error(500, "InternalError", str(exc))
+            return
+        if not is_dir:
+            self._s3_error(400, "InvalidArgument", "a file holds the folder's name")
+            return
+        self.send_response(200)
+        self.send_header("ETag", _EMPTY_ETAG)
+        self.send_header("Content-Length", "0")
+        self.send_header("Server", HEAD_BANNER)
+        self.end_headers()
+
     def _handle_delete_object(self, bucket: str, key: str) -> None:
         path = self._backend_path_for(bucket, key)
         try:
@@ -740,7 +927,10 @@ def _walk_keys(
                 continue
             rel = full[len(root) :].lstrip("/")
             if getattr(item, "is_dir", False):
-                stack.append(full)
+                folder = rel + "/"
+                # Only folders that can hold a key with the prefix.
+                if not prefix or folder.startswith(prefix) or prefix.startswith(folder):
+                    stack.append(full)
                 continue
             if prefix and not rel.startswith(prefix):
                 continue
@@ -757,6 +947,58 @@ def _walk_keys(
                 truncated = True
                 break
     return out, truncated
+
+
+def _list_page(
+    entries: list[tuple[str, dict]],
+    prefix: str,
+    delimiter: str,
+    after: str,
+    max_keys: int,
+) -> tuple[list[tuple[str, dict]], list[str], bool, str]:
+    """One ListObjects page from the sorted *entries* below *prefix*.
+
+    Returns ``(contents, common_prefixes, truncated, last)``: keys after
+    *after*, those whose rest after the prefix holds *delimiter* rolled
+    up into one common prefix each, at most *max_keys* of both together.
+    *last* is the last key or common prefix returned - the next page's
+    marker. A common prefix at or before *after* was returned already.
+    """
+    contents: list[tuple[str, dict]] = []
+    prefixes: list[str] = []
+    last = ""
+    for rel, meta in entries:
+        if after and rel <= after:
+            continue
+        common = None
+        if delimiter:
+            cut = rel.find(delimiter, len(prefix))
+            if cut >= 0:
+                common = rel[: cut + len(delimiter)]
+                if (prefixes and prefixes[-1] == common) or (after and common <= after):
+                    continue
+        if len(contents) + len(prefixes) >= max_keys:
+            return contents, prefixes, True, last
+        if common is not None:
+            prefixes.append(common)
+            last = common
+        else:
+            contents.append((rel, meta))
+            last = rel
+    return contents, prefixes, False, last
+
+
+def _encode_continuation_token(key: str) -> str:
+    return base64.urlsafe_b64encode(key.encode("utf-8", "surrogateescape")).decode("ascii")
+
+
+def _decode_continuation_token(token: str) -> str:
+    """The key a NextContinuationToken names; ValueError for anything else."""
+    try:
+        raw = base64.b64decode(token.encode("ascii"), altchars=b"-_", validate=True)
+    except (binascii.Error, UnicodeEncodeError) as exc:
+        raise ValueError(str(exc)) from exc
+    return raw.decode("utf-8", "surrogateescape")
 
 
 def _xml_escape(s: str) -> str:
@@ -942,10 +1184,12 @@ class _DAVHandler(_BaseHandler):
         dst_path = urlparse(dst_url).path or ""
         try:
             dst_norm = _normalize_key(dst_path)
+            dst_full = _rooted_join(
+                self.config.backend, self.config.root_path, dst_norm.lstrip("/")
+            )
         except (ValueError, PermissionError) as exc:
             self._send_simple(400, str(exc).encode("utf-8"))
             return
-        dst_full = _backend_join(self.config.backend, self.config.root_path, dst_norm.lstrip("/"))
         src_full = self._backend_path()
         if src_full is None:
             return
@@ -1033,10 +1277,10 @@ class _DAVHandler(_BaseHandler):
     def _backend_path(self) -> str | None:
         try:
             key = _normalize_key(urlparse(self.path).path or "/")
+            return _rooted_join(self.config.backend, self.config.root_path, key.lstrip("/"))
         except (ValueError, PermissionError) as exc:
             self._send_simple(400, str(exc).encode("utf-8"))
             return None
-        return _backend_join(self.config.backend, self.config.root_path, key.lstrip("/"))
 
     def _url_for(self, backend_path: str) -> str:
         rel = backend_path
@@ -1101,6 +1345,9 @@ class ReverseServer:
     backend_label: str
     httpd: ThreadingHTTPServer = field(repr=False)
     thread: threading.Thread = field(repr=False)
+    #: What clients must send (Bearer, or the Basic password); "" when the
+    #: server runs without auth (``auth_token=None``). Never logged.
+    auth_token: str = field(default="", repr=False)
 
     @property
     def base_url(self) -> str:
@@ -1139,14 +1386,35 @@ def supported_flavours() -> list[str]:
 
 
 def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServer:
-    config.auth_token = str(config.auth_token or "").strip()
-    config.root_path = _normalize_root_path(config.root_path)
-    if not _is_local_bind(config.bind) and not config.auth_token:
-        raise PermissionError(
-            f"reverse-{flavour} refuses to bind to {config.bind!r} without "
-            "auth_token; otherwise any host that can reach this interface "
-            "can access the exposed backend."
+    local = _is_local_bind(config.bind)
+    generated = False
+    if config.auth_token is None:
+        if not local:
+            raise PermissionError(
+                f"reverse-{flavour}: auth_token=None (no auth) is allowed only on a "
+                f"loopback bind, not on {config.bind!r}"
+            )
+        config.auth_token = ""
+        log.warning(
+            "reverse-%s on %s runs without a token: every local user of this host "
+            "can reach the exposed backend",
+            flavour,
+            config.bind,
         )
+    else:
+        config.auth_token = str(config.auth_token).strip()
+        if not config.auth_token:
+            if not local:
+                raise PermissionError(
+                    f"reverse-{flavour} refuses to bind to {config.bind!r} without "
+                    "auth_token; otherwise any host that can reach this interface "
+                    "can access the exposed backend."
+                )
+            # Loopback is not private on a shared host: a token by default,
+            # as mcp_http does without TLS.
+            config.auth_token = secrets.token_urlsafe(32)
+            generated = True
+    config.root_path = _normalize_root_path(config.root_path)
     if config.auth_token and len(config.auth_token) < 16:
         log.warning(
             "reverse-%s auth_token is short (%d chars); use a long random "
@@ -1177,6 +1445,7 @@ def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServ
             name=f"axross-reverse-{flavour}-{config.port}",
             daemon=True,
         ),
+        auth_token=config.auth_token,
     )
     server.thread.start()
     log.info(
@@ -1185,7 +1454,9 @@ def _serve(config: ServerConfig, handler_cls: type, flavour: str) -> ReverseServ
         label,
         server.base_url,
         config.read_only,
-        "yes" if config.auth_token else "no",
+        ("token generated, see .auth_token" if generated else "yes")
+        if config.auth_token
+        else "no",
     )
     return server
 
@@ -1201,7 +1472,7 @@ def serve_s3(
     bind: str = DEFAULT_BIND,
     port: int = DEFAULT_S3_PORT,
     read_only: bool = False,
-    auth_token: str = "",
+    auth_token: str | None = "",
     root_path: str = "/",
 ) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable S3 endpoint.
@@ -1232,7 +1503,7 @@ def serve_webdav(
     bind: str = DEFAULT_BIND,
     port: int = DEFAULT_WEBDAV_PORT,
     read_only: bool = False,
-    auth_token: str = "",
+    auth_token: str | None = "",
     root_path: str = "/",
 ) -> ReverseServer:
     """Expose ``backend`` as a minimum-viable WebDAV endpoint.

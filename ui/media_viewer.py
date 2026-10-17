@@ -45,7 +45,16 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut, QTransform
+from PyQt6.QtGui import (
+    QIcon,
+    QImage,
+    QKeyEvent,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+    QTransform,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -1348,6 +1357,7 @@ class MediaViewerDialog(QDialog):
             path_at=lambda pos: self._tile_path(tiles.indexAt(pos)),
             done=self._after_drag,
         )
+        self._move_watch = VFA.MoveWatch(self, backend, self._pane, self.remove_path)
 
     # -- scan -----------------------------------------------------------------
     def start(self) -> None:
@@ -1492,8 +1502,10 @@ class MediaViewerDialog(QDialog):
             self.remove_path(path)
 
     def _after_drag(self, path: str, action) -> None:
+        # A drop accepted as a move has not moved anything yet: the file
+        # leaves the grid when the source pane shows it gone.
         if action == Qt.DropAction.MoveAction:
-            self.remove_path(path)
+            self._move_watch.watch(path)
 
     def remove_path(self, path: str) -> None:
         """*path* is gone (deleted, moved): out of the grid and the viewer."""

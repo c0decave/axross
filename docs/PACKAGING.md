@@ -243,9 +243,10 @@ start it anyway:
   ./axross-slim-macos-arm64
   ```
 
-The window needs the desktop session. Over SSH there is no screen:
-axross then says so and exits 1, where Qt used to abort with crash
-reports. Without a window, `--mcp-server` and `--script FILE` work
+The window needs the desktop session. Over SSH only the user who is
+logged in at the screen gets it (the window then opens on that screen);
+for any other user there is no screen: axross then says so and exits 1,
+where Qt used to abort with crash reports. Without a window, `--mcp-server` and `--script FILE` work
 anywhere.
 
 ### Docker image (`Dockerfile.mcp`)
@@ -314,11 +315,46 @@ scripts/axross-podman.sh mcp --llm-model M.gguf -- --mcp-tools agent --mcp-root 
   `llm.json` yet. The model container is removed when axross exits.
 * **MCP.** `mcp` runs `axross --mcp-server` on stdio (`podman run -i`),
   for an MCP client on the host; arguments after `--` go to axross.
+* **The Agent dock's sandbox inside.** The image brings bubblewrap.
+  `--agent-sandbox` adds `--security-opt unmask=/proc/*`: podman masks
+  paths under `/proc` and mounts `/proc/sys` read-only, and bubblewrap
+  then fails to mount its own `/proc` ("Can't mount proc on
+  /newroot/proc") and, on high and paranoid, to switch off user
+  namespaces. Capabilities stay dropped and `no-new-privileges` stays
+  on; `/sys/firmware` stays masked. Measured 2026-10-17 with podman
+  6.1.3: with the option every test of `tests/test_agent_sandbox.py`
+  passes inside the container; without it the tab's error names the
+  option. podman inside the container cannot start the agent image (the
+  container's user namespace maps no further ids for `newuidmap`):
+  choose a bubblewrap sandbox profile there.
 
 Verified with podman 6.1.3: the window on X11 (Xvfb) and on Wayland
 (headless weston), the Agent's MCP tools answering with a local
 Qwen2.5-1.5B through llama.cpp, and `agent_run` from an MCP client on
 stdio.
+
+### Agent sandbox image (`Dockerfile.agent`)
+
+The image a tab's agent runs in when its sandbox profile uses podman or
+docker (Tools > Agent Settings > Sandboxes): only `core.agent_worker`,
+the agent loop and the MCP tools it calls, on `python:3.12-slim`; it
+runs as your own uid (`--user`, with podman also `--userns=keep-id`),
+so it can enter the tab's folder. No GUI, no protocol backends,
+no credentials: the model's requests, remote connections, MCP servers
+and extension tools stay in axross, which talks to the worker over
+stdin/stdout.
+
+```bash
+scripts/axross-podman.sh agent-image          # localhost/axross-agent:<version>
+docker build -f Dockerfile.agent -t localhost/axross-agent:<version> .
+```
+
+axross starts it with `--network=none --cap-drop=ALL --read-only
+--security-opt=no-new-privileges`, a size-limited `/tmp`, memory, pids
+and (high, paranoid) CPU limits, `--ipc=none` (high, paranoid) and only
+the tab's folder and the sandbox's extra folders mounted. bubblewrap
+needs no image: it runs the worker from the installed axross with the
+system and Python directories read-only.
 
 ## Cross-distro builds (glibc portability)
 

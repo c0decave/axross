@@ -42,7 +42,10 @@ class _RecordingDbx:
 
     def files_download(self, path, rev=None):
         self.calls.append(("files_download", path, rev))
-        return None, SimpleNamespace(content=b"old")
+        # The SDK streams a download (a requests.Response, stream=True).
+        return None, SimpleNamespace(
+            iter_content=lambda chunk_size=1: iter([b"old"]), close=lambda: None
+        )
 
     def files_copy_v2(self, src, dst):
         self.calls.append(("files_copy_v2", src, dst))

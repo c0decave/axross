@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fuzz_testkit import check_contract, iterations, mutants  # noqa: E402
 
 from core import svn_fs_client as S  # noqa: E402
+from tests.svn_fake import popen_from_run  # noqa: E402
 
 INFO = (
     b'<?xml version="1.0" encoding="UTF-8"?>\n<info>\n'
@@ -76,6 +77,7 @@ def svn():
     with (
         mock.patch.object(S, "_svn_available", return_value=True),
         mock.patch.object(S.subprocess, "run", fake),
+        mock.patch.object(S.subprocess, "Popen", popen_from_run(fake)),
     ):
         client = S.SvnFsSession(url="http://127.0.0.1/repo")
         yield fake, client

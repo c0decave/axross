@@ -25,7 +25,10 @@ SCRIPT = ROOT / "scripts" / "axross-podman.sh"
 FAKE_PODMAN = """#!/bin/sh
 printf '%s\\n' "$*" >> "$PODMAN_LOG"
 case "$1" in
-  logs) printf '%b' "${FAKE_LLM_LOG-load_model: loading\\nllama_server: model loaded\\nllama_server: listening on http://127.0.0.1:8080\\n}" ;;
+  logs)
+    ready='load_model: loading\\nllama_server: model loaded\\n'
+    ready="${ready}llama_server: listening on http://127.0.0.1:8080\\n"
+    printf '%b' "${FAKE_LLM_LOG-$ready}" ;;
   container) [ "${FAKE_LLM_DEAD:-0}" = 1 ] && exit 1 ;;
 esac
 exit 0
@@ -33,7 +36,8 @@ exit 0
 FAKE_XAUTH = """#!/bin/sh
 # xauth nlist :N  -> one cookie line;  xauth -f FILE nmerge -  -> write FILE
 case "$1" in
-  nlist) echo "0100 0004 74657374 0001 37 0012 4d49542d4d414749432d434f4f4b49452d31 0010 00112233445566778899aabbccddeeff" ;;
+  nlist) cookie=4d49542d4d414749432d434f4f4b49452d31
+         echo "0100 0004 74657374 0001 37 0012 $cookie 0010 00112233445566778899aabbccddeeff" ;;
   -f) cat > "$2" ;;
 esac
 """
@@ -112,7 +116,9 @@ def test_happy_x11_gets_its_socket_and_a_cookie_of_its_own(env):
     mounts = _pairs(call, "-v")
     assert f"{env['AXROSS_X11_DIR']}/X7:/tmp/.X11-unix/X7" in mounts
     cookie = next(m.split(":")[0] for m in mounts if m.endswith(":/tmp/.Xauthority:ro"))
-    assert Path(cookie).read_text().startswith("ffff")  # any-host family, so the container's hostname matches
+    assert (
+        Path(cookie).read_text().startswith("ffff")
+    )  # any-host family, so the container's hostname matches
     assert stat.S_IMODE(Path(cookie).stat().st_mode) == 0o600
     envs = _pairs(call, "-e")
     assert {"DISPLAY=:7", "QT_QPA_PLATFORM=xcb", "XAUTHORITY=/tmp/.Xauthority"} <= set(envs)
@@ -130,7 +136,9 @@ def test_happy_a_local_model_runs_beside_axross_sharing_its_network(env, tmp_pat
     assert not any(c[:1] == ["pod"] for c in calls)
     llm = next(c for c in calls if c[0] == "run" and "axross-gui-llm" in c)
     assert "--userns=keep-id" in llm and f"{model}:/models/{model.name}:ro" in _pairs(llm, "-v")
-    assert ["-m", f"/models/{model.name}"] == llm[llm.index("-m"):llm.index("-m") + 2] and "--jinja" in llm
+    assert ["-m", f"/models/{model.name}"] == llm[
+        llm.index("-m") : llm.index("-m") + 2
+    ] and "--jinja" in llm
     app = _run_call(calls)
     assert _pairs(app, "--network") == ["container:axross-gui-llm"]
     assert _pairs(app, "--userns") == ["container:axross-gui-llm"] and "--userns=keep-id" not in app
@@ -138,14 +146,21 @@ def test_happy_a_local_model_runs_beside_axross_sharing_its_network(env, tmp_pat
     assert ["rm", "-f", "axross-gui-llm"] in [c[:3] for c in calls]  # cleaned up afterwards
     profiles = json.loads((_home(env) / ".config" / "axross" / "llm.json").read_text())
     (profile,) = profiles["profiles"]
-    assert profile["endpoint"] == "http://127.0.0.1:8080/v1" and profiles["active"] == profile["name"]
+    assert (
+        profile["endpoint"] == "http://127.0.0.1:8080/v1" and profiles["active"] == profile["name"]
+    )
 
 
 def test_happy_mcp_mode_is_a_stdio_server_without_a_display(env):
     _, calls = _run(env, "mcp", "--", "--mcp-tools", "remote,agent")
     call = _run_call(calls)
     assert "-i" in call and not any("X11" in m or "wayland" in m for m in _pairs(call, "-v"))
-    assert call[-4:] == ["localhost/axross-gui:latest", "--mcp-server", "--mcp-tools", "remote,agent"]
+    assert call[-4:] == [
+        "localhost/axross-gui:latest",
+        "--mcp-server",
+        "--mcp-tools",
+        "remote,agent",
+    ]
 
 
 def test_happy_build_uses_the_gui_dockerfile(env):
@@ -197,10 +212,22 @@ def test_edge_an_existing_llm_profile_file_is_left_alone(env, tmp_path):
 def test_edge_llm_url_seeds_a_profile_without_a_pod(env):
     _socket(Path(env["AXROSS_X11_DIR"]) / "X7")
     env["DISPLAY"] = ":7"
-    _, calls = _run(env, "gui", "--llm-url", "http://host.containers.internal:11434/v1", "--llm-name", "qwen2.5:7b")
+    _, calls = _run(
+        env,
+        "gui",
+        "--llm-url",
+        "http://host.containers.internal:11434/v1",
+        "--llm-name",
+        "qwen2.5:7b",
+    )
     assert not any(c[:1] == ["pod"] for c in calls)
-    profile = json.loads((_home(env) / ".config" / "axross" / "llm.json").read_text())["profiles"][0]
-    assert profile["endpoint"] == "http://host.containers.internal:11434/v1" and profile["model"] == "qwen2.5:7b"
+    profile = json.loads((_home(env) / ".config" / "axross" / "llm.json").read_text())["profiles"][
+        0
+    ]
+    assert (
+        profile["endpoint"] == "http://host.containers.internal:11434/v1"
+        and profile["model"] == "qwen2.5:7b"
+    )
 
 
 def test_edge_home_is_private_and_data_is_mounted(env, tmp_path):
@@ -211,7 +238,9 @@ def test_edge_home_is_private_and_data_is_mounted(env, tmp_path):
     _, calls = _run(env, "gui", "--data", str(data), "--", "--debug")
     call = _run_call(calls)
     assert stat.S_IMODE(_home(env).stat().st_mode) == 0o700
-    assert f"{_home(env)}:~" in _pairs(call, "-v") and f"{data}:/data" in _pairs(call, "-v")
+    assert f"{_home(env)}:~" in _pairs(call, "-v") and f"{data}:/data" in _pairs(
+        call, "-v"
+    )
     assert call[-1] == "--debug"
     assert os.environ.get("PODMAN_LOG") is None  # the fake never leaks into the real environment
 
@@ -219,7 +248,9 @@ def test_edge_home_is_private_and_data_is_mounted(env, tmp_path):
 def test_sad_a_name_that_would_break_the_json_is_refused(env):
     _socket(Path(env["AXROSS_X11_DIR"]) / "X7")
     env["DISPLAY"] = ":7"
-    proc, calls = _run(env, "gui", "--llm-url", "http://h:1/v1", "--llm-name", 'x", "evil": "1', expect=2)
+    proc, calls = _run(
+        env, "gui", "--llm-url", "http://h:1/v1", "--llm-name", 'x", "evil": "1', expect=2
+    )
     assert "llm-name" in proc.stderr and calls == []
     assert not (_home(env) / ".config" / "axross" / "llm.json").exists()
 
@@ -265,7 +296,9 @@ def test_sad_a_model_that_never_comes_up_stops_before_axross(env, tmp_path):
     model.write_bytes(b"GGUF")
     proc, calls = _run(env, "gui", "--llm-model", str(model), expect=2)
     assert "did not come up" in proc.stderr and "load_model: loading" in proc.stderr
-    assert not any(c[0] == "run" and "axross-gui-llm" not in c for c in calls)  # axross never started
+    assert not any(
+        c[0] == "run" and "axross-gui-llm" not in c for c in calls
+    )  # axross never started
     assert ["rm", "-f", "axross-gui-llm"] in [c[:3] for c in calls]
 
 
@@ -276,3 +309,39 @@ def test_sad_a_model_container_that_dies_is_reported(env, tmp_path):
     model.write_bytes(b"GGUF")
     proc, _ = _run(env, "gui", "--llm-model", str(model), expect=2)
     assert "exited" in proc.stderr and "failed to load model" in proc.stderr
+
+
+# --- the agent's sandbox inside the container -------------------------------------------
+# Measured 2026-10-17 in podman (keep-id, cap-drop=ALL, no-new-privileges):
+# bubblewrap's --proc /proc fails on podman's masked /proc paths ("Can't mount
+# proc on /newroot/proc") and --disable-userns on the read-only /proc/sys;
+# with --security-opt unmask=/proc/* the whole agent sandbox test file passes.
+
+
+def test_happy_agent_sandbox_unmasks_proc_and_keeps_the_rest_closed(env):
+    _socket(Path(env["AXROSS_X11_DIR"]) / "X7")
+    env["DISPLAY"] = ":7"
+    _, calls = _run(env, "gui", "--agent-sandbox")
+    call = _run_call(calls)
+    assert "--security-opt=unmask=/proc/*" in call
+    assert "--cap-drop=ALL" in call and "--security-opt=no-new-privileges" in call
+
+
+def test_sad_without_the_option_proc_stays_masked(env):
+    _, calls = _run(env, "mcp")
+    assert not any("unmask" in a for a in _run_call(calls))
+
+
+def test_edge_agent_sandbox_also_reaches_axross_beside_a_local_model(env, tmp_path):
+    _socket(Path(env["AXROSS_X11_DIR"]) / "X7")
+    env["DISPLAY"] = ":7"
+    model = tmp_path / "m.gguf"
+    model.write_bytes(b"GGUF")
+    _, calls = _run(env, "gui", "--agent-sandbox", "--llm-model", str(model))
+    assert "--security-opt=unmask=/proc/*" in _run_call(calls)
+    llm = next(c for c in calls if c[0] == "run" and "axross-gui-llm" in c)
+    assert not any("unmask" in a for a in llm)  # the model's container needs no sandbox
+
+
+def test_happy_the_image_brings_bubblewrap():
+    assert "bubblewrap" in _final_stage()

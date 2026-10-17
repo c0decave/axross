@@ -79,6 +79,7 @@ def walk(
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     should_continue: Callable[[], bool] | None = None,
+    unlisted: dict[str, str] | None = None,
 ) -> dict[str, FileItem]:
     """Map every entry under ``root`` to its path relative to ``root``.
 
@@ -86,7 +87,10 @@ def walk(
     into: following them duplicates whole subtrees and, on a backend
     without loop detection, does not terminate. Unreadable directories
     are skipped — a permission-denied subtree should cost the caller
-    that subtree, not the entire comparison.
+    that subtree, not the entire comparison. Skipped is not empty,
+    though: when ``unlisted`` is given, each directory whose listing
+    failed is recorded there (relative path, ``""`` for the root) with
+    the error, so a caller can tell "nothing there" from "never read".
 
     ``should_continue`` is checked before every listing. Walking a remote
     tree is unbounded work, and a caller that has gone away (a closed
@@ -106,11 +110,13 @@ def walk(
             entries = backend.list_dir(path)
         except OSError as exc:
             log.debug("tree_compare: skipping %s: %s", path, exc)
+            if unlisted is not None:
+                unlisted[prefix.rstrip("/")] = str(exc) or type(exc).__name__
             return
         # Listing names are server-chosen (WebDAV takes them from
         # <D:displayname>). ``../x`` or ``a/b`` would become a relative
         # path that a sync joins onto the OTHER root, outside it.
-        for item in drop_unsafe_names(entries, origin=path):
+        for item in drop_unsafe_names(entries, origin=path, backend=backend):
             rel = f"{prefix}{item.name}"
             found[rel] = item
             if item.is_dir and not item.is_link:
@@ -118,6 +124,46 @@ def walk(
 
     _descend(root, "", 0)
     return found
+
+
+def _under_unlisted(rel: str, unlisted: dict[str, str]) -> tuple[str, str] | None:
+    """The unlisted directory *rel* is or lies in, with its error."""
+    for folder, error in unlisted.items():
+        if not folder or rel == folder or rel.startswith(f"{folder}/"):
+            return folder, error
+    return None
+
+
+def _unlisted_entry(
+    rel: str,
+    left: FileItem | None,
+    right: FileItem | None,
+    left_unlisted: dict[str, str],
+    right_unlisted: dict[str, str],
+) -> ComparedEntry | None:
+    """UNKNOWN for a path whose folder one side never listed.
+
+    Without this, a folder whose listing failed looked empty, and every
+    file under it on the other side compared as "missing" — which a
+    sync turns into a copy over files nobody compared.
+    """
+    for side, unlisted in (("left", left_unlisted), ("right", right_unlisted)):
+        hit = _under_unlisted(rel, unlisted)
+        if hit is not None:
+            folder, error = hit
+            if rel == folder and left is not None and right is not None:
+                if left.is_dir != right.is_dir:
+                    # Folder vs file differs whatever the folder holds.
+                    return None
+            where = f"folder {folder!r}" if folder else "root folder"
+            return ComparedEntry(
+                rel,
+                Status.UNKNOWN,
+                f"the {side} {where} could not be listed: {error}",
+                left,
+                right,
+            )
+    return None
 
 
 def _mtime_matches(left: FileItem, right: FileItem) -> bool:
@@ -217,27 +263,41 @@ def compare_trees(
 
         hasher = hash_file
 
+    left_unlisted: dict[str, str] = {}
+    right_unlisted: dict[str, str] = {}
     left_items = walk(
-        left_backend, left_root, max_depth=max_depth, should_continue=should_continue
+        left_backend,
+        left_root,
+        max_depth=max_depth,
+        should_continue=should_continue,
+        unlisted=left_unlisted,
     )
     right_items = walk(
-        right_backend, right_root, max_depth=max_depth, should_continue=should_continue
+        right_backend,
+        right_root,
+        max_depth=max_depth,
+        should_continue=should_continue,
+        unlisted=right_unlisted,
     )
 
-    return [
-        _classify(
-            rel,
-            left_items.get(rel),
-            right_items.get(rel),
-            left_backend=left_backend,
-            left_root=left_root,
-            right_backend=right_backend,
-            right_root=right_root,
-            hash_limit=hash_limit,
-            hasher=hasher,
-        )
-        for rel in sorted(set(left_items) | set(right_items))
-    ]
+    entries = []
+    for rel in sorted(set(left_items) | set(right_items)):
+        left, right = left_items.get(rel), right_items.get(rel)
+        entry = _unlisted_entry(rel, left, right, left_unlisted, right_unlisted)
+        if entry is None:
+            entry = _classify(
+                rel,
+                left,
+                right,
+                left_backend=left_backend,
+                left_root=left_root,
+                right_backend=right_backend,
+                right_root=right_root,
+                hash_limit=hash_limit,
+                hasher=hasher,
+            )
+        entries.append(entry)
+    return entries
 
 
 def summarize(entries: list[ComparedEntry]) -> dict[str, int]:

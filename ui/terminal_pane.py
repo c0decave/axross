@@ -71,6 +71,11 @@ class TerminalPaneWidget(QWidget):
         return self._profile
 
     @property
+    def is_running(self) -> bool:
+        """A shell session is open in this pane."""
+        return self._session is not None and self._session.is_active
+
+    @property
     def is_local(self) -> bool:
         """A local shell: neither a profile nor a transport behind it."""
         return self._profile is None and self._transport is None

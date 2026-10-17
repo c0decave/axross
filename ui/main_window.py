@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QByteArray, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QKeySequence, QPalette
+from PyQt6.QtGui import QAction, QColor, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -74,6 +74,35 @@ def _is_ssh_session(backend) -> bool:
     mod = sys.modules.get("core.ssh_client")
     return mod is not None and isinstance(backend, mod.SSHSession)
 
+
+def _terminal_name(session, profile) -> str:
+    """The terminal dock's name for an SSH *session* opened through *profile*.
+
+    ``session.name`` is only ``user@host``: two profiles to one user@host
+    (another port, two jump hosts to one inner address) shared one dock
+    entry, and connecting the second restarted the first one's running
+    shell on the other machine. The profile name and a non-default port
+    tell them apart."""
+    target = session.name
+    if profile is None:
+        return target
+    port = getattr(profile, "port", None)
+    if port and int(port) != 22:
+        target = f"{target}:{port}"
+    name = getattr(profile, "name", "")
+    return f"{name} ({target})" if name else target
+
+
+def _needs_key_passphrase(exc: BaseException) -> bool:
+    """True when a connect failed for want of (the right) SSH key
+    passphrase. Without importing paramiko at start-up: no SSH connect
+    can have failed before it is loaded."""
+    mod = sys.modules.get("paramiko")
+    return mod is not None and isinstance(exc, mod.PasswordRequiredException)
+
+
+# How often Quick Connect asks for a key passphrase before it gives up.
+KEY_PASSPHRASE_TRIES = 3
 
 RECONNECT_INTERVAL_MS = 30_000  # 30 seconds
 MAX_UI_STATE_BYTES = 1024 * 1024
@@ -171,13 +200,19 @@ def _defer_while_alive(widgets, fn) -> None:
     QTimer.singleShot(0, run)
 
 
-def _write_private_text(path: Path | str, text: str) -> None:
+def _write_private_text(path: Path | str, text: str, *, private_dir: bool = True) -> None:
+    """Write *text* to *path* atomically as a 0600 file.
+
+    *private_dir* (axross' own config folder) also creates the folder and
+    makes it 0700. A folder the user picked (an export) is left exactly
+    as it is: its mode is not ours to change."""
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(target.parent, 0o700)
-    except OSError:
-        log.debug("Could not set permissions on %s", target.parent, exc_info=True)
+    if private_dir:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(target.parent, 0o700)
+        except OSError:
+            log.debug("Could not set permissions on %s", target.parent, exc_info=True)
     fd, temp_name = tempfile.mkstemp(
         dir=target.parent,
         prefix=f".{target.name}.",
@@ -280,6 +315,8 @@ class MainWindow(QMainWindow):
         # doesn't tear the worker threads down mid-run. Older tasks
         # drain off this list once their threads have actually exited.
         self._connect_tasks: list = []
+        # Pane -> its auto-reconnect still in flight (skipped meanwhile).
+        self._reconnecting: dict = {}
         # Open Compare windows with the two panes each was built on.
         self._compare_dialogs: list = []
 
@@ -351,12 +388,27 @@ class MainWindow(QMainWindow):
         self._conflict_checks: set = set()
         self._transfer_manager.job_finished.connect(self._on_transfer_finished)
         self._transfer_manager.all_finished.connect(self._on_all_transfers_finished)
+        # Undos carried out by the transfer engine, recorded as undone only
+        # once every job of them finished (see _await_undo_jobs).
+        self._undo_waits: list[dict] = []
+        self._transfer_manager.job_finished.connect(self._on_undo_job_finished)
+        self._transfer_manager.job_error.connect(self._on_undo_job_error)
+        # Connections of closed panes kept open for their transfers:
+        # (profile, backend), released once no job uses the backend.
+        self._deferred_releases: list[tuple] = []
+        self._transfer_manager.job_finished.connect(self._release_idle_connections)
+        self._transfer_manager.job_error.connect(self._release_idle_connections)
+        self._transfer_manager.walk_finished.connect(self._release_idle_connections)
 
         # Extensions: only the switched-on ones are loaded, and none in the
         # paranoid security mode (core.extensions).
         from ui.extension_host import ExtensionHost
 
         self.extension_host = ExtensionHost(self, self.extensions_menu)
+        # The agent through extensions: their tools and topics in the Agent
+        # tabs, every agent event to them (ui.extension_host).
+        self._agent_dock.agent_event.connect(self.extension_host.emit_agent_event)
+        self.extension_host.agent_tools_changed.connect(self._agent_dock.refresh_extensions)
         self.extension_host.load_enabled()
 
         # Debounce timer for post-transfer refresh
@@ -635,6 +687,8 @@ class MainWindow(QMainWindow):
         network_action.triggered.connect(self._show_network_proxy)
         llm_action = tools_menu.addAction(tr("&LLM Profiles…"))
         llm_action.triggered.connect(self._show_llm_profiles)
+        agent_settings_action = tools_menu.addAction(tr("A&gent Settings…"))
+        agent_settings_action.triggered.connect(self._show_agent_settings)
         metadata_settings_action = tools_menu.addAction(tr("&Metadata Settings…"))
         metadata_settings_action.setToolTip(
             "How Remove Metadata writes (in place or a cleaned copy) and whether it asks first"
@@ -799,12 +853,24 @@ class MainWindow(QMainWindow):
         self._metadata_action.triggered.connect(self._metadata_from_toolbar)
         toolbar.addSeparator()
         for action, icon_name, tip in (
-            (self.thumbnail_view_action, "thumbnails", "Thumbnail view for the active pane (Ctrl+Shift+G)"),
-            (self._view_media_action, "media-view", "View the images, PDFs and videos of this folder"),
+            (
+                self.thumbnail_view_action,
+                "thumbnails",
+                "Thumbnail view for the active pane (Ctrl+Shift+G)",
+            ),
+            (
+                self._view_media_action,
+                "media-view",
+                "View the images, PDFs and videos of this folder",
+            ),
             (self._find_index_action, "find-index", "Find in the offline index (Ctrl+Shift+F)"),
             (self._compare_action, "compare", "Compare the two panes"),
             (self._disk_usage_action, "disk-usage", "Disk usage of this folder"),
-            (self._metadata_action, "metadata", "Show the metadata of the selection or this folder"),
+            (
+                self._metadata_action,
+                "metadata",
+                "Show the metadata of the selection or this folder",
+            ),
             (self._pack_action, "pack", "Pack the selection into an archive"),
             (self._manage_ext_action, "extensions", "Manage extensions"),
         ):
@@ -1053,15 +1119,116 @@ class MainWindow(QMainWindow):
     def _setup_agent_dock(self) -> None:
         from ui.agent_dock import AgentDock
 
-        self._agent_dock = AgentDock(self, root_provider=self._agent_root)
+        self._agent_dock = AgentDock(
+            self,
+            root_provider=self._agent_root,
+            pane_items=self._agent_pane_items,
+            pane_backend=self._agent_pane_backend,
+            remote_backends=self._agent_remote_backends,
+            extensions=lambda: getattr(self, "extension_host", None),
+        )
         self._install_dock_titlebar(self._agent_dock, "Agent", "bot")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._agent_dock)
         self._agent_dock.hide()
         self._agent_dock.settings_requested.connect(self._show_llm_profiles)
-        self._agent_dock.visibilityChanged.connect(
-            lambda visible: visible and self._agent_dock.refresh_profiles()
-        )
+        self._agent_dock.visibilityChanged.connect(self._on_agent_visibility)
+        self._focus_agent_action = QAction(tr("Ask the Agent"), self)
+        self._focus_agent_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self._focus_agent_action.triggered.connect(self._focus_agent)
+        self.addAction(self._focus_agent_action)
         self._populate_dock_view_menu()
+
+    def _on_agent_visibility(self, visible: bool) -> None:
+        if visible:
+            self._agent_dock.refresh_profiles()
+            self._agent_dock.follow_folder()
+
+    def _agent_follow_pane(self, pane: FilePaneWidget) -> None:
+        """The active pane changed or moved: the Agent dock follows it."""
+        dock = getattr(self, "_agent_dock", None)
+        if dock is not None and pane is self._active_pane and dock.isVisible():
+            dock.follow_folder()
+
+    def _agent_pane_items(self, kind: str) -> dict | None:
+        """For the Agent's + menu: the active pane's selection or folder."""
+        from core.local_fs import LocalFS
+
+        pane = getattr(self, "_active_pane", None)
+        if pane is None:
+            return None
+        paths = pane.selected_items() if kind == "selection" else [pane.current_path]
+        paths = [p for p in paths if p]
+        if not paths:
+            return None
+        local = isinstance(pane.backend, LocalFS)
+        return {
+            "paths": paths,
+            "backend": None if local else self._agent_backend_id(pane),
+            "local": local,
+        }
+
+    def _agent_pane_backend(self, pane_id) -> tuple:
+        """(the agent's backend id or None, local?) of the pane a drag came from."""
+        from core.local_fs import LocalFS
+
+        for pane in self._panes:
+            if str(id(pane)) == pane_id:
+                local = isinstance(pane.backend, LocalFS)
+                return (None if local else self._agent_backend_id(pane)), local
+        return None, True
+
+    def _agent_remote_backends(self) -> list:
+        """The remote connections of the panes as the agent sees them:
+        ``(pane:<profile or backend name>, backend, profile or None)``, one
+        per connection object (two panes on one connection share it)."""
+        from core.local_fs import LocalFS
+
+        out: list = []
+        taken: set = set()
+        for pane in self._panes:
+            backend = getattr(pane, "backend", None)
+            if (
+                backend is None
+                or isinstance(backend, LocalFS)
+                or any(b is backend for _i, b, _p in out)
+            ):
+                continue
+            profile = self._pane_profiles.get(pane) if hasattr(self, "_pane_profiles") else None
+            name = profile.name if profile is not None else ""
+            base = f"pane:{name or getattr(backend, 'name', '') or 'remote'}"
+            bid, n = base, 1
+            while bid in taken:
+                n += 1
+                bid = f"{base}#{n}"
+            taken.add(bid)
+            out.append((bid, backend, profile))
+        return out
+
+    def _agent_backend_id(self, pane) -> str | None:
+        for bid, backend, _profile in self._agent_remote_backends():
+            if backend is pane.backend:
+                return bid
+        return None
+
+    def _send_to_agent(self, pane, paths: list) -> None:
+        from core.local_fs import LocalFS
+
+        dock = getattr(self, "_agent_dock", None)
+        if dock is None:
+            return
+        self._focus_agent()
+        local = isinstance(pane.backend, LocalFS)
+        dock.current_tab().attach(paths, None if local else self._agent_backend_id(pane), local)
+
+    def _focus_agent(self) -> None:
+        dock = getattr(self, "_agent_dock", None)
+        if dock is None:
+            return
+        dock.show()
+        dock.raise_()
+        tab = dock.current_tab()
+        if tab is not None:
+            tab.input.setFocus()
 
     def _agent_root(self) -> str:
         """The agent's folder: the active pane's, when it shows local files."""
@@ -1083,6 +1250,20 @@ class MainWindow(QMainWindow):
         for dock in (getattr(self, "_analysis_dock", None), getattr(self, "_agent_dock", None)):
             if dock is not None:
                 dock.refresh_profiles()
+
+    def _show_agent_settings(self) -> None:
+        from ui.agent_settings_dialog import AgentSettingsDialog
+
+        dock = getattr(self, "_agent_dock", None)
+        live = dock is not None and hasattr(dock, "sessions")
+        dialog = AgentSettingsDialog(self, sessions=dock.sessions if live else None,
+                                     store_session=dock.store_session if live else None)
+        if dock is not None and hasattr(dock, "reload_settings"):
+            dialog.saved.connect(dock.reload_settings)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def _on_analysis_visibility(self, visible: bool) -> None:
         if visible:
@@ -1628,6 +1809,9 @@ class MainWindow(QMainWindow):
             agent_toggle = agent.toggleViewAction()
             agent_toggle.setText("A&gent")
             self._dock_view_menu.addAction(agent_toggle)
+            focus = getattr(self, "_focus_agent_action", None)
+            if focus is not None:
+                self._dock_view_menu.addAction(focus)
         if getattr(self, "_archive_dock", None) is not None:
             self._register_archive_dock_view_action()
 
@@ -1649,6 +1833,7 @@ class MainWindow(QMainWindow):
         pane.view_mode_changed.connect(lambda _mode, p=pane: self._sync_view_mode_action(p))
         pane.selection_changed.connect(lambda p=pane: self._extension_event("selection_changed", p))
         pane.path_changed.connect(lambda _path, p=pane: self._extension_event("path_changed", p))
+        pane.path_changed.connect(lambda _path, p=pane: self._agent_follow_pane(p))
         pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
         pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
         pane.drop_transfer_requested.connect(self._on_drop_transfer)
@@ -1661,6 +1846,7 @@ class MainWindow(QMainWindow):
         pane.open_terminal_requested.connect(
             lambda directory, p=pane: self._open_terminal_here(p, directory)
         )
+        pane.send_to_agent_requested.connect(lambda paths, p=pane: self._send_to_agent(p, paths))
         pane.cycle_pane_requested.connect(
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
@@ -1694,6 +1880,7 @@ class MainWindow(QMainWindow):
         self._sync_view_mode_action()
         if changed:
             self._extension_event("pane_activated", pane)
+            self._agent_follow_pane(pane)
         log.debug("Active pane: %s at %s", pane.backend.name, pane.current_path)
         if changed:  # a click into the active pane must not restart its analysis
             self._schedule_analysis()
@@ -1795,10 +1982,10 @@ class MainWindow(QMainWindow):
         for pane in self._panes:
             backend = pane.backend
             if _is_ssh_session(backend) and backend.transport and backend.connected:
-                label = backend.name
+                profile = self._pane_profiles.get(pane)
+                label = _terminal_name(backend, profile)
                 if label not in seen:
                     seen.add(label)
-                    profile = self._pane_profiles.get(pane)
                     choices.append((f"SSH: {label}", backend.transport, profile, pane))
 
         if len(choices) == 1:
@@ -2031,6 +2218,7 @@ class MainWindow(QMainWindow):
         pane.view_mode_changed.connect(lambda _mode, p=pane: self._sync_view_mode_action(p))
         pane.selection_changed.connect(lambda p=pane: self._extension_event("selection_changed", p))
         pane.path_changed.connect(lambda _path, p=pane: self._extension_event("path_changed", p))
+        pane.path_changed.connect(lambda _path, p=pane: self._agent_follow_pane(p))
         pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
         pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
         pane.drop_transfer_requested.connect(self._on_drop_transfer)
@@ -2043,6 +2231,7 @@ class MainWindow(QMainWindow):
         pane.open_terminal_requested.connect(
             lambda directory, p=pane: self._open_terminal_here(p, directory)
         )
+        pane.send_to_agent_requested.connect(lambda paths, p=pane: self._send_to_agent(p, paths))
         pane.cycle_pane_requested.connect(
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
@@ -2084,9 +2273,10 @@ class MainWindow(QMainWindow):
             profile = self._pane_profiles.pop(pane, None)
             try:
                 if _is_ssh_session(pane.backend):
-                    self._terminal_dock.remove_ssh_session(pane.backend.name)
+                    name = _terminal_name(pane.backend, profile)
+                    self._terminal_dock.remove_ssh_session(name)
                 if profile is not None:
-                    self._connection_manager.release(profile)
+                    self._release_pane_connection(profile, pane.backend)
             except Exception:  # noqa: BLE001 — a dead session must not block the switch
                 log.debug("Preset teardown: releasing %s failed", pane, exc_info=True)
             self._close_compare_windows_for(pane)
@@ -2156,17 +2346,68 @@ class MainWindow(QMainWindow):
 
         apply_preset(self, name)
 
+    def _layout_switch_confirmed(self) -> bool:
+        """A layout switch rebuilds every pane: ask first when that closes
+        a running shell or a remote connection. The key chord is easy to
+        hit by accident, and the switch used to kill them unasked."""
+        shells = sum(1 for term in self._terminal_panes if getattr(term, "is_running", False))
+        remotes = len(self._pane_profiles)
+        if not shells and not remotes:
+            return True
+        lost = []
+        if shells:
+            lost.append(f"{shells} shell{'s' if shells != 1 else ''}")
+        if remotes:
+            lost.append(f"{remotes} connection{'s' if remotes != 1 else ''}")
+        reply = QMessageBox.question(
+            self,
+            tr("Switch Layout"),
+            f"Switching the layout closes {' and '.join(lost)}. Switch anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
     def cycle_layout_preset(self, *, forward: bool = True) -> None:
         """Rotate through the built-in preset list. Wired to
         ``Ctrl+Alt+L`` (forward) and ``Ctrl+Alt+Shift+L`` (back)."""
         from ui.layout_presets import cycle_preset
 
+        if not self._layout_switch_confirmed():
+            return
         new_name = cycle_preset(self, forward=forward)
         # Lightweight statusbar hint so the user sees what they cycled to.
         try:
             self.statusBar().showMessage(f"Layout: {new_name}", 2000)
         except Exception:  # noqa: BLE001
             pass
+
+    def _release_pane_connection(self, profile, backend) -> None:
+        """Give back a closing pane's reference on its connection - once
+        no transfer uses it any more. Released at once, a session whose
+        last reference that was got disconnected under its running and
+        queued transfers, and every one of them failed."""
+        if not self._transfer_manager.busy(backend):
+            self._connection_manager.release(profile)
+            return
+        self._deferred_releases.append((profile, backend))
+        log.info("%s stays connected until its transfers finish", profile.name)
+        self.statusBar().showMessage(
+            f"{profile.name}: the connection stays open until its transfers finish", 8000
+        )
+
+    def _release_idle_connections(self, *_args) -> None:
+        """A transfer ended: release the kept connections it was the last
+        user of."""
+        for entry in list(self._deferred_releases):
+            profile, backend = entry
+            if self._transfer_manager.busy(backend):
+                continue
+            self._deferred_releases.remove(entry)
+            try:
+                self._connection_manager.release(profile)
+            except Exception:  # noqa: BLE001 - a dead session must not stop the others
+                log.debug("Releasing %s after its transfers failed", profile.name, exc_info=True)
 
     def _close_pane(self, pane: FilePaneWidget) -> None:
         if pane not in self._panes or len(self._panes) <= 1:
@@ -2178,17 +2419,18 @@ class MainWindow(QMainWindow):
 
         # Remove SSH terminal option only when no other pane uses the same session label.
         if _is_ssh_session(pane.backend):
+            name = _terminal_name(pane.backend, profile)
             still_used = any(
                 other is not pane
                 and _is_ssh_session(other.backend)
-                and other.backend.name == pane.backend.name
+                and _terminal_name(other.backend, self._pane_profiles.get(other)) == name
                 for other in self._panes
             )
             if not still_used:
-                self._terminal_dock.remove_ssh_session(pane.backend.name)
+                self._terminal_dock.remove_ssh_session(name)
 
         if profile is not None:
-            self._connection_manager.release(profile)
+            self._release_pane_connection(profile, pane.backend)
         self._panes.remove(pane)
         self._close_compare_windows_for(pane)
         if pane is self._target_pane:
@@ -2215,7 +2457,11 @@ class MainWindow(QMainWindow):
             parent.deleteLater()
 
         if self._panes:
-            self._set_active_pane(self._panes[0])
+            # Only a closed source needs a new one: re-activating the first
+            # pane whatever was closed turned the source into the target
+            # and F5 / F6 ran the other way round.
+            if self._active_pane is None:
+                self._set_active_pane(self._panes[0])
             if self._target_pane is None and len(self._panes) > 1:
                 self._target_pane = next(
                     (other for other in self._panes if other is not self._active_pane),
@@ -2443,9 +2689,24 @@ class MainWindow(QMainWindow):
         dlg = SchedulerDialog(self._job_store(), parent=self)
         dlg.exec()
         # Pick up edits without waiting for the next tick.
-        self._scheduler_jobs = self._job_store().load()
+        self._scheduler_jobs = self._with_running_flags(self._job_store().load())
         if getattr(self, "_scripts_dock", None) is not None:
             self._scripts_dock.refresh()  # the [scheduled] markers
+
+    def _with_running_flags(self, jobs: list, *, finished: str = "") -> list:
+        """*jobs* as loaded from the store, with the in-process ``running``
+        flag carried over from the current list. The store never holds it:
+        a reload that dropped it let the next tick start a job that was
+        still in flight a second time. *finished* names the job whose run
+        just ended."""
+        from dataclasses import replace
+
+        running = {
+            j.job_id
+            for j in getattr(self, "_scheduler_jobs", None) or ()
+            if j.running and j.job_id != finished
+        }
+        return [replace(j, running=True) if j.job_id in running else j for j in jobs]
 
     def _start_scheduler(self) -> None:
         """Arm the tick that runs due jobs.
@@ -2484,14 +2745,13 @@ class MainWindow(QMainWindow):
             self._run_scheduled_job(job)
 
     @staticmethod
-    def _scheduled_runner(job):
-        """What a job actually does. Runs on a worker thread."""
-        if job.kind == "script":
-            from core import scripting
+    def _scheduled_runner(job, cancel_event=None):
+        """What a job actually does. Runs on a worker thread; a script
+        runs in a child process (core.scheduler.run_script_job), which
+        *cancel_event* stops."""
+        from core.scheduler import run_script_job
 
-            scripting.run_script(job.target)
-            return f"ran {job.target}"
-        raise ValueError(f"unknown job kind {job.kind!r}")
+        return run_script_job(job, cancel_event=cancel_event)
 
     def _run_scheduled_job(self, job) -> None:
         """Start one job on a worker thread.
@@ -2504,12 +2764,19 @@ class MainWindow(QMainWindow):
         The outcome comes back through a queued signal so the store is
         written and the status bar touched on the GUI thread only.
         """
+        import functools
+        import threading
+
         from PyQt6.QtCore import QThread
 
         from core.scheduler import run_job
 
         done = self._scheduler_done
-        runner = self._scheduled_runner
+        cancel = getattr(self, "_scheduler_cancel", None)
+        if cancel is None:
+            # Set on close: a scheduled script's child process ends with the app.
+            cancel = self._scheduler_cancel = threading.Event()
+        runner = functools.partial(self._scheduled_runner, cancel_event=cancel)
 
         def _report(j, ok, detail):
             try:
@@ -2547,14 +2814,23 @@ class MainWindow(QMainWindow):
         job = next((j for j in self._scheduler_jobs if j.job_id == job_id), None)
         if job is None:
             return
-        updated = record_result(job, ok=ok, at=datetime.now(), detail=detail)
-        self._scheduler_jobs = [
-            updated if j.job_id == job_id else j for j in self._scheduler_jobs
-        ]
+        at = datetime.now()
+
+        def _record(jobs: list) -> list:
+            # The result goes onto the job as the store holds it now: the
+            # Scheduler dialog may have changed or removed it meanwhile,
+            # and a job removed there stays removed.
+            return [
+                record_result(j, ok=ok, at=at, detail=detail) if j.job_id == job_id else j
+                for j in jobs
+            ]
+
         try:
-            self._job_store().save(self._scheduler_jobs)
+            jobs = self._job_store().update(_record)
         except OSError as exc:
             log.warning("scheduler: could not persist job state: %s", exc)
+            jobs = _record(self._scheduler_jobs)
+        self._scheduler_jobs = self._with_running_flags(jobs, finished=job_id)
         if not ok:
             self.statusBar().showMessage(f"Scheduled job {job.name!r} failed: {detail}", 8000)
 
@@ -2578,7 +2854,7 @@ class MainWindow(QMainWindow):
         presses undo and gets no response assumes it worked.
         """
         from core.operation_journal import read_recent
-        from core.undo import apply_undo, pick_undoable, undoable
+        from core.undo import apply_undo, gone_reason, pick_undoable, undoable
 
         try:
             events = read_recent(limit=200)
@@ -2589,7 +2865,16 @@ class MainWindow(QMainWindow):
 
         plans = undoable(events)
         by_label = self._backends_by_label()
-        plan = pick_undoable(plans, set(by_label))
+
+        def _gone(candidate) -> bool:
+            # An entry restored or deleted in the Trash window is not in
+            # the journal; offering it again would block every older one.
+            entry = by_label.get(candidate.backend) if candidate.backend else None
+            if entry is None and not candidate.backend and len(by_label) == 1:
+                entry = next(iter(by_label.values()))
+            return entry is not None and bool(gone_reason(candidate, entry[0]))
+
+        plan = pick_undoable(plans, set(by_label), gone=_gone)
         if plan is None:
             newest = plans[0] if plans else None
             if newest is not None and not newest.reversible:
@@ -2629,26 +2914,76 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Cannot undo", refusal)
             return
         backend, pane = by_label[plan.backend] if plan.backend else next(iter(by_label.values()))
+        queued: list = []
+
+        def transfer(**kwargs):
+            return self._undo_transfer(queued=queued, **kwargs)
+
         try:
             apply_undo(
                 plan,
                 backend,
                 source_backend=self._undo_source_backend(plan, by_label),
-                transfer=self._undo_transfer,
+                transfer=transfer,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Undo failed", str(exc))
             return
+        if plan.action == "transfer_back":
+            # Only queued so far: recording it now would drop the entry
+            # from the undo history even when the transfer back fails.
+            self._await_undo_jobs(plan, queued, pane)
+            return
+        self._finish_undo(plan, pane)
+
+    def _finish_undo(self, plan, pane, jobs=()) -> None:
         try:
             from core.undo import record_undone
 
-            # The next Ctrl+Z reaches the operation before this one.
-            record_undone(plan)
+            # The next Ctrl+Z reaches the operation before this one - not
+            # the move back the jobs of this undo journaled.
+            record_undone(plan, by=[getattr(j, "operation_id", "") for j in jobs])
         except Exception as exc:  # noqa: BLE001 - the undo itself succeeded
             log.warning("undo: could not record the undo in the journal: %s", exc)
-        if pane is not None:
+        if pane is not None and pane in self._panes:
             pane.refresh_after_change()
         self.statusBar().showMessage(f"Undone: {plan.reason}", 5000)
+
+    def _await_undo_jobs(self, plan, jobs: list, pane) -> None:
+        """Record *plan* as undone when every job of it has finished."""
+        from core.transfer_worker import TransferStatus
+
+        refused = [j for j in jobs if j.status is TransferStatus.ERROR]
+        if not jobs or refused:
+            why = refused[0].error_message if refused else "nothing was queued"
+            QMessageBox.warning(self, "Undo failed", f"{plan.reason} failed:\n{why}")
+            return
+        self._undo_waits.append(
+            {"plan": plan, "pending": {j.job_id for j in jobs}, "pane": pane, "jobs": jobs}
+        )
+        self.statusBar().showMessage(f"Undoing: {plan.reason}", 5000)
+
+    def _on_undo_job_finished(self, job_id: str) -> None:
+        for wait in list(self._undo_waits):
+            if job_id not in wait["pending"]:
+                continue
+            wait["pending"].discard(job_id)
+            if not wait["pending"]:
+                self._undo_waits.remove(wait)
+                self._finish_undo(wait["plan"], wait["pane"], wait.get("jobs", ()))
+
+    def _on_undo_job_error(self, job_id: str, error: str) -> None:
+        for wait in list(self._undo_waits):
+            if job_id not in wait["pending"]:
+                continue
+            self._undo_waits.remove(wait)
+            plan = wait["plan"]
+            QMessageBox.warning(
+                self,
+                "Undo failed",
+                f"{plan.reason} failed:\n{error}\n\n"
+                "The operation stays in the undo history.",
+            )
 
     @staticmethod
     def _undo_refusal(plan, by_label: dict) -> str:
@@ -2694,13 +3029,18 @@ class MainWindow(QMainWindow):
         entry = by_label.get(plan.source_backend)
         return entry[0] if entry else None
 
-    def _undo_transfer(self, *, src_backend, src_path, dst_backend, dst_path) -> str:
+    def _undo_transfer(
+        self, *, src_backend, src_path, dst_backend, dst_path, queued: list | None = None
+    ) -> str:
         """Move data back to *dst_path* through the normal transfer engine.
 
         The target folder is the one the data came from - not the folder a
         pane on that connection happens to show now, where a file of the
-        same name would be overwritten.
+        same name would be overwritten. The jobs are appended to *queued*:
+        the undo is done when they are, not when they are queued.
         """
+        from core.transfer_conflicts import ConflictPlan
+
         src_name = src_path.rsplit(src_backend.separator(), 1)[-1]
         dst_name = dst_path.rsplit(dst_backend.separator(), 1)[-1]
         if src_name != dst_name:
@@ -2712,14 +3052,19 @@ class MainWindow(QMainWindow):
             raise OSError(
                 f"{dst_path} exists again — undo would overwrite it. Move or rename it first."
             )
-        self._transfer_manager.transfer_files(
+        jobs = self._transfer_manager.transfer_files(
             source_backend=src_backend,
             dest_backend=dst_backend,
             source_paths=[src_path],
             dest_dir=dst_backend.parent(dst_path),
             direction=self._transfer_direction(src_backend, dst_backend),
             move=True,
+            # The check above looked once; a file that appears before the
+            # job runs is not replaced either.
+            conflict_plan=ConflictPlan.never_replace(dst_backend),
         )
+        if queued is not None:
+            queued.extend(jobs)
         labels = {getattr(src_backend, "name", None), getattr(dst_backend, "name", None)}
         for pane in self._panes:
             if getattr(pane.backend, "name", None) in labels:
@@ -2845,13 +3190,18 @@ class MainWindow(QMainWindow):
             ("to_right", (left, right)),
             ("to_left", (right, left)),
         ):
-            pairs = [
-                (i["source"], i["dest"])
-                for i in items
-                if i["direction"] == direction and i.get("kind") == "copy"
-            ]
-            if pairs:
-                self._transfer_compared(source, target, pairs)
+            # Only an action that says it overwrites may replace a file:
+            # a "missing" one that exists by the time it runs fails instead.
+            for overwrites in (False, True):
+                pairs = [
+                    (i["source"], i["dest"])
+                    for i in items
+                    if i["direction"] == direction
+                    and i.get("kind") == "copy"
+                    and bool(i.get("overwrites")) is overwrites
+                ]
+                if pairs:
+                    self._transfer_compared(source, target, pairs, overwrites=overwrites)
 
         if errors:
             QMessageBox.warning(
@@ -2868,9 +3218,11 @@ class MainWindow(QMainWindow):
         if not pairs or not self._compared_panes_open(left, right):
             return
         source, target = (left, right) if direction == "to_right" else (right, left)
-        self._transfer_compared(source, target, pairs)
+        # The window copies one-sided rows only: the destination was
+        # free when compared, and a file there now is not to be replaced.
+        self._transfer_compared(source, target, pairs, overwrites=False)
 
-    def _transfer_compared(self, source, target, pairs) -> None:
+    def _transfer_compared(self, source, target, pairs, *, overwrites: bool) -> None:
         """Queue ``(source, dest)`` pairs so each lands at its own path.
 
         ``_start_transfer_between`` on its own queues into the target
@@ -2878,13 +3230,26 @@ class MainWindow(QMainWindow):
         compared root's files (or wherever the pane had browsed to) and
         replaced a namesake there. Grouped by destination folder, the
         name is the source's, which a comparison row shares on both sides.
+
+        Without ``overwrites`` every job refuses to replace an existing
+        destination; the transfer engine's default is to replace it.
         """
+        from core.transfer_conflicts import ConflictPlan
+
         backend = target.backend
+        conflict_plan = None if overwrites else ConflictPlan.never_replace(backend)
         by_dir: dict[str, list[str]] = {}
         for src, dst in pairs:
             by_dir.setdefault(backend.parent(dst), []).append(src)
         for dest_dir, paths in by_dir.items():
-            self._start_transfer_between(source, target, paths, move=False, dest_dir=dest_dir)
+            self._start_transfer_between(
+                source,
+                target,
+                paths,
+                move=False,
+                dest_dir=dest_dir,
+                conflict_plan=conflict_plan,
+            )
 
     def _delete_compared(self, pane, paths: list) -> None:
         """Delete paths the compare window asked for.
@@ -2942,7 +3307,8 @@ class MainWindow(QMainWindow):
         if kind == TH.LOCAL:
             dock.open_local_shell_at(directory)
         elif kind == TH.SSH:
-            dock.open_ssh_shell_at(backend.name, TH.ssh_transport(backend), directory)
+            name = _terminal_name(backend, self._pane_profiles.get(pane))
+            dock.open_ssh_shell_at(name, TH.ssh_transport(backend), directory)
         else:
             QMessageBox.information(self, tr("Open Terminal Here"), TH.no_shell_reason(backend))
             return
@@ -3141,6 +3507,31 @@ class MainWindow(QMainWindow):
         manager_action.triggered.connect(lambda _checked=False: self._on_connect())
         return menu
 
+    def _proxy_command_confirmed(self, profile) -> bool:
+        """An imported profile's ProxyCommand is shown once and runs only
+        when the user says Yes; the answer is saved with the profile."""
+        command = getattr(profile, "proxy_command", "")
+        if not command or getattr(profile, "proxy_command_confirmed", True):
+            return True
+        reply = QMessageBox.question(
+            self,
+            tr("Run ProxyCommand?"),
+            f"The profile '{profile.name}' was imported and connects through this "
+            f"command, which runs on this computer:\n\n{command}\n\n"
+            "Run it now and from now on?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            log.info("ProxyCommand of %s not confirmed; not connecting", profile.name)
+            return False
+        profile.proxy_command_confirmed = True
+        try:
+            self._profile_manager.add(profile)
+        except Exception:  # noqa: BLE001 - confirmed for this run at least
+            log.warning("Could not save the confirmation for %s", profile.name, exc_info=True)
+        return True
+
     def _run_connect_async(
         self,
         profile: "ConnectionProfile",
@@ -3160,6 +3551,8 @@ class MainWindow(QMainWindow):
         """
         from core.connect_worker import run_connect
 
+        if not self._proxy_command_confirmed(profile):
+            return
         # Drop tasks whose thread has already exited. A still-running
         # task stays in the list until its own ``finished`` fires.
         self._connect_tasks = [
@@ -3235,9 +3628,9 @@ class MainWindow(QMainWindow):
             if profile.auth_type == "password":
                 needs_password = True
                 prompt_label = f"Password for {profile.username}@{profile.host}:"
-            elif profile.auth_type == "key" and profile.key_file:
-                # Try without passphrase first; if key is encrypted, ask
-                pass
+            # A key-auth profile connects without a passphrase first; an
+            # encrypted key fails with PasswordRequiredException, and
+            # _on_failure asks for it and tries again.
         elif proto in SIMPLE_PASSWORD_PROTOCOLS:
             needs_password, prompt_label = _simple_password_prompt(profile)
         # OAuth protocols (onedrive, sharepoint, gdrive, dropbox) don't need password prompts
@@ -3280,7 +3673,9 @@ class MainWindow(QMainWindow):
                 and session.transport
                 and session.transport.is_active()
             ):
-                self._terminal_dock.add_ssh_session(session.name, session.transport)
+                self._terminal_dock.add_ssh_session(
+                    _terminal_name(session, profile), session.transport
+                )
 
             # Post-connect hook (used by bookmark navigation to
             # land the new pane on the bookmarked path).
@@ -3335,7 +3730,26 @@ class MainWindow(QMainWindow):
             self._add_to_recent(profile.name)
             log.info("Quick connected to %s", session.name)
 
+        passphrase_tries = 0
+
         def _on_failure(exc):
+            nonlocal key_passphrase, passphrase_tries
+            if _needs_key_passphrase(exc) and passphrase_tries < KEY_PASSPHRASE_TRIES:
+                from PyQt6.QtWidgets import QInputDialog
+
+                passphrase_tries += 1
+                prompt = f"Passphrase for the key {profile.key_file}:"
+                if key_passphrase:
+                    prompt = f"Wrong passphrase. {prompt}"
+                entered, ok = QInputDialog.getText(
+                    self, "Key Passphrase", prompt, QLineEdit.EchoMode.Password
+                )
+                if not ok:
+                    log.info("Quick connect to %s: passphrase prompt cancelled", profile.name)
+                    return
+                key_passphrase = entered
+                self._run_connect_async(profile, password, key_passphrase, _on_success, _on_failure)
+                return
             QMessageBox.critical(self, "Connection Failed", str(exc))
             log.error("Quick connect failed: %s", exc)
 
@@ -3382,8 +3796,8 @@ class MainWindow(QMainWindow):
 
     def _load_persistent_visual_settings(self) -> None:
         """Read the subset of session.json that represents user
-        preferences: theme, monochrome icons and the "Restore Layout on
-        Start" switch. The layout itself is restore_layout_on_start's job.
+        preferences: theme, compact mode, monochrome icons and the
+        "Restore Layout on Start" switch. The layout itself is restore_layout_on_start's job.
 
         Guarantee kept from before the layout came back on start: a fresh
         start never connects to anything. Remote panes of the restored
@@ -3405,6 +3819,11 @@ class MainWindow(QMainWindow):
             return
         if win.get("ui_theme"):
             self._apply_theme(win["ui_theme"])
+        # Compact is a preference like the theme, not part of the layout:
+        # read here too, or it was lost whenever layout restore was off.
+        # setChecked fires the toggle handler, which re-applies the theme.
+        if win.get("compact") is True and hasattr(self, "_compact_action"):
+            self._compact_action.setChecked(True)
         # Only a stored False switches it off; anything else is the default.
         if win.get(RESTORE_ON_START_KEY) is False and hasattr(self, "_restore_on_start_action"):
             self._restore_on_start_action.setChecked(False)
@@ -3634,9 +4053,9 @@ class MainWindow(QMainWindow):
             self._pane_passwords.pop(last, None)
             self._pane_key_passphrases.pop(last, None)
             if _is_ssh_session(last.backend):
-                self._terminal_dock.remove_ssh_session(last.backend.name)
+                self._terminal_dock.remove_ssh_session(_terminal_name(last.backend, profile))
             if profile:
-                self._connection_manager.release(profile)
+                self._release_pane_connection(profile, last.backend)
             self._panes.remove(last)
             last.setParent(None)
             last.deleteLater()
@@ -3917,7 +4336,9 @@ class MainWindow(QMainWindow):
                 and session.transport
                 and session.transport.is_active()
             ):
-                self._terminal_dock.add_ssh_session(session.name, session.transport)
+                self._terminal_dock.add_ssh_session(
+                    _terminal_name(session, profile), session.transport
+                )
             self._add_to_recent(profile.name)
             try:
                 pane.navigate_async(path)
@@ -3998,7 +4419,9 @@ class MainWindow(QMainWindow):
                 and session.transport
                 and session.transport.is_active()
             ):
-                self._terminal_dock.add_ssh_session(session.name, session.transport)
+                self._terminal_dock.add_ssh_session(
+                    _terminal_name(session, profile), session.transport
+                )
 
             if password and not profile.store_password:
                 reply = QMessageBox.question(
@@ -4198,6 +4621,10 @@ class MainWindow(QMainWindow):
             if self._profile_manager.get(profile.name):
                 skipped += 1
                 continue
+            # A ProxyCommand from a file is someone else's shell command:
+            # it runs only after the user saw and confirmed it on Connect.
+            # The file's own "confirmed" field cannot vouch for it.
+            profile.proxy_command_confirmed = not profile.proxy_command
 
             # ``add()`` can raise RuntimeError if the keyring refuses a
             # sensitive field (headless system, locked keyring, DBus
@@ -4277,6 +4704,7 @@ class MainWindow(QMainWindow):
             _write_private_text(
                 path,
                 json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                private_dir=False,  # the user's folder keeps its mode
             )
         except OSError as e:
             QMessageBox.warning(self, "Export Error", f"Cannot write file:\n{e}")
@@ -4581,19 +5009,29 @@ class MainWindow(QMainWindow):
         conflict_plan=None,
     ) -> None:
         """Queue the transfer now. Without *conflict_plan* existing files
-        are replaced: callers that confirmed that themselves (compare /
-        sync) use this directly; the user commands go through
-        ``_request_transfer``."""
+        are replaced: callers that decided that themselves (the compare
+        window, through ``_transfer_compared``) use this directly; the
+        user commands go through ``_request_transfer``."""
         direction = self._transfer_direction(source.backend, target.backend)
 
         # Track target pane (and source for move) for auto-refresh on completion
         self._transfer_target_panes.add(target)
         if move:
             self._transfer_target_panes.add(source)
-        # The summary comes from the jobs just created. A separate preview
-        # walk (stat + exists per entry, on the GUI thread) only fed this
-        # log line; every job is in the operation journal as well.
-        jobs = self._transfer_manager.transfer_files(
+        # The summary comes from the jobs the walk creates. A separate
+        # preview walk only fed this log line; every job is in the
+        # operation journal as well. The walk itself (a round trip per
+        # remote folder) runs off the GUI thread; the jobs are queued here
+        # when it is done, in the same order.
+        def _walked(jobs) -> None:
+            log.info(
+                "Transfer enqueued: %s: %d file(s), %d byte(s)",
+                "move" if move else "copy",
+                len(jobs),
+                sum(j.total_bytes for j in jobs),
+            )
+
+        self._transfer_manager.transfer_files_in_background(
             source_backend=source.backend,
             dest_backend=target.backend,
             source_paths=selected,
@@ -4601,12 +5039,7 @@ class MainWindow(QMainWindow):
             direction=direction,
             move=move,
             conflict_plan=conflict_plan,
-        )
-        log.info(
-            "Transfer enqueued: %s: %d file(s), %d byte(s)",
-            "move" if move else "copy",
-            len(jobs),
-            sum(j.total_bytes for j in jobs),
+            on_done=_walked,
         )
 
         action = "Move" if move else "Copy"
@@ -4641,9 +5074,14 @@ class MainWindow(QMainWindow):
     # --- Auto-reconnect ---
 
     def _check_connections(self) -> None:
-        """Periodically check SSH connections and attempt reconnect."""
+        """Periodically check SSH connections and attempt reconnect.
+
+        The connect runs on a worker thread: on the GUI thread a host that
+        accepts TCP but never answers froze the window for the whole
+        handshake timeout, every interval, per dropped pane. A pane whose
+        reconnect is still in flight is skipped."""
         for pane in list(self._panes):
-            if pane not in self._pane_profiles:
+            if pane not in self._pane_profiles or pane in self._reconnecting:
                 continue
 
             backend = pane.backend
@@ -4653,30 +5091,55 @@ class MainWindow(QMainWindow):
             if backend.connected:
                 continue
 
-            profile = self._pane_profiles[pane]
-            password = self._pane_passwords.get(pane, "")
-            key_passphrase = self._pane_key_passphrases.get(pane, "")
-            log.info("Auto-reconnecting to %s...", profile.host)
+            self._start_auto_reconnect(pane, self._pane_profiles[pane], backend)
 
-            try:
-                # Re-use connection manager which handles session key matching
-                previous_path = pane.current_path
-                session = self._connection_manager.connect(
-                    profile,
-                    password=password,
-                    key_passphrase=key_passphrase,
+    def _start_auto_reconnect(self, pane, profile, dropped) -> None:
+        from core.connect_worker import run_connect
+
+        log.info("Auto-reconnecting to %s...", profile.host)
+        previous_path = pane.current_path
+
+        def _on_success(session) -> None:
+            self._reconnecting.pop(pane, None)
+            if (
+                pane not in self._panes
+                or self._pane_profiles.get(pane) is not profile
+                or pane.backend is not dropped
+            ):
+                # The pane closed or moved on meanwhile: nobody uses it.
+                self._connection_manager.release(profile)
+                return
+            # One load, straight to where the pane was.
+            pane.set_backend(session, previous_path)
+            # The reference the pane held on the dropped session.
+            self._connection_manager.release(profile)
+            transport = getattr(session, "transport", None)
+            if transport and transport.is_active():
+                self._terminal_dock.add_ssh_session(
+                    _terminal_name(session, profile), session.transport
                 )
-                # One load, straight to where the pane was.
-                pane.set_backend(session, previous_path)
-                if (
-                    hasattr(session, "transport")
-                    and session.transport
-                    and session.transport.is_active()
-                ):
-                    self._terminal_dock.add_ssh_session(session.name, session.transport)
-                log.info("Auto-reconnected to %s", session.name)
-            except Exception as e:
-                log.debug("Auto-reconnect to %s failed: %s", profile.host, e)
+            log.info("Auto-reconnected to %s", session.name)
+
+        def _on_failure(exc) -> None:
+            self._reconnecting.pop(pane, None)
+            log.debug("Auto-reconnect to %s failed: %s", profile.host, exc)
+
+        # Unknown host keys are not asked about: a background reconnect
+        # refuses them, as it did on the GUI thread.
+        task = run_connect(
+            self._connection_manager,
+            profile,
+            password=self._pane_passwords.get(pane, ""),
+            key_passphrase=self._pane_key_passphrases.get(pane, ""),
+            on_success=_on_success,
+            on_failure=_on_failure,
+        )
+        self._reconnecting[pane] = task
+        # Pinned there too, so closing the window abandons it.
+        self._connect_tasks = [
+            t for t in self._connect_tasks if t.thread is not None and t.thread.isRunning()
+        ]
+        self._connect_tasks.append(task)
 
     # --- Bookmarks ---
 
@@ -5341,6 +5804,9 @@ and an MCP server.</p>
             except Exception:  # noqa: BLE001 — the rest of the cleanup must run
                 log.warning("Abandoning a connect attempt failed on close", exc_info=True)
         self._connect_tasks.clear()
+        cancel = getattr(self, "_scheduler_cancel", None)
+        if cancel is not None:
+            cancel.set()
         for thread in list(getattr(self, "_scheduler_threads", ())):
             detach_running_thread(thread)
         self._scheduler_threads = []
@@ -5373,6 +5839,14 @@ and an MCP server.</p>
             except Exception:  # noqa: BLE001
                 log.warning("Terminal pane shutdown failed on close", exc_info=True)
         self._terminal_panes.clear()
+        # File panes: their FUSE mounts go before the sessions they serve
+        # (disconnect_all below) - left mounted, the kernel kept a mount
+        # whose serving thread was gone. Their watchers stop as well.
+        for pane in list(self._panes):
+            try:
+                pane.shutdown()
+            except Exception:  # noqa: BLE001 — the rest of the cleanup must run
+                log.warning("File pane shutdown failed on close", exc_info=True)
         self._log_dock.shutdown()
         self._terminal_dock.shutdown()
         if getattr(self, "_analysis_dock", None) is not None:

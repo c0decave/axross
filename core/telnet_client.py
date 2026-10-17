@@ -858,6 +858,21 @@ def rename_command(src: str, dst: str) -> str:
     )
 
 
+def copy_command(src: str, dst: str, *, preserve: bool = False) -> str:
+    """Shell command that copies the file ``src`` to the path ``dst``.
+
+    Plain ``cp`` copies ``src`` INTO ``dst`` when ``dst`` is a directory
+    and reports success; ``cp -T`` refuses that but is GNU only. As in
+    :func:`rename_command`, the directory is tested first and the copy
+    fails instead. *preserve* adds ``-p`` (mode and times)."""
+    qsrc, qdst = shlex.quote(src), shlex.quote(dst)
+    flags = "-p -- " if preserve else "-- "
+    return (
+        f"if test -d {qdst}; then echo {shlex.quote(f'cp: {dst}: is a directory')} >&2; false; "
+        f"else cp {flags}{qsrc} {qdst}; fi"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Layer 4: Output Parsers
 # ---------------------------------------------------------------------------
@@ -1183,9 +1198,22 @@ class _SpooledWriter:
                 "Cannot upload binary file: no base64/uuencode/xxd available "
                 "on remote system. Only text files are supported."
             )
+        # The telnet stream turns every CR into a line feed and the shell
+        # drops NUL: such a file would arrive altered, so it is refused.
+        if "\r" in text or "\x00" in text:
+            raise OSError(
+                "Cannot upload this file with the raw (cat) transfer: it contains "
+                "carriage returns or NUL bytes, which the terminal would alter; "
+                "no base64/uuencode/xxd available on the remote system."
+            )
         redirect = ">>" if self._append else ">"
         eof = self._safe_eof(text)
-        cmd = f"cat {redirect} {qpath} << '{eof}'\n{text}\n{eof}"
+        if not text or not text.endswith("\n"):
+            # A heredoc body always ends in a newline. Command substitution
+            # strips trailing newlines - here exactly the one added.
+            cmd = f"printf '%s' \"$(cat << '{eof}'\n{text}\n{eof}\n)\" {redirect} {qpath}"
+        else:
+            cmd = f"cat {redirect} {qpath} << '{eof}'\n{text}{eof}"
         self._shell.execute_checked(cmd, timeout=TRANSFER_TIMEOUT)
 
     def discard(self) -> None:
@@ -1381,7 +1409,9 @@ class TelnetSession(SessionLifecycle):
     def list_dir(self, path: str) -> list[FileItem]:
         path = self.normalize(path)
         try:
-            output = self._exec(f"ls -la {shlex.quote(path)}")
+            from core.exec_util import ls_dir_operand
+
+            output = self._exec(f"ls -la {shlex.quote(ls_dir_operand(path))}")
             return _parse_ls_la(output)
         except OSError as exc:
             # Stripped IoT / busybox / restricted-shell fallback:
@@ -1451,13 +1481,22 @@ class TelnetSession(SessionLifecycle):
             group=item.group,
         )
 
+    def _path_kind(self, path: str) -> str | None:
+        """"dir", "other" or None (not there). ``test -e`` read every
+        non-zero exit as "no", a folder it may not search included;
+        server_side_copy(overwrite=False) and the transfer worker take
+        False from exists() as the go-ahead to write."""
+        from core.exec_util import path_kind, path_kind_command
+
+        path = self.normalize(path)
+        out, code = self._exec_raw(path_kind_command(path))
+        return path_kind(f"Telnet {path}", out, code)
+
     def is_dir(self, path: str) -> bool:
-        _, code = self._exec_raw(f"test -d {shlex.quote(self.normalize(path))}")
-        return code == 0
+        return self._path_kind(path) == "dir"
 
     def exists(self, path: str) -> bool:
-        _, code = self._exec_raw(f"test -e {shlex.quote(self.normalize(path))}")
-        return code == 0
+        return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
         self._exec(f"mkdir -p {shlex.quote(self.normalize(path))}")
@@ -1508,15 +1547,50 @@ class TelnetSession(SessionLifecycle):
             except ValueError as e:
                 raise OSError(f"Cannot decode {path}: {e}") from e
         else:
-            # Raw cat — text only
-            output, code = shell.execute(f"cat {qpath}", timeout=TRANSFER_TIMEOUT)
-            if code != 0:
-                raise OSError(f"Cannot read {path}: cat failed (exit {code})")
-            data = output.encode("utf-8")
+            data = self._read_raw(shell, path, qpath)
 
         buf = io.BytesIO(data)
         buf.seek(0)
         return buf
+
+    def _read_raw(self, shell: _ShellSession, path: str, qpath: str) -> bytes:
+        """Raw ``cat`` read - text only - framed by markers of its own.
+
+        The shell session strips each answer, which took leading and
+        trailing blank lines and spaces off the file; the content is cut
+        out between two markers instead. The telnet stream drops every
+        carriage return: where ``wc`` exists the size is checked, so a
+        CRLF (or non-UTF-8) file fails instead of arriving altered.
+        """
+        import secrets
+
+        tag = secrets.token_hex(8)
+        begin = f"__AXROSS_RAW_BEGIN_{tag}__"
+        end = f"__AXROSS_RAW_END_{tag}__"
+        output, code = shell.execute(
+            f"printf '%s' '{begin}' && cat -- {qpath} && printf '%s' '{end}'",
+            timeout=TRANSFER_TIMEOUT,
+        )
+        if code != 0:
+            raise OSError(f"Cannot read {path}: cat failed (exit {code})")
+        start = output.find(begin)
+        stop = output.rfind(end)
+        if start == -1 or stop < start + len(begin):
+            raise OSError(f"Cannot read {path}: the answer is not framed as sent")
+        data = output[start + len(begin) : stop].encode("utf-8")
+        if self._caps.has_wc:
+            size_text, code = shell.execute(f"wc -c < {qpath}", timeout=CMD_TIMEOUT)
+            try:
+                size = int(size_text.strip()) if code == 0 else -1
+            except ValueError:
+                size = -1
+            if size != len(data):
+                raise OSError(
+                    f"Cannot read {path} with the raw (cat) transfer: {len(data)} bytes "
+                    f"arrived, the file has {size} bytes (carriage returns or binary "
+                    "content do not survive the terminal)"
+                )
+        return data
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         path = self.normalize(path)
@@ -1577,7 +1651,7 @@ class TelnetSession(SessionLifecycle):
         """Shell ``cp -p`` on the remote — server-side."""
         src = self.normalize(src)
         dst = self.normalize(dst)
-        output, code = self._exec_raw(f"cp -p -- {shlex.quote(src)} {shlex.quote(dst)} 2>&1")
+        output, code = self._exec_raw(f"{copy_command(src, dst, preserve=True)} 2>&1")
         if code != 0:
             raise OSError(f"cp {src} -> {dst} failed: {output.strip()!r}")
 
@@ -1594,11 +1668,11 @@ class TelnetSession(SessionLifecycle):
         output, code = self._exec_raw(f"{tool} {shlex.quote(path)} 2>/dev/null")
         if code != 0 or not output:
             return ""
+        from core.exec_util import digest_from_sum_output
+
         first_line = split_lf_only_stream(output.strip())[0] if output.strip() else ""
-        digest = first_line.split()[0] if first_line else ""
-        if digest and all(c in "0123456789abcdef" for c in digest.lower()):
-            return f"{algorithm}:{digest.lower()}"
-        return ""
+        digest = digest_from_sum_output(first_line, algorithm)
+        return f"{algorithm}:{digest}" if digest else ""
 
     # ------------------------------------------------------------------
     # Telnet-specific verbs (API_GAPS round 2)

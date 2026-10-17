@@ -65,13 +65,17 @@ class _StatefulNntp:
             elif verb == "OVER" and current:
                 low, _, high = arg.partition("-")
                 rows = "".join(
-                    f"{n}\t{current} subject {n}\tme\tWed, 01 Jul 2026 09:00:00 +0000\t<{n}@{current}>\t\t10\t1\r\n"
+                    f"{n}\t{current} subject {n}\tme\tWed, 01 Jul 2026 09:00:00 +0000"
+                    f"\t<{n}@{current}>\t\t10\t1\r\n"
                     for n in range(int(low), int(high) + 1)
                 )
                 out = "224 overview\r\n" + rows + ".\r\n"
             elif verb in ("ARTICLE", "HEAD") and current:
                 code = 220 if verb == "ARTICLE" else 221
-                out = f"{code} {arg} <{arg}@{current}>\r\nNewsgroups: {current}\r\nX-Number: {arg}\r\n.\r\n"
+                out = (
+                    f"{code} {arg} <{arg}@{current}>\r\n"
+                    f"Newsgroups: {current}\r\nX-Number: {arg}\r\n.\r\n"
+                )
             elif verb == "QUIT":
                 c.sendall(b"205 bye\r\n")
                 break

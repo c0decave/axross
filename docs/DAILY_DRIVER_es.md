@@ -44,8 +44,11 @@ Comportamiento por defecto:
 * **Una vez por pane-session.** El punto es romper el autopiloto, no
   ahogar al operador. Tras un disparo, el pane corre a velocidad
   normal el resto de la sesión.
-* **Headless / REPL** imprime a stderr, acepta Ctrl-C. **GUI**
-  redirige el renderer a un QDialog con
+* **Headless / REPL** imprime a stderr, acepta Ctrl-C. **GUI**:
+  Delete, Move to Trash, Rename, Batch Rename, Change Permissions y
+  Move (F6) en un panel muestran un diálogo con cuenta atrás
+  (`ui/production_gate.py`); Esc o Cancel detiene la operación. Otro
+  código Qt puede instalar su renderer con
   `core.safety_tarpit.set_countdown_renderer`.
 * **CI** se deshabilita con `AXROSS_TARPIT_DISABLE=1` — flag por
   proceso; nunca pongas `production=False` solo para que el CI

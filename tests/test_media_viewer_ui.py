@@ -98,7 +98,9 @@ def _item(path: Path, kind: str) -> MediaItem:
 def test_happy_runner_runs_work_off_the_gui_thread_and_delivers_in_it():
     runner = MV.TaskRunner(workers=2)
     got = []
-    runner.finished.connect(lambda key, value, error: got.append((key, value, error, threading.current_thread())))
+    runner.finished.connect(
+        lambda key, value, error: got.append((key, value, error, threading.current_thread()))
+    )
     runner.submit("k", lambda cancel: threading.current_thread())
     assert wait_until(lambda: got)
     key, value, error, delivered_in = got[0]
@@ -207,7 +209,9 @@ def test_edge_options_dialog_depth_only_with_recursion_and_video_when_supported(
 # -- dialog: scan and overview ---------------------------------------------------------
 
 
-def test_happy_overview_lists_the_folder_and_makes_thumbnails_off_the_gui_thread(folder, monkeypatch):
+def test_happy_overview_lists_the_folder_and_makes_thumbnails_off_the_gui_thread(
+    folder, monkeypatch
+):
     threads = []
     real = ML.thumbnail
 
@@ -280,7 +284,11 @@ def test_edge_lazy_thumbnails_only_for_what_is_shown(tmp_path, monkeypatch):
     for n in range(120):
         write_image(tmp_path / f"{n:03}.png", size=(8, 8))
     asked = []
-    monkeypatch.setattr(ML, "thumbnail", lambda b, item, **kw: asked.append(item.name) or QImage(8, 8, QImage.Format.Format_RGB32))
+    monkeypatch.setattr(
+        ML,
+        "thumbnail",
+        lambda b, item, **kw: asked.append(item.name) or QImage(8, 8, QImage.Format.Format_RGB32),
+    )
     dlg = _dialog(LocalFS(), tmp_path, _opts(kinds=frozenset({IMAGE})))
     dlg.resize(300, 200)
     wait_until(lambda: False, timeout=0.5)
@@ -510,7 +518,9 @@ def test_happy_zoom_and_rotate(tmp_path):
 
 
 def test_edge_fullscreen_toggles_and_escape_leaves_it(three_images):
-    dlg = MV.MediaViewerDialog(LocalFS(), str(Path(three_images[0].path).parent), _opts(start_mode=MV.START_BROWSE))
+    dlg = MV.MediaViewerDialog(
+        LocalFS(), str(Path(three_images[0].path).parent), _opts(start_mode=MV.START_BROWSE)
+    )
     dlg.show()
     dlg.start()
     assert wait_until(lambda: dlg.scan_finished)

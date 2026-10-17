@@ -41,7 +41,9 @@ class _Container:
         self.undeletable: set[str] = set()
 
     def list_blobs(self, name_starts_with=""):
-        return iter([SimpleNamespace(name=n) for n in sorted(self.blobs) if n.startswith(name_starts_with)])
+        return iter(
+            [SimpleNamespace(name=n) for n in sorted(self.blobs) if n.startswith(name_starts_with)]
+        )
 
     def delete_blobs(self, *names, **kw):
         self.batch_calls.append(len(names))
@@ -51,6 +53,17 @@ class _Container:
         for n in names:
             self.blobs.discard(n)
         return iter(())
+
+    def get_blob_client(self, name):
+        # remove() asks whether "dir" is a Data Lake folder placeholder.
+        from azure.core.exceptions import ResourceNotFoundError
+
+        def props():
+            if name not in self.blobs:
+                raise ResourceNotFoundError("BlobNotFound")
+            return SimpleNamespace(metadata={})
+
+        return SimpleNamespace(get_blob_properties=props)
 
     def delete_blob(self, name, **kw):
         self.single_calls += 1
@@ -80,7 +93,9 @@ class PrefixDeleteTest(unittest.TestCase):
         self.assertEqual((c.single_calls, c.blobs), (0, {"other/keep"}))
 
     def test_sad_no_batch_support_falls_back_to_single_deletes(self) -> None:
-        c = _Container(self.names(300), batch_error=HttpResponseError(message="FeatureNotSupported"))
+        c = _Container(
+            self.names(300), batch_error=HttpResponseError(message="FeatureNotSupported")
+        )
         self.session(c)._remove_prefix("dir/")
         self.assertEqual(c.single_calls, 300)
         self.assertEqual(c.blobs, {"other/keep"})

@@ -4,9 +4,10 @@ How a language model drives axross correctly: through the MCP server
 (the tools below) or, where the operator allows it, through Python
 scripts that use the `axross.*` API. [MCP.md](MCP.md) is the full
 reference for the server; this guide is the short path to using it
-right. The tool catalog at the end is generated from
-[`mcp-tools.json`](mcp-tools.json), which a test holds against the
-code.
+right. The tool catalog (§11) is generated from
+[`mcp-tools.json`](mcp-tools.json) and the scripting catalog (§12) from
+[`scripting-api.json`](scripting-api.json); tests hold both files
+against the code.
 
 ---
 
@@ -139,31 +140,122 @@ those flags would serve.
 
 ## 9. Python scripts (`--mcp-allow-scripts`)
 
-- `script_api_schema` first: every `axross.*` function with typed
-  parameters, `mutates` (changes files or remote state) and `prompts`
-  (can need a human).
-- Write with `script_write`, run with `script_run(name, args,
-  timeout_s)`. The reply carries `exit`, `stdout`, `stderr` and, after
-  an uncaught exception, `error_type`, `error` and `traceback`.
-- Nobody can answer a prompt: `axross.confirm()` raises
-  `NonInteractiveError` unless the script passes `assume_yes=True` —
-  pass it only for an action the operator asked for.
-- Open sessions with `with` so they close also after an error:
+A script reaches what no tool does: every backend through
+`axross.open_url`, the per-protocol helpers (databases, mail, LDAP, SNMP,
+remote shells) and many steps in one call. It runs as the server's user,
+in its own process, with nobody to answer a question.
 
-  ```python
-  import axross
-  with axross.open("backup-server") as b:
-      for entry in b.list_dir("/var/log"):
-          print(entry.name, entry.size)
-  ```
-- `axross.open(name)` opens a saved profile; `axross.open_url(url)` any
-  backend by URL — the only way to the backends without a profile:
-  `ldap://`, `postgres://host/db`, `mongodb://`, `redis://`,
-  `git+https://host/repo.git`, `rsh://`, `exchange://`, `wmi://`,
-  `slp://`, `sqlite://`.
+### 9.1 First steps
+
+1. `script_api_schema` with `names: []`: the index — `rules`, `errors`,
+   `groups` (every function and class by topic), the session methods and
+   `legend` (what each field means). Then `script_api_schema` with the
+   names you plan to call: whole docstring, parameters with defaults,
+   `examples`, `raises`, `mutates` (can change something), `prompts` (can
+   need a human) and the types they return. Without a server, the same
+   data is [`scripting-api.json`](scripting-api.json); §12 is its compact
+   catalog.
+2. `script_write(name, source)` saves the script, `script_run(name, args,
+   timeout_s)` runs it: `args` become `sys.argv[1:]`.
+3. Read the reply: `exit` (the `sys.exit` value; negative: stopped by a
+   signal), `stdout`, `stderr`, `timed_out` and, after an uncaught
+   exception, `error_type`, `error` and `traceback`.
+
+### 9.2 A script that reports to a machine
+
+```python
+import json
+import sys
+
+import axross
+
+root = sys.argv[1] if len(sys.argv) > 1 else "/"
+with axross.open("backup-server") as b:          # closed again, also after an error
+    entries = [
+        {"path": b.join(root, e.name), "size": e.size, "dir": e.is_dir}
+        for e in b.list_dir(root)                 # e.name is a name, not a path
+    ]
+print(json.dumps(entries, default=str))           # one JSON document on stdout
+```
+
+### 9.3 Idioms
+
+- **Open**: `axross.open(name)` for a saved profile (`axross.list_profiles()`
+  names them); `axross.open_url(url)` for any backend by URL — the only
+  way to the backends without a profile: `ldap://`, `postgres://host/db`,
+  `mongodb://`, `redis://`, `git+https://host/repo.git`, `rsh://`,
+  `exchange://`, `wmi://`, `slp://`, `sqlite://`. `axross.localfs()` is
+  the local file system, `axross.ramfs()` a scratch space in memory.
+- **Read**: `axross.read_text(b, path)` and `axross.read_bytes(b, path)`
+  read at most 64 MiB unless `max_bytes` says otherwise; stream anything
+  bigger with `with b.open_read(path) as fh:`.
+- **Walk**: `axross.find_files(b, root, ext="log")` yields every file
+  below `root` (its `name` is the full path); `axross.summarize(b, path)`
+  gives the gist of a folder without listing it all.
+- **Write and copy**: `axross.write_text(b, path, text)`,
+  `axross.copy(src_b, src, dst_b, dst)` and `axross.move(...)` refuse an
+  existing target; pass `overwrite=True` only when replacing is the task.
+  For big or flaky transfers use `axross.resumable_copy`.
+- **Delete**: `axross.preview_delete(b, [path])` first, then
+  `axross.remove(b, path, confirm=True)` or the restorable
+  `axross.trash(b, path, confirm=True)` — only for a delete the operator
+  asked for.
+- **Compare**: `axross.hash_file(b, path)` returns the bare hex digest of
+  the algorithm you name on every backend; `axross.checksum` may answer
+  with the backend's own fingerprint (`md5:…` or `s3-etag:…` on S3) —
+  compare the prefix first.
+- **Commands**: `axross.exec(b, cmd)` on an SSH or SCP session returns an
+  `ExecResult`; `.check()` raises `OSError` on a non-zero exit. Quote
+  arguments with `shlex.quote`.
 - **SQLite URLs follow the SQLAlchemy convention:** `sqlite:///data.db`
   is relative to the current directory, `sqlite:////srv/data.db` (four
   slashes) is the absolute path `/srv/data.db`.
+
+### 9.4 Pitfalls
+
+- **The session methods skip the guards.** `b.remove`, `b.rename` and
+  `b.open_write` neither refuse an existing target nor ask for
+  `confirm=True` nor wait for the production countdown; the `axross.*`
+  helpers do. Change files through the helpers.
+- **Nobody answers.** `script_run` sets `AXROSS_NONINTERACTIVE=1` and an
+  empty stdin: `axross.confirm()` raises `NonInteractiveError` unless the
+  script passes `assume_yes=True` — pass it only for an action the
+  operator asked for — and a change on a profile flagged production is
+  refused unless the operator started axross with
+  `AXROSS_TARPIT_DISABLE=1`. `axross.is_interactive()` tells which case a
+  script is in.
+- **Paths follow the session.** Most sessions use `/`; `axross.localfs()`
+  follows the host and WinRM and WMI sessions use `\`. Join with
+  `b.join` and `b.parent`, not `os.path`.
+- **Wrong kind of session.** The per-protocol helpers (`axross.exec`,
+  `axross.query`, `axross.imap_search`, …) raise `TypeError` on a session
+  of another protocol. `copy`, `symlink` and `hardlink` exist on some
+  sessions only: test `hasattr(b, "copy")` and the `supports_symlinks`
+  attribute first.
+- **Output is bounded.** `stdout` and `stderr` have a size limit (see
+  `script_run` in §11); a script that prints more is stopped. Aggregate
+  before printing.
+
+### 9.5 Errors in a script
+
+Catch the narrow class first — `NonInteractiveError` is a
+`PermissionError`, which is an `OSError`:
+
+```python
+try:
+    axross.write_text(b, path, text)
+except FileExistsError:
+    ...                               # the target exists: another path, or overwrite=True
+except axross.NonInteractiveError:
+    ...                               # needs a human: report it, do not work around it
+except PermissionError:
+    ...                               # refused (server, confirm=, security mode)
+except OSError as exc:
+    ...                               # I/O failed or the session cannot do it
+```
+
+The table in §12 says what each exception means. A refusal is a
+decision: report it instead of retrying another way.
 
 ## 10. Do and don't
 
@@ -266,7 +358,7 @@ Regex search inside file contents under a root path. Recurses up to max_depth (d
 
 #### `list_versions` — read-only · quick (15 s) · stdio + http · *backend*
 
-List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV). Empty list on backends with no native versioning.
+List historical versions of a file (S3 ObjectVersions, Dropbox revisions, GDrive revision-history, Azure blob snapshots, WebDAV DeltaV, Git: one per commit that changed the file). Empty list on backends with no native versioning.
 
 - `path` (string, required)
 
@@ -329,7 +421,7 @@ Needs: `--mcp-write` `--mcp-root DIR`.
 
 #### `bulk_copy` — mutating · stream (300 s) · stdio + http · *backend*
 
-Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is "copied", "skipped" (reason: "too-large" or "exists"), or "error". Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false. Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.
+Copy a file OR directory tree from src into dst. Per-file records: {src, dst, size, action} where action is "copied", "skipped" (reason: "too-large", "exists", "unsafe-name", or "max-depth" for a folder below max_depth), or "error" (folder: true for a folder that could not be listed). "truncated" is true when max_files or max_depth cut the walk; "complete" is true only when every file was copied or already existed. Emits one progress notification per copied file; a notifications/cancelled stops within one file. Defaults: max_files=1000, max_depth=10, max_file_bytes=10 GiB, overwrite=false. Missing dst parent directories are created automatically. Same-backend only in V1 — cross-backend copy is handled by the transfer manager, not the MCP surface.
 
 Needs: `--mcp-write` `--mcp-root DIR`.
 
@@ -379,9 +471,11 @@ Needs: `--mcp-allow-scripts`.
 
 #### `script_api_schema` — read-only · quick (15 s) · stdio
 
-Describe the ``axross`` scripting API that script_run gives a script, as JSON built from the live code: per public function its signature, parameters with types and defaults, return type, first docstring paragraph, group, ``mutates`` (can change files, remote state or settings) and ``prompts`` (needs a human: under script_run it raises NonInteractiveError unless the script opts in, e.g. confirm(assume_yes=True)); the public classes; and the methods every backend session has (with close() and the with statement). Same data as axross.api_schema().
+Describe the ``axross`` scripting API that script_run gives a script, as JSON built from the live code: rules and errors (the conventions and exceptions a script meets), groups (the names by topic), per public function its signature, parameters with types and defaults, return type, whole docstring, examples, ``raises``, ``mutates`` (can change files, remote state or settings) and ``prompts`` (needs a human: under script_run it raises NonInteractiveError unless the script opts in, e.g. confirm(assume_yes=True)); the public classes; the types the API returns (FileItem, results) with fields and methods; the methods every backend session has (with close() and the with statement); and a legend of every field. Same data as axross.api_schema(names) and docs/scripting-api.json. The whole API is large: call it with names=[] for the index, then with the names you need.
 
 Needs: `--mcp-allow-scripts`.
+
+- `names` (array of string): Only these functions, classes and types, plus the types they use; [] gives the index alone. Default: everything.
 
 #### `script_read` — read-only · quick (15 s) · stdio
 
@@ -746,3 +840,298 @@ Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 - `src_backend` (string, default `"local"`): Backend id of the source (list_backends); 'local' is the local file system under the MCP root.
 
 <!-- END GENERATED TOOL CATALOG -->
+
+---
+
+## 12. Scripting catalog
+
+<!-- BEGIN GENERATED SCRIPTING CATALOG (python -m core.llm_guide) -->
+
+111 functions, 11 classes, 29 session members and 34 further types, from `docs/scripting-api.json` (schema version 2). Each line: signature, then whether the call can change something, whether it can need a human, and what the axross layer raises itself; then the first paragraph of its docstring. The manifest has the whole docstring, the examples and the parameters.
+
+### Rules
+
+- **namespace**: A script run by script_run, axross --script or the Scripts dock finds the API bound as axross; import axross gives the same names.
+- **sessions**: open(profile_name), open_url(url), localfs() and ramfs() return a session b with the backend_protocol methods. Open it in a with block: leaving the block ends the connection, also after an exception; b.close() does the same by hand.
+- **paths**: Paths are absolute strings in the session's own syntax. Most sessions use '/'; localfs() uses the host's separator and WinRM and WMI sessions use '\'. Build paths with b.join() and b.parent() rather than os.path, which follows the host.
+- **listing**: b.list_dir(path) returns a list of FileItem and b.stat(path) one FileItem (see types): name is the entry's name inside the directory, not a path - join it to the directory; modified is naive local time; is_dir and is_link give the kind. find_files(b, root, ...) walks a tree and yields the files as FileItem whose name is the full path; it skips folders it cannot read.
+- **helpers-before-session-methods**: Change files with the axross.* helpers, not the raw session methods. copy, move, write_bytes, write_text and encrypt refuse an existing target unless overwrite=True (move across backends refuses it even then); remove and trash refuse without confirm=True; write_bytes writes atomically where the backend allows it; copy, move, remove, trash, write_bytes, write_text, dedupe and remove_metadata wait for the production countdown on a profile flagged production. b.remove(), b.rename(), b.open_write() and the other session methods do none of this.
+- **no-human**: Under script_run nobody can answer: stdin is empty and AXROSS_NONINTERACTIVE=1 is set. A function with prompts=true raises NonInteractiveError (a PermissionError) instead of asking: confirm() unless assume_yes=True is passed, and a change on a production profile unless the operator started axross with AXROSS_TARPIT_DISABLE=1. is_interactive() tells a script which case it is in. Pass assume_yes=True only for an action the operator asked for.
+- **bounded-reads**: read_bytes() and read_text() read at most 67108864 (64 MiB) bytes unless max_bytes says otherwise, and raise OSError above it. Stream bigger files: with b.open_read(path) as fh: then fh.read(chunk_size) in a loop.
+- **handles**: b.open_read() and b.open_write() return file handles the caller must close: use them in a with block. b.open_write() has none of write_bytes()'s checks.
+- **checksums**: checksum(b, path) returns the backend's fingerprint marked with its algorithm ('sha256:<hex>', 'md5:<hex>', 's3-etag:<etag>', ...), which may not be the algorithm asked for: compare the prefix before the value. hash_file(b, path, algorithm) always streams and returns the bare hex digest of that algorithm - use it to compare files across backends.
+- **wrong-session-kind**: Per-protocol helpers (exec, interactive_shell, query, tables, imap_search, ldap_search, share, ...) raise TypeError on a session of another kind.
+- **output**: print() goes to stdout, which script_run returns with stderr, the exit status and, after an uncaught exception, error_type, error and traceback. Print a result a machine reads as one JSON document; sys.exit(n) sets the exit status.
+
+### Errors
+
+| Exception | Base | Meaning | What to do |
+|---|---|---|---|
+| `OSError` | `Exception` | An I/O operation failed or the session cannot do it: protocol error, connection lost, an operation the backend does not support, a read above max_bytes. The subclasses below say more. | Read the message. Do not repeat the same call unchanged. |
+| `FileNotFoundError` | `OSError` | The path does not exist on that session. | List the parent directory and check the path. |
+| `FileExistsError` | `OSError` | The target exists and overwrite=False (copy, move, write_bytes, write_text, encrypt). | Choose another path, or pass overwrite=True only when replacing it is intended. |
+| `IsADirectoryError` | `OSError` | A file operation got a folder (for example metadata() on a directory). | Use the folder variant the message names. |
+| `PermissionError` | `OSError` | A refusal: the server denied access, remove() or trash() was called without confirm=True, or the security mode blocks the feature. | Do not route around it. confirm=True is for deletes the operator asked for. |
+| `NonInteractiveError` | `PermissionError` | The call needs a human and none can answer: confirm() without assume_yes=True, or a change on a production profile. | Pass assume_yes=True only for what the operator asked for; production changes need the operator. |
+| `KeyError` | `LookupError` | open() got a profile name that is not saved, or docs() an unknown topic. | list_profiles() gives the saved names. |
+| `TypeError` | `Exception` | The session is the wrong kind for the helper (exec() on S3, query() on a session that is no database) or an argument has the wrong type. | Check the session's protocol and the signature. |
+| `ValueError` | `Exception` | An argument value is invalid: an unknown URL scheme, a port out of range, a script name outside [A-Za-z0-9_-], an unknown mode or format. | Fix the argument; the message names it. |
+| `KeyboardInterrupt` | `BaseException` | Someone stopped the production countdown before a change. | Do not repeat the change. |
+
+### Open / connect
+
+- `axross.open(profile_name: str, password: str | None = None, key_passphrase: str | None = None) -> FileBackend` — read-only · prompts (NonInteractiveError without a human) · raises KeyError. Open a backend by saved profile name. Returns a FileBackend session. Raises :class:`KeyError` if the profile doesn't exist and :class:`OSError` for connection failure.
+- `axross.open_url(url: str, **kwargs: Any) -> FileBackend` — read-only · prompts (NonInteractiveError without a human) · raises TypeError, ValueError. Open a backend from a URL like ``sftp://user@host/``, ``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.
+- `axross.localfs() -> LocalFS` — read-only. Return a LocalFS session pointed at the host's filesystem.
+- `axross.ramfs(max_bytes: int | None = None) -> RamFsSession` — read-only. Return a fresh RamFS session — bytes never touch disk. ``max_bytes`` overrides the default per-instance cap.
+- `axross.list_profiles() -> list[str]` — read-only. Return the names of all saved connection profiles.
+- `axross.get_profile(name: str) -> ConnectionProfile | None` — read-only. Look up a saved :class:`ConnectionProfile` by name.
+- `axross.save_profile(profile: ConnectionProfile) -> None` — mutates. Persist a :class:`core.profiles.ConnectionProfile`. The profile object itself can be constructed via ``ConnectionProfile(name=..., protocol=..., host=...)`` — see ``help(core.profiles.ConnectionProfile)``.
+- `axross.delete_profile(name: str) -> None` — mutates. Delete a saved profile by name. No-op if the profile doesn't exist.
+- `axross.list_backends() -> list[str]` — read-only. Return the protocol IDs of every registered backend (sftp, smb, s3, …) regardless of whether the optional dependency is installed. Use :func:`available_backends` for the installed subset.
+- `axross.available_backends() -> list[str]` — read-only. Return the protocol IDs of backends whose dependencies are actually installed.
+
+### File I/O
+
+- `axross.copy(src_backend: FileBackend, src_path: str, dst_backend: FileBackend, dst_path: str, buffer_size: int = 1048576, *, overwrite: bool = False) -> int` — mutates · prompts (NonInteractiveError without a human) · raises FileExistsError, OSError. Copy bytes from one backend to another. Returns the number of bytes transferred. Same-backend copies use the backend's native ``copy()`` if available; cross-backend copies always stream.
+- `axross.move(src_backend: FileBackend, src_path: str, dst_backend: FileBackend, dst_path: str, *, overwrite: bool = False) -> int` — mutates · prompts (NonInteractiveError without a human) · raises FileExistsError, OSError. Move a file from one backend to another. Same-backend uses rename; cross-backend uses copy + delete-source.
+- `axross.remove(backend: FileBackend, path: str, *, recursive: bool = False, confirm: bool = False) -> str` — mutates · prompts (NonInteractiveError without a human) · raises PermissionError. Delete ``path`` from ``backend`` after an explicit opt-in.
+- `axross.trash(backend: FileBackend, path: str, *, root: str | None = None, confirm: bool = False) -> str` — mutates · prompts (NonInteractiveError without a human) · raises PermissionError. Move ``path`` to Axross trash after an explicit opt-in.
+- `axross.read_bytes(backend: FileBackend, path: str, *, max_bytes: int | None = 67108864) -> bytes` — read-only · raises OSError, ValueError. Read a file into memory.
+- `axross.write_bytes(backend: FileBackend, path: str, data: bytes, *, overwrite: bool = False) -> int` — mutates · prompts (NonInteractiveError without a human) · raises FileExistsError, OSError. Write ``data`` to ``path`` on ``backend``. Returns bytes written.
+- `axross.read_text(backend: FileBackend, path: str, encoding: str = 'utf-8', *, max_bytes: int | None = 67108864) -> str` — read-only · raises OSError, ValueError. Read an entire file as text. Decodes the bytes via ``encoding`` with ``errors="replace"`` so a stray non-UTF-8 byte never raises; use :func:`read_bytes` when you need exact-bytes round-trip.
+- `axross.write_text(backend: FileBackend, path: str, text: str, encoding: str = 'utf-8', *, overwrite: bool = False) -> int` — mutates · prompts (NonInteractiveError without a human) · raises FileExistsError, OSError. Write a UTF-8 text file. Convenience wrapper around :func:`write_bytes` — encodes ``text`` and forwards. Returns the number of bytes written. Existing destinations are refused unless ``overwrite=True`` is passed.
+- `axross.checksum(backend: FileBackend, path: str, algorithm: str = 'sha256') -> str` — read-only. Return the backend's content fingerprint for ``path``. Falls back to a streaming hash when the backend has no cheap server-side checksum.
+- `axross.hash_bytes(data: bytes, algorithm: str = 'sha256') -> str` — read-only. Hex digest of ``data`` under ``algorithm`` (anything :mod:`hashlib.new` accepts: sha1, sha256, sha512, md5, …).
+- `axross.hash_file(backend: FileBackend, path: str, algorithm: str = 'sha256', chunk_size: int = 1048576) -> str` — read-only. Streaming hex digest of a backend-side file. Same as :func:`checksum` but never tries to use a server-side fingerprint — use this when you specifically want algorithm parity across different backends.
+
+### Encryption + archives
+
+- `axross.encrypt(backend: FileBackend, path: str, passphrase: str, keep_original: bool = True, *, overwrite: bool = False) -> str` — mutates · raises FileExistsError, OSError, ValueError. Encrypt ``path`` with the axross encrypted-overlay format and write the ciphertext to ``<path>.axenc``. Returns the new path.
+- `axross.decrypt(backend: FileBackend, path: str, passphrase: str) -> bytes` — read-only. Read and decrypt an .axenc file. Returns the plaintext bytes — the caller decides where to put them (write_bytes to disk, hand them to a parser, etc.).
+- `axross.extract_archive(local_path: str, dst_dir: str, progress: Callable[[int, int, str], None] | None = None) -> str` — mutates. Extract a local archive (zip / tar / 7z) to ``dst_dir``. Returns the destination directory after the extract. Refuses zip-bombs and zip-slip via the same guards used by the file-manager UI.
+- `axross.is_archive(path: str) -> bool` — read-only. True when ``path`` looks like a zip / tar / 7z by extension.
+
+### Bookmarks + scripts
+
+- `axross.list_bookmarks() -> list` — read-only. Return all saved bookmarks (list of :class:`Bookmark`).
+- `axross.add_bookmark(name: str, path: str, backend_name: str = 'Local', profile_name: str = '', icon_name: str = 'bookmark') -> None` — mutates. Create a new bookmark. Idempotent on (path, backend_name).
+- `axross.remove_bookmark(index: int) -> None` — mutates. Remove the bookmark at ``index`` (zero-based).
+- `axross.script_dir() -> str` — read-only · raises OSError. Return the script-storage directory path. Created on first access. Mode 0700 so other local users can't read scripts that might contain credentials.
+- `axross.list_scripts() -> list[str]` — read-only · raises OSError. Names of every saved script in :func:`script_dir`.
+- `axross.save_script(name: str, source: str) -> str` — mutates · raises OSError, ValueError. Write ``source`` to ``script_dir()/<name>.py`` (mode 0o600). Overwrites any existing file with the same name. Returns the final on-disk path.
+- `axross.load_script(name: str) -> str` — read-only · raises OSError, ValueError. Read the source of a saved script as a UTF-8 string. Raises ``FileNotFoundError`` when the script doesn't exist; ``ValueError`` when the name contains characters outside the allow-list.
+- `axross.delete_script(name: str) -> None` — mutates · raises OSError, ValueError. Remove a saved script. No-op if the file is already gone.
+- `axross.run_script(name: str, env: dict | None = None) -> dict` — mutates · prompts (NonInteractiveError without a human) · raises OSError, ValueError. Execute a saved script in a fresh namespace pre-populated with ``axross`` (this module). Returns the post-exec namespace so the caller can inspect any variables it left behind. ``env`` overrides / augments the initial namespace.
+
+### Per-protocol
+
+- `axross.find_tftp_files(backend: FileBackend, wordlist: list[str] | str | None = None, on_progress: Callable[[str, int, int], None] | None = None) -> list[FileItem]` — read-only. Walk ``backend.find_files()`` (TFTP wordlist scan). The backend must be a :class:`TftpSession`; raises :class:`AttributeError` otherwise.
+- `axross.slp_discover(host: str, scope: str = 'DEFAULT', port: int = 427, use_tcp: bool = False) -> dict` — read-only. One-shot SLPv2 discover: returns ``{service_type: [(url, ttl)]}`` for everything the daemon at ``host`` advertises in ``scope``. Pure read; no SrvReg path is ever exercised (CVE-2023-29552 mitigation).
+- `axross.nntp_post(backend: FileBackend, group: str, subject: str, body: str, author: str = 'axross <noreply@axross>') -> None` — mutates · raises ValueError. Post a fully-formed article to ``group`` on ``backend`` (an :class:`NntpSession`). Builds a minimal RFC 5322 envelope around ``subject`` + ``body``; for richer headers, hand the writer a pre-built bytes payload via ``backend.open_write(...)``.
+- `axross.git_push(backend: FileBackend, branch: str | None = None) -> None` — mutates. Push committed work on ``backend`` (a :class:`GitFsSession`) to its origin. Raises :class:`GitForceRefused` on non-fast-forward. Pass ``branch=None`` to push every branch the session has touched.
+- `axross.exec(backend: FileBackend, cmd: str, *, timeout: float | None = 30.0, stdin: bytes | str | None = None, stdout_cap: int = 1048576, stderr_cap: int = 65536, env: dict[str, str] | None = None) -> ExecResult` — mutates · raises TypeError. Run a shell command on a remote backend. Returns :class:`models.exec_result.ExecResult` with ``returncode``, ``stdout``, ``stderr`` and the corresponding ``truncated_*`` flags.
+- `axross.interactive_shell(backend: FileBackend, *, term: str = 'xterm-256color', cols: int = 80, rows: int = 24, env: dict[str, str] | None = None) -> InteractiveShell` — mutates · raises TypeError. Open an interactive shell on the same SSH transport ``backend`` is already using. Multiplexing — file ops on ``backend`` keep working while the shell is open. Returns a :class:`models.interactive_shell.InteractiveShell` wrapper with ``read`` / ``write`` / ``read_until`` / ``resize_pty`` / ``close`` / ``interact`` / iter-as-lines.
+- `axross.query(backend: FileBackend, sql_or_args: str, *args: Any, **kwargs: Any) -> list[dict]` — mutates · raises TypeError. Generic database-query dispatch. Calls ``backend.query()`` for SQL backends (SQLite / Postgres) or ``backend.find()`` for Mongo when ``sql_or_args`` looks like a collection name + filter dict.
+- `axross.tables(backend: FileBackend) -> list[str]` — read-only · raises TypeError. Return every table (SQLite/Postgres) or collection (Mongo) on ``backend``. Wraps the per-backend method of the same name.
+- `axross.imap_search(backend: FileBackend, criteria: str = 'ALL', *, mailbox: str = 'INBOX') -> list` — read-only · raises TypeError. Wrapper around message-backend search. For IMAP this returns the list of UIDs matching an IMAP search expression (RFC 3501); for Exchange it returns the backend's lightweight message dicts:
+- `axross.imap_move(backend: FileBackend, uid: int, src_mailbox: str, dst_mailbox: str) -> None` — mutates · raises TypeError. Move an IMAP message by UID. Uses MOVE if the server supports it, COPY+\Deleted+EXPUNGE otherwise. See ``ImapSession.move``.
+- `axross.imap_set_flags(backend: FileBackend, uid: int, flags: list[str], *, mailbox: str = 'INBOX', mode: str = 'set') -> None` — mutates · raises TypeError. STORE flags on an IMAP message by UID. ``mode`` is ``set`` / ``add`` / ``remove``.
+- `axross.share(backend: FileBackend, path: str, **kwargs: Any) -> str` — mutates · raises TypeError. Create a shareable link for ``path`` on a cloud backend that supports it. Dispatches to:
+- `axross.ldap_search(backend: FileBackend, base_dn: str, filter: str = '(objectClass=*)', *, scope: str = 'subtree', attributes: list[str] | None = None, limit: int = 1000) -> list[dict]` — read-only · raises TypeError. Run a raw LDAP search via the connected ``LdapFsSession``. Returns up to ``limit`` entries as dicts ``{dn, attributes}``:
+
+### Network helpers
+
+- `axross.dns_resolve(host: str, family: str = 'any') -> list[str]` — read-only. Return the IPs ``host`` resolves to. ``family`` is ``"v4"``, ``"v6"``, or ``"any"``.
+- `axross.dns_records(name: str, rtype: str = 'A', *, resolver: str | None = None, timeout: float = 3.0) -> list[str]` — read-only · raises OSError. Return DNS records of ``rtype`` for ``name``. Uses ``dnspython`` so we get TXT/MX/SRV/CAA/NAPTR records in addition to the basic A / AAAA / CNAME / NS / PTR.
+- `axross.dns_reverse(ip: str, *, resolver: str | None = None, timeout: float = 3.0) -> list[str]` — read-only · raises OSError. PTR lookup for an IP. Returns a list (most addresses have at most one PTR but the protocol allows multiple).
+- `axross.port_open(host: str, port: int, timeout: float = 3.0) -> bool` — read-only. ``True`` if a TCP connect to ``host:port`` succeeds within ``timeout`` seconds. Useful for lab-up probes in scripts.
+- `axross.port_scan(host: str, ports: Iterable[int], *, timeout: float = 1.0, concurrency: int = 64) -> list[int]` — read-only · raises ValueError. Concurrent TCP-connect scan. Returns the sorted list of ports that accepted a connection within ``timeout``.
+- `axross.subnet_hosts(cidr: str) -> list[str]` — read-only · raises ValueError. Iterate every usable host in ``cidr`` (e.g. ``"10.0.0.0/29"``). Returns a list of IP strings — for /29 that's 6 addresses, for /24 it's 254. Refuses ranges larger than /16 to prevent the user from accidentally enumerating 65k addresses they didn't mean to.
+- `axross.tcp_banner(host: str, port: int, *, timeout: float = 3.0, max_bytes: int = 4096, send: bytes | None = None) -> bytes` — read-only. Connect to ``host:port`` and read up to ``max_bytes`` of the server's initial response. Useful for service-ID probes (SSH, FTP, SMTP, IMAP all greet with a banner).
+- `axross.tls_cert(host: str, port: int = 443, *, timeout: float = 5.0, sni: str | None = None, verify: bool = False) -> TlsCert` — read-only · raises OSError. TLS handshake against ``host:port`` and return the parsed leaf certificate.
+- `axross.ssh_hostkey(host: str, port: int = 22, *, timeout: float = 5.0) -> SshHostKey` — read-only. Connect, complete the SSH KEX, fetch the server's host key and return its fingerprints. NO authentication is attempted.
+- `axross.http_probe(url: str, *, method: str = 'GET', headers: dict[str, str] | None = None, body: bytes | str | None = None, timeout: float = 10.0, allow_redirects: bool = True, body_cap: int = 1048576, raw_cap: int | None = None, verify: bool = True) -> HttpProbe` — read-only · raises OSError, ValueError. Lightweight HTTP/HTTPS probe via ``requests``. Returns the response status, headers, body (up to ``body_cap``), redirect chain, and the TLS leaf cert when applicable.
+- `axross.snmp_get(host: str, oid: str, *, community: str = 'public', port: int = 161, timeout: float = 3.0, retries: int = 1, user: str | None = None, auth_key: str | None = None, priv_key: str | None = None, auth_proto: str | None = None, priv_proto: str | None = None) -> SnmpVar` — read-only · raises OSError. Issue a single SNMP GET request. Returns one ``SnmpVar`` for the OID. Raises ``OSError`` on transport failure.
+- `axross.snmp_walk(host: str, base_oid: str, *, community: str = 'public', port: int = 161, timeout: float = 3.0, retries: int = 1, max_vars: int = 10000, user: str | None = None, auth_key: str | None = None, priv_key: str | None = None, auth_proto: str | None = None, priv_proto: str | None = None) -> list[SnmpVar]` — read-only · raises OSError. Walk an OID subtree, returning every leaf as an ``SnmpVar``. ``max_vars`` caps the result at a sane number — a walk of ``1.3`` on a packed device returns thousands of varbinds.
+- `axross.snmp_set(host: str, oid: str, value: Any, *, value_type: str = 'OctetString', community: str = 'private', port: int = 161, timeout: float = 3.0, retries: int = 1) -> SnmpVar` — mutates · raises OSError, ValueError. Issue an SNMP SET. ``value_type`` is the pysnmp type-class name (``OctetString`` / ``Integer`` / ``Counter32`` / …).
+- `axross.ping(host: str, *, port: int = 80, timeout: float = 3.0, count: int = 1) -> list[PingResult]` — read-only. TCP-based reachability probe — connect to ``host:port`` and measure RTT. Returns one ``PingResult`` per ``count`` attempt.
+- `axross.mac_lookup(mac: str) -> OuiInfo` — read-only · raises OSError, ValueError. Look up the IEEE OUI vendor for a MAC address.
+- `axross.whois(query: str, *, timeout: float = 5.0) -> WhoisInfo` — read-only · raises NotImplementedError, OSError. RIR / ASN / registrar lookup.
+- `axross.time_skew(host: str, *, source: str = 'http', port: int | None = None, timeout: float = 5.0, verify_tls: bool = False) -> TimeSkew` — read-only · raises NotImplementedError, OSError, ValueError. Measure clock drift of ``host`` vs. the local clock.
+
+### Search across backends
+
+- `axross.find_files(backend: FileBackend, path: str, *, pattern: str | None = None, ext: str | None = None, mtime_after: datetime | None = None, mtime_before: datetime | None = None, size_min: int | None = None, size_max: int | None = None, max_depth: int | None = None, follow_links: bool = False) -> Iterator` — read-only · raises TypeError. Recursive walk of ``backend`` rooted at ``path``, filtered by every non-None criterion. Yields :class:`models.file_item.FileItem`.
+- `axross.grep(backend: FileBackend, path: str, pattern: str, *, max_size: int = 10485760, max_matches: int = 100, ignore_case: bool = False, binary: bool = False) -> list[GrepHit]` — read-only · raises OSError, TypeError. Search ``backend:path`` for ``pattern`` (a regex). Returns up to ``max_matches`` hits.
+- `axross.diff_files(b1: FileBackend, p1: str, b2: FileBackend, p2: str, *, max_bytes: int = 10485760, n_context: int = 3) -> list[str]` — read-only · raises ValueError. Unified diff of two files, possibly on different backends. Returns a list of diff lines (incl. ``--- / +++`` headers). Empty list = no difference.
+
+### Duplicate index
+
+- `axross.duplicate_scans() -> list[ScanRecord]` — read-only. Return the Duplicate Finder's scan history, newest first.
+- `axross.duplicates(*, scan: ScanRecord | int | None = None, folder: str | None = None, algorithm: str | None = None) -> list[list[CasEntry]]` — read-only. Return the duplicate groups of the Duplicate Finder's index.
+- `axross.dedupe(*, keep: str = 'oldest', dry_run: bool = True, scan: ScanRecord | int | None = None, folder: str | None = None, algorithm: str | None = None, backends: list[FileBackend] | None = None) -> DedupeResult` — mutates · prompts (NonInteractiveError without a human) · raises ValueError. Keep the first copy of every duplicate group, trash the others.
+
+### Content inspection
+
+- `axross.file_type(backend: FileBackend | str | os.PathLike[str], path: str | None = None, *, max_bytes: int = 65536, timeout: float = 15.0, use_file_command: bool = True) -> FileTypeInfo` — read-only · raises TypeError. Identify a file's real type from its content (magic bytes), not its name.
+- `axross.magic_type(data: bytes, *, default: str = 'application/octet-stream') -> str` — read-only · raises OSError. Detect file type by magic bytes. Returns the MIME type if recognised, ``default`` otherwise. Uses pure-Python ``puremagic`` so no libmagic dep is needed at runtime.
+- `axross.text_encoding(data: bytes, *, sample_bytes: int = 65536) -> dict` — read-only · raises OSError. Guess the text encoding of ``data``. Returns a dict:
+- `axross.entropy(data: bytes, *, base: int = 2) -> float` — read-only. Shannon entropy of ``data`` in bits/byte (when ``base=2``).
+- `axross.archive_inspect(path: str, *, max_entries: int = 100000) -> list[ArchiveEntry]` — read-only · raises OSError, ValueError. List the entries inside ``path`` without extracting. Detects the archive type by extension first (``.zip`` / ``.tar*`` / ``.7z``) and falls through to magic-byte sniffing for unknown suffixes.
+
+### File metadata
+
+- `axross.metadata(backend: FileBackend, path: str) -> MetadataReport` — read-only · raises IsADirectoryError. Return the metadata of one file as a ``MetadataReport``.
+- `axross.remove_metadata(backend: FileBackend, path: str, *, mode: str | None = None, recursive: bool = False) -> list` — mutates · prompts (NonInteractiveError without a human) · raises FileNotFoundError, ValueError. Remove the metadata of a file, or of every supported file in a folder.
+- `axross.export_metadata(backend: FileBackend, root: str, *, fmt: str = 'json', recursive: bool = False, out: str | None = None) -> str` — mutates · raises ValueError. Return the metadata of a file or of every supported file in a folder, as JSON (``{"files": [...]}``) or CSV (one row per field).
+
+### Safety + diagnostics
+
+- `axross.diagnose(backend: FileBackend, *, root: str | None = None, write_test: bool = False) -> str` — mutates. Run live diagnostics against an open backend and return a plain-text report.
+- `axross.preview_delete(backend: FileBackend, paths: list[str], *, max_entries: int = 10000) -> str` — read-only. Preview a delete/trash operation before executing it.
+- `axross.preview_transfer(source_backend: FileBackend, dest_backend: FileBackend, source_paths: list[str], dest_dir: str, *, operation: str = 'copy', max_entries: int = 10000) -> str` — read-only. Preview a copy/move before queueing it.
+- `axross.recovery_scan(backend: FileBackend, root: str | None = None) -> str` — read-only. Scan a backend location for recoverable temp/trash items and return a plain-text report.
+- `axross.recent_operations(limit: int = 20) -> list[dict]` — read-only. Return recent operation-journal events: secrets redacted, paths as they are on disk (undo needs them).
+- `axross.security_mode(name: str | None = None) -> str` — mutates. Get or set the runtime security mode.
+
+### Credential testing (authorised use only)
+
+- `axross.bruteforce(profile: ConnectionProfile | str, *, users: Iterable[str], passwords: Iterable[str], rate_per_min: float = 30.0, timeout_per_attempt: float = 10.0, abort_on_lockout: bool = True, abort_after_n_lockouts: int = 1, abort_after_n_failures: int | None = None, max_attempts: int | None = None, stop_on_first_success_per_user: bool = True, progress: Callable[[AttemptOutcome], None] | None = None, on_unknown_host: Callable[[object], bool] | None = None, state_file: str | os.PathLike[str] | None = None, dry_run: bool = False, jitter_s: float = 0.0, authorized: bool = False) -> AttackReport` — mutates. Run a brute-force credential test in user-major order against a saved profile (name or :class:`ConnectionProfile`).
+- `axross.spray(profile: ConnectionProfile | str, *, users: Iterable[str], password: str | None = None, passwords: Iterable[str] | None = None, rate_per_min: float = 30.0, timeout_per_attempt: float = 10.0, abort_on_lockout: bool = True, abort_after_n_lockouts: int = 1, max_attempts: int | None = None, stop_on_first_success_per_user: bool = True, progress: Callable[[AttemptOutcome], None] | None = None, on_unknown_host: Callable[[object], bool] | None = None, state_file: str | os.PathLike[str] | None = None, dry_run: bool = False, jitter_s: float = 0.0, authorized: bool = False) -> AttackReport` — mutates. Run a password spray in password-major order — the safer pattern for AD-style targets where lockout is per-user-per-window.
+- `axross.enumerate_users(profile: ConnectionProfile | str, candidates: Iterable[str], *, method: str = 'auto', timeout_per_probe: float = 10.0, timing_samples: int = 5, rate_per_min: float = 30.0, jitter_s: float = 0.0, progress: Callable[[EnumResult], None] | None = None, on_unknown_host: Callable[[object], bool] | None = None, authorized: bool = False) -> EnumReport` — mutates. Probe whether each candidate username exists on the target.
+
+### Multi-system workflow
+
+- `axross.where_was_i(host: str | None = None) -> list[HostVisit] | HostVisit | None` — read-only. Look up the visit-history record(s).
+- `axross.health_pulse() -> list[HealthRecord]` — read-only. Snapshot the live connection-health pulse for every enrolled session — last-probe latency, median latency, staleness flag.
+- `axross.summarize(backend: FileBackend, path: str = '', *, max_entries: int = 2000) -> Summary` — read-only. One-paragraph synopsis of a directory: file/dir/link counts, extension histogram, age buckets, newest/oldest entries, top-5 largest files. Reads metadata only — no file contents are fetched.
+- `axross.explain(backend: FileBackend, path: str = '') -> ExplainResult` — read-only. Heuristic best-guess "what IS this directory?" — git repo, PostgreSQL data dir, nginx config tree, k8s manifests, Maildir, web-server log dir, and friends. Returns the highest-confidence pattern match as a :class:`core.inspect.ExplainResult`, or an empty result if nothing scored above 0.2.
+- `axross.compare_file(backends: list[FileBackend], path: str, *, content: bool = True, content_cap_bytes: int | None = None, parallelism: int = 8, per_target_timeout_s: float = 30.0) -> CompareReport` — read-only. Compare the SAME path across N backends in parallel.
+- `axross.inspect_targets(targets: list[tuple[FileBackend, str]], *, content: bool = True, content_cap_bytes: int | None = None, parallelism: int = 8, per_target_timeout_s: float = 30.0) -> InspectReport` — read-only. Inspect a list of ``(backend, path)`` pairs in parallel.
+- `axross.federated_search(backends: list[FileBackend], query: SearchQuery | None = None, *, name: str = '', regex: str = '', contains: str = '', contains_is_regex: bool = False, min_size: int = -1, max_size: int = -1, modified_after: float = 0.0, modified_before: float = 0.0, roots: list[str] | None = None, max_depth: int = 6, max_hits_per_backend: int = 500, max_hits_total: int = 5000, parallelism: int = 8, per_backend_timeout_s: float = 60.0, progress: Callable[[SearchHit], None] | None = None) -> SearchResult` — read-only. Run one search query against many backends in parallel.
+- `axross.resumable_copy(src_backend: FileBackend, src_path: str, dst_backend: FileBackend, dst_path: str, *, segment_size: int = 4194304, manifest_path: str | os.PathLike[str] | None = None, overwrite: bool = False, progress: Callable[[int, int], None] | None = None) -> ResumeReport` — mutates. Cross-backend copy with checkpoint-resume.
+- `axross.dashboard(*, with_capacity: bool = False, recent_ops_limit: int = 10, fmt: str = 'text', backends: list[FileBackend] | None = None) -> str` — read-only. Federation-status dashboard — one screen, every connection.
+
+### Time-lapse / trail
+
+- `axross.snapshot_now(backend: FileBackend, path: str, *, name: str = '', head_hash: bool = False, max_files: int = 5000) -> Snapshot` — mutates. Take a single time-lapse snapshot of a directory tree.
+- `axross.start_trail(backend: FileBackend, path: str, *, name: str = '', interval_s: float = 300.0, head_hash: bool = False, max_files: int = 5000, on_snapshot: Callable[[Snapshot], None] | None = None) -> str` — mutates. Start a background trail — periodic snapshots until :func:`stop_trail` is called. Returns the trail name.
+- `axross.stop_trail(name: str) -> bool` — mutates. Stop a named background trail. Returns True if one was found.
+- `axross.list_trails() -> list[dict]` — read-only. List every recorded trail with its metadata.
+- `axross.list_snapshots(trail_name: str, *, limit: int = 100) -> list[Snapshot]` — read-only. List the most recent snapshots of one trail (newest first).
+- `axross.diff_snapshots(snapshot_a: int, snapshot_b: int) -> TrailDiff` — read-only. Compare snapshot A to snapshot B (B is the newer / target).
+
+### Reverse-serve (expose a backend over S3 / WebDAV)
+
+- `axross.serve_s3(backend: FileBackend, *, bind: str = '127.0.0.1', port: int = 9000, read_only: bool = False, auth_token: str | None = '', root_path: str = '/') -> ReverseServer` — mutates. Expose ``backend`` as a minimum-viable S3 endpoint so any existing S3 client (aws-cli / restic / rclone / terraform) can speak to it.
+- `axross.serve_webdav(backend: FileBackend, *, bind: str = '127.0.0.1', port: int = 8080, read_only: bool = False, auth_token: str | None = '', root_path: str = '/') -> ReverseServer` — mutates. Expose ``backend`` as a minimum-viable WebDAV endpoint — ``davfs2 mount``, gnome-files (``davs://``), macOS Finder, browser read-only listings all work; they ask for the token as the password (any user name). Same token rules as :func:`serve_s3`. Returns a :class:`core.reverse_serve.ReverseServer`.
+
+### Result types (dataclasses returned by helpers above)
+
+- class `axross.TlsCert`
+- class `axross.SshHostKey`
+- class `axross.HttpProbe`
+- class `axross.GrepHit`
+- class `axross.SnmpVar`
+- class `axross.ArchiveEntry`
+- class `axross.PingResult`
+- class `axross.OuiInfo`
+- class `axross.WhoisInfo`
+- class `axross.TimeSkew`
+
+### UI helpers (REPL / scripts)
+
+- `axross.message(text: str, *, title: str = 'axross', level: str = 'info') -> None` — read-only. Show a modal informational dialog with the given message.
+- `axross.confirm(text: str, *, title: str = 'axross', default_yes: bool = False, assume_yes: bool = False) -> bool` — read-only · prompts (NonInteractiveError without a human). Show a Yes/No dialog. Returns True on Yes, False otherwise.
+- `axross.toast(text: str, *, level: str = 'info', timeout: float = 4.0) -> None` — read-only. Non-modal toast in the bottom-right corner of the main window.
+- `axross.is_interactive() -> bool` — read-only. True when a human can answer :func:`confirm` right now.
+- class `axross.NonInteractiveError`
+
+### Misc
+
+- `axross.help() -> None` — read-only. Print the curated cheat-sheet of the scripting surface.
+- `axross.docs(name: str | None = None) -> str` — read-only · raises KeyError. Return long-form documentation as Markdown.
+- `axross.api_schema(names: list[str] | None = None) -> dict` — read-only · raises RuntimeError, ValueError. Describe the scripting API as JSON-serialisable data, for a machine.
+
+### Session methods (`b` = what `open`, `open_url`, `localfs` and `ramfs` return)
+
+- `b.checksum(path: str, algorithm: str = 'sha256') -> str` — read-only · without support: No cheap checksum: callers hash a full read themselves.. Return a hex-encoded checksum of the file's content.
+- `b.chmod(path: str, mode: int) -> None` — mutates. Change file permissions. mode is octal (e.g. 0o755).
+- `b.copy(src: str, dst: str) -> None` — mutates · only some sessions: test `hasattr(b, name)`. Server-side copy of *src* to *dst* within this backend.
+- `b.disk_usage(path: str) -> tuple[int, int, int]` — read-only · without support: Not reported.. Return (total, used, free) bytes for the filesystem containing path. Returns (0, 0, 0) if not supported.
+- `b.exists(path: str) -> bool` — read-only. Check if path exists.
+- `b.hardlink(target: str, link_path: str) -> None` — mutates · only some sessions: test `hasattr(b, name)`. Create a hard link at *link_path* to the same inode as *target*. Raises :class:`OSError` on backends that don't model hardlinks. LocalFS overrides this.
+- `b.home() -> str` — read-only. Return the home/default directory.
+- `b.is_dir(path: str) -> bool` — read-only. Check if path is a directory.
+- `b.join(*parts: str) -> str` — read-only. Join path components using this backend's separator.
+- `b.list_dir(path: str) -> list[FileItem]` — read-only. List directory contents. Raises OSError on failure.
+- `b.list_versions(path: str) -> list[FileVersion]` — read-only · without support: No versioning: an empty list.. Return historical versions of *path*, newest first.
+- `b.mkdir(path: str) -> None` — mutates. Create a directory. Raises OSError on failure.
+- `b.name` — read-only. Human-readable name for this backend (e.g. 'Local' or 'user@host').
+- `b.normalize(path: str) -> str` — read-only. Normalize a path (resolve .., ., etc.).
+- `b.open_read(path: str) -> IO[bytes]` — read-only. Open a file for reading. Caller must close the returned handle.
+- `b.open_version_read(path: str, version_id: str) -> IO[bytes]` — read-only · without support: No versioning: raises OSError.. Open a historical version of *path* for streaming read.
+- `b.open_write(path: str, append: bool = False) -> IO[bytes]` — mutates. Open a file for writing. Caller must close the returned handle.
+- `b.parent(path: str) -> str` — read-only. Return the parent directory of the given path.
+- `b.readlink(path: str) -> str` — read-only · without support: No symbolic links: raises OSError.. Read symlink target. Raises OSError if not a symlink.
+- `b.remove(path: str, recursive: bool = False) -> None` — mutates. Remove a file or directory. If recursive=True, remove directory tree.
+- `b.rename(src: str, dst: str) -> None` — mutates. Rename/move a file or directory.
+- `b.separator() -> str` — read-only. Return the path separator for this backend.
+- `b.stat(path: str) -> FileItem` — read-only. Get file/directory info. Raises OSError on failure.
+- `b.supports_hardlinks` — read-only. True when this session can create hard links with hardlink(); read it with getattr(b, 'supports_hardlinks', False).
+- `b.supports_symlinks` — read-only. True when this session can create symbolic links with symlink(); read it with getattr(b, 'supports_symlinks', False).
+- `b.symlink(target: str, link_path: str) -> None` — mutates · only some sessions: test `hasattr(b, name)`. Create a symbolic link at *link_path* pointing to *target*.
+- `b.close() -> None` — read-only. End the session: ``disconnect()`` when the class has one.
+- `b.__enter__()` — read-only. Return the session itself: ``with axross.open(name) as b:``.
+- `b.__exit__(exc_type, exc, tb) -> bool` — read-only. End the session when the ``with`` block is left, also after an exception, which is never swallowed.
+
+### Types
+
+- `axross.PingResult` (class, `core.net_helpers`): host, port, reachable, rtt_ms — Outcome of a TCP-ping. ``rtt_ms`` is ``None`` when the host didn't accept the connection within the timeout; otherwise it's the round-trip in milliseconds (connect-only, no full TLS/TCP handshake).
+- `axross.OuiInfo` (class, `core.net_helpers`): mac, oui, vendor, vendor_long — OUI (Organisationally Unique Identifier) lookup result. ``vendor`` is the short name (``"VMware"``); ``vendor_long`` the full registry entry (``"VMware, Inc."``). Both ``None`` when the OUI isn't in the database.
+- `axross.WhoisInfo` (class, `core.net_helpers`): query, kind, asn, asn_description, country, cidr, registry, raw — Result of a :func:`whois` lookup. ``kind`` is ``"ip"`` for address lookups (RIR / ASN data) or ``"domain"`` for registrar queries. Some fields will be ``None`` when the source registry doesn't expose them.
+- `axross.TimeSkew` (class, `core.net_helpers`): host, source, offset_seconds, rtt_seconds — Result of a :func:`time_skew` measurement. ``offset_seconds`` is positive when the remote source is AHEAD of local; negative when behind. ``rtt_seconds`` is the round-trip used to compute the offset (useful for confidence: small RTT → tight offset). ``source`` records which protocol answered.
+- `axross.TlsCert` (class, `core.net_helpers`): subject, issuer, san, not_before, not_after, serial, sha256, raw_der — Parsed peer certificate. ``raw_der`` is the binary DER blob so callers can re-parse with their own tooling if needed.
+- `axross.SshHostKey` (class, `core.net_helpers`): host, port, key_type, fingerprint_sha256, fingerprint_md5, raw — SSH host key as returned by paramiko's transport handshake. ``key_type`` is paramiko's name (``ssh-ed25519``, ``ssh-rsa``, ``ecdsa-sha2-nistp256`` …). ``fingerprint_sha256`` is the standard base64 form OpenSSH's ``ssh-keygen -l`` prints.
+- `axross.HttpProbe` (class, `core.net_helpers`): status, url, headers, body, truncated, redirect_chain, cert — Result of an :func:`http_probe` call. ``redirect_chain`` lists every URL we were redirected through (incl. the original); ``cert`` is non-None for HTTPS responses.
+- `axross.SnmpVar` (class, `core.snmp_helpers`): oid, type, value — One OID/value pair returned from a GET / WALK.
+- `axross.GrepHit` (class, `core.net_helpers`): path, line_no, line — GrepHit(path: 'str', line_no: 'int', line: 'str')
+- `axross.ArchiveEntry` (class, `core.net_helpers`): name, size, compressed_size, is_dir, modified — One entry from :func:`archive_inspect`. ``size`` is the uncompressed size in bytes; ``compressed_size`` is what's actually on disk (None when the format doesn't track it separately — tar). ``modified`` is a UTC datetime when known.
+- `axross.NonInteractiveError` (exception, `core.ui_helpers`) — A confirmation is needed, but no human can answer it.
+- `AttackReport` (class, `core.cred_attack`): target_protocol, target_host, target_port, started_at, finished_at, attempts, successes, aborted, abort_reason, attempted_count, errors, lockouts, summary() — Final report from one bruteforce/spray run.
+- `AttemptOutcome` (class, `core.cred_attack`): username, password_hash, result, elapsed_s, error_message, timestamp, to_dict() — The trace record for one credential attempt.
+- `AttemptResult` (enum, `core.cred_attack`): SUCCESS, FAILED, LOCKOUT, ERROR, SKIPPED — Outcome of a single credential attempt.
+- `CasEntry` (class, `core.cas`): backend_id, path, algorithm, value, size, indexed_at, mtime, scan_id — One row from the CAS index.
+- `CompareReport` (class, `core.multi_view`): path, probes, content_diff, all_equal() — Result of comparing the SAME path across N backends.
+- `ConnectionProfile` (class, `core.profiles`): name, protocol, host, port, username, auth_type, key_file, store_password, proxy_mode, proxy_type, proxy_host, proxy_port, proxy_username, store_proxy_password, proxy_command, proxy_command_confirmed, _proxy_password_override, address_family, ftp_passive, ftps_verify_tls, smb_share, webdav_url, s3_bucket, s3_region, s3_endpoint, rsync_module, rsync_ssh, rsync_ssh_key, nfs_export, nfs_version, azure_container, azure_connection_string, azure_account_name, azure_sas_token, azure_share, onedrive_client_id, onedrive_tenant_id, sharepoint_site_url, gdrive_client_id, gdrive_client_secret, dropbox_app_key, dropbox_app_secret, iscsi_target_iqn, iscsi_mount_point, imap_ssl, pop3_ssl, nntp_ssl, tftp_filelist, tftp_filelist_enabled, tftp_max_size_bytes, adb_mode, adb_usb_serial, mtp_device_id, mtp_mounter, ssh_keepalive_interval, smb_client_name, telnet_naws_width, telnet_naws_height, rsync_preserve_metadata, suppress_shell_history, terminal_theme, production, get_password(), get_proxy_password(), set_password(), set_proxy_password(), to_dict() — A saved connection profile (multi-protocol).
+- `Credential` (class, `core.cred_attack`): username, password — A pair of (username, password) the loop discovered as valid.
+- `DedupeResult` (class, `core.cas`): dry_run, groups, keep, trash, undated_groups, removed, refused, failed, render() — What :func:`dedupe` planned and, unless a dry run, did.
+- `EnumReport` (class, `core.cred_attack`): target_protocol, target_host, started_at, finished_at, results, hits(), summary() — EnumReport(target_protocol: 'str', target_host: 'str', started_at: 'float', finished_at: 'float', results: 'list[EnumResult]' = <factory>)
+- `EnumResult` (class, `core.cred_attack`): username, likely_exists, confidence, method, notes — Per-candidate enumeration verdict.
+- `ExecResult` (class, `models.exec_result`): returncode, stdout, stderr, truncated_stdout, truncated_stderr, ok, check() — ExecResult(returncode: 'int', stdout: 'bytes', stderr: 'bytes', truncated_stdout: 'bool' = False, truncated_stderr: 'bool' = False)
+- `ExplainResult` (class, `core.inspect`): label, confidence, evidence, hint, render() — Heuristic verdict on what a directory IS.
+- `Field` (class, `core.metadata_formats`): group, name, value, removable — Field(group: 'str', name: 'str', value: 'str', removable: 'bool' = True)
+- `FileItem` (class, `models.file_item`): name, size, modified, permissions, is_dir, is_link, link_target, owner, group, accessed, created, mode_str, permissions_str, size_human, type_char — Represents a single file or directory entry, local or remote.
+- `FileTypeInfo` (class, `core.file_type`): path, name, kind, description, mime, extension, extension_mime, verdict, size, encoding, line_endings, engine, file_command, bytes_read, error, mismatch, summary() — What one file really is.
+- `FileVersion` (class, `models.file_version`): version_id, modified, size, is_current, label — One historical revision of a file.
+- `HealthRecord` (class, `core.conn_health`): profile_key, protocol, label, enrolled_at, last_probe_at, last_latency_s, consecutive_failures, stale, history, healthy, median_latency_s — HealthRecord(profile_key: 'str', protocol: 'str', label: 'str', enrolled_at: 'float' = <factory>, last_probe_at: 'float' = 0.0, last_latency_s: 'float | None' = None, consecutive_failures: 'int' = 0, stale: 'bool' = False, history: 'list[HealthSample]' = <factory>)
+- `HealthSample` (class, `core.conn_health`): ts, latency_s, error — HealthSample(ts: 'float', latency_s: 'float | None', error: 'str' = '')
+- `HostVisit` (class, `core.visit_history`): protocol, host, username, last_path, last_seen, visit_count, recent_ops, key — Last-visited state for one (protocol, host, username) triple.
+- `InspectReport` (class, `core.multi_view`): targets, hashes_consistent() — Result of inspecting an arbitrary list of (backend, path) pairs.
+- `InteractiveShell` (class, `models.interactive_shell`): closed, label, close(), fileno(), interact(), read(), read_stderr(), read_until(), resize_pty(), write() — Thin wrapper around a paramiko ``Channel`` in shell+PTY mode.
+- `LocalFS` (session, `core.local_fs`): local_path(), same_file(), set_modified() — Local filesystem backend implementing the FileBackend protocol.
+- `MetadataReport` (class, `core.metadata_tools`): path, name, kind, fields, error, size, truncated, removable, to_dict() — What one file carries. ``error`` is set when it could not be read (completely); ``fields`` may still hold what was read before that.
+- `RamFsSession` (session, `core.ram_fs`): connected, max_bytes, size_bytes, disconnect() — In-process RAM-backed FileBackend.
+- `ResumeReport` (class, `core.copy_resume`): src_label, src_path, dst_label, dst_path, total_bytes, bytes_transferred, segments_skipped, segments_transferred, elapsed_s, manifest_path, completed, summary() — ResumeReport(src_label: 'str', src_path: 'str', dst_label: 'str', dst_path: 'str', total_bytes: 'int', bytes_transferred: 'int', segments_skipped: 'int', segments_transferred: 'int', elapsed_s: 'float', manifest_path: 'str', completed: 'bool')
+- `ReverseServer` (class, `core.reverse_serve`): flavour, bind, port, backend_label, httpd, thread, auth_token, base_url, shutdown() — Live handle on a running reverse-server.
+- `ScanRecord` (class, `core.cas`): scan_id, backend_id, root, algorithm, started_at, finished_at, files_indexed, status, files_in_index, duplicate_groups, error — One rebuild of the index, as the history shows it.
+- `SearchHit` (class, `core.search_federation`): backend_label, path, size, mtime, is_dir, snippet, score, warning — One result row.
+- `SearchQuery` (class, `core.search_federation`): name, regex, contains, contains_is_regex, min_size, max_size, modified_after, modified_before, roots, max_depth, ignore_dirs, _compiled_regex, _compiled_contains, contains_regex(), matches_mtime(), matches_name(), matches_size(), validate() — What to search for.
+- `SearchResult` (class, `core.search_federation`): hits, per_backend, errors, elapsed_s, truncated — Aggregated federation result.
+- `Snapshot` (class, `core.trail`): snapshot_id, trail_name, ts, file_count, total_bytes, tree_hash, truncated — Snapshot(snapshot_id: 'int', trail_name: 'str', ts: 'float', file_count: 'int', total_bytes: 'int', tree_hash: 'str', truncated: 'bool' = False)
+- `Summary` (class, `core.inspect`): backend_label, path, file_count, dir_count, link_count, total_bytes, extensions, age_buckets, largest, newest, oldest, truncated, error, render() — Structured directory snapshot.
+- `TargetProbe` (class, `core.multi_view`): label, path, exists, size, mtime, permissions, is_dir, is_link, sha256, content, truncated, error, elapsed_s — One backend × one path probe result.
+- `TrailDiff` (class, `core.trail`): added, removed, modified, unchanged, is_empty(), summary() — Diff between two snapshots of the same trail.
+
+<!-- END GENERATED SCRIPTING CATALOG -->

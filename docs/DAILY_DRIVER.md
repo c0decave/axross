@@ -46,9 +46,11 @@ Default behaviour:
   drown the operator. After the gate fires once, the pane runs at
   normal speed for the rest of the session.
 * **Headless / REPL** — print to stderr, accept Ctrl-C as the bail
-  signal. **GUI** — replaces the renderer with a coloured QDialog +
-  countdown bar (call `core.safety_tarpit.set_countdown_renderer`
-  from your Qt code).
+  signal. **GUI** — Delete, Move to Trash, Rename, Batch Rename,
+  Change Permissions and Move (F6) in a file pane show a countdown
+  dialog (`ui/production_gate.py`); Esc or Cancel stops the operation.
+  Other Qt code can install its own renderer with
+  `core.safety_tarpit.set_countdown_renderer`.
 * **Disable for CI** — set `AXROSS_TARPIT_DISABLE=1` in scripted
   environments. The flag is intentionally per-process; never
   `production=False` on the actual profile when you want CI to

@@ -11,7 +11,7 @@ surface so an LLM can drive the whole thing.**
 - **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
 - **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
 - **Built-in Python scripting** — REPL, Scripts dock and 32 ready-made scripts on one `axross.*` API.
-- **LLM-ready via MCP** — an agent drives axross over stdio or HTTP, read-only unless you allow writes.
+- **An LLM agent built in** — Agent dock with tabs and sandboxes, MCP over stdio or HTTP, read-only by default.
 - **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
 - **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
 - **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
@@ -70,9 +70,37 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 *Log dock.* Every copy and move is logged with its integrity check (sha256) and an entry in the operation journal.
 
+![The Agent dock: a local model reads a file from inside a bubblewrap sandbox](docs/screenshots/agent-dock.png)
+
+*Agent dock.* A local model (here Qwen 2.5 on llama.cpp) reads a file for you. The tab runs in the `Normal` sandbox (bubblewrap), the mode is `Ask`, and every tool call shows in the transcript.
+
+![The Topics menu of an Agent tab](docs/screenshots/agent-topics.png)
+
+*Topics.* Ready-made tasks — inventory, services, logs, disk usage, a folder summary — fill the request for you; each tab is its own session.
+
+![The agent reads a file of a remote pane](docs/screenshots/agent-remote-pane.png)
+
+*A pane's connection, lent to the agent.* The left pane is connected to a remote store; the agent reads `/reports/q3.txt` through it, without its own login.
+
+![Agent Settings, Sandboxes page](docs/screenshots/agent-sandboxes.png)
+
+*Sandbox profiles.* Engine (bubblewrap, podman, docker), level from `lax` to `paranoid`, allowed hosts and extra folders — applied before every task.
+
+![The Access dialog of one Agent tab](docs/screenshots/agent-access.png)
+
+*Access per tab.* Which axross functions the agent may use, which hosts it may reach and which folders it sees, read-only or writable.
+
+![Agent Settings, MCP Servers page](docs/screenshots/agent-mcp-servers.png)
+
+*MCP servers.* Further MCP servers for the agent — here axross itself over stdio, tested: 11 tools.
+
+![The Agent Stats window over the main window](docs/screenshots/agent-stats.png)
+
+*Agent Stats.* The bundled extension counts tasks, tool calls, errors and tokens, for all tabs and the last one.
+
 ---
 
-## 23 highlights
+## 26 highlights
 
 1. **30+ protocols, one consistent UI.** SFTP/SCP, FTP/FTPS, SMB/CIFS,
    WebDAV, S3-compatible, Rsync, NFS, Azure Blob/Files, OneDrive,
@@ -179,8 +207,8 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
     rclone / gnome-files / davfs2 / macOS Finder all just work —
     every tool that already speaks S3 or WebDAV gets immediate
     access to whatever protocol axross is fronting (SFTP, SMB, RamFS,
-    Postgres-FS, IMAP-as-FS, …). Localhost-bind default + Bearer-token
-    auth + read-only mode + path-traversal rejection. See
+    Postgres-FS, IMAP-as-FS, …). Localhost-bind default + token
+    auth on by default + read-only mode + path-traversal rejection. See
     [docs/REVERSE_SERVE.md](docs/REVERSE_SERVE.md).
 
 13. **Resilient cross-backend transfers.** `axross.resumable_copy()`
@@ -261,8 +289,29 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 23. **Extensions.** Python plugins add Extensions-menu entries, right-click
     actions and panels (**Extensions → Manage Extensions…**). Every
     extension starts switched off, finding one never runs it, and
-    `paranoid` mode loads none. Five bundled examples. See
+    `paranoid` mode loads none. Six bundled examples. See
     [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+
+24. **An LLM agent in its own dock.** **View → Panels → Agent** talks to
+    the model you pick in **Agent Settings** (Ollama, LM Studio, MLX-LM
+    or any OpenAI-compatible endpoint such as llama.cpp). Every tab is a session, kept as one JSON
+    file; protection modes `ask`, `plan`, `auto` and `bypass` decide what
+    runs without a question; **Topics** offers ready-made tasks; **+**
+    and drag & drop from a pane hand files over, and the remote
+    connections open in the panes can be lent to it. The bundled
+    **Agent Stats** extension counts runs, tool calls and tokens.
+
+25. **Agents in a sandbox.** Each tab can run its agent in bubblewrap,
+    podman or docker, at the level `lax`, `normal`, `high` or `paranoid`
+    (paranoid: the LLM is the only peer, every folder read-only). The
+    API key never enters the sandbox. Per tab, **Access…** grants the
+    network (none, a `host:port` list, or all, never above the level)
+    and folders read-only or writable, and switches the axross functions
+    the agent may use outside the sandbox on or off.
+
+26. **An MCP client, too.** **Agent Settings → MCP Servers** connects
+    further MCP servers (stdio or HTTP); their tools appear in the tab's
+    **Tools** list and ask before every call or before writes only.
 
 ---
 
@@ -331,7 +380,7 @@ Full table of extras + system tools per protocol:
 | [INSTALL.md](INSTALL.md) | Prerequisites, per-protocol extras, OAuth setup, wheel build, dev setup. |
 | [docs/USAGE.md](docs/USAGE.md) · [USAGE_de.md](docs/USAGE_de.md) · [USAGE_es.md](docs/USAGE_es.md) | User guide — connections, panes, transfers, terminal, right-click actions. |
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + `axross.*` API + slash-commands + 32 bundled scripts + MCP scripting tools. |
-| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the five bundled examples. |
+| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the six bundled examples. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
 | [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | For LLM agents: how to drive axross over MCP and the `axross.*` API correctly, with the tool catalog generated from the manifest. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |

@@ -8,17 +8,19 @@ import os
 import select
 import signal
 import struct
+import sys
 import time
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetricsF, QKeyEvent, QTextCursor
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QDragLeaveEvent, QFont, QFontMetricsF, QKeyEvent, QKeySequence, QTextCursor
 from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -83,6 +85,69 @@ FONT_MAX_PT = 28
 FONT_DEFAULT_PT = 10
 
 
+def on_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _shell_ctrl() -> Qt.KeyboardModifier:
+    """The modifier of the key labelled Ctrl / Control. Qt reports it as
+    MetaModifier on macOS, where ControlModifier is Command."""
+    return Qt.KeyboardModifier.MetaModifier if on_macos() else Qt.KeyboardModifier.ControlModifier
+
+
+def _app_modifiers() -> Qt.KeyboardModifier:
+    """Alt and the platform's command key (Command on macOS, Super
+    elsewhere): their combinations belong to the application."""
+    command = (
+        Qt.KeyboardModifier.ControlModifier if on_macos() else Qt.KeyboardModifier.MetaModifier
+    )
+    return Qt.KeyboardModifier.AltModifier | command
+
+
+def _is_copy_or_paste(event: QKeyEvent) -> bool:
+    return event.matches(QKeySequence.StandardKey.Copy) or event.matches(
+        QKeySequence.StandardKey.Paste
+    )
+
+# What a key sends to the host, as xterm sends it.
+_CURSOR_KEYS: dict[int, bytes] = {
+    Qt.Key.Key_Up: b"\x1b[A",
+    Qt.Key.Key_Down: b"\x1b[B",
+    Qt.Key.Key_Right: b"\x1b[C",
+    Qt.Key.Key_Left: b"\x1b[D",
+    Qt.Key.Key_Home: b"\x1b[H",
+    Qt.Key.Key_End: b"\x1b[F",
+}
+#: The cursor keys while the host asked for application mode (?1h).
+_CURSOR_KEYS_APPLICATION: dict[int, bytes] = {
+    key: b"\x1bO" + seq[2:] for key, seq in _CURSOR_KEYS.items()
+}
+_EDIT_KEYS: dict[int, bytes] = {
+    Qt.Key.Key_Delete: b"\x1b[3~",
+    Qt.Key.Key_PageUp: b"\x1b[5~",
+    Qt.Key.Key_PageDown: b"\x1b[6~",
+    Qt.Key.Key_Return: b"\n",
+    Qt.Key.Key_Enter: b"\n",
+    Qt.Key.Key_Backspace: b"\x7f",
+    Qt.Key.Key_Tab: b"\t",
+    Qt.Key.Key_Escape: b"\x1b",
+}
+_FUNCTION_KEYS: dict[int, bytes] = {
+    Qt.Key.Key_F1: b"\x1bOP",
+    Qt.Key.Key_F2: b"\x1bOQ",
+    Qt.Key.Key_F3: b"\x1bOR",
+    Qt.Key.Key_F4: b"\x1bOS",
+    Qt.Key.Key_F5: b"\x1b[15~",
+    Qt.Key.Key_F6: b"\x1b[17~",
+    Qt.Key.Key_F7: b"\x1b[18~",
+    Qt.Key.Key_F8: b"\x1b[19~",
+    Qt.Key.Key_F9: b"\x1b[20~",
+    Qt.Key.Key_F10: b"\x1b[21~",
+    Qt.Key.Key_F11: b"\x1b[23~",
+    Qt.Key.Key_F12: b"\x1b[24~",
+}
+
+
 class TerminalEmulator(QPlainTextEdit):
     """Terminal widget: shows a :class:`core.vt_screen.VTScreen`.
 
@@ -122,6 +187,14 @@ class TerminalEmulator(QPlainTextEdit):
         # What the document shows: which screen, how much of its
         # scrollback, how many screen rows at the end, which mode.
         self._shown: tuple | None = None
+        # The document is a view of the screen: an edit that _render did not
+        # make (a drag that moves the selection out, a cut) is drawn over.
+        self._rendering = False
+        self._redraw_timer = QTimer(self)
+        self._redraw_timer.setSingleShot(True)
+        self._redraw_timer.setInterval(0)
+        self._redraw_timer.timeout.connect(lambda: self._render(full=True))
+        self.document().contentsChange.connect(self._on_contents_change)
         self._render(full=True)
 
     @property
@@ -239,6 +312,71 @@ class TerminalEmulator(QPlainTextEdit):
         break starts a fresh line, whatever the cursor did before."""
         self.append_output(text.replace("\r\n", "\n").replace("\n", "\r\n"))
 
+    def _on_contents_change(self, _position: int, _removed: int, _added: int) -> None:
+        if not self._rendering:
+            self._redraw_timer.start()
+
+    # ------------------------------------------------------------------
+    # Paste, drops, input methods: input for the host, never an edit
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _has_plain_text(source) -> bool:
+        # Not hasText(): in Qt 6 it is also true for URLs alone (files
+        # dragged from a pane), and their text is a file:// URL.
+        return source is not None and any(
+            fmt.split(";")[0].strip() == "text/plain" for fmt in source.formats()
+        )
+
+    def canInsertFromMimeData(self, source) -> bool:  # noqa: N802 - Qt override
+        return self._has_plain_text(source)
+
+    def insertFromMimeData(self, source) -> None:  # noqa: N802 - Qt override
+        """Paste (context menu, Ctrl+Shift+V, a middle click) and a text
+        drop end here: the text goes to the host like typed input."""
+        if self._has_plain_text(source):
+            text = source.text()
+            if text:
+                self.data_ready.emit(text.encode("utf-8"))
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # Not QPlainTextEdit's drop: it moves the caret to the drop point
+        # and, for a move within the widget, deletes the selection.
+        mime = event.mimeData()
+        if not self.canInsertFromMimeData(mime):
+            event.ignore()
+            return
+        self.insertFromMimeData(mime)
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        super().dragLeaveEvent(QDragLeaveEvent())  # clears the drop marker
+
+    def inputMethodEvent(self, event) -> None:  # noqa: N802 - Qt override
+        text = event.commitString()
+        if text:
+            self.data_ready.emit(text.encode("utf-8"))
+        event.accept()
+
+    def _context_menu(self) -> QMenu:
+        """Copy, Paste (to the host) and Select All - no Cut, Delete, Undo:
+        the screen belongs to the host."""
+        menu = QMenu(self)
+        copy = menu.addAction("Copy")
+        copy.setEnabled(self.textCursor().hasSelection())
+        copy.triggered.connect(self.copy)
+        paste = menu.addAction("Paste")
+        paste.setEnabled(self.canPaste())
+        paste.triggered.connect(self.paste)
+        menu.addSeparator()
+        select_all = menu.addAction("Select All")
+        select_all.triggered.connect(self.selectAll)
+        return menu
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt override
+        menu = self._context_menu()
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
     def clear(self) -> None:  # noqa: D102 - Qt override: the screen goes too
         self._screen.feed("\x1b[H\x1b[2J\x1b[3J")
         self._render(full=True)
@@ -256,28 +394,80 @@ class TerminalEmulator(QPlainTextEdit):
         alternate = screen.alternate
         shown = self._shown
         doc = self.document()
-        if (
-            full
-            or shown is None
-            or shown[0] is not screen
-            or shown[2] != alternate
-            or not 0 <= screen.scrolled_total - shown[1] <= len(screen.scrollback)
-            or doc.blockCount() < shown[3]
-        ):
-            history = [] if alternate else list(screen.scrollback)
-            self.setPlainText("\n".join(history + lines))
-        else:
-            new = screen.scrolled_total - shown[1]
-            added = list(screen.scrollback)[len(screen.scrollback) - new:] if new else []
-            cursor = QTextCursor(doc.findBlockByNumber(doc.blockCount() - shown[3]))
-            cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
-            cursor.insertText("\n".join(added + lines))
+        # Every edit below is the screen's own: not one to draw over.
+        self._rendering = True
+        try:
+            if (
+                full
+                or shown is None
+                or shown[0] is not screen
+                or shown[2] != alternate
+                or not 0 <= screen.scrolled_total - shown[1] <= len(screen.scrollback)
+                or doc.blockCount() < shown[3]
+            ):
+                history = [] if alternate else list(screen.scrollback)
+                self.setPlainText("\n".join(history + lines))
+            else:
+                new = screen.scrolled_total - shown[1]
+                added = list(screen.scrollback)[len(screen.scrollback) - new:] if new else []
+                cursor = QTextCursor(doc.findBlockByNumber(doc.blockCount() - shown[3]))
+                cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertText("\n".join(added + lines))
+        finally:
+            self._rendering = False
         self._shown = (screen, screen.scrolled_total, alternate, len(lines))
         block = doc.findBlockByNumber(doc.blockCount() - len(lines) + row)
         caret = QTextCursor(block)
         caret.setPosition(block.position() + min(len(prefix), max(0, block.length() - 1)))
         self.setTextCursor(caret)
         self.ensureCursorVisible()
+
+    @staticmethod
+    def _is_own_key(key: int, mods: Qt.KeyboardModifier) -> bool:
+        """The terminal's own zoom (Ctrl+= / Ctrl+- / Ctrl+0) and find
+        (Ctrl+Shift+F) keys: never sent to the host."""
+        if not mods & Qt.KeyboardModifier.ControlModifier:
+            return False
+        if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_Minus, Qt.Key.Key_0):
+            return True
+        return key == Qt.Key.Key_F and bool(mods & Qt.KeyboardModifier.ShiftModifier)
+
+    def _claims_key(self, event: QKeyEvent) -> bool:
+        """True when *event* is input for the host and must not trigger an
+        application shortcut: Ctrl+letter, unmodified function, cursor and
+        editing keys, text typed with or without Shift, and Ctrl+Shift+V
+        (paste). Ctrl+Shift+letter, Alt / Meta combinations, modified
+        function keys and the terminal's own zoom / find keys stay with
+        the application - its shortcut fires when it has one."""
+        key = event.key()
+        mods = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        ctrl = _shell_ctrl()
+        shift = Qt.KeyboardModifier.ShiftModifier
+        if on_macos() and mods & Qt.KeyboardModifier.ControlModifier:
+            # Command: only Copy and Paste are the terminal's own.
+            return _is_copy_or_paste(event)
+        if mods & _app_modifiers():
+            return False
+        if self._is_own_key(key, mods):
+            return False
+        if mods == ctrl | shift:
+            return key == Qt.Key.Key_V
+        if mods == ctrl:
+            return Qt.Key.Key_A <= key <= Qt.Key.Key_Z
+        if mods == Qt.KeyboardModifier.NoModifier and (
+            key in _FUNCTION_KEYS or key in _CURSOR_KEYS or key in _EDIT_KEYS
+        ):
+            return True
+        return bool(event.text()) and key not in _FUNCTION_KEYS
+
+    def event(self, event: QEvent) -> bool:  # noqa: D102 - Qt override
+        # Qt offers every key to the focus widget as a ShortcutOverride
+        # before it looks for an application shortcut: accepting it here
+        # makes Ctrl+W, Ctrl+Q, F6, ... a keyPressEvent of the terminal.
+        if event.type() == QEvent.Type.ShortcutOverride and self._claims_key(event):
+            event.accept()
+            return True
+        return super().event(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
@@ -287,6 +477,17 @@ class TerminalEmulator(QPlainTextEdit):
         # Font-zoom shortcuts BEFORE the Ctrl+letter forwarder below,
         # otherwise Ctrl+= / Ctrl+- get sent as ASCII to the remote
         # shell and never reach us.
+        if key == Qt.Key.Key_V and mods == _shell_ctrl() | Qt.KeyboardModifier.ShiftModifier:
+            self.paste()  # through insertFromMimeData: to the host
+            return
+        if on_macos() and mods & Qt.KeyboardModifier.ControlModifier:
+            # Command+C / Command+V: the macOS copy and paste.
+            if event.matches(QKeySequence.StandardKey.Copy):
+                self.copy()
+                return
+            if event.matches(QKeySequence.StandardKey.Paste):
+                self.paste()
+                return
         if mods & Qt.KeyboardModifier.ControlModifier:
             if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
                 self.zoom_font(+FONT_ZOOM_STEP)
@@ -306,40 +507,30 @@ class TerminalEmulator(QPlainTextEdit):
                 return
 
         # Ctrl+<letter> → send as terminal control character
-        if mods == Qt.KeyboardModifier.ControlModifier and Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+        if on_macos() and mods & Qt.KeyboardModifier.ControlModifier:
+            return  # any other Command key is no input for the host
+        if mods == _shell_ctrl() and Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
             ctrl_byte = bytes([key - Qt.Key.Key_A + 1])  # Ctrl+A=0x01 .. Ctrl+Z=0x1a
             self.data_ready.emit(ctrl_byte)
             return
 
-        # Arrow keys
-        arrow_map = {
-            Qt.Key.Key_Up: b"\x1b[A",
-            Qt.Key.Key_Down: b"\x1b[B",
-            Qt.Key.Key_Right: b"\x1b[C",
-            Qt.Key.Key_Left: b"\x1b[D",
-            Qt.Key.Key_Home: b"\x1b[H",
-            Qt.Key.Key_End: b"\x1b[F",
-            Qt.Key.Key_Delete: b"\x1b[3~",
-            Qt.Key.Key_PageUp: b"\x1b[5~",
-            Qt.Key.Key_PageDown: b"\x1b[6~",
-        }
-        if key in arrow_map:
-            self.data_ready.emit(arrow_map[key])
+        # Cursor and editing keys
+        if key in _CURSOR_KEYS:
+            table = (
+                _CURSOR_KEYS_APPLICATION
+                if self._screen.application_cursor_keys
+                else _CURSOR_KEYS
+            )
+            self.data_ready.emit(table[key])
+            return
+        if key in _EDIT_KEYS:
+            self.data_ready.emit(_EDIT_KEYS[key])
             return
 
-        # Enter
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.data_ready.emit(b"\n")
-            return
-
-        # Backspace
-        if key == Qt.Key.Key_Backspace:
-            self.data_ready.emit(b"\x7f")
-            return
-
-        # Tab
-        if key == Qt.Key.Key_Tab:
-            self.data_ready.emit(b"\t")
+        # Function keys, unmodified: a modified one is the application's.
+        if key in _FUNCTION_KEYS:
+            if not mods & ~Qt.KeyboardModifier.KeypadModifier:
+                self.data_ready.emit(_FUNCTION_KEYS[key])
             return
 
         # Regular text
@@ -714,6 +905,17 @@ class _TerminalSearchBar(QWidget):
             )
 
 
+def _transport_alive(transport) -> bool:
+    """True for an SSH transport that still carries its connection."""
+    is_active = getattr(transport, "is_active", None)
+    if not callable(is_active):
+        return False
+    try:
+        return bool(is_active())
+    except Exception:  # noqa: BLE001 - a broken transport is a dead one
+        return False
+
+
 class _TerminalTab:
     """Holds state for one terminal session: session object + output buffer."""
 
@@ -836,10 +1038,25 @@ class TerminalDock(QDockWidget):
             tab.session.resize(rows, cols)
 
     def add_ssh_session(self, name: str, transport) -> None:
-        """Register an SSH transport as a terminal option."""
+        """Register an SSH transport as a terminal option.
+
+        An entry of the same name is re-pointed (and its running shell
+        restarted) only when its own transport is gone - a reconnect. One
+        whose transport is still alive belongs to another connection: the
+        new transport gets an entry of its own instead of taking over a
+        running shell on a different machine."""
         label = f"SSH: {name}"
         for i in range(self._session_combo.count()):
             if self._session_combo.itemText(i) == label:
+                current = self._session_combo.itemData(i)
+                if current is transport:
+                    return  # already registered
+                if _transport_alive(current):
+                    extra = self._unique_label(label)
+                    self._ssh_extra[extra] = name
+                    self._session_combo.addItem(extra, userData=transport)
+                    log.info("Registered SSH terminal option: %s", extra)
+                    return
                 self._session_combo.setItemData(i, transport)
                 tab = self._tabs.get(label)
                 if tab and isinstance(tab.session, SSHTerminalSession):
@@ -848,8 +1065,14 @@ class TerminalDock(QDockWidget):
                     tab.session = None
                     if was_active:
                         try:
-                            tab.session = SSHTerminalSession(transport)
-                            tab.session.start()
+                            # The pty the widget shows, as _start_session
+                            # opens it - not the 40x120 default.
+                            rows, cols = self._terminal.grid_size()
+                            session = SSHTerminalSession(
+                                transport, initial_dir=tab.remote_dir, rows=rows, cols=cols
+                            )
+                            session.start()
+                            tab.session = session
                             self._read_timer.start()
                             if self._active_key == label:
                                 self._btn_start.setEnabled(False)
@@ -866,7 +1089,9 @@ class TerminalDock(QDockWidget):
                                 self._status_label.setText("Disconnected")
                                 self._terminal.message(f"\n--- Reconnect failed: {e} ---\n")
                 for j in range(self._session_combo.count()):
-                    if self._ssh_extra.get(self._session_combo.itemText(j)) == name:
+                    if self._ssh_extra.get(
+                        self._session_combo.itemText(j)
+                    ) == name and not _transport_alive(self._session_combo.itemData(j)):
                         self._session_combo.setItemData(j, transport)
                 log.debug("Updated SSH terminal option: %s", label)
                 return

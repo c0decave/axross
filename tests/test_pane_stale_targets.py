@@ -197,14 +197,16 @@ class AutoReconnectWindowTest(_Base):
         pane._backend = _Dropped()
         win._pane_profiles[pane] = mock.Mock(host="h")
         new_fs = _HomeFS(str(self.root / "b"))
+        self.addCleanup(win._pane_profiles.clear)  # closeEvent cannot save a Mock profile
         with mock.patch.object(MW, "_is_ssh_session", return_value=True), mock.patch.object(
             win._connection_manager, "connect", return_value=new_fs
-        ):
+        ), mock.patch.object(win._connection_manager, "release"):
             win._check_connections()
-        end = time.time() + 3
-        while pane.is_loading and time.time() < end:
-            self.app.processEvents()
-            time.sleep(0.002)
+            # The reconnect runs on a worker thread: wait for it to land.
+            end = time.time() + 3
+            while (pane.backend is not new_fs or pane.is_loading) and time.time() < end:
+                self.app.processEvents()
+                time.sleep(0.002)
         self.assertIs(pane.backend, new_fs)
         self.assertEqual(pane.current_path, str(self.root))
         self.assertEqual(new_fs.calls, [str(self.root)])

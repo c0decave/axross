@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Iterable
 
 from core import posix_compat
-from core.db_fs_base import DbFsBackend
+from core.db_fs_base import DbFsBackend, parse_mode
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,10 @@ CREATE INDEX IF NOT EXISTS axross_files_parent ON axross_files(parent);
 class SqliteFsSession(DbFsBackend):
     """SQLite-backed FileBackend. ``url`` is the path to a ``.sqlite``
     file; the file is created on open if it doesn't exist."""
+
+    #: "database is locked", a corrupt file, a full disk: sqlite3.Error
+    #: is no OSError (core.db_fs_base._driver_errors_as_oserror).
+    _DRIVER_ERRORS = (sqlite3.Error,)
 
     def __init__(self, url: str = "", **_ignored):
         from core.proxy import warn_unsupported_proxy
@@ -187,6 +191,23 @@ class SqliteFsSession(DbFsBackend):
     # Adapter — translate row dicts ↔ SQLite rows
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _mode(row: sqlite3.Row) -> int:
+        """SQLite types per value: another client's row may hold text in
+        the INTEGER column ('rw-r--r--'); parse_mode takes what it can."""
+        return parse_mode(row["mode"], 0o755 if row["is_dir"] else 0o644)
+
+    @staticmethod
+    def _content(value):
+        """The BLOB as bytes; TEXT (another client's) as the UTF-8 bytes
+        SQLite stores it in, which is also the size the listing reports.
+        Anything else stays as it is for DbFsBackend._content_bytes."""
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return bytes(value)
+        if isinstance(value, str):
+            return value.encode("utf-8", "surrogatepass")
+        return value
+
     def _row_dict(self, row: sqlite3.Row | None) -> dict | None:
         if row is None:
             return None
@@ -194,9 +215,9 @@ class SqliteFsSession(DbFsBackend):
             "path": row["path"],
             "parent": row["parent"],
             "is_dir": bool(row["is_dir"]),
-            "mode": int(row["mode"]),
+            "mode": self._mode(row),
             "mtime": row["mtime"],
-            "content": bytes(row["content"]) if row["content"] is not None else None,
+            "content": self._content(row["content"]),
         }
 
     def _db_get(self, path: str) -> dict | None:
@@ -234,7 +255,7 @@ class SqliteFsSession(DbFsBackend):
             "path": row["path"],
             "parent": row["parent"],
             "is_dir": bool(row["is_dir"]),
-            "mode": int(row["mode"]),
+            "mode": SqliteFsSession._mode(row),
             "mtime": row["mtime"],
             "size": row["size"] or 0,
         }

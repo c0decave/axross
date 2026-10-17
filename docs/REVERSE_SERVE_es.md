@@ -33,12 +33,15 @@ explícitamente fuera de scope.
 >>> srv = axross.serve_s3(backend, port=9000)
 >>> srv.base_url
 'http://127.0.0.1:9000'
+>>> srv.auth_token
+'kX3v…'
 ```
 
-En otro terminal:
+En otro terminal, con el token como access key id (el secret no se
+comprueba):
 
 ```bash
-$ export AWS_ACCESS_KEY_ID=anything
+$ export AWS_ACCESS_KEY_ID='<srv.auth_token>'
 $ export AWS_SECRET_ACCESS_KEY=anything
 $ restic -r s3:http://127.0.0.1:9000/restic-backups init
 $ restic -r s3:http://127.0.0.1:9000/restic-backups backup ~/Documents
@@ -66,6 +69,8 @@ En gnome-files, en la barra de path:
 davs://127.0.0.1:8080
 ```
 
+gnome-files pide un nombre de usuario (cualquiera) y un password: `srv.auth_token`.
+
 Las carpetas son carpetas IMAP, los ficheros son mensajes — la
 misma vista que axross tiene internamente, ahora visible para
 cualquier herramienta WebDAV.
@@ -77,14 +82,16 @@ cualquier herramienta WebDAV.
 | Default | Valor | Por qué |
 |---|---|---|
 | Bind | `127.0.0.1` | Interfaz pública requiere `bind="0.0.0.0"` explícito. Un reverse-server perdido nunca debería exponer tu SFTP remoto al LAN por error. |
-| Auth | ninguna en localhost | `auth_token="…"` para `Authorization: Bearer <token>`. Binds non-local como `0.0.0.0` se **rechazan** sin auth token. |
+| Auth | un token, también en localhost | Un servidor loopback genera uno (`srv.auth_token`); `auth_token="…"` fija uno propio. Los clientes lo envían como `Authorization: Bearer <token>`, como password Basic (los clientes WebDAV lo piden) o como AWS access key id (aws-cli, restic, boto3). `auth_token=None` desactiva la auth, solo en loopback: entonces cualquier usuario local del host llega al backend. Binds non-local como `0.0.0.0` se **rechazan** sin token explícito. |
 | Read-only | False | `read_only=True` rechaza todo verbo mutador (PUT/DELETE/MKCOL/MOVE/COPY) con HTTP 403. |
-| Path traversal | rechazado | Cada path se normaliza; segmentos `..` devuelven 400. |
+| Path traversal | rechazado | Cada path se normaliza; segmentos `..`, segmentos con barra invertida y segmentos que empiezan por una unidad (`C:`) devuelven 400, y cada path unido debe quedar bajo la raíz en el estilo de paths del backend (también paths de Windows). |
 | Cap del body | 8 GiB por request | Contra mentiras de Content-Length. |
 
-El reverse-server **no** hace AWS Signature V4 — el endpoint
-path-style autentica solo por Bearer. restic / rclone / aws-cli
-aceptan creds dummy (sin auth) o header `Authorization` custom.
+El reverse-server **no** comprueba AWS Signature V4 — de una request
+firmada lee solo el access key id y lo compara con el token. aws-cli /
+restic / rclone / boto3 funcionan con `AWS_ACCESS_KEY_ID=<token>` y
+cualquier secret; curl y otros clientes HTTP envían
+`Authorization: Bearer <token>`.
 
 Para endpoint S3 totalmente firmado: gateway real (MinIO,
 SeaweedFS, garage). El reverse-server de axross es **gateway
@@ -149,8 +156,8 @@ Concretamente:
 * La auth del backend ya pasó. Quien llegue al reverse-server tiene
   el acceso de quien abrió el backend. **No apuntes esto a un SFTP
   remoto con datos a los que el usuario local no debe acceder.**
-* Los Bearer tokens se comparan con `hmac.compare_digest`. Se pasan
-  como plain `Authorization: Bearer <token>` — sin protección anti-
+* Los tokens se comparan con `hmac.compare_digest`. Viajan en claro
+  (header Bearer, password Basic o AWS access key id) — sin protección anti-
   replay, sin nonce, sin bound temporal. Trátalo como cualquier
   shared secret: rota al sospechar, nunca loguees, transporta sobre
   TLS si sale de localhost.
