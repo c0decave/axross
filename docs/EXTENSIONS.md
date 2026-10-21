@@ -65,7 +65,7 @@ resources (files, sockets).
 |---|---|
 | `api.add_menu_action(label, callback, shortcut=None)` | An entry in the Extensions menu. |
 | `api.add_context_action(label, callback, applies_to="any", extensions=())` | An entry in the file pane's right-click menu. `callback(ctx)`. `applies_to`: `any`, `folder` (nothing selected), `selection`, `files`, `folders`, `single_file`. `extensions=(".md",)` limits it by file name. |
-| `api.add_dock(title, widget)` | A panel on the right; its show/hide entry goes into the Extensions menu. |
+| `api.add_dock(title, widget)` | A panel on the right with the title bar of the built-in panels (float, [x], close all); its show/hide entry goes into the Extensions menu, which reopens it after [x]. |
 | `api.on(event, callback)` | `callback(ctx)` on `selection_changed`, `path_changed` or `pane_activated` of the active pane. |
 | `api.run_in_background(work, on_done=None, on_error=None)` | `work()` on a worker thread, `on_done(result)` / `on_error(exc)` back on the GUI thread. Use it for anything that reads files or the network. |
 | `api.current()` | The active pane's context, or `None`. |

@@ -159,10 +159,6 @@ class DialogTest(_Qt):
         self.assertEqual(self.keys, {"k": "sk-keep"})
 
     def test_happy_models_are_listed_from_the_server_off_the_gui_thread(self) -> None:
-        try:
-            import sift  # noqa: F401
-        except ImportError:
-            self.skipTest("sift is not installed")
         from tests.fake_llm_server import FakeOllama
 
         d = self.dlg()
@@ -174,10 +170,6 @@ class DialogTest(_Qt):
         self.assertEqual(sorted(names), ["demo:latest", "other:7b"])
 
     def test_sad_an_unreachable_server_says_so(self) -> None:
-        try:
-            import sift  # noqa: F401
-        except ImportError:
-            self.skipTest("sift is not installed")
         d = self.dlg()
         self._fill(d, endpoint="http://127.0.0.1:9")
         d.fetch_models()

@@ -31,7 +31,6 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -114,12 +113,10 @@ class SnapshotBrowserDialog(QDialog):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        from ui.column_fit import ColumnFitter
+
+        # Label takes the free width; every divider stays draggable.
+        self._columns = ColumnFitter(self._table, fill=2)
         root.addWidget(self._table, stretch=1)
 
         btn_row = QHBoxLayout()

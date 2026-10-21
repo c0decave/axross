@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QPushButton,
     QTableWidget,
@@ -55,9 +54,10 @@ class ExtensionsDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        from ui.column_fit import ColumnFitter
+
+        # The description takes the free width; every divider stays draggable.
+        self._columns = ColumnFitter(self.table, fill=4)
         self.table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.table, 1)
 

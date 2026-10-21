@@ -64,7 +64,9 @@ def _format_time(value: datetime | None) -> str:
 class _SizeWorker(QObject):
     """Recursive size walk, off the GUI thread."""
 
-    done = pyqtSignal(int)
+    #: object, not int: a Qt int is 32 bits, and a 3 GiB folder would
+    #: arrive as -1 GiB.
+    done = pyqtSignal(object)
 
     def __init__(self, backend: FileBackend, path: str) -> None:
         super().__init__()

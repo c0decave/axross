@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDockWidget,
     QHBoxLayout,
-    QHeaderView,
     QProgressBar,
     QPushButton,
     QTableView,
@@ -75,12 +74,11 @@ class TransferDock(QDockWidget):
         # Progress bar delegate
         self._table.setItemDelegateForColumn(COL_PROGRESS, ProgressBarDelegate(self._table))
 
-        # Column sizing
-        header = self._table.horizontalHeader()
-        header.setStretchLastSection(True)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in range(1, self._model.columnCount()):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        # Column sizing: File takes the free width, the others fit their
+        # content; every divider stays draggable (ui.column_fit).
+        from ui.column_fit import ColumnFitter
+
+        self._columns = ColumnFitter(self._table, fill=0)
 
         layout.addWidget(self._table, stretch=1)
 

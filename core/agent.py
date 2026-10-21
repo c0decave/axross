@@ -157,6 +157,62 @@ def post_chat(profile: LLMProfile, api_key: str, body: dict) -> dict:
         raise AgentError(f"the LLM server at {profile.host()} did not answer JSON") from None
 
 
+#: Seconds a model listing may take at most, whatever the profile allows.
+MODELS_TIMEOUT = 15.0
+
+
+def models_url(profile: LLMProfile) -> str:
+    """Where a profile's server lists its models: Ollama's own ``/api/tags``
+    at the server root, ``<endpoint>/models`` for the OpenAI-compatible
+    servers (their endpoint already names ``/v1``)."""
+    base = profile.resolved_endpoint().rstrip("/")
+    if profile.provider == "ollama":
+        if urlsplit(base).path.rstrip("/").endswith("/v1"):
+            base = base[: -len("/v1")]
+        return base + "/api/tags"
+    return base + "/models"
+
+
+def list_models(profile: LLMProfile, api_key: str) -> list[str]:
+    """The model names the profile's server offers, asked directly - no
+    sift needed. Raises :class:`AgentError` with a reason a person can act
+    on; a redirect is never followed (it would carry the key elsewhere)."""
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    from core.agent_net import opener_without_redirects
+
+    request = urllib.request.Request(models_url(profile), headers=headers, method="GET")
+    timeout = min(profile.timeout, MODELS_TIMEOUT)
+    try:
+        with opener_without_redirects().open(request, timeout=timeout) as response:
+            data = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        if 300 <= exc.code < 400:
+            raise AgentError(
+                f"the LLM server at {profile.host()} answered a redirect (HTTP {exc.code}), "
+                "which is not followed"
+            ) from None
+        raise AgentError(f"the LLM server at {profile.host()} answered HTTP {exc.code}") from None
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise AgentError(f"cannot reach the LLM server at {profile.host()}: {reason}") from None
+    except ValueError:
+        raise AgentError(f"the LLM server at {profile.host()} did not answer JSON") from None
+    if not isinstance(data, dict):
+        raise AgentError(f"the LLM server at {profile.host()} did not answer a model list")
+    if data.get("error"):
+        # LM Studio on a wrong path answers 200 {"error": "Unexpected endpoint ..."}.
+        raise AgentError(f"the LLM server at {profile.host()} answered: {data['error']}")
+    key, field_name = ("models", "name") if profile.provider == "ollama" else ("data", "id")
+    entries = data.get(key)
+    if not isinstance(entries, list):
+        raise AgentError(f"the LLM server at {profile.host()} did not answer a model list")
+    return [
+        str(e[field_name]) for e in entries if isinstance(e, dict) and e.get(field_name)
+    ]
+
+
 def needs_confirmation(name: str, *, write: bool, group: str) -> bool:
     """Whether a call needs the user's yes: every mutating tool, and every
     tool of the exec group that runs something."""

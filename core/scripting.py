@@ -923,6 +923,8 @@ def move(
     log.info("axross.move cross-backend: %s:%s -> %s:%s", src_label, src_path, dst_label, dst_path)
     from contextlib import ExitStack
 
+    from core.server_ops import refuse_changed_source, source_size
+
     with ExitStack() as gates:
         gates.enter_context(
             _mutation_gate(
@@ -936,6 +938,9 @@ def move(
                 f"move source remove {src_path!r}",
             )
         )
+        # Compared after the copy: data written to the source meanwhile
+        # would otherwise be deleted with it and be in neither place.
+        size_before = source_size(src_backend, src_path)
         transferred = copy(
             src_backend,
             src_path,
@@ -944,10 +949,11 @@ def move(
             overwrite=False,
         )
         try:
+            refuse_changed_source(src_backend, src_path, size_before, dst_path)
             src_backend.remove(src_path)
         except OSError as exc:
             log.warning(
-                "axross.move: copied %s:%s -> %s:%s but source remove failed: %s; "
+                "axross.move: copied %s:%s -> %s:%s but the source was not removed: %s; "
                 "undoing destination",
                 src_label,
                 src_path,
@@ -959,7 +965,7 @@ def move(
                 dst_backend.remove(dst_path)
             except OSError as undo_exc:
                 log.error(
-                    "axross.move: undo failed after source remove failure; "
+                    "axross.move: undo failed after the source was not removed; "
                     "duplicate data may remain at %s:%s: %s",
                     dst_label,
                     dst_path,

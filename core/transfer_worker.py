@@ -254,7 +254,8 @@ class TransferWorker(QObject):
     Designed to run on a QThread.
     """
 
-    progress = pyqtSignal(str, int, int)  # job_id, bytes_done, bytes_total
+    # object, not int: a Qt int is 32 bits, and 3 GiB would arrive as -1 GiB.
+    progress = pyqtSignal(str, object, object)  # job_id, bytes_done, bytes_total
     speed_update = pyqtSignal(str, float)  # job_id, bytes_per_second
     job_finished = pyqtSignal(str)  # job_id
     job_error = pyqtSignal(str, str)  # job_id, error_message
@@ -383,7 +384,15 @@ class TransferWorker(QObject):
                 self.speed_update.emit(job.job_id, job.speed)
 
         try:
-            self._do_transfer(job, progress_callback)
+            # A move compares the source's size after the copy with this, so
+            # it never deletes data written to the source meanwhile.
+            size_before = self._move_source_size(job)
+            written = self._do_transfer(job, progress_callback)
+            if written is not None:
+                # What was written, not what the listing said when the job
+                # was queued: a symlink is listed with the length of its
+                # target path, and a source may have grown since.
+                job.transferred_bytes = job.total_bytes = written
 
             # Post-transfer integrity check: native compare when both
             # backends produce matching-algorithm hashes cheaply. When
@@ -394,6 +403,11 @@ class TransferWorker(QObject):
 
             # Move mode: delete source after successful transfer
             if job.move and job.source_backend:
+                from core.server_ops import refuse_changed_source
+
+                refuse_changed_source(
+                    job.source_backend, job.source_path, size_before, job.dest_path
+                )
                 try:
                     job.source_backend.remove(job.source_path)
                     log.info("Move: deleted source %s", job.source_path)
@@ -439,6 +453,15 @@ class TransferWorker(QObject):
             self.job_error.emit(job.job_id, str(e))
             log.error("Transfer error for %s: %s", job.filename, e)
             self._finish_journal(job, status="error", error=str(e))
+
+    @staticmethod
+    def _move_source_size(job: TransferJob) -> int | None:
+        """The source's size before a move copies it (None for a copy)."""
+        if not job.move or job.source_backend is None:
+            return None
+        from core.server_ops import source_size
+
+        return source_size(job.source_backend, job.source_path)
 
     def _verify_integrity(self, job: TransferJob) -> None:
         """Compare source + dest checksum after a successful transfer.
@@ -584,8 +607,9 @@ class TransferWorker(QObject):
         self,
         job: TransferJob,
         progress_callback,
-    ) -> None:
-        """Perform the actual file copy using backend open_read/open_write."""
+    ) -> int:
+        """Perform the actual file copy using backend open_read/open_write.
+        Returns the size of the destination file written."""
         source_backend = job.source_backend
         dest_backend = job.dest_backend
 
@@ -605,9 +629,8 @@ class TransferWorker(QObject):
 
         self._check_existing_destination(job)
         if job.use_temp_file:
-            self._do_transfer_with_temp(job, progress_callback)
-        else:
-            self._do_transfer_direct(job, progress_callback)
+            return self._do_transfer_with_temp(job, progress_callback)
+        return self._do_transfer_direct(job, progress_callback)
 
     @staticmethod
     def _check_existing_destination(job: TransferJob) -> None:
@@ -656,7 +679,7 @@ class TransferWorker(QObject):
         self,
         job: TransferJob,
         progress_callback,
-    ) -> None:
+    ) -> int:
         """Write directly to dest_path (no temp file + rename).
 
         Used for backends where temp-file rename is unsupported (IMAP),
@@ -710,12 +733,13 @@ class TransferWorker(QObject):
         finally:
             if destination_snapshot is not None:
                 destination_snapshot.close()
+        return transferred
 
     def _do_transfer_with_temp(
         self,
         job: TransferJob,
         progress_callback,
-    ) -> None:
+    ) -> int:
         """Write to a temp file, then rename to final destination.
 
         Used for backends with real filesystem semantics (local, SFTP,
@@ -812,7 +836,7 @@ class TransferWorker(QObject):
                     self._finalize_temp_destination(dest_backend, temp_path, job.dest_path)
                     self._apply_source_mtime(job)
                     cleanup_temp = False
-                    return
+                    return transferred
                 if resume_offset > 0:
                     # Seek source to resume position
                     try:
@@ -855,6 +879,7 @@ class TransferWorker(QObject):
             self._apply_source_mtime(job)
 
             cleanup_temp = False
+            return transferred
         except (_DestinationKept, FileExistsError, _SameEntry):
             # Refused to replace the destination: the partial is of no
             # use to a retry, which would be refused the same way.

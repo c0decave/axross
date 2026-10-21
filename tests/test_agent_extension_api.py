@@ -250,8 +250,14 @@ def test_edge_the_stats_window_counts_and_moves(env):
     assert host.error("bundled:agent_stats") == ""
     module = host.module("bundled:agent_stats")
     window = module.WINDOW
-    assert window.windowFlags() & Qt.WindowType.Tool
-    assert window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    # A normal window owned by the main window: a tiling window manager
+    # floats it at its own size (sway tiled the parentless Tool window
+    # across half the screen), and it has the usual title bar buttons.
+    assert window.windowType() == Qt.WindowType.Window
+    assert not window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    assert window.parentWidget() is env.win
+    hint = window.sizeHint()
+    assert window.width() <= max(hint.width(), 320) and window.height() <= max(hint.height(), 400)
     next(a for a in env.win.extensions_menu.actions() if a.text() == "Agent Stats").trigger()
     pump(0.1)
     assert window.isVisible()

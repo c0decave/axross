@@ -124,6 +124,7 @@ FULL_MODS=(
     "ntplib:axross.time_skew NTP source"
     "pysnmp:axross.snmp_get/walk/set"
     "manuf:axross.mac_lookup IEEE OUI database"
+    "sift:Analysis dock file explainer (pip: sift-summarizer)"
 )
 
 if [[ "$FLAVOR" == "full" ]]; then

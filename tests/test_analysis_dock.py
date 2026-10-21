@@ -578,7 +578,7 @@ class DockListingTest(_DockLLMBase):
 
     def test_sad_a_late_listing_does_not_replace_the_file_shown_since(self) -> None:
         for error in (PermissionError("Permission denied"), None):
-            with self.subTest(error=error):
+            with self.subTest(error=repr(error)):
                 backend = _GatedListingBackend([FileItem(name="x.txt", size=1)], error)
                 analyzer = _LLMAnalyzer()
                 dock = self._dock(analyzer)

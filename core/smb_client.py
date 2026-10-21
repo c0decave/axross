@@ -290,6 +290,7 @@ def _patched_gethostname(name: str):
 
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _FILE_ATTRIBUTE_READONLY = 0x01  # smbprotocol FileAttributes, MS-FSCC 2.6
+_FILE_ATTRIBUTE_HIDDEN = 0x02
 _FILE_ATTRIBUTE_DIRECTORY = 0x10
 
 
@@ -840,16 +841,19 @@ class SmbSession(SessionLifecycle):
             modified=cls._modified(us),
             permissions=mode & 0o777,
             is_dir=is_dir,
+            attr_hidden=bool(attrs & _FILE_ATTRIBUTE_HIDDEN),
         )
 
     @classmethod
     def _stat_to_item(cls, name: str, st) -> FileItem:
         is_dir = stat_module.S_ISDIR(st.st_mode)
         modified = cls._modified(st.st_mtime_ns // 1000)
+        attrs = getattr(st, "st_file_attributes", 0)
         return FileItem(
             name=name,
             size=st.st_size if not is_dir else 0,
             modified=modified,
             permissions=st.st_mode & 0o777,
             is_dir=is_dir,
+            attr_hidden=isinstance(attrs, int) and bool(attrs & _FILE_ATTRIBUTE_HIDDEN),
         )

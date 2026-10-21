@@ -44,6 +44,11 @@ class _DirFtpServer:
     ``size``: False refuses every ``SIZE`` (a server that allows it in
     binary mode only).
     ``utf8``: False refuses ``OPTS UTF8 ON``; the client then speaks latin-1.
+    ``dash_a``: ``"parse"`` reads a leading ``-a`` of LIST / NLST as the
+    option and, like pure-ftpd (measured 2026-10-21), leaves dot entries
+    out of a LIST without it and lists ``.`` and ``..`` with it;
+    ``"literal"`` takes ``-a /x`` for a path, so it is missing (550, or
+    empty with ``missing_listing="empty"``).
     """
 
     def __init__(
@@ -55,8 +60,10 @@ class _DirFtpServer:
         missing_listing: str = "error",
         size: bool = True,
         utf8: bool = True,
+        dash_a: str = "parse",
     ) -> None:
         self.root = root
+        self.dash_a = dash_a
         self.mlsd = mlsd
         self.list_style = list_style
         self.mdtm = mdtm
@@ -180,8 +187,17 @@ class _DirFtpServer:
                 else:
                     conn.sendall(b"550 no\r\n")
             elif verb in ("MLSD", "NLST", "LIST") and data_l is not None:
+                show_all = verb != "LIST"
+                if verb != "MLSD" and self.dash_a == "parse":
+                    if arg == "-a" or arg.startswith("-a "):
+                        show_all = True
+                        virt, real = self._real(cwd, arg[2:].lstrip())
                 if os.path.isdir(real):
                     names = sorted(os.listdir(real))
+                    if not show_all:
+                        names = [n for n in names if not n.startswith(".")]
+                    elif verb == "LIST":
+                        names = [".", ".."] + names
                     pairs = [(os.path.join(real, n), n) for n in names]
                 elif os.path.lexists(real):
                     pairs = [(real, posixpath.basename(virt))]

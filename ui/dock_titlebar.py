@@ -61,7 +61,11 @@ class DockTitleBar(QWidget):
         icon_name: str,
         dock: QDockWidget,
         parent=None,
+        *,
+        reopen_hint: str = "View → Panels",
     ) -> None:
+        """*reopen_hint* names the menu whose toggle shows the panel again
+        after a close (extension panels: the Extensions menu)."""
         super().__init__(parent or dock)
         self._dock = dock
         layout = QHBoxLayout(self)
@@ -92,7 +96,7 @@ class DockTitleBar(QWidget):
         self._close_btn = QToolButton(self)
         self._close_btn.setIcon(icon("close-pane", 16))
         self._close_btn.setIconSize(QSize(16, 16))
-        self._close_btn.setToolTip("Close this panel (reopen via View → Panels)")
+        self._close_btn.setToolTip(f"Close this panel (reopen via {reopen_hint})")
         self._close_btn.setAutoRaise(True)
         self._close_btn.setFixedSize(QSize(22, 22))
         self._close_btn.clicked.connect(dock.close)

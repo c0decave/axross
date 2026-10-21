@@ -76,6 +76,10 @@ class TransferModel(QAbstractTableModel):
             if col == COL_SIZE:
                 return self._format_size(job.total_bytes)
             if col == COL_PROGRESS:
+                if job.skipped:
+                    # "newer" kept the destination: nothing was written and
+                    # a move kept its source, so this is no "Done".
+                    return "Skipped"
                 if job.status == TransferStatus.DONE:
                     return "Done"
                 return f"{job.progress_percent:.0f}%"
@@ -88,10 +92,11 @@ class TransferModel(QAbstractTableModel):
                     return self._format_eta(job.eta_seconds)
                 return ""
             if col == COL_STATUS:
-                return job.status.value
+                return "skipped" if job.skipped else job.status.value
 
         if role == Qt.ItemDataRole.UserRole and col == COL_PROGRESS:
-            return job.progress_percent
+            # No bar for a skipped job: the delegate then draws "Skipped".
+            return None if job.skipped else job.progress_percent
 
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if col in (COL_SIZE, COL_SPEED, COL_ETA, COL_PROGRESS):

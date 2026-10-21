@@ -49,7 +49,7 @@ class _FollowWindowState(QObject):
         self.update()
 
     def update(self) -> None:
-        if self._window.isMaximized():
+        if VW.is_maximized(self._window):
             name, tip = "window-restore", f"Restore ({VW.MAXIMIZE_KEY})"
         else:
             name, tip = "window-maximize", f"Maximize ({VW.MAXIMIZE_KEY})"
@@ -58,7 +58,12 @@ class _FollowWindowState(QObject):
         self._button.setAccessibleName(tip.split(" ")[0])
 
     def eventFilter(self, watched, event) -> bool:
-        if watched is self._window and event.type() == QEvent.Type.WindowStateChange:
+        # Resize too: axross maximizes by geometry where the window manager
+        # ignores the request (no state change then).
+        if watched is self._window and event.type() in (
+            QEvent.Type.WindowStateChange,
+            QEvent.Type.Resize,
+        ):
             self.update()
         return False
 

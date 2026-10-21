@@ -51,12 +51,25 @@ class FileItem:
     # backends only update mtime on content change but keep ctime
     # pinned to upload time.
     created: datetime | None = None
+    # The platform or protocol marks the entry hidden without a leading
+    # dot: FILE_ATTRIBUTE_HIDDEN (Windows, SMB, WinRM) or UF_HIDDEN
+    # (macOS / BSD chflags). Set only from data the listing already
+    # carries; a backend that cannot know leaves it False and the dot
+    # rule of :attr:`is_hidden` decides alone.
+    attr_hidden: bool = False
 
     def __post_init__(self) -> None:
         for name in ("modified", "accessed", "created"):
             value = getattr(self, name)
             if getattr(value, "tzinfo", None) is not None:
                 object.__setattr__(self, name, _local_wall_clock(value))
+
+    @property
+    def is_hidden(self) -> bool:
+        """Hidden from a listing unless the user asks for hidden files: a
+        dot name (the Unix convention, on every backend) or the backend's
+        hidden flag (:attr:`attr_hidden`)."""
+        return self.attr_hidden or self.name.startswith(".")
 
     @property
     def permissions_str(self) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import threading
@@ -204,6 +205,114 @@ def _size_text(b: float) -> str:
 
 def _shorten_path(path: str, limit: int = 60) -> str:
     return path if len(path) <= limit else "…" + path[-(limit - 1) :]
+
+
+# Paths a pane is deleting or moving to the trash. A second Delete of the
+# same path - or of a folder above or below it - from any pane is refused
+# while the first runs, instead of racing it. Claimed on the GUI thread;
+# released by the GUI thread when the delete ends before its removal phase,
+# else by the worker once its last remove() has returned.
+_REMOVAL_LOCK = threading.Lock()
+_REMOVAL_CLAIMS: dict[int, tuple[object, list[str]]] = {}
+_REMOVAL_TOKENS = itertools.count(1)
+
+
+def _removal_key(backend) -> object:
+    """Every LocalFS shares one file system; another backend is its own."""
+    from core.local_fs import LocalFS
+
+    return "local" if isinstance(backend, LocalFS) else ("backend", id(backend))
+
+
+def _paths_overlap(a: str, b: str) -> bool:
+    """*a* and *b* are the same entry, or one lies inside the other."""
+    a, b = a.rstrip("/\\") or a, b.rstrip("/\\") or b
+    if a == b:
+        return True
+    return any(
+        b.startswith(a.rstrip(sep) + sep) or a.startswith(b.rstrip(sep) + sep)
+        for sep in ("/", "\\")
+    )
+
+
+def _claim_removal(backend, paths: list[str]) -> tuple[int | None, list[str]]:
+    """Claim *paths* for one delete: ``(token, [])``, or ``(None, busy)``
+    with the paths another running delete already holds."""
+    key = _removal_key(backend)
+    with _REMOVAL_LOCK:
+        busy = [
+            p
+            for k, held in _REMOVAL_CLAIMS.values()
+            if k == key
+            for p in paths
+            if any(_paths_overlap(p, h) for h in held)
+        ]
+        if busy:
+            return None, sorted(set(busy))
+        token = next(_REMOVAL_TOKENS)
+        _REMOVAL_CLAIMS[token] = (key, list(paths))
+        return token, []
+
+
+def _release_removal(token: int | None) -> None:
+    """Give the paths of *token* free again; a second call does nothing."""
+    with _REMOVAL_LOCK:
+        _REMOVAL_CLAIMS.pop(token, None)
+
+
+def _paths_in_removal() -> list[str]:
+    """Every path a delete currently holds (diagnostics and tests)."""
+    with _REMOVAL_LOCK:
+        return sorted(p for _k, held in _REMOVAL_CLAIMS.values() for p in held)
+
+
+class _RemovalResult:
+    """What the removal phase did: ``done`` entries removed, ``errors`` one
+    line per failed entry, ``not_attempted`` entries a cancel (or a stop)
+    kept, ``aborted`` when an unexpected exception stopped the run."""
+
+    def __init__(self, done: int, errors: list[str], not_attempted: int, aborted: bool) -> None:
+        self.done = done
+        self.errors = errors
+        self.not_attempted = not_attempted
+        self.aborted = aborted
+
+
+def _run_removal(backend, entries, trash: bool, cancelled, report) -> _RemovalResult:
+    """Remove (or move to the trash) each ``(name, path, is_dir)`` in turn.
+
+    Runs on a worker thread. *cancelled* is checked between entries: the
+    entry in progress finishes, the rest stay. An OSError is recorded and
+    the next entry goes ahead (as the synchronous loop did); any other
+    exception is a backend defect and stops the run, so nothing more is
+    removed after it.
+    """
+    from core import trash as T
+
+    done, errors, attempted, aborted = 0, [], 0, False
+    what = "Trash" if trash else "Delete"
+    for index, (name, path, is_dir) in enumerate(entries):
+        if cancelled():
+            break
+        report(index, len(entries), name)
+        attempted += 1
+        try:
+            if trash:
+                T.trash(backend, path)
+            else:
+                backend.remove(path, recursive=is_dir)
+        except OSError as exc:
+            log.error("%s failed for %s: %s", what, name, exc)
+            errors.append(f"{name}: {exc}")
+            continue
+        except Exception as exc:  # noqa: BLE001 — reported to the user, run stopped
+            log.exception("%s stopped at %s: unexpected error", what, name)
+            errors.append(f"{name}: {exc}")
+            aborted = True
+            break
+        done += 1
+        log.info("%s: %s", "Trashed" if trash else "Deleted", path)
+    return _RemovalResult(done, errors, len(entries) - attempted, aborted)
 
 
 # Buttons the pane handles itself: the two side buttons walk the history,
@@ -944,6 +1053,16 @@ class FilePaneWidget(QWidget):
         self._cancel_size_btn.hide()
         status_layout.addWidget(self._cancel_size_btn)
         self._size_job: ScanJob | None = None
+        # Shown only while Delete / Move to Trash runs in the background.
+        self._cancel_delete_btn = QPushButton(tr("Cancel"))
+        self._cancel_delete_btn.setToolTip(tr("Stop the delete after the entry in progress"))
+        self._cancel_delete_btn.clicked.connect(self._cancel_removal)
+        self._cancel_delete_btn.hide()
+        status_layout.addWidget(self._cancel_delete_btn)
+        self._removal_job: ScanJob | None = None
+        # The running delete: phase "check" (the walk before the question)
+        # or "remove"; empty while none runs.
+        self._removal_ctx: dict = {}
         # View > Activate Pane: resting the mouse here makes this the active
         # pane after the configured delay (core.pane_activation).
         self._hover_timer = QTimer(self)
@@ -1278,6 +1397,15 @@ class FilePaneWidget(QWidget):
         self._hover_timer.stop()
         if getattr(self, "_size_job", None) is not None:
             self._size_job.abandon()
+        if getattr(self, "_removal_job", None) is not None:
+            # A removal stops after the entry in progress; its worker gives
+            # the claimed paths free when that entry has returned.
+            self._removal_job.abandon()
+        ctx = getattr(self, "_removal_ctx", None)
+        if ctx:
+            if ctx["phase"] != "remove":
+                _release_removal(ctx["token"])
+            self._removal_ctx = {}
         if getattr(self, "_pack_job", None) is not None:
             self._pack_job.abandon()  # the pack stops and removes its temp file
         if getattr(self, "_thumbs", None) is not None:
@@ -1331,8 +1459,8 @@ class FilePaneWidget(QWidget):
 
     def _view_selected(self) -> None:
         """Open selected file read-only (F3) — routes to the best
-        viewer: image for supported MIMEs (local only), text for text
-        files, hex for everything else binary."""
+        viewer: image for supported MIMEs (local only), the media viewer
+        for a PDF, text for text files, hex for everything else binary."""
         items = self.selected_file_items()
         files = [i for i in items if not i.is_dir]
         if len(files) != 1:
@@ -1342,6 +1470,8 @@ class FilePaneWidget(QWidget):
         if full_path is None:
             return
         if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
+            return
+        if self._open_document_viewer(full_path, item.name):
             return
         if self._is_binary_file(full_path, item.name):
             self._open_hex_editor(full_path, read_only=True)
@@ -1402,6 +1532,37 @@ class FilePaneWidget(QWidget):
             parent=self,
         )
         dlg.exec()
+        return True
+
+    def _open_document_viewer(self, path: str, name: str) -> bool:
+        """Open the PDF *name* (in this folder) on its own in the media
+        viewer - "document mode": file navigation has nothing to step to,
+        the page control turns its pages. Returns False when *name* is no
+        PDF or the viewer cannot show it (QtPdf missing, the security mode
+        blocks the media viewer); the caller then opens the hex editor."""
+        from core import media_collect as MC
+        from core.security_mode import current_policy
+        from ui import media_viewer as MV
+
+        if MC.classify(name) != MC.PDF:
+            return False
+        if not MV.pdf_supported():
+            log.info(
+                "Opening %s in the hex editor: PDF viewing needs QtPdf, "
+                "which cannot be loaded here",
+                path,
+            )
+            return False
+        policy = current_policy()
+        if not policy.allow_auto_preview:
+            log.info(
+                "Opening %s in the hex editor: the '%s' security mode blocks the media viewer",
+                path,
+                policy.name,
+            )
+            return False
+        options = MV.MediaViewOptions(kinds=frozenset({MC.PDF}), start_mode=MV.START_BROWSE)
+        self.open_media_viewer(options, only_names={name})
         return True
 
     #: The last media-view choices, shared by every pane for the session.
@@ -2221,10 +2382,13 @@ class FilePaneWidget(QWidget):
                 return
             # Route to the best viewer:
             #   images (local only) → ImageViewerDialog
+            #   PDFs                → media viewer, that document alone
             #   binaries            → hex
             #   text                → text editor
             #   fallthrough         → emit for other handlers
             if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
+                return
+            if self._open_document_viewer(full_path, item.name):
                 return
             if self._is_binary_file(full_path, item.name):
                 self._open_hex_editor(full_path)
@@ -3210,72 +3374,339 @@ class FilePaneWidget(QWidget):
             self.refresh_after_change()
 
     def _delete_selected(self) -> None:
+        """Delete the selection permanently, in the background.
+
+        See :meth:`_start_removal`: the walk before the question and the
+        removal itself run on a ScanJob, so the window stays live while a
+        large folder (or a slow share) is deleted.
+        """
+        self._start_removal(trash=False)
+
+    @property
+    def removal_running(self) -> bool:
+        """A Delete / Move to Trash of this pane is checking, asking or removing."""
+        return bool(self._removal_ctx)
+
+    def _start_removal(self, *, trash: bool) -> None:
+        """Delete (or move to the trash) the selected items without blocking.
+
+        1. The paths are resolved now and claimed, so no second delete of
+           them (from this pane or another) runs at the same time.
+        2. ``preview_delete`` walks them on a worker thread: counts, and
+           hidden entries inside selected folders. Cancel stops it and
+           nothing is deleted.
+        3. The question, then - for a folder holding hidden entries, or one
+           the walk could not fully see - a second question with No as the
+           default, then the production gate.
+        4. The removal runs on the worker thread entry by entry; Cancel
+           stops between entries. Errors are reported per entry, and the
+           listing is reloaded at the end.
+        """
+        title = "Move to Trash" if trash else "Delete"
+        if self._removal_ctx:
+            self.status_message(tr("A delete is still running in this pane."))
+            return
         items = self.selected_file_items()
         if not items:
             return
-        names = _dialog_item_names(items)
         from core.path_policy import safe_join
 
-        selected: list[tuple[object, str]] = []
+        entries: list[tuple[str, str, bool]] = []
         unsafe: list[str] = []
         for item in items:
             try:
-                selected.append(
+                entries.append(
                     (
-                        item,
+                        item.name,
                         safe_join(self._backend, self._current_path, item.name),
+                        bool(item.is_dir),
                     )
                 )
             except ValueError as exc:
                 unsafe.append(f"{item.name}: {exc}")
-        if not selected:
+        if not entries:
             QMessageBox.warning(
                 self,
-                "Delete",
+                title,
                 "No selected item has a safe backend path.\n" + _escape_dialog_lines(unsafe[:10]),
             )
             return
-        selected_paths = [path for _, path in selected]
-        preview_text = ""
-        try:
+        backend = self._backend
+        paths = [path for _name, path, _is_dir in entries]
+        token, busy = _claim_removal(backend, paths)
+        if token is None:
+            QMessageBox.warning(
+                self,
+                title,
+                "Not started: these paths are already being deleted or moved to the trash:\n"
+                + _escape_dialog_lines(busy[:10]),
+            )
+            return
+        self._removal_ctx = {
+            "phase": "check",
+            "trash": trash,
+            "title": title,
+            "backend": backend,
+            "entries": entries,
+            "unsafe": unsafe,
+            "names": _dialog_item_names(items),
+            "token": token,
+        }
+
+        def work(cancelled, report):
             from core.destructive_preview import preview_delete
 
-            preview_text = (
-                "\n\n"
-                + preview_delete(
-                    self._backend,
-                    selected_paths,
-                ).summary()
+            return preview_delete(backend, paths, cancel=cancelled, progress=report)
+
+        self._show_removal_busy(
+            tr("Checking {n} item(s) before the delete…").format(n=len(entries))
+        )
+        self._ensure_removal_job().start(work, replace=True)
+
+    def _ensure_removal_job(self) -> ScanJob:
+        if self._removal_job is None:
+            self._removal_job = ScanJob(self, formatter=self._removal_progress_text)
+            self._removal_job.progress.connect(self._status.setText)
+            self._removal_job.finished.connect(self._on_removal_finished)
+        return self._removal_job
+
+    def _removal_progress_text(self, state: dict) -> str:
+        ctx = self._removal_ctx
+        where = _shorten_path(str(state.get("path", "")))
+        if ctx.get("phase") == "remove":
+            verb = tr("Moving to the trash…") if ctx.get("trash") else tr("Deleting…")
+            return f"{verb} {state['scanned']} of {state['indexed']} — {where}"
+        return (
+            tr("Checking before the delete… {folders} folders, {files} files").format(
+                folders=state["scanned"], files=state["indexed"]
             )
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Delete preview failed: %s", exc)
+            + f" — {where}"
+        )
+
+    def _show_removal_busy(self, text: str) -> None:
+        self._status.setText(text)
+        self._progress_bar.show()
+        self._cancel_delete_btn.setEnabled(True)
+        self._cancel_delete_btn.show()
+
+    def _hide_removal_busy(self) -> None:
+        self._cancel_delete_btn.hide()
+        size_running = self._size_job is not None and self._size_job.running
+        if not self.is_loading and not size_running:
+            self._progress_bar.hide()
+
+    def _cancel_removal(self) -> None:
+        """Stop the running delete: the walk at once, a removal after the
+        entry in progress (entries already removed stay removed)."""
+        if not self._removal_ctx or self._removal_job is None:
+            return
+        self._removal_job.cancel()
+        self._cancel_delete_btn.setEnabled(False)
+        self._status.setText(tr("Cancelling - the entry in progress finishes first…"))
+
+    def _end_removal(self, ctx: dict) -> None:
+        _release_removal(ctx["token"])
+        if self._removal_ctx is ctx:
+            self._removal_ctx = {}
+
+    def _on_removal_finished(self, kind: str, value, cancelled: bool) -> None:
+        ctx = self._removal_ctx
+        if not ctx or self._shutting_down:
+            return
+        self._hide_removal_busy()
+        if ctx["phase"] == "check":
+            self._on_removal_checked(ctx, kind, value, cancelled)
+        else:
+            self._on_removal_done(ctx, kind, value)
+
+    def _removal_dropped(self, ctx: dict) -> bool:
+        """True when the delete must not go on after a dialog: the pane is
+        closing, or the connection changed under it (a reconnect)."""
+        if self._shutting_down or self._removal_ctx is not ctx:
+            _release_removal(ctx["token"])
+            return True
+        if self._backend is not ctx["backend"]:
+            self._end_removal(ctx)
+            self.status_message(
+                tr("{what} not started: the connection changed - nothing was touched.").format(
+                    what=ctx["title"]
+                )
+            )
+            return True
+        return False
+
+    def _on_removal_checked(self, ctx: dict, kind: str, value, cancelled: bool) -> None:
+        trash, title = ctx["trash"], ctx["title"]
+        preview = value if kind == "done" else None
+        if kind == "error":
+            log.debug("%s preview failed: %s", title, value)
+        if cancelled or (preview is not None and preview.cancelled):
+            self._end_removal(ctx)
+            self.status_message(
+                tr("{what} cancelled - nothing was touched.").format(what=title)
+                if trash
+                else tr("Delete cancelled - nothing was deleted.")
+            )
+            return
+        if self._removal_dropped(ctx):
+            return
+        entries, unsafe = ctx["entries"], ctx["unsafe"]
+        preview_text = "\n\n" + preview.summary() if preview is not None else ""
         if unsafe:
             preview_text += f"\n\nSkipped {len(unsafe)} unsafe item(s):\n" + "\n".join(unsafe[:5])
-
+        question = (
+            f"Move {len(entries)} item(s) to trash?"
+            if trash
+            else f"Delete {len(entries)} item(s)?"
+        )
         reply = QMessageBox.question(
             self,
-            "Delete",
-            f"Delete {len(selected)} item(s)?\n{names}{escape(preview_text)}",
+            title,
+            f"{question}\n{ctx['names']}{escape(preview_text)}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.StandardButton.Yes:
-            if not self._production_ok(f"delete {len(selected)} item(s) in {self._current_path}"):
-                return
-            errors = list(unsafe)
-            for item, path in selected:
-                try:
-                    self._backend.remove(path, recursive=item.is_dir)
-                    log.info("Deleted: %s", path)
-                except OSError as e:
-                    log.error("Delete failed for %s: %s", item.name, e)
-                    errors.append(f"{item.name}: {e}")
-            if errors:
-                QMessageBox.warning(
-                    self,
-                    "Delete Errors",
-                    f"{len(errors)} item(s) failed:\n" + _escape_dialog_lines(errors[:10]),
+        if self._removal_dropped(ctx):
+            return
+        if reply != QMessageBox.StandardButton.Yes:
+            self._end_removal(ctx)
+            return
+        if not self._hidden_entries_ok(ctx, preview):
+            if not self._removal_dropped(ctx):
+                self._end_removal(ctx)
+                self.status_message(
+                    tr("{what} cancelled - nothing was touched.").format(what=title)
                 )
-            self.refresh_after_change()
+            return
+        if self._removal_dropped(ctx):
+            return
+        op = (
+            f"move {len(entries)} item(s) to the trash"
+            if trash
+            else f"delete {len(entries)} item(s) in {self._current_path}"
+        )
+        if not self._production_ok(op):
+            if not self._removal_dropped(ctx):
+                self._end_removal(ctx)
+            return
+        if self._removal_dropped(ctx):
+            return
+        self._start_removal_phase(ctx)
+
+    def _hidden_entries_ok(self, ctx: dict, preview) -> bool:
+        """Item 31: a selected folder holding hidden entries needs a second,
+        explicit OK (default No). So does one the walk could not fully see:
+        hidden entries cannot be ruled out there. Plain files, and a hidden
+        entry selected by name, need none."""
+        if not any(is_dir for _name, _path, is_dir in ctx["entries"]):
+            return True
+        if preview is not None and not preview.hidden_count and not preview.incomplete:
+            return True
+        trash = ctx["trash"]
+        if preview is not None and preview.hidden_count:
+            n = preview.hidden_count
+            shown = preview.hidden[:5]
+            lines = [
+                f"The selected folder(s) contain {n} hidden "
+                f"{'entry' if n == 1 else 'entries'} that a listing without hidden "
+                "files does not show, for example:",
+                *(f"  {_shorten_path(p, 80)}" for p in shown),
+            ]
+            if n > len(shown):
+                lines.append(f"  … and {n - len(shown)} more")
+            if preview.incomplete:
+                lines.append("The check did not see every entry; there may be more.")
+        else:
+            if preview is None:
+                reason = "the check failed"
+            elif preview.truncated:
+                reason = f"it stopped after {preview.total_items} entries"
+            else:
+                reason = f"{len(preview.warnings)} entries could not be read"
+            lines = [
+                "The check could not look at every entry in the selected folder(s) "
+                f"({reason}), so hidden entries cannot be ruled out."
+            ]
+        lines.append("")
+        lines.append(
+            "Move them to the trash as well?" if trash else "Delete them as well?"
+        )
+        reply = QMessageBox.warning(
+            self,
+            f"{ctx['title']}: hidden entries",
+            _escape_dialog_lines(lines),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _start_removal_phase(self, ctx: dict) -> None:
+        ctx["phase"] = "remove"
+        backend, entries, trash, token = ctx["backend"], ctx["entries"], ctx["trash"], ctx["token"]
+
+        def work(cancelled, report):
+            try:
+                return _run_removal(backend, entries, trash, cancelled, report)
+            finally:
+                _release_removal(token)
+
+        self._show_removal_busy(
+            tr("Moving {n} item(s) to the trash…").format(n=len(entries))
+            if trash
+            else tr("Deleting {n} item(s)…").format(n=len(entries))
+        )
+        self._ensure_removal_job().start(work, replace=True)
+
+    def _on_removal_done(self, ctx: dict, kind: str, value) -> None:
+        self._end_removal(ctx)
+        trash, total = ctx["trash"], len(ctx["entries"])
+        errors = list(ctx["unsafe"])
+        if kind == "error":  # _run_removal catches per entry; this is a defect
+            log.error("%s failed: %s", ctx["title"], value)
+            errors.append(str(value))
+            note = f"{ctx['title']} failed: {value}"
+        else:
+            errors.extend(value.errors)
+            moved = "Moved" if trash else "Deleted"
+            where = " to the trash" if trash else ""
+            if value.aborted:
+                note = (
+                    f"{ctx['title']} stopped after an unexpected error: {moved.lower()} "
+                    f"{value.done} of {total} item(s){where}; {value.not_attempted} kept."
+                )
+            elif value.not_attempted:
+                note = (
+                    f"{ctx['title']} cancelled after {value.done} of {total} item(s); "
+                    f"{value.not_attempted} kept."
+                )
+            else:
+                note = f"{moved} {value.done} of {total} item(s){where}."
+        self._note_after_refresh(note)
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Trash Errors" if trash else "Delete Errors",
+                f"{len(errors)} item(s) failed:\n" + _escape_dialog_lines(errors[:10]),
+            )
+
+    def _note_after_refresh(self, text: str) -> None:
+        """Show *text* and reload the folder; the reload's "N items" line
+        would hide the result, so it is shown again once the listing is in."""
+        self.status_message(text)
+        folder = self._current_path
+        self.refresh_after_change(quiet=True)
+        if not self.is_loading:
+            return
+
+        def again(path: str, ok: bool) -> None:
+            try:
+                self.navigation_finished.disconnect(again)
+            except (TypeError, RuntimeError):
+                pass
+            # Not over the listing of a folder the user went to meanwhile.
+            if ok and path == folder and not self._shutting_down:
+                self._status.setText(text)
+
+        self.navigation_finished.connect(again)
 
     def _show_permissions(self) -> None:
         """Chmod-only editor. Kept as a separate entry point for callers
@@ -3719,8 +4150,10 @@ class FilePaneWidget(QWidget):
         Every other visible column gets its preferred width while the name
         fits in what is left. A name that does not fit takes the slack of
         the others - each gives up at most what its own content does not
-        use, in proportion to that slack - and only then is it cut. None of
-        this is a user choice, so nothing here writes column prefs.
+        use, in proportion to that slack - and only then is it cut. A width
+        the user dragged is no slack: taking it made every drag snap back
+        while a long name did not fit. None of this is a user choice, so
+        nothing here writes column prefs.
         """
         if self._fitting or getattr(self, "_table", None) is None:
             return
@@ -3733,7 +4166,11 @@ class FilePaneWidget(QWidget):
         missing = self._content_width(0) - (viewport - sum(widths.values()))
         # Hidden, the viewport has no real width yet: nothing to make room in.
         if missing > 0 and others and self._table.isVisible():
-            slack = {c: max(0, widths[c] - self._column_floor(c)) for c in others}
+            chosen = set(getattr(self._column_prefs, "widths", {}) or {})
+            slack = {
+                c: 0 if c in chosen else max(0, widths[c] - self._column_floor(c))
+                for c in others
+            }
             total = sum(slack.values())
             take = min(missing, total)
             if take > 0:
@@ -4020,80 +4457,12 @@ class FilePaneWidget(QWidget):
 
         Trash lives at ``<backend.home()>/.axross-trash`` by default,
         so the entry survives restart and can be restored through
-        "Show Trash…". Uses the typed error contract: per-item OSError
-        is collected and reported at the end, one bad item doesn't
-        abort the rest.
+        "Show Trash…". Runs like Delete (see :meth:`_start_removal`): in
+        the background, with the same second question for folders that
+        hold hidden entries. Per-item OSError is collected and reported
+        at the end; one bad item doesn't abort the rest.
         """
-        from core import trash as T
-
-        items = self.selected_file_items()
-        if not items:
-            return
-        names = _dialog_item_names(items)
-        from core.path_policy import safe_join
-
-        selected: list[tuple[object, str]] = []
-        unsafe: list[str] = []
-        for item in items:
-            try:
-                selected.append(
-                    (
-                        item,
-                        safe_join(self._backend, self._current_path, item.name),
-                    )
-                )
-            except ValueError as exc:
-                unsafe.append(f"{item.name}: {exc}")
-        if not selected:
-            QMessageBox.warning(
-                self,
-                "Move to Trash",
-                "No selected item has a safe backend path.\n" + _escape_dialog_lines(unsafe[:10]),
-            )
-            return
-        selected_paths = [path for _, path in selected]
-        preview_text = ""
-        try:
-            from core.destructive_preview import preview_delete
-
-            preview_text = (
-                "\n\n"
-                + preview_delete(
-                    self._backend,
-                    selected_paths,
-                ).summary()
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Trash preview failed: %s", exc)
-        if unsafe:
-            preview_text += f"\n\nSkipped {len(unsafe)} unsafe item(s):\n" + "\n".join(unsafe[:5])
-        reply = QMessageBox.question(
-            self,
-            "Move to Trash",
-            f"Move {len(selected)} item(s) to trash?\n{names}{escape(preview_text)}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._production_ok(f"move {len(selected)} item(s) to the trash"):
-            return
-        errors: list[str] = list(unsafe)
-        moved = 0
-        for item, path in selected:
-            try:
-                T.trash(self._backend, path)
-                moved += 1
-                log.info("Trashed: %s", path)
-            except OSError as e:
-                errors.append(f"{item.name}: {e}")
-                log.error("Trash failed for %s: %s", item.name, e)
-        if errors:
-            QMessageBox.warning(
-                self,
-                "Trash Errors",
-                f"{len(errors)} item(s) failed:\n" + _escape_dialog_lines(errors[:10]),
-            )
-        self.refresh_after_change()
+        self._start_removal(trash=True)
 
     def _show_trash_browser(self) -> None:
         """Open a dialog listing ``core.trash`` entries for the current
@@ -4592,12 +4961,9 @@ class FilePaneWidget(QWidget):
                 return True
 
             # --- Misc ---
-            if key == Qt.Key.Key_H and ctrl:
-                self._proxy.show_hidden = not self._proxy.show_hidden
-                self._status.setText(
-                    "Hidden files: ON" if self._proxy.show_hidden else "Hidden files: OFF"
-                )
-                return True
+            # Ctrl+H is not a pane key: View > Show Hidden Files owns it and
+            # switches every pane at once (a pane-only toggle drifted from
+            # the menu check and from the other panes).
             if key == Qt.Key.Key_F and ctrl:
                 self._filter_edit.setFocus()
                 self._filter_edit.selectAll()

@@ -110,6 +110,14 @@ except Exception:
     # builds that drop the round-2 extras). Fail open.
     pass
 
+# sift (Analysis dock, axross-full): its extractors are imported by name,
+# so the static analyser misses some. Absent in a slim build venv: fail open.
+if FLAVOR == "full":
+    try:
+        hiddenimports += collect_submodules("sift")
+    except Exception:
+        pass
+
 # Keyring — credentials.py queries the OS-native backend via the
 # keyring package. Without these hidden imports, PyInstaller
 # bundles only the fallback "null" backend, and every profile
@@ -172,6 +180,9 @@ if FLAVOR == "slim":
         "core.winrm_client",
         "core.wmi_client",
         "core.exchange_client",
+        # sift (the Analysis dock's explainer) ships in full only; slim
+        # offers to install it.
+        "sift",
     ]
 
 # Unconditional excludes — stuff that slipped into the venv but

@@ -122,9 +122,9 @@ def test_e2e_view_media_recursive_overview_viewer_slideshow_escape(window, tree)
         QTest.keyClick(viewer, Qt.Key.Key_Right)
         assert viewer.current_item().name == expected
     assert wait_until(lambda: viewer.mode == "pdf")
-    QTest.keyClick(viewer, Qt.Key.Key_Right)
+    QTest.keyClick(viewer, Qt.Key.Key_Down)  # pages have their own keys
     assert (viewer.current_item().name, viewer.current_page) == ("itinerary.pdf", 1)
-    QTest.keyClick(viewer, Qt.Key.Key_Right)  # the end: stays
+    QTest.keyClick(viewer, Qt.Key.Key_Right)  # the last file: stays
     assert (viewer.current_item().name, viewer.current_page) == ("itinerary.pdf", 1)
 
     QTest.keyClick(viewer, Qt.Key.Key_Home)

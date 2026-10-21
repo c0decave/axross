@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -111,9 +110,10 @@ class SchedulerDialog(QDialog):
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
+        from ui.column_fit import ColumnFitter
+
+        # The first column takes the free width; every divider stays draggable.
+        self._columns = ColumnFitter(self._table, fill=0)
         layout.addWidget(self._table)
 
         form = QHBoxLayout()

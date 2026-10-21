@@ -192,6 +192,15 @@ class BookmarkManager:
         walk(self._root, 0)
         return out
 
+    def find(self, path: str, backend_name: str) -> Bookmark | None:
+        """The bookmark for *path* on *backend_name* anywhere in the tree
+        (the live node), or ``None``. This is the duplicate rule
+        :meth:`add` applies."""
+        for existing in self.all():
+            if existing.path == path and existing.backend_name == backend_name:
+                return existing
+        return None
+
     def for_backend(self, backend_name: str) -> list[Bookmark]:
         return [b for b in self.all() if b.backend_name == backend_name]
 
@@ -463,13 +472,12 @@ class BookmarkManager:
         """Add *bookmark* to *group* (``None`` = top level) at *index*
         (clamped; ``None`` appends). Returns ``False`` without changing
         anything when the same path on the same backend is already
-        bookmarked anywhere in the tree."""
-        for existing in self.all():
-            if existing.path == bookmark.path and existing.backend_name == bookmark.backend_name:
-                log.debug(
-                    "Skipping duplicate bookmark for %s on %s", bookmark.path, bookmark.backend_name
-                )
-                return False
+        bookmarked anywhere in the tree (see :meth:`find`)."""
+        if self.find(bookmark.path, bookmark.backend_name) is not None:
+            log.debug(
+                "Skipping duplicate bookmark for %s on %s", bookmark.path, bookmark.backend_name
+            )
+            return False
         bookmark.icon_name = _sanitize_icon_name(bookmark.icon_name)
         bookmark.color = _sanitize_color(bookmark.color)
         siblings = self._siblings(group)

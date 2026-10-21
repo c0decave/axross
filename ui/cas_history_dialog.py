@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -110,11 +109,10 @@ class CasHistoryDialog(QDialog):
         self._tree.setHeaderLabels(list(COLUMNS))
         self._tree.setRootIsDecorated(False)
         self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
-        header = self._tree.header()
-        header.setStretchLastSection(False)
-        for col in range(len(COLUMNS)):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COL_ROOT, QHeaderView.ResizeMode.Stretch)
+        from ui.column_fit import ColumnFitter
+
+        # Root takes the free width; every divider stays draggable.
+        self._columns = ColumnFitter(self._tree, fill=COL_ROOT)
         self._tree.currentItemChanged.connect(lambda *_a: self._update_buttons())
         self._tree.itemDoubleClicked.connect(lambda *_a: self._show_duplicates())
         root.addWidget(self._tree, stretch=1)

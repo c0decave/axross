@@ -67,8 +67,8 @@ JSON de perfil mismo nunca lleva credenciales en plano.
 - El panel activo lleva borde azul; el panel **destino** (donde
   aterrizan las copias) lleva borde verde. El último panel
   enfocado se vuelve destino.
-- Un panel se vuelve activo cuando el ratón descansa en él 1 s.
-  **View → Activate Pane** fija 1, 2 o 3 s, u **On Click**. El foco del
+- Un panel se vuelve activo cuando el ratón descansa en él 0,5 s.
+  **View → Activate Pane** fija 0,5, 1, 2 o 3 s, u **On Click**. El foco del
   teclado solo sigue desde la lista de archivos de otro panel, nunca
   desde un campo de texto.
 - **Alt+Izq / Alt+Der** recorren la historia de panels;
@@ -161,7 +161,8 @@ cuyo protocolo nativo no las soporta.
 | Duplicate Finder | Menú View | Agrupar por hash de contenido, copiar URLs `ax-cas://…`; mover las copias seleccionadas a la papelera de axross tras comprobar en vivo que queda otra copia real. |
 | View Media… / View Selected Media… | Click derecho, menú View | Imágenes, PDFs y vídeos de la carpeta (opcionalmente recursivo) o de la selección como grid overview, visor para ir pasando o slideshow — ver *Editores y visores*. |
 | Show / Remove / Export Metadata… | Click derecho | EXIF / GPS / XMP / IPTC, propiedades de Office, info de PDF, tags de audio / vídeo de la selección — o de toda la carpeta si no hay nada seleccionado (subcarpetas opcionales) — ver *Metadata de ficheros*. |
-| Move to Trash | Click derecho | Papelera universal. |
+| Move to Trash | Click derecho | Papelera universal. Funciona como Delete Permanently: en segundo plano, con la misma segunda pregunta para las entradas ocultas. |
+| Delete Permanently | Click derecho, `Del` | Primero cuenta fuera del hilo de la GUI lo que se borrará (carpetas, archivos, bytes, entradas ocultas) y luego pregunta. Una carpeta seleccionada con entradas ocultas (dotfiles o el flag hidden del backend) - o una que la comprobación no pudo leer entera - necesita un segundo OK cuyo default es No. El borrado corre en segundo plano: la línea de estado muestra el progreso, Cancel para tras la entrada en curso (lo borrado queda borrado), los fallos se listan por entrada y la carpeta se recarga al final. Una ruta que ya se está borrando se rechaza, también desde el otro pane. |
 | Show Trash… | Click derecho | Diálogo restaurar / borrar permanentemente. |
 | Show Versions… | Click derecho | Snapshot browser — Save Version As, Restore as Current. |
 | Show Checksum… | Click derecho | Checksum nativo (S3 ETag, Drive md5, ssh sha256sum…) con fallback a stream-hash. |
@@ -202,6 +203,9 @@ el botón Maximize de la barra de título.
   remotos.
 - **Visor de imágenes** — F3 / doble-click, allow-list MIME,
   caps de tamaño.
+- **PDF** — F3 / doble-click abre el PDF solo en el media viewer
+  (necesita QtPdf; sin QtPdf o en el security mode `paranoid` se abre
+  el editor hex y el log dice por qué).
 - **Media viewer** — *View → View Media…* o click derecho → *View
   Media…* sobre la carpeta (*View Selected Media…* para una
   selección de ficheros y carpetas). Se eligen los tipos (imágenes
@@ -212,8 +216,10 @@ el botón Maximize de la barra de título.
   con filtro, orden por nombre / fecha / carpeta y slider de
   tamaño; Enter o doble-click abre), **Start slideshow** o **Click
   through**. En el visor: Izquierda / Derecha / PageUp / PageDown /
-  Space avanzan (se paran en el primer y último elemento; dentro de
-  un PDF pasan páginas y tras la última van al siguiente elemento),
+  Space van al fichero anterior / siguiente (se paran en el primer y
+  último elemento; también dentro de un PDF, y la slideshow solo pasa
+  páginas de un PDF abierto solo). Un PDF de más de una página muestra un control de páginas
+  `← n / m →` en la barra de botones; Arriba / Abajo pasan sus páginas.
   Home / End, F11 fullscreen, Ctrl+M maximize / restore (la ventana
   recuerda tamaño, posición y estado maximize para la próxima
   apertura), rueda o `+` / `-` zoom, `F` fit, `1`
@@ -559,7 +565,9 @@ sandbox; el token de un servidor http se guarda en el keyring.
 `api.open_agent_tab`), darle herramientas (`api.add_agent_tool`),
 añadir topics (`api.add_agent_topic`) y seguir sus eventos
 (`api.on_agent_event`). La extensión incluida *Agent Stats* muestra una
-ventana pequeña, siempre encima y movible, con tareas, respuestas,
+ventana pequeña sobre la ventana principal (una ventana normal: mover,
+cambiar tamaño, cerrar; también flotante en window managers de mosaico)
+con tareas, respuestas,
 llamadas a herramientas, errores, tokens y tiempo.
 
 Un perfil cuyo servidor no está en esta máquina ni en su red pregunta

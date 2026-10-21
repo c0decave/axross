@@ -40,6 +40,10 @@ def _tree(tmp_path: Path) -> Path:
     (root / "plain" / "sub").mkdir(parents=True)
     (root / "plain" / "a.txt").write_text("a")
     (root / "plain" / "b.txt").write_text("b")
+    (root / "dots" / ".cache").mkdir(parents=True)
+    (root / "dots" / ".env").write_text("SECRET=1\n")
+    os.chmod(root / "dots" / ".env", 0o600)
+    (root / "dots" / "visible.txt").write_text("v")
     return root
 
 
@@ -47,9 +51,21 @@ def _tree(tmp_path: Path) -> Path:
 def server(tmp_path):
     made: list[tuple[_DirFtpServer, FC.FtpSession]] = []
 
-    def make(list_style: str = "unix", mdtm: bool = True):
+    def make(
+        list_style: str = "unix",
+        mdtm: bool = True,
+        dash_a: str = "parse",
+        missing_listing: str = "error",
+    ):
         root = _tree(tmp_path)
-        srv = _DirFtpServer(root, mlsd="none", list_style=list_style, mdtm=mdtm)
+        srv = _DirFtpServer(
+            root,
+            mlsd="none",
+            list_style=list_style,
+            mdtm=mdtm,
+            dash_a=dash_a,
+            missing_listing=missing_listing,
+        )
         s = FC.FtpSession("127.0.0.1", srv.port, "u", "p")
         made.append((srv, s))
         return root, srv, s
@@ -100,7 +116,30 @@ def test_happy_a_listing_asks_mdtm_per_file_and_nothing_per_directory(server):
     assert set(items) == {"a.txt", "b.txt", "sub"} and items["sub"].is_dir
 
 
+def test_happy_dot_entries_get_their_list_line_too(server):
+    """pure-ftpd (measured 2026-10-21) leaves dot entries out of a plain
+    ``LIST``; NLST still named them, so each was probed on its own and
+    showed no mode, owner or group. ``LIST -a`` carries them."""
+    _root, srv, s = server()
+    items, verbs = _listed(srv, s, "/dots")
+    assert set(items) == {".env", ".cache", "visible.txt"}
+    assert items[".env"].permissions == 0o600
+    assert (items[".env"].owner, items[".env"].group) == ("owner", "group")
+    assert items[".cache"].is_dir and not items[".cache"].is_link
+    assert "CWD" not in verbs and "SIZE" not in verbs
+    assert verbs.count("LIST") == 1
+    assert any(c.startswith("LIST -a ") for c in srv.commands)
+
+
 # --- sad ------------------------------------------------------------------
+
+
+def test_sad_a_server_that_refuses_the_option_gets_a_plain_list(server):
+    _root, srv, s = server(dash_a="literal")  # "LIST -a /x": 550, no such path
+    items, verbs = _listed(srv, s, "/site")
+    assert verbs.count("LIST") == 2
+    assert items["secret.txt"].permissions == 0o640
+    assert items["home.html"].is_link
 
 
 def test_sad_without_mdtm_a_file_keeps_its_list_date(server):
@@ -136,6 +175,16 @@ NOW = datetime(2026, 3, 10, 12, 0, tzinfo=timezone.utc)
 def _one(line: str):
     (entry,) = FC._parse_unix_list_details(["total 1", line], now=NOW)
     return entry
+
+
+def test_edge_an_empty_answer_to_the_option_gets_a_plain_list(server):
+    """A server that takes ``-a /x`` for a missing path and answers with an
+    empty listing (as vsftpd-style servers do for a missing folder)."""
+    _root, srv, s = server(dash_a="literal", missing_listing="empty")
+    items, verbs = _listed(srv, s, "/plain")
+    assert verbs.count("LIST") == 2
+    assert set(items) == {"a.txt", "b.txt", "sub"} and items["sub"].is_dir
+    assert "CWD" not in verbs
 
 
 def test_edge_a_time_in_the_future_belongs_to_last_year():

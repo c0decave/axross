@@ -127,6 +127,15 @@ _HOST_KEY_ALGORITHMS = {
 }
 
 
+def _wait_readable(chan, timeout: float) -> bool:
+    """Wait up to *timeout* s for *chan* to signal data (paramiko's pipe
+    behind ``fileno``). Only a wait: that pipe can miss a wake-up."""
+    import select as _select
+
+    rlist, _, _ = _select.select([chan], [], [], timeout)
+    return chan in rlist
+
+
 def drain_exec_channel(
     chan,
     *,
@@ -138,15 +147,13 @@ def drain_exec_channel(
     """Read an exec channel's stdout and stderr to the end, each clipped
     at its cap, and return the :class:`~models.exec_result.ExecResult`.
 
-    Both streams are drained together with select(): reading one to its
-    end while the other is unread deadlocks once the remote fills the
-    channel window. Bytes above a cap are read and discarded so the
-    remote can finish. Raises ``TimeoutError`` (an OSError) when the
-    command has not exited after *timeout* seconds - the channel timeout
-    only bounds a blocking recv, which this loop never makes.
+    Both streams are drained together: reading one to its end while the
+    other is unread deadlocks once the remote fills the channel window.
+    Bytes above a cap are read and discarded so the remote can finish.
+    Raises ``TimeoutError`` (an OSError) when the command has not exited
+    after *timeout* seconds - the channel timeout only bounds a blocking
+    recv, which this loop never makes.
     """
-    import select as _select
-
     from models.exec_result import ExecResult
 
     stdout_buf = bytearray()
@@ -159,28 +166,32 @@ def drain_exec_channel(
             break
         if deadline is not None and time.monotonic() >= deadline:
             raise TimeoutError(f"{label}: the command did not finish within {timeout:g} s")
-        rlist, _, _ = _select.select([chan], [], [], 0.1)
-        if chan in rlist:
-            if chan.recv_ready():
-                room = stdout_cap - len(stdout_buf)
-                if room > 0:
-                    chunk = chan.recv(min(65536, room))
-                    if chunk:
-                        stdout_buf.extend(chunk)
-                else:
-                    # Cap reached — drain to keep the remote
-                    # from blocking on a full pipe, but discard.
-                    chan.recv(65536)
-                    stdout_truncated = True
-            if chan.recv_stderr_ready():
-                room = stderr_cap - len(stderr_buf)
-                if room > 0:
-                    chunk = chan.recv_stderr(min(65536, room))
-                    if chunk:
-                        stderr_buf.extend(chunk)
-                else:
-                    chan.recv_stderr(65536)
-                    stderr_truncated = True
+        # Readiness is asked of the channel itself; the wait is only a
+        # wait. paramiko's pipe behind fileno() can miss a wake-up (measured
+        # under load: not readable 97 times in a row with data pending), and
+        # a loop that read only after a wake-up never read again.
+        if not (chan.recv_ready() or chan.recv_stderr_ready()):
+            _wait_readable(chan, 0.1)
+        if chan.recv_ready():
+            room = stdout_cap - len(stdout_buf)
+            if room > 0:
+                chunk = chan.recv(min(65536, room))
+                if chunk:
+                    stdout_buf.extend(chunk)
+            else:
+                # Cap reached — drain to keep the remote
+                # from blocking on a full pipe, but discard.
+                chan.recv(65536)
+                stdout_truncated = True
+        if chan.recv_stderr_ready():
+            room = stderr_cap - len(stderr_buf)
+            if room > 0:
+                chunk = chan.recv_stderr(min(65536, room))
+                if chunk:
+                    stderr_buf.extend(chunk)
+            else:
+                chan.recv_stderr(65536)
+                stderr_truncated = True
     # Final drain after exit-status arrives.
     while chan.recv_ready():
         room = stdout_cap - len(stdout_buf)
@@ -675,24 +686,66 @@ class SSHSession(SessionLifecycle):
         """
         if not self._transport or not self._transport.is_active():
             raise ConnectionError("Transport is not active")
-        return paramiko.SFTPClient.from_transport(self._transport)
+        return self._open_sftp_client()
+
+    @staticmethod
+    def _channel_open(client: paramiko.SFTPClient | None) -> bool:
+        """Whether *client*'s channel can still carry requests. A channel
+        the server or this side closed stays dead; the transport (and the
+        session's other channels) can be fine."""
+        if client is None:
+            return False
+        try:
+            channel = client.get_channel()
+        except Exception:  # noqa: BLE001 - a broken client is a closed one
+            return False
+        return channel is not None and not channel.closed and not channel.eof_received
 
     def _get_sftp_client(self) -> paramiko.SFTPClient | None:
+        """This thread's SFTP client on the session's transport. A client
+        whose channel died is replaced: the connection manager shares a
+        session whose transport is alive with every pane on the host, so
+        a dead cached channel failed each of them until the last pane
+        closed the session."""
         if not self._transport or not self._transport.is_active():
             return None
 
         thread_id = threading.get_ident()
         existing = getattr(self._thread_local, "sftp", None)
-        if existing is not None:
+        if self._channel_open(existing):
             return existing
 
         with self._sftp_lock:
             existing = self._thread_sftp.get(thread_id)
-            if existing is None:
-                existing = paramiko.SFTPClient.from_transport(self._transport)
+            if not self._channel_open(existing):
+                if existing is not None:
+                    log.info("SFTP channel to %s was closed; opening a new one", self.name)
+                    try:
+                        existing.close()
+                    except Exception as exc:  # noqa: BLE001 - it is dead already
+                        log.debug("Closing the dead SFTP client raised: %s", exc)
+                existing = self._open_sftp_client()
                 self._thread_sftp[thread_id] = existing
             self._thread_local.sftp = existing
             return existing
+
+    def _open_sftp_client(self) -> paramiko.SFTPClient:
+        """A new SFTP channel. A server that refuses the SFTP subsystem
+        (SSH and SCP working, SFTP switched off - common on NAS boxes)
+        answers by closing the channel; paramiko then says only
+        "Channel closed.", which reads like a dropped connection."""
+        try:
+            return paramiko.SFTPClient.from_transport(self._transport)
+        except (paramiko.SSHException, EOFError) as exc:
+            if self._transport is not None and self._transport.is_active():
+                raise OSError(
+                    f"{self.name}: the server refused the SFTP subsystem"
+                    f" ({exc or 'channel closed'})."
+                    " SSH works, so SFTP is probably switched off on the server (on a"
+                    " Synology NAS: Control Panel > File Services > FTP > Enable SFTP"
+                    " service). Use the SCP protocol for this host, or enable SFTP."
+                ) from exc
+            raise
 
     # --- FileBackend implementation ---
 

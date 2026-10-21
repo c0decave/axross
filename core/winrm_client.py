@@ -336,6 +336,7 @@ class WinRMSession(SessionLifecycle):
                 Size = if ($_.PSIsContainer) {{ 0 }} else {{ $_.Length }}
                 Mtime = $_.LastWriteTimeUtc.ToString('o')
                 IsLink = ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                IsHidden = ($_.Attributes -band [IO.FileAttributes]::Hidden) -ne 0
               }}
             }} | ConvertTo-Json -Compress -Depth 2
         """
@@ -360,6 +361,7 @@ class WinRMSession(SessionLifecycle):
               Size = if ($item.PSIsContainer) {{ 0 }} else {{ $item.Length }}
               Mtime = $item.LastWriteTimeUtc.ToString('o')
               IsLink = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+              IsHidden = ($item.Attributes -band [IO.FileAttributes]::Hidden) -ne 0
             }} | ConvertTo-Json -Compress -Depth 2
             }}
         """
@@ -769,6 +771,8 @@ class WinRMSession(SessionLifecycle):
             modified=mtime,
             is_dir=bool(row.get("IsDir")),
             is_link=bool(row.get("IsLink")),
+            # ConvertTo-Json writes a JSON boolean; anything else is no flag.
+            attr_hidden=row.get("IsHidden") is True,
         )
 
 

@@ -14,6 +14,7 @@ import errno
 import logging
 import os
 import shutil
+import stat as stat_module
 import tempfile
 import uuid
 from typing import TYPE_CHECKING
@@ -316,6 +317,66 @@ def _is_destination_exists_error(exc: OSError) -> bool:
     return any(marker in msg for marker in _DESTINATION_EXISTS_MARKERS)
 
 
+def source_size(backend, path: str) -> int | None:
+    """The size *backend* reports for *path* now, to tell afterwards whether
+    it changed while it was copied. ``None`` when it cannot tell (no stat,
+    a failed one) and for a symlink, whose own size is the length of its
+    target's path."""
+    try:
+        item = backend.stat(path)
+    except Exception as exc:  # noqa: BLE001 - no size: nothing to compare later
+        log.debug("cannot read the size of %s: %s", path, exc)
+        return None
+    if item is None or getattr(item, "is_link", False):
+        return None
+    try:
+        return int(getattr(item, "size", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def refuse_changed_source(backend, path: str, size_before: int | None, copy_path: str) -> None:
+    """Raise :class:`OSError` when *path* no longer has *size_before*, the
+    size it had before it was copied to *copy_path*.
+
+    A move deletes its source after the copy; data written to the source
+    meanwhile (a log line appended after the copy read the end) would then
+    be in neither place. A source whose size cannot be read now counts as
+    changed: a kept source costs a second copy, a wrong delete costs data.
+    Without a size from before there is nothing to compare.
+    """
+    if size_before is None:
+        return
+    size_after = source_size(backend, path)
+    if size_after == size_before:
+        return
+    now = "an unknown size" if size_after is None else f"{size_after} bytes"
+    raise OSError(
+        f"{path} changed while it was copied ({size_before} bytes before, {now} now); "
+        f"it was not removed, the copy at {copy_path} misses the change"
+    )
+
+
+def _local_tree_sizes(path: str) -> dict[str, tuple[bool, int]]:
+    """Every entry of the local entry *path* (itself as ``""``, a folder's
+    contents below it, links not followed) as ``(is_folder, size)``; a
+    folder's own size is not compared, it varies with the file system."""
+    st = os.lstat(path)
+    if not stat_module.S_ISDIR(st.st_mode):
+        return {"": (False, st.st_size)}
+    entries: dict[str, tuple[bool, int]] = {"": (True, 0)}
+    for root, dirs, files in os.walk(path):
+        for name in dirs + files:
+            full = os.path.join(root, name)
+            try:
+                child = os.lstat(full)
+            except FileNotFoundError:
+                continue  # gone meanwhile: the other snapshot shows it
+            folder = stat_module.S_ISDIR(child.st_mode)
+            entries[os.path.relpath(full, path)] = (folder, 0 if folder else child.st_size)
+    return entries
+
+
 def _finalize_temp_destination(backend, temp_path: str, dst: str) -> None:
     try:
         backend.rename(temp_path, dst)
@@ -524,6 +585,9 @@ def _move_across_devices(src: str, dst: str, rename_exc: BaseException) -> None:
     if os.path.lexists(dst):
         raise rename_exc
     is_tree = os.path.isdir(src) and not os.path.islink(src)
+    # Compared after the copy: what is written to the source meanwhile
+    # would otherwise be removed with it and be in neither place.
+    before = _local_tree_sizes(src)
     try:
         if is_tree:
             shutil.copytree(src, dst, symlinks=True)
@@ -531,6 +595,10 @@ def _move_across_devices(src: str, dst: str, rename_exc: BaseException) -> None:
             os.symlink(os.readlink(src), dst)
         else:
             shutil.copy2(src, dst, follow_symlinks=False)
+        if _local_tree_sizes(src) != before:
+            raise OSError(
+                f"{src} changed while it was copied; it was not moved to {dst}"
+            )
     except BaseException as exc:
         try:
             if is_tree and os.path.isdir(dst) and not os.path.islink(dst):
@@ -688,12 +756,15 @@ def server_side_move(
     # surfacing the failure.
     if _exists_true(backend, dst):
         raise OSError(f"move target already exists: {dst}")
+    size_before = source_size(backend, src)
     server_side_copy(backend, src, dst)
     try:
+        refuse_changed_source(backend, src, size_before, dst)
         backend.remove(src)
     except OSError as exc:
         log.warning(
-            "server_side_move: copied %s -> %s but remove(src) failed: %s -- undoing destination",
+            "server_side_move: copied %s -> %s but the source was not removed: %s "
+            "-- undoing destination",
             src,
             dst,
             exc,
@@ -702,11 +773,9 @@ def server_side_move(
             backend.remove(dst)
         except OSError as undo_exc:
             log.error(
-                "server_side_move: undo failed after source remove failure; "
+                "server_side_move: undo failed after the source was not removed; "
                 "duplicate data may remain at %s: %s",
                 dst,
                 undo_exc,
             )
-        raise OSError(
-            f"move partially completed: copy succeeded but remove of source {src} failed: {exc}"
-        ) from exc
+        raise OSError(f"move not completed: the source {src} was not removed: {exc}") from exc

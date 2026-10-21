@@ -152,6 +152,11 @@ class GroupDialogTest(_Qt):
         self.assertEqual(dlg.result(), ("Keep", "star", "#2ecc71"))
 
 
+def g_menu(test) -> object:
+    """The submenu of the first group in the window's bookmarks menu."""
+    return next(a for a in test._entries(test.win._bookmarks_menu) if a.menu() is not None).menu()
+
+
 class MainWindowTest(_Qt):
     @classmethod
     def setUpClass(cls) -> None:
@@ -260,6 +265,80 @@ class MainWindowTest(_Qt):
             cls.return_value.exec.return_value = QDialog.DialogCode.Rejected
             self.win._on_bookmark_request("/a", "u@host")
         self.assertEqual(cls.call_args.args[0].backend_name, "u@host")
+
+    def test_bookmarking_a_bookmarked_dir_opens_the_edit_dialog_of_the_existing_one(self) -> None:
+        from PyQt6.QtWidgets import QDialog
+
+        mgr = self.win._bookmark_manager
+        g = mgr.add_group("Work")
+        mgr.add(Bookmark("proj", "/srv/proj"), group=g)
+        existing = g.children[0]
+        changed = Bookmark("project", "/srv/proj", icon_name="rocket")
+        with (
+            mock.patch("ui.main_window.BookmarkEditDialog") as add_cls,
+            mock.patch("ui.bookmark_sidebar.BookmarkEditDialog") as edit_cls,
+        ):
+            edit_cls.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            edit_cls.return_value.result_bookmark.return_value = changed
+            edit_cls.return_value.result_group.return_value = g
+            self.win._on_bookmark_request("/srv/proj", "Local")
+        add_cls.assert_not_called()
+        self.assertIs(edit_cls.call_args.args[0], existing)
+        self.assertFalse(edit_cls.call_args.kwargs.get("new", False))
+        self.assertIs(edit_cls.call_args.kwargs["current_group"], g)
+        self.assertEqual([(b.name, b.icon_name) for b in mgr.all()], [("project", "rocket")])
+        self.assertIn("project", [a.text().split("  ")[0] for a in self._entries(g_menu(self))])
+
+    def test_cancelling_the_edit_of_an_existing_bookmark_keeps_it(self) -> None:
+        from PyQt6.QtWidgets import QDialog
+
+        mgr = self.win._bookmark_manager
+        mgr.add(Bookmark("proj", "/srv/proj", icon_name="star"))
+        with (
+            mock.patch("ui.main_window.BookmarkEditDialog") as add_cls,
+            mock.patch("ui.bookmark_sidebar.BookmarkEditDialog") as edit_cls,
+        ):
+            edit_cls.return_value.exec.return_value = QDialog.DialogCode.Rejected
+            self.win._on_bookmark_request("/srv/proj", "Local")
+        add_cls.assert_not_called()
+        edit_cls.assert_called_once()
+        self.assertEqual([(b.name, b.icon_name) for b in mgr.all()], [("proj", "star")])
+
+    def test_the_same_path_on_another_backend_still_opens_the_add_dialog(self) -> None:
+        from PyQt6.QtWidgets import QDialog
+
+        mgr = self.win._bookmark_manager
+        mgr.add(Bookmark("proj", "/srv/proj"))
+        with (
+            mock.patch("ui.main_window.BookmarkEditDialog") as add_cls,
+            mock.patch("ui.bookmark_sidebar.BookmarkEditDialog") as edit_cls,
+        ):
+            add_cls.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            add_cls.return_value.result_bookmark.side_effect = lambda: add_cls.call_args.args[0]
+            add_cls.return_value.result_group.return_value = None
+            self.win._on_bookmark_request("/srv/proj", "u@host")
+        edit_cls.assert_not_called()
+        self.assertTrue(add_cls.call_args.kwargs["new"])
+        self.assertEqual(sorted(b.backend_name for b in mgr.all()), ["Local", "u@host"])
+
+    def test_a_new_bookmark_edited_onto_a_bookmarked_path_is_reported_not_dropped(self) -> None:
+        """The path field of the add dialog is editable: pointing it at a
+        folder that is already bookmarked must not end in a silent no-op."""
+        from PyQt6.QtWidgets import QDialog
+
+        mgr = self.win._bookmark_manager
+        mgr.add(Bookmark("taken", "/srv/taken"))
+        self.win.statusBar().clearMessage()
+        with mock.patch("ui.main_window.BookmarkEditDialog") as add_cls:
+            add_cls.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            add_cls.return_value.result_bookmark.return_value = Bookmark("dup", "/srv/taken")
+            add_cls.return_value.result_group.return_value = None
+            self.win._on_bookmark_request("/srv/free", "Local")
+        self.assertEqual([b.name for b in mgr.all()], ["taken"])
+        message = self.win.statusBar().currentMessage()
+        self.assertIn("/srv/taken", message)
+        self.assertIn("taken", message)
+        self.assertIn("already bookmarked", message)
 
     def test_sidebar_changes_refresh_the_menu(self) -> None:
         mgr = self.win._bookmark_manager

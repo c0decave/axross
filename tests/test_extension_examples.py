@@ -234,6 +234,11 @@ def test_happy_every_bundled_example_loads_and_registers(tmp_path) -> None:
             assert host.module(info.ext_id) is not None, (info.ext_id, host.error(info.ext_id))
             assert host.error(info.ext_id) == ""
         assert [d.windowTitle() for d in host.docks("bundled:folder_treemap")] == ["Folder Treemap"]
+        # Operator item 13: the treemap panel closes with the [x] of the app's title bar.
+        from ui.dock_titlebar import DockTitleBar
+
+        (treemap,) = host.docks("bundled:folder_treemap")
+        assert isinstance(treemap.titleBarWidget(), DockTitleBar)
         folder = tmp_path / "pics"
         folder.mkdir()
         _png(folder / "p.png", 20, 20)

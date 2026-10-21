@@ -4,6 +4,10 @@
 * Ctrl+M toggles maximized <-> normal; F11 toggles fullscreen and comes
   back to the state it left (maximized or normal), which Qt itself does
   not do: ``showFullScreen`` drops the maximized bit.
+* A window manager that ignores a maximize request (sway and other tiling
+  managers: measured in sway 1.7, ``showMaximized`` changes nothing on a
+  floating window) gets the screen filled by axross itself after
+  :data:`WM_GRACE_MS`; restore puts the old geometry back.
 * The last normal geometry and whether the window was maximized are kept
   per viewer in ``session.json`` under ``window.viewers.<name>`` — the
   file the main window already keeps its own size and visual settings in
@@ -19,7 +23,8 @@ import json
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QRect, QSize, Qt
+from PyQt6 import sip
+from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer
 from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget
 
@@ -42,6 +47,29 @@ DEFAULT_SIZES: dict[str, tuple[int, int]] = {
 #: Dynamic property: was the window maximized when it went fullscreen?
 _MAXIMIZED_BEFORE_FULLSCREEN = "axrossMaximizedBeforeFullScreen"
 
+#: Dynamic property: the normal geometry of a window axross maximized
+#: itself because the window manager ignored the request.
+EMULATED_MAXIMIZE = "axrossEmulatedMaximize"
+#: How long a window manager gets to answer a maximize request before
+#: axross fills the screen itself.
+WM_GRACE_MS = 350
+#: Pixels a window that fills its screen may be off by: the frame and the
+#: border a window manager adds (sway 1.7: 4 x 2 px around 1920 x 1080).
+FILL_TOLERANCE_PX = 16
+
+
+def _fills(window: QWidget, avail: QRect) -> bool:
+    g = window.geometry()
+    return all(
+        abs(a - b) <= FILL_TOLERANCE_PX
+        for a, b in (
+            (g.x(), avail.x()),
+            (g.y(), avail.y()),
+            (g.width(), avail.width()),
+            (g.height(), avail.height()),
+        )
+    )
+
 
 # -- window state --------------------------------------------------------------
 
@@ -51,11 +79,73 @@ def allow_maximize(window: QWidget) -> None:
     window.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
 
 
+def _emulated_geometry(window: QWidget) -> QRect | None:
+    """The saved normal geometry while axross keeps *window* filling its
+    screen; None otherwise. A window resized since (by hand, by the window
+    manager) is no longer maximized: the property is dropped."""
+    saved = window.property(EMULATED_MAXIMIZE)
+    if not isinstance(saved, QRect) or not saved.isValid():
+        return None
+    screen = window.screen()
+    if screen is None or not _fills(window, screen.availableGeometry()):
+        window.setProperty(EMULATED_MAXIMIZE, QRect())
+        return None
+    return saved
+
+
+def is_maximized(window: QWidget) -> bool:
+    """Maximized by the window manager, or by axross where it ignored the
+    request."""
+    return window.isMaximized() or _emulated_geometry(window) is not None
+
+
+def normal_geometry(window: QWidget) -> QRect:
+    """The geometry *window* returns to from maximized / fullscreen."""
+    saved = _emulated_geometry(window)
+    return QRect(saved) if saved is not None else window.normalGeometry()
+
+
+def _fill_screen_if_ignored(window: QWidget, normal: QRect) -> None:
+    """The window manager had its chance: when *window* is still not
+    maximized, fill the available screen and keep *normal* for restore."""
+    if not window.isVisible() or window.isMaximized() or window.isFullScreen():
+        return
+    screen = window.screen()
+    if screen is None:
+        return
+    avail = screen.availableGeometry()
+    if _fills(window, avail):
+        return
+    log.info(
+        "The window manager ignored Maximize for %r; filling the screen instead",
+        window.windowTitle(),
+    )
+    window.setProperty(EMULATED_MAXIMIZE, QRect(normal))
+    window.setGeometry(avail)
+
+
+def _request_maximized(window: QWidget) -> None:
+    normal = window.geometry()
+    window.showMaximized()
+
+    def check() -> None:
+        if sip.isdeleted(window):  # closed and deleted meanwhile
+            return
+        _fill_screen_if_ignored(window, normal)
+
+    QTimer.singleShot(WM_GRACE_MS, check)
+
+
 def toggle_maximized(window: QWidget) -> None:
     """Maximized -> normal, normal -> maximized. In fullscreen, Ctrl+M asks
     for a maximized window, so it leaves fullscreen into maximized."""
+    saved = _emulated_geometry(window)
+    if saved is not None and not window.isFullScreen():
+        window.setProperty(EMULATED_MAXIMIZE, QRect())
+        window.setGeometry(saved)
+        return
     if window.isFullScreen() or not window.isMaximized():
-        window.showMaximized()
+        _request_maximized(window)
     else:
         window.showNormal()
 
@@ -181,9 +271,35 @@ def restore_window_state(window: QWidget, name: str) -> None:
         window.resize(QSize(*DEFAULT_SIZES[name]))
         return
     rect = QRect(state["x"], state["y"], state["width"], state["height"])
-    window.setGeometry(clamp_to_screen(rect, window))
+    normal = clamp_to_screen(rect, window)
+    window.setGeometry(normal)
     if state["maximized"]:
         window.setWindowState(window.windowState() | Qt.WindowState.WindowMaximized)
+        _FillOnceShown(window, normal)
+
+
+class _FillOnceShown(QObject):
+    """After the first Show: fill the screen if the window manager ignored
+    the maximized state the window was restored with."""
+
+    def __init__(self, window: QWidget, normal: QRect) -> None:
+        super().__init__(window)
+        self._window = window
+        self._normal = QRect(normal)
+        window.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
+        if watched is self._window and event.type() == QEvent.Type.Show:
+            self._window.removeEventFilter(self)
+            window, normal = self._window, self._normal
+
+            def check() -> None:
+                if not sip.isdeleted(window):
+                    _fill_screen_if_ignored(window, normal)
+
+            QTimer.singleShot(WM_GRACE_MS, check)
+            self.deleteLater()
+        return False
 
 
 def save_window_state(window: QWidget, name: str) -> None:
@@ -193,8 +309,8 @@ def save_window_state(window: QWidget, name: str) -> None:
     if not window.isVisible():
         return
     full = window.isFullScreen()
-    maximized = window.isMaximized() or (full and _was_maximized_before_fullscreen(window))
-    rect = window.normalGeometry() if (full or window.isMaximized()) else window.geometry()
+    maximized = is_maximized(window) or (full and _was_maximized_before_fullscreen(window))
+    rect = normal_geometry(window) if (full or is_maximized(window)) else window.geometry()
     if not rect.isValid():
         rect = window.geometry()
     entry = {
@@ -231,17 +347,21 @@ def save_window_state(window: QWidget, name: str) -> None:
 
 __all__ = [
     "DEFAULT_SIZES",
+    "EMULATED_MAXIMIZE",
     "FULLSCREEN_KEY",
     "MAXIMIZE_KEY",
     "VIEWERS_KEY",
     "allow_maximize",
     "clamp_to_screen",
     "install_window_keys",
+    "is_maximized",
     "leave_fullscreen",
     "load_state",
     "maximize_shortcut",
+    "normal_geometry",
     "restore_window_state",
     "save_window_state",
     "toggle_fullscreen",
     "toggle_maximized",
+    "WM_GRACE_MS",
 ]

@@ -83,13 +83,17 @@ class WorkerProtocolError(Exception):
     """The child sent something that is not a valid reply."""
 
 
-def sift_available() -> bool:
-    """True when sift can be imported and a worker can be started.
-
-    A frozen build has no ``python -m``; the analysis is off there.
-    """
+def worker_argv() -> list[str]:
+    """The command that starts the analysis child. A frozen build has no
+    ``python -m``: the binary itself answers ``--analysis-worker`` (main.py)."""
     if getattr(sys, "frozen", False):
-        return False
+        return [sys.executable, "--analysis-worker"]
+    return [sys.executable, "-m", "core.analysis_worker"]
+
+
+def sift_available() -> bool:
+    """True when sift can be imported and a worker can be started - from
+    source, or in a frozen build that bundles sift (axross-full)."""
     try:
         return importlib.util.find_spec("sift") is not None
     except (ImportError, ValueError):
@@ -178,7 +182,7 @@ class AnalysisWorker:
         command: list[str] | None = None,
     ) -> None:
         self._cache_dir = os.fspath(cache_dir) if cache_dir is not None else None
-        self._command = command or [sys.executable, "-m", "core.analysis_worker"]
+        self._command = command or worker_argv()
         self._proc: subprocess.Popen | None = None
         self._reader = _LineReader()
         self._call_lock = threading.Lock()

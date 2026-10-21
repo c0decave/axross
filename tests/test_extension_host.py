@@ -159,6 +159,85 @@ def test_happy_a_dock_and_an_event(window, tmp_path) -> None:
     assert wait_until(lambda: str(tmp_path) in host.module("user:watcher").EVENTS)
 
 
+def _treemap_like_dock(window, name: str = "panel"):
+    write_ext(
+        name,
+        """
+        from PyQt6.QtWidgets import QLabel
+
+        def activate(api):
+            api.add_dock("My Panel", QLabel("x"))
+        """,
+    )
+    EX.set_enabled(f"user:{name}", True)
+    host = window.extension_host
+    host.reload()
+    (dock,) = host.docks(f"user:{name}")
+    dock.show()
+    pump()
+    return dock
+
+
+def test_happy_an_extension_dock_has_the_app_title_bar_with_x_and_float(window) -> None:
+    """Operator item 13: the Folder Treemap panel had no [x]. Extension docks
+    get the same title bar as the built-in panels."""
+    from ui.dock_titlebar import DockTitleBar
+
+    dock = _treemap_like_dock(window)
+    bar = dock.titleBarWidget()
+    assert isinstance(bar, DockTitleBar)
+    assert bar._title_label.text() == "My Panel"
+    assert "Extensions menu" in bar._close_btn.toolTip()
+    assert dock.isVisible()
+    bar._float_btn.click()
+    assert dock.isFloating()
+    bar._float_btn.click()
+    assert not dock.isFloating()
+
+
+def test_happy_the_x_hides_the_dock_and_the_extensions_menu_brings_it_back(window) -> None:
+    dock = _treemap_like_dock(window)
+    toggle = next(a for a in window.extensions_menu.actions() if a.text() == "My Panel")
+    assert toggle.isChecked()
+    dock.titleBarWidget()._close_btn.click()
+    pump()
+    assert not dock.isVisible()
+    assert not toggle.isChecked()
+    assert window.extension_host.docks("user:panel") == [dock]  # hidden, not destroyed
+    toggle.trigger()
+    pump()
+    assert dock.isVisible()
+
+
+def test_edge_a_closed_extension_dock_is_still_removed_when_switched_off(window) -> None:
+    dock = _treemap_like_dock(window, "gone")
+    dock.titleBarWidget()._close_btn.click()
+    pump()
+    host = window.extension_host
+    host.set_enabled("user:gone", False)
+    assert host.docks("user:gone") == []
+    assert "My Panel" not in _menu_texts(window)
+
+
+def test_edge_every_dock_in_the_window_carries_the_app_title_bar(window) -> None:
+    """Built-in and extension panels alike: none falls back to Qt's default
+    title bar, whose close button the modern theme hides
+    (``titlebar-close-icon: none``)."""
+    from PyQt6.QtWidgets import QDockWidget
+
+    from ui.dock_titlebar import DockTitleBar
+
+    _treemap_like_dock(window)
+    docks = window.findChildren(QDockWidget)
+    assert len(docks) > 1
+    bare = [
+        d.objectName() or d.windowTitle()
+        for d in docks
+        if not isinstance(d.titleBarWidget(), DockTitleBar)
+    ]
+    assert bare == []
+
+
 def test_happy_run_in_background_answers_on_the_gui_thread(window) -> None:
     write_ext(
         "bg",

@@ -183,8 +183,8 @@ class FileSortProxyModel(QSortFilterProxyModel):
         # ".." is always visible
         if item.name == "..":
             return True
-        # Hidden files filter
-        if not self._show_hidden and item.name.startswith("."):
+        # Hidden files filter: dot names and entries the backend flags hidden
+        if not self._show_hidden and item.is_hidden:
             return False
         # Text filter from filter bar
         regex = self.filterRegularExpression()

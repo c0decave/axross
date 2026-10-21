@@ -365,6 +365,12 @@ class ArchivePaneWidget(QWidget):
         self._tree.setUniformRowHeights(True)
         self._tree.setAlternatingRowColors(True)
         self._tree.doubleClicked.connect(self._on_double_clicked)
+        # Columns as in the file pane: every divider draggable, the numbers
+        # as wide as their content, Name the free width; a column the user
+        # dragged keeps its width (ui.column_fit).
+        from ui.column_fit import ColumnFitter
+
+        self._columns = ColumnFitter(self._tree, fill=0)
         layout.addWidget(self._tree, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -433,7 +439,7 @@ class ArchivePaneWidget(QWidget):
         self._header_label.setText(
             f"{basename} [{fmt}] — {n_files} entries, {_fmt_size(total)}",
         )
-        self._status_label.setText("Bereit")
+        self._status_label.setText("Ready")
 
     def _set_empty_model(self) -> None:
         """Install a header-only empty model so the tree is valid (and

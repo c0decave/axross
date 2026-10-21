@@ -318,7 +318,7 @@ class TransferIntoBookmarkTest(_Window):
 
     def test_sad_a_missing_or_unmounted_folder_is_reported_and_nothing_moves(self) -> None:
         for target in (self.tmp / "unmounted" / "share", self.a / "f.txt"):
-            with self.subTest(target=target):
+            with self.subTest(target=str(target)):
                 self.warnings.clear()
                 bm = Bookmark(target.name, str(target))
                 self.manager.add(bm)

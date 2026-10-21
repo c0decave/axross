@@ -137,11 +137,17 @@ class ExtensionAPI:
         self._reg.context.append((str(label), callback, applies_to, suffixes))
 
     def add_dock(self, title: str, widget: QWidget) -> QDockWidget:
-        """A panel docked on the right; its show/hide entry goes into the
-        Extensions menu."""
+        """A panel docked on the right, with the title bar of the built-in
+        panels (float, [x], close all in this area); its show/hide entry
+        goes into the Extensions menu, which also reopens it after [x]."""
+        from ui.dock_titlebar import DockTitleBar
+
         window = self._host.window
         dock = QDockWidget(str(title), window)
         dock.setObjectName(f"extension-dock-{self.info.ext_id}-{len(self._reg.docks)}")
+        dock.setTitleBarWidget(
+            DockTitleBar(str(title), "extensions", dock, reopen_hint="the Extensions menu")
+        )
         dock.setWidget(widget)
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         toggle = dock.toggleViewAction()

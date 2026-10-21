@@ -967,13 +967,24 @@ class FtpSession(SessionLifecycle):
 
     def _unix_listing(self, ftp: FTP, path: str) -> list[_ListEntry] | None:
         """Parsed Unix-style ``LIST`` of directory ``path``, or None when
-        the server refuses it or answers in a format without link types."""
-        lines: list[str] = []
-        try:
-            ftp.retrlines(f"LIST {path}", lines.append)
-        except error_perm:
-            return None
-        return _parse_unix_list_details(lines)
+        the server refuses it or answers in a format without link types.
+
+        ``LIST -a`` first: pure-ftpd (measured 2026-10-21) leaves dot
+        entries out of a plain LIST, and NLST still names them, so each
+        one fell back to the per-entry probe and lost mode, owner and
+        group. A server that refuses the option, or takes ``-a`` for a
+        path and answers with nothing usable, gets the plain LIST."""
+        details: list[_ListEntry] | None = None
+        for command in (f"LIST -a {path}", f"LIST {path}"):
+            lines: list[str] = []
+            try:
+                ftp.retrlines(command, lines.append)
+            except error_perm:
+                continue
+            details = _parse_unix_list_details(lines)
+            if details:
+                return details
+        return details
 
     @staticmethod
     def _mdtm(ftp: FTP, path: str) -> datetime | None:

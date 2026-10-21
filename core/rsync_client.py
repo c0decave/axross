@@ -255,6 +255,27 @@ def _build_ssh_proxy_command(proxy) -> str:
     return f"{shlex.quote(nc)} -X {scheme}{auth_args} -x {shlex.quote(proxy_addr)} %h %p"
 
 
+#: rsync's escape for a byte it will not print: backslash, "#", three octal
+#: digits.
+_RSYNC_ESCAPE_RE = re.compile(rb"\\#([0-7]{3})")
+
+
+def _unescape_rsync_output(text: str) -> str:
+    """Undo rsync's ``\\#ooo`` escapes byte by byte, then read the bytes as
+    UTF-8 again (surrogateescape, as the output was read).
+
+    ``-8`` was enough up to rsync 3.4; rsync 3.5.1 still escapes the bytes
+    0x80-0x9f, which split UTF-8 names (the sharp s came out as a lone
+    0xc3 byte and ``\\#237``) so that a listed name could not be found
+    again.
+    """
+    if "\\#" not in text:
+        return text
+    raw = text.encode("utf-8", "surrogateescape")
+    raw = _RSYNC_ESCAPE_RE.sub(lambda m: bytes([int(m.group(1), 8) & 0xFF]), raw)
+    return raw.decode("utf-8", "surrogateescape")
+
+
 def _redact_rsync_cmd(cmd: list[str]) -> str:
     """Redact sensitive flags before logging.
 
@@ -594,7 +615,8 @@ class RsyncSession(SessionLifecycle):
         assert self._rsync_bin is not None
         # -8 (--8-bit-output): without a UTF-8 locale - a service, a
         # container, an MCP server started with a bare environment - rsync
-        # prints every non-ASCII byte of a name as "\#ooo".
+        # prints every non-ASCII byte of a name as "\#ooo". rsync 3.5.1
+        # still escapes 0x80-0x9f; _run_rsync undoes what is left.
         args: list[str] = [self._rsync_bin, "-8"]
 
         if self._ssh_mode:
@@ -682,13 +704,13 @@ class RsyncSession(SessionLifecycle):
             raise OSError("rsync binary not found") from exc
 
         if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
+            stderr = _unescape_rsync_output((result.stderr or "").strip())
             message = f"rsync exited with code {result.returncode}: {stderr}"
             if result.returncode == 23 and _NOT_THERE_RE.search(stderr):
                 raise FileNotFoundError(errno.ENOENT, message)
             raise OSError(message)
 
-        return result.stdout or ""
+        return _unescape_rsync_output(result.stdout or "")
 
     # --------------------------------------------------------------------- #
     #  FileBackend — listing / stat                                          #

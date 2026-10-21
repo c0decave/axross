@@ -285,7 +285,7 @@ class ConflictDialogTest(unittest.TestCase):
         from ui.transfer_conflict_dialog import TransferConflictDialog
 
         for action in ConflictAction:
-            with self.subTest(action=action):
+            with self.subTest(action=action.name):
                 dialog = TransferConflictDialog(self.conflict(), remaining=2)
                 self.assertEqual(self.click(dialog, action, apply_all=True), (action, True))
                 dialog.deleteLater()

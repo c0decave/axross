@@ -244,13 +244,12 @@ class CasDuplicatesDialog(QDialog):
         # sat at the end and was the first thing elided. Whatever still has
         # to be shortened keeps both ends; the tooltip holds the full path.
         self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        from ui.column_fit import ColumnFitter
+
         header = self._tree.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(COL_FOLDER, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(COL_SIZE, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COL_MODIFIED, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COL_BACKEND, QHeaderView.ResizeMode.ResizeToContents)
+        # Folder takes the free width, the others fit their content; every
+        # divider stays draggable (ui.column_fit).
+        self._columns = ColumnFitter(self._tree, fill=COL_FOLDER)
         # A full sha256 is 64 characters and used to take the room the
         # names needed; it is in the tooltip and in "Copy ax-cas URL".
         header.setSectionResizeMode(COL_HASH, QHeaderView.ResizeMode.Interactive)

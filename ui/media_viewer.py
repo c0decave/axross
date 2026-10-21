@@ -20,8 +20,12 @@ items, dialog closed) is dropped.
 
 Navigation decision: Left / Right / PageUp / PageDown / Space stop at the
 first and last item (the status line says so) - stepping past the end by
-accident should not throw away your place. The slideshow loops. Inside a
-PDF the same keys turn pages; past the last page they go to the next item.
+accident should not throw away your place. The slideshow loops. Those keys,
+the item buttons and the slideshow always move to another FILE, never to
+another page: a multi-page item (a PDF) has its own page control
+``← n / m →`` under the picture, shown only when it has more than one page,
+with Up / Down as its keys. A PDF opened on its own from a pane (double-click,
+F3) is the same viewer with that one item.
 """
 
 from __future__ import annotations
@@ -773,10 +777,33 @@ class MediaViewer(QWidget):
             return b
 
         button(tr("Overview"), tr("Back to the overview (Esc)"), self.back_requested.emit)
-        button("◀", tr("Previous (Left, PageUp)"), self.prev_item)
-        button("▶", tr("Next (Right, PageDown, Space)"), self.next_item)
+        button("◀", tr("Previous file (Left, PageUp)"), self.prev_item)
+        button("▶", tr("Next file (Right, PageDown, Space)"), self.next_item)
         self.counter_label = QLabel("")
         bar.addWidget(self.counter_label)
+        bar.addStretch(1)
+        # Pages of the current item, apart from the file navigation; shown
+        # only for an item with more than one page.
+        self.page_bar = QWidget()
+        page_row = QHBoxLayout(self.page_bar)
+        page_row.setContentsMargins(0, 0, 0, 0)
+        self.prev_page_button = QPushButton("←")
+        self.prev_page_button.setToolTip(tr("Previous page (Up)"))
+        self.page_label = QLabel("")
+        self.page_label.setToolTip(tr("Page"))
+        self.next_page_button = QPushButton("→")
+        self.next_page_button.setToolTip(tr("Next page (Down)"))
+        for b, slot in (
+            (self.prev_page_button, self.prev_page),
+            (self.next_page_button, self.next_page),
+        ):
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.clicked.connect(slot)
+        page_row.addWidget(self.prev_page_button)
+        page_row.addWidget(self.page_label)
+        page_row.addWidget(self.next_page_button)
+        self.page_bar.setVisible(False)
+        bar.addWidget(self.page_bar)
         bar.addStretch(1)
         button(tr("Fit"), tr("Fit to window (F)"), self.fit)
         button("1:1", tr("Actual size (1)"), self.actual_size)
@@ -1080,16 +1107,10 @@ class MediaViewer(QWidget):
         self._arm_slideshow()
 
     # -- navigation ------------------------------------------------------------
-    def step(self, delta: int, *, wrap: bool = False, whole_items: bool = False) -> None:
+    def step(self, delta: int, *, wrap: bool = False) -> None:
+        """Move *delta* files; never turns a page (see :meth:`step_page`)."""
         if not self._items:
             return
-        if self.mode == "pdf" and not whole_items:
-            page = self.current_page + delta
-            if 0 <= page < self.page_count:
-                self._jump_page(page)
-                if self._slideshow:
-                    self._arm_slideshow()
-                return
         index = self.current_index + delta
         n = len(self._items)
         if not 0 <= index < n:
@@ -1105,6 +1126,27 @@ class MediaViewer(QWidget):
 
     def prev_item(self) -> None:
         self.step(-1)
+
+    def step_page(self, delta: int) -> None:
+        """Turn *delta* pages inside the current item; stops at its first
+        and last page."""
+        if self.mode != "pdf" or self.page_count < 2:
+            return
+        page = self.current_page + delta
+        if not 0 <= page < self.page_count:
+            self._status = tr("Last page") if delta > 0 else tr("First page")
+            self._update_status()
+            return
+        self._status = ""
+        self._jump_page(page)
+        if self._slideshow:
+            self._arm_slideshow()  # a full interval for the page just turned to
+
+    def next_page(self) -> None:
+        self.step_page(+1)
+
+    def prev_page(self) -> None:
+        self.step_page(-1)
 
     def first(self) -> None:
         self.show_index(0)
@@ -1185,8 +1227,19 @@ class MediaViewer(QWidget):
             self.slideshow_timer.start(self._interval())
 
     def _slideshow_tick(self) -> None:
-        if self._slideshow:
-            self.step(+1, wrap=True)
+        if not self._slideshow:
+            return
+        if len(self._items) == 1 and self._has_pages():
+            # A document opened on its own is being read: its slideshow
+            # turns the pages and starts over after the last one. With
+            # other items around, the slideshow only ever moves files.
+            if self.current_page + 1 < self.page_count:
+                self.step_page(+1)
+            else:
+                self._jump_page(0)
+                self._arm_slideshow()
+            return
+        self.step(+1, wrap=True)
 
     # -- window -------------------------------------------------------------
     def toggle_fullscreen(self) -> None:
@@ -1199,14 +1252,16 @@ class MediaViewer(QWidget):
         key = event.key()
         ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
         K = Qt.Key
-        if key in (K.Key_Right, K.Key_Space) or (key == K.Key_PageDown and not ctrl):
+        # PageUp / PageDown move files with and without Ctrl (Ctrl was the
+        # "skip the rest of this PDF" key while they also turned pages).
+        if key in (K.Key_Right, K.Key_Space, K.Key_PageDown):
             self.step(+1)
-        elif key in (K.Key_Left, K.Key_Backspace) or (key == K.Key_PageUp and not ctrl):
+        elif key in (K.Key_Left, K.Key_Backspace, K.Key_PageUp):
             self.step(-1)
-        elif key == K.Key_PageDown:
-            self.step(+1, whole_items=True)
-        elif key == K.Key_PageUp:
-            self.step(-1, whole_items=True)
+        elif key == K.Key_Down and not ctrl and self._has_pages():
+            self.next_page()
+        elif key == K.Key_Up and not ctrl and self._has_pages():
+            self.prev_page()
         elif key == K.Key_Home:
             self.first()
         elif key == K.Key_End:
@@ -1237,7 +1292,21 @@ class MediaViewer(QWidget):
             return
         event.accept()
 
+    def _has_pages(self) -> bool:
+        """Whether the current item has pages to turn (Up / Down are page
+        keys only then; elsewhere they stay with the view)."""
+        return self.mode == "pdf" and self.page_count > 1
+
+    def _update_page_bar(self) -> None:
+        paged = self._has_pages()
+        self.page_bar.setVisible(paged)
+        if paged:
+            self.page_label.setText(f"{self.current_page + 1} / {self.page_count}")
+            self.prev_page_button.setEnabled(self.current_page > 0)
+            self.next_page_button.setEnabled(self.current_page < self.page_count - 1)
+
     def _update_status(self) -> None:
+        self._update_page_bar()
         item = self.current_item()
         if item is None:
             self.counter_label.setText("")
@@ -1307,10 +1376,12 @@ class MediaViewerDialog(QDialog):
         root.addWidget(self.status_label)
         self.scan_job = ScanJob(
             self,
-            formatter=lambda s: tr("Scanning… {folders} folders, {items} media files").format(
-                folders=s["scanned"], items=s["indexed"]
-            )
-            + f" — {shorten(s['path'])}",
+            formatter=lambda s: (
+                tr("Scanning… {folders} folders, {items} media files").format(
+                    folders=s["scanned"], items=s["indexed"]
+                )
+                + f" — {shorten(s['path'])}"
+            ),
         )
         self.scan_job.finished.connect(self._on_scan_finished)
         self.busy = BusyStrip(self.scan_job, self)
@@ -1346,8 +1417,10 @@ class MediaViewerDialog(QDialog):
             self._pane,
             path_at=lambda _pos: self._viewer_path(),
             done=self._after_drag,
-            allowed=lambda: image_view.horizontalScrollBar().maximum() <= 0
-            and image_view.verticalScrollBar().maximum() <= 0,
+            allowed=lambda: (
+                image_view.horizontalScrollBar().maximum() <= 0
+                and image_view.verticalScrollBar().maximum() <= 0
+            ),
         )
         tiles = self.overview.view
         VFA.DragOut(

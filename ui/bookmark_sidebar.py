@@ -489,6 +489,11 @@ class BookmarkSidebar(QDockWidget):
             self._manager.set_expanded(parent, True)
         self._after_change()
 
+    def edit_node(self, node) -> None:
+        """Open the edit dialog for *node* - the context menu's "Edit..."
+        flow, for callers outside the sidebar."""
+        self._edit_node(node)
+
     def _edit_node(self, node) -> None:
         if isinstance(node, BookmarkGroup):
             dialog = GroupEditDialog(node, parent=self)

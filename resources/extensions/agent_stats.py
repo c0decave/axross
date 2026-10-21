@@ -1,4 +1,4 @@
-"""A small window that stays on top and counts what the agent does."""
+"""A small window above the main window that counts what the agent does."""
 
 from __future__ import annotations
 
@@ -82,8 +82,12 @@ class AgentStats:
 
 
 class StatsWindow(QWidget):
-    def __init__(self) -> None:
-        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+    def __init__(self, parent: QWidget | None = None) -> None:
+        # A normal window owned by the main window: it stays above it, has
+        # the usual title bar buttons, and a tiling window manager floats it
+        # at its own size (sway tiled the old parentless Tool window across
+        # half the screen).
+        super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("Agent Stats")
         self.setObjectName("axAgentStats")
         self.counts = AgentStats()
@@ -108,7 +112,7 @@ class StatsWindow(QWidget):
         reset = QPushButton("Reset")
         reset.clicked.connect(self.reset)
         layout.addWidget(reset)
-        self.resize(240, 10)
+        self.resize(self.sizeHint())
 
     def add(self, session: str, event: dict) -> None:
         self.counts.add(session, event)
@@ -138,7 +142,7 @@ def _number(value) -> str:
 
 def activate(api):
     global WINDOW
-    WINDOW = StatsWindow()
+    WINDOW = StatsWindow(api.window)
 
     def toggle():
         if WINDOW.isVisible():

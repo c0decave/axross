@@ -299,6 +299,12 @@ def main() -> int:
         from core.agent_worker import main as agent_worker_main
 
         return agent_worker_main()
+    if sys.argv[1:] == ["--analysis-worker"]:
+        # The sift analysis child (core.analysis_worker starts it): no GUI,
+        # stdin/stdout are its channel. The frozen build's "python -m".
+        from core.analysis_worker import _child_main
+
+        return _child_main()
     parser = argparse.ArgumentParser(description="Axross File Manager")
     from axross._version import __version__
 

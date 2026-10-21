@@ -59,8 +59,8 @@ JSON itself never carries plaintext credentials.
   **Ctrl+Shift+V**, close with **Ctrl+W**.
 - Active pane gets a blue border; the **target** pane (where copies
   land) gets a green border. Last-focused pane becomes target.
-- A pane becomes the active one when the mouse rests in it for 1 s.
-  **View → Activate Pane** sets 1, 2 or 3 s, or **On Click**. Keyboard
+- A pane becomes the active one when the mouse rests in it for 0.5 s.
+  **View → Activate Pane** sets 0.5, 1, 2 or 3 s, or **On Click**. Keyboard
   focus follows only from another pane's file list, never out of a text
   field.
 - **Alt+Left / Alt+Right** walk through pane history; **Tab** /
@@ -107,7 +107,9 @@ already there: Overwrite, Overwrite if Newer, Skip, Rename
 Cancel (nothing is copied). Folders merge; the names inside them are
 asked about. A skipped move keeps its source, and a file that appears
 at the destination after the prompt fails its job instead of being
-overwritten.
+overwritten. A move removes its source only when the source still has
+the size it had before it was copied; one that changed meanwhile (a log
+still being written) fails its job and is kept.
 
 Every cross-pane copy or move enters the transfer queue. The dock
 at the bottom shows progress, throughput, and ETA. Transfers run on
@@ -164,7 +166,8 @@ native protocol doesn't support them.
 | Identify File Type… | Right-click (selection) | One row per entry: the real type from the content (magic bytes via Qt's MIME database, puremagic, a built-in signature table), the MIME type, what the extension claims and a highlighted *mismatch* when they disagree, size, and for text the encoding and line endings. Reads at most 64 KiB per file through the backend, off the GUI thread, with a 15 s timeout per file — a dead remote gives a "timed out" row. Local files also show `file(1)`'s description when it is installed. Scripting: `axross.file_type(b, path)`. |
 | Open Terminal Here | Right-click (also on empty space) | Opens a shell in the terminal dock in the folder: a selected folder, otherwise the folder shown. Local panes get a local shell started in that folder; SFTP / SCP panes get a shell on the same SSH connection followed by `cd -- '<folder>'` (quoted with `shlex.quote`). Disabled, with the reason as tooltip, on protocols without a shell. |
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
-| Move to Trash | Right-click | Universal recycle bin. |
+| Move to Trash | Right-click | Universal recycle bin. Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
+| Delete Permanently | Right-click, `Del` | First counts what will go (folders, files, bytes, hidden entries) off the GUI thread, then asks. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops after the entry in progress (removed entries stay removed), failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
 | Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback. |
@@ -223,6 +226,9 @@ the title bar's Maximize button.
   *View → Open Size Limit…* (1–4096 MB, stored in `settings.json`).
 - **Image viewer** — F3 / double-click, MIME-allow-listed, size-
   capped to keep Qt's allocator happy.
+- **PDF** — F3 / double-click opens the PDF on its own in the media
+  viewer below (needs QtPdf; without it, or in the `paranoid` security
+  mode, the hex editor opens instead and the log says why).
 - **Media viewer** — *View → View Media…* or right-click → *View
   Media…* on the folder (*View Selected Media…* for a selection of
   files and folders). Choose the types (images incl. SVG, PDFs,
@@ -232,9 +238,11 @@ the title bar's Maximize button.
   **Overview first** (thumbnail grid with filter, sort by name /
   date / folder and a size slider; Enter or double-click opens an
   item), **Start slideshow** or **Click through**. In the viewer:
-  Left / Right / PageUp / PageDown / Space step (stopping at the
-  first and last item; inside a PDF they turn pages, past the last
-  page to the next item), Home / End, F11 fullscreen, Ctrl+M
+  Left / Right / PageUp / PageDown / Space go to the previous / next
+  file (stopping at the first and last item; also inside a PDF, and
+  the slideshow only turns pages of a PDF opened on its own). A PDF with more than one
+  page gets a page control `← n / m →` in the button bar; Up / Down
+  turn its pages. Home / End, F11 fullscreen, Ctrl+M
   maximize / restore (the window remembers its last size, position
   and maximized state for the next open), wheel or
   `+` / `-` zoom, `F` fit, `1` 100 %, `R` rotate, `S` slideshow
@@ -648,8 +656,9 @@ server's token is kept in the keyring.
 **Extensions** can start the agent (`api.run_agent`,
 `api.open_agent_tab`), give it tools (`api.add_agent_tool`), add topics
 (`api.add_agent_topic`) and follow its events (`api.on_agent_event`).
-The bundled *Agent Stats* extension shows a small window, on top and
-movable, with tasks, answers, tool calls, errors, tokens and time.
+The bundled *Agent Stats* extension shows a small window above the main
+window (a normal window: move, resize, close; it floats on tiling
+window managers too) with tasks, answers, tool calls, errors, tokens and time.
 
 A profile whose server is not on this machine or its network asks
 first, as what the tools read is sent there.

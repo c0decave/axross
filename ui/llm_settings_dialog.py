@@ -6,7 +6,8 @@ keeps the stored key. A profile whose endpoint is not on this machine or a
 private network shows a warning: analysing a file with it sends the file.
 
 "Fetch models" asks the server for its model list on a background thread
-(sift's client; no file is sent, nothing is generated).
+(``core.agent.list_models``, no sift needed; no file is sent, nothing is
+generated).
 """
 
 from __future__ import annotations
@@ -306,28 +307,14 @@ class LLMSettingsDialog(QDialog):
         self.status_label.setText(tr("Asking the server for its models…"))
 
         def work() -> None:
-            try:
-                from sift.config import Config
-                from sift.llm import build_client
+            from core.agent import AgentError, list_models
 
-                client = build_client(
-                    Config(
-                        provider=profile.provider,
-                        endpoint=profile.resolved_endpoint(),
-                        api_key=key,
-                        timeout=min(profile.timeout, 15.0),
-                    )
+            try:
+                self._fetcher.done.emit(token, list_models(profile, key), "")
+            except AgentError as exc:
+                self._fetcher.done.emit(
+                    token, None, tr("Listing models failed: {error}").format(error=str(exc))
                 )
-                if client is None or not client.available():
-                    self._fetcher.done.emit(
-                        token,
-                        None,
-                        tr("No answer from {url}.").format(url=profile.resolved_endpoint()),
-                    )
-                    return
-                self._fetcher.done.emit(token, client.list_models(), "")
-            except ImportError:
-                self._fetcher.done.emit(token, None, tr("sift is not installed."))
             except Exception as exc:  # noqa: BLE001 - shown to the user
                 self._fetcher.done.emit(
                     token,

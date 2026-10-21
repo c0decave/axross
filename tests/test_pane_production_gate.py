@@ -148,12 +148,27 @@ def _yes():
     )
 
 
+def _settle(pane, timeout: float = 5.0) -> None:
+    """Delete and Move to Trash run in the background (ScanJob): wait until
+    the check, the questions and the removal are through."""
+    import time
+
+    end = time.time() + timeout
+    while time.time() < end:
+        APP.processEvents()
+        if not pane.removal_running and not pane.is_loading:
+            return
+        time.sleep(0.005)
+    raise AssertionError("the delete did not finish")
+
+
 def test_sad_a_cancelled_countdown_keeps_the_file_on_delete(pane_on_prod, monkeypatch):
     pane, root = pane_on_prod
     (root / "keep.txt").write_text("x")
     shown = _dialog_answers(monkeypatch, QDialog.DialogCode.Rejected)
     with _select(pane, "keep.txt"), _yes():
         pane._delete_selected()
+        _settle(pane)
     assert (root / "keep.txt").exists()
     assert len(shown) == 1
 
@@ -164,16 +179,19 @@ def test_happy_an_accepted_countdown_deletes(pane_on_prod, monkeypatch):
     _dialog_answers(monkeypatch, QDialog.DialogCode.Accepted)
     with _select(pane, "gone.txt"), _yes():
         pane._delete_selected()
+        _settle(pane)
     assert not (root / "gone.txt").exists()
 
 
 def test_sad_a_cancelled_countdown_keeps_the_file_on_trash(pane_on_prod, monkeypatch):
     pane, root = pane_on_prod
     (root / "keep.txt").write_text("x")
-    _dialog_answers(monkeypatch, QDialog.DialogCode.Rejected)
+    shown = _dialog_answers(monkeypatch, QDialog.DialogCode.Rejected)
     with _select(pane, "keep.txt"), _yes():
         pane._trash_selected()
+        _settle(pane)
     assert (root / "keep.txt").exists()
+    assert len(shown) == 1
 
 
 def test_sad_a_cancelled_countdown_keeps_the_name(pane_on_prod, monkeypatch):
@@ -221,6 +239,7 @@ def test_edge_a_local_pane_asks_nothing(monkeypatch):
         (Path(tmp) / "f.txt").write_text("x")
         with _select(pane, "f.txt"), _yes():
             pane._delete_selected()
+            _settle(pane)
         assert not (Path(tmp) / "f.txt").exists()
         pane.deleteLater()
     assert shown == []

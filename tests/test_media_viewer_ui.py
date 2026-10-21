@@ -477,25 +477,86 @@ def test_sad_encrypted_pdf_shows_a_placeholder(tmp_path):
     viewer.shutdown()
 
 
-def test_happy_pdf_pages_then_the_next_item(tmp_path):
+def test_happy_item_keys_leave_a_pdf_page_keys_turn_its_pages(tmp_path):
+    """Operator item 35: next / previous always take the next FILE; the
+    pages of a document have their own control and keys."""
     pdf = _item(write_pdf(tmp_path / "doc.pdf", pages=3), PDF)
     img = _item(write_image(tmp_path / "z.png"), IMAGE)
     viewer = _viewer(LocalFS(), [pdf, img])
     assert wait_until(lambda: _shown(viewer))
     assert viewer.mode == "pdf"
     assert viewer.current_page == 0 and viewer.page_count == 3
-    QTest.keyClick(viewer, Qt.Key.Key_Right)
+    assert viewer.page_bar.isVisible()
+    assert viewer.page_label.text() == "1 / 3"
+    QTest.keyClick(viewer, Qt.Key.Key_Down)
     assert (viewer.current_index, viewer.current_page) == (0, 1)
-    QTest.keyClick(viewer, Qt.Key.Key_PageDown)
+    viewer.next_page_button.click()
     assert (viewer.current_index, viewer.current_page) == (0, 2)
-    QTest.keyClick(viewer, Qt.Key.Key_Right)  # past the last page
+    assert viewer.page_label.text() == "3 / 3"
+    QTest.keyClick(viewer, Qt.Key.Key_Up)
+    assert viewer.current_page == 1
+    viewer.prev_page_button.click()
+    assert viewer.current_page == 0
+    QTest.keyClick(viewer, Qt.Key.Key_Right)  # page 1 of 3: still the next file
     assert viewer.current_index == 1
     assert wait_until(lambda: viewer.mode == "image")
-    QTest.keyClick(viewer, Qt.Key.Key_Left)  # back into the PDF
+    assert not viewer.page_bar.isVisible()
+    QTest.keyClick(viewer, Qt.Key.Key_Left)
     assert viewer.current_index == 0
     assert wait_until(lambda: viewer.mode == "pdf")
-    QTest.keyClick(viewer, Qt.Key.Key_Left)
-    assert viewer.current_page == 0
+    for key in (Qt.Key.Key_PageDown, Qt.Key.Key_Space):
+        QTest.keyClick(viewer, key)
+        assert viewer.current_index == 1, key
+        QTest.keyClick(viewer, Qt.Key.Key_PageUp)
+        assert viewer.current_index == 0, key
+        assert wait_until(lambda: viewer.mode == "pdf")
+    QTest.keyClick(viewer, Qt.Key.Key_PageDown, Qt.KeyboardModifier.ControlModifier)
+    assert viewer.current_index == 1  # Ctrl+PageDown keeps working
+    viewer.shutdown()
+
+
+def test_sad_page_keys_stop_at_the_ends_and_do_nothing_on_an_image(tmp_path):
+    pdf = _item(write_pdf(tmp_path / "doc.pdf", pages=2), PDF)
+    img = _item(write_image(tmp_path / "z.png"), IMAGE)
+    viewer = _viewer(LocalFS(), [img, pdf])
+    assert wait_until(lambda: viewer.mode == "image")
+    QTest.keyClick(viewer, Qt.Key.Key_Down)
+    assert (viewer.current_index, viewer.current_page, viewer.mode) == (0, 0, "image")
+    viewer.show_index(1)
+    assert wait_until(lambda: viewer.mode == "pdf")
+    assert not viewer.prev_page_button.isEnabled()
+    QTest.keyClick(viewer, Qt.Key.Key_Up)
+    assert (viewer.current_index, viewer.current_page) == (1, 0)
+    assert "First page" in viewer.status_text()
+    QTest.keyClick(viewer, Qt.Key.Key_Down)
+    QTest.keyClick(viewer, Qt.Key.Key_Down)
+    assert (viewer.current_index, viewer.current_page) == (1, 1)
+    assert "Last page" in viewer.status_text()
+    assert not viewer.next_page_button.isEnabled()
+    viewer.shutdown()
+
+
+def test_edge_a_one_page_pdf_shows_no_page_control(tmp_path):
+    pdf = _item(write_pdf(tmp_path / "one.pdf", pages=1), PDF)
+    viewer = _viewer(LocalFS(), [pdf])
+    assert wait_until(lambda: viewer.mode == "pdf")
+    assert viewer.page_count == 1
+    assert not viewer.page_bar.isVisible()
+    viewer.shutdown()
+
+
+def test_edge_the_slideshow_never_turns_pages(tmp_path):
+    """Among other items the slideshow moves files only; a document opened
+    alone is test_happy_a_document_opened_alone_is_read_as_a_slideshow."""
+    pdf = _item(write_pdf(tmp_path / "doc.pdf", pages=3), PDF)
+    img = _item(write_image(tmp_path / "z.png"), IMAGE)
+    viewer = _viewer(LocalFS(), [pdf, img])
+    assert wait_until(lambda: viewer.mode == "pdf")
+    viewer.start_slideshow()
+    assert wait_until(lambda: viewer.slideshow_timer.isActive())
+    viewer.slideshow_timer.timeout.emit()
+    assert viewer.current_index == 1
+    viewer.stop_slideshow()
     viewer.shutdown()
 
 
@@ -585,4 +646,58 @@ def test_sad_broken_video_shows_a_placeholder(tmp_path):
     clip.write_bytes(b"\x00\x01garbage" * 10)
     viewer = _viewer(LocalFS(), [_item(clip, VIDEO)])
     assert wait_until(lambda: viewer.mode == "placeholder", timeout=15)
+    viewer.shutdown()
+
+
+def test_edge_up_down_stay_with_the_view_unless_an_item_has_pages(tmp_path):
+    """Up / Down are page keys only for an item with pages; elsewhere they
+    go on to the base class (and from there to the parent), as before."""
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QKeyEvent
+
+    def accepted(viewer, key) -> bool:
+        event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+        viewer.keyPressEvent(event)
+        return event.isAccepted()
+
+    img = _item(write_image(tmp_path / "z.png"), IMAGE)
+    one = _item(write_pdf(tmp_path / "one.pdf", pages=1), PDF)
+    doc = _item(write_pdf(tmp_path / "doc.pdf", pages=2), PDF)
+    viewer = _viewer(LocalFS(), [img, one, doc])
+    assert wait_until(lambda: viewer.mode == "image")
+    assert not accepted(viewer, Qt.Key.Key_Down)
+    assert not accepted(viewer, Qt.Key.Key_Up)
+    viewer.show_index(1)
+    assert wait_until(lambda: viewer.mode == "pdf")
+    assert not accepted(viewer, Qt.Key.Key_Down)
+    viewer.show_index(2)
+    assert wait_until(lambda: viewer.mode == "pdf" and viewer.page_count == 2)
+    assert accepted(viewer, Qt.Key.Key_Down)
+    assert viewer.current_page == 1
+    viewer.shutdown()
+
+
+def test_happy_a_document_opened_alone_is_read_as_a_slideshow(tmp_path):
+    """A PDF opened on its own (the only item) is being read: its slideshow
+    turns the pages and starts over at the last one."""
+    doc = _item(write_pdf(tmp_path / "doc.pdf", pages=3), PDF)
+    viewer = _viewer(LocalFS(), [doc])
+    assert wait_until(lambda: viewer.mode == "pdf" and viewer.page_count == 3)
+    viewer.start_slideshow()
+    assert wait_until(lambda: viewer.slideshow_timer.isActive())
+    for expected in (1, 2, 0):
+        viewer.slideshow_timer.timeout.emit()
+        assert (viewer.current_index, viewer.current_page) == (0, expected)
+    viewer.stop_slideshow()
+    viewer.shutdown()
+
+
+def test_edge_a_single_image_slideshow_stays_put(tmp_path):
+    img = _item(write_image(tmp_path / "z.png"), IMAGE)
+    viewer = _viewer(LocalFS(), [img])
+    assert wait_until(lambda: viewer.mode == "image")
+    viewer.start_slideshow()
+    viewer.slideshow_timer.timeout.emit()
+    assert viewer.current_index == 0 and viewer.mode == "image"
+    viewer.stop_slideshow()
     viewer.shutdown()

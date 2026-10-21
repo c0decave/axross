@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QTreeWidget,
@@ -87,6 +86,12 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ),
     ("Viewers", ("F11",), "Fullscreen on / off (image and media viewer)"),
     ("Viewers", ("Delete",), "Delete the shown file (image and media viewer)"),
+    (
+        "Viewers",
+        ("Left", "Right", "PageUp", "PageDown", "Space"),
+        "Previous / next file (media viewer; never a page)",
+    ),
+    ("Viewers", ("Up", "Down"), "Previous / next page of a PDF (media viewer)"),
     ("Scripting", ("Ctrl+S",), "Save the script (Scripts panel)"),
     ("Scripting", ("Ctrl+Return",), "Run the script in its own process (Scripts panel)"),
     ("Scripting", ("Tab", "Shift+Tab"), "Indent / dedent the line or selection (script editor)"),
@@ -128,8 +133,10 @@ class ShortcutsDialog(QDialog):
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         # Per item: per pixel leaves the last row 1 px under the edge after End.
         self.tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.tree.header().setStretchLastSection(True)
+        from ui.column_fit import ColumnFitter
+
+        # Keys as wide as they are, Action the rest; both dividers draggable.
+        self._columns = ColumnFitter(self.tree, fill=1)
         self.tree.installEventFilter(self)
 
         sections: dict[str, QTreeWidgetItem] = {}

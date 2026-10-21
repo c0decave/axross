@@ -129,6 +129,8 @@ MAX_RESTORED_WINDOW_PX = 100_000
 MAX_SAVED_WINDOW_STATE_CHARS = 64 * 1024
 #: window key of the File > "Restore Layout on Start" switch (default on).
 RESTORE_ON_START_KEY = "restore_layout_on_start"
+#: window key of the View > "Show Hidden Files" switch (default on).
+SHOW_HIDDEN_KEY = "show_hidden"
 _SESSION_NODE_TYPES = ("splitter", "pane", "terminal")
 
 
@@ -373,9 +375,6 @@ class MainWindow(QMainWindow):
         # main.py calls after construction - and which never connects.
         self._load_persistent_visual_settings()
 
-        # Show hidden files by default
-        self._hidden_action.setChecked(True)
-
         # Auto-reconnect timer
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setInterval(RECONNECT_INTERVAL_MS)
@@ -494,8 +493,12 @@ class MainWindow(QMainWindow):
         # View menu
         view_menu = menubar.addMenu(tr("&View"))
 
+        # One switch for the whole window; every file pane follows it
+        # (_new_file_pane, _toggle_hidden). On by default; a stored
+        # window.show_hidden of False switches it off at the start.
         self._hidden_action = view_menu.addAction(tr("Show &Hidden Files"))
         self._hidden_action.setCheckable(True)
+        self._hidden_action.setChecked(True)
         self._hidden_action.setShortcut(QKeySequence("Ctrl+H"))
         self._hidden_action.toggled.connect(self._toggle_hidden)
 
@@ -1820,15 +1823,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._root_splitter)
         self._add_pane_to_splitter(self._root_splitter, LocalFS())
 
-    def _add_pane_to_splitter(
-        self,
-        splitter: QSplitter,
-        backend,
-        profile=None,
-        password="",
-        key_passphrase="",
-    ) -> FilePaneWidget:
+    def _new_file_pane(self, backend) -> FilePaneWidget:
+        """A file pane wired to the window - the one place every file pane
+        is made (splits, connections, restored layouts, layout presets).
+        It starts with the window's View settings, Show Hidden Files
+        among them: a pane made with the model default showed no hidden
+        files while the menu said it did."""
         pane = FilePaneWidget(backend, async_initial_load=True)
+        pane.set_show_hidden(self._hidden_action.isChecked())
         pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
         pane.view_mode_changed.connect(lambda _mode, p=pane: self._sync_view_mode_action(p))
         pane.selection_changed.connect(lambda p=pane: self._extension_event("selection_changed", p))
@@ -1851,6 +1853,17 @@ class MainWindow(QMainWindow):
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
         pane.selection_changed.connect(lambda p=pane: self._on_pane_selection_changed(p))
+        return pane
+
+    def _add_pane_to_splitter(
+        self,
+        splitter: QSplitter,
+        backend,
+        profile=None,
+        password="",
+        key_passphrase="",
+    ) -> FilePaneWidget:
+        pane = self._new_file_pane(backend)
         splitter.addWidget(pane)
         self._panes.append(pane)
         if profile is not None:
@@ -2213,29 +2226,7 @@ class MainWindow(QMainWindow):
         """Factory hook for layout_presets.apply_preset — returns a
         fresh FilePaneWidget on LocalFS, fully wired into the active-
         pane / drop-target machinery just like a manual split would."""
-        pane = FilePaneWidget(LocalFS(), async_initial_load=True)
-        pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
-        pane.view_mode_changed.connect(lambda _mode, p=pane: self._sync_view_mode_action(p))
-        pane.selection_changed.connect(lambda p=pane: self._extension_event("selection_changed", p))
-        pane.path_changed.connect(lambda _path, p=pane: self._extension_event("path_changed", p))
-        pane.path_changed.connect(lambda _path, p=pane: self._agent_follow_pane(p))
-        pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
-        pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
-        pane.drop_transfer_requested.connect(self._on_drop_transfer)
-        pane.bookmark_requested.connect(self._on_bookmark_request)
-        pane.close_requested.connect(lambda p=pane: self._close_pane(p))
-        pane.set_as_target_requested.connect(lambda p=pane: self._set_target_pane(p))
-        pane.pane_drop_requested.connect(self._on_pane_drop)
-        pane.open_bookmarks_requested.connect(self._show_bookmarks_popup)
-        pane.open_duplicates_requested.connect(self._open_cas_duplicates)
-        pane.open_terminal_requested.connect(
-            lambda directory, p=pane: self._open_terminal_here(p, directory)
-        )
-        pane.send_to_agent_requested.connect(lambda paths, p=pane: self._send_to_agent(p, paths))
-        pane.cycle_pane_requested.connect(
-            lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
-        )
-        pane.selection_changed.connect(lambda p=pane: self._on_pane_selection_changed(p))
+        pane = self._new_file_pane(LocalFS())
         self._panes.append(pane)
         return pane
 
@@ -2311,7 +2302,7 @@ class MainWindow(QMainWindow):
         self._refresh_pane_styles()
 
     def _build_pane_activation_menu(self, menu) -> None:
-        """On Click, or after resting the mouse 1, 2 or 3 s in a pane."""
+        """On Click, or after resting the mouse 0.5, 1, 2 or 3 s in a pane."""
         from PyQt6.QtGui import QActionGroup
 
         from core import pane_activation as PA
@@ -3039,30 +3030,44 @@ class MainWindow(QMainWindow):
         same name would be overwritten. The jobs are appended to *queued*:
         the undo is done when they are, not when they are queued.
         """
-        from core.transfer_conflicts import ConflictPlan
+        from core.path_policy import safe_join, transfer_leaf
+        from core.transfer_conflicts import IF_EXISTS_FAIL, ConflictPlan
 
         src_name = src_path.rsplit(src_backend.separator(), 1)[-1]
         dst_name = dst_path.rsplit(dst_backend.separator(), 1)[-1]
-        if src_name != dst_name:
-            raise OSError(
-                f"{src_path} no longer has the name it was moved under ({dst_name}); "
-                "undo cannot put it back."
-            )
         if dst_backend.exists(dst_path):
             raise OSError(
                 f"{dst_path} exists again — undo would overwrite it. Move or rename it first."
             )
-        jobs = self._transfer_manager.transfer_files(
-            source_backend=src_backend,
-            dest_backend=dst_backend,
-            source_paths=[src_path],
-            dest_dir=dst_backend.parent(dst_path),
-            direction=self._transfer_direction(src_backend, dst_backend),
-            move=True,
-            # The check above looked once; a file that appears before the
-            # job runs is not replaced either.
-            conflict_plan=ConflictPlan.never_replace(dst_backend),
-        )
+        direction = self._transfer_direction(src_backend, dst_backend)
+        if src_name == dst_name:
+            jobs = self._transfer_manager.transfer_files(
+                source_backend=src_backend,
+                dest_backend=dst_backend,
+                source_paths=[src_path],
+                dest_dir=dst_backend.parent(dst_path),
+                direction=direction,
+                move=True,
+                # The check above looked once; a file that appears before the
+                # job runs is not replaced either.
+                conflict_plan=ConflictPlan.never_replace(dst_backend),
+            )
+        else:
+            # The move stored the file under another name ("Rename" at the
+            # conflict prompt), which transfer_files cannot give back: it
+            # names the result after the source. The journal holds one entry
+            # per file, so this is one file job, refusing an existing name.
+            try:
+                leaf = transfer_leaf(src_backend, dst_backend, dst_name)
+                target = safe_join(dst_backend, dst_backend.parent(dst_path), leaf)
+            except ValueError as exc:
+                raise OSError(f"undo cannot put {src_path} back as {dst_path}: {exc}") from exc
+            jobs = [
+                self._transfer_manager.transfer_file(
+                    src_backend, dst_backend, src_path, target, direction,
+                    move=True, if_exists=IF_EXISTS_FAIL,
+                )
+            ]
         if queued is not None:
             queued.extend(jobs)
         labels = {getattr(src_backend, "name", None), getattr(dst_backend, "name", None)}
@@ -3796,8 +3801,9 @@ class MainWindow(QMainWindow):
 
     def _load_persistent_visual_settings(self) -> None:
         """Read the subset of session.json that represents user
-        preferences: theme, compact mode, monochrome icons and the
-        "Restore Layout on Start" switch. The layout itself is restore_layout_on_start's job.
+        preferences: theme, compact mode, monochrome icons, Show Hidden
+        Files and the "Restore Layout on Start" switch. The layout itself
+        is restore_layout_on_start's job.
 
         Guarantee kept from before the layout came back on start: a fresh
         start never connects to anything. Remote panes of the restored
@@ -3827,6 +3833,9 @@ class MainWindow(QMainWindow):
         # Only a stored False switches it off; anything else is the default.
         if win.get(RESTORE_ON_START_KEY) is False and hasattr(self, "_restore_on_start_action"):
             self._restore_on_start_action.setChecked(False)
+        # Only a stored False switches it off, like the restore switch.
+        if win.get(SHOW_HIDDEN_KEY) is False:
+            self._hidden_action.setChecked(False)
         mono = bool(win.get("monochrome_icons", False))
         if mono and hasattr(self, "_monochrome_action"):
             # setChecked fires the toggle handler → icons
@@ -3855,6 +3864,7 @@ class MainWindow(QMainWindow):
                 "ui_theme": self._current_theme,
                 "compact": self._compact_mode,
                 "monochrome_icons": _is_mono(),
+                SHOW_HIDDEN_KEY: self._hidden_action.isChecked(),
                 RESTORE_ON_START_KEY: self._restore_on_start_action.isChecked(),
                 # Base64 of Qt's own formats: window geometry and the dock
                 # layout (which docks are open, where, and how large).
@@ -4105,6 +4115,7 @@ class MainWindow(QMainWindow):
         if dock_state is not None and not self.restoreState(QByteArray(dock_state)):
             log.info("Session restore: the saved dock layout was not usable")
         self._compact_action.setChecked(bool(win.get("compact", False)))
+        self._hidden_action.setChecked(win.get(SHOW_HIDDEN_KEY) is not False)
         # ``theme`` is the pre-modern key and is deliberately ignored:
         # the modern theme became the default for everyone, and the old
         # key could not tell a deliberate choice from the old default.
@@ -5164,6 +5175,18 @@ class MainWindow(QMainWindow):
             # From a pane's own bookmark button the pane is the sender.
             sender = self.sender()
             pane = sender if isinstance(sender, FilePaneWidget) else None
+        existing = self._bookmark_manager.find(path, backend_name)
+        if existing is not None:
+            # A second "New Bookmark" for the same folder could only be
+            # dropped by the manager's duplicate rule; edit the one there is.
+            self.statusBar().showMessage(
+                tr("{path} is already bookmarked as '{name}'.").format(
+                    path=path, name=existing.name
+                ),
+                6000,
+            )
+            self._bookmark_sidebar.edit_node(existing)
+            return
         draft = self._bookmark_draft(path, backend_name, pane)
         dialog = BookmarkEditDialog(
             draft,
@@ -5177,7 +5200,17 @@ class MainWindow(QMainWindow):
         bookmark = dialog.result_bookmark()
         if not bookmark.name:
             return
-        self._bookmark_manager.add(bookmark, group=dialog.result_group())
+        if not self._bookmark_manager.add(bookmark, group=dialog.result_group()):
+            # The dialog's path field pointed the draft at a folder that is
+            # bookmarked already.
+            taken = self._bookmark_manager.find(bookmark.path, bookmark.backend_name)
+            self.statusBar().showMessage(
+                tr("Not added: {path} is already bookmarked as '{name}'.").format(
+                    path=bookmark.path, name=taken.name if taken is not None else ""
+                ),
+                6000,
+            )
+            return
         self._rebuild_bookmarks_menu()
 
     def _show_bookmarks_popup(self) -> None:

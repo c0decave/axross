@@ -2,8 +2,10 @@
 
 Thin wrapper over :mod:`core.trash`. Presents the entries for a
 single backend in a table, with Restore / Permanently-Delete /
-Empty-Trash buttons. Each action goes straight to the backend;
-failures collect per-item and get shown once at the end.
+Empty-Trash buttons. Each action runs on a background job (one at a
+time, with a status strip and Cancel between entries), so a large
+trashed folder on a slow share does not freeze the window; failures
+collect per-item and get shown once at the end.
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from core import trash as T
 from ui.close_corner import add_close_corner
+from ui.scan_job import BusyStrip, ScanJob, shorten
 
 log = logging.getLogger("ui.trash_browser")
 
@@ -65,11 +67,10 @@ class TrashBrowserDialog(QDialog):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        from ui.column_fit import ColumnFitter
+
+        # Original Path takes the free width; every divider stays draggable.
+        self._columns = ColumnFitter(self._table, fill=0)
         root.addWidget(self._table, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -86,6 +87,14 @@ class TrashBrowserDialog(QDialog):
         btn_row.addWidget(self._empty_btn)
 
         btn_row.addStretch(1)
+
+        # One background action at a time; its status line sits above the
+        # buttons, and the action buttons are off while it runs.
+        self._job = ScanJob(self, formatter=self._progress_text)
+        self._job.finished.connect(self._on_job_finished)
+        self._busy_strip = BusyStrip(self._job, self, cancel_text="Cancel")
+        root.addWidget(self._busy_strip)
+        self._on_done = None
 
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         close.rejected.connect(self.reject)
@@ -138,9 +147,69 @@ class TrashBrowserDialog(QDialog):
         return out
 
     # ------------------------------------------------------------------
+    # Background job
+    # ------------------------------------------------------------------
+    @property
+    def busy(self) -> bool:
+        """An action of this dialog is running in the background."""
+        return self._on_done is not None
+
+    def _progress_text(self, state: dict) -> str:
+        return (
+            f"Working… {state['scanned']} of {state['indexed']} — {shorten(state['path'])}"
+        )
+
+    def _run(self, work, on_done) -> bool:
+        """Start *work(cancelled, report)* in the background; *on_done(kind,
+        value, cancelled)* runs on the GUI thread when it ends. Refused
+        while another action runs."""
+        if self._on_done is not None:
+            return False
+        self._on_done = on_done
+        for button in (self._restore_btn, self._delete_btn, self._empty_btn):
+            button.setEnabled(False)
+        self._job.start(work)
+        return True
+
+    def _on_job_finished(self, kind: str, value, cancelled: bool) -> None:
+        on_done, self._on_done = self._on_done, None
+        for button in (self._restore_btn, self._delete_btn, self._empty_btn):
+            button.setEnabled(True)
+        self._reload()
+        if on_done is not None:
+            on_done(kind, value, cancelled)
+
+    def done(self, result: int) -> None:  # noqa: D102 - Qt override
+        # Closing while an action runs: it stops after the entry in progress
+        # and nothing is reported to a dialog that is gone.
+        self._job.abandon()
+        self._on_done = None
+        super().done(result)
+
+    def _per_entry(self, entries, action):
+        """Work for the job: *action(entry)* for each entry; an OSError is
+        collected, Cancel stops between entries. Returns (done, errors)."""
+
+        def work(cancelled, report):
+            done, errors = 0, []
+            for index, entry in enumerate(entries):
+                if cancelled():
+                    break
+                report(index, len(entries), entry.original_path)
+                errors_before = len(errors)
+                action(entry, errors)
+                if len(errors) == errors_before:
+                    done += 1
+            return done, errors
+
+        return work
+
+    # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
     def _do_restore(self) -> None:
+        if self.busy:
+            return
         entries = self._selected_entries()
         if not entries:
             QMessageBox.information(
@@ -149,24 +218,32 @@ class TrashBrowserDialog(QDialog):
                 "Select at least one entry to restore.",
             )
             return
-        errors: list[str] = []
-        restored = 0
-        for e in entries:
+        backend = self._backend
+
+        def restore(entry, errors) -> None:
             try:
-                T.restore(self._backend, e.trash_id)
-                restored += 1
+                T.restore(backend, entry.trash_id)
             except OSError as exc:
-                errors.append(f"{e.original_path}: {exc}")
-                log.warning("Restore failed for %s: %s", e.trash_id, exc)
-        self._reload()
-        if errors:
-            QMessageBox.warning(
-                self,
-                "Restore",
-                f"{restored} restored, {len(errors)} failed:\n" + "\n".join(errors[:10]),
-            )
+                errors.append(f"{entry.original_path}: {exc}")
+                log.warning("Restore failed for %s: %s", entry.trash_id, exc)
+
+        def done(kind, value, cancelled) -> None:
+            if kind == "error":
+                QMessageBox.warning(self, "Restore", f"Failed:\n{value}")
+                return
+            restored, errors = value
+            if errors:
+                QMessageBox.warning(
+                    self,
+                    "Restore",
+                    f"{restored} restored, {len(errors)} failed:\n" + "\n".join(errors[:10]),
+                )
+
+        self._run(self._per_entry(entries, restore), done)
 
     def _do_delete_permanent(self) -> None:
+        if self.busy:
+            return
         entries = self._selected_entries()
         if not entries:
             return
@@ -180,33 +257,33 @@ class TrashBrowserDialog(QDialog):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        errors: list[str] = []
-        for e in entries:
-            data_file = self._backend.join(
-                self._trash_root(),
-                e.trash_id,
-            )
-            meta_file = self._backend.join(
-                self._trash_root(),
-                e.trash_id + T.META_SUFFIX,
-            )
+        backend, trash_root = self._backend, self._trash_root()
+
+        def delete(entry, errors) -> None:
+            data_file = backend.join(trash_root, entry.trash_id)
+            meta_file = backend.join(trash_root, entry.trash_id + T.META_SUFFIX)
             try:
-                self._backend.remove(data_file, recursive=True)
+                backend.remove(data_file, recursive=True)
             except OSError as exc:
-                errors.append(f"{e.original_path} data: {exc}")
+                errors.append(f"{entry.original_path} data: {exc}")
             try:
-                self._backend.remove(meta_file)
+                backend.remove(meta_file)
             except OSError as exc:
-                errors.append(f"{e.original_path} meta: {exc}")
-        self._reload()
-        if errors:
-            QMessageBox.warning(
-                self,
-                "Delete Permanent",
-                "\n".join(errors[:10]),
-            )
+                errors.append(f"{entry.original_path} meta: {exc}")
+
+        def done(kind, value, cancelled) -> None:
+            if kind == "error":
+                QMessageBox.warning(self, "Delete Permanent", f"Failed:\n{value}")
+                return
+            _deleted, errors = value
+            if errors:
+                QMessageBox.warning(self, "Delete Permanent", "\n".join(errors[:10]))
+
+        self._run(self._per_entry(entries, delete), done)
 
     def _do_empty(self) -> None:
+        if self.busy:
+            return
         reply = QMessageBox.question(
             self,
             "Empty Trash",
@@ -215,21 +292,23 @@ class TrashBrowserDialog(QDialog):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        try:
-            removed = T.empty_trash(self._backend)
-        except OSError as exc:
-            QMessageBox.warning(
+        backend = self._backend
+
+        def work(cancelled, report):
+            report(0, 1, "emptying the trash")
+            return T.empty_trash(backend)
+
+        def done(kind, value, cancelled) -> None:
+            if kind == "error":
+                QMessageBox.warning(self, "Empty Trash", f"Failed:\n{value}")
+                return
+            QMessageBox.information(
                 self,
                 "Empty Trash",
-                f"Failed:\n{exc}",
+                f"Removed {value} entr{'y' if value == 1 else 'ies'}.",
             )
-            return
-        self._reload()
-        QMessageBox.information(
-            self,
-            "Empty Trash",
-            f"Removed {removed} entr{'y' if removed == 1 else 'ies'}.",
-        )
+
+        self._run(work, done)
 
     def _trash_root(self) -> str:
         """Resolve the backend's trash root (same logic as core.trash)."""

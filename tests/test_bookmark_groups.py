@@ -47,6 +47,24 @@ class GroupBasicsTest(_Base):
         self.m.add(self.bm("again", "/x"))
         self.assertEqual(len(self.m.all()), 1)
 
+    def test_find_returns_the_bookmark_add_would_call_a_duplicate(self) -> None:
+        g = self.m.add_group("G")
+        self.m.add(self.bm("a", "/x"), group=g)
+        found = self.m.find("/x", "Local")
+        self.assertIs(found, g.children[0])
+        self.assertFalse(self.m.add(self.bm("again", "/x")))
+
+    def test_find_returns_none_for_a_path_never_bookmarked(self) -> None:
+        self.m.add(self.bm("a", "/x"))
+        self.assertIsNone(self.m.find("/y", "Local"))
+        self.assertIsNone(BookmarkManager().find("", ""))
+
+    def test_find_tells_the_same_path_on_another_backend_apart(self) -> None:
+        self.m.add(self.bm("a", "/x"))
+        self.assertIsNone(self.m.find("/x", "u@host"))
+        self.assertTrue(self.m.add(self.bm("remote", "/x", backend_name="u@host")))
+        self.assertEqual(self.m.find("/x", "u@host").name, "remote")
+
     def test_groups_nest_without_limit_in_the_api(self) -> None:
         g1 = self.m.add_group("A")
         g2 = self.m.add_group("B", parent=g1)

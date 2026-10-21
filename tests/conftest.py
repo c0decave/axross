@@ -32,6 +32,24 @@ if not os.environ.get("AXROSS_TEST_HOME"):
 
 
 import pytest  # noqa: E402
+import unittest  # noqa: E402
+import unittest.case  # noqa: E402
+
+#: subTest parameter values execnet can send from an xdist worker as they are.
+_PLAIN = (str, int, float, bool, type(None))
+_original_sub_test = unittest.TestCase.subTest
+
+
+def _sub_test_with_plain_params(self, msg=unittest.case._subtest_msg_sentinel, **params):
+    """unittest's subTest, with every parameter that is not a plain value
+    passed as its repr: under ``pytest -n`` the subtest report travels
+    through execnet, which refuses an enum or an exception ("DumpError:
+    can't serialize") and fails a test that passes in one process."""
+    plain = {k: v if isinstance(v, _PLAIN) else repr(v) for k, v in params.items()}
+    return _original_sub_test(self, msg, **plain)
+
+
+unittest.TestCase.subTest = _sub_test_with_plain_params
 
 
 @pytest.fixture(autouse=True)

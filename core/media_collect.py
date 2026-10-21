@@ -215,7 +215,7 @@ def collect_media(
         folder = sep.join(rel)
         for entry in sorted(entries, key=lambda e: e.name):
             name = entry.name
-            if name in (".", "..") or (not include_hidden and name.startswith(".")):
+            if name in (".", "..") or (not include_hidden and entry.is_hidden):
                 continue
             if restrict is not None and name not in restrict:
                 continue

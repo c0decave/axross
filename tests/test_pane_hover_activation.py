@@ -31,12 +31,12 @@ def settings(tmp_path, monkeypatch):
 # --- the setting ----------------------------------------------------------
 
 
-def test_happy_the_default_is_one_second_of_hovering():
-    assert PA.activation_delay_ms() == 1000
+def test_happy_the_default_is_half_a_second_of_hovering():
+    assert PA.activation_delay_ms() == 500
 
 
 def test_happy_each_choice_round_trips():
-    for value, delay in ((1, 1000), (2, 2000), (3, 3000), (PA.CLICK, None)):
+    for value, delay in ((0.5, 500), (1, 1000), (2, 2000), (3, 3000), (PA.CLICK, None)):
         PA.set_activation(value)
         assert PA.activation() == value
         assert PA.activation_delay_ms() == delay
@@ -45,11 +45,11 @@ def test_happy_each_choice_round_trips():
 def test_sad_a_hand_edited_value_falls_back_to_the_default(settings):
     for bad in (7, 0, -1, "x", True, 1.5, None, [1]):
         OL.write_setting(PA.SETTING, bad)
-        assert PA.activation_delay_ms() == 1000, bad
+        assert PA.activation_delay_ms() == 500, bad
 
 
 def test_sad_an_invalid_choice_is_refused():
-    for bad in (0, 4, "hover", True, 2.0):
+    for bad in (0, 4, "hover", True, 2.0, 0.25, "0.5"):
         with pytest.raises(ValueError):
             PA.set_activation(bad)
 
@@ -163,7 +163,7 @@ def test_edge_keyboard_focus_moves_from_another_list_not_from_a_text_field(app, 
 # --- the menu -------------------------------------------------------------
 
 
-def test_happy_the_view_menu_offers_click_and_one_to_three_seconds(app):
+def test_happy_the_view_menu_offers_click_and_half_to_three_seconds(app):
     from PyQt6.QtWidgets import QMenu
 
     from ui.main_window import MainWindow
@@ -175,10 +175,11 @@ def test_happy_the_view_menu_offers_click_and_one_to_three_seconds(app):
     window, menu = Window(), QMenu()
     window._build_pane_activation_menu(menu)
     actions = window._pane_activation_actions
-    assert list(actions) == [PA.CLICK, 1, 2, 3]
-    assert actions[1].isChecked() and not actions[2].isChecked()  # the default
+    assert list(actions) == [PA.CLICK, 0.5, 1, 2, 3]
+    assert actions[0.5].isChecked() and not actions[2].isChecked()  # the default
+    assert actions[0.5].text() == "After 0.5 s in the Pane"
     actions[2].trigger()
     assert PA.activation() == 2
-    assert actions[2].isChecked() and not actions[1].isChecked()
+    assert actions[2].isChecked() and not actions[0.5].isChecked()
     actions[PA.CLICK].trigger()
     assert PA.activation_delay_ms() is None

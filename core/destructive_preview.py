@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from core.path_policy import safe_join
 
 log = logging.getLogger(__name__)
+
+# How many hidden paths a preview keeps as examples; the count is exact.
+HIDDEN_EXAMPLES = 20
+
+
+def is_hidden_entry(item, name: str) -> bool:
+    """True for an entry a listing without hidden files does not show: a
+    dot name, or one the backend flags hidden (``FileItem.attr_hidden`` -
+    Windows / SMB / macOS - the same rule as the pane's filter,
+    ``FileItem.is_hidden``). A plain ``hidden`` attribute counts too."""
+    return (
+        name.startswith(".")
+        or bool(getattr(item, "attr_hidden", False))
+        or bool(getattr(item, "hidden", False))
+    )
 
 
 @dataclass
@@ -20,10 +36,22 @@ class OperationPreview:
     conflicts: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     truncated: bool = False
+    # Hidden entries found INSIDE the roots (a root itself is not counted:
+    # the user picked it by name). ``hidden`` holds up to HIDDEN_EXAMPLES
+    # paths; ``hidden_count`` is the exact number.
+    hidden: list[str] = field(default_factory=list)
+    hidden_count: int = 0
+    cancelled: bool = False
 
     @property
     def total_items(self) -> int:
         return self.files + self.dirs
+
+    @property
+    def incomplete(self) -> bool:
+        """The walk did not see every entry (cap, cancel, or an entry it
+        could not stat / list / name), so hidden entries cannot be ruled out."""
+        return self.truncated or self.cancelled or bool(self.warnings)
 
     def summary(self) -> str:
         parts = [
@@ -31,6 +59,8 @@ class OperationPreview:
             f"{self.files} file(s), {self.dirs} dir(s)",
             f"{self.bytes_total} byte(s)",
         ]
+        if self.hidden_count:
+            parts.append(f"{self.hidden_count} hidden")
         if self.conflicts:
             parts.append(f"{len(self.conflicts)} conflict(s)")
         if self.warnings:
@@ -45,10 +75,26 @@ def preview_delete(
     paths: list[str],
     *,
     max_entries: int = 10_000,
+    cancel: Callable[[], bool] | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> OperationPreview:
+    """Count what deleting *paths* would remove, and the hidden entries in it.
+
+    *cancel* is polled before every entry; once it returns true the walk
+    stops and the preview is marked ``cancelled``. *progress* receives
+    ``(dirs, files, path)`` for every entry visited. Both serve a caller
+    that runs the walk on a worker thread.
+    """
     preview = OperationPreview(operation="delete", roots=list(paths))
 
+    def stopped() -> bool:
+        if cancel is not None and not preview.cancelled and cancel():
+            preview.cancelled = True
+        return preview.cancelled
+
     def walk(path: str, depth: int = 0) -> None:
+        if stopped():
+            return
         if preview.total_items >= max_entries:
             preview.truncated = True
             return
@@ -59,12 +105,16 @@ def preview_delete(
             return
         if getattr(item, "is_dir", False):
             preview.dirs += 1
+            if progress is not None:
+                progress(preview.dirs, preview.files, path)
             try:
                 children = backend.list_dir(path)
             except OSError as exc:
                 preview.warnings.append(f"{path}: list failed: {exc}")
                 return
             for child in children:
+                if stopped():
+                    return
                 if preview.total_items >= max_entries:
                     preview.truncated = True
                     return
@@ -72,14 +122,24 @@ def preview_delete(
                 if not name or name in (".", ".."):
                     continue
                 try:
-                    walk(safe_join(backend, path, name), depth + 1)
+                    child_path = safe_join(backend, path, name)
                 except ValueError as exc:
                     preview.warnings.append(f"{path}/{name}: unsafe name: {exc}")
+                    continue
+                if is_hidden_entry(child, name):
+                    preview.hidden_count += 1
+                    if len(preview.hidden) < HIDDEN_EXAMPLES:
+                        preview.hidden.append(child_path)
+                walk(child_path, depth + 1)
         else:
             preview.files += 1
             preview.bytes_total += int(getattr(item, "size", 0) or 0)
+            if progress is not None:
+                progress(preview.dirs, preview.files, path)
 
     for root in paths:
+        if stopped():
+            break
         walk(root)
     return preview
 
@@ -141,4 +201,4 @@ def preview_transfer(
     return preview
 
 
-__all__ = ["OperationPreview", "preview_delete", "preview_transfer"]
+__all__ = ["OperationPreview", "is_hidden_entry", "preview_delete", "preview_transfer"]

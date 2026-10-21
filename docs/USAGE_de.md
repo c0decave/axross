@@ -63,8 +63,8 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   **Strg+Shift+V**, schließen mit **Strg+W**.
 - Aktives Pane bekommt blauen Rahmen; das **Ziel**-Pane (Kopierziel)
   bekommt einen grünen. Letztes fokussiertes Pane wird Ziel.
-- Ein Pane wird aktiv, wenn die Maus 1 s darin ruht.
-  **View → Activate Pane** stellt 1, 2 oder 3 s ein, oder **On Click**.
+- Ein Pane wird aktiv, wenn die Maus 0,5 s darin ruht.
+  **View → Activate Pane** stellt 0,5, 1, 2 oder 3 s ein, oder **On Click**.
   Der Tastaturfokus folgt nur aus der Dateiliste eines anderen Panes,
   nie aus einem Textfeld.
 - **Alt+Links / Alt+Rechts** durchschreiten Pane-Historie;
@@ -154,7 +154,8 @@ native Protokoll sie nicht kennt.
 | Duplicate Finder | View-Menü | Gruppieren nach Content-Hash, `ax-cas://…`-URLs kopieren; markierte Kopien in den axross-Trash verschieben, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. |
 | View Media… / View Selected Media… | Rechtsklick, View-Menü | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
 | Show / Remove / Export Metadata… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
-| Move to Trash | Rechtsklick | Universaler Papierkorb. |
+| Move to Trash | Rechtsklick | Universaler Papierkorb. Läuft wie Delete Permanently: im Hintergrund, mit derselben zweiten Rückfrage für Hidden Entries. |
+| Delete Permanently | Rechtsklick, `Del` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, Hidden Entries), dann die Rückfrage. Ein ausgewählter Ordner mit Hidden Entries (Dotfiles oder Hidden-Flag des Backends) - oder einer, den die Prüfung nicht vollständig lesen konnte - braucht ein zweites OK mit No als Default. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, Cancel hält nach dem laufenden Eintrag an (Gelöschtes bleibt gelöscht), Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
 | Show Trash… | Rechtsklick | Wiederherstellen / Permanent-Löschen-Dialog. |
 | Show Versions… | Rechtsklick | Snapshot-Browser — Save Version As, Restore as Current. |
 | Show Checksum… | Rechtsklick | Native-Checksum (S3 ETag, Drive md5, ssh sha256sum…) mit Stream-Hash-Fallback. |
@@ -193,6 +194,9 @@ dasselbe, ebenso der Maximize-Button der Titelleiste.
 - **Hex-Editor** — read-only; nützlich für Triage auf Remote-Dateien.
 - **Bild-Viewer** — F3 / Doppelklick, MIME-Allowlist, Größen-
   kappen.
+- **PDF** — F3 / Doppelklick öffnet das PDF allein im Media Viewer
+  (braucht QtPdf; ohne QtPdf oder im Security-Mode `paranoid` öffnet
+  stattdessen der Hex-Editor, das Log nennt den Grund).
 - **Media Viewer** — *View → View Media…* oder Rechtsklick → *View
   Media…* auf den Ordner (*View Selected Media…* für ausgewählte
   Dateien und Ordner). Wählbar sind die Typen (Bilder inkl. SVG,
@@ -202,9 +206,11 @@ dasselbe, ebenso der Maximize-Button der Titelleiste.
   Start: **Overview first** (Thumbnail-Grid mit Filter, Sortierung
   nach Name / Datum / Ordner und Größen-Slider; Enter oder
   Doppelklick öffnet), **Start slideshow** oder **Click through**.
-  Im Viewer: Links / Rechts / PageUp / PageDown / Space blättern
-  (Stopp am ersten und letzten Element; im PDF seitenweise, nach der
-  letzten Seite zum nächsten Element), Home / End, F11 Fullscreen,
+  Im Viewer: Links / Rechts / PageUp / PageDown / Space gehen zur
+  vorigen / nächsten Datei (Stopp am ersten und letzten Element; auch
+  im PDF, und die Slideshow blättert nur in einem allein geöffneten PDF). Ein PDF mit
+  mehr als einer Seite bekommt eine Seitensteuerung `← n / m →` in der
+  Button-Leiste; Hoch / Runter blättern seine Seiten. Home / End, F11 Fullscreen,
   Ctrl+M Maximize / Restore (das Fenster merkt sich Größe, Position
   und Maximize-Zustand für das nächste Öffnen),
   Mausrad oder `+` / `-` Zoom, `F` Fit, `1` 100 %, `R` drehen, `S`
@@ -547,7 +553,9 @@ Keyring.
 `api.open_agent_tab`), ihm Tools geben (`api.add_agent_tool`), Topics
 hinzufügen (`api.add_agent_topic`) und seinen Events folgen
 (`api.on_agent_event`). Die mitgelieferte Extension *Agent Stats* zeigt
-ein kleines Fenster, immer oben und verschiebbar, mit Aufgaben,
+ein kleines Fenster über dem Hauptfenster (ein normales Fenster:
+verschieben, Größe ändern, schließen; auch unter Tiling-Window-Managern
+schwebend) mit Aufgaben,
 Antworten, Tool-Aufrufen, Fehlern, Tokens und Zeit.
 
 Ein Profil, dessen Server nicht auf diesem Rechner oder in seinem Netz

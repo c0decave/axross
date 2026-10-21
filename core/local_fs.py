@@ -70,6 +70,23 @@ def clear_name_cache() -> None:
 
 log = logging.getLogger(__name__)
 
+
+def stat_hidden_flag(st) -> bool:
+    """True when the stat result itself marks the entry hidden: Windows
+    ``st_file_attributes & FILE_ATTRIBUTE_HIDDEN`` or macOS / BSD
+    ``st_flags & UF_HIDDEN`` (``chflags hidden``). Linux has neither field;
+    a missing or unreadable field is "not flagged", never an error. Reads
+    only the stat the listing already made - no extra system call."""
+    for field_name, bit in (
+        ("st_file_attributes", stat_module.FILE_ATTRIBUTE_HIDDEN),
+        ("st_flags", stat_module.UF_HIDDEN),
+    ):
+        value = getattr(st, field_name, 0)
+        if isinstance(value, int) and value & bit:
+            return True
+    return False
+
+
 # The errors that say nothing is at a path: it is missing, a file stands
 # where a folder of the path should be, or the name is one the
 # filesystem cannot hold.
@@ -318,4 +335,5 @@ class LocalFS(SessionLifecycle):
             group=group,
             accessed=accessed,
             created=created,
+            attr_hidden=stat_hidden_flag(st),
         )
