@@ -103,10 +103,23 @@ Terminal erscheint nichts, das Log geht wie immer in die Log-Datei.
 laufen ohnehin im Terminal, ebenso ein Start, dessen Ausgabe in eine Pipe
 oder Datei geht. Unter Linux ohne `DISPLAY`/`WAYLAND_DISPLAY` (SSH ohne
 X-Forwarding) bleibt axross ebenfalls im Vordergrund, damit die Meldung
-„no screen" im Terminal ankommt.
+„no screen" im Terminal ankommt. Das Terminal kommt zurück, sobald das
+Fenster steht (bei einem warmen Start unter einer Sekunde).
+
+**Startup Watchdog.** Ist das Hauptfenster 20 s nach dem Start noch nicht
+da, schreibt axross den Stack jedes Threads nach
+`~/.local/state/axross/logs/crash.log` und meldet auf stderr (bei einem
+Hintergrund-Start auf dem Terminal, aus dem gestartet wurde) und im Log,
+was passiert ist, wo es hängt - etwa in welcher Extension - und was zu tun
+ist. Der Prozess läuft weiter; erscheint das Fenster doch noch, steht das
+im Log. `AXROSS_STARTUP_WATCHDOG_SECONDS` ändert die Grenze, `0` schaltet
+den Watchdog ab. Eine Extension, in der ein Start hängen geblieben oder
+abgestürzt ist, lädt der nächste Start nicht (siehe `docs/EXTENSIONS.md`);
+`--safe-mode` lädt beim Start gar keine Extension.
 
 ```bash
 axross                       # Normal-Start (GUI); aus einem Terminal im Hintergrund
+axross --safe-mode           # GUI ohne Extensions (für einen Start, der in einer hängt)
 axross --foreground          # GUI, das Terminal bleibt belegt
 axross --verbose             # GUI im Vordergrund, Log (INFO) auch auf stderr
 axross --debug               # Mit Debug-Logging auf stderr (Vordergrund)

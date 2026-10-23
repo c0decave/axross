@@ -486,12 +486,13 @@ class WorkspaceMixin:
 
     def _terminal_start_folder(self) -> str:
         """Where a new local shell starts: the folder the active file pane
-        shows when it is a local one that still exists, else home."""
+        shows when it is a local one, else home (the shell falls back to
+        home itself when the folder is gone - see _local_folder_or_home)."""
         from core.local_fs import LocalFS
 
         pane = self._active_pane
         path = pane.current_path if pane is not None and type(pane.backend) is LocalFS else None
-        return self._existing_local_folder(path)
+        return self._local_folder_or_home(path)
 
     def add_terminal_pane(self, ws: Workspace | None = None, *, cwd: str | None = None):
         """A local shell as a pane of its own in *ws* (default: the current
@@ -502,7 +503,7 @@ class WorkspaceMixin:
         ws = ws if ws is not None else self._current_ws
         if ws not in self._workspaces:
             return None
-        folder = self._existing_local_folder(cwd) if cwd else self._terminal_start_folder()
+        folder = self._local_folder_or_home(cwd) if cwd else self._terminal_start_folder()
         term = self._preset_make_terminal_pane("local", cwd=folder)
         root = ws.root
         root.addWidget(term)

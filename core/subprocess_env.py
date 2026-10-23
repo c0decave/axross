@@ -64,6 +64,14 @@ def clean_child_env(env: dict | None = None, **overrides: str) -> dict:
             # genuinely needs one passes it via ``overrides``.
             del result[var]
 
+    # What axross set for itself (core.multimedia_env: no GPU probing by
+    # Qt Multimedia) is not the user's choice: a host program gets the
+    # environment the user would give it.
+    from core.multimedia_env import set_by_axross
+
+    for name in set_by_axross():
+        result.pop(name, None)
+
     result.update(overrides)
     return result
 

@@ -17,6 +17,23 @@ read, change and send anything you can. Therefore:
 - An extension that raises an error never takes axross down: the error is
   shown in the status bar and in the manager's *Status* column, and
   whatever the extension registered before a failing `activate()` is removed.
+- An extension that **hangs or crashes** axross while its code runs (its
+  module code or `activate()`) is not loaded by the next start. Before it
+  runs, axross writes a marker (extension, pid, time) to
+  `~/.local/state/axross/extension-activation/` and removes it afterwards; a
+  start that finds the marker of a process that is gone - or one that has
+  been activating for longer than 20 s - skips that extension. It stays
+  switched on: a notice offers **Try Again** (load it now; a new hang is
+  caught by the next start again) and **Keep Off** (switch it off); closing
+  the notice keeps it skipped, and **Reload Extensions** or switching it on
+  again in the manager is a new try. The log says which process stopped in
+  which extension; `suspended` in `extensions.json` lists the skipped ones.
+  An `activate()` that takes longer than 1 s is logged as a warning, and
+  every load logs its duration.
+- `axross --safe-mode` loads **no** extension at the start (they stay
+  switched on; switching one on in the manager still loads it). A start
+  whose window does not come within 20 s says so on stderr and names the
+  extension it is stuck in - see the start modes in the handbook.
 
 ## Where they live
 

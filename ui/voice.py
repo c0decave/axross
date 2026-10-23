@@ -21,6 +21,7 @@ from typing import Callable
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
+from core import multimedia_probe as MPROBE
 from core import voice_audio as VA
 from core import voice_models as VM
 from core import voice_settings as VS
@@ -41,6 +42,29 @@ _LINE_VOICE = "piper-en-ryan"
 # -- sound card -------------------------------------------------------------------------------
 
 
+class AudioPending(OSError):
+    """Qt Multimedia is still being tried in a child (core.multimedia_probe)."""
+
+
+class AudioUnavailable(OSError):
+    """Qt Multimedia did not answer in the child: it is off for this run."""
+
+
+def _audio_ready() -> None:
+    """Return when the microphone and speaker may touch Qt Multimedia;
+    raise AudioPending (the probe is started) or AudioUnavailable (why).
+
+    QMediaDevices, QAudioSource and QAudioSink start Qt's multimedia
+    backend on the GUI thread and talk to the audio server; a GPU driver or
+    an audio server that hangs there froze the whole window."""
+    result = MPROBE.cached()
+    if result is None:
+        MPROBE.start()
+        raise AudioPending(tr("Audio is still starting - try again in a moment."))
+    if not result.ok:
+        raise AudioUnavailable(MPROBE.unavailable_text(result))
+
+
 class QtRecorder(QObject):
     """The default microphone at 16 kHz mono int16 (converted when the
     device offers something else)."""
@@ -54,6 +78,7 @@ class QtRecorder(QObject):
         self._convert = None
 
     def start(self) -> None:
+        _audio_ready()
         from PyQt6.QtMultimedia import QAudioFormat, QAudioSource, QMediaDevices
 
         device = QMediaDevices.defaultAudioInput()
@@ -94,6 +119,7 @@ class QtRecorder(QObject):
 def _qt_sink(rate: int):
     """(QAudioSink, its QIODevice, the rate it plays) for mono int16 at
     *rate*, or the device's own rate when it takes no other."""
+    _audio_ready()
     from PyQt6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 
     device = QMediaDevices.defaultAudioOutput()
@@ -159,6 +185,8 @@ class QtPlayer(QObject):
         self._close()
         try:
             self._sink, self._io, self._device_rate = self._sink_factory(rate)
+        except AudioPending:
+            return False  # the queue waits; the timer tries again (bounded by the probe)
         except OSError as exc:
             self.stop()
             self.failed.emit(str(exc))
@@ -252,6 +280,8 @@ class VoiceController(QObject):
         self._stt = stt_worker or VW.VoiceWorker()
         self._recorder_factory = recorder_factory or QtRecorder
         self._player = player if player is not None else QtPlayer()
+        if recorder_factory is None or player is None:
+            MPROBE.start()  # the real sound card: its answer is there before the first use
         self._player.level.connect(self._on_player_level)
         self._player.drained.connect(self._on_drained)
         if hasattr(self._player, "failed"):
@@ -528,6 +558,9 @@ class VoiceController(QObject):
         recorder.data.connect(self._on_data)
         try:
             recorder.start()
+        except (AudioPending, AudioUnavailable) as exc:
+            self.notice.emit(str(exc))
+            return False
         except OSError as exc:
             self.notice.emit(tr("The microphone could not be opened: {error}").format(error=exc))
             return False

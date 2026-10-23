@@ -10,6 +10,7 @@ import signal
 import struct
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -547,10 +548,17 @@ class TerminalEmulator(QPlainTextEdit):
 
 
 class LocalTerminalSession:
-    """A local shell session using pty, optionally started in *cwd*."""
+    """A local shell session using pty, optionally started in *cwd*.
+
+    The shell enters *cwd* itself, after the fork: the GUI thread never
+    asks the filesystem about it (a folder on a dead hard network mount
+    never answers). A folder it cannot enter - gone, or not a folder -
+    makes it start in the home folder, with a line saying so."""
 
     def __init__(self, cwd: str | None = None):
         self._cwd = cwd
+        # Taken now, in the parent: a fork must not look anything up.
+        self._fallback_cwd = str(Path.home())
         self._master_fd: int | None = None
         self._pid: int | None = None
         self._running = False
@@ -578,15 +586,23 @@ class LocalTerminalSession:
             # libreadline against ours — "symbol lookup error:
             # undefined symbol: rl_trim_arg_from_keyseq".
             env = clean_child_env(TERM="xterm")
-            if self._cwd:
+            # The child must reach execve whatever happens: falling back
+            # into the parent's Python code from a fork would run a second
+            # copy of the application - hence every step guarded.
+            # Without a folder the shell starts where axross runs, as always.
+            for index, folder in enumerate((self._cwd, self._fallback_cwd) if self._cwd
+                                           else ()):
                 try:
-                    os.chdir(self._cwd)
-                    env["PWD"] = self._cwd
+                    os.chdir(folder)
+                    env["PWD"] = folder
+                    break
                 except OSError as exc:
-                    # The child must reach execve whatever happens: falling
-                    # back into the parent's Python code from a fork would
-                    # run a second copy of the application.
-                    os.write(2, f"axross: cannot enter {self._cwd}: {exc}\r\n".encode())
+                    try:
+                        os.write(2, f"axross: cannot enter {folder}: {exc}\r\n".encode())
+                    except OSError:
+                        pass
+                    if index:
+                        break
             os.execve(shell, [shell], env)
         else:
             self._pid = pid
@@ -605,8 +621,10 @@ class LocalTerminalSession:
         from core.subprocess_env import clean_child_env
 
         shell = os.environ.get("COMSPEC", "cmd.exe")
+        # ConPTY takes the folder up front and refuses one that is gone.
+        cwd = self._cwd if self._cwd and os.path.isdir(self._cwd) else self._fallback_cwd
         self._winpty = PtyProcess.spawn(
-            [shell], cwd=self._cwd or None, env=clean_child_env(TERM="xterm")
+            [shell], cwd=cwd or None, env=clean_child_env(TERM="xterm")
         )
         self._pid = getattr(self._winpty, "pid", None)
         self._running = True

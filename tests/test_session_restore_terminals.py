@@ -52,6 +52,13 @@ def _wait_dead(pid: int, timeout: float = 3.0) -> bool:
     return not _alive(pid)
 
 
+def _same_dir(a, b) -> bool:
+    try:
+        return a is not None and os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 class _TerminalWindowCase(unittest.TestCase):
     """A window with a private session.json; terminals are shut down after."""
 
@@ -222,7 +229,17 @@ class TerminalsComeBackOnStartTest(_TerminalWindowCase):
                 }
             }
         )
-        self.assertEqual(self.win._terminal_panes[0]._session._cwd, str(self.home))
+        # The shell finds the folder gone and starts at home itself: the GUI
+        # thread no longer asks the filesystem (a dead network mount there
+        # kept the window from appearing - tests/test_restore_dead_path.py).
+        term = self.win._terminal_panes[0]
+        self.assertEqual(term._session._fallback_cwd, str(self.home))
+        end = time.time() + 10
+        while time.time() < end and not _same_dir(term.working_directory(), self.home):
+            self.app.processEvents()
+            time.sleep(0.05)
+        self.assertTrue(_same_dir(term.working_directory(), self.home),
+                        term.working_directory())
 
     def test_edge_a_restored_terminal_closes_with_its_close_button(self) -> None:
         _term, pid = self._open_local_terminal()

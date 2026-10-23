@@ -4,6 +4,7 @@ away) and animated visualizations a click switches between."""
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import posixpath
@@ -56,6 +57,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.i18n import tr
+
+log = logging.getLogger(__name__)
 
 try:  # the equalizer and the visualizations need numpy; playback does not
     import numpy as np
@@ -1239,6 +1242,69 @@ class SimpleEngine(QObject):
 # -- the panel -----------------------------------------------------------------------
 
 
+def default_engine():
+    """The engine a panel builds itself: the equalizer one with numpy."""
+    return EqEngine() if np is not None else SimpleEngine()
+
+
+class PendingEngine(QObject):
+    """Stands in for the engine until Qt Multimedia answered
+    (:meth:`PlayerPanel._start_engine`): it plays nothing, creates no
+    multimedia object and keeps what the panel asked for - the track, its
+    position, play, volume, gains - for the real engine. A panel whose
+    audio does not start keeps it, so the saved state stays intact."""
+
+    finished_playing = pyqtSignal()
+    changed = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.state = "stopped"
+        self.error = ""
+        self.path = ""
+        self.loaded = False
+        self.position = 0
+        self.wants_play = False
+        self.gains: list[float] | None = None
+
+    def load(self, path: str) -> None:
+        self.path, self.loaded, self.position, self.wants_play = path, True, 0, False
+
+    def play(self) -> None:
+        self.wants_play = self.loaded
+
+    def pause(self) -> None:
+        self.wants_play = False
+
+    def stop(self) -> None:
+        self.wants_play = False
+
+    def seek(self, ms) -> None:
+        self.position = max(0, int(ms))
+
+    def set_volume(self, volume: float) -> None:
+        pass  # the panel's slider holds it; attaching applies it
+
+    def set_gains(self, gains) -> None:
+        self.gains = [float(g) for g in gains]
+
+    def set_eq_enabled(self, on: bool) -> None:
+        pass  # the panel's check box holds it; attaching applies it
+
+    def position_ms(self) -> int:
+        return self.position
+
+    def duration_ms(self) -> int:
+        return 0
+
+    def current_bars(self, n_bars: int = 32):
+        return None
+
+    def current_samples(self):
+        return None
+
+
 #: The visualizations, in the order a click on them goes through them.
 VISUALIZER_NAMES = {
     "spectrum": "Spectrum",
@@ -1603,19 +1669,35 @@ def _local_drop_context(mime):
 
 
 class PlayerPanel(QWidget):
+    """The player. Given an *engine* (the tests) it uses it at once.
+    Without one it comes up with the controls off and builds its engine
+    only after core.multimedia_probe found that Qt Multimedia answers
+    (*audio_probe*, run through *run_in_background*): Qt starts its backend
+    in the thread of the first multimedia object, here the GUI thread, and
+    a GPU driver or an audio server that hangs there froze the whole window
+    (axross-full showed no window: QAudioDecoder() -> cuInit, for ever).
+    When the probe fails the panel says why and stays off."""
+
     #: The title of the track now playing ("" when none).
     track_changed = pyqtSignal(str)
+    #: The audio did not start; the text the panel shows.
+    engine_failed = pyqtSignal(str)
 
-    def __init__(self, engine=None, state_path=None, run_in_background=None) -> None:
+    def __init__(self, engine=None, state_path=None, run_in_background=None, *,
+                 engine_factory=None, audio_probe=None) -> None:
         super().__init__()
-        if engine is None:
-            engine = EqEngine() if np is not None else SimpleEngine()
-        self.engine = engine
-        self.engine.finished_playing.connect(self._next_after_end)
-        self.engine.changed.connect(self._refresh)
-        failed = getattr(self.engine, "failed", None)
-        if failed is not None:
-            failed.connect(self._track_failed)
+        #: engine_factory() -> engine, called on the GUI thread once the probe passed.
+        self._engine_factory = engine_factory or default_engine
+        #: audio_probe() -> core.multimedia_probe.ProbeResult; blocks, so it
+        #: runs through run_in_background.
+        self._audio_probe = audio_probe
+        self.engine_ready = engine is not None
+        #: The text shown when the audio did not start ("" otherwise).
+        self.audio_error = ""
+        self._shut_down = False
+        self.engine = engine if engine is not None else PendingEngine()
+        if self.engine_ready:
+            self._connect_engine(self.engine)
         self.repeat = "off"
         self.shuffle = False
         self.muted = False
@@ -1649,6 +1731,11 @@ class PlayerPanel(QWidget):
         top.addWidget(self.cover)
         top.addWidget(self.now_playing, 1)
         root.addLayout(top)
+        #: "Starting audio…" until the engine is there, or why it is not.
+        self.audio_status = QLabel(tr("Starting audio…"))
+        self.audio_status.setWordWrap(True)
+        self.audio_status.setVisible(not self.engine_ready)
+        root.addWidget(self.audio_status)
         position = QHBoxLayout()
         self.seek_slider = SeekSlider()
         self.seek_slider.setRange(0, 0)
@@ -1681,7 +1768,7 @@ class PlayerPanel(QWidget):
         self.repeat_button.setCheckable(True)
         self.prev_button.clicked.connect(self.previous_track)
         self.play_button.clicked.connect(self.toggle_play)
-        self.stop_button.clicked.connect(self.engine.stop)
+        self.stop_button.clicked.connect(lambda: self.engine.stop())
         self.next_button.clicked.connect(self.next_track)
         self.shuffle_button.toggled.connect(self.set_shuffle)
         self.repeat_button.clicked.connect(self._cycle_repeat)
@@ -1797,8 +1884,98 @@ class PlayerPanel(QWidget):
         self._clock.setInterval(250)
         self._clock.timeout.connect(self._refresh_time)
         self._clock.start()
+        self._set_transport_enabled(self.engine_ready)
         if self._state_path:
             self.restore_state()
+        if not self.engine_ready:
+            self._start_engine()
+
+    # -- the engine ------------------------------------------------------------------------
+
+    def _connect_engine(self, engine) -> None:
+        engine.finished_playing.connect(self._next_after_end)
+        engine.changed.connect(self._refresh)
+        failed = getattr(engine, "failed", None)
+        if failed is not None:
+            failed.connect(self._track_failed)
+
+    def _set_transport_enabled(self, on: bool) -> None:
+        for button in (self.prev_button, self.play_button, self.stop_button, self.next_button):
+            button.setEnabled(on)
+
+    def _start_engine(self) -> None:
+        """Probe Qt Multimedia off the GUI thread; the engine follows."""
+        probe = self._audio_probe
+        if probe is None:
+            from core import multimedia_probe
+
+            probe = multimedia_probe.probe
+        self._background(probe, self._probe_done, self._probe_failed)
+
+    def _gone(self) -> bool:
+        from PyQt6 import sip
+
+        return self._shut_down or sip.isdeleted(self)
+
+    def _probe_done(self, result) -> None:
+        if self._gone():
+            return  # the panel closed meanwhile: no engine any more
+        if not result.ok:
+            self._audio_failed(result.reason)
+            return
+        try:
+            engine = self._engine_factory()
+        except Exception as exc:  # noqa: BLE001 - shown, the rest of axross goes on
+            log.warning("Media Player: the engine could not be built", exc_info=True)
+            self._audio_failed(str(exc) or type(exc).__name__)
+            return
+        self._attach_engine(engine)
+
+    def _probe_failed(self, exc) -> None:
+        if not self._gone():
+            self._audio_failed(str(exc) or type(exc).__name__)
+
+    def _audio_failed(self, reason: str) -> None:
+        text = tr("Audio does not start on this system: {reason}. The Media Player is off; "
+                  "everything else works.").format(reason=reason)
+        self.audio_error = text
+        self.audio_status.setText(text)
+        self.audio_status.setVisible(True)
+        self._set_transport_enabled(False)
+        log.warning("Media Player: %s", text)
+        self.engine_failed.emit(text)
+
+    def _attach_engine(self, engine) -> None:
+        """Use *engine* from now on and hand it what was asked for while
+        the panel waited: the track (at its position, playing if asked),
+        the volume, the gains and the equalizer switch."""
+        pending = self.engine if isinstance(self.engine, PendingEngine) else None
+        self.engine = engine
+        self._connect_engine(engine)
+        self.visualizer.engine = engine
+        self.engine_ready = True
+        self.audio_error = ""
+        self.audio_status.setVisible(False)
+        self._set_transport_enabled(True)
+        self._apply_volume()
+        if pending is None:
+            return
+        if pending.gains is not None:
+            engine.set_gains(pending.gains)
+        if isinstance(engine, EqEngine):
+            engine.set_eq_enabled(self.eq_check.isChecked())
+        if pending.loaded:
+            engine.load(pending.path)
+            if pending.position > 0:
+                engine.seek(pending.position)
+            if self._current is not None and self._row_of(self._current) >= 0 \
+                    and self._current.data(_PATH_ROLE) == pending.path:
+                self._read_tags(pending.path)
+            if pending.wants_play:
+                engine.play()
+                self.visualizer.timer.start()
+        self._refresh()
+        self._refresh_time()
 
     # -- playlist --------------------------------------------------------------------------
 
@@ -2320,9 +2497,13 @@ class PlayerPanel(QWidget):
     # -- now playing -----------------------------------------------------------------------
 
     def _read_tags(self, path: str) -> None:
-        """Title, artist, album, length and cover from Qt's metadata reader."""
+        """Title, artist, album, length and cover from Qt's metadata reader
+        (a QMediaPlayer: not before the engine is there - _attach_engine
+        reads them then)."""
         self.now_playing.setText(os.path.basename(path))
         self.cover.clear()
+        if not self.engine_ready:
+            return
         try:
             from PyQt6.QtMultimedia import QMediaMetaData, QMediaPlayer
         except ImportError:  # pragma: no cover
@@ -2500,6 +2681,7 @@ class PlayerPanel(QWidget):
 
     def shutdown(self) -> None:
         """The extension unloads (or the window closes): save, then stop."""
+        self._shut_down = True  # a probe answering later builds no engine
         self.save_state()
         self._state_path = None  # nothing after this writes
         self._clock.stop()
@@ -2567,6 +2749,9 @@ def activate(api):
                         run_in_background=lambda work, done, error: api.run_in_background(
                             work, on_done=done, on_error=error))
     panel.drop_resolver = getattr(api, "drop_context", None)
+    panel.engine_failed.connect(api.notify)
+    if panel.audio_error:  # a host that answered at once
+        api.notify(panel.audio_error)
     _PANELS.append(panel)
     dock = api.add_dock(tr("Media Player"), panel)
     bar = dock.titleBarWidget() if dock is not None else None

@@ -305,9 +305,16 @@ def _no_screen_message(app) -> str | None:
 #: Set in the environment of the re-executed child of a detached start.
 DETACHED_ENV = "AXROSS_DETACHED"
 #: How long a detached start watches its child for an immediate failure
-#: before it gives the terminal back.
+#: before it gives the terminal back - when the startup watchdog is
+#: switched off. With it (the default) the parent waits until the child
+#: reports its window shown - 0.7-0.8 s measured for a warm start from a
+#: terminal, less than this fixed second used to cost - or reports a stall,
+#: at most the watchdog's bound plus core.startup_guard.DETACH_GRACE_SECONDS.
 DETACH_CHECK_SECONDS = 1.0
 _TRUTHY = {"1", "true", "yes", "on"}
+#: The pipe to the parent of a detached start (core.startup_guard), taken
+#: from the environment in main() before anything can start a child.
+_NOTIFY_FD: int | None = None
 
 
 def should_detach(
@@ -376,13 +383,23 @@ def detach_from_terminal() -> bool:
     imported yet, but a forked copy of a process with threads is not safe
     to continue. A frozen one-file child extracts itself again
     (core.subprocess_env.relaunch_env): this process's folder is deleted
-    when it exits. False when the child cannot be started, or ends with an
-    error at once - its output goes nowhere, so the caller then runs in
-    the foreground, where the error reaches the terminal."""
+    when it exits.
+
+    The child gets a pipe (core.startup_guard): this process gives the
+    terminal back once the child reports its window shown, and prints the
+    child's startup watchdog message when the window does not come - the
+    child's own stderr goes nowhere. False when the child cannot be
+    started, or ends with an error at once - its output goes nowhere, so
+    the caller then runs in the foreground, where the error reaches the
+    terminal."""
+    from core import startup_guard as SG
     from core.subprocess_env import relaunch_env
 
     env = relaunch_env(os.environ, frozen=bool(getattr(sys, "frozen", False)))
     env[DETACHED_ENV] = "1"
+    bound = SG.watchdog_seconds(env)
+    read_fd, write_fd = os.pipe()
+    env[SG.NOTIFY_FD_ENV] = str(write_fd)
     try:
         child = subprocess.Popen(
             _child_command(),
@@ -391,20 +408,28 @@ def detach_from_terminal() -> bool:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
             close_fds=True,
+            pass_fds=(write_fd,),
             env=env,
         )
     except OSError:
+        os.close(read_fd)
         return False
+    finally:
+        os.close(write_fd)  # the child holds its own copy
     try:
-        code = child.wait(timeout=DETACH_CHECK_SECONDS)
-    except subprocess.TimeoutExpired:
-        return True  # still starting: the normal case
-    if code == 0:
-        return True
-    print(f"axross: the background start ended with status {code}; "
-          "starting in the foreground instead (--foreground does this directly).",
-          file=sys.stderr)
-    return False
+        if bound > 0:
+            return SG.await_detached_child(
+                child, read_fd, bound + SG.DETACH_GRACE_SECONDS, sys.stderr,
+                crash_path=LOG_DIR / CRASH_FILE_NAME,
+            )
+        return SG.await_detached_child(
+            child, read_fd, DETACH_CHECK_SECONDS, sys.stderr, crash_path=None,
+            report_timeout=False,
+        )
+    except KeyboardInterrupt:
+        return True  # the child runs on in its own session; the prompt is back
+    finally:
+        os.close(read_fd)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -431,11 +456,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep the terminal: started from a terminal, the window otherwise "
         "runs in the background and the prompt returns at once",
     )
+    parser.add_argument(
+        "--safe-mode",
+        action="store_true",
+        help="Load no extension at the start (they stay switched on; Extensions > "
+        "Manage Extensions… can still switch one on). For a start that hangs or "
+        "crashes in an extension",
+    )
     _add_mode_arguments(parser)
     return parser
 
 
 def main() -> int:
+    global _NOTIFY_FD
     # Before anything can start a child: give the process the environment
     # it started with (a frozen bundle points LD_LIBRARY_PATH, QT_PLUGIN_PATH
     # and more into its unpacked folder, and host programs then load our
@@ -444,6 +477,12 @@ def main() -> int:
 
     restore_loader_env(bundle_dir=getattr(sys, "_MEIPASS", None) if getattr(sys, "frozen", False)
                        else None)
+    # Before anything can create a Qt Multimedia object: Qt's FFmpeg backend
+    # must not try the GPU drivers (an NVIDIA driver hung in cuInit inside
+    # QAudioDecoder() and the window never came). See core.multimedia_env.
+    from core.multimedia_env import apply_no_gpu_probe
+
+    apply_no_gpu_probe()
     if sys.argv[1:] == ["--agent-worker"]:
         # The agent in its own process (core.agent_sandbox starts it, mostly
         # in a sandbox): no GUI, no log files, stdin/stdout are its channel.
@@ -462,9 +501,20 @@ def main() -> int:
         from core.voice_worker import _child_main as voice_worker_main
 
         return voice_worker_main()
+    if sys.argv[1:] == ["--multimedia-probe"]:
+        # Qt Multimedia tried in a child before the GUI touches it
+        # (core.multimedia_probe starts it): no window, stdout is its channel.
+        from core.multimedia_probe import _child_main as multimedia_probe_main
+
+        return multimedia_probe_main()
     args = build_parser().parse_args()
     detach = should_detach(args, os.environ, (sys.stdout, sys.stderr))
     consume_detached_marker(os.environ)
+    # The detached parent's pipe (in its child only): out of the environment
+    # before anything can start a child of its own.
+    from core.startup_guard import take_notify_fd
+
+    _NOTIFY_FD = take_notify_fd(os.environ)
     if detach and detach_from_terminal():
         return 0
     return _run(args)
@@ -768,6 +818,25 @@ def _run(args) -> int:
     if smoke_ms == -1:
         return 2
 
+    # Armed before anything of the GUI is built: everything up to the shown
+    # window (imports, QApplication, the window, extensions, the restored
+    # layout) is watched; a window that does not come is reported instead
+    # of a silent process (core.startup_guard).
+    from core import startup_guard as SG
+
+    watchdog = SG.StartupWatchdog(
+        SG.watchdog_seconds(),
+        crash_file=_crash_file,
+        crash_path=crash_log,
+        notify_fd=_NOTIFY_FD,
+    )
+    watchdog.start()
+    if args.safe_mode:
+        from core import extensions as EX
+
+        EX.set_safe_mode(True)
+        log.info("Safe mode: no extension is loaded at the start")
+
     from core.backend_registry import init_registry
 
     init_registry()
@@ -809,6 +878,10 @@ def _run(args) -> int:
     # come back as placeholders with a Reconnect button.
     window.restore_layout_on_start()
     window.show()
+    # Disarmed on the first event-loop pass: the window is up then.
+    from PyQt6.QtCore import QTimer
+
+    QTimer.singleShot(0, watchdog.window_shown)
 
     log.info("Application ready")
     if smoke_ms is not None:

@@ -87,6 +87,7 @@ from PyQt6.QtWidgets import (
 
 from core import media_collect as MC
 from core import media_load as ML
+from core import multimedia_probe as MPROBE
 from core.i18n import tr
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
@@ -740,6 +741,8 @@ class MediaViewer(QWidget):
         self._pdf_view = None
         self._player = None
         self._video_widget = None
+        #: (index, entry) of the video waiting for core.multimedia_probe.
+        self._probe_wait = None
         self._slideshow = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._build_ui()
@@ -1074,11 +1077,45 @@ class MediaViewer(QWidget):
             self._show_placeholder(tr("Video playback needs QtMultimedia, which is not installed"))
             self._arm_slideshow()
             return
+        if self._player is None:
+            # QMediaPlayer, QAudioOutput and QVideoWidget start Qt's
+            # multimedia backend in this (the GUI) thread, and a GPU driver
+            # or audio server that hangs there freezes the window: a child
+            # tries it first (core.multimedia_probe).
+            result = MPROBE.cached()
+            if result is None:
+                self.mode = "starting"
+                self._show_placeholder(tr("Starting video playback…"))
+                self._probe_wait = (self.current_index, entry)
+                MPROBE.probe_async(self._multimedia_checked, context=self)
+                return
+            if not result.ok:
+                item = self.current_item()
+                self.mode = "placeholder"
+                self._show_placeholder(
+                    tr("Cannot play {name}").format(name=item.name if item else "")
+                    + "\n\n" + MPROBE.unavailable_text(result)
+                )
+                self._arm_slideshow()
+                return
         player = self._ensure_player()
         self.mode = "video"
         self.pages.setCurrentWidget(self._video_widget)
         player.setSource(QUrl.fromLocalFile(entry.local_path))
         player.play()
+
+    def _multimedia_checked(self, _result) -> None:
+        """The probe answered: show the waiting video, if it is still the
+        one on screen (the answer itself is cached in MPROBE)."""
+        wait, self._probe_wait = self._probe_wait, None
+        if wait is None:
+            return
+        index, entry = wait
+        if self.mode != "starting" or self.current_index != index \
+                or self._prepared.get(index) is not entry:
+            return
+        self._display_video(entry)
+        self._update_status()
 
     def _stop_media(self) -> None:
         if self._player is not None:
@@ -1223,7 +1260,7 @@ class MediaViewer(QWidget):
         """(Re)start the countdown for the item on screen; a video plays to
         its end instead, a loading item starts it once shown."""
         self.slideshow_timer.stop()
-        if self._slideshow and self.mode not in ("loading", "video", "empty"):
+        if self._slideshow and self.mode not in ("loading", "starting", "video", "empty"):
             self.slideshow_timer.start(self._interval())
 
     def _slideshow_tick(self) -> None:

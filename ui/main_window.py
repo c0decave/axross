@@ -5126,10 +5126,16 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         return active_pane, target_pane
 
     @staticmethod
-    def _existing_local_folder(path) -> str:
-        """*path* when it is a local folder, else the home folder: a folder
-        removed since the session was saved is no error worth a dialog."""
-        if isinstance(path, str) and path and os.path.isdir(path):
+    def _local_folder_or_home(path) -> str:
+        """*path* when it names an absolute local folder, else the home
+        folder - without asking the filesystem. This runs in the GUI thread,
+        also before the window is shown, and a folder on a dead hard network
+        mount (NFS, sshfs) never answers: one ``isdir`` there kept the
+        window from ever appearing. Whoever uses the folder checks it where
+        waiting is harmless: a pane lists it in the background and shows
+        home when it is gone (navigate_async's *fallback*), a shell enters
+        it itself and starts at home when it cannot (LocalTerminalSession)."""
+        if isinstance(path, str) and path and os.path.isabs(path):
             return path
         return str(Path.home())
 
@@ -5138,7 +5144,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         terminal: a placeholder unless *connect_remote*."""
         profile_name = data.get("profile")
         if data.get("local") or not profile_name:
-            cwd = self._existing_local_folder(data.get("cwd"))
+            cwd = self._local_folder_or_home(data.get("cwd"))
             splitter.addWidget(self._preset_make_terminal_pane("local", cwd=cwd))
             return
         if not connect_remote:
@@ -5155,11 +5161,13 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         profile_name = data.get("profile")
 
         if data.get("local") or not profile_name:
-            # Local pane
-            path = self._existing_local_folder(path)
+            # Local pane: the folder is listed in the background; a folder
+            # removed since the session was saved shows home - no error
+            # worth a dialog, and no filesystem call in the GUI thread.
+            path = self._local_folder_or_home(path)
             pane = self._add_pane_to_splitter(splitter, LocalFS())
             try:
-                pane.navigate_async(path)
+                pane.navigate_async(path, fallback=pane.backend.home())
             except Exception:
                 log.warning(
                     "Session restore: failed to navigate local pane to %s", path, exc_info=True

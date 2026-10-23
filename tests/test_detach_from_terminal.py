@@ -60,8 +60,15 @@ def _log_file(tmp_path: Path) -> Path:
     return tmp_path / "home" / ".local" / "state" / "axross" / "logs" / "axross.log"
 
 
+def _is_probe_child(cmdline: bytes) -> bool:
+    """The short-lived Qt Multimedia check axross starts at every start
+    (core.multimedia_probe) - a helper, not a second axross."""
+    args = cmdline.split(b"\0")
+    return b"--multimedia-probe" in args or b"core.multimedia_probe" in args
+
+
 def _marked(marker: str) -> list[int]:
-    """Live processes whose environment carries *marker*."""
+    """Live axross processes whose environment carries *marker*."""
     found = []
     needle = f"AXROSS_TEST_MARKER={marker}".encode()
     for entry in os.listdir("/proc"):
@@ -70,9 +77,10 @@ def _marked(marker: str) -> list[int]:
         try:
             environ = Path(f"/proc/{entry}/environ").read_bytes()
             state = Path(f"/proc/{entry}/stat").read_text().split(")")[-1].split()[0]
+            cmdline = Path(f"/proc/{entry}/cmdline").read_bytes()
         except OSError:
             continue
-        if needle in environ.split(b"\0") and state != "Z":
+        if needle in environ.split(b"\0") and state != "Z" and not _is_probe_child(cmdline):
             found.append(int(entry))
     return found
 
@@ -446,3 +454,10 @@ def test_edge_the_child_forgets_the_marker_so_its_own_children_can_detach(monkey
     assert main.consume_detached_marker(environ) is True
     assert environ == {"PATH": "/bin"}
     assert main.consume_detached_marker(environ) is False
+
+
+def test_edge_the_multimedia_check_is_not_counted_as_a_second_axross():
+    assert _is_probe_child(b"/usr/bin/python3\0-m\0core.multimedia_probe\0")
+    assert _is_probe_child(b"/opt/axross-full\0--multimedia-probe\0")
+    assert not _is_probe_child(b"/usr/bin/python3\0main.py\0--debug\0")
+    assert not _is_probe_child(b"/opt/axross-full\0")

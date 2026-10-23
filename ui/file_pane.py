@@ -1264,15 +1264,20 @@ class FilePaneWidget(QWidget):
     def is_loading(self) -> bool:
         return bool(self._nav_ctx)
 
-    def navigate_async(self, path: str, history="push", quiet: bool = False) -> None:
+    def navigate_async(
+        self, path: str, history="push", quiet: bool = False, fallback: str | None = None
+    ) -> None:
         """Load *path* on a worker thread. The current listing stays shown
         and usable; a status line with a Cancel button reports the load
         (``quiet=True`` for background refreshes: no busy UI). A new call
         supersedes a running one; its late result is dropped. The folder
         changes only once the listing arrived: a failure or cancel leaves
-        the pane where it was."""
+        the pane where it was - or, with *fallback*, a failure (not a
+        cancel) loads *fallback* instead (a restored folder that is gone
+        comes back as home, decided off the GUI thread)."""
         self._status_before = self._status.text()
-        self._nav_ctx = {"path": path, "history": history, "quiet": quiet}
+        self._nav_ctx = {"path": path, "history": history, "quiet": quiet,
+                         "fallback": fallback}
         if not quiet:
             self._progress_bar.show()
             self._cancel_nav_btn.show()
@@ -1328,6 +1333,12 @@ class FilePaneWidget(QWidget):
             return
         self._end_loading()
         if kind == "error":
+            fallback = ctx.get("fallback")
+            if fallback and fallback != ctx["path"]:
+                log.info("Cannot open %s (%s); showing %s instead", ctx["path"], value, fallback)
+                self.navigation_finished.emit(ctx["path"], False)
+                self.navigate_async(fallback, history=ctx["history"], quiet=ctx["quiet"])
+                return
             log.error("Navigation failed: %s", value)
             if not ctx["quiet"]:
                 self._status.setText(f"Error: {value}")

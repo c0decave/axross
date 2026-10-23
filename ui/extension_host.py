@@ -19,6 +19,7 @@ import logging
 import re
 import sys
 import threading
+import time
 import traceback
 import types
 import weakref
@@ -27,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QDockWidget, QMenu, QWidget
 
@@ -355,6 +356,10 @@ class ExtensionHost(QObject):
         #: each one missed while paused, for the catch-up on resume.
         self._paused: set[str] = EX.paused_ids()
         self._missed: dict[str, set[str]] = {}
+        #: Extensions skipped at this start, for the notice once the window
+        #: is up; suspensions that could not be saved (still honoured now).
+        self._pending_notices: list[EX.ExtensionInfo] = []
+        self._unsaved_suspended: set[str] = set()
         self._result.connect(self._deliver)
         _ACTIVE_HOST = weakref.ref(self)
 
@@ -456,21 +461,137 @@ class ExtensionHost(QObject):
         api._pause_action = action
 
     # -- load / unload ----------------------------------------------------------
-    def load_enabled(self) -> None:
+    def load_enabled(self, *, user_request: bool = False) -> None:
+        """Load the switched-on extensions. At the start (the default) an
+        extension an earlier start stopped in (core.extensions' startup
+        guard) is skipped with a notice once the window is up, and safe
+        mode loads none. *user_request* (Reload) loads them all, a
+        suspended one included: that is the user's new try."""
         enabled = EX.enabled_ids()
+        if not user_request:
+            self._suspend_stale(enabled)
+        suspended = EX.suspended_ids() | self._unsaved_suspended
+        skipped: list[EX.ExtensionInfo] = []
+        safe = EX.safe_mode() and not user_request
         for info in EX.discover():
-            if info.ext_id in enabled and info.ext_id not in self._loaded:
-                self.load(info)
+            if info.ext_id not in enabled or info.ext_id in self._loaded:
+                continue
+            if safe:
+                self._errors[info.ext_id] = "not loaded: safe mode (--safe-mode)"
+                continue
+            if info.ext_id in suspended and not user_request:
+                self._errors[info.ext_id] = (
+                    "not loaded: an earlier start stopped while activating it "
+                    "(it hung or crashed); Try Again in the notice, or Reload, loads it"
+                )
+                skipped.append(info)
+                continue
+            if info.ext_id in suspended:
+                self._unsuspend(info.ext_id)
+            self.load(info)
+        if safe and enabled:
+            from core.i18n import tr
+
+            log.info("Safe mode: no extension loaded (%d switched on)", len(enabled))
+            self._status(tr("Safe mode: no extension was loaded."), 10000)
+        if skipped:
+            self._pending_notices.extend(skipped)
+            # Once the event loop runs: the window is shown by then.
+            QTimer.singleShot(0, self._show_start_notices)
+
+    def _suspend_stale(self, enabled: set[str]) -> None:
+        """Turn the markers of earlier processes into suspensions."""
+        for entry in EX.collect_stale_activations():
+            ext_id = entry["ext_id"]
+            if ext_id not in enabled:
+                log.info("Startup guard: %s was switched off since process %s stopped in it",
+                         ext_id, entry["pid"])
+                continue
+            what = ("ended (hung and was killed, or crashed) while activating"
+                    if entry["reason"] == "ended" else
+                    f"still runs, but has been activating for more than "
+                    f"{EX.HUNG_ACTIVATION_SECONDS:g} s")
+            log.warning(
+                "Startup guard: process %s %s the extension %s (%s), activation started "
+                "%s; it stays switched on but is not loaded at the start until tried again",
+                entry["pid"], what, entry["name"], ext_id,
+                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry["started"])),
+            )
+            try:
+                EX.set_suspended(ext_id, True)
+            except OSError as exc:
+                log.warning("Suspension of %s not saved: %s", ext_id, exc)
+                self._unsaved_suspended.add(ext_id)
+
+    def _unsuspend(self, ext_id: str) -> None:
+        self._unsaved_suspended.discard(ext_id)
+        try:
+            EX.set_suspended(ext_id, False)
+        except OSError as exc:
+            log.warning("Suspension of %s not cleared: %s", ext_id, exc)
+
+    def _status(self, text: str, timeout_ms: int) -> None:
+        bar = self.window.statusBar()
+        if bar is not None:
+            bar.showMessage(text, timeout_ms)
+
+    def _show_start_notices(self) -> None:
+        """One non-modal notice per extension skipped at this start."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        from core.i18n import tr
+
+        pending, self._pending_notices = self._pending_notices, []
+        for info in pending:
+            box = QMessageBox(self.window)
+            box.setObjectName("axExtensionStartNotice")
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle(tr("Extension not loaded"))
+            box.setText(
+                tr("{name} was not loaded on this start: an earlier start of axross stopped "
+                   "while activating it (it hung or crashed). It stays switched on.").format(
+                       name=info.name)
+            )
+            box.setInformativeText(
+                tr("Try Again loads it now - if it hangs again, the next start skips it again. "
+                   "Keep Off switches it off; Extensions > Manage Extensions… switches it on "
+                   "again. Details are in the log.")
+            )
+            retry = box.addButton(tr("Try Again"), QMessageBox.ButtonRole.AcceptRole)
+            keep_off = box.addButton(tr("Keep Off"), QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton(tr("Later"), QMessageBox.ButtonRole.RejectRole)
+            box.setWindowModality(Qt.WindowModality.NonModal)
+            box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+
+            def answered(button, ext_id=info.ext_id, retry=retry, keep_off=keep_off):
+                if button is retry:
+                    self.retry(ext_id)
+                elif button is keep_off:
+                    self.set_enabled(ext_id, False)
+
+            box.buttonClicked.connect(answered)
+            box.show()
+
+    def retry(self, ext_id: str) -> bool:
+        """Try Again for an extension skipped at the start: load it now
+        (with its marker, so a new hang is caught by the next start)."""
+        info = next((e for e in EX.discover() if e.ext_id == ext_id), None)
+        if info is None or ext_id in self._loaded:
+            return ext_id in self._loaded
+        self._unsuspend(ext_id)
+        self._errors.pop(ext_id, None)
+        return self.load(info)
 
     def reload(self) -> None:
         """Unload everything and load the switched-on extensions anew, from
         their current source."""
         self.unload_all()
         self._errors.clear()
-        self.load_enabled()
+        self.load_enabled(user_request=True)
 
     def set_enabled(self, ext_id: str, on: bool) -> None:
-        EX.set_enabled(ext_id, on)
+        EX.set_enabled(ext_id, on)  # clears a suspension too
+        self._unsaved_suspended.discard(ext_id)
         if on:
             info = next((e for e in EX.discover() if e.ext_id == ext_id), None)
             if info is not None and ext_id not in self._loaded:
@@ -489,6 +610,10 @@ class ExtensionHost(QObject):
             return False
         api = ExtensionAPI(self, info)
         module_name = f"axross_extension_{info.source}_{info.module_name}"
+        # The startup guard: a marker while the extension's code runs, so
+        # a hang or crash in it is found by the next start.
+        marker = EX.begin_activation(info)
+        started = time.monotonic()
         try:
             module = _exec_source(module_name, info.path)
             module.activate(api)
@@ -497,10 +622,16 @@ class ExtensionHost(QObject):
             api._remove_all()
             self._record(api, exc)
             return False
+        finally:
+            EX.end_activation(marker)
+            took = time.monotonic() - started
+            if took > EX.SLOW_ACTIVATE_SECONDS:
+                log.warning("Extension %s took %.2f s to activate (more than %g s)",
+                            info.ext_id, took, EX.SLOW_ACTIVATE_SECONDS)
         self._loaded[info.ext_id] = (module, api)
         self._add_pause_action(api)
         self._show_paused(info.ext_id)
-        log.info("Extension loaded: %s (%s)", info.name, info.ext_id)
+        log.info("Extension loaded: %s (%s) in %.3f s", info.name, info.ext_id, took)
         if api._reg.agent_tools or api._reg.agent_topics:
             # What activate() registered counts only now that it is loaded.
             self.agent_tools_changed.emit()

@@ -37,8 +37,21 @@ reads the ``EXTENSION`` literal, it never imports the file. Every
 extension starts switched off, the bundled examples included, and the
 paranoid security mode (which blocks scripts) blocks all of them.
 
-This module is Qt-free: discovery and the on/off state. Loading and the
-API live in :mod:`ui.extension_host`.
+Startup guard
+-------------
+Before the host runs an extension's code it writes a marker (extension,
+pid, time) to a private state folder and removes it when ``activate``
+returned or raised (:func:`begin_activation` / :func:`end_activation`). A
+marker whose process is gone - it hung and was killed, or crashed, inside
+that code - or one that has been activating for longer than the startup
+watchdog's bound, is found by the next start
+(:func:`collect_stale_activations`): that extension is *suspended*, i.e.
+stays switched on but is not loaded at the start until the user tries it
+again (``suspended`` in extensions.json). ``--safe-mode``
+(:func:`set_safe_mode`) loads no extension at the start at all.
+
+This module is Qt-free: discovery, the on/off state and the startup guard.
+Loading and the API live in :mod:`ui.extension_host`.
 """
 
 from __future__ import annotations
@@ -47,10 +60,27 @@ import ast
 import json
 import logging
 import os
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.startup_guard import WATCHDOG_SECONDS
+
 log = logging.getLogger(__name__)
+
+#: An activation running longer than this counts as hung: the startup
+#: watchdog reports a window missing after the same time.
+HUNG_ACTIVATION_SECONDS = WATCHDOG_SECONDS
+#: An activation taking longer than this is logged as a warning. Measured:
+#: the slowest bundled extension (Media Player, it builds a QAudioDecoder)
+#: takes about 0.24 s, all others under 0.02 s.
+SLOW_ACTIVATE_SECONDS = 1.0
+_MARKER_NAME = re.compile(r"^(\d{1,10})\.json$")
+#: --safe-mode of this process (main.py sets it).
+_SAFE_MODE = False
+#: (ext_id, name, monotonic start) of the activation running right now.
+_CURRENT: tuple[str, str, float] | None = None
 
 #: A source file larger than this is not even parsed.
 MAX_SOURCE_BYTES = 512 * 1024
@@ -222,21 +252,26 @@ def _id_list(key: str) -> set[str]:
     return {i for i in ids if isinstance(i, str)}
 
 
-def _set_member(key: str, ext_id: str, on: bool) -> None:
-    """Add *ext_id* to (or remove it from) the list under *key*, keeping
+def _set_member(key: str, ext_id: str, on: bool, *, also_off: tuple[str, ...] = ()) -> None:
+    """Add *ext_id* to (or remove it from) the list under *key* - and
+    remove it from the lists under *also_off* in the same write - keeping
     every other key of the settings file."""
     from core.secure_storage import keep_unreadable_copy, write_secret_file
 
     data, readable = _read_settings()
     if not readable and not keep_unreadable_copy(settings_file()):
         raise OSError(f"{settings_file()} is unreadable and could not be kept aside")
-    ids = _id_list(key) if readable else set()
-    if on:
-        ids.add(ext_id)
-    else:
-        ids.discard(ext_id)
     data = dict(data) if readable else {}
-    data[key] = sorted(ids)
+    for name in (key, *also_off):
+        old = data.get(name)
+        ids = {i for i in old if isinstance(i, str)} if isinstance(old, list) else set()
+        if name != key and name not in data:
+            continue  # nothing to remove from a list that is not there
+        if on and name == key:
+            ids.add(ext_id)
+        else:
+            ids.discard(ext_id)
+        data[name] = sorted(ids)
     os.makedirs(settings_file().parent, mode=0o700, exist_ok=True)
     write_secret_file(str(settings_file()), json.dumps(data, indent=2) + "\n")
 
@@ -246,7 +281,10 @@ def enabled_ids() -> set[str]:
 
 
 def set_enabled(ext_id: str, on: bool) -> None:
-    _set_member("enabled", ext_id, on)
+    """Switch *ext_id* on or off. Either way it is no longer suspended:
+    switching it on again is the user's new try, and one switched off has
+    nothing to be suspended from."""
+    _set_member("enabled", ext_id, on, also_off=("suspended",))
 
 
 def paused_ids() -> set[str]:
@@ -259,16 +297,210 @@ def set_paused(ext_id: str, on: bool) -> None:
     _set_member("paused", ext_id, on)
 
 
+# ---------------------------------------------------------------------------
+# Startup guard
+# ---------------------------------------------------------------------------
+
+
+def suspended_ids() -> set[str]:
+    """Switched-on extensions an earlier start stopped in (hung or crashed
+    while their code ran): not loaded at the start until tried again."""
+    return _id_list("suspended")
+
+
+def set_suspended(ext_id: str, on: bool) -> None:
+    _set_member("suspended", ext_id, on)
+
+
+def safe_mode() -> bool:
+    """``--safe-mode``: this process loads no extension at the start."""
+    return _SAFE_MODE
+
+
+def set_safe_mode(on: bool) -> None:
+    global _SAFE_MODE
+    _SAFE_MODE = bool(on)
+
+
+def activation_dir() -> Path:
+    """The private folder of the activation markers (beside the log)."""
+    return Path.home() / ".local" / "state" / "axross" / "extension-activation"
+
+
+def begin_activation(info: ExtensionInfo) -> Path | None:
+    """Write the marker for *info*'s code about to run in this process;
+    its path, or None when it cannot be written - the load goes on
+    without the guard, a start never fails over its marker."""
+    global _CURRENT
+    from core.secure_storage import write_secret_file
+
+    folder = activation_dir()
+    marker = folder / f"{os.getpid()}.json"
+    data = {
+        "pid": os.getpid(),
+        "ext_id": info.ext_id,
+        "name": info.name,
+        "started": time.time(),
+        "proc_start": _process_start(os.getpid()),
+    }
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        os.chmod(folder, 0o700)
+        write_secret_file(str(marker), json.dumps(data) + "\n")
+    except OSError as exc:
+        log.warning("Extension %s runs without its startup marker: %s", info.ext_id, exc)
+        marker = None
+    _CURRENT = (info.ext_id, info.name, time.monotonic())
+    return marker
+
+
+def end_activation(marker: Path | None) -> None:
+    """The code of the extension *marker* names has returned (or raised)."""
+    global _CURRENT
+    _CURRENT = None
+    if marker is None:
+        return
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log.warning("Cannot remove the extension marker %s: %s", marker, exc)
+
+
+def current_activation() -> tuple[str, str, float] | None:
+    """``(ext_id, name, seconds running)`` of the extension code running in
+    this process right now, None when none is (the startup watchdog names
+    it in its message)."""
+    current = _CURRENT
+    if current is None:
+        return None
+    ext_id, name, since = current
+    return ext_id, name, time.monotonic() - since
+
+
+def _process_start(pid: int) -> int | None:
+    """The kernel's start time of *pid* (Linux, clock ticks after boot):
+    tells a process from a later one that got the same pid."""
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+        return int(text.rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _process_alive(pid: int, proc_start) -> bool:
+    """Whether the process that wrote a marker still runs."""
+    if pid == os.getpid():
+        return False  # a marker of an earlier process that had this pid
+    if os.name == "nt":
+        return _windows_process_alive(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        # PermissionError: another user's process has that pid now - the
+        # marker's writer (always this user) is gone.
+        return False
+    stat_path = Path(f"/proc/{pid}/stat")
+    if stat_path.exists():
+        try:
+            state = stat_path.read_text(encoding="ascii", errors="replace").rsplit(")", 1)[1]
+            if state.split()[0] == "Z":
+                return False  # ended, not yet reaped
+        except (OSError, IndexError):
+            pass
+        now = _process_start(pid)
+        if isinstance(proc_start, int) and now is not None and now != proc_start:
+            return False  # the pid was reused
+    return True
+
+
+def _windows_process_alive(pid: int) -> bool:
+    # os.kill(pid, 0) on Windows sends CTRL_C_EVENT; ask the kernel instead.
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def collect_stale_activations() -> list[dict]:
+    """The markers an earlier process left: each as ``{"ext_id", "name",
+    "pid", "started", "reason"}`` with *reason* ``"ended"`` (its process
+    is gone; the marker is removed) or ``"hung"`` (it still runs but has
+    been activating for longer than :data:`HUNG_ACTIVATION_SECONDS`; the
+    marker stays for its owner to remove). Markers of processes that are
+    activating right now are left alone, unreadable ones removed."""
+    folder = activation_dir()
+    try:
+        entries = sorted(folder.iterdir())
+    except OSError:
+        return []
+    found = []
+    for path in entries:
+        match = _MARKER_NAME.match(path.name)
+        if match is None or path.is_symlink():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            pid = data["pid"]
+            ext_id = data["ext_id"]
+            started = float(data.get("started", 0))
+            if not (isinstance(pid, int) and isinstance(ext_id, str) and ext_id):
+                raise ValueError("bad marker")
+        except (OSError, ValueError, KeyError, TypeError):
+            _remove(path)
+            continue
+        name = data.get("name") if isinstance(data.get("name"), str) else ext_id
+        entry = {"ext_id": ext_id, "name": name, "pid": pid, "started": started}
+        if not _process_alive(pid, data.get("proc_start")):
+            found.append({**entry, "reason": "ended"})
+            _remove(path)
+        elif time.time() - started > HUNG_ACTIVATION_SECONDS:
+            found.append({**entry, "reason": "hung"})
+    return found
+
+
+def _remove(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 __all__ = [
     "ExtensionInfo",
+    "HUNG_ACTIVATION_SECONDS",
     "MAX_SOURCE_BYTES",
+    "SLOW_ACTIVATE_SECONDS",
+    "activation_dir",
+    "begin_activation",
     "bundled_dir",
+    "collect_stale_activations",
+    "current_activation",
     "discover",
     "enabled_ids",
+    "end_activation",
     "extensions_allowed",
     "extensions_dir",
     "paused_ids",
+    "safe_mode",
     "set_enabled",
     "set_paused",
+    "set_safe_mode",
+    "set_suspended",
     "settings_file",
+    "suspended_ids",
 ]
