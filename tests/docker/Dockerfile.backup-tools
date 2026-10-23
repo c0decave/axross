@@ -1,0 +1,7 @@
+# Real borg (1.4.x) and duplicity (3.x) for tests/test_backup_repos_live.py.
+# Built and run by scripts/backup_repos_live.sh: packages are fetched here,
+# the test itself runs with --network=none and the tree mounted read-only.
+FROM docker.io/library/debian:trixie-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends borgbackup duplicity gnupg python3 python3-pytest \
+    && rm -rf /var/lib/apt/lists/*

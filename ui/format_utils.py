@@ -40,4 +40,11 @@ def format_size(n: int) -> str:
     return f"{n} bytes ({human_bytes(n)})"
 
 
-__all__ = ["format_size", "human_bytes"]
+def measured_bytes(n: int, incomplete: bool = False) -> str:
+    """``human_bytes`` of a measured folder size, with "≥" when part of the
+    folder could not be measured (the size is a lower bound). Shared by
+    the pane's Size column and the Calculate Size table."""
+    return ("≥ " if incomplete else "") + human_bytes(n)
+
+
+__all__ = ["format_size", "human_bytes", "measured_bytes"]

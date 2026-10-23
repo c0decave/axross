@@ -596,6 +596,113 @@ def subnet_hosts(cidr: str) -> list[str]:
     return [str(ip) for ip in net.hosts()]
 
 
+class TargetError(ValueError):
+    """A target list that cannot be used: a malformed entry or too many hosts."""
+
+
+#: Default bound of :func:`parse_targets` - a /22 and a bit.
+MAX_TARGET_HOSTS = 1024
+_HOST_LABEL = re.compile(r"^(?!-)[A-Za-z0-9_-]{1,63}(?<!-)$")
+_IPV4_RANGE = re.compile(r"^[0-9.]+-[0-9.]+$")
+_SHORT_RANGE = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3})-(\d{1,3})$")
+
+
+def _host_name(entry: str) -> str | None:
+    """*entry* as a lower-case DNS/NetBIOS host name, or None."""
+    if len(entry) > 253 or entry.endswith("."):
+        return None
+    labels = entry.split(".")
+    if not all(_HOST_LABEL.match(label) for label in labels):
+        return None
+    # All-numeric dotted names are addresses, and a bad one ("999.1.1.1")
+    # must not slip through as a host name.
+    if all(label.isdigit() for label in labels):
+        return None
+    return entry.lower()
+
+
+def _entry_hosts(entry: str, budget: int) -> list[str] | int:
+    """Hosts of one entry, or - when it has more than *budget* - their count
+    (never expanded). Raises TargetError for a malformed entry."""
+    if "/" in entry:
+        try:
+            net = ipaddress.ip_network(entry, strict=False)
+        except ValueError as exc:
+            raise TargetError(f"not a CIDR block: {entry!r}") from exc
+        if net.num_addresses <= 2:  # /31, /32, /127, /128: every address is a host
+            count = net.num_addresses
+        else:
+            count = net.num_addresses - (2 if net.version == 4 else 1)
+        if count > budget:
+            return count
+        return [str(ip) for ip in (net if net.num_addresses <= 2 else net.hosts())]
+    if _IPV4_RANGE.match(entry):
+        short = _SHORT_RANGE.match(entry)
+        first_text, last_text = (
+            (short.group(1), short.group(1).rsplit(".", 1)[0] + "." + short.group(2))
+            if short else entry.split("-", 1)
+        )
+        try:
+            first = ipaddress.IPv4Address(first_text)
+            last = ipaddress.IPv4Address(last_text)
+        except ValueError as exc:
+            raise TargetError(f"not an IPv4 range: {entry!r}") from exc
+        if int(last) < int(first):
+            raise TargetError(f"range ends before it starts: {entry!r}")
+        count = int(last) - int(first) + 1
+        if count > budget:
+            return count
+        return [str(ipaddress.IPv4Address(n)) for n in range(int(first), int(last) + 1)]
+    try:
+        return [str(ipaddress.ip_address(entry))]
+    except ValueError:
+        pass
+    name = _host_name(entry)
+    if name is None:
+        raise TargetError(f"not a host name, address, CIDR block or range: {entry!r}")
+    return [name]
+
+
+def parse_targets(text: str, *, max_hosts: int = MAX_TARGET_HOSTS) -> list[str]:
+    """Host names, IPv4/IPv6 addresses, CIDR blocks (``10.0.0.0/24``) and
+    IPv4 ranges (``10.0.0.5-10.0.0.20``, ``10.0.0.5-20``) - separated by
+    spaces, commas, semicolons or lines; ``#`` starts a comment - as one list
+    in the order given, without duplicates. Host names are lower-cased.
+
+    Raises :class:`TargetError` for a malformed entry or when the list has
+    more than *max_hosts* hosts; a large block is counted, never expanded.
+    """
+    hosts: list[str] = []
+    seen: set[str] = set()
+    total = 0
+    for line in str(text).splitlines() or [""]:
+        line = line.split("#", 1)[0]
+        for entry in re.split(r"[\s,;]+", line.strip()):
+            if not entry:
+                continue
+            if any(ord(c) < 32 for c in entry):
+                raise TargetError(f"control character in target {entry!r}")
+            # Expanded up to the whole limit (still bounded), then counted
+            # without duplicates: a block given twice adds nothing.
+            got = _entry_hosts(entry, max_hosts)
+            if isinstance(got, int):
+                raise TargetError(
+                    f"{entry!r} has {got} hosts, more than the limit of {max_hosts}"
+                )
+            for host in got:
+                if host not in seen:
+                    seen.add(host)
+                    hosts.append(host)
+            total = len(hosts)
+            if total > max_hosts:
+                raise TargetError(
+                    f"{entry!r} brings the list to {total} hosts, more than the limit of {max_hosts}"
+                )
+    if not hosts:
+        raise TargetError("no targets given")
+    return hosts
+
+
 # ---------------------------------------------------------------------------
 # Find / grep / diff across any FileBackend
 # ---------------------------------------------------------------------------
@@ -1366,6 +1473,8 @@ __all__ = [
     "http_probe",
     "HttpProbe",
     "subnet_hosts",
+    "parse_targets",
+    "TargetError",
     "find_files",
     "grep",
     "GrepHit",

@@ -18,7 +18,7 @@ import subprocess
 from datetime import datetime
 from typing import IO
 
-from core import posix_compat
+from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
 from core.local_fs import entry_stat
 from core.path_policy import confined_path
@@ -280,7 +280,7 @@ class NfsSession(SessionLifecycle):
             os.remove(full)  # the link, never what it points at
         elif os.path.isdir(full):
             if recursive:
-                shutil.rmtree(full)
+                removal_cancel.rmtree(full)
             else:
                 os.rmdir(full)
         else:

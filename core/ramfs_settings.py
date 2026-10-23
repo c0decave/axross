@@ -36,6 +36,8 @@ log = logging.getLogger(__name__)
 
 CONFIG_DIR = Path.home() / ".config" / "axross"
 SETTINGS_FILE = CONFIG_DIR / "ramfs.json"
+#: The largest byte value the loader accepts for the two sizes (64 GiB).
+MAX_BYTES = 64 * 1024 * 1024 * 1024
 
 
 @dataclass
@@ -79,7 +81,7 @@ class RamFsSettings:
             "ramfs_system_reserve_bytes",
         ):
             v = raw.get(fld)
-            if isinstance(v, int) and 0 <= v <= 64 * 1024 * 1024 * 1024:
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= MAX_BYTES:
                 kw[fld] = v
         return cls(**kw)
 

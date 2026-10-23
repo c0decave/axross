@@ -1142,7 +1142,8 @@ class RsyncSession(SessionLifecycle):
         args.append(self._build_url(src_path))
         args.append(dst_local_path)
         try:
-            proc = _sp.run(args, capture_output=True, text=True, timeout=float(timeout))
+            proc = _sp.run(args, capture_output=True, text=True, timeout=float(timeout),
+                           env=self._build_env())
         except _sp.TimeoutExpired as exc:
             raise OSError(f"rsync dry-run timed out: {exc}") from exc
         if proc.returncode not in (0, 23, 24):  # 23/24 = partial transfer (acceptable in dry-run)

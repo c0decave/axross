@@ -21,7 +21,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDrag, QMouseEvent, QPainter, QPixmap
+from PyQt6.QtGui import QDrag, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -46,7 +46,7 @@ from core.open_limits import describe_limit, max_open_bytes
 from core.redaction import redact_url
 from models.file_item import FileItem
 from models.file_table_model import COL_NAME, FileSortProxyModel, FileTableModel
-from ui.layout_utils import detect_drop_zone
+from ui.pane_drag import PANE_MIME_TYPE, DraggableHeader, PaneDropZones
 from ui.scan_job import ScanJob
 
 
@@ -69,6 +69,93 @@ def _is_safe_leaf_name(name: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+#: Right-click entries by command: (icon, key). The icon is the one the
+#: toolbar or a dock shows for the same command (``ui.icon_provider``), so a
+#: command looks the same everywhere. The key is the one the pane's
+#: ``eventFilter`` or a window QAction already reacts to (see
+#: ``ui.shortcuts_dialog.SHORTCUTS``); the entry only *shows* it. It carries
+#: the key with ``Qt.WidgetShortcut`` on a menu that never takes focus, so
+#: Qt never sees a second owner: two live owners of one key make Qt fire
+#: neither ("Ambiguous shortcut overload").
+CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
+    # open / view the selection
+    "open-text": ("file", None),
+    "open-hex": ("code", None),
+    "open-root": ("shield", None),
+    "preview-archive": ("archive", None),
+    "extract": ("download", None),
+    "view-selected-media": ("media-view", None),
+    # clipboard / edit
+    "copy-path": (None, "Ctrl+C"),
+    "rename": ("edit", "F2"),
+    "batch-rename": ("edit", None),
+    # transfer
+    "copy-to-target": ("copy-right", "F5"),
+    "move-to-target": ("move-right", "F6"),
+    "pack": ("pack", None),
+    # protect
+    "encrypt": ("key", None),
+    "decrypt": ("key", None),
+    # remove
+    "trash": ("trash", None),
+    "delete": ("x", "Del"),
+    # create in this folder
+    "new-folder": ("folder", "F7"),
+    "new-file": ("plus", None),
+    "new-symlink": (None, None),
+    "new-hardlink": (None, None),
+    "xlink": (None, None),
+    # info / analysis
+    "identify": (None, None),
+    "identify-folder": (None, None),
+    "disk-image": ("disk-usage", None),
+    "checksum": (None, None),
+    "versions": (None, None),
+    "calculate-size": ("disk-usage", None),
+    "link-target": (None, None),
+    "permissions": ("lock", None),
+    "properties": ("settings", "Alt+Return"),
+    "metadata": ("metadata", None),
+    "metadata-remove": ("metadata", None),
+    "metadata-export": ("metadata", None),
+    "duplicates": ("duplicates", "Ctrl+Shift+D"),
+    "find-files": ("find-index", None),
+    # this folder
+    "refresh": ("refresh", "Ctrl+R"),
+    "view-mode": ("thumbnails", "Ctrl+Shift+G"),
+    "media-view": ("media-view", None),
+    "bookmark": ("bookmark", "Ctrl+D"),
+    "trash-browser": ("trash", None),
+    "terminal": ("terminal", None),
+    "external-terminal": ("terminal", None),
+    "fuse-ro": (None, None),
+    "fuse-rw": (None, None),
+    "fuse-unmount": (None, None),
+    # agent
+    "send-to-agent": ("bot", None),
+}
+
+
+def decorate_command(action, command: str):
+    """Give a right-click *action* the icon and the shown key of *command*
+    (see :data:`CONTEXT_COMMANDS`) and tag it with ``axCommand``/``axIcon``
+    so the window can tell commands apart without matching labels."""
+    from PyQt6.QtGui import QKeySequence
+
+    from ui.icon_provider import icon
+
+    icon_name, key = CONTEXT_COMMANDS[command]
+    action.setProperty("axCommand", command)
+    if icon_name:
+        action.setProperty("axIcon", icon_name)
+        action.setIcon(icon(icon_name))
+    if key:
+        action.setShortcut(QKeySequence(key))
+        action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        action.setShortcutVisibleInContextMenu(True)
+    return action
 
 
 def _sanitize_clipboard_text(text: str) -> tuple[str, bool]:
@@ -128,9 +215,13 @@ def open_local_file_in_viewer(parent: QWidget | None, path: str, *, read_only: b
     import os as _os
 
     from core.local_fs import LocalFS
+    from ui import viewer_window as VW
 
     name = _os.path.basename(path)
     backend = LocalFS()
+    # Windows of their own (VW.show_independent): a modal viewer froze the
+    # editor and the main window until it was closed.
+    owner = VW.owner_window(parent)
     try:
         if FilePaneWidget._looks_like_image(name):
             from core import previews as _PV
@@ -138,17 +229,26 @@ def open_local_file_in_viewer(parent: QWidget | None, path: str, *, read_only: b
             if _PV._is_local_backend(backend):
                 from ui.image_viewer import ImageViewerDialog
 
-                dlg = ImageViewerDialog(backend, path, siblings=[path], parent=parent)
-                dlg.exec()
+                dlg = ImageViewerDialog(backend, path, siblings=[path], parent=owner)
+                if dlg.loaded:
+                    VW.show_independent(dlg)
+                else:
+                    dlg.deleteLater()
                 return
         if _classify_local_file_is_binary(backend, path, name):
             from ui.hex_editor import HexEditorDialog
 
-            HexEditorDialog(backend, path, parent=parent, read_only=read_only).exec()
+            VW.show_independent(
+                HexEditorDialog(backend, path, parent=owner, read_only=read_only, background=True)
+            )
         else:
             from ui.text_editor import TextEditorDialog
 
-            TextEditorDialog(backend, path, parent=parent, read_only=read_only).exec()
+            dlg = TextEditorDialog(backend, path, parent=owner, read_only=read_only)
+            if dlg.loaded:
+                VW.show_independent(dlg)
+            else:
+                dlg.deleteLater()
     except Exception as exc:  # noqa: BLE001 — a preview must never crash the app
         log.warning("Could not open %s in a viewer: %s", path, exc)
 
@@ -192,15 +292,6 @@ def _set_style(widget: QWidget, css: str) -> None:
     call, and every click re-applied the same three sheets to every pane."""
     if widget.styleSheet() != css:
         widget.setStyleSheet(css)
-
-
-def _size_text(b: float) -> str:
-    """Bytes as B / KB / MB / GB / TB / PB, one decimal above bytes."""
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(b) < 1024:
-            return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
-        b /= 1024
-    return f"{b:.1f} PB"
 
 
 def _shorten_path(path: str, limit: int = 60) -> str:
@@ -269,38 +360,67 @@ def _paths_in_removal() -> list[str]:
 class _RemovalResult:
     """What the removal phase did: ``done`` entries removed, ``errors`` one
     line per failed entry, ``not_attempted`` entries a cancel (or a stop)
-    kept, ``aborted`` when an unexpected exception stopped the run."""
+    kept, ``aborted`` when an unexpected exception stopped the run, and
+    ``partial`` - ``(name, removed inside)`` - for a folder a cancel
+    stopped halfway: part of it is gone, the folder and the rest stay."""
 
-    def __init__(self, done: int, errors: list[str], not_attempted: int, aborted: bool) -> None:
+    def __init__(
+        self,
+        done: int,
+        errors: list[str],
+        not_attempted: int,
+        aborted: bool,
+        partial: tuple[str, int] | None = None,
+    ) -> None:
         self.done = done
         self.errors = errors
         self.not_attempted = not_attempted
         self.aborted = aborted
+        self.partial = partial
 
 
 def _run_removal(backend, entries, trash: bool, cancelled, report) -> _RemovalResult:
     """Remove (or move to the trash) each ``(name, path, is_dir)`` in turn.
 
-    Runs on a worker thread. *cancelled* is checked between entries: the
-    entry in progress finishes, the rest stay. An OSError is recorded and
-    the next entry goes ahead (as the synchronous loop did); any other
+    Runs on a worker thread. *cancelled* is checked between entries, and -
+    for a delete - also between the entries inside a folder, where the
+    backend walks the tree itself (core.removal_cancel: local paths, SMB,
+    SFTP, FTP). A folder stopped that way is reported in ``partial`` with
+    the number of entries removed inside it; one stopped before anything
+    inside went counts as not attempted. A backend that removes a tree in
+    one server request finishes that entry first. An OSError is recorded
+    and the next entry goes ahead (as the synchronous loop did); any other
     exception is a backend defect and stops the run, so nothing more is
     removed after it.
     """
+    from core import removal_cancel as RC
     from core import trash as T
 
     done, errors, attempted, aborted = 0, [], 0, False
+    partial: tuple[str, int] | None = None
     what = "Trash" if trash else "Delete"
     for index, (name, path, is_dir) in enumerate(entries):
         if cancelled():
             break
         report(index, len(entries), name)
         attempted += 1
+
+        def inside(count: int, _path: str, index=index, name=name) -> None:
+            report(index, len(entries), f"{name}: {count} removed inside")
+
         try:
             if trash:
                 T.trash(backend, path)
             else:
-                backend.remove(path, recursive=is_dir)
+                with RC.cancellable_removal(cancelled, inside):
+                    backend.remove(path, recursive=is_dir)
+        except RC.RemovalCancelled as exc:
+            if exc.removed:
+                partial = (name, exc.removed)
+                log.info("Delete cancelled inside %s: %d entries removed", path, exc.removed)
+            else:
+                attempted -= 1  # nothing of it was touched
+            break
         except OSError as exc:
             log.error("%s failed for %s: %s", what, name, exc)
             errors.append(f"{name}: {exc}")
@@ -312,7 +432,7 @@ def _run_removal(backend, entries, trash: bool, cancelled, report) -> _RemovalRe
             break
         done += 1
         log.info("%s: %s", "Trashed" if trash else "Deleted", path)
-    return _RemovalResult(done, errors, len(entries) - attempted, aborted)
+    return _RemovalResult(done, errors, len(entries) - attempted, aborted, partial)
 
 
 # Buttons the pane handles itself: the two side buttons walk the history,
@@ -463,12 +583,12 @@ class _DragTableView(QTableView):
         self._pane._start_drag()
 
     def dragEnterEvent(self, event) -> None:
-        self._pane.dragEnterEvent(event)
+        self._pane.dragEnterEvent(event, origin=self.viewport())
 
     def dragMoveEvent(self, event) -> None:
         pos = event.position().toPoint()
         folder = self._pane._folder_at(pos)
-        self._pane.dragMoveEvent(event, folder)
+        self._pane.dragMoveEvent(event, folder, origin=self.viewport())
         if event.isAccepted() and not event.mimeData().hasFormat(PANE_MIME_TYPE):
             self._pane._show_drop_hint(pos, folder, event.dropAction())
         else:
@@ -480,7 +600,9 @@ class _DragTableView(QTableView):
 
     def dropEvent(self, event) -> None:
         self._pane._hide_drop_hint()
-        self._pane.dropEvent(event, self._pane._folder_at(event.position().toPoint()))
+        self._pane.dropEvent(
+            event, self._pane._folder_at(event.position().toPoint()), origin=self.viewport()
+        )
 
 
 if TYPE_CHECKING:
@@ -489,7 +611,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 TRANSFER_MIME_TYPE = "application/x-axross-transfer"
-PANE_MIME_TYPE = "application/x-axross-pane-drag"
 
 
 def filesystem_key(backend) -> str:
@@ -547,8 +668,6 @@ def decode_transfer_payload(mime: QMimeData | None) -> dict[str, object] | None:
     }
 
 
-_DRAG_THRESHOLD = 10  # pixels before header drag starts
-
 #: Widest the drag picture gets (logical pixels); a long name is elided.
 _DRAG_PIXMAP_MAX_WIDTH = 340
 
@@ -595,84 +714,6 @@ def drag_pixmap(names: list[str], dirs: int) -> QPixmap:
                      Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
     painter.end()
     return pix
-
-
-class _DraggableHeader(QLabel):
-    """Header label that can be dragged to rearrange panes."""
-
-    def __init__(self, pane: FilePaneWidget, parent=None):
-        super().__init__(parent)
-        self._pane = pane
-        self._drag_start: QPoint | None = None
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start = event.pos()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if (
-            self._drag_start is not None
-            and (event.pos() - self._drag_start).manhattanLength() >= _DRAG_THRESHOLD
-        ):
-            self._drag_start = None
-            self._start_pane_drag()
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        self._drag_start = None
-        super().mouseReleaseEvent(event)
-
-    def _start_pane_drag(self) -> None:
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(PANE_MIME_TYPE, str(id(self._pane)).encode())
-        drag.setMimeData(mime)
-        # Small pixmap as drag icon
-        pix = QPixmap(120, 24)
-        pix.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pix)
-        painter.setPen(Qt.GlobalColor.white)
-        painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "Move pane")
-        painter.end()
-        drag.setPixmap(pix)
-        drag.exec(Qt.DropAction.MoveAction)
-
-
-class _DropOverlay(QWidget):
-    """Semi-transparent overlay showing which zone a pane will be dropped into."""
-
-    def __init__(self, parent: QWidget):
-        super().__init__(parent)
-        # Overlay is purely visual; drag/drop must stay on the pane itself.
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAcceptDrops(False)
-        self._zone: str = ""
-        self.hide()
-
-    def set_zone(self, zone: str) -> None:
-        if zone != self._zone:
-            self._zone = zone
-            self.update()
-
-    def paintEvent(self, event) -> None:
-        if not self._zone:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = Qt.GlobalColor.cyan
-        painter.setBrush(color)
-        painter.setOpacity(0.25)
-        w, h = self.width(), self.height()
-        if self._zone == "left":
-            painter.drawRect(0, 0, w // 2, h)
-        elif self._zone == "right":
-            painter.drawRect(w // 2, 0, w // 2, h)
-        elif self._zone == "top":
-            painter.drawRect(0, 0, w, h // 2)
-        elif self._zone == "bottom":
-            painter.drawRect(0, h // 2, w, h // 2)
-        painter.end()
 
 
 _MIN_COLUMN_WIDTH = 60
@@ -722,12 +763,17 @@ class FilePaneWidget(QWidget):
     # The pane does not own the duplicate-finder dialog; the main window
     # does, because the index spans every connection rather than one pane.
     open_duplicates_requested = pyqtSignal()
+    #: Find in This Folder…: the folder to search. The main window owns the
+    #: Find Files dialog (it searches folders of several panes).
+    find_files_requested = pyqtSignal(str)
     # Open Terminal Here: the folder to open a shell in. The main window owns
     # the terminal dock and decides between a local and an SSH shell.
     open_terminal_requested = pyqtSignal(str)
     #: Send to Agent: the selected paths (or the folder shown) for the
     #: Agent dock's current tab. The main window owns the dock.
     send_to_agent_requested = pyqtSignal(list)
+    # New Agent Tab Here: the local folder shown, "" on a remote backend.
+    new_agent_tab_requested = pyqtSignal(str)
     # Emitted from the watcher background thread so the GUI thread
     # owns the actual list refresh. Internal: connect via Qt's auto
     # cross-thread queueing (PyQt does this when the receiver lives
@@ -753,16 +799,24 @@ class FilePaneWidget(QWidget):
         self._nav_ctx: dict = {}
         self._history_navigating = False  # suppress history push during back/forward
         # Auto-refresh via core.watch — one watcher at a time, scoped
-        # to the currently displayed directory. Toggleable per-pane.
+        # to the currently displayed directory. Toggleable per-pane; on
+        # by default only where watching is cheap (local, in-process or a
+        # push watcher) - a remote folder would be listed every 2 s.
         self._watcher = None
         self._watched_path: str | None = None
-        self._watch_enabled = True
+        from core import watch as _watch
+
+        self._watch_enabled = _watch.auto_refresh_by_default(backend)
         self._watch_debounce: QTimer | None = None
         self._shutting_down = False
         #: Open metadata windows (see open_metadata).
         self.metadata_dialogs: list = []
         #: Open Identify File Type windows (see identify_file_type).
         self.file_type_dialogs: list = []
+        #: path -> (size, is a disk image) from Identify File Type on this
+        #: backend: the menu offers Disk Image… for an image by content
+        #: without reading a remote file itself (_content_says_disk_image).
+        self._identified_images: dict[str, tuple[int | None, bool]] = {}
 
         self._setup_ui()
         # The debounce timer is created in the GUI thread so its
@@ -825,7 +879,7 @@ class FilePaneWidget(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
 
-        header = _DraggableHeader(self)
+        header = DraggableHeader(self)
         header.setCursor(Qt.CursorShape.OpenHandCursor)
         header.setToolTip("Drag to rearrange pane")
         header_layout.addWidget(header)
@@ -897,14 +951,16 @@ class FilePaneWidget(QWidget):
         self._btn_refresh.clicked.connect(lambda _c=False: self.refresh_async())
         path_bar.addWidget(self._btn_refresh)
 
-        # Auto-refresh toggle. Default ON; backends that are expensive
-        # to list (S3, deep SFTP trees) can be opted out per-pane.
+        # Auto-refresh toggle: on for local folders, off for remote ones
+        # until the user turns it on (see core.watch.auto_refresh_by_default).
         self._btn_watch = QPushButton("\u25c9")  # ◉ (filled = on)
         self._btn_watch.setFixedWidth(30)
         self._btn_watch.setCheckable(True)
-        self._btn_watch.setChecked(True)
+        self._btn_watch.setChecked(self._watch_enabled)
         self._btn_watch.setToolTip(
-            "Auto-refresh on backend changes (toggle off for expensive backends)"
+            "Auto-refresh when the folder changes. On by default for local "
+            "folders; off for remote ones, where it lists the folder again "
+            "every 2 seconds - click to turn it on for this pane."
         )
         self._btn_watch.toggled.connect(self._on_watch_toggled)
         path_bar.addWidget(self._btn_watch)
@@ -954,6 +1010,11 @@ class FilePaneWidget(QWidget):
 
         self._table = _DragTableView(self)
         self._table.setModel(self._proxy)
+        # Tags (core.tags): dots in the Name column, listed in its tooltip.
+        from ui.tag_ui import TagDotsDelegate
+
+        self._model.tag_lookup = self._tags_of_item
+        self._table.setItemDelegateForColumn(0, TagDotsDelegate(self))
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setSortingEnabled(True)
@@ -1063,7 +1124,7 @@ class FilePaneWidget(QWidget):
         # The running delete: phase "check" (the walk before the question)
         # or "remove"; empty while none runs.
         self._removal_ctx: dict = {}
-        # View > Activate Pane: resting the mouse here makes this the active
+        # Edit > Settings > General > Activate a pane: resting the mouse here makes this the active
         # pane after the configured delay (core.pane_activation).
         self._hover_timer = QTimer(self)
         self._hover_timer.setSingleShot(True)
@@ -1096,9 +1157,9 @@ class FilePaneWidget(QWidget):
         ):
             widget.installEventFilter(self)
 
-        # Drop overlay for pane rearrangement
-        self._drop_overlay = _DropOverlay(self)
-        self._drop_overlay.hide()
+        # Pane rearrangement drops (ui/pane_drag.py), shared with terminal panes
+        self._pane_drop = PaneDropZones(self)
+        self._drop_overlay = self._pane_drop.overlay
 
     def _fetch_listing(self, path: str) -> tuple[str, list]:
         """Backend part of a navigation: normalised path + listing (with the
@@ -1525,13 +1586,19 @@ class FilePaneWidget(QWidget):
             siblings = [path]
         if path not in siblings:
             siblings.append(path)
+        from ui import viewer_window as VW
+
         dlg = ImageViewerDialog(
             self._backend,
             path,
             siblings=sorted(siblings),
-            parent=self,
+            parent=VW.owner_window(self),
+            source_pane=self,
         )
-        dlg.exec()
+        if dlg.loaded:
+            VW.show_independent(dlg)
+        else:  # it said why; nothing to show
+            dlg.deleteLater()
         return True
 
     def _open_document_viewer(self, path: str, name: str) -> bool:
@@ -1593,6 +1660,26 @@ class FilePaneWidget(QWidget):
         dlg.start()
         return dlg
 
+    def show_disk_image(self, path: str | None = None):
+        """Disk Image…: the partitions and file systems of the selected
+        image, with a loop mount for a local one (ui/disk_image_dialog.py).
+        Returns the window, or None without an image."""
+        from ui.disk_image_dialog import DiskImageDialog
+
+        if path is None:
+            items = self.selected_file_items()
+            if len(items) != 1:
+                return None
+            path = self._safe_item_path(items[0], warn=False)
+            if path is None:
+                return None
+        dlg = DiskImageDialog(self._backend, path, parent=self,
+                              open_folder=getattr(self.window(), "open_local_folder", None))
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.show()
+        dlg.start()
+        return dlg
+
     def identify_file_type(self):
         """Open the Identify File Type window on the selection: the real type
         of each entry from its content, what its extension claims and
@@ -1608,6 +1695,65 @@ class FilePaneWidget(QWidget):
         if not paths:
             return None
         dlg = FileTypeDialog(self._backend, paths, parent=self)
+        backend = self._backend
+        dlg.identified.connect(
+            lambda path, info, b=backend: self._remember_file_type(b, path, info)
+        )
+        self.file_type_dialogs.append(dlg)
+        dlg.destroyed.connect(
+            lambda _obj=None, d=dlg: self.file_type_dialogs.remove(d)
+            if d in self.file_type_dialogs
+            else None
+        )
+        dlg.show()
+        dlg.start()
+        return dlg
+
+    #: Identify results kept per pane; the oldest go first beyond this.
+    _IDENTIFIED_LIMIT = 2048
+
+    def _remember_file_type(self, backend, path: str, info) -> None:
+        """Keep whether Identify found *path* to be a disk image (with its
+        size, so a changed file is not trusted) - only for the backend the
+        pane still shows."""
+        from core.disk_image import type_says_image
+
+        if backend is not self._backend or getattr(info, "kind", "") != "file":
+            return
+        self._identified_images.pop(path, None)
+        self._identified_images[path] = (info.size, type_says_image(info.mime, info.engine))
+        while len(self._identified_images) > self._IDENTIFIED_LIMIT:
+            self._identified_images.pop(next(iter(self._identified_images)))
+
+    def _content_says_disk_image(self, item, path: str) -> bool:
+        """Whether the content of *item* (at *path*) says disk image, for
+        Disk Image… in the menu - cheap on the GUI thread: what Identify
+        found for this size of the file, else for a local regular file its
+        first 4 KiB (core.disk_image.local_content_says_image). A remote
+        file is never read here: opening a menu must not wait on the
+        network. Nor a LocalFS subclass (an MTP device's FUSE mount may
+        fetch the whole file on open) - plain LocalFS only."""
+        if item.is_dir:
+            return False
+        known = self._identified_images.get(path)
+        if known is not None and known[0] == item.size:
+            return known[1]
+        from core.disk_image import local_content_says_image
+        from core.local_fs import LocalFS
+
+        if type(self._backend) is not LocalFS:
+            return False
+        return local_content_says_image(path)
+
+    def identify_folder(self, directory: str | None = None):
+        """Open Identify Files in This Folder… on *directory* (default: the
+        selected folder, else the folder shown - :meth:`terminal_directory`):
+        every file in it identified by content in the background, through
+        this pane's backend. Returns the window."""
+        from ui.file_type_dialog import FolderFileTypeDialog
+
+        dlg = FolderFileTypeDialog(self._backend, directory or self.terminal_directory(),
+                                   parent=self)
         self.file_type_dialogs.append(dlg)
         dlg.destroyed.connect(
             lambda _obj=None, d=dlg: self.file_type_dialogs.remove(d)
@@ -1874,6 +2020,38 @@ class FilePaneWidget(QWidget):
         current = self._model.get_item(self._proxy.mapToSource(sel.currentIndex()).row())
         return names, current.name if current is not None else None
 
+    def reveal_path(self, path: str) -> None:
+        """Show the folder holding *path* with that entry selected and
+        scrolled into view - loading the folder in the background first
+        when the pane shows another one."""
+        backend = self._backend
+        folder = backend.parent(path)
+        name = path[len(folder):].lstrip("/\\") if path.startswith(folder) else path
+        if not name:
+            return
+
+        def select() -> None:
+            self._restore_selection({name}, name)
+            index = self._table.currentIndex()
+            if index.isValid():
+                self._table.scrollTo(index)
+            self._table.setFocus()
+
+        if folder == self._current_path and not self.is_loading:
+            select()
+            return
+
+        def arrived(loaded: str, ok: bool) -> None:
+            try:
+                self.navigation_finished.disconnect(arrived)
+            except (TypeError, RuntimeError):
+                pass
+            if ok and loaded == folder and backend is self._backend and not self._shutting_down:
+                select()
+
+        self.navigation_finished.connect(arrived)
+        self.navigate_async(folder)
+
     def _restore_selection(self, names: set[str], current: str | None) -> None:
         """Select the rows named ``names`` in one change; ``current`` back as current."""
         selection = QItemSelection()
@@ -1909,6 +2087,12 @@ class FilePaneWidget(QWidget):
     def set_show_hidden(self, show: bool) -> None:
         self._proxy.show_hidden = show
 
+    def set_hidden_style(self, highlight: bool, colour: str | None = None) -> None:
+        """Hidden entries in italics and in *colour* (``#rrggbb``) or the
+        theme's muted colour; off: drawn like every other entry."""
+        self._model.highlight_hidden = highlight
+        self._model.hidden_color = colour
+
     def set_proxy_info(self, text: str, tooltip: str = "") -> None:
         """Show the proxy route in the status bar; ``""`` hides it."""
         self._proxy_label.setText(text)
@@ -1926,6 +2110,7 @@ class FilePaneWidget(QWidget):
         """
         self._stop_watcher()
         self._backend = backend
+        self._identified_images.clear()  # paths of the old connection
         self._current_path = backend.home()
         self._retire_stale_menus()
         self._history = []
@@ -2074,7 +2259,90 @@ class FilePaneWidget(QWidget):
     def _on_filter_changed(self, text: str) -> None:
         # Key column and case sensitivity are set once in _setup_ui:
         # setting them here re-filtered every row a second time per key.
+        # "tag:<name>" shows the files that carry that tag (core.tags).
+        if text.lower().startswith("tag:"):
+            from core import tags as T
+
+            wanted = text[4:].strip().lower()
+            name = next((t.name for t in T.store().tags() if t.name.lower() == wanted), None)
+            self._proxy.setFilterFixedString("")
+            self._proxy.set_tag_filter(
+                (lambda item: name in self._tags_of_item(item)) if name else (lambda item: False))
+            return
+        if self._proxy._tag_filter is not None:
+            self._proxy.set_tag_filter(None)
         self._proxy.setFilterFixedString(text)
+
+    # --- Tags ---
+
+    #: The connection profile this pane was opened from ("" for local and
+    #: ad-hoc connections); the main window sets it. Tags remember it.
+    profile_name = ""
+
+    def _tags_of_item(self, item) -> list[str]:
+        if item is None or item.name == "..":
+            return []
+        from core import tags as T
+
+        return T.store().tags_of(self._backend.name, self._backend.join(self._current_path, item.name))
+
+    def tag_colours_at(self, proxy_index) -> list[str]:
+        """The colours of the tags of the row at *proxy_index* (the dots)."""
+        from core import tags as T
+
+        item = self._model.get_item(self._proxy.mapToSource(proxy_index).row())
+        names = self._tags_of_item(item)
+        if not names:
+            return []
+        store = T.store()
+        return [c for c in (store.colour(n) for n in names) if c]
+
+    def toggle_tag(self, name: str) -> None:
+        """Tag every selected file with *name*, or - when all have it -
+        take it off all of them."""
+        from core import tags as T
+
+        paths = self.selected_items()
+        if not paths:
+            return
+        store = T.store()
+        backend = self._backend.name
+        if all(name in store.tags_of(backend, p) for p in paths):
+            for path in paths:
+                store.untag(backend, path, name)
+        else:
+            for path in paths:
+                store.tag(backend, self.profile_name, path, name)
+        self._tags_changed()
+
+    def new_tag_for_selection(self) -> None:
+        from core import tags as T
+        from ui.tag_ui import ask_new_tag
+
+        tag = ask_new_tag(self)
+        if tag is None:
+            return
+        for path in self.selected_items():
+            T.store().tag(self._backend.name, self.profile_name, path, tag.name)
+        self._tags_changed()
+
+    def _tags_follow_rename(self, old_path: str, new_path: str) -> None:
+        """The tags of a renamed file - or of the files below a renamed
+        folder - move to the new path (core.tags)."""
+        from core import tags as T
+
+        try:
+            T.store().rename_path(self._backend.name, old_path, new_path)
+        except OSError as exc:  # tags.json not writable: the rename itself stands
+            log.warning("Tags could not follow %s -> %s: %s", old_path, new_path, exc)
+
+    def _tags_changed(self) -> None:
+        if self._proxy._tag_filter is not None:
+            self._proxy.invalidateFilter()
+        # A tagged name needs room for its dots (ui.tag_ui.dots_width):
+        # measure the Name column again and refit it.
+        self._content_widths_changed()
+        self._table.viewport().update()
 
     # --- Bookmark ---
 
@@ -2125,17 +2393,11 @@ class FilePaneWidget(QWidget):
         )
         log.debug("Drag finished with action %s", result)
 
-    def dragEnterEvent(self, event) -> None:
+    def dragEnterEvent(self, event, origin: QWidget | None = None) -> None:
+        """*origin*: the child view whose coordinates *event* carries."""
         # Pane rearrangement drag
-        if event.mimeData().hasFormat(PANE_MIME_TYPE):
-            source_id = bytes(event.mimeData().data(PANE_MIME_TYPE)).decode()
-            if source_id != str(id(self)):
-                event.setDropAction(Qt.DropAction.MoveAction)
-                event.accept()
-                self._drop_overlay.setGeometry(self.rect())
-                self._drop_overlay.show()
-                self._drop_overlay.raise_()
-                return
+        if self._pane_drop.enter(event, origin):
+            return
         # File transfer drag (from any pane, this one included: inside a
         # pane a drop onto a folder moves or copies into it)
         payload = self._decode_transfer_payload(event.mimeData())
@@ -2195,18 +2457,11 @@ class FilePaneWidget(QWidget):
             current = parent
         return False
 
-    def dragMoveEvent(self, event, folder: str | None = None) -> None:
+    def dragMoveEvent(
+        self, event, folder: str | None = None, origin: QWidget | None = None
+    ) -> None:
         # Pane rearrangement — show drop zone
-        if event.mimeData().hasFormat(PANE_MIME_TYPE):
-            source_id = bytes(event.mimeData().data(PANE_MIME_TYPE)).decode()
-            if source_id != str(id(self)):
-                zone = self._detect_drop_zone(event.position().toPoint())
-                self._drop_overlay.setGeometry(self.rect())
-                self._drop_overlay.set_zone(zone)
-                event.setDropAction(Qt.DropAction.MoveAction)
-                event.accept()
-                return
-            event.ignore()
+        if self._pane_drop.move(event, origin):
             return
         # File transfer drag
         payload = self._decode_transfer_payload(event.mimeData())
@@ -2217,7 +2472,7 @@ class FilePaneWidget(QWidget):
         event.accept()
 
     def dragLeaveEvent(self, event) -> None:
-        self._drop_overlay.hide()
+        self._pane_drop.leave()
         super().dragLeaveEvent(event)
 
     def _show_drop_hint(self, pos: QPoint, folder: str | None, action) -> None:
@@ -2257,20 +2512,19 @@ class FilePaneWidget(QWidget):
         self._drop_row_marker.hide()
         self._drop_hint.hide()
 
-    def dropEvent(self, event, folder: str | None = None) -> None:
-        self._drop_overlay.hide()
+    def dropEvent(
+        self, event, folder: str | None = None, origin: QWidget | None = None
+    ) -> None:
         # Pane rearrangement drop
-        if event.mimeData().hasFormat(PANE_MIME_TYPE):
-            source_id = bytes(event.mimeData().data(PANE_MIME_TYPE)).decode()
-            if source_id != str(id(self)):
-                zone = self._detect_drop_zone(event.position().toPoint())
-                event.acceptProposedAction()
-                # Emit signal — main_window handles the actual reparenting
-                self.pane_drop_requested.emit(source_id, self, zone)
-                log.info("Pane drop: zone=%s onto %s", zone, self._backend.name)
-                return
-            event.ignore()
+        pane_drop = self._pane_drop.drop(event, origin)
+        if pane_drop is not None:
+            source_id, zone = pane_drop
+            # The window does the actual reparenting
+            self.pane_drop_requested.emit(source_id, self, zone)
+            log.info("Pane drop: zone=%s onto %s", zone, self._backend.name)
             return
+        if event.mimeData().hasFormat(PANE_MIME_TYPE):
+            return  # a drag of this pane itself, or no pane: ignored
         # File transfer drop
         payload = self._decode_transfer_payload(event.mimeData())
         if not payload:
@@ -2293,10 +2547,6 @@ class FilePaneWidget(QWidget):
             log.info("Drop %s received: %d items", action, len(paths))
         else:
             event.ignore()
-
-    def _detect_drop_zone(self, pos: QPoint) -> str:
-        """Determine which zone the cursor is in: left, right, top, or bottom."""
-        return detect_drop_zone(pos.x(), pos.y(), self.width(), self.height())
 
     def _encode_transfer_payload(self, paths: list[str], dirs: list[str] | None = None) -> bytes:
         """*dirs* names the dragged folders (from the listing, no stat):
@@ -2399,7 +2649,8 @@ class FilePaneWidget(QWidget):
                     self,
                     "File Too Large",
                     f"{item.name} is {item.size_human}; files up to {describe_limit()} "
-                    "are opened. Raise the limit under View → Open Size Limit….",
+                    "are opened. Raise the limit under Edit → Settings… → Files & Panes → "
+                    "Open Size Limit.",
                 )
             else:
                 self.file_activated.emit(full_path)
@@ -2584,7 +2835,7 @@ class FilePaneWidget(QWidget):
 
     def _is_editable_file(self, name: str, size: int) -> bool:
         """Check if a file should be opened in the text/hex editor."""
-        # One user-configurable limit (View → Open Size Limit…) for every viewer.
+        # One user-configurable limit (Settings > Files & Panes) for every viewer.
         if size > max_open_bytes():
             return False
 
@@ -2604,20 +2855,39 @@ class FilePaneWidget(QWidget):
         return True
 
     def _open_editor(self, path: str, read_only: bool = False) -> None:
+        """Edit *path*: a tab in the window's editor (non-modal; the window
+        refreshes this pane after a save), or - in a pane without a main
+        window - the single-file dialog."""
+        opener = getattr(self.window(), "open_in_editor", None)
+        if callable(opener):
+            opener(self._backend, path, read_only=read_only)
+            return
+        from ui import viewer_window as VW
         from ui.text_editor import TextEditorDialog
 
-        dialog = TextEditorDialog(self._backend, path, parent=self, read_only=read_only)
-        dialog.exec()
-        if not read_only:
-            self.refresh_after_change()
+        dialog = TextEditorDialog(
+            self._backend, path, parent=VW.owner_window(self), read_only=read_only
+        )
+        if not dialog.loaded:  # it said why
+            dialog.deleteLater()
+            return
+        dialog.saved.connect(self.refresh_after_change)
+        VW.show_independent(dialog)
 
     def _open_hex_editor(self, path: str, read_only: bool = False) -> None:
+        """*path* in a hex window of its own: non-modal (``exec()`` froze the
+        editor and the main window until it closed), owned by the main
+        window, the file read off the GUI thread; a save refreshes this
+        pane."""
+        from ui import viewer_window as VW
         from ui.hex_editor import HexEditorDialog
 
-        dialog = HexEditorDialog(self._backend, path, parent=self, read_only=read_only)
-        dialog.exec()
-        if not read_only:
-            self.refresh_after_change()
+        dialog = HexEditorDialog(
+            self._backend, path, parent=VW.owner_window(self), read_only=read_only,
+            background=True,
+        )
+        dialog.saved.connect(self.refresh_after_change)
+        VW.show_independent(dialog)
 
     def _link_points_to_directory(self, path: str) -> bool:
         try:
@@ -2683,243 +2953,252 @@ class FilePaneWidget(QWidget):
         self._menus = keep
 
     def _build_base_context_menu(self) -> QMenu:
+        """The pane's own right-click entries, in groups split by separators:
+        open/view the selection, clipboard/edit, transfer, protect, remove,
+        create here, info/analysis, this folder, tags, agent. Each entry shows the
+        icon its command has in the toolbar or a dock and the key the pane or
+        the window reacts to (:data:`CONTEXT_COMMANDS`); the underlined
+        letter (``&``) picks it while the menu is open."""
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
         selected = self.selected_file_items()
+        files = [i for i in selected if not i.is_dir]
+        single = files[0] if len(files) == 1 else None
+        single_path = self._safe_item_path(single, warn=False) if single is not None else None
+        # A single file whose name cannot be joined safely gets none of the
+        # entries that act on that name (open, rename, remove, checksum ...).
+        hostile = single is not None and single_path is None
 
-        refresh_action = menu.addAction(tr("Refresh"))
-        refresh_action.triggered.connect(self.refresh)
+        def entry(command: str, label: str, slot=None):
+            action = decorate_command(menu.addAction(label), command)
+            if slot is not None:
+                action.triggered.connect(slot)
+            return action
 
-        menu.addSeparator()
+        def group() -> None:
+            actions = menu.actions()
+            if actions and not actions[-1].isSeparator():
+                menu.addSeparator()
 
-        mkdir_action = menu.addAction(tr("New Folder"))
-        mkdir_action.triggered.connect(self._create_folder)
+        # -- open / view the selection
+        if single_path is not None:
+            entry("open-text", tr("Open as &Text"), lambda: self._open_editor(single_path))
+            entry("open-hex", tr("Open as &Hex"), lambda: self._open_hex_editor(single_path))
+            # "Open as root…" only for local backends with pkexec + the
+            # helper binaries (cat/tee/stat/ls): no click into an error dialog.
+            if self._elevated_io_available():
+                entry("open-root", tr("Open as root…"), lambda: self._open_as_root(single_path))
+            self._add_archive_actions(menu, entry, single, single_path)
+        if selected:
+            entry(
+                "view-selected-media",
+                tr("View Selected Media…"),
+                lambda _checked=False: self.view_media(selected_only=True),
+            )
 
-        newfile_action = menu.addAction(tr("New File…"))
-        newfile_action.triggered.connect(self._create_empty_file)
+        # -- clipboard / edit
+        if selected:
+            group()
+            entry(
+                "copy-path",
+                tr("&Copy Path"),
+                lambda _checked=False: self._copy_paths_to_clipboard(),
+            )
+            if not hostile:
+                entry("rename", tr("&Rename"), self._rename_selected)
+                if len(selected) > 1:
+                    entry("batch-rename", tr("Batch Rename..."), self._batch_rename)
 
-        # Symlink / Hardlink are backend-dependent. Hide when the
-        # backend doesn't flag support so users don't see actions
-        # that will fail the moment they click them.
+        # -- transfer
+        if selected:
+            group()
+            entry(
+                "copy-to-target",
+                tr("Copy to Tar&get Pane"),
+                lambda: self.transfer_requested.emit(self.selected_items()),
+            )
+            entry(
+                "move-to-target",
+                tr("Mo&ve to Target Pane"),
+                lambda _checked=False: self._move_to_target(),
+            )
+            decorate_command(menu.addMenu(self._build_pack_menu(selected, menu)), "pack")
+
+        # -- protect (single file: passphrase prompt flow)
+        if single_path is not None:
+            group()
+            if single.name.endswith(".axenc"):
+                entry(
+                    "decrypt",
+                    tr("Decrypt with passphrase…"),
+                    lambda: self._decrypt_selected_file(single),
+                )
+            else:
+                entry(
+                    "encrypt",
+                    tr("Encrypt with passphrase…"),
+                    lambda: self._encrypt_selected_file(single),
+                )
+
+        # -- remove
+        if selected and not hostile:
+            group()
+            entry("trash", tr("Move to Tr&ash"), self._trash_selected)
+            entry("delete", tr("&Delete Permanently"), self._delete_selected)
+
+        # -- create in this folder. Symlink / Hardlink only where the backend
+        # flags support: no entry that fails the moment it is clicked.
+        group()
+        entry("new-folder", tr("&New Folder"), self._create_folder)
+        entry("new-file", tr("New &File…"), self._create_empty_file)
         if getattr(self._backend, "supports_symlinks", False):
-            sym_action = menu.addAction(tr("New Symlink…"))
-            sym_action.triggered.connect(self._create_symlink)
+            entry("new-symlink", tr("New Symlink…"), self._create_symlink)
         if getattr(self._backend, "supports_hardlinks", False):
-            hard_action = menu.addAction(tr("New Hardlink…"))
-            hard_action.triggered.connect(self._create_hardlink)
+            entry("new-hardlink", tr("New Hardlink…"), self._create_hardlink)
+        entry("xlink", tr("Create XLink…"), self._create_xlink)
 
-        bookmark_action = menu.addAction(tr("Bookmark This Directory"))
-        bookmark_action.triggered.connect(self._add_bookmark)
+        # -- info / analysis
+        group()
+        if selected:
+            identify = entry(
+                "identify",
+                tr("Identif&y File Type…"),
+                lambda _checked=False: self.identify_file_type(),
+            )
+            identify.setToolTip(
+                tr("Detect the real type from the content and compare it with the extension")
+            )
+            if single_path is not None:
+                from core.disk_image import looks_like_image
 
+                if looks_like_image(single.name) or self._content_says_disk_image(
+                        single, single_path):
+                    image = entry("disk-image", tr("Disk Image…"),
+                                  lambda _checked=False: self.show_disk_image())
+                    image.setToolTip(
+                        tr("Partitions and file systems of the image; mount one read-only")
+                    )
+            if single_path is not None:
+                # Most backends return a native fingerprint cheaply (S3 ETag,
+                # Drive md5Checksum, ssh sha256sum); the rest stream after a prompt.
+                entry("checksum", tr("Show Checks&um…"), lambda: self._show_checksum(single))
+                entry("versions", tr("Show Versions…"), lambda: self._show_versions(single))
+            dirs = [i for i in selected if i.is_dir]
+            if dirs and not hostile:
+                entry(
+                    "calculate-size",
+                    tr("Calculate Si&ze ({count} dirs)").format(count=len(dirs)),
+                    self._calculate_dir_size,
+                )
+            if any(i.is_link for i in selected) and not hostile:
+                entry("link-target", tr("Show Link Target"), self._show_link_target)
+            if not hostile:
+                entry("permissions", tr("Per&missions..."), self._show_permissions)
+            entry("properties", tr("Propert&ies…"), self._show_properties)
+        # The folder you stand in (or the selected one): offered on empty space too.
+        folder_scan = entry(
+            "identify-folder",
+            tr("Identify Files in This Folder…"),
+            lambda _checked=False: self.identify_folder(),
+        )
+        folder_scan.setToolTip(
+            tr("Detect the real type of every file in this folder (or the selected one) "
+               "from its content; disk images show their partitions")
+        )
+        # Metadata acts on the selection, or on this folder when nothing is
+        # selected - "remove all metadata" for a directory is one click.
+        for command, label, meta_action in (
+            ("metadata", "Show Metadata…", "show"),
+            ("metadata-remove", "Remove Metadata…", "remove"),
+            ("metadata-export", "Export Metadata…", "export"),
+        ):
+            entry(command, tr(label), lambda _checked=False, a=meta_action: self.open_metadata(a))
+        # Acts on the folder you are standing in: offered with nothing selected.
+        entry(
+            "duplicates", tr("Find Duplicate Fi&les…"), self.open_duplicates_requested.emit
+        )
+        if self.receivers(self.find_files_requested) > 0:
+            find = entry(
+                "find-files",
+                tr("Find in This Folder…"),
+                lambda _checked=False: self.find_files_requested.emit(self.terminal_directory()),
+            )
+            find.setToolTip(
+                tr("Search this folder (or the selected one) by name, type, content and "
+                   "inside archives")
+            )
+
+        # -- this folder
+        group()
+        entry("refresh", tr("R&efresh"), self.refresh)
+        view_as = "Vie&w as Details" if self.view_mode == "thumbnails" else "Vie&w as Thumbnails"
+        entry("view-mode", tr(view_as), lambda _checked=False: self.toggle_view_mode())
+        entry("media-view", tr("View Media…"), lambda _checked=False: self.view_media())
+        entry("bookmark", tr("&Bookmark This Directory"), self._add_bookmark)
+        entry("trash-browser", tr("Show Trash…"), self._show_trash_browser)
         self._add_terminal_actions(menu)
+        self._add_fuse_actions(menu, entry)
+
+        # -- tags of the selection (nothing without one)
+        from ui.tag_ui import add_tags_menu
+
+        group()
+        add_tags_menu(self, menu)
+
+        # -- agent
+        group()
         self._add_agent_action(menu)
+        if menu.actions() and menu.actions()[-1].isSeparator():
+            menu.removeAction(menu.actions()[-1])
+        return menu
 
-        xlink_action = menu.addAction(tr("Create XLink…"))
-        xlink_action.triggered.connect(self._create_xlink)
+    def _add_archive_actions(self, menu: QMenu, entry, item, path: str) -> None:
+        """Preview Archive / Extract… for one local file whose name is a
+        format :mod:`core.archive` extracts. The safety caps and the
+        zip-slip guard live there; the UI picks a unique target dir and
+        drives a progress dialog."""
+        from core import archive as _ARCH
+        from core import previews as _PV
 
-        # FUSE mount toggle — only shown when fusepy is importable.
-        # Two separate entries (read-only + read-write) make the
-        # chosen mode explicit rather than hiding it behind a dialog
-        # toggle. When a mount is already active only "Unmount" shows.
+        if not (_PV._is_local_backend(self._backend) and _ARCH.is_supported_archive(item.name)):
+            return
+        # The non-modal archive dock, nothing extracted to disk.
+        entry(
+            "preview-archive",
+            tr("&Preview Archive"),
+            lambda _checked=False, p=path: self._open_archive_preview(p),
+        )
+        extract = entry("extract", tr("E&xtract…"), lambda: self._extract_archive(item))
+        # Bold sets the one entry that writes to disk apart from the
+        # read-only preview; its icon comes from the provider like every
+        # other entry, so monochrome mode and the theme tint apply to it.
+        bold = extract.font()
+        bold.setBold(True)
+        extract.setFont(bold)
+
+    def _add_fuse_actions(self, menu: QMenu, entry) -> None:
+        """Mount as FUSE read-only / read-write, or Unmount - only when
+        fusepy is importable. Two entries make the chosen mode explicit."""
         try:
             from core import fuse_mount as FM
 
-            if FM.is_available():
-                if getattr(self, "_fuse_handle", None) is not None:
-                    fuse_action = menu.addAction(tr("Unmount FUSE"))
-                    fuse_action.triggered.connect(self._unmount_fuse)
-                else:
-                    ro_action = menu.addAction(tr("Mount as FUSE (read-only)…"))
-                    ro_action.triggered.connect(
-                        lambda: self._mount_as_fuse(writeable=False),
-                    )
-                    rw_action = menu.addAction(tr("Mount as FUSE (read-write)…"))
-                    rw_action.triggered.connect(
-                        lambda: self._mount_as_fuse(writeable=True),
-                    )
+            if not FM.is_available():
+                return
+            if getattr(self, "_fuse_handle", None) is not None:
+                entry("fuse-unmount", tr("Unmount FUSE"), self._unmount_fuse)
+            else:
+                entry(
+                    "fuse-ro",
+                    tr("Mount as FUSE (read-only)…"),
+                    lambda: self._mount_as_fuse(writeable=False),
+                )
+                entry(
+                    "fuse-rw",
+                    tr("Mount as FUSE (read-write)…"),
+                    lambda: self._mount_as_fuse(writeable=True),
+                )
         except Exception as exc:  # noqa: BLE001 — never let fuse break the menu
             log.debug("Skipping FUSE menu entry: %s", exc)
-
-        trash_browser_action = menu.addAction(tr("Show Trash…"))
-        trash_browser_action.triggered.connect(self._show_trash_browser)
-
-        # Deliberately outside the ``if selected:`` block below: this
-        # acts on the directory you are standing in, which is exactly
-        # the moment you have nothing selected yet.
-        dupes_action = menu.addAction(tr("Find Duplicate Files…"))
-        dupes_action.triggered.connect(self.open_duplicates_requested.emit)
-
-        view_as = "View as Details" if self.view_mode == "thumbnails" else "View as Thumbnails"
-        view_as_action = menu.addAction(tr(view_as))
-        view_as_action.triggered.connect(lambda _checked=False: self.toggle_view_mode())
-
-        # Same reasoning: the media viewer starts from the folder itself.
-        media_action = menu.addAction(tr("View Media…"))
-        media_action.triggered.connect(lambda _checked=False: self.view_media())
-
-        # Metadata acts on the selection, or on this folder when nothing is
-        # selected - "remove all metadata" for a directory is one click.
-        for label, meta_action in (
-            ("Show Metadata…", "show"),
-            ("Remove Metadata…", "remove"),
-            ("Export Metadata…", "export"),
-        ):
-            act = menu.addAction(tr(label))
-            act.triggered.connect(lambda _checked=False, a=meta_action: self.open_metadata(a))
-
-        if selected:
-            media_sel_action = menu.addAction(tr("View Selected Media…"))
-            media_sel_action.triggered.connect(
-                lambda _checked=False: self.view_media(selected_only=True)
-            )
-
-            menu.addSeparator()
-
-            props_action = menu.addAction(tr("Properties…\tAlt+Enter"))
-            props_action.triggered.connect(self._show_properties)
-
-            type_action = menu.addAction(tr("Identify File Type…"))
-            type_action.setToolTip(
-                tr("Detect the real type from the content and compare it with the extension")
-            )
-            type_action.triggered.connect(lambda _checked=False: self.identify_file_type())
-
-            copy_action = menu.addAction(tr("Copy to Target Pane"))
-            copy_action.triggered.connect(
-                lambda: self.transfer_requested.emit(self.selected_items())
-            )
-
-            menu.addMenu(self._build_pack_menu(selected, menu))
-
-            # Open in editor (for single file selection)
-            files = [i for i in selected if not i.is_dir]
-            if len(files) == 1:
-                menu.addSeparator()
-                item = files[0]
-                full_path = self._safe_item_path(item, warn=False)
-                if full_path is None:
-                    return menu
-
-                text_action = menu.addAction(tr("Open as Text"))
-                text_action.triggered.connect(lambda: self._open_editor(full_path))
-
-                hex_action = menu.addAction(tr("Open as Hex"))
-                hex_action.triggered.connect(lambda: self._open_hex_editor(full_path))
-
-                # "Open as root…" only shows for local backends and only
-                # if pkexec + the helper binaries (cat/tee/stat/ls) are
-                # actually present. Hiding it on remote / pkexec-less
-                # systems avoids the "click → error dialog" UX dead-end.
-                if self._elevated_io_available():
-                    elev_action = menu.addAction(tr("Open as root…"))
-                    elev_action.triggered.connect(lambda: self._open_as_root(full_path))
-
-            menu.addSeparator()
-
-            rename_action = menu.addAction(tr("Rename"))
-            rename_action.triggered.connect(self._rename_selected)
-
-            if len(selected) > 1:
-                batch_rename_action = menu.addAction(tr("Batch Rename..."))
-                batch_rename_action.triggered.connect(self._batch_rename)
-
-            trash_action = menu.addAction(tr("Move to Trash"))
-            trash_action.triggered.connect(self._trash_selected)
-
-            delete_action = menu.addAction(tr("Delete Permanently"))
-            delete_action.triggered.connect(self._delete_selected)
-
-            menu.addSeparator()
-
-            perms_action = menu.addAction(tr("Permissions..."))
-            perms_action.triggered.connect(self._show_permissions)
-
-            # Checksum is a single-file action — most backends return a
-            # native fingerprint (S3 ETag, Drive md5Checksum, ssh
-            # sha256sum etc.) cheaply; the rest fall back to streaming
-            # via open_read after a confirmation prompt.
-            files_for_csum = [i for i in selected if not i.is_dir]
-            if len(files_for_csum) == 1:
-                csum_action = menu.addAction(tr("Show Checksum…"))
-                csum_action.triggered.connect(lambda: self._show_checksum(files_for_csum[0]))
-
-                versions_action = menu.addAction(tr("Show Versions…"))
-                versions_action.triggered.connect(lambda: self._show_versions(files_for_csum[0]))
-
-            # Directory size
-            dirs = [i for i in selected if i.is_dir]
-            if dirs:
-                size_action = menu.addAction(f"Calculate Size ({len(dirs)} dirs)")
-                size_action.triggered.connect(self._calculate_dir_size)
-
-            # Symlink info
-            links = [i for i in selected if i.is_link]
-            if links:
-                link_target_action = menu.addAction(tr("Show Link Target"))
-                link_target_action.triggered.connect(self._show_link_target)
-
-            # Encryption (single file only — passphrase prompt flow).
-            if len(files) == 1:
-                item = files[0]
-                menu.addSeparator()
-                if item.name.endswith(".axenc"):
-                    dec_action = menu.addAction(tr("Decrypt with passphrase…"))
-                    dec_action.triggered.connect(lambda: self._decrypt_selected_file(item))
-                else:
-                    enc_action = menu.addAction(tr("Encrypt with passphrase…"))
-                    enc_action.triggered.connect(lambda: self._encrypt_selected_file(item))
-
-            # Archive extraction — offered only for local backends
-            # and only when the filename actually matches a format
-            # we can extract. The safety caps + zip-slip guard live
-            # in :mod:`core.archive`; the UI just picks a unique
-            # target dir and drives a progress dialog.
-            if len(files) == 1:
-                from core import archive as _ARCH
-                from core import previews as _PV
-
-                if _PV._is_local_backend(self._backend) and _ARCH.is_supported_archive(
-                    files[0].name
-                ):
-                    menu.addSeparator()
-                    arc_item = files[0]
-                    arc_path = self._safe_item_path(arc_item, warn=False)
-
-                    # "Preview Archive" opens the non-modal archive
-                    # dock without extracting anything to disk.
-                    preview_action = menu.addAction(tr("Preview Archive"))
-                    if arc_path is not None:
-                        preview_action.triggered.connect(
-                            lambda _checked=False, p=arc_path: self._open_archive_preview(p)
-                        )
-                    else:
-                        preview_action.setEnabled(False)
-
-                    extract_action = menu.addAction(tr("Extract…"))
-                    extract_action.triggered.connect(lambda: self._extract_archive(arc_item))
-                    # Colour-highlight the extract entry so it stands
-                    # apart from the read-only preview. QMenu/QAction
-                    # don't honour per-item stylesheets reliably across
-                    # platforms, so we go with the SIMPLEST robust combo
-                    # that visibly distinguishes it: bold font + a small
-                    # generated QPixmap icon filled with the WARNING
-                    # accent (#e5c07b, reused from ui.log_dock's palette).
-                    from PyQt6.QtGui import QColor, QIcon
-
-                    bold = extract_action.font()
-                    bold.setBold(True)
-                    extract_action.setFont(bold)
-                    # Defence in depth: the highlight swatch is purely
-                    # cosmetic, so a hypothetical icon-creation failure
-                    # must never abort the whole context menu. Guard JUST
-                    # the swatch/icon creation+set.
-                    try:
-                        swatch = QPixmap(12, 12)
-                        swatch.fill(QColor("#e5c07b"))
-                        extract_action.setIcon(QIcon(swatch))
-                    except Exception:  # noqa: BLE001 — cosmetic only
-                        log.debug("Extract-action highlight swatch failed", exc_info=True)
-
-        return menu
 
     def _add_terminal_actions(self, menu: QMenu) -> None:
         """Open Terminal Here (embedded dock) and, for local folders, Open
@@ -2929,7 +3208,7 @@ class FilePaneWidget(QWidget):
 
         kind = TH.shell_kind(self._backend)
         menu.setToolTipsVisible(True)
-        embedded = menu.addAction(tr("Open Terminal Here"))
+        embedded = decorate_command(menu.addAction(tr("&Open Terminal Here")), "terminal")
         embedded.triggered.connect(lambda _checked=False: self.open_terminal_here())
         if not kind:
             embedded.setEnabled(False)
@@ -2942,17 +3221,30 @@ class FilePaneWidget(QWidget):
         else:
             embedded.setToolTip(tr("Open a shell in the terminal dock in this folder"))
         if kind == TH.LOCAL:
-            external = menu.addAction(tr("Open External Terminal Here"))
+            external = decorate_command(
+                menu.addAction(tr("Open External Terminal Here")), "external-terminal"
+            )
             external.setToolTip(tr("Start your terminal emulator ($TERMINAL) in this folder"))
             external.triggered.connect(lambda _checked=False: self.open_external_terminal_here())
 
     def _add_agent_action(self, menu: QMenu) -> None:
-        """Send to Agent: the selection, or the folder on empty space."""
+        """Send to Agent: the selection, or the folder on empty space; and
+        New Agent Tab Here: start the agent in a new tab for this folder."""
         if self.receivers(self.send_to_agent_requested) == 0:
             return
-        action = menu.addAction(tr("Send to Agent"))
+        action = decorate_command(menu.addAction(tr("Send to Agent")), "send-to-agent")
         action.setToolTip(tr("Attach the selection (or this folder) to the Agent's current tab"))
         action.triggered.connect(lambda _checked=False: self.send_to_agent())
+        if self.receivers(self.new_agent_tab_requested):
+            start = menu.addAction(tr("New Agent Tab Here"))
+            start.setToolTip(tr("Open the Agent with a new conversation in this folder"))
+            start.triggered.connect(lambda _checked=False: self.new_agent_tab_here())
+
+    def new_agent_tab_here(self) -> None:
+        from core.local_fs import LocalFS
+
+        local = isinstance(self._backend, LocalFS)
+        self.new_agent_tab_requested.emit(self._current_path if local else "")
 
     def send_to_agent(self) -> None:
         paths = self.selected_items() or ([self._current_path] if self._current_path else [])
@@ -3041,7 +3333,7 @@ class FilePaneWidget(QWidget):
         compression when one file is selected, and the options dialog."""
         from core import packer as PK
 
-        menu = QMenu(tr("Pack"), parent)
+        menu = QMenu(tr("Pac&k"), parent)
         for fmt_id, label in self._QUICK_PACK:
             action = menu.addAction(tr(label))
             ok, reason = PK.FORMATS[fmt_id].available()
@@ -3356,6 +3648,7 @@ class FilePaneWidget(QWidget):
                     return
                 server_side_move(self._backend, old_path, new_path)
                 log.info("Renamed %s -> %s", old_path, new_path)
+                self._tags_follow_rename(old_path, new_path)
                 self.refresh_after_change()
             except OSError as e:
                 log.error("Rename failed: %s", e)
@@ -3386,6 +3679,63 @@ class FilePaneWidget(QWidget):
     def removal_running(self) -> bool:
         """A Delete / Move to Trash of this pane is checking, asking or removing."""
         return bool(self._removal_ctx)
+
+    def remove_paths(self, paths: list[str]) -> bool:
+        """Delete *paths* (on this pane's backend) that a caller has already
+        confirmed - the Compare window's Delete - without blocking.
+
+        It is the removal phase of :meth:`_start_removal`: the paths are
+        claimed against a parallel delete, the production gate asks, then
+        the pane's status line shows the progress with Cancel, errors are
+        reported per entry and the folder is reloaded at the end. Each path
+        is removed on its own and non-recursively (a folder goes only when
+        it is empty), deepest first, so a folder listed before the entries
+        inside it goes after them. False when it did not start.
+        """
+        if not paths:
+            return False
+        if self._removal_ctx:
+            QMessageBox.information(
+                self,
+                "Delete",
+                tr("A delete is still running in this pane; try again when it is done."),
+            )
+            return False
+        backend = self._backend
+
+        def depth(path: str) -> int:
+            bare = path.rstrip("/\\")
+            return bare.count("/") + bare.count("\\")
+
+        ordered = sorted(dict.fromkeys(paths), key=depth, reverse=True)
+        token, busy = _claim_removal(backend, ordered)
+        if token is None:
+            QMessageBox.warning(
+                self,
+                "Delete",
+                "Not started: these paths are already being deleted or moved to the trash:\n"
+                + _escape_dialog_lines(busy[:10]),
+            )
+            return False
+        ctx = {
+            "phase": "remove",
+            "trash": False,
+            "title": "Delete",
+            "backend": backend,
+            "entries": [(path, path, False) for path in ordered],
+            "unsafe": [],
+            "names": "",
+            "token": token,
+        }
+        self._removal_ctx = ctx
+        if not self._production_ok(f"delete {len(ordered)} item(s)"):
+            if not self._removal_dropped(ctx):
+                self._end_removal(ctx)
+            return False
+        if self._removal_dropped(ctx):  # closed or reconnected meanwhile
+            return False
+        self._start_removal_phase(ctx)
+        return True
 
     def _start_removal(self, *, trash: bool) -> None:
         """Delete (or move to the trash) the selected items without blocking.
@@ -3502,7 +3852,7 @@ class FilePaneWidget(QWidget):
             return
         self._removal_job.cancel()
         self._cancel_delete_btn.setEnabled(False)
-        self._status.setText(tr("Cancelling - the entry in progress finishes first…"))
+        self._status.setText(tr("Cancelling - stopping at the next entry…"))
 
     def _end_removal(self, ctx: dict) -> None:
         _release_removal(ctx["token"])
@@ -3673,6 +4023,13 @@ class FilePaneWidget(QWidget):
                     f"{ctx['title']} stopped after an unexpected error: {moved.lower()} "
                     f"{value.done} of {total} item(s){where}; {value.not_attempted} kept."
                 )
+            elif value.partial is not None:
+                part_name, part_count = value.partial
+                note = (
+                    f"{ctx['title']} cancelled after {value.done} of {total} item(s); "
+                    f"{part_name} was partly deleted ({part_count} entries inside it "
+                    f"removed, the rest is still there); {value.not_attempted} kept."
+                )
             elif value.not_attempted:
                 note = (
                     f"{ctx['title']} cancelled after {value.done} of {total} item(s); "
@@ -3733,28 +4090,32 @@ class FilePaneWidget(QWidget):
         multi-selection — which is what this did — answers a question
         nobody asked after Ctrl+A.
         """
+        from ui import viewer_window as VW
         from ui.properties_dialog import PropertiesDialog
 
         items = self.selected_file_items()
         if not items:
             return
+        owner = VW.owner_window(self)
         if len(items) == 1:
             path = self._safe_item_path(items[0])
             if path is None:
                 return
-            dialog = PropertiesDialog(self._backend, path, items[0], parent=self)
+            dialog = PropertiesDialog(self._backend, path, items[0], parent=owner)
         else:
-            dialog = PropertiesDialog(self._backend, self._current_path, items, parent=self)
-        if dialog.exec():
-            # The permissions tab may have written a new mode.
-            self.refresh_after_change()
+            dialog = PropertiesDialog(self._backend, self._current_path, items, parent=owner)
+        # The permissions tab may have written a new mode: OK refreshes.
+        dialog.accepted.connect(self.refresh_after_change)
+        VW.show_independent(dialog)
 
     def _calculate_dir_size(self) -> None:
         """Total size of the selected folders, walked in the background.
 
         The walk (core.tree_size) runs on a ScanJob: the window stays live,
-        the status line counts folders and files, Cancel stops it, and the
-        result comes as a message when it is done.
+        the status line counts folders and files, Cancel stops it. When it
+        is done the result is a sortable table (ui.dir_size_dialog), and
+        each folder's size shows in this pane's Size column until the
+        listing is reloaded.
         """
         from core.tree_size import tree_size
 
@@ -3804,6 +4165,9 @@ class FilePaneWidget(QWidget):
         self._status.setText(tr("Calculating size…"))
         self._progress_bar.show()
         self._cancel_size_btn.show()
+        # The listing the names belong to: a result that arrives after the
+        # pane moved on must not label a same-named folder elsewhere.
+        self._size_origin = (backend, self._current_path)
         self._size_job.start(work)
 
     def _cancel_dir_size(self) -> None:
@@ -3821,22 +4185,24 @@ class FilePaneWidget(QWidget):
         if kind == "error":
             QMessageBox.warning(self, "Directory Size", f"Could not calculate the size:\n{value}")
             return
-        lines = []
-        for name, r in value:
-            line = f"{name}: {_size_text(r.bytes)}"
-            notes = []
-            if r.unreadable:
-                notes.append(
-                    tr("1 folder could not be read")
-                    if r.unreadable == 1
-                    else tr("{n} folders could not be read").format(n=r.unreadable)
-                )
-            if r.depth_capped:
-                notes.append(tr("depth limit reached"))
-            if notes:
-                line += f" ({', '.join(notes)})"
-            lines.append(line)
-        QMessageBox.information(self, "Directory Size", "\n".join(lines))
+        from ui.dir_size_dialog import DirSizeDialog, rows_from_results
+
+        rows = rows_from_results(value)
+        backend, folder = getattr(self, "_size_origin", (None, None))
+        if backend is self._backend and folder == self._current_path:
+            self._model.set_computed_sizes({r.name: (r.bytes, r.incomplete) for r in rows})
+        old = getattr(self, "_size_dialog", None)
+        if old is not None:
+            old.close()
+        dialog = DirSizeDialog(rows, folder or self._current_path, parent=self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.destroyed.connect(lambda _obj=None, d=dialog: self._forget_size_dialog(d))
+        self._size_dialog = dialog
+        dialog.show()
+
+    def _forget_size_dialog(self, dialog) -> None:
+        if getattr(self, "_size_dialog", None) is dialog:
+            self._size_dialog = None
 
     # Known checksum-string prefixes that the backends return. Keeping
     # this as an explicit allowlist (rather than a "looks like
@@ -3935,8 +4301,11 @@ class FilePaneWidget(QWidget):
             algo = "sha256"
             source = "stream-read"
 
-        dlg = ChecksumDialog(full_path, algo, value, source=source, parent=self)
-        dlg.exec()
+        from ui import viewer_window as VW
+
+        VW.show_independent(
+            ChecksumDialog(full_path, algo, value, source=source, parent=VW.owner_window(self))
+        )
 
     def _stream_sha256(self, path: str, total_size: int = 0) -> str | None:
         """Read *path* through the backend and return its SHA-256 hex,
@@ -4449,8 +4818,9 @@ class FilePaneWidget(QWidget):
                 f"Elevated read failed:\n{exc}",
             )
             return
-        dlg = ElevatedViewerDialog(full_path, data, parent=self)
-        dlg.exec()
+        from ui import viewer_window as VW
+
+        VW.show_independent(ElevatedViewerDialog(full_path, data, parent=VW.owner_window(self)))
 
     def _trash_selected(self) -> None:
         """Move selected items to ``core.trash`` for the current backend.

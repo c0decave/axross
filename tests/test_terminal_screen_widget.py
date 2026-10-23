@@ -295,3 +295,38 @@ def test_edge_a_failed_restart_says_so_and_a_background_tab_gets_the_widget_size
     assert dock._tabs["SSH: host"].session is None
     assert "Reconnect failed: channel refused" in dock._terminal.toPlainText()
     dock.shutdown()
+
+
+# -- the caret after characters outside the BMP (bughunt 2026-10-22: the caret
+# was placed by Python characters in a QTextCursor, which counts an emoji or a
+# Nerd Font icon from the supplementary planes as two, so it sat one column to
+# the left per such character before the cursor) ------------------------------------
+
+
+def _units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def test_edge_the_caret_follows_a_prompt_with_emoji(app):
+    t = _term(app)
+    t.append_output("\U0001f600\U0001f600 ab")
+    cursor = t.textCursor()
+    assert cursor.block().text().rstrip() == "\U0001f600\U0001f600 ab"
+    assert cursor.positionInBlock() == _units("\U0001f600\U0001f600 ab")
+    assert t.document().characterAt(cursor.position() - 1) == "b"
+
+
+def test_edge_the_caret_inside_a_line_after_a_supplementary_icon(app):
+    t = _term(app)
+    # A Nerd Font v3 icon (U+F0001) in a prompt, then the cursor moved back 2.
+    t.append_output("\U000f0001 ~ % cd\x1b[2D")
+    cursor = t.textCursor()
+    assert cursor.positionInBlock() == _units("\U000f0001 ~ % ")
+    assert t.document().characterAt(cursor.position()) == "c"
+
+
+def test_happy_the_caret_after_plain_and_wide_bmp_text_is_unchanged(app):
+    t = _term(app)
+    t.append_output("中文 ab")
+    cursor = t.textCursor()
+    assert cursor.positionInBlock() == len("中文 ab")

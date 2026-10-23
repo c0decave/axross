@@ -129,8 +129,14 @@ def apply_preset(owner, name: str) -> None:
     # later connect, Extract Pane and the session save on close touched a
     # deleted object ("wrapped C/C++ object of type QSplitter has been
     # deleted").
-    owner._root_splitter = root
-    owner.setCentralWidget(root)
+    install = getattr(owner, "_install_root_splitter", None)
+    if install is not None:
+        # A window with workspaces: the new root replaces the current
+        # workspace's, the others keep theirs.
+        install(root)
+    else:
+        owner._root_splitter = root
+        owner.setCentralWidget(root)
     # Track which preset we're on so the cycle helper can rotate.
     owner._current_preset_name = name
     owner._refresh_after_preset()

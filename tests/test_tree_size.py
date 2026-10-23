@@ -8,6 +8,7 @@ asked to cancel.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 from pathlib import Path
@@ -122,3 +123,48 @@ def test_edge_the_depth_bound_is_reported(tmp_path):
     r = tree_size(_Deep(50), "/", max_depth=10)
     assert r.depth_capped
     assert r.folders == 11  # the root and ten levels below it
+
+
+# --- hidden entries (operator item 30: "rechnen wir dann auch hidden files mit ein?") ---
+
+
+def _tree_with_hidden(root: Path) -> Path:
+    """A visible file, dotfiles, a hidden folder with a visible and a hidden
+    file inside, and a visible folder holding only a dotfile: 1+20+300+4000+50000."""
+    (root / ".cache" / "inner").mkdir(parents=True)
+    (root / "plain").mkdir()
+    (root / "visible.bin").write_bytes(b"x" * 1)
+    (root / ".bashrc").write_bytes(b"x" * 20)
+    (root / ".cache" / "data.bin").write_bytes(b"x" * 300)
+    (root / ".cache" / "inner" / ".lock").write_bytes(b"x" * 4000)
+    (root / "plain" / ".env").write_bytes(b"x" * 50000)
+    return root
+
+
+def test_happy_dotfiles_and_hidden_folders_are_counted_like_du(tmp_path):
+    root = _tree_with_hidden(tmp_path / "t")
+    r = tree_size(LocalFS(), str(root))
+    assert (r.bytes, r.files, r.folders) == (54321, 5, 4)
+    # The same sum the file system itself gives for the regular files.
+    on_disk = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+    assert r.bytes == on_disk
+
+
+def test_sad_a_hidden_flag_on_the_item_does_not_exclude_it(tmp_path):
+    """Backends that mark entries hidden (Windows attribute, SMB) set
+    ``attr_hidden``; the walk ignores that flag as it ignores the leading dot."""
+    root = _tree_with_hidden(tmp_path / "t")
+
+    class Flagging(LocalFS):
+        def list_dir(self, path):
+            return [dataclasses.replace(i, attr_hidden=True) for i in super().list_dir(path)]
+
+    assert tree_size(Flagging(), str(root)).bytes == 54321
+
+
+def test_edge_a_folder_with_nothing_but_hidden_entries_is_not_empty(tmp_path):
+    root = tmp_path / "only-hidden"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "HEAD").write_bytes(b"ref: refs/heads/main\n")
+    r = tree_size(LocalFS(), str(root))
+    assert (r.bytes, r.files, r.folders) == (21, 1, 2)

@@ -79,3 +79,25 @@ def test_edge_a_source_without_stat_moves_as_before(tmp_path):
     axross.move(_NoStat(), str(src), LocalFS(), str(dst))
     assert not src.exists()
     assert dst.read_bytes() == b"x" * 64
+
+
+class _ShortRead(LocalFS):
+    """open_read ends after half the file, without an error."""
+
+    def open_read(self, path):
+        import io
+
+        with open(path, "rb") as fh:
+            data = fh.read()
+        return io.BytesIO(data[: len(data) // 2])
+
+
+def test_sad_a_short_copy_keeps_the_source_and_takes_the_copy_back(tmp_path):
+    # The audit of 2026-10-22: a stream that ends early must not cost the source.
+    src, dst = tmp_path / "f.bin", tmp_path / "out" / "f.bin"
+    dst.parent.mkdir()
+    src.write_bytes(b"y" * 4096)
+    with pytest.raises(OSError, match="only 2048 of 4096 bytes"):
+        axross.move(_ShortRead(), str(src), LocalFS(), str(dst))
+    assert src.read_bytes() == b"y" * 4096
+    assert not dst.exists()

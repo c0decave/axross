@@ -1,7 +1,8 @@
 """Compact mode comes back on start like the theme does.
 
-Found in review (round 3, config; reproduced): with File > Restore
-Layout on Start switched off, ``_load_persistent_visual_settings``
+Found in review (round 3, config; reproduced): with "Restore the layout
+of the last session on start" switched off (now Edit > Settings >
+General), ``_load_persistent_visual_settings``
 restored the theme and the monochrome icons but not compact mode - that
 was only read by ``_apply_session``, the layout restore. The window
 started normal-sized and wrote ``compact: false`` back on close, so the
@@ -36,7 +37,7 @@ class CompactModeOnStartTest(_WindowStateTest):
         self.session.write_text(_session(compact=True, ui_theme="hacker"))
         win = self.make_window()
         self.assertTrue(win._compact_mode)
-        self.assertTrue(win._compact_action.isChecked())
+        self.assertTrue(win.current_window_prefs().compact)
         self.assertTrue(self.saved_window()["compact"])
 
     def test_sad_compact_false_stays_off(self) -> None:

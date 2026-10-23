@@ -153,3 +153,42 @@ def test_sad_a_server_without_sftp_says_so(env):
     assert "SFTP subsystem" in text
     assert "SCP" in text
     assert not s.connected
+
+
+class _NoChannelServer(SftpServer):
+    """Authenticates, then refuses every new channel - as OpenSSH does once
+    MaxSessions (default 10) channels are open on the connection."""
+
+    def _serve(self) -> None:
+        from tests import sftp_testkit as K
+
+        class _Refusing(K._Auth):
+            def check_channel_request(self, kind, chanid):
+                return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                return
+            t = paramiko.Transport(conn)
+            t.add_server_key(K._host_key())
+            t.start_server(server=_Refusing())
+            self._transports.append(t)
+
+
+def test_sad_a_refused_channel_is_not_called_switched_off_sftp(env):
+    # The audit of 2026-10-22: ChannelException is an SSHException, so a
+    # server at its channel limit was reported as "SFTP is probably switched
+    # off, use SCP" - wrong advice for the "no connect until every pane is
+    # closed" case.
+    root, server = env
+    srv = server(_NoChannelServer)
+    s = SSHSession(_profile(srv.port))
+    with pytest.raises(OSError) as info:
+        s.connect(password="x", on_unknown_host=lambda _e: True)
+    text = str(info.value)
+    assert "refused to open" in text and "channel" in text
+    assert "MaxSessions" in text
+    assert "switched off" not in text and "Synology" not in text
+    assert not s.connected

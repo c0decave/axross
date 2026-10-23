@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
-from PyQt6.QtCore import QItemSelectionModel  # noqa: E402
+from PyQt6.QtCore import QEvent, QItemSelectionModel  # noqa: E402
 from PyQt6.QtGui import QAction  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QToolBar  # noqa: E402
 
@@ -51,6 +51,9 @@ def window(tmp_path):
     yield win
     win.close()
     win.deleteLater()
+    # processEvents() never runs DeferredDelete: without this every window
+    # lives on and each new one's stylesheet repolishes all of them.
+    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     pump()
 
 
@@ -67,7 +70,8 @@ def _select(pane, name: str) -> None:
 
 
 def _labels(menu: QMenu) -> list[str]:
-    return [a.text() for a in menu.actions() if not a.isSeparator()]
+    # "&" marks the mnemonic letter; the label is what is left.
+    return [a.text().replace("&", "") for a in menu.actions() if not a.isSeparator()]
 
 
 def _menubar_menu(window, text: str) -> QMenu:
@@ -114,9 +118,10 @@ def test_happy_the_actions_menu_mirrors_the_right_click_menu(window, name) -> No
 
 def test_happy_toolbar_buttons_are_in_the_menus_as_the_same_action(window) -> None:
     in_menus = _all_menu_actions(window)
-    toolbar = next(tb for tb in window.findChildren(QToolBar) if tb.windowTitle() == "Main")
+    bars = [tb for tb in window.findChildren(QToolBar) if tb.windowTitle() in ("Main", "Tools")]
     missing = [
         a.text()
+        for toolbar in bars
         for a in toolbar.actions()
         if a.text() and not a.isSeparator() and id(a) not in in_menus
         and a.text() not in _menu_texts(window)
@@ -142,10 +147,17 @@ def _menu_texts(window) -> set[str]:
 
 
 def test_sad_no_shortcut_is_bound_twice(window) -> None:
-    # Two actions with one shortcut make Qt fire neither ("ambiguous").
+    # Two actions with one shortcut make Qt fire neither ("ambiguous"). A
+    # right-click entry only shows its key: Qt.WidgetShortcut on a menu that
+    # never takes focus is no owner (tests/test_pane_context_menu_layout.py
+    # presses every such key and counts one trigger).
+    from PyQt6.QtCore import Qt
+
     _all_menu_actions(window)
     owners: dict[str, set[int]] = {}
     for action in window.findChildren(QAction):
+        if action.shortcutContext() == Qt.ShortcutContext.WidgetShortcut:
+            continue
         for seq in action.shortcuts():
             key = seq.toString()
             if key:
@@ -187,3 +199,64 @@ def test_edge_without_a_file_pane_the_actions_menu_says_so(window) -> None:
 def test_edge_view_menu_has_shell_and_bookmarks(window) -> None:
     view = _labels(_menubar_menu(window, "&View"))
     assert "Shell" in view and "Bookmarks" in view
+
+
+def _mnemonic(text: str) -> str:
+    """The letter after a single "&" ("&&" is a literal ampersand)."""
+    i = 0
+    while i < len(text) - 1:
+        if text[i] == "&":
+            if text[i + 1] != "&":
+                return text[i + 1].lower()
+            i += 1
+        i += 1
+    return ""
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_sad_no_mnemonic_is_used_twice_in_one_menu(language, monkeypatch) -> None:
+    # Alt+letter with two owners in one menu only cycles between them instead
+    # of triggering: every letter belongs to one entry per menu. German is
+    # the one catalogue that translates the menus, so it is checked too.
+    from core import i18n
+    from ui.main_window import MainWindow
+
+    monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator(language))
+    win = MainWindow()
+    win._reconnect_timer.stop()
+    doubles = []
+
+    def check(title: str, actions) -> None:
+        owners: dict[str, list[str]] = {}
+        for action in actions:
+            if action.isSeparator() or not action.isVisible():
+                continue
+            letter = _mnemonic(action.text())
+            if letter:
+                owners.setdefault(letter, []).append(action.text())
+        doubles.extend((title, k, v) for k, v in owners.items() if len(v) > 1)
+
+    def walk(title: str, menu: QMenu) -> None:
+        menu.aboutToShow.emit()
+        check(title, menu.actions())
+        for action in menu.actions():
+            if action.menu() is not None:
+                walk(f"{title} > {action.text()}", action.menu())
+
+    try:
+        check("menu bar", win.menuBar().actions())
+        for top in win.menuBar().actions():
+            walk(top.text(), top.menu())
+        if language == "de":  # the catalogue really is in use
+            assert any(a.text() == "&Datei" for a in win.menuBar().actions())
+    finally:
+        win.close()
+        win.deleteLater()
+        APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert doubles == [], doubles
+
+
+def test_edge_mnemonic_reads_double_ampersands_literally() -> None:
+    assert _mnemonic("&Network && Proxy") == "n"
+    assert _mnemonic("Save && &Quit") == "q"
+    assert _mnemonic("Plain") == "" and _mnemonic("Trailing&") == ""

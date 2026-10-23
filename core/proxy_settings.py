@@ -196,6 +196,11 @@ def set_session_password(password: str) -> None:
     _session_password = password or ""
 
 
+def session_password() -> str:
+    """The password typed for this process only ("" when none)."""
+    return _session_password
+
+
 def set_password(password: str) -> bool:
     from core.credentials import delete_proxy_password, store_proxy_password
 

@@ -135,7 +135,11 @@ def test_happy_the_relay_answers_a_sandboxed_read(fake, tmp_path):
     assert result.answer == "It says: buy milk." and result.stopped == "answered"
     assert result.calls == [{"name": "read_file", "outcome": "ok"}]
     assert "buy milk" in server.requests[1]["messages"][-1]["content"]
-    assert [e["type"] for e in events] == ["tool_call", "tool_result", "assistant"]
+    assert [e["type"] for e in events if e["type"] != "connection"] == \
+        ["tool_call", "tool_result", "assistant"]
+    # axross sends the worker's requests, so axross says how they went (the lamp).
+    assert [e["state"] for e in events if e["type"] == "connection"] == \
+        ["trying", "connected", "trying", "connected"]
 
 
 def test_happy_a_change_waits_for_the_hosts_yes(fake, tmp_path):
@@ -466,6 +470,28 @@ def test_sad_a_missing_extra_folder_is_named(tmp_path):
     with pytest.raises(A.AgentError, match="gone"):
         agent.run("hi")
     agent.close()
+
+
+def test_edge_a_restored_conversation_gets_the_workers_system_message(fake, tmp_path):
+    # A session saved with another folder: the worker tells the model the
+    # folder it works in now, not the one in the stored system message.
+    import json
+
+    server = fake({"content": "ok"})
+    history = [{"role": "system", "content": 'old rules, root "/elsewhere"'},
+               {"role": "user", "content": "earlier"}, {"role": "assistant", "content": "yes"}]
+    agent = SB.SandboxedAgent(_config(server.url, tmp_path),
+                              lambda: SB.SandboxProfile(engine="bubblewrap", level="lax"),
+                              command=SB.worker_argv(), history=history)
+    try:
+        agent.run("now")
+    finally:
+        agent.close()
+    sent = server.requests[0]["messages"]
+    assert sent[0]["role"] == "system"
+    assert json.dumps(str(tmp_path)) in sent[0]["content"]
+    assert "/elsewhere" not in sent[0]["content"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
 
 
 def test_edge_a_changed_profile_starts_a_new_sandbox_that_keeps_the_conversation(fake, tmp_path):

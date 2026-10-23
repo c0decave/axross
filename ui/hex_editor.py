@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QRect, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
 from ui.close_corner import make_close_corner, make_maximize_corner
+from ui.scan_job import ScanJob
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -54,6 +55,24 @@ def _read_capped(handle, cap: int | None = None) -> bytes:
     if len(data) > cap:
         raise HexEditorReadLimitError(f"file exceeds {cap} byte hex editor cap")
     return bytes(data)
+
+
+class HexFileTooLargeError(Exception):
+    """The file is above the open size limit; ``size_human`` says how big."""
+
+    def __init__(self, size_human: str) -> None:
+        super().__init__(size_human)
+        self.size_human = size_human
+
+
+def read_for_hex(backend, path: str, cap: int):
+    """``(stat, data)`` of *path* - on any thread, no widget touched.
+    Raises HexFileTooLargeError above *cap* bytes and OSError."""
+    stat = backend.stat(path)
+    if stat.size > cap:
+        raise HexFileTooLargeError(stat.size_human)
+    with backend.open_read(path) as f:
+        return stat, _read_capped(f, cap)
 
 
 BYTES_PER_LINE = 16
@@ -436,7 +455,15 @@ class HexWidget(QWidget):
 
 
 class HexEditorDialog(QDialog):
-    """Hex editor dialog for viewing/editing binary files via any FileBackend."""
+    """Hex editor dialog for viewing/editing binary files via any FileBackend.
+
+    With *background* the file is read off the GUI thread (the window shows
+    "Loading…" meanwhile and closes with a message when the read fails), so
+    a slow remote file freezes nothing; without it the constructor reads.
+    """
+
+    #: A save went through: the pane showing the file's folder refreshes.
+    saved = pyqtSignal()
 
     def __init__(
         self,
@@ -444,12 +471,16 @@ class HexEditorDialog(QDialog):
         file_path: str,
         parent: QWidget | None = None,
         read_only: bool = False,
+        *,
+        background: bool = False,
     ):
         super().__init__(parent)
         self._backend = backend
         self._file_path = file_path
         self._original_data = b""
         self._read_only = read_only
+        self._background = background
+        self._load_job: ScanJob | None = None
         # True once the file was read; see exec().
         self._loaded_once = False
 
@@ -460,6 +491,15 @@ class HexEditorDialog(QDialog):
 
         self._setup_ui()
         self._load_file()
+
+    @property
+    def loaded(self) -> bool:
+        """Whether the file was read (a failed or running load: False)."""
+        return self._loaded_once
+
+    @property
+    def loading(self) -> bool:
+        return self._load_job is not None and self._load_job.running
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -568,6 +608,8 @@ class HexEditorDialog(QDialog):
         return super().eventFilter(watched, event)
 
     def _update_status(self) -> None:
+        if self.loading:
+            return  # "Loading…" stays until the bytes are there
         pos = self._hex_widget._cursor_pos
         self._offset_label.setText(f"Offset: 0x{pos:08X} ({pos})")
         self._mode_label.setText("[HEX]" if self._hex_widget._editing_hex else "[ASCII]")
@@ -581,33 +623,58 @@ class HexEditorDialog(QDialog):
             self._status_label.setText("Loaded")
 
     def _load_file(self) -> None:
-        try:
-            stat = self._backend.stat(self._file_path)
-            if stat.size > max_open_bytes():
-                QMessageBox.warning(
-                    self,
-                    "File Too Large",
-                    f"File is {stat.size_human} — only files up to {describe_limit()} "
-                    "are opened (change it under View → Open Size Limit…).",
-                )
-                self.reject()
+        cap = max_open_bytes()
+        if not self._background:
+            try:
+                result = read_for_hex(self._backend, self._file_path, cap)
+            except (HexFileTooLargeError, OSError) as exc:
+                self._load_failed(exc)
                 return
+            self._show_loaded(result)
+            return
+        job = self._load_job
+        if job is None:
+            job = self._load_job = ScanJob(self)
+            job.finished.connect(self._on_load_finished)
+        # Nothing to edit or save until the bytes are there.
+        self._hex_widget.read_only = True
+        self._btn_save.setEnabled(False)
+        self._btn_reload.setEnabled(False)
+        self._status_label.setText("Loading…")
+        backend, path = self._backend, self._file_path
+        job.start(lambda _cancel, _progress: read_for_hex(backend, path, cap), replace=True)
 
-            self._size_label.setText(f"{stat.size:,} bytes")
+    def _on_load_finished(self, kind: str, value, _cancelled: bool) -> None:
+        self._btn_reload.setEnabled(True)
+        self._hex_widget.read_only = self._read_only
+        if kind == "done":
+            self._show_loaded(value)
+        else:
+            self._load_failed(value)
 
-            with self._backend.open_read(self._file_path) as f:
-                self._original_data = _read_capped(f)
+    def _show_loaded(self, result) -> None:
+        stat, data = result
+        self._size_label.setText(f"{stat.size:,} bytes")
+        self._original_data = data
+        self._hex_widget.set_data(self._original_data)
+        self._status_label.setText("Loaded")
+        self._btn_save.setEnabled(False)
+        self._loaded_once = True
+        log.debug("Hex loaded: %s (%d bytes)", self._file_path, len(self._original_data))
 
-            self._hex_widget.set_data(self._original_data)
-            self._status_label.setText("Loaded")
-            self._btn_save.setEnabled(False)
-            self._loaded_once = True
-            log.debug("Hex loaded: %s (%d bytes)", self._file_path, len(self._original_data))
-
-        except OSError as e:
-            log.error("Cannot read file %s: %s", self._file_path, e)
-            QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
-            self.reject()
+    def _load_failed(self, exc: BaseException) -> None:
+        if isinstance(exc, HexFileTooLargeError):
+            QMessageBox.warning(
+                self,
+                "File Too Large",
+                f"File is {exc.size_human} — only files up to {describe_limit()} "
+                "are opened (change it under Edit → Settings… → Files & Panes → "
+                "Open Size Limit).",
+            )
+        else:
+            log.error("Cannot read file %s: %s", self._file_path, exc)
+            QMessageBox.critical(self, "Error", f"Cannot read file:\n{exc}")
+        self.reject()
 
     def _reload_file(self) -> None:
         if self._hex_widget.is_modified:
@@ -666,6 +733,7 @@ class HexEditorDialog(QDialog):
             self._btn_save.setEnabled(False)
             self._status_label.setText("Saved")
             log.info("Hex saved: %s (%d bytes)", self._file_path, len(content))
+            self.saved.emit()
 
         except OSError as e:
             log.error("Cannot save file %s: %s", self._file_path, e)
@@ -724,6 +792,12 @@ class HexEditorDialog(QDialog):
                 return
         self.accept()
 
+    def done(self, result: int) -> None:  # noqa: D401 - Qt override
+        # A read still running is dropped with the window.
+        if self._load_job is not None:
+            self._load_job.abandon()
+        super().done(result)
+
     def reject(self) -> None:
         # Esc must not throw away edits silently either.
         if self._hex_widget.is_modified:
@@ -748,4 +822,6 @@ class HexEditorDialog(QDialog):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+        if self._load_job is not None:
+            self._load_job.abandon()
         event.accept()

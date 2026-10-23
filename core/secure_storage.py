@@ -21,8 +21,9 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from pathlib import Path
 
 from core import posix_compat
 
@@ -35,6 +36,38 @@ log = logging.getLogger(__name__)
 
 _FILE_MODE = 0o600
 _DIR_MODE = 0o700
+
+
+def data_file_path(
+    name: str,
+    override_var: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Where the axross data file *name* (an index database) lives.
+
+    1. ``$<override_var>`` when it is set and not empty;
+    2. ``$XDG_DATA_HOME/axross/<name>`` when ``XDG_DATA_HOME`` is an
+       absolute path (the XDG spec ignores a relative one) - unless the file
+       is missing there while one exists at the old place, which then stays
+       in use, so an index made before the variable was honoured is not
+       orphaned;
+    3. ``~/.local/share/axross/<name>``, the XDG default.
+    """
+    env = os.environ if environ is None else environ
+    home = Path.home() if home is None else Path(home)
+    override = env.get(override_var, "")
+    if override.strip():
+        return Path(override)
+    legacy = home / ".local" / "share" / "axross" / name
+    base = env.get("XDG_DATA_HOME", "").strip()
+    if not base or not os.path.isabs(base):
+        return legacy
+    chosen = Path(base) / "axross" / name
+    if chosen != legacy and not chosen.exists() and legacy.exists():
+        return legacy
+    return chosen
 
 
 def ensure_private_dir(path: str) -> None:

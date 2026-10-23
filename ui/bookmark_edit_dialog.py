@@ -2,25 +2,38 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from core.bookmarks import Bookmark, BookmarkGroup
+from core.bookmarks import (
+    DEFAULT_SSH_PORT,
+    LOCAL_SHELL,
+    Bookmark,
+    BookmarkGroup,
+    host_address,
+    host_bookmark_problem,
+)
+from core.i18n import tr
 from ui.close_corner import add_close_corner
-from ui.icon_provider import BOOKMARK_COLORS, bookmark_icon_names, icon
+from ui.icon_provider import BOOKMARK_COLORS, bookmark_icon_names, has_icon, icon
 
 
 class _IconGridPicker(QWidget):
@@ -40,15 +53,18 @@ class _IconGridPicker(QWidget):
         self._columns = columns
         self._color = color
         self._buttons: dict[str, QPushButton] = {}
-        # The initial value must also appear in the grid's own list
-        # — the grid only shows ``bookmark_icon_names()``, which is
-        # a strict subset of ``ICONS``. If the caller passed a
-        # toolbar-verb icon name (say "split-h") it'd never match
-        # a grid button and the dialog would look empty-selected.
-        # Coerce to the default so the picker always has a visibly
-        # checked button.
-        if initial not in bookmark_icon_names():
-            initial = "bookmark"
+        # The grid shows ``bookmark_icon_names()``, a strict subset of
+        # ``ICONS``. An icon the provider knows but the grid does not list
+        # (a Smart Folder's "find-index") gets a button of its own in
+        # front, so it stays chosen and checked: coerced to the default, a
+        # mere rename gave the entry a plain bookmark's icon. A name the
+        # provider does not know at all falls back to the default.
+        self._names = bookmark_icon_names()
+        if initial not in self._names:
+            if has_icon(initial):
+                self._names = [initial, *self._names]
+            else:
+                initial = "bookmark"
         self.selected_name: str = initial
         self._build_ui()
         self._update_check_state()
@@ -65,8 +81,7 @@ class _IconGridPicker(QWidget):
         grid = QGridLayout(container)
         grid.setSpacing(4)
         grid.setContentsMargins(6, 6, 6, 6)
-        names = bookmark_icon_names()
-        for idx, name in enumerate(names):
+        for idx, name in enumerate(self._names):
             btn = QPushButton(container)
             btn.setCheckable(True)
             btn.setIcon(icon(name, 32, self._color))
@@ -161,15 +176,21 @@ class BookmarkEditDialog(QDialog):
         groups: list[tuple[int, BookmarkGroup]] | None = None,
         current_group: BookmarkGroup | None = None,
         new: bool = False,
+        terminal_profiles: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
         self._bookmark = bookmark or Bookmark(name="", path="")
         self._is_new = bookmark is None or new
         self._groups = groups
         self._current_group = current_group
-        self.setWindowTitle(
-            "New Bookmark" if self._is_new else "Edit Bookmark",
-        )
+        # A terminal bookmark chooses its connection: a local shell or one
+        # of these profiles (names only - the profile keeps the secrets).
+        self._terminal_profiles = list(terminal_profiles or [])
+        if self._bookmark.is_terminal:
+            title = tr("New Terminal Bookmark") if self._is_new else tr("Edit Terminal Bookmark")
+        else:
+            title = "New Bookmark" if self._is_new else "Edit Bookmark"
+        self.setWindowTitle(title)
         self.resize(540, 420)
         self._build_ui()
         add_close_corner(self)
@@ -189,10 +210,49 @@ class BookmarkEditDialog(QDialog):
         # server's home, fix a typo). The bookmark is just a
         # (name, path, icon) tuple; any of the three should be
         # editable.
-        form.addRow("Path:", self._path_edit)
-        backend_label = QLabel(self._bookmark.backend_name or "Local", self)
-        backend_label.setProperty("role", "muted")
-        form.addRow("Backend:", backend_label)
+        if self._bookmark.is_smart_folder:
+            # A Smart Folder's "path" is its key in the store, not a folder.
+            from core.file_search import describe_saved_search
+
+            self._path_edit.setText(describe_saved_search(self._bookmark.search))
+            self._path_edit.setReadOnly(True)
+            form.addRow("Search:", self._path_edit)
+            backend_label = QLabel(self._bookmark.backend_name or "Local", self)
+            backend_label.setProperty("role", "muted")
+            form.addRow("Backend:", backend_label)
+        elif self._bookmark.is_terminal:
+            self._path_edit.setPlaceholderText(tr("optional: the shell starts in this folder"))
+            form.addRow(tr("Working Folder:"), self._path_edit)
+            self._connection_combo = QComboBox(self)
+            self._connection_combo.addItem(tr("Local Shell"), LOCAL_SHELL)
+            # A bare host: its own fields below, no profile. Told apart by its
+            # index, not its data - a profile may have any name.
+            self.host_choice_index = self._connection_combo.count()
+            self._connection_combo.addItem(tr("SSH Host (no profile)"), "")
+            for name in self._terminal_profiles:
+                self._connection_combo.addItem(name, name)
+            form.addRow(tr("Connection:"), self._connection_combo)
+            self._host_box = self._build_host_box()
+            form.addRow(self._host_box)
+            if self._bookmark.is_host_terminal:
+                self._connection_combo.setCurrentIndex(self.host_choice_index)
+            else:
+                current = self._bookmark.profile_name or LOCAL_SHELL
+                index = self._connection_combo.findData(current)
+                if index < 0 or index == self.host_choice_index:
+                    # A profile renamed or deleted since: kept visible, never
+                    # quietly replaced by another connection.
+                    self._connection_combo.addItem(
+                        tr("{name} (missing)").format(name=current), current)
+                    index = self._connection_combo.count() - 1
+                self._connection_combo.setCurrentIndex(index)
+            self._connection_combo.currentIndexChanged.connect(self._update_host_box)
+            self._update_host_box()
+        else:
+            form.addRow("Path:", self._path_edit)
+            backend_label = QLabel(self._bookmark.backend_name or "Local", self)
+            backend_label.setProperty("role", "muted")
+            form.addRow("Backend:", backend_label)
         if self._groups is not None:
             self._group_combo = QComboBox(self)
             self._group_options: list[BookmarkGroup | None] = [None]
@@ -228,16 +288,127 @@ class BookmarkEditDialog(QDialog):
         row.addWidget(btns)
         root.addLayout(row)
 
+    # -- a terminal bookmark on a bare host ------------------------------------
+    def _build_host_box(self) -> QWidget:
+        """Host, port, user and key file of a host terminal bookmark. No
+        password field: it is asked for when the bookmark connects."""
+        import getpass
+
+        box = QWidget(self)
+        form = QFormLayout(box)
+        form.setContentsMargins(0, 0, 0, 0)
+        bookmark = self._bookmark
+        self._host_edit = QLineEdit(bookmark.host, box)
+        self._host_edit.setPlaceholderText(tr("host name or IP address"))
+        form.addRow(tr("Host:"), self._host_edit)
+        self._port_spin = QSpinBox(box)
+        self._port_spin.setRange(1, 65535)
+        self._port_spin.setValue(bookmark.port if bookmark.is_host_terminal else DEFAULT_SSH_PORT)
+        form.addRow(tr("Port:"), self._port_spin)
+        user = bookmark.username
+        if not bookmark.is_host_terminal:
+            try:
+                user = getpass.getuser()
+            except Exception:  # noqa: BLE001 - no passwd entry: leave it empty
+                user = ""
+        self._user_edit = QLineEdit(user, box)
+        form.addRow(tr("User:"), self._user_edit)
+        key_row = QHBoxLayout()
+        self._key_edit = QLineEdit(bookmark.key_file, box)
+        self._key_edit.setPlaceholderText(tr("optional: else ssh-agent, else a password prompt"))
+        key_row.addWidget(self._key_edit, stretch=1)
+        browse = QPushButton(tr("Browse…"), box)
+        browse.clicked.connect(self._browse_key_file)
+        key_row.addWidget(browse)
+        form.addRow(tr("Key File:"), key_row)
+        note = QLabel(tr("No password is stored: it is asked for when the bookmark connects."),
+                      box)
+        note.setProperty("role", "muted")
+        note.setWordWrap(True)
+        form.addRow(note)
+        return box
+
+    def _browse_key_file(self) -> None:
+        import os
+
+        start = self._key_edit.text().strip() or os.path.expanduser("~/.ssh")
+        path, _filter = QFileDialog.getOpenFileName(self, tr("Key File"), start)
+        if path:
+            self._key_edit.setText(path)
+
+    def _host_chosen(self) -> bool:
+        return (
+            self._bookmark.is_terminal
+            and self._connection_combo.currentIndex() == self.host_choice_index
+        )
+
+    def _update_host_box(self, *_args) -> None:
+        self._host_box.setVisible(self._host_chosen())
+
+    def accept(self) -> None:  # noqa: D102 - Qt override: a host must be usable
+        if self._bookmark.is_terminal and self._host_chosen():
+            problem = host_bookmark_problem(self.result_bookmark())
+            if problem:
+                # A fixed first line: Qt reads markup there as rich text,
+                # and the problem quotes what was typed.
+                QMessageBox.warning(self, self.windowTitle(),
+                                    tr("This host cannot be used:") + "\n\n" + problem)
+                return
+        super().accept()
+
     def result_bookmark(self) -> Bookmark:
         """Return a new Bookmark carrying the dialog's current
-        field values. Called by the caller on Accepted."""
-        return Bookmark(
+        field values. Called by the caller on Accepted. What the dialog
+        does not show (kind, creation time, a Smart Folder's search) is
+        carried over; a Smart Folder keeps its store key as path."""
+        if self._bookmark.is_terminal and self._host_chosen():
+            host = self._host_edit.text().strip()
+            port = self._port_spin.value()
+            user = self._user_edit.text().strip()
+            folder = self._path_edit.text().strip()
+            address = host_address(host, port, user)
+            return dataclasses.replace(
+                self._bookmark,
+                name=(self._name_edit.text().strip()
+                      or (f"{address}: {folder}" if folder else address)),
+                path=folder,
+                backend_name=address,
+                profile_name=address,  # see core.bookmarks.Bookmark: never ""
+                host=host,
+                port=port,
+                username=user,
+                key_file=self._key_edit.text().strip(),
+                icon_name=self._picker.selected_name,
+                color=self._colors.selected_color,
+            )
+        if self._bookmark.is_terminal:
+            profile = self._connection_combo.currentData() or LOCAL_SHELL
+            return dataclasses.replace(
+                self._bookmark,
+                name=(
+                    self._name_edit.text().strip()
+                    or self._bookmark.name
+                    or self._connection_combo.currentText()
+                ),
+                # Empty is a choice here: no working folder.
+                path=self._path_edit.text().strip(),
+                backend_name="Local" if profile == LOCAL_SHELL else profile,
+                profile_name=profile,
+                host="",
+                port=DEFAULT_SSH_PORT,
+                username="",
+                key_file="",
+                icon_name=self._picker.selected_name,
+                color=self._colors.selected_color,
+            )
+        smart = self._bookmark.is_smart_folder
+        return dataclasses.replace(
+            self._bookmark,
             name=self._name_edit.text().strip() or self._bookmark.name,
-            path=self._path_edit.text() or self._bookmark.path,
-            backend_name=self._bookmark.backend_name,
-            profile_name=self._bookmark.profile_name,
+            path=self._bookmark.path if smart else (self._path_edit.text() or self._bookmark.path),
             icon_name=self._picker.selected_name,
             color=self._colors.selected_color,
+            search=dict(self._bookmark.search),
         )
 
     def result_group(self) -> BookmarkGroup | None:

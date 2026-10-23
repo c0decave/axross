@@ -9124,31 +9124,30 @@ def test_smb_shares_list_input_validation():
             raise AssertionError(f"shares_list should refuse {bad!r}")
 
 
-def test_smb_shares_list_parses_grepable_output(monkeypatch):
-    """Stub the smbclient subprocess so the parser can be exercised
-    without samba-client on the runner."""
-    from core import smb_client
+def test_smb_shares_list_parses_netshareenum(monkeypatch):
+    """Stub impacket's connection so the share mapping can be exercised
+    without a server (no smbclient binary since 2026-10-21)."""
+    from core import smb_client, smb_shares
 
-    class _Done:
-        returncode = 0
-        # ``smbclient -L -g`` (grepable) format.
-        stdout = (
-            "Disk|public|Public share\n"
-            "Disk|home|User home\n"
-            "Printer|hp-laser|Office printer\n"
-            "IPC|IPC$|IPC Service\n"
-            "Workgroup|WORKGROUP\n"  # not a share — must skip
-        )
-        stderr = ""
+    class _Conn:
+        def __init__(self, *a, **kw):
+            pass
 
-    monkeypatch.setattr(smb_client, "__name__", "core.smb_client")
-    # ``shares_list`` does its own ``import shutil``/``subprocess``
-    # locally, so we have to patch in the function's namespace.
-    import shutil as _sh
-    import subprocess as _sp
+        def login(self, *a, **kw):
+            pass
 
-    monkeypatch.setattr(_sh, "which", lambda name: "/usr/bin/smbclient")
-    monkeypatch.setattr(_sp, "run", lambda *a, **kw: _Done())
+        def listShares(self):
+            return [
+                {"shi1_netname": "public\x00", "shi1_type": 0, "shi1_remark": "Public share\x00"},
+                {"shi1_netname": "home\x00", "shi1_type": 0, "shi1_remark": "User home\x00"},
+                {"shi1_netname": "hp-laser\x00", "shi1_type": 1, "shi1_remark": "Office printer\x00"},
+                {"shi1_netname": "IPC$\x00", "shi1_type": 0x80000003, "shi1_remark": "IPC Service\x00"},
+            ]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(smb_shares, "_connection_class", lambda: _Conn)
     out = smb_client.SmbSession.shares_list(
         "10.99.0.31",
         username="alice",
@@ -9157,8 +9156,8 @@ def test_smb_shares_list_parses_grepable_output(monkeypatch):
     by_name = {s["name"]: s for s in out}
     assert by_name["public"]["type"] == "Disk"
     assert by_name["home"]["comment"] == "User home"
+    assert by_name["hp-laser"]["type"] == "Printer"
     assert by_name["IPC$"]["type"] == "IPC"
-    assert "WORKGROUP" not in by_name
 
 
 def test_smb_acl_get_and_dfs_referrals_are_implemented():

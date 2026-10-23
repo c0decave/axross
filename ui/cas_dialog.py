@@ -249,7 +249,7 @@ class CasDuplicatesDialog(QDialog):
         header = self._tree.header()
         # Folder takes the free width, the others fit their content; every
         # divider stays draggable (ui.column_fit).
-        self._columns = ColumnFitter(self._tree, fill=COL_FOLDER)
+        self._columns = ColumnFitter(self._tree, fill=COL_FOLDER, keep=(COL_NAME,))
         # A full sha256 is 64 characters and used to take the room the
         # names needed; it is in the tooltip and in "Copy ax-cas URL".
         header.setSectionResizeMode(COL_HASH, QHeaderView.ResizeMode.Interactive)

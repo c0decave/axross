@@ -140,6 +140,34 @@ class NoRenameFallbackTest(_Base):
         self.assertEqual(src.read_bytes(), b"data" + LATE)
         self.assertFalse(dst.exists())
 
+    def test_sad_a_copy_that_came_out_short_keeps_the_source(self) -> None:
+        # The audit of 2026-10-22: copy + delete compared the source's size
+        # before and after, never what the copy holds.
+        src = self.home / "a.txt"
+        src.write_bytes(b"0123456789")
+        dst = self.home / "b.txt"
+
+        def short_copy(_backend, a, b, **_kwargs):
+            Path(b).write_bytes(Path(a).read_bytes()[:4])
+
+        with mock.patch.object(server_ops, "server_side_copy", side_effect=short_copy):
+            with self.assertRaisesRegex(OSError, "only 4 of 10 bytes"):
+                server_side_move(_NoRename(), str(src), str(dst))
+        self.assertEqual(src.read_bytes(), b"0123456789")
+        self.assertFalse(dst.exists())
+
+    def test_edge_a_folder_or_link_has_no_size_to_compare(self) -> None:
+        # ext4 folders never shrink: a used folder can report 12288 bytes,
+        # its fresh copy 4096. That is not a short copy, so a folder's (and
+        # a link's) own size is never compared.
+        folder = self.home / "d"
+        folder.mkdir()
+        link = self.home / "l"
+        link.symlink_to(folder)
+        self.assertIsNone(server_ops._file_size(LocalFS(), str(folder)))
+        self.assertIsNone(server_ops._file_size(LocalFS(), str(link)))
+        server_ops.refuse_short_copy("/src", 12288, None, "/dst")  # nothing raised
+
     def test_edge_an_empty_file_moves(self) -> None:
         src = self.home / "a.txt"
         src.write_bytes(b"")

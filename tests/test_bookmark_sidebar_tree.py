@@ -385,5 +385,114 @@ class EditDeleteTest(_Base):
         self.assertTrue(self.side._new_group_btn.isVisible())
 
 
+
+# -- names in questions and tooltips are shown as typed (bughunt 2026-10-22: the
+# delete questions and a group's tooltip held HTML-escaped names in text Qt shows
+# as plain text, so "Bob's & Co" read "Bob&#x27;s &amp; Co") --------------------------
+
+#: Common punctuation: html.escape turns all of it into entities, and without
+#: a "<" (whose "&lt;" makes Qt guess rich text) the entities were shown.
+NASTY = "Bob's & \"Co\""
+#: Markup must stay text, never formatting.
+MARKUP = "<b>x</b> & y"
+
+
+def _renders_as_rich_text(text: str) -> bool:
+    """What a QMessageBox or a tooltip does with *text* (AutoText), told
+    apart by layout from the plain and the rich rendering."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QLabel
+
+    auto, plain, rich = QLabel(text), QLabel(text), QLabel(text)
+    auto.setTextFormat(Qt.TextFormat.AutoText)
+    plain.setTextFormat(Qt.TextFormat.PlainText)
+    rich.setTextFormat(Qt.TextFormat.RichText)
+    return auto.sizeHint() == rich.sizeHint() and auto.sizeHint() != plain.sizeHint()
+
+
+def _shown(text: str) -> str:
+    """The text a reader sees for *text* shown with AutoText."""
+    if not _renders_as_rich_text(text):
+        return text
+    from PyQt6.QtGui import QTextDocument
+
+    doc = QTextDocument()
+    doc.setHtml(text)
+    return doc.toPlainText()
+
+
+class LiteralNamesTest(_Base):
+    def test_the_controls_tell_plain_from_rich(self) -> None:
+        self.assertTrue(_renders_as_rich_text("Delete '<b>x</b>'?"))
+        self.assertEqual(_shown("a &amp; b"), "a &amp; b")  # plain: entities stay
+        self.assertEqual(_shown("<qt>a &amp; b</qt>"), "a & b")
+
+    def _question_text(self, node) -> str:
+        from PyQt6.QtWidgets import QMessageBox
+
+        with mock.patch("ui.bookmark_sidebar.QMessageBox.question") as ask:
+            ask.return_value = QMessageBox.StandardButton.No
+            self.side._delete_node(node)
+        return ask.call_args[0][2]
+
+    def test_deleting_a_bookmark_names_it_as_typed(self) -> None:
+        for name in (NASTY, MARKUP):
+            mark = Bookmark(name, f"/srv/{name}")
+            self.m.add(mark)
+            shown = _shown(self._question_text(mark))
+            self.assertIn(name, shown)
+            self.assertIn(f"/srv/{name}", shown)
+
+    def test_deleting_a_group_names_it_as_typed_and_counts_its_bookmarks(self) -> None:
+        for name in (NASTY, MARKUP):
+            group = self.m.add_group(name)
+            self.m.add(Bookmark("inside", f"/inside/{name}"), group=group)
+            shown = _shown(self._question_text(group))
+            self.assertIn(name, shown)
+            self.assertIn("1 bookmark", shown)
+
+    def test_deleting_a_smart_folder_or_a_folderless_terminal_shows_no_key_or_blank(self) -> None:
+        smart = BM.new_smart_folder("Saved", {"version": 1})
+        self.m.add(smart)
+        text = self._question_text(smart)
+        self.assertNotIn(smart.path, text)  # "search:<id>" is a store key, not a place
+        self.assertTrue(text.endswith("Saved"))
+        term = Bookmark("shell", "", profile_name=BM.LOCAL_SHELL, kind=BM.KIND_TERMINAL)
+        self.m.add(term)
+        self.assertTrue(self._question_text(term).endswith("shell"))
+
+    def test_a_group_tooltip_shows_the_name_as_typed(self) -> None:
+        for name in (NASTY, MARKUP):
+            self.m.add_group(name)
+            self.side.rebuild()
+            self.assertEqual(_shown(self.item(name).toolTip(0)), name)
+
+    def test_a_plain_group_name_tooltip_is_unchanged_to_the_reader(self) -> None:
+        self.assertEqual(_shown(self.item("Work").toolTip(0)), "Work")
+
+    def test_main_window_bookmark_warnings_name_it_as_typed(self) -> None:
+        from ui.main_window import MainWindow
+
+        broken = BM.new_smart_folder(NASTY, {"version": 99})  # refused when it runs
+        with mock.patch("ui.main_window.QMessageBox.warning") as warn:
+            MainWindow._run_smart_folder(mock.MagicMock(), broken)
+        self.assertIn(NASTY, _shown(warn.call_args.args[2]))
+        no_profile = Bookmark(NASTY, "/x", backend_name="u@h&co")
+        with mock.patch("ui.main_window.QMessageBox.warning") as warn:
+            MainWindow._connect_then_transfer(mock.MagicMock(), mock.MagicMock(), ["/a"],
+                                              no_profile, True)
+        shown = _shown(warn.call_args.args[2])
+        self.assertIn(NASTY, shown)
+        self.assertIn("u@h&co", shown)
+        missing = Bookmark(NASTY, "/x", backend_name="h", profile_name="p's")
+        window = mock.MagicMock()
+        window._profile_manager.get.return_value = None
+        with mock.patch("ui.main_window.QMessageBox.warning") as warn:
+            MainWindow._connect_then_transfer(window, mock.MagicMock(), ["/a"], missing, True)
+        shown = _shown(warn.call_args.args[2])
+        self.assertIn(NASTY, shown)
+        self.assertIn("p's", shown)
+
+
 if __name__ == "__main__":
     unittest.main()

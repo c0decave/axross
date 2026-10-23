@@ -436,9 +436,53 @@ falls back to `build-tmp/` inside the project dir — which is
 gitignored, so it doesn't pollute the tree.
 
 If your host is under 5 GB free *anywhere*, build on a different
-machine and copy the resulting `dist/axross-<flavor>` over. The
-ELF has no runtime dependency on the build host beyond a
-compatible glibc.
+machine and copy the resulting `dist/axross-<flavor>` over. What the
+ELF needs from the machine it runs on is listed below.
+
+## What comes from the host, and how the build checks it
+
+A one-file binary runs host code in two ways: host programs it starts
+(a shell, ffprobe, a file manager behind xdg-open) and host libraries
+loaded into its own process (the GPU's OpenGL driver, audio plugins).
+Both met the bundle's own libraries once: `bash -c` died with "symbol
+lookup error ... rl_trim_arg_from_keyseq" (the bundle's readline), an
+OpenGL context aborted with "Could not initialize GLX" (Mesa needs a newer
+libstdc++ than the bundled one), Qt's TIFF and xcb plugins needed
+libraries that were never bundled. The rules, in `scripts/bundle_options.py`:
+
+| Comes from the host | Why |
+|---|---|
+| glibc in all its parts, libstdc++, libgcc_s (`HOST_OWNED`, never bundled) | one copy per process; the host's is never older than the builder's |
+| fontconfig, freetype (`HOST_OWNED`) | they read the host's `/etc/fonts` |
+| GL/EGL/GLX/DRM/GBM/Vulkan, Wayland client, libxcb, libX11, libpulse (`HOST_PROVIDED`) | the graphics and sound stack belongs to the host's drivers and session |
+| everything else | bundled; a build fails when it is not |
+
+`scripts/build_bundle.sh` runs `scripts/bundle_smoke.py --system-libs` on
+every built binary; inside it, the build fails when
+
+* a bundled ELF needs a system library that is neither bundled nor in the
+  table (`scripts/elf_needs.py` reads DT_NEEDED);
+* a library the host must own is bundled;
+* a bundled ELF needs a symbol version (GLIBC_, GLIBCXX_, CXXABI_ ...) that
+  the build machine does not define - in the AlmaLinux 9 builder that is the
+  oldest supported system;
+* a child process started via `subprocess` without `env=`, `os.system` or
+  QProcess sees a variable pointing into the unpacked folder
+  (`LD_LIBRARY_PATH`, `QT_PLUGIN_PATH`, `QML2_IMPORT_PATH`, `_PYI_*`;
+  `core.subprocess_env.restore_loader_env` clears them at start).
+
+The builder runs on the oldest system, so it cannot see what breaks on a
+current one. Before every release, run against the built binaries on a
+current distribution (Arch, Fedora, openSUSE Tumbleweed):
+
+```bash
+AXROSS_FROZEN_BINARY=dist/axross-full .venv/bin/python -m pytest tests/test_frozen_binary_host_e2e.py
+AXROSS_FROZEN_BINARY=dist/axross-slim .venv/bin/python -m pytest tests/test_frozen_binary_host_e2e.py
+```
+
+It starts host programs from the binary, loads the host's C++ plugin
+libraries (Mesa, JACK, ALSA, Vulkan drivers) into it and creates an
+OpenGL context under Xvfb, each against a control without axross.
 
 ## Update the build
 
@@ -485,7 +529,11 @@ scripts/build_bundle.sh full --appimage
 docker build -f Dockerfile.mcp -t axross-mcp:$(git describe --tags) .
 docker tag axross-mcp:$(git describe --tags) axross-mcp:latest
 
-# 5. Sha256 everything
+# 5. The binaries against a current host (see "What comes from the host")
+AXROSS_FROZEN_BINARY=dist/axross-full .venv/bin/python -m pytest tests/test_frozen_binary_host_e2e.py
+AXROSS_FROZEN_BINARY=dist/axross-slim .venv/bin/python -m pytest tests/test_frozen_binary_host_e2e.py
+
+# 6. Sha256 everything
 ( cd dist && sha256sum axross-* ) | tee dist/SHA256SUMS
 ```
 

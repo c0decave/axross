@@ -318,27 +318,12 @@ def _recreate_parent(backend, path: str) -> None:
     holds one entry per FILE. The way back for each file therefore leads
     into a folder that is gone, and the transfer engine creates folders
     only for a folder it copies, not for a single file. Raises OSError
-    when something that is not a folder holds the place.
+    when something that is not a folder holds the place
+    (:func:`core.trash.recreate_parent_folders`).
     """
-    parent = backend.parent(path)
-    missing: list[str] = []
-    current = parent
-    while current and not backend.exists(current):
-        missing.append(current)
-        above = backend.parent(current)
-        if above == current:
-            break
-        current = above
-    for folder in reversed(missing):
-        backend.mkdir(folder)
-        log.info("undo: recreated the folder %s", folder)
-    if missing:
-        return
-    info = backend.stat(parent)
-    # A link (to a folder, as ~/Pictures -> /data/pics) is left to the
-    # transfer: LocalFS reports it by lstat, i.e. as not a folder.
-    if not getattr(info, "is_dir", False) and not getattr(info, "is_link", False):
-        raise OSError(f"{parent} is not a folder any more; undo cannot put the file back.")
+    from core.trash import recreate_parent_folders
+
+    recreate_parent_folders(backend, path)
 
 
 def _restore_metadata(plan: UndoPlan, backend, trash_module) -> str:

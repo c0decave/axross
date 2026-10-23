@@ -39,6 +39,7 @@ skip that, which is why the level decides what is writable at all.
 from __future__ import annotations
 
 import collections
+import dataclasses
 import functools
 import json
 import logging
@@ -58,6 +59,7 @@ from typing import Callable
 from axross._version import __version__
 from core import agent as A
 from core.agent_net import HostRelay, parse_hosts
+from core.subprocess_env import clean_child_env
 
 log = logging.getLogger(__name__)
 
@@ -308,7 +310,7 @@ def _user_scope_works() -> bool:
         return False
     try:
         done = subprocess.run(["systemd-run", "--user", "--scope", "--quiet", "--collect", "true"],
-                              capture_output=True, timeout=15)
+                              capture_output=True, timeout=15, env=clean_child_env())
     except (OSError, subprocess.SubprocessError):
         return False
     return done.returncode == 0
@@ -494,7 +496,7 @@ VANISHED = SandboxProfile(name="(missing sandbox profile)", level="paranoid")
 #: The events a worker may report, and how long their texts may be. The
 #: rest (confirmations, run_started/finished, auto_approved, notices) are
 #: axross's own: a worker's version of them is dropped.
-_WORKER_EVENTS = frozenset({"assistant", "tool_call", "tool_result", "usage"})
+_WORKER_EVENTS = frozenset({"assistant", "reasoning", "tool_call", "tool_result", "usage"})
 _OUTCOMES = ("ok", "error", "declined", "unavailable")
 _MAX_EVENT_TEXT = 200_000
 _MAX_EVENT_ARGS = 20_000
@@ -505,7 +507,7 @@ def _clean_event(event: dict) -> dict | None:
     kind = event.get("type")
     if kind not in _WORKER_EVENTS:
         return None
-    if kind == "assistant":
+    if kind in ("assistant", "reasoning"):
         return {"type": kind, "text": str(event.get("text") or "")[:_MAX_EVENT_TEXT]}
     if kind == "usage":
         out: dict = {"type": kind}
@@ -517,7 +519,12 @@ def _clean_event(event: dict) -> dict | None:
     name = str(event.get("name") or "")[:200]
     if kind == "tool_result":
         outcome = event.get("outcome")
-        return {"type": kind, "name": name, "outcome": outcome if outcome in _OUTCOMES else "error"}
+        reason = event.get("reason")
+        outcome = outcome if outcome in _OUTCOMES else "error"
+        return {"type": kind, "name": name, "outcome": outcome,
+                "reason": reason if reason in A.REFUSAL_REASONS else "",
+                # The worker's text, cleaned again here: it crosses a trust line.
+                "detail": A.tool_result_detail(outcome, event.get("detail"))}
     args = event.get("args") if isinstance(event.get("args"), dict) else {}
     try:
         size = len(json.dumps(args, ensure_ascii=False))
@@ -578,6 +585,7 @@ class SandboxedAgent:
         self._on_event = on_event or (lambda event: None)
         self.cancel = cancel or threading.Event()
         self._command = command
+        self._context_watch = A.OllamaContextWatch(config.profile, config.api_key)
         #: The worker masks the arguments of a question with the tool schema.
         self._tools: dict = {}
         #: The conversation, as the worker last reported it: a new sandbox
@@ -693,9 +701,20 @@ class SandboxedAgent:
 
     # -- the process ----------------------------------------------------------------
 
+    def _mounted(self, profile: SandboxProfile | None) -> SandboxProfile | None:
+        """*profile* as this agent mounts it: with Files read-only its own
+        folders are read-only too, whatever the level lets them be - the
+        mount is the layer that does not trust the worker."""
+        if profile is None or not self.config.files_read_only:
+            return profile
+        return dataclasses.replace(
+            profile, mounts=tuple((path, False) for path, _writable in profile.mounts)
+        )
+
     def _argv(self, profile: SandboxProfile | None) -> list[str]:
         if self._command is not None:
             return list(self._command)
+        profile = self._mounted(profile)
         if profile is None:
             return worker_argv()
         engine = profile.resolved_engine()
@@ -750,6 +769,7 @@ class SandboxedAgent:
         self._start_message(profile)
 
     def _start_message(self, profile: SandboxProfile | None) -> None:
+        profile = self._mounted(profile)
         prof = self.config.profile
         sandboxed = profile is not None
         writable = self.config.allow_write and (not sandboxed or profile.rules.folder_writable)
@@ -773,6 +793,8 @@ class SandboxedAgent:
             "extra_roots": [[path, bool(rw)] for path, rw in extra],
             "groups": sorted(groups),
             "allow_write": bool(writable),
+            # The worker's own agent applies it as well (core.agent.read_only).
+            "files_read_only": bool(self.config.files_read_only),
             "max_steps": self.config.max_steps,
             "max_tool_chars": self.config.max_tool_chars,
             "system_prompt": self.config.system_prompt,
@@ -830,6 +852,7 @@ class SandboxedAgent:
                     [ENGINE_PROGRAMS.get(engine, engine), "rm", "-f", name],
                     capture_output=True,
                     timeout=20,
+                    env=clean_child_env(),
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 log.warning("agent sandbox: removing the container %s failed: %s", name, exc)
@@ -905,6 +928,11 @@ class SandboxedAgent:
         self._load_external()
         if self._proc is None or self._proc.poll() is not None:
             self._start(sandbox)
+        # The worker sends through axross: axross asks what is loaded - after
+        # the sandbox's own problems, which say more.
+        refusal = A.model_load_refusal(profile, self.config.api_key)
+        if refusal:
+            raise A.AgentError(refusal)
         done = threading.Event()
 
         def forward_cancel() -> None:
@@ -992,12 +1020,31 @@ class SandboxedAgent:
                 {"type": "answer", "id": message.get("id"), "error": "a broken model request"}
             )
             return
+        # axross sends for the worker: its own word on the connection, the
+        # worker's is dropped (_WORKER_EVENTS).
+        self._on_event({"type": "connection", "state": "trying"})
         try:
-            value = A.post_chat(self.config.profile, self.config.api_key, body)
-        except A.AgentError as exc:
+            value = A.post_chat(self.config.profile, self.config.api_key, body,
+                                cancel=self.cancel)
+        except A.AgentCancelled as exc:
+            self._on_event({"type": "connection", "state": "cancelled"})
+            # The cancel must reach the worker before the error it reads as
+            # the end of the task (its agent then says "stopped").
+            self._send({"type": "cancel"})
             self._send({"type": "answer", "id": message.get("id"), "error": str(exc)})
             return
+        except A.AgentError as exc:
+            self._on_event({"type": "connection", "state": "failed", "detail": str(exc)})
+            self._send({"type": "answer", "id": message.get("id"), "error": str(exc)})
+            return
+        self._on_event({"type": "connection", "state": "connected"})
         self._send({"type": "answer", "id": message.get("id"), "value": value})
+        usage = value.get("usage") if isinstance(value, dict) else None
+        if isinstance(usage, dict):
+            # The worker cannot reach the server to ask its context: axross does.
+            notice = self._context_watch.notice(usage)
+            if notice:
+                self._on_event({"type": "notice", "text": notice})
 
     def _answer_host_tool(self, message: dict, *, wait: bool = False) -> None:
         def run() -> None:
@@ -1047,6 +1094,11 @@ class SandboxedAgent:
         fields = (
             f"tool={name} args_sha256={A._digest(args_text)} args_len={len(args_text)} where=host"
         )
+        if self.config.files_read_only and A.changes_files(
+            getattr(tool, "write", False), getattr(tool, "group", "")
+        ):
+            A.audit.info("%s outcome=declined read_only=1", fields)
+            return {"outcome": "declined", "text": A.READ_ONLY_REFUSAL}
         if external:
             refusal = self._external_refusal(tool, self.profile())
             if refusal is not None:

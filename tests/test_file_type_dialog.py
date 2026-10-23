@@ -94,7 +94,7 @@ def pane(tree):
 
 
 def _texts(widget) -> list[str]:
-    return [a.text() for a in widget._build_context_menu().actions()]
+    return [a.text().replace("&", "") for a in widget._build_context_menu().actions()]
 
 
 def _column(name: str) -> int:
@@ -113,7 +113,7 @@ def test_happy_entry_is_offered_for_a_selected_file(pane):
 
 def test_happy_two_files_give_two_rows_with_the_mismatch_flagged(pane, tree):
     pane._restore_selection({"photo.txt", "notes.txt"}, "photo.txt")
-    action = next(a for a in pane._build_context_menu().actions() if a.text() == LABEL)
+    action = next(a for a in pane._build_context_menu().actions() if a.text().replace("&", "") == LABEL)
     action.trigger()
     assert _wait(lambda: pane.file_type_dialogs and pane.file_type_dialogs[-1].idle)
     dlg = pane.file_type_dialogs[-1]

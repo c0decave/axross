@@ -10,13 +10,23 @@ and MCP workflows.**
 - **30+ protocols in one window** — SFTP, SMB, S3, WebDAV, cloud drives, IMAP, Git, databases and more.
 - **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
 - **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
+- **Workspaces** — named pane layouts as tabs, detachable into their own window, restored on the next start.
+- **An LLM agent built in** — Agent dock with tabs and sandboxes for LM Studio, Ollama, vLLM or llama.cpp, read-only by default.
+- **Talk to the agent** — push-to-talk, spoken answers in German and English, speech recognition locally or on the LLM server.
+- **MCP server and client** — LLMs drive axross over stdio or HTTP, and the agent uses the tools of further MCP servers.
 - **Built-in Python scripting** — REPL, Scripts dock and 32 ready-made scripts on one `axross.*` API.
-- **An LLM agent built in** — Agent dock with tabs and sandboxes, MCP over stdio or HTTP, read-only by default.
+- **Tabbed text editor** — syntax highlighting, find/replace, encodings and line endings, for local and remote files.
+- **Find Files** — by name, type, content, size or tag, inside archives too, kept as a Smart Folder.
+- **Coloured tags** — on any file, following renames and moves, a filter in Find Files.
+- **Disk images and forensics** — partitions and file systems, read-only loop mount, hashes, The Sleuth Kit, PhotoRec.
+- **Media Player** — playlist, M3U, shuffle/repeat, 10-band equalizer and spectrum.
 - **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
 - **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
 - **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
 - **Resumable transfers** — survive Ctrl-C and VPN drops, resume from the last verified segment.
-- **Install in one line** — `pip install axross`, or a single-file binary from the release page.
+- **Archives as folders** — browse ZIP, TAR and 7z, nested ones too, extract only what you pick, zip-bomb-safe.
+- **Extensions** — Media Player, Forensic Tools, Treemap, VirtualBox and more, each off until you switch it on.
+- **Install in one line** — `pip install axross`, or a single-file binary for Linux, macOS and Windows.
 
 Axross is a multi-protocol file manager and security toolkit built
 with Python and PyQt6. It gives you a split-pane desktop UI, a

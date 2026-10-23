@@ -29,8 +29,22 @@ Quick Connect (Ctrl+N) opens a saved one. Each
 profile selects a protocol and stores host / username / auth /
 proxy / per-protocol options. Sensitive fields (passwords, OAuth
 secrets, Azure connection strings) go to the OS keyring; profile
-JSON itself never carries plaintext credentials.
+JSON itself never carries plaintext credentials. A right click on a
+profile in Quick Connect (or on the profile list of the Connection
+Manager) offers *Delete Connection Config…*: after a question the
+profile goes, with its stored password.
 
+- **Missing features.** *Help > Features…* lists every optional
+  feature - connections, file analysis and archives, external tools
+  such as ripgrep, rsync or the forensic and VirtualBox extensions'
+  qemu-img, Sleuth Kit, TestDisk / PhotoRec and VBoxManage - as
+  installed or missing, with how to get
+  it. *Install Selected* runs `python -m pip install …` in the Python
+  that runs axross after a question naming the command (the output in
+  the log, no restart needed for most); a frozen build links the
+  axross-full download of the same release; a tool shows this system's
+  package command to copy. Choosing a backend whose dependencies are
+  missing, or analysing a file without sift, offers the same window.
 - **Host-key verification.** First-time SSH targets show a SHA-256
   fingerprint dialog before the connection completes; trusted keys
   persist to `~/.ssh/known_hosts`.
@@ -43,7 +57,8 @@ JSON itself never carries plaintext credentials.
   registration recipe.
 - **Proxy support.** SOCKS4/4a, SOCKS5, HTTP CONNECT and HTTPS proxies
   (TLS to the proxy), with Basic, NTLM and Negotiate authentication,
-  per profile or as one global default (*Tools → Network & Proxy…*) with
+  per profile or as one global default (*Edit → Settings… → Network &
+  Proxy*, also *Tools → Network & Proxy…*) with
   a bypass list and a PAC script. SOCKS5 resolves hostnames at the proxy
   (no DNS leak); SOCKS4 sends host names as SOCKS4a. A "Test proxy"
   button reports which stage fails, and each pane shows its route.
@@ -60,13 +75,45 @@ JSON itself never carries plaintext credentials.
 - Active pane gets a blue border; the **target** pane (where copies
   land) gets a green border. Last-focused pane becomes target.
 - A pane becomes the active one when the mouse rests in it for 0.5 s.
-  **View → Activate Pane** sets 0.5, 1, 2 or 3 s, or **On Click**. Keyboard
+  **Edit → Settings… → General → Activate a pane** sets 0.5, 1, 2 or 3 s,
+  or **On Click**. Keyboard
   focus follows only from another pane's file list, never out of a text
   field.
 - **Alt+Left / Alt+Right** walk through pane history; **Tab** /
   **Shift+Tab** in a file list cycle the panes.
 - Drag-and-drop between panes initiates a transfer (works for
   local↔remote, remote↔remote, cross-protocol).
+
+### Workspaces — several layouts, on several screens
+
+A workspace is a named pane layout of its own. **Workspace → New
+Workspace → With File List** (**Ctrl+Alt+N**) opens one with a local pane,
+**With Terminal** (**Ctrl+Alt+Shift+N**) one with a local shell; from the
+second on, the workspaces show as tabs above the panes. **Ctrl+Alt+PgDown /
+PgUp** switch them, and each one keeps its own source and target pane.
+
+- **Several shells:** **Workspace → Add Terminal Pane** (also in the
+  tab's right-click menu) puts another local shell into the workspace,
+  side by side with the panes already there.
+- **Rename:** double-click the tab, its right-click menu, or **Workspace
+  → Rename Workspace…**.
+- **Detach to Window** (Workspace menu or the tab's right-click menu)
+  puts the workspace on a window of its own — move it to another
+  screen. Closing that window brings the workspace back as a tab.
+- **Move a pane:** **Workspace → Move Pane to Workspace** sends the
+  active pane to another workspace (or a new one), or drag a pane's
+  header onto a pane of another workspace or window. File panes and
+  terminal panes drag alike (a terminal pane's ⇄ button moves it too);
+  hold a dragged pane over a workspace tab for half a second and that
+  tab opens, so a pane reaches a workspace in the background.
+- **Close Workspace** closes it with its panes (it asks first); the
+  last pane of a workspace closing closes the workspace. One workspace
+  always stays.
+- A layout preset (**View → Layout Preset**) replaces the panes of the
+  current workspace only.
+- All workspaces — names, order, the current one, layouts with their
+  terminals and folders, which are detached and where their windows are
+  — come back on the next start (see below).
 
 ### The layout comes back on start
 
@@ -90,8 +137,9 @@ layout preset does (stored password, no prompt). The restore runs no
 scripts and no extensions, and Paranoid Security Mode is unchanged by
 it.
 
-**File > Restore Layout on Start** (on by default) switches this off;
-the choice is stored in `session.json` at once and a start then shows
+*Restore the layout of the last session on start* (**Edit → Settings… →
+General**, on by default) switches this off; the choice is stored in
+`session.json` at once and a start then shows
 the default single pane. A missing, unreadable or invalid
 `session.json` also starts with the default layout; the reason is in
 the log. **File > Restore Last Session** (**Ctrl+Shift+R**) still
@@ -115,15 +163,19 @@ Every cross-pane copy or move enters the transfer queue. The dock
 at the bottom shows progress, throughput, and ETA. Transfers run on
 worker threads and survive a refused dialog or a closed pane.
 
-- **Atomic semantics.** Every write goes to a sibling temp file
-  (`.tmp-<hex>.tmp`) and is renamed into place at the end. On
+- **Atomic semantics.** Every write goes to a hidden sibling temp
+  file (`.<name>.part-<job>-<fingerprint>`) and is renamed into place
+  at the end. On
   S3 / Azure / Dropbox / GDrive / OneDrive / IMAP / Rsync the
   underlying upload is already atomic; on the rest the rename is
   the commit point.
 - **Resume.** Failed transfers can be resumed; partial bytes on the
-  destination are picked up where they left off.
+  destination are picked up where they left off. A transfer that
+  failed because the destination is full removes its partial file.
 - **Retry.** "Retry Failed" replays every error-state transfer in
-  the queue.
+  the queue, each failed transfer once.
+- **Cancel All** also stops a copy or move whose folder walk is
+  still running: none of its files is queued.
 - **Verify.** A per-job `verify_checksum` flag re-hashes the
   destination after the upload and rejects on mismatch.
 
@@ -143,7 +195,9 @@ native protocol doesn't support them.
 | `core.encrypted_overlay` | AES-256-GCM at-rest encryption with PBKDF2-HMAC-SHA256 (200 k iterations). |
 | `core.cas` | Content-addressable layer: SQLite index of `(backend, path) → checksum`, duplicate detection, `ax-cas://<algo>:<hex>` URLs. |
 | `core.snapshot_browser` | Uniform timeline view across S3, Dropbox, GDrive, OneDrive, Azure Blob. |
-| `core.metadata_index` | Offline SQLite search by name / ext / size / mtime. |
+| `core.metadata_index` | Offline SQLite search by name / ext / size / mtime. One file: `$AXROSS_METADATA_DB`, else `$XDG_DATA_HOME/axross/metadata.sqlite`, else `~/.local/share/axross/metadata.sqlite` (an index already at that old place stays in use). Filled only by *Index Active Folder…* (not by browsing) — see *The offline index* under *Find Files*. |
+| `core.file_search` | The Find Files engine: name / type / content / size / date over folders of any backend, inside archives, streaming and cancellable; `fd` / `rg` locally when installed. |
+| `core.file_categories` | The type presets of Find Files (Images, Disk & VM images, Crypto wallets, Keys & certificates, …) by name, folder and content markers. |
 | `core.previews` | Local image thumbnailer with strict MIME allow-list, size caps, and a Qt-allocation gate. F3 / double-click. |
 | `core.archive` | Safe extraction of zip / tar / 7z and single compressed files (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Zip-slip / bomb / lying-metadata guards; `.7z` needs the `[archive]` extra, zstd Python 3.14 or that extra. |
 | `core.packer` | Right-click → **Pack**: zip, tar.gz / .zst / .xz / .bz2, 7z (optionally AES-256 with encrypted file names), or one file as .gz / .zst / .xz / .bz2 — from any backend, never overwriting (`name (2).zip`), never leaving a half-written archive. |
@@ -155,19 +209,24 @@ native protocol doesn't support them.
 
 | Action | Trigger | What it does |
 |---|---|---|
+| Disk Image… | Right-click (one `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …` file) | The container (qcow2, VDI, VMDK, VHD/VHDX, E01), the partition table (MBR with logical partitions, GPT) and each volume's file system and label, read in plain Python through any backend. A local image mounts one volume through a loop device over exactly its bytes: `udisksctl` without a prompt first (where polkit allows it), then `sudo`, then `pkexec`, then `udisksctl` letting polkit ask. The sudo password is asked once and kept in memory while axross runs (never on disk, never on a command line); *Remember the sudo password* (*Edit → Settings… → Security*) switches that off, which restores the order `udisksctl` (polkit asks), `pkexec`, `sudo` asked every time. Paranoid Security Mode never remembers it. sudo, pkexec and udisksctl are run only from root-owned system folders, never from `$PATH`. **Read-only** unless *Allow writing* is ticked and confirmed. The mounted folder opens in a new pane; *Unmount* gives the loop device back. Mounts made by axross are remembered across restarts (`~/.config/axross/mounts.json`, only those still mounted come back). *Identify File Type…* recognises disk images by content too (GPT, MBR, virtual disks) and offers *Disk Image…* for such a row, whatever its name. qcow2 / dynamic VDI / VMDK need converting (`qemu-img convert -O raw`) first; a fixed VDI mounts directly. |
 | New Folder | Right-click | `backend.mkdir(path)` on every writeable backend. |
+| Tags ▸ | Right-click a selection | Tick a coloured tag (Important and Review later exist; New Tag… adds one) for every selected file on any backend; dots in the Name column, the tags in its tooltip; `tag:<name>` in the filter field shows only those files; *View > Tagged Files…* lists every tag's files and goes there. Stored in `~/.config/axross/tags.json`. |
 | New File… | Right-click | Zero-byte file via `backend.open_write(path).write(b"")`. |
 | New Symlink… | Right-click | Two prompts. Visible only on `supports_symlinks=True` backends. |
 | New Hardlink… | Right-click | Same shape; cross-device hardlinks surface as `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Search the offline metadata index by name / ext / size. |
+| Find in This Folder… | Right-click (also on empty space) | Find Files with this folder (or the selected one) ticked — see *Find Files*. |
 | Duplicate Finder | View menu | Group rows by content hash, copy `ax-cas://…` URLs; move selected copies to the axross trash after a live re-check that a genuine other copy survives. |
 | View Media… / View Selected Media… | Right-click, View menu | Images, PDFs and videos of the folder (optionally recursive) or the selection as overview grid, click-through viewer or slideshow — see *Editors and viewers*. |
 | Show / Remove / Export Metadata… | Right-click | EXIF / GPS / XMP / IPTC, Office properties, PDF info, audio / video tags of the selection — or of the whole folder when nothing is selected (subfolders optional) — see *File metadata*. |
+| Calculate Size (N dirs) | Right-click on folders | Total size, file and folder count of each selected folder, walked in the background through the connection (*Cancel* in the status line); the result table sorts, and the sizes show in the pane's Size column until the folder is reloaded. **Hidden files count**: dotfiles, hidden folders and entries a backend flags hidden are summed like every other entry — as `du` does — whether or not the pane shows them. A link counts with its own size and is never followed; a folder that cannot be read is named in the result and skipped. |
+| Identify Files in This Folder… | Right-click (also on empty space); the button of the *Identify File Type* window | Every file directly in the folder (a selected folder, else the folder shown; subfolders are counted, not entered; hidden files included) identified like *Identify File Type…*, in the background and through the connection, so remote panes work too. Bounded: at most 2000 files, 64 KiB read per file, a 15 s timeout per read, *Cancel*; `file(1)` is not asked. The columns sort: name, detected type, MIME type, the *mismatch* verdict, size, a note — for a disk image its container, partition table and partition count (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; at most 4 MiB read for it) — and, for local files when the `sift` extra is installed, sift's kind. A row opens *Disk Image…* (disk images) or *Properties…*; a double-click picks the one that fits. |
 | Identify File Type… | Right-click (selection) | One row per entry: the real type from the content (magic bytes via Qt's MIME database, puremagic, a built-in signature table), the MIME type, what the extension claims and a highlighted *mismatch* when they disagree, size, and for text the encoding and line endings. Reads at most 64 KiB per file through the backend, off the GUI thread, with a 15 s timeout per file — a dead remote gives a "timed out" row. Local files also show `file(1)`'s description when it is installed. Scripting: `axross.file_type(b, path)`. |
 | Open Terminal Here | Right-click (also on empty space) | Opens a shell in the terminal dock in the folder: a selected folder, otherwise the folder shown. Local panes get a local shell started in that folder; SFTP / SCP panes get a shell on the same SSH connection followed by `cd -- '<folder>'` (quoted with `shlex.quote`). Disabled, with the reason as tooltip, on protocols without a shell. |
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
 | Move to Trash | Right-click | Universal recycle bin. Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
-| Delete Permanently | Right-click, `Del` | First counts what will go (folders, files, bytes, hidden entries) off the GUI thread, then asks. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops after the entry in progress (removed entries stay removed), failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
+| Delete Permanently | Right-click, `Del` | First counts what will go (folders, files, bytes, hidden entries) off the GUI thread, then asks. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP, and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
 | Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback. |
@@ -179,10 +238,114 @@ native protocol doesn't support them.
 | Batch Rename… | Right-click (multi-select) | Find/Replace or regex with live preview + atomic rename. |
 | Permissions… | Right-click | chmod dialog with checkbox grid + octal input. |
 
+## Find Files
+
+**Edit → Find Files…** (`Alt+F7` or `Ctrl+Alt+F`; a pane's right-click
+*Find in This Folder…*) searches folders on every open connection at once
+— local, SFTP, SMB, S3, … — and optionally the offline index. `Ctrl+F`
+stays the pane's live filter.
+
+| Field | What it does |
+|---|---|
+| Name | Text without `* ? [ ]` matches anywhere in the name (`report` finds `Q3-report.pdf`); a pattern (`*.jpg`, `IMG_????.*`) the whole name. Case is ignored. *Regex* takes a regular expression instead. |
+| Contains | Text inside the file, line by line, in the first 32 MiB of each file; *Regex* and *Case-sensitive* as usual. |
+| Types | Any of the ticked presets: Images, Videos, Audio, Documents, Archives, Disk & VM images (dd / raw / img, ISO, qcow2, VDI, VMDK, VHD(X), E01 / AFF, DMG, LUKS…), Crypto wallets (Bitcoin Core / Litecoin `wallet.dat`, Electrum, Ethereum `UTC--…` keystores, Exodus, Monero, MultiBit / Armory, Wasabi, Atomic, Ledger Live, MetaMask / Phantom / … browser wallets), Keys & certificates (PEM / DER, `.p12` / `.pfx`, Java key stores, SSH and PuTTY keys, KeePass), Source code, Email, Databases. Decided by name and folder; for local files whose extension says nothing (`blob`, `wallet.dat`, `UTC--…`) also by the first bytes, and by `sift` when the `sift` extra is installed (`axross[sift]`). Types name file *kinds* — nothing looks for passwords or keys inside files. |
+| Size / Modified | `10K`, `1.5M`, `2G`; a date range. |
+| Inside archives | Also look into zip, tar, tar.gz / .bz2 / .xz / .zst, single .gz / .bz2 / .xz / .zst files and archives nested in them (3 levels); 7z and rar by member name. A hit reads `archive.zip!/folder/file.txt`. Bounded: 10 000 members and 1 GiB decompressed per archive, 64 MiB per nested archive, the extraction's 100:1 zip-bomb ratio; a remote archive is copied (at most 256 MiB) to a private temporary file first. |
+| Tag | Only files that carry the chosen tag (right-click → *Tags*); a tagged archive counts for its members. A Smart Folder keeps the tag. Offline-index hits are filtered too. |
+| Hidden files, Skip .git / node_modules / caches, depth | What the walk includes. Symlinked folders are never followed. |
+| Look in | Every open pane's folder (the active one ticked), *Add Folder…*, and *Also search the offline index* (names, sizes, dates; no content). |
+
+Results stream in while the search runs; *Stop* or closing the window
+cancels it. The columns sort; double-click or `Enter` shows the file
+selected in a pane (an archive member opens the archive view), and the
+right-click menu has *Open*, *Reveal in Pane*, *Copy Path* and *Send to
+Agent*.
+
+On a local folder the search uses [`fd`](https://github.com/sharkdp/fd)
+to list files and [`ripgrep`](https://github.com/BurntSushi/ripgrep)
+(`rg`) to search their content when they are installed (on `PATH`, `fdfind`
+on Debian / Ubuntu, or `bin/` next to a frozen build); without them a
+built-in walker gives the same results, more slowly. Remote folders are
+walked through the connection.
+
+**Save as Smart Folder…** keeps the search in the bookmarks (sidebar and
+Bookmarks menu, with a magnifier icon); a click runs it again on the
+folders whose connection is open. It is stored in `bookmarks.json` with
+the other bookmarks.
+
+**Edit → Index Active Folder…** records names, sizes and dates below the
+active pane's folder in the offline index — the only way it is filled.
+*View → Find in Index…* (`Ctrl+Shift+F`) searches it; the window shows the
+index file.
+
+### The offline index
+
+- **What it stores.** One SQLite file with one row per file and folder:
+  the connection, the full path, name, size, folder or not, extension,
+  modification time and when it was indexed. No file content and no
+  checksums — those are the duplicate index (`cas.sqlite`, next to it).
+- **Where.** `$AXROSS_METADATA_DB`; else `$XDG_DATA_HOME/axross/metadata.sqlite`
+  when `XDG_DATA_HOME` is an absolute path; else
+  `~/.local/share/axross/metadata.sqlite`. An index made at that old place
+  stays in use as long as there is none at the new one, so setting
+  `XDG_DATA_HOME` orphans nothing. `cas.sqlite` follows the same rules
+  (`$AXROSS_CAS_DB`). *Edit → Settings… → Search* shows both paths.
+- **How it is filled and updated.** *Edit → Index Active Folder…* (or
+  *Index Current Pane…* in *Find in Index*) walks the active pane's folder
+  recursively through its connection — any backend, hidden entries
+  included, at most 50 levels and 1 000 000 entries per run, written in
+  batches of 500, cancellable (what was indexed is kept). Browsing never
+  indexes. Indexing the same folder again updates its rows in place; rows of
+  files deleted since are **not** removed by the GUI (the MCP tool
+  `index_build` with `prune` drops them).
+- **How it is searched.** Name substring (case-insensitive), extension,
+  size range, date range, one connection. Extension, size and date use
+  SQLite indexes; a name substring (`LIKE '%…%'`) cannot use one and reads
+  every row.
+- **How fast — measured** on the development machine with `/usr` (290 872
+  entries, local disk, the machine under other load): first run 125 s
+  (about 2 300 entries/s), second run over the same tree 53 s, index file
+  98 MiB; a name search 0.4–1.2 s (every row is read; many hits take
+  longer), an extension search 37 ms. Good for "where was that file" across
+  connections that are offline now; it is no content search (that is
+  *Find Files → Contains*, live).
+
+### Find Files and sift
+
+sift (the optional `sift` extra) is a file *analyser*, not a
+search engine: it builds no index and has no search — its command line
+and API summarise files, and its only store is a cache of summaries keyed
+by the file's content hash. Searching folders, by type and inside
+archives, is axross' own Find Files (`core.file_search`,
+`core.file_categories`, `core.archive`).
+
+- **What Find Files uses sift for.** With the `sift` extra installed, the
+  *Types* filter asks `sift.detect` about local files whose name says
+  nothing (no extension a preset claims) and maps its kind — image, pdf,
+  docx, archive, sqlite, email, source code, … — to a preset. Remote
+  files and archive members are typed by name and folder only. There is
+  no switch: Find Files uses sift when it is there.
+- **Inside archives.** sift lists an archive's members in its summary
+  (the Analysis dock) but does not search them. *Find Files → Inside
+  archives* does: zip, tar.*, single-file compressors and archives nested
+  in them (3 levels), 7z and rar by member name.
+- **Where sift's options and features are.** *View → Panels → Analysis*
+  (`Ctrl+Shift+I`) explains the selected file: without a model
+  automatically, with the active LLM profile on *Analyse with LLM*. The
+  dock's *LLM…* button opens *Edit → Settings… → LLM Profiles*, where the
+  model servers are set. *Help → Features…* shows whether the sift extra
+  is installed and offers to install it (`pip install axross[sift]`; a
+  frozen build offers the axross-full download instead).
+  *Identify Files in This Folder…* shows sift's kind of local files as a
+  column of its own.
+
 ## Path bar
 
 - **Auto-refresh ◉** subscribes the pane to `core.watch`; debounced
-  refresh on backend changes.
+  refresh on backend changes. On by default for local folders (inotify,
+  or a cheap local poll); off for remote ones, where it would list the
+  folder again every 2 seconds - one click turns it on for that pane.
 - **Live filter** types into the path bar to filter the listing in
   real time.
 - **Bookmarks** (left dock, or the toolbar's bookmark button) for
@@ -198,7 +361,33 @@ native protocol doesn't support them.
   copies), through the same existing-name check as F5 / F6; a folder
   that is gone or a remote that does not answer is reported and nothing
   is queued, and a remote bookmark without an open connection connects
-  first, then transfers.
+  first, then transfers. Ctrl+click and Shift+click select several
+  entries: they drag together, and the right-click menu moves them
+  (*Move to Group*) or deletes them after one question. A group's
+  right-click menu sorts it (*Sort* by name, path, name + path or age,
+  each also reversed; groups stay first, the order is saved; bookmarks
+  from before the creation time was recorded sort last).
+  **Bookmarks > Manage Bookmarks…** shows the same tree with each
+  entry's location and connection and does the same with buttons:
+  Edit…, Rename… (F2), New Group…, New Terminal Bookmark…, Move Up /
+  Down / to Top, Move to Group, Sort, Delete… (Del, for a selection).
+  It works on the same store, so the sidebar and the menu change at once.
+- **Terminal bookmarks** open a shell instead of a folder: a local
+  shell, one on an SSH (SFTP/SCP) profile, or one on a bare host —
+  *SSH Host (no profile)*: host or IP address, port (22), user, an
+  optional key file — optionally changing into a working folder. Make one
+  with the ☆ button of a terminal pane (*Bookmark this Terminal*) or
+  *New Terminal Bookmark…* in the sidebar's right-click menu; a click
+  opens a terminal pane beside the active pane. A bookmark never holds a
+  credential: a profile bookmark names the profile; a host bookmark
+  connects like Quick Connect — in the background, asking whether to
+  trust an unknown host key (known_hosts, never accepted silently), using
+  the key file or else a running ssh-agent, asking the password when
+  neither gets in and the key's passphrase when the key is encrypted;
+  nothing typed is stored, and the proxy of *Settings → Network & Proxy*
+  applies. A profile that is gone or has no shell, or a host that is no
+  host name, is reported and nothing opens. A host bookmark's shell is
+  not part of the saved layout.
 - **Folders load in the background**: opening a folder, going up /
   back / forward, refreshing or typing a path keeps the current
   listing usable; the status line shows *Loading …* with a Cancel
@@ -216,14 +405,37 @@ native protocol doesn't support them.
 Every viewer, editor and dialog has two buttons in its top-right corner:
 [x] closes it, the one left of it maximizes it over the whole screen and
 restores the size it had before. `Ctrl+M` does the same, and so does
-the title bar's Maximize button.
+the title bar's Maximize button. In a dialog, a left drag on the rest of
+that top row moves the dialog, and a left drag on a floating panel's
+title bar moves the panel - also where the window manager draws no title
+bar (spectrwm, other tiling setups) or keeps the window maximized
+(spectrwm's `fullscreen` layout), and on Wayland: axross then asks the
+window manager to move it. A double-click on a floating panel's title
+bar docks it again.
 
-- **Text editor** (built-in) — with conflict detection on save and
-  a close button in the top-right corner.
+- **Text editor** (built-in) — every file opened for editing is a tab
+  of one editor window (*Edit* / F4 in a pane, local or remote): syntax
+  highlighting (Pygments; the language by name or `#!` line, changeable
+  in the status bar), line numbers, find and replace with regex, case
+  and whole word (Ctrl+F / Ctrl+H, F3), go to line (Ctrl+G), wrap, zoom,
+  line endings (LF / CRLF / CR) and encoding (UTF-8, UTF-8 BOM, Latin-1,
+  UTF-16) under *Format*, Save / Save All. *File → New* (Ctrl+N) starts
+  an untitled tab, *Open…* (Ctrl+O) picks local files (remote files open
+  from their pane), *Save As…* (Ctrl+Shift+S) writes a local tab to a
+  local file and a remote tab to a path on its own backend, asking
+  before it replaces a file; Save All is Ctrl+L. Enter keeps the line's
+  indentation, one level more after `:` (Python, YAML) or `{` (brace
+  languages). *Tools → Text Editor* opens the window without a file.
+  A save keeps every untouched
+  line's own ending, a BOM and no-break spaces, writes atomically and
+  asks first when the file changed since it was opened; the pane showing
+  the folder refreshes. Closing a tab or the window with unsaved
+  changes asks Save / Discard / Cancel; closing the last tab closes the
+  window, and its menu bar carries the maximize and [x] buttons.
 - **Hex editor** — useful for triage on remote files.
 - **Open size limit** — the text / hex viewers read the whole file,
   so there is a cap: 32 MB by default, changeable under
-  *View → Open Size Limit…* (1–4096 MB, stored in `settings.json`).
+  *Edit → Settings… → Files & Panes* (1–4096 MB, stored in `settings.json`).
 - **Image viewer** — F3 / double-click, MIME-allow-listed, size-
   capped to keep Qt's allocator happy.
 - **PDF** — F3 / double-click opens the PDF on its own in the media
@@ -260,6 +472,36 @@ the title bar's Maximize button.
   references outside the file. `paranoid` mode blocks the viewer.
   `I` (or the *Info* button) shows the current item's metadata in a
   side panel, with *Remove metadata* — in the image viewer too.
+- **Media Player** (bundled extension, *Extensions → Manage
+  Extensions…*) — a dock that plays MP3, WAV, Ogg Vorbis, FLAC, Opus,
+  AAC and more. Add tracks with right-click → *Play in Media Player*,
+  *Add…*, or by dropping files and folders from a file pane or the
+  desktop onto the playlist (folders add their audio files sorted, at
+  most 2000, 6 levels deep; entries that are not audio are skipped
+  with a note; remote files are copied to a temporary folder off the
+  GUI thread, at most 512 MB each and 2 GB per drop). Drag rows to
+  reorder; the playing track (bold, play icon, named in the dock
+  title) keeps playing. Seek with the position slider (click or drag,
+  `1:23 / 4:56`). ⏮ restarts the track after 3 s, else goes back;
+  shuffle plays every track once per round, repeat is off / all /
+  one. An unplayable track is marked and skipped. *Load…* / *Save…*
+  read and write M3U / M3U8 playlists (UTF-8, relative paths for
+  tracks under the playlist's folder, `#EXTINF` titles and lengths;
+  URLs, missing or non-audio entries are skipped, files over 1 MiB
+  or with NUL bytes are refused; temporary copies of remote tracks
+  are not saved). The list, the current track and position, volume,
+  mute, shuffle and repeat come back on the next start
+  (`~/.config/axross/media_player.json`, mode 0600). Volume follows a
+  perceptual (cubic) curve; mute button. Keys while the player has
+  the focus: Space play/pause, Enter play the selected row, Delete
+  remove the selected rows, Left / Right seek 5 s (with Shift 30 s),
+  Ctrl+Left / Ctrl+Right previous / next, M mute, + / - volume. With
+  numpy: 10-band equalizer with presets (the arrow left of *Equalizer*
+  folds the band sliders away and gives the playlist the room) and an
+  animated visualization: spectrum, mirrored spectrum, radial spectrum,
+  oscilloscope or stereo VU meter - a click on it switches to the next.
+  The chosen visualization and the folded equalizer come back on the
+  next start.
 - **SSH terminal** — tabbed dock next to the transfer queue. Local
   PTY (`pty.fork()`) and remote SSH-over-paramiko are both
   available; the SSH variant reuses the existing connection rather
@@ -289,7 +531,8 @@ background with progress and *Cancel*. In the image and media viewers
 | PDF | pypdf, else QtPdf | Info dictionary, XMP streams, PieceInfo, earlier revisions (full rewrite) | — needs the `[metadata]` extra (`pip install 'axross[metadata]'`) |
 | Audio / video | `ffprobe` | all tags and chapters, data streams (camera GPS tracks), the cover picture of audio files (`ffmpeg -c copy`, no re-encoding) | the streams |
 
-**How removal writes** — *Tools → Metadata Settings…*:
+**How removal writes** — *Edit → Settings… → Metadata* (*Tools →
+Metadata Settings…* opens it):
 
 - **In place** (default): the file is replaced atomically and its
   original is kept in the axross trash. One run — a single file or a
@@ -549,18 +792,49 @@ For LLM clients: [LLM_GUIDE.md](LLM_GUIDE.md).
 
 ## Agent dock — a local LLM works with axross
 
-View > Panels > Agent (Ctrl+Shift+A) opens a chat with an LLM profile
+Tools > Start Agent, *New Agent Tab Here* in a pane's right-click menu
+(a new tab for that folder) or View > Panels > Agent (Ctrl+Shift+A)
+open a chat with an LLM profile
 (the profiles of the Analysis dock: LM Studio, Ollama, vLLM, llama.cpp
 or any OpenAI-compatible server; LLM… manages them). The model works
 with the same tools as the MCP server, in the folder shown at the top
 (the active pane's, when it shows local files).
+
+**Ollama** runs a model with a context of 4096 tokens unless told
+otherwise, and the agent's instructions and tools alone take 2,000 to
+5,000 tokens (5,259 with *Allow changes to files*). Start the server
+with `OLLAMA_CONTEXT_LENGTH=16384`, or set `PARAMETER num_ctx 16384` in
+a Modelfile: Ollama cuts a request that does not fit without a word,
+and its OpenAI-compatible API takes no context size. When an answer
+filled the context, the tab says so.
 
 **Tabs.** Every tab is a conversation of its own with its own model,
 protection mode, sandbox, folder and tools: "+" or Ctrl+T opens one,
 a double-click renames it. With *Keep tabs* on (Tools > Agent
 Settings…) each tab is one JSON file in `~/.config/axross/agent/sessions/`
 (`0o600`) and comes back at the next start. Ctrl+Enter sends, Esc
-stops, Up/Down bring back earlier tasks.
+or Stop ends the task at once - also while the model is still writing
+its answer (the request is cut, the server stops generating) - and
+Up/Down bring back earlier tasks. A reasoning model that writes its
+whole answer only into its reasoning (Qwen3 on LM Studio does at times)
+gets that shown, marked as such; a model that ends without any answer
+is said so.
+
+**Thinking.** What a reasoning model thinks before it answers or calls a
+tool (`reasoning_content` or `reasoning` beside the answer, or
+`<think>…</think>` at the start of it) is shown apart from the answer: a
+grey, italic **▸ Thinking** line with its first sentence. Click
+*Thinking* to open the whole text, click again to close it. Only the
+answer is read aloud. Kept tabs keep the thinking, closed.
+
+**The lamp** in the dock's title bar says whether the tab's LLM answers:
+**green** - the last request to its endpoint (a model listing, or a
+request of a task) succeeded; **orange** - one is on its way; **red** -
+it failed, no profile is set up, or the endpoint is remote and has no
+consent yet (it is not asked before the first task). Its tooltip names
+the endpoint, the model and the reason; a click checks again. The check
+lists the server's models in the background, only while the dock is
+shown.
 
 **Protection modes** (per tab):
 
@@ -586,10 +860,40 @@ per extension with agent tools. Always there: `ask_user` (the agent
 asks you something) and `update_plan` (a checklist above the task
 field).
 
+**Files read-only** (in the tab's top row, and for every tab in Agent
+Settings > Access): the agent reads files but changes none - no
+writing, deleting or moving, no remote commands (a command can change
+files), extra folders read-only, no writing tools of MCP servers or
+extensions, and a sandbox mounts nothing writable. It is enforced where
+the agent's tools are built and again at every call, not only in the
+dialog.
+
 **Topics ▸** fills the task field with a prepared task — System
 inventory, Install or update software (in Plan mode), Service status,
-Collect logs, Disk usage, Summarise a folder, Read data out — for you
-to complete and send. Extensions can add their own.
+Collect logs, Disk usage, Summarise a folder, Read data out, Review a
+config folder, Free disk space (with the Duplicate Finder tools) — for
+you to complete and send. Extensions can add their own.
+
+**Your own topics** ("work prompts"): Topics ▸ *+ New Topic…* opens an
+empty form, *Save This Task as Topic…* starts from the task field, and
+*Edit or Delete My Topics…* changes or removes them. A topic stores a
+title, a slash command,
+the prompt (`{folder}` and `{backend}` are filled in), the mode it
+suggests, what it needs and the tool groups it ticks, in
+`~/.config/axross/agent/work_prompts.json`. Every topic has a command:
+type `/` in the task field to pick one (`/free-space`, `/review-config`,
+your own); text after the command is kept below the prompt. A command
+fills the field — you read it and send it.
+
+**Prompts** (*Edit → Settings… → Agent → Prompts*): the system prompt
+(the rules the model gets first) and the user prompt (a template for
+every task: `{task}` becomes what you typed, text without `{task}` goes
+in front of it, empty sends the task as typed) as named profiles.
+*Default* is axross's own prompt and cannot be changed or deleted —
+*Duplicate* it to change a copy. *Prompt profile of new requests* picks
+the one the next request of every tab uses; the tab still adds its
+folder, Plan mode and read-aloud rules. Stored in
+`~/.config/axross/agent/settings.json`.
 
 **axross functions** are the tools axross runs itself on the agent's
 behalf — outside the agent's sandbox, with axross's own rights: *Remote
@@ -675,16 +979,88 @@ An MCP client can hand a task to the same local model with
 `--mcp-tools agent` (`agent_run`); that model can only read
 ([MCP.md](MCP.md) §9.9).
 
+### Talking with the agent
+
+The tab's **🎤** button talks to the agent, **🔊** reads its answers
+aloud. Speech is recognised by the tab's LLM profile (LLM Profiles,
+*Advanced*): locally with Whisper — nothing leaves the machine — or by an
+OpenAI-compatible server (`/audio/transcriptions`; a remote one asks
+before it hears a recording). Answers are spoken by a local Piper voice.
+
+- **Microphone modes** (Settings > Voice): *push-to-talk* (hold the button,
+  or the hold key, default **F9**, while the Agent dock has the focus),
+  *toggle* (click to start, click again or pause to end) and
+  *conversation* (after each spoken answer it listens again; click the
+  button to end it).
+- **Recognised text** goes into the task field to read and send, or is
+  sent at once (a conversation always sends).
+- **What is spoken:** only the answer - no tool calls, no code (a short
+  note says that code is shown), no URLs or long paths. Stop, Esc, typing
+  or a new task end it. When axross refuses a tool call (Files read-only,
+  not allowed, no permission) the voice says so briefly; the first voice
+  use of a session greets.
+- **Voice and language:** male or female, German or English, or *follow
+  the answer*. In German speech English IT terms (Server, Backup, Pull
+  Request, …) are spoken in English; a term the answer writes in
+  `{braces}` is one too (the braces are not shown).
+- **Setup:** `pip install axross[voice]` (piper-tts, faster-whisper; part
+  of axross-full), then *Help > Features…*, group **Voice**: download the
+  voices and a Whisper model (pinned checksums, into
+  `~/.local/share/axross/voice/`).
+- **Safety:** confirmations are always clicked, never spoken; the
+  microphone is off in the paranoid security mode; audio and transcripts
+  stay in memory.
+
+## Settings
+
+**Edit → Settings…** (**Ctrl+,**; on macOS in the application menu) holds
+every setting of axross in one window: the categories on the left, the
+page of the selected one on the right, and above the list a field that
+finds a setting by its name (type *sudo*, *proxy* or *zoom*).
+
+| Category | Settings |
+|---|---|
+| General | Language (applies at the next start), restore the layout of the last session on start, when a pane becomes the active one (on click, or after resting the mouse 0.5–3 s in it) |
+| Appearance | Theme, compact mode, monochrome icons, font size (zoom), highlight hidden files and their colour (a colour that is hard to read on the theme is used only after a question) |
+| Files & Panes | Show hidden files, open size limit, RAM workspaces (on / off, size limit, memory kept free) and temporary files in RAM (applies at the next start) |
+| Network & Proxy | The default proxy, bypass list, PAC script, a test |
+| LLM Profiles | The LLM servers of the Agent and Analysis docks; *Fetch models* opens a list with each model's size, parameters, quantisation and which one is loaded, as far as the server reports them |
+| Agent | General, Prompts, Access, Sandboxes, MCP Servers, Sessions |
+| Voice | Read answers aloud, spoken language, voice, microphone mode, hold key, recognised text inserted or sent, the pause that ends speaking |
+| Metadata | How Remove Metadata writes, asking first |
+| Search | Hosts searched at once by *Find on Network Hosts*; where the offline and duplicate indexes are |
+| Security | Paranoid security mode (kept for the next start; `AXROSS_SECURITY_MODE` in the environment wins), remember the sudo password |
+| Extensions | Which extensions are switched on |
+
+**OK, Apply, Cancel** work the same on every page: only pages whose values
+were changed are written; OK and Apply check every changed page first and
+save nothing at all while one has a problem (that page is shown, the
+problem is named above it); then each changed page is saved and takes
+effect at once. Cancel, Esc and the [x] discard what was not applied.
+
+*Tools → Network & Proxy…, LLM Profiles…, Agent Settings…, Metadata
+Settings…* and *Extensions → Manage Extensions…* open the Settings window
+on their page. *View → Show Hidden Files* (**Ctrl+H**), *View → Theme* and
+*View → Zoom* stay quick switches; they are stored at once, like the page.
+
 ## Configuration files
 
 - `~/.config/axross/profiles.json` — connection profiles (`0o600`).
 - `~/.config/axross/bookmarks.json` — bookmark bar contents.
 - `~/.config/axross/session.json` — pane layout, window geometry and
-  dock layout at last close; restored on start unless File > Restore
-  Layout on Start is off.
+  dock layout at last close; restored on start unless *Restore the layout
+  of the last session on start* (Settings > General) is off. Its `window`
+  object also holds the look (theme, compact, monochrome icons, font size,
+  hidden files) and the language.
 - `~/.config/axross/column_prefs.json` — column widths and hidden
   columns, one file shared by all panes.
-- `~/.config/axross/settings.json` — small preferences (open size limit).
+- `~/.config/axross/settings.json` — small preferences: open size limit,
+  pane activation, metadata write mode and confirmation, remember the sudo
+  password, hosts searched at once, the security mode.
+- `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — the
+  default proxy, the LLM profiles, the switched-on extensions (secrets in
+  the keyring).
+- `~/.config/axross/agent/voice.json` — the Voice settings (`0o600`).
 - `~/.config/axross/agent/settings.json` — Agent Settings (modes, access,
   sandbox profiles, MCP servers; `0o600`).
 - `~/.config/axross/agent/sessions/` — one JSON file per kept Agent tab (`0o600`).

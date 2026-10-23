@@ -479,7 +479,7 @@ class ScriptsDock(QDockWidget):
         self.stop_action.setEnabled(running)
         if not policy.allow_scripts:
             blocked = tr(
-                "Scripts are blocked in {mode} security mode (Tools > Paranoid Security Mode)."
+                "Scripts are blocked in {mode} security mode (Edit > Settings > Security)."
             ).format(mode=policy.name)
             self.run_action.setEnabled(False)
             self.console_action.setEnabled(False)
@@ -494,7 +494,7 @@ class ScriptsDock(QDockWidget):
         )
 
     def refresh_policy(self) -> None:
-        """Re-read the security mode (Tools > Paranoid Security Mode)."""
+        """Re-read the security mode (Edit > Settings > Security)."""
         self._update_actions()
 
     # ------------------------------------------------------------------

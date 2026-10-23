@@ -4,7 +4,6 @@ in its top-right corner."""
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -30,6 +29,8 @@ MODULES = (
     "disk_usage_dialog",
     "properties_dialog",
     "media_viewer",
+    "dir_size_dialog",
+    "archive_pane",
 )
 
 
@@ -40,8 +41,26 @@ class SourceGuardTest(unittest.TestCase):
             self.assertRegex(src, r"add_close_corner\(", mod)
 
     def test_main_window_text_dialogs_install_it_too(self) -> None:
+        """Every function of main_window.py that builds a QDialog installs the
+        corner. Counted per function: a count over the file ("at least 3")
+        fell when two text windows came to share _show_text_dialog."""
+        import ast
+
         src = (ROOT / "ui" / "main_window.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(len(re.findall(r"add_close_corner\(", src)), 3)
+        builders, missing = [], []
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            calls = {
+                c.func.id if isinstance(c.func, ast.Name) else getattr(c.func, "attr", "")
+                for c in ast.walk(node) if isinstance(c, ast.Call)
+            }
+            if "QDialog" in calls:
+                builders.append(node.name)
+                if "add_close_corner" not in calls:
+                    missing.append(node.name)
+        self.assertTrue(builders)  # the scan found the text dialogs
+        self.assertEqual(missing, [])
 
 
 class _Qt(unittest.TestCase):

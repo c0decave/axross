@@ -1021,19 +1021,22 @@ class MainWindowAnalysisTest(_Qt):
     def test_happy_tools_menu_and_dock_button_open_the_profiles(self) -> None:
         from PyQt6.QtGui import QAction
 
+        from ui.settings_dialog import SettingsDialog
+
         opened = []
+
+        def fake_exec(dialog) -> int:
+            opened.append(dialog.current_page_id())
+            return 0
         with (
-            mock.patch(
-                "ui.llm_settings_dialog.LLMSettingsDialog.exec",
-                side_effect=lambda: opened.append(1) or 0,
-            ),
+            mock.patch.object(SettingsDialog, "exec", fake_exec),
             mock.patch.object(self.win._analysis_dock, "refresh_profiles") as refresh,
         ):
             menu = [a for a in self.win.findChildren(QAction) if a.text() == "&LLM Profiles…"]
             self.assertEqual(len(menu), 1)
             menu[0].trigger()
             self.win._analysis_dock.settings_button.click()
-        self.assertEqual(len(opened), 2)
+        self.assertEqual(opened, ["llm", "llm"])  # Edit > Settings… on LLM Profiles
         self.assertEqual(refresh.call_count, 2)
 
     def test_happy_a_folder_or_several_files_are_offered_as_a_batch(self) -> None:

@@ -8,7 +8,9 @@ two operations:
   mtime window via ``search_all``. Results are returned newest-first.
 * **Index Current Pane** — walk the active pane's current directory
   (recursively, depth- and entry-capped per ``core.metadata_index``)
-  so subsequent searches find what's there.
+  so subsequent searches find what's there. Edit > Index Active Folder…
+  opens this window and starts it. The index is one SQLite file,
+  :func:`core.metadata_index.default_db_path` (shown in the window).
 
 Searching costs zero network — it's a SQLite SELECT. Indexing is
 the expensive step. We keep the two split so a user can search the
@@ -140,11 +142,22 @@ class MetadataSearchDialog(QDialog):
         self._index_btn.setEnabled(self._active_pane is not None)
         btn_row.addWidget(self._index_btn)
 
+        index_path = str(MX.default_db_path())
+        self._index_btn.setToolTip(
+            f"Record names, sizes and dates below the active pane's folder.\nStored in {index_path}"
+        )
         btn_row.addStretch(1)
         self._status = QLabel("")
         self._status.setProperty("role", "muted")
         btn_row.addWidget(self._status)
         root.addLayout(btn_row)
+
+        # Where the index lives (operator question: "wo und in welcher
+        # Datei wird das indexing eigentlich gespeichert?").
+        self.location_label = QLabel(f"Index file: {index_path}", self)
+        self.location_label.setProperty("role", "muted")
+        self.location_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        root.addWidget(self.location_label)
 
         self._table = QTableWidget(0, 5, self)
         self._table.setHorizontalHeaderLabels(["Name", "Path", "Size", "Modified", "Backend"])
@@ -153,8 +166,9 @@ class MetadataSearchDialog(QDialog):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         from ui.column_fit import ColumnFitter
 
-        # Path takes the free width; every divider stays draggable.
-        self._columns = ColumnFitter(self._table, fill=1)
+        # Path takes the free width, Name keeps its content; every divider
+        # stays draggable.
+        self._columns = ColumnFitter(self._table, fill=1, keep=(0,))
         self._table.doubleClicked.connect(self._on_row_activated)
         root.addWidget(self._table, stretch=1)
 
@@ -215,6 +229,10 @@ class MetadataSearchDialog(QDialog):
             self._table.setItem(row, 4, QTableWidgetItem(e.backend_id))
         self._update_status(found=len(entries))
 
+    def start_index_active(self) -> None:
+        """Index the active pane's folder (Edit > Index Active Folder…)."""
+        self._do_index_active()
+
     def _do_index_active(self) -> None:
         pane = self._active_pane
         if pane is None:
@@ -236,7 +254,7 @@ class MetadataSearchDialog(QDialog):
             return
         self._index_root = path
         self._job.start(
-            lambda cancel, progress: MX.index_dir(
+            lambda cancel, progress: MX.reindex_dir(
                 backend, path, backend_id=bid, cancel=cancel, progress=progress
             )
         )
@@ -247,10 +265,13 @@ class MetadataSearchDialog(QDialog):
         if kind == "error":
             QMessageBox.warning(self, "Index", f"Indexing failed:\n{value}")
             return
+        indexed, removed = value if isinstance(value, tuple) else (value, 0)
         if cancelled:
-            text = f"Cancelled — {value} entries indexed so far under {path}."
+            text = f"Cancelled — {indexed} entries indexed so far under {path}."
         else:
-            text = f"Indexed {value} entries under {path}."
+            text = f"Indexed {indexed} entries under {path}."
+            if removed:
+                text += f"\nRemoved {removed} that no longer exist."
         QMessageBox.information(self, "Index", text)
         self._update_status()
 

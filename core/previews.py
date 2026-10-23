@@ -702,7 +702,9 @@ def decode_image(
 def open_externally(backend, path: str) -> None:
     """Hand *path* to the desktop's default handler.
 
-    Uses :class:`QDesktopServices` so we don't have to shell out.
+    Uses :class:`QDesktopServices` so we don't have to shell out - except
+    in a frozen build, which starts xdg-open with a clean environment
+    (:mod:`core.desktop_open`).
     Still validates the path (NUL byte, existence, regular-file)
     before invoking anything — the desktop handler itself is the
     remaining attack surface and is outside our control.
@@ -728,11 +730,14 @@ def open_externally(backend, path: str) -> None:
         raise PreviewNotAvailable(f"refusing to open special file: {abs_path}")
     try:
         from PyQt6.QtCore import QUrl
-        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtGui import QDesktopServices  # noqa: F401 - core.desktop_open uses it
     except ImportError as exc:  # pragma: no cover
         raise PreviewNotAvailable(f"PyQt6.QtGui.QDesktopServices unavailable: {exc}") from exc
+    from core import desktop_open
+
     url = QUrl.fromLocalFile(abs_path)
-    ok = QDesktopServices.openUrl(url)
+    # Through core.desktop_open, so the frozen build's opener starts too.
+    ok = desktop_open.open_url(url)
     if not ok:
         raise OSError(f"QDesktopServices.openUrl refused to open {abs_path}")
 

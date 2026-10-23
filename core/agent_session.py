@@ -16,9 +16,12 @@
       "groups": ["metadata", "filetype"],
       "allow_write": false,
       "allow_exec": false,
+      "files_read_only": false,
       "access": {"axross": false, "functions": ["mcp_servers"],   # core.agent_access
                  "network": "hosts", "hosts": ["db.example:5432"]},
-      "transcript": [{"who": "You:", "text": "…", "muted": false}],
+      "transcript": [{"who": "You:", "text": "…", "muted": false},
+                     {"who": "Thinking:", "text": "…", "muted": true,
+                      "kind": "reasoning"}],      # "kind" is optional
       "messages": [{"role": "user", "content": "…"}]   # what the model saw
     }
 
@@ -72,6 +75,8 @@ class AgentSession:
     groups: list = field(default_factory=list)
     allow_write: bool = False
     allow_exec: bool = False
+    #: The tab's "Files read-only" switch (core.agent.read_only).
+    files_read_only: bool = False
     #: What the tab may reach (core.agent_access); None: a session from
     #: before, which takes Agent Settings > Access.
     access: SessionAccess | None = None
@@ -95,6 +100,7 @@ class AgentSession:
             "groups": list(self.groups),
             "allow_write": self.allow_write,
             "allow_exec": self.allow_exec,
+            "files_read_only": self.files_read_only,
             **({"access": self.access.to_dict()} if self.access is not None else {}),
             "transcript": self.transcript,
             "messages": self.messages,
@@ -114,7 +120,7 @@ class AgentSession:
                 setattr(out, name, data[name])
         if data.get("mode") in MODES:
             out.mode = data["mode"]
-        for name in ("allow_write", "allow_exec"):
+        for name in ("allow_write", "allow_exec", "files_read_only"):
             if isinstance(data.get(name), bool):
                 setattr(out, name, data[name])
         out.access = SessionAccess.from_dict(data.get("access"))
@@ -124,21 +130,29 @@ class AgentSession:
             for e in data.get("extra_folders") or []
             if isinstance(e, dict) and isinstance(e.get("path"), str) and os.path.isabs(e["path"])
         ]
-        out.transcript = [
-            {
-                "who": str(e.get("who", "")),
-                "text": str(e.get("text", "")),
-                "muted": bool(e.get("muted")),
-            }
-            for e in data.get("transcript") or []
-            if isinstance(e, dict)
-        ]
+        out.transcript = [_transcript_entry(e) for e in data.get("transcript") or []
+                          if isinstance(e, dict)]
         out.messages = [
             m
             for m in data.get("messages") or []
             if isinstance(m, dict) and isinstance(m.get("role"), str)
         ]
         return out
+
+
+#: The kinds of transcript line besides a plain one: "reasoning" is a
+#: model's thinking, shown as a block that opens and closes.
+TRANSCRIPT_KINDS = ("reasoning",)
+
+
+def _transcript_entry(e: dict) -> dict:
+    """A transcript line of a session file: who, text, muted, and "kind"
+    only when it is a known one (older files have none)."""
+    entry = {"who": str(e.get("who", "")), "text": str(e.get("text", "")),
+             "muted": bool(e.get("muted"))}
+    if e.get("kind") in TRANSCRIPT_KINDS:
+        entry["kind"] = e["kind"]
+    return entry
 
 
 class SessionStore:

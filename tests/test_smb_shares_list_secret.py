@@ -1,15 +1,13 @@
-"""``SmbSession.shares_list`` keeps the password off the command line.
+"""``SmbSession.shares_list`` keeps the password away from any child process.
 
 docs/SECURITY-REVIEW-2026-10.md C-5: the share listing ran
-``smbclient -L //host -g -U user%password``. A process's argv is world
-readable (``/proc/<pid>/cmdline``, ``ps``); smbclient's own man page says
-its scrubbing of the process title "is after startup and so is subject to
-a race". The password now travels in the child's ``PASSWD`` environment
-variable (smbclient(1): "the tool will check the PASSWD environment
-variable"), which only the same user (and root) can read.
+``smbclient -L //host -g -U user%password``; argv is world readable. The fix
+of that review moved the password into the child's ``PASSWD`` variable.
+Since 2026-10-21 (operator: *„ersetze alles was smb/cifs/wmi betrifft wo wir
+BINARIES benutzen, mit impacket"*) there is no child at all: the list comes
+from NetShareEnum through impacket in-process (core/smb_shares.py).
 
-Driven end to end through a stand-in ``smbclient`` executable that records
-its argv and environment.
+A stand-in ``smbclient`` on PATH records whether anything still runs it.
 """
 
 from __future__ import annotations
@@ -30,8 +28,29 @@ SC = pytest.importorskip("core.smb_client")
 SECRET = "s3cr%t pass"
 
 
+class _Conn:
+    seen: list = []
+
+    def __init__(self, remote_name, remote_host, sess_port=445, timeout=60, **kw):
+        pass
+
+    def login(self, user, password, domain="", lmhash="", nthash=""):
+        _Conn.seen.append((user, password, domain))
+
+    def listShares(self):
+        return [
+            {"shi1_netname": "public\x00", "shi1_type": 0, "shi1_remark": "Public share\x00"},
+            {"shi1_netname": "IPC$\x00", "shi1_type": 0x80000003, "shi1_remark": "IPC Service\x00"},
+        ]
+
+    def close(self):
+        pass
+
+
 @pytest.fixture
 def fake_smbclient(tmp_path, monkeypatch):
+    from core import smb_shares
+
     record = tmp_path / "record.json"
     script = tmp_path / "bin" / "smbclient"
     script.parent.mkdir()
@@ -39,38 +58,34 @@ def fake_smbclient(tmp_path, monkeypatch):
         textwrap.dedent(
             f"""\
             #!{sys.executable}
-            import json, os, sys
+            import json, sys
             with open({str(record)!r}, "w") as fh:
-                json.dump({{"argv": sys.argv[1:], "passwd": os.environ.get("PASSWD")}}, fh)
-            print("Disk|public|Public share")
-            print("IPC|IPC$|IPC Service")
+                json.dump({{"argv": sys.argv[1:]}}, fh)
             """
         )
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{script.parent}{os.pathsep}{os.environ.get('PATH', '')}")
-    monkeypatch.delenv("PASSWD", raising=False)
-    return lambda: json.loads(record.read_text())
+    _Conn.seen = []
+    monkeypatch.setattr(smb_shares, "_connection_class", lambda: _Conn)
+    return record
 
 
-def test_happy_password_is_not_in_argv(fake_smbclient):
+def test_happy_no_child_process_sees_the_password(fake_smbclient):
     shares = SC.SmbSession.shares_list("fileserver", username="alice", password=SECRET)
     assert [s["name"] for s in shares] == ["public", "IPC$"]
-    seen = fake_smbclient()
-    assert not any(SECRET in a or "s3cr" in a for a in seen["argv"]), seen["argv"]
-    assert seen["passwd"] == SECRET
-    assert seen["argv"][-2:] == ["-U", "alice"]
+    assert not fake_smbclient.exists(), "the smbclient binary still ran"
+    assert _Conn.seen == [("alice", SECRET, "")]
 
 
-def test_sad_username_with_percent_is_refused(fake_smbclient):
-    # smbclient splits "-U user%pass" itself: a "%" in the user name would
-    # put the rest of it on the command line as a password again.
-    with pytest.raises(ValueError):
-        SC.SmbSession.shares_list("fileserver", username="al%ice", password=SECRET)
+def test_sad_a_percent_in_the_user_name_is_just_a_character_now(fake_smbclient):
+    # smbclient split "-U user%pass" itself; impacket takes the name as is.
+    SC.SmbSession.shares_list("fileserver", username="al%ice", password=SECRET)
+    assert _Conn.seen == [("al%ice", SECRET, "")]
+    assert not fake_smbclient.exists()
 
 
-def test_edge_anonymous_listing_sets_no_password(fake_smbclient):
+def test_edge_anonymous_listing_sends_an_empty_login(fake_smbclient):
     SC.SmbSession.shares_list("fileserver")
-    seen = fake_smbclient()
-    assert "-N" in seen["argv"]
-    assert seen["passwd"] is None
+    assert _Conn.seen == [("", "", "")]
+    assert not fake_smbclient.exists()

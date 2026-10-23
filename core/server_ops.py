@@ -335,6 +335,39 @@ def source_size(backend, path: str) -> int | None:
         return None
 
 
+def _file_size(backend, path: str) -> int | None:
+    """The size of the regular file *path*; None for a folder, a link or
+    when it cannot be read."""
+    try:
+        item = backend.stat(path)
+    except Exception as exc:  # noqa: BLE001 - no size: nothing to compare
+        log.debug("cannot read the size of %s: %s", path, exc)
+        return None
+    if item is None or getattr(item, "is_dir", False) or getattr(item, "is_link", False):
+        return None
+    try:
+        return int(getattr(item, "size", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def refuse_short_copy(path: str, size_before: int | None, written: int | None,
+                      copy_path: str) -> None:
+    """Raise :class:`OSError` when fewer bytes were written to *copy_path*
+    than *path* had before it was copied: a move must not delete a source
+    whose copy came out short. A source stream may end early without an
+    error, and a destination without a comparable checksum (FTP) cannot
+    object afterwards. More written than the size from before is left to
+    :func:`refuse_changed_source` (the source grew), and so is a size some
+    backends only report as 0."""
+    if size_before is None or written is None or written >= size_before:
+        return
+    raise OSError(
+        f"only {written} of {size_before} bytes of {path} were copied to {copy_path}; "
+        "the source was kept, the copy is incomplete"
+    )
+
+
 def refuse_changed_source(backend, path: str, size_before: int | None, copy_path: str) -> None:
     """Raise :class:`OSError` when *path* no longer has *size_before*, the
     size it had before it was copied to *copy_path*.
@@ -759,6 +792,9 @@ def server_side_move(
     size_before = source_size(backend, src)
     server_side_copy(backend, src, dst)
     try:
+        # The copy's own size: a server-side copy reports no byte count.
+        # Files only - a new folder's own size says nothing about its content.
+        refuse_short_copy(src, size_before, _file_size(backend, dst), dst)
         refuse_changed_source(backend, src, size_before, dst)
         backend.remove(src)
     except OSError as exc:

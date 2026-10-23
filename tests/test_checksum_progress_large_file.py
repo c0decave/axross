@@ -75,7 +75,7 @@ class ChecksumLargeFileTest(unittest.TestCase):
         shown: list = []
         with mock.patch(
             "ui.file_pane.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
-        ), mock.patch("ui.checksum_dialog.ChecksumDialog.exec", lambda dlg: shown.append(dlg)):
+        ), mock.patch("ui.viewer_window.show_independent", lambda dlg: shown.append(dlg)):
             self.pane._show_checksum(item)
         self.assertEqual(len(shown), 1)
 

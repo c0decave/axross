@@ -302,3 +302,51 @@ def test_edge_onedrive_unreadable_legacy_cache_is_left_alone(token_dir, msal_stu
     assert msal_stub[-1][1] in ("{}", "")
     (own,) = _own_files(token_dir, "onedrive_token")
     assert "client-A" in own.read_text()
+
+
+# ---------------------------------------------------------------------------
+# A frozen build opens the login page with a clean environment: the clean
+# webbrowser is installed before the library calls webbrowser itself.
+# ---------------------------------------------------------------------------
+
+
+def test_happy_gdrive_installs_the_clean_browser_before_the_consent_page(
+        token_dir, gdrive, monkeypatch):
+    from core import gdrive_client as G
+
+    used, flows = gdrive
+    # How many consent pages had opened when the clean browser went in.
+    installed_at: list[int] = []
+    monkeypatch.setattr(G, "install_clean_webbrowser", lambda **kw: installed_at.append(len(flows)))
+    _connect(_gprofile("fresh", "fresh-client"))
+    assert installed_at == [0] and flows == ["fresh-client"]
+
+
+def test_edge_gdrive_with_a_stored_token_opens_no_browser_and_installs_nothing(
+        token_dir, gdrive, monkeypatch):
+    from core import gdrive_client as G
+
+    used, flows = gdrive
+    installed: list[bool] = []
+    monkeypatch.setattr(G, "install_clean_webbrowser", lambda **kw: installed.append(True))
+    (token_dir / "gdrive_token.json").write_text(_gdrive_token("work-client", "ACCOUNT-A"))
+    _connect(_gprofile("work", "work-client"))
+    assert flows == [] and installed == []
+
+
+def test_happy_onedrive_installs_the_clean_browser_before_the_login(
+        token_dir, msal_stub, monkeypatch):
+    from core import onedrive_client as O
+
+    order: list[str] = []
+    monkeypatch.setattr(O, "install_clean_webbrowser", lambda **kw: order.append("install"))
+    stub = O.msal.PublicClientApplication
+
+    class _Ordered(stub):
+        def acquire_token_interactive(self, scopes, redirect_uri=None):
+            order.append("login")
+            return super().acquire_token_interactive(scopes, redirect_uri)
+
+    monkeypatch.setattr(O.msal, "PublicClientApplication", _Ordered)
+    _connect(_oprofile("fresh", "client-Z"))
+    assert order == ["install", "login"]

@@ -37,8 +37,11 @@ log = logging.getLogger(__name__)
 
 #: Events an extension can subscribe to with ``api.on``.
 EVENTS = ("selection_changed", "path_changed", "pane_activated")
+#: The order a resumed extension gets the events it missed: the pane,
+#: then its folder, then the selection in that folder.
+_CATCH_UP_ORDER = ("pane_activated", "path_changed", "selection_changed")
 #: What a context action can apply to (``applies_to``).
-APPLIES_TO = ("any", "folder", "selection", "files", "folders", "single_file")
+APPLIES_TO = ("any", "folder", "selection", "files", "folders", "single_file", "single_folder")
 #: An agent tool's own name (the agent sees ``ext_<module>__<name>``).
 _AGENT_TOOL_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
@@ -97,6 +100,7 @@ class ExtensionAPI:
         self.axross = scripting
         self.log = logging.getLogger(f"axross.ext.{info.module_name}")
         self._reg = _Registered()
+        self._pause_action: QAction | None = None
 
     @property
     def window(self):
@@ -128,7 +132,8 @@ class ExtensionAPI:
 
         *applies_to*: ``any`` (always), ``folder`` (nothing selected: the
         folder itself), ``selection`` (anything selected), ``files`` /
-        ``folders`` (only files / only folders selected), ``single_file``.
+        ``folders`` (only files / only folders selected), ``single_file`` /
+        ``single_folder`` (exactly one file / one folder selected).
         *extensions* (``(".md", ".txt")``) limits file entries by name.
         """
         if applies_to not in APPLIES_TO:
@@ -145,9 +150,13 @@ class ExtensionAPI:
         window = self._host.window
         dock = QDockWidget(str(title), window)
         dock.setObjectName(f"extension-dock-{self.info.ext_id}-{len(self._reg.docks)}")
-        dock.setTitleBarWidget(
-            DockTitleBar(str(title), "extensions", dock, reopen_hint="the Extensions menu")
+        bar = DockTitleBar(str(title), "extensions", dock, reopen_hint="the Extensions menu")
+        ext_id = self.info.ext_id
+        bar.enable_pause(
+            lambda paused: self._host.set_paused(ext_id, paused),
+            paused=self._host.is_paused(ext_id),
         )
+        dock.setTitleBarWidget(bar)
         dock.setWidget(widget)
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         toggle = dock.toggleViewAction()
@@ -219,8 +228,10 @@ class ExtensionAPI:
 
     def on_agent_event(self, callback: Callable[[str, dict], Any]) -> None:
         """Call *callback(session id, event)* on the GUI thread for every
-        event of every Agent tab: run_started, assistant, tool_call,
-        tool_result, confirmation, usage, run_finished, ..."""
+        event of every Agent tab: run_started, reasoning (the model's
+        thinking), assistant, tool_call, tool_result, confirmation, usage,
+        connection (a request to the LLM: trying, connected, failed,
+        cancelled), run_finished, ..."""
         self._reg.agent_handlers.append(callback)
 
     def _agent_dock(self):
@@ -255,6 +266,41 @@ class ExtensionAPI:
         pane = getattr(self._host.window, "_active_pane", None)
         return context_of(pane) if pane is not None else None
 
+    def drop_context(self, mime) -> ExtensionContext | None:
+        """What a drag & drop of *mime* onto an extension's widget is about:
+        for a file pane drag the source pane's backend and the dragged paths
+        (a local pane that has closed meanwhile still means the local disk;
+        a remote one's connection is gone: None), for ``file://`` URLs from
+        another program the local disk. None for anything else. Parsing
+        only - no filesystem call, safe in drop handlers."""
+        import os
+
+        from core.local_fs import LocalFS
+        from ui.file_pane import decode_transfer_payload
+
+        if mime is None:
+            return None
+        payload = decode_transfer_payload(mime)
+        if payload is not None:
+            paths = tuple(payload["paths"])
+            if not paths:
+                return None
+            find = getattr(self._host.window, "_pane_by_id", None)
+            pane = find(payload["source_pane_id"]) if callable(find) else None
+            if pane is not None:
+                return ExtensionContext(backend=pane.backend, folder=pane.current_path,
+                                        paths=paths, pane=pane)
+            if payload.get("filesystem") == "Local":
+                return ExtensionContext(backend=LocalFS(), folder=os.path.dirname(paths[0]),
+                                        paths=paths)
+            return None
+        if mime.hasUrls():
+            paths = tuple(u.toLocalFile() for u in mime.urls() if u.isLocalFile())
+            if paths:
+                return ExtensionContext(backend=LocalFS(), folder=os.path.dirname(paths[0]),
+                                        paths=paths)
+        return None
+
     def notify(self, text: str, timeout_ms: int = 5000) -> None:
         bar = self._host.window.statusBar()
         if bar is not None:
@@ -284,6 +330,7 @@ class ExtensionAPI:
             self._host.window.removeDockWidget(dock)
             dock.deleteLater()
         self._reg = _Registered()
+        self._pause_action = None
         if had_agent:
             self._host.agent_tools_changed.emit()
 
@@ -304,6 +351,10 @@ class ExtensionHost(QObject):
         self._separator = menu.addSeparator()
         self._loaded: dict[str, tuple[Any, ExtensionAPI]] = {}
         self._errors: dict[str, str] = {}
+        #: Paused extensions (persisted in extensions.json) and the events
+        #: each one missed while paused, for the catch-up on resume.
+        self._paused: set[str] = EX.paused_ids()
+        self._missed: dict[str, set[str]] = {}
         self._result.connect(self._deliver)
         _ACTIVE_HOST = weakref.ref(self)
 
@@ -324,6 +375,85 @@ class ExtensionHost(QObject):
 
     def loaded_ids(self) -> list[str]:
         return list(self._loaded)
+
+    # -- pause ------------------------------------------------------------------
+    def is_paused(self, ext_id: str) -> bool:
+        return ext_id in self._paused
+
+    def set_paused(self, ext_id: str, paused: bool) -> bool:
+        """Hold back (or deliver again) the pane events of a loaded
+        extension, so its panel stops reloading on every folder or
+        selection change. Resuming sends each event it missed once, with
+        the active pane's current state. The state is kept in
+        extensions.json; False if *ext_id* is not loaded."""
+        from core.i18n import tr
+
+        if ext_id not in self._loaded:
+            return False
+        paused = bool(paused)
+        if paused != (ext_id in self._paused):
+            if paused:
+                self._paused.add(ext_id)
+            else:
+                self._paused.discard(ext_id)
+            try:
+                EX.set_paused(ext_id, paused)
+            except OSError as exc:
+                log.warning("Pause state of %s not saved: %s", ext_id, exc)
+                bar = self.window.statusBar()
+                if bar is not None:
+                    bar.showMessage(
+                        tr("Pause state not saved: {error}").format(error=exc), 10000
+                    )
+        self._show_paused(ext_id)
+        if not paused:
+            self._catch_up(ext_id)
+        return True
+
+    def _show_paused(self, ext_id: str) -> None:
+        entry = self._loaded.get(ext_id)
+        if entry is None:
+            return
+        api = entry[1]
+        paused = ext_id in self._paused
+        for dock in api._reg.docks:
+            bar = dock.titleBarWidget()
+            if hasattr(bar, "set_paused"):
+                bar.set_paused(paused)
+        if api._pause_action is not None:
+            api._pause_action.setChecked(paused)
+
+    def _catch_up(self, ext_id: str) -> None:
+        missed = self._missed.pop(ext_id, set())
+        pane = getattr(self.window, "_active_pane", None)
+        entry = self._loaded.get(ext_id)
+        if not missed or pane is None or entry is None:
+            return
+        api = entry[1]
+        context = context_of(pane)
+        for event in _CATCH_UP_ORDER:
+            if event in missed:
+                for handler in list(api._reg.handlers.get(event, ())):
+                    self.call(api, handler, context)
+
+    def _add_pause_action(self, api: ExtensionAPI) -> None:
+        """A checkable "Pause <name>" in the Extensions menu, for an
+        extension with panels or event handlers - pausing anything else
+        would change nothing."""
+        from core.i18n import tr
+
+        if not (api._reg.docks or api._reg.handlers):
+            return
+        ext_id = api.info.ext_id
+        action = QAction(tr("Pause {name}").format(name=api.info.name), self.window)
+        action.setCheckable(True)
+        action.setChecked(ext_id in self._paused)
+        action.setProperty("axPauseExtension", ext_id)
+        action.setToolTip(tr("No folder and selection changes reach it while paused"))
+        action.triggered.connect(lambda checked: self.set_paused(ext_id, bool(checked)))
+        self.menu_section().addAction(action)
+        api._reg.actions.append(action)
+        api._pause_action = action
 
     # -- load / unload ----------------------------------------------------------
     def load_enabled(self) -> None:
@@ -368,6 +498,8 @@ class ExtensionHost(QObject):
             self._record(api, exc)
             return False
         self._loaded[info.ext_id] = (module, api)
+        self._add_pause_action(api)
+        self._show_paused(info.ext_id)
         log.info("Extension loaded: %s (%s)", info.name, info.ext_id)
         if api._reg.agent_tools or api._reg.agent_topics:
             # What activate() registered counts only now that it is loaded.
@@ -379,6 +511,7 @@ class ExtensionHost(QObject):
         if entry is None:
             return
         module, api = entry
+        self._missed.pop(ext_id, None)
         deactivate = getattr(module, "deactivate", None)
         if callable(deactivate):
             self.call(api, deactivate, api)
@@ -416,8 +549,12 @@ class ExtensionHost(QObject):
         if not self._loaded or pane is None:
             return
         context = None
-        for _module, api in list(self._loaded.values()):
-            for handler in api._reg.handlers.get(event, ()):
+        for ext_id, (_module, api) in list(self._loaded.items()):
+            handlers = api._reg.handlers.get(event, ())
+            if handlers and ext_id in self._paused:
+                self._missed.setdefault(ext_id, set()).add(event)
+                continue
+            for handler in handlers:
                 if context is None:
                     context = context_of(pane)
                 self.call(api, handler, context)
@@ -526,6 +663,8 @@ def _applies(ctx: ExtensionContext, applies_to: str, suffixes: tuple[str, ...]) 
         return bool(folders) and not files
     if applies_to == "single_file":
         return len(files) == 1 and not folders
+    if applies_to == "single_folder":
+        return len(folders) == 1 and not files
     return False
 
 

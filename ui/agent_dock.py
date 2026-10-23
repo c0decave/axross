@@ -16,26 +16,30 @@ Protection modes:
 
 A task runs on a background thread (core.agent.Agent, or
 core.agent_sandbox.SandboxedAgent when the tab has a sandbox). Closing a
-tab or Stop answers No to a waiting question and ends the run between two
-steps. What the model and the tools return is shown as plain text: it
+tab or Stop answers No to a waiting question and ends the run at once,
+also while the model is still answering (core.agent.post_chat cuts the
+request). What the model and the tools return is shown as plain text: it
 comes from files and servers and can be hostile.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import html
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Callable
 
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QStringListModel, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDockWidget,
     QHBoxLayout,
     QInputDialog,
@@ -56,8 +60,10 @@ from PyQt6.QtWidgets import (
 
 from core import agent as A
 from core import agent_access as X
+from core import agent_link as AL
 from core import agent_settings as AGS
 from core import llm_profiles as LP
+from core import voice_text as VT
 from core.agent_session import AgentSession, SessionStore
 from core.mcp_client import McpClientPool
 from core.i18n import tr
@@ -67,6 +73,8 @@ log = logging.getLogger(__name__)
 #: Groups a tab may offer; exec has its own box, scripts are never offered.
 OFFERED_GROUPS = ("metadata", "filetype", "archive", "duplicates", "index", "packer", "crypto",
                   "transfer", "remote")
+#: A task that starts like a work prompt's command: "/name", then the rest.
+_SLASH = re.compile(r"/([A-Za-z0-9-]*)(?:\s+(.*))?\Z", re.DOTALL)
 #: The Tools-list lines of further MCP servers: "mcp:<name>".
 MCP_PREFIX = "mcp:"
 #: The Tools-list lines of extensions with agent tools: "ext:<extension id>".
@@ -81,8 +89,37 @@ PLAN_PROMPT = (
     "with a numbered plan of the exact changes and commands you would make, and wait."
 )
 RUN_PLAN_TASK = "Carry out the plan above, step by step. Report what you changed."
+#: Added to the system prompt while answers are read aloud.
+VOICE_PROMPT = (
+    "\nYour final answer is also read aloud: write plain sentences, keep it short, put code in "
+    "code blocks. In a German answer put English technical terms in curly braces, e.g. "
+    "{Pull Request}, so they are spoken in English."
+)
+MIC_TIPS = {
+    "push_to_talk": "Hold to talk to the agent (or hold {key})",
+    "toggle": "Click to talk, click again or pause to end ({key})",
+    "conversation": "Click to start a spoken conversation, click again to end it ({key})",
+}
+VOICE_STATES = {"listening": "Listening…", "transcribing": "Recognising…",
+                "speaking": "Speaking…"}
 #: Most tasks kept for the Up key.
 HISTORY_LIMIT = 50
+#: The links of the transcript's Thinking blocks: "axross-thinking:<line>".
+THINKING_SCHEME = "axross-thinking"
+#: Longest first line a closed Thinking block shows.
+SUMMARY_CHARS = 100
+
+
+def reasoning_summary(text: str, limit: int = SUMMARY_CHARS) -> str:
+    """The one line a closed Thinking block shows: its first line with
+    text, cut at *limit* characters; "…" says that more follows."""
+    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+    if not lines:
+        return ""
+    first = lines[0]
+    if len(first) > limit:
+        return first[: limit - 1].rstrip() + "…"
+    return first + (" …" if len(lines) > 1 else "")
 
 
 def _ask_user(parent, question: str) -> str | None:
@@ -126,10 +163,42 @@ def _ask_remote(parent, profile: LP.LLMProfile, host: str) -> bool:
         box.deleteLater()
 
 
+def _ask_voice_remote(parent, profile: LP.LLMProfile, host: str) -> bool:
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(tr("Send your voice to a remote server?"))
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(
+        tr("The profile {name} recognises speech on {host}. Your recording is sent there.").format(
+            name=profile.name, host=host
+        )
+    )
+    box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    try:
+        return box.exec() == QMessageBox.StandardButton.Yes
+    finally:
+        box.deleteLater()
+
+
+def _default_voice(dock):
+    from ui.voice import VoiceController
+
+    return VoiceController(dock, profile_provider=dock.voice_profile,
+                           confirm_remote=lambda p, h: _ask_voice_remote(dock, p, h))
+
+
 def bypass_allowed(settings: AGS.AgentSettings) -> bool:
     from core.security_mode import is_paranoid
 
     return settings.allow_bypass and not is_paranoid()
+
+
+class _LinkBridge(QObject):
+    """Carries a connection check's result to the GUI thread:
+    ``(tab, token, reachable, detail)``."""
+
+    checked = pyqtSignal(object, int, bool, str)
 
 
 class _Bridge(QObject):
@@ -148,10 +217,21 @@ class _TaskInput(QPlainTextEdit):
     submit = pyqtSignal()
     recall = pyqtSignal(int)
     dropped = pyqtSignal(object)
+    #: A key that types something: new input, any speech stops.
+    typed = pyqtSignal()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
         key = event.key()
         mods = event.modifiers()
+        completer = getattr(self, "completer", None)
+        if (
+            completer is not None
+            and completer.popup().isVisible()
+            and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Escape, Qt.Key.Key_Tab,
+                        Qt.Key.Key_Backtab)
+        ):
+            event.ignore()  # the completer's popup takes these
+            return
         if (
             key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
             and mods & Qt.KeyboardModifier.ControlModifier
@@ -164,6 +244,8 @@ class _TaskInput(QPlainTextEdit):
             self.recall.emit(-1 if key == Qt.Key.Key_Up else 1)
             return
         self._recalling = False
+        if event.text() and event.text().isprintable():
+            self.typed.emit()
         super().keyPressEvent(event)
 
     def canInsertFromMimeData(self, source) -> bool:  # noqa: N802 - Qt override
@@ -229,6 +311,17 @@ class AgentTab(QWidget):
         self._plan_ready = False
         #: ``on_done(answer, error)`` of the running task (an extension's run_agent).
         self._done: list = []
+        #: A spoken conversation: each answer is spoken, then the microphone opens again.
+        self._conversation = False
+        self._hotkey_down = False
+        self._refusals_said: set[str] = set()
+        #: What the transcript shows, in order: ``{who, text, muted, kind}``
+        #: (also lines that are not kept, the voice's notes).
+        self._entries: list[dict] = []
+        #: The Thinking blocks that are open (indexes into _entries).
+        self._open: set[int] = set()
+        #: Whether this tab's LLM is reachable: the dock's lamp.
+        self.link = AL.LinkTracker()
         self._bridge = _Bridge()
         self._bridge.event.connect(self._on_event)
         self._bridge.finished.connect(self._on_finished)
@@ -254,12 +347,17 @@ class AgentTab(QWidget):
         self.sandbox_combo.setToolTip(tr("Sandbox the agent of this tab runs in"))
         self.access_button = QPushButton(tr("Access…"))
         self.access_button.clicked.connect(self.edit_access)
+        # In the head, not under Tools ▸: whether the agent may change files
+        # at all must be visible at a glance (core.agent.read_only).
+        self.read_only_check = QCheckBox(tr("Files read-only"))
+        self.read_only_check.toggled.connect(lambda _on: self._store())
         self.settings_button = QPushButton(tr("LLM…"))
         self.settings_button.setToolTip(tr("LLM profiles"))
         self.settings_button.clicked.connect(self.dock.settings_requested.emit)
         head.addWidget(self.model_combo, 2)
         head.addWidget(self.mode_combo, 1)
         head.addWidget(self.sandbox_combo, 1)
+        head.addWidget(self.read_only_check)
         head.addWidget(self.access_button)
         head.addWidget(self.settings_button)
         layout.addLayout(head)
@@ -307,6 +405,7 @@ class AgentTab(QWidget):
         self.transcript = QTextBrowser()
         self.transcript.setOpenLinks(False)
         self.transcript.setOpenExternalLinks(False)
+        self.transcript.anchorClicked.connect(self._on_anchor)
         layout.addWidget(self.transcript, 1)
         self.status_label = QLabel()
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -334,6 +433,15 @@ class AgentTab(QWidget):
         self.input.recall.connect(self._recall)
         self.input.dropped.connect(self._on_dropped)
         layout.addWidget(self.input)
+        # "/" at the start of the task offers the work prompts' commands.
+        self.slash_model = QStringListModel(self)
+        self.slash_completer = QCompleter(self.slash_model, self)
+        self.slash_completer.setWidget(self.input)
+        self.slash_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.slash_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.slash_completer.activated[str].connect(self._slash_chosen)
+        self.input.completer = self.slash_completer
+        self.input.textChanged.connect(self._update_slash_popup)
 
         buttons = QHBoxLayout()
         self.attach_button = QToolButton()
@@ -346,7 +454,8 @@ class AgentTab(QWidget):
         self.topics_button = QToolButton()
         self.topics_button.setText(tr("Topics ▸"))
         self.topics_button.setToolTip(
-            tr("Prepared tasks: inventory, installs, logs, disk usage, ...")
+            tr("Prepared tasks: inventory, installs, logs, disk usage, ... - and your own "
+               "(+ New Topic…)")
         )
         self.topics_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.topics_menu = QMenu(self.topics_button)
@@ -361,10 +470,28 @@ class AgentTab(QWidget):
         self.stop_button.clicked.connect(self.stop)
         self.send_button = QPushButton(tr("Send"))
         self.send_button.clicked.connect(self.send)
+        from ui.icon_provider import icon
+
+        self.mic_button = QToolButton()
+        self.mic_button.setIcon(icon("mic"))
+        self.mic_button.pressed.connect(self._mic_pressed)
+        self.mic_button.released.connect(self._mic_released)
+        self.mic_button.clicked.connect(self._mic_clicked)
+        self.speaker_button = QToolButton()
+        self.speaker_button.setIcon(icon("speaker"))
+        self.speaker_button.setCheckable(True)
+        self.speaker_button.setToolTip(tr("Read the agent's answers aloud"))
+        self.speaker_button.toggled.connect(self._on_speaker)
+        self.voice_label = QLabel()
+        self.voice_label.setStyleSheet("color: #888;")
+        self.input.typed.connect(self._on_typed)
         buttons.addWidget(self.attach_button)
         buttons.addWidget(self.topics_button)
         buttons.addWidget(self.new_button)
         buttons.addStretch(1)
+        buttons.addWidget(self.voice_label)
+        buttons.addWidget(self.mic_button)
+        buttons.addWidget(self.speaker_button)
         buttons.addWidget(self.plan_button)
         buttons.addWidget(self.stop_button)
         buttons.addWidget(self.send_button)
@@ -376,6 +503,146 @@ class AgentTab(QWidget):
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self._escape,
                   context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.setAcceptDrops(True)
+        from ui.voice_lens import LensOverlay
+
+        self.lens = LensOverlay(self.transcript)
+        self.update_voice_look()
+
+    # -- voice ----------------------------------------------------------------------------
+
+    @property
+    def voice(self):
+        return self.dock.voice
+
+    def update_voice_look(self) -> None:
+        """The microphone and speaker as the voice settings and state say."""
+        from core.security_mode import is_paranoid
+
+        settings = self.voice.settings
+        mode = settings.input_mode
+        listening = self.voice.listening() and self.dock.voice_tab is self
+        self.mic_button.setCheckable(mode != "push_to_talk")
+        self.mic_button.blockSignals(True)
+        self.mic_button.setChecked(mode != "push_to_talk" and (
+            self._conversation if mode == "conversation" else listening))
+        self.mic_button.blockSignals(False)
+        paranoid = is_paranoid()
+        self.mic_button.setEnabled(not paranoid)
+        self.mic_button.setToolTip(
+            tr("The microphone is off in the paranoid security mode") if paranoid
+            else tr(MIC_TIPS[mode]).format(key=settings.hotkey))
+        self.speaker_button.blockSignals(True)
+        self.speaker_button.setChecked(settings.output_enabled)
+        self.speaker_button.blockSignals(False)
+        state = self.voice.state if self.dock.voice_tab in (self, None) else "idle"
+        self.voice_label.setText(tr(VOICE_STATES[state]) if state in VOICE_STATES else "")
+        self._update_buttons()
+
+    def _start_listening(self) -> bool:
+        self.dock.voice_tab = self
+        started = self.voice.start_listening(
+            auto_stop=self.voice.settings.input_mode != "push_to_talk")
+        self.update_voice_look()
+        return started
+
+    def _mic_pressed(self) -> None:
+        if self.voice.settings.input_mode == "push_to_talk":
+            self._start_listening()
+
+    def _mic_released(self) -> None:
+        if self.voice.settings.input_mode == "push_to_talk" and self.dock.voice_tab is self:
+            self.voice.stop_listening()
+
+    def _mic_clicked(self) -> None:
+        mode = self.voice.settings.input_mode
+        if mode == "toggle":
+            if self.voice.listening():
+                self.voice.stop_listening()
+            else:
+                self._start_listening()
+        elif mode == "conversation":
+            if self._conversation:
+                self.end_conversation()
+            else:
+                self._conversation = True
+                if not self._start_listening():
+                    self._conversation = False
+        self.update_voice_look()
+
+    def end_conversation(self) -> None:
+        self._conversation = False
+        if self.dock.voice_tab is self:
+            self.voice.cancel_listening()
+            self.voice.stop_speaking()
+        self.update_voice_look()
+
+    def _hotkey(self) -> QKeySequence:
+        return QKeySequence(self.voice.settings.hotkey)
+
+    def _is_hotkey(self, event) -> bool:
+        portable = QKeySequence.SequenceFormat.PortableText
+        return QKeySequence(event.keyCombination()).toString(portable) == \
+            self.voice.settings.hotkey
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._is_hotkey(event):
+            event.accept()
+            if not event.isAutoRepeat() and not self._hotkey_down:
+                self._hotkey_down = True
+                if self.voice.settings.input_mode == "push_to_talk":
+                    self._start_listening()
+                else:
+                    self._mic_clicked()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:  # noqa: N802 - Qt override
+        hotkey = self._hotkey()
+        if self._hotkey_down and hotkey.count() and event.key() == hotkey[0].key():
+            event.accept()
+            if not event.isAutoRepeat():
+                self._hotkey_down = False
+                self._mic_released()
+            return
+        super().keyReleaseEvent(event)
+
+    def on_voice_text(self, text: str) -> None:
+        """Recognised speech: into the task field, or sent (the setting, and
+        always in a conversation). Never an answer to a confirmation."""
+        if self._conversation or self.voice.settings.after_recognition == "send":
+            if not self.busy():
+                self.input.setPlainText(text)
+                self.send()
+                return
+        current = self.input.toPlainText().rstrip()
+        self.input.setPlainText(f"{current} {text}" if current else text)
+        cursor = self.input.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.input.setTextCursor(cursor)
+        self.input.setFocus()
+
+    def on_speaking_finished(self) -> None:
+        if self._conversation and not self.busy() and not self.voice.listening():
+            QTimer.singleShot(0, self._listen_again)
+
+    def _listen_again(self) -> None:
+        if self._conversation and not self.busy() and not self.voice.listening():
+            if not self._start_listening():
+                self._conversation = False
+                self.update_voice_look()
+
+    def _on_speaker(self, on: bool) -> None:
+        self.voice.set_output_enabled(on)
+        self.dock.update_voice_look()
+
+    def _on_typed(self) -> None:
+        if self.voice.speaking():
+            self.voice.stop_speaking()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if not self.lens.isHidden():
+            self.lens.cover()
 
     def _toggle_tools(self, shown: bool) -> None:
         self.tools_box.setVisible(shown)
@@ -399,8 +666,10 @@ class AgentTab(QWidget):
                 )
             self.allow_write.setChecked(s.allow_write)
             self.allow_exec.setChecked(s.allow_exec)
+            self.read_only_check.setChecked(s.files_read_only or self._read_only_forced())
             for entry in s.transcript:
-                self._show(entry["who"], entry["text"], entry.get("muted", False))
+                self._show(entry["who"], entry["text"], entry.get("muted", False),
+                           kind=entry.get("kind", ""))
         finally:
             self._loading = False
         self._store(save=False)
@@ -441,15 +710,6 @@ class AgentTab(QWidget):
                 item = self.groups.item(i)
                 if item.text() == "remote":
                     item.setHidden("saved_profiles" not in functions)
-            self.allow_exec.setEnabled("remote_commands" in functions and self._exec_policy())
-            self.allow_exec.setToolTip(
-                ""
-                if self.allow_exec.isEnabled()
-                else tr(
-                    "Remote commands are off in this tab's Access, Agent Settings "
-                    "or the security mode"
-                )
-            )
         finally:
             self._loading = was
         self._update_profile_label()
@@ -474,6 +734,13 @@ class AgentTab(QWidget):
             item.setToolTip(tip)
             self.groups.addItem(item)
 
+    def _read_only_forced(self) -> bool:
+        """Agent Settings > Access makes files read-only in every tab."""
+        return bool(getattr(self.dock.agent_settings.access, "files_read_only", False))
+
+    def files_read_only(self) -> bool:
+        return self._read_only_forced() or self.session.files_read_only
+
     @staticmethod
     def _exec_policy() -> bool:
         from core.security_mode import current_policy
@@ -491,8 +758,13 @@ class AgentTab(QWidget):
         s.groups = sorted(self.selected_groups())
         s.allow_write = self.allow_write.isChecked()
         s.allow_exec = self.allow_exec.isChecked()
+        if self.read_only_check.isEnabled():
+            # Forced by Agent Settings, the box shows the ceiling, not the
+            # tab's own choice: that one is kept for when it is lifted.
+            s.files_read_only = self.read_only_check.isChecked()
         self._update_profile_label()
         self._update_mode_look()
+        self.dock.check_link(self, when="changed")
         if save:
             self.changed.emit()
 
@@ -510,15 +782,47 @@ class AgentTab(QWidget):
         sandbox = self.sandbox_profile()
         from core.agent_sandbox import writes_allowed
 
-        can_write = mode != "plan" and writes_allowed(sandbox)
+        forced = self._read_only_forced()
+        read_only = self.files_read_only()
+        self.read_only_check.blockSignals(True)
+        self.read_only_check.setChecked(read_only)
+        self.read_only_check.blockSignals(False)
+        self.read_only_check.setEnabled(not forced)
+        self.read_only_check.setToolTip(
+            tr("Agent Settings > Access makes files read-only in every tab")
+            if forced
+            else tr(
+                "The agent reads files but changes none: no writing, deleting or moving, "
+                "no remote commands, no writing tools of MCP servers or extensions"
+            )
+        )
+        can_write = mode != "plan" and writes_allowed(sandbox) and not read_only
         self.allow_write.setEnabled(can_write)
         self.allow_write.setToolTip(
             ""
             if can_write
             else (
-                tr("Plan mode only reads")
+                tr("Files read-only is on")
+                if read_only
+                else tr("Plan mode only reads")
                 if mode == "plan"
                 else tr("This sandbox mounts nothing writable")
+            )
+        )
+        can_exec = (
+            not read_only
+            and "remote_commands" in self.functions()
+            and self._exec_policy()
+        )
+        self.allow_exec.setEnabled(can_exec)
+        self.allow_exec.setToolTip(
+            ""
+            if can_exec
+            else tr("Files read-only is on: a command could change files")
+            if read_only
+            else tr(
+                "Remote commands are off in this tab's Access, Agent Settings "
+                "or the security mode"
             )
         )
 
@@ -585,7 +889,8 @@ class AgentTab(QWidget):
     def _update_buttons(self) -> None:
         busy = self.busy()
         self.send_button.setEnabled(not busy and self.profile() is not None)
-        self.stop_button.setEnabled(busy)
+        voice = getattr(self.dock, "voice", None)
+        self.stop_button.setEnabled(busy or bool(voice is not None and voice.speaking()))
         self.new_button.setEnabled(not busy)
         self.plan_button.setVisible(self._plan_ready and not busy)
 
@@ -600,6 +905,12 @@ class AgentTab(QWidget):
     def _on_root_edited(self, text: str) -> None:
         self._root_typed = bool(text)
         self._store()
+
+    def set_folder(self, folder: str) -> None:
+        """Work in *folder* from now on, as if it had been typed: the tab no
+        longer follows the active pane."""
+        self.root_edit.setText(folder)
+        self._on_root_edited(folder)
 
     def follow_folder(self) -> None:
         if self._root_typed:
@@ -639,11 +950,15 @@ class AgentTab(QWidget):
         except Exception:
             log.exception("API key lookup failed for %s", profile.name)
             key = ""
-        prompt = A.SYSTEM_PROMPT + (PLAN_PROMPT if mode == "plan" else "")
+        # The active prompt profile (Agent Settings > Prompts); Default is A.SYSTEM_PROMPT.
+        prompt = settings.active_prompts().system_prompt + (
+            PLAN_PROMPT if mode == "plan" else "") + (
+            VOICE_PROMPT if self.voice.settings.output_enabled else "")
         return A.AgentConfig(
             profile=profile, api_key=key,
             root=os.path.abspath(os.path.expanduser(self.root_edit.text().strip() or "~")),
             groups=frozenset(groups), allow_write=allow_write, allow_exec=allow_exec,
+            files_read_only=self.files_read_only(),
             max_steps=settings.max_steps, max_tool_chars=settings.max_tool_chars,
             system_prompt=prompt, extra_roots=tuple(self.session.extra_folders),
             remote_backends=self._remote_backends() if "remote_files" in functions else (),
@@ -743,18 +1058,63 @@ class AgentTab(QWidget):
 
     # -- the transcript --------------------------------------------------------------------
 
-    def _show(self, who: str, text: str, muted: bool = False) -> None:
+    def _show(self, who: str, text: str, muted: bool = False, *, kind: str = "") -> None:
+        self._entries.append({"who": who, "text": text, "muted": muted, "kind": kind})
+        self.transcript.append(self._entry_html(len(self._entries) - 1))
+
+    def _entry_html(self, index: int) -> str:
+        entry = self._entries[index]
+        text = entry["text"]
+        if entry["kind"] == "reasoning":
+            # The model's thinking: grey and italic, closed to one line; the
+            # label opens and closes it. The text is escaped like any line,
+            # so the model cannot add a link of its own.
+            opened = index in self._open
+            label = (f'<a href="{THINKING_SCHEME}:{index}" style="color:#888; '
+                     f'text-decoration:none"><b>{"▾" if opened else "▸"} '
+                     f'{html.escape(tr("Thinking"))}</b></a>')
+            body = (html.escape(text).replace(chr(10), "<br>") if opened
+                    else html.escape(reasoning_summary(text)))
+            return f'<p style="color:#888"><i>{label}{"<br>" if opened else " "}{body}</i></p>'
         # No colour on normal lines: the theme's text colour applies. Qt's
         # rich text has no "inherit" - it paints that as black.
-        style = ' style="color:#888"' if muted else ""
-        self.transcript.append(
-            f"<p{style}><b>{html.escape(who)}</b> "
-            f"{html.escape(text).replace(chr(10), '<br>')}</p>"
-        )
+        style = ' style="color:#888"' if entry["muted"] else ""
+        return (f"<p{style}><b>{html.escape(entry['who'])}</b> "
+                f"{html.escape(text).replace(chr(10), '<br>')}</p>")
 
-    def _append(self, who: str, text: str, *, muted: bool = False) -> None:
-        self._show(who, text, muted)
-        self.session.transcript.append({"who": who, "text": text, "muted": muted})
+    def _append(self, who: str, text: str, *, muted: bool = False, kind: str = "") -> None:
+        self._show(who, text, muted, kind=kind)
+        entry = {"who": who, "text": text, "muted": muted}
+        if kind:
+            entry["kind"] = kind
+        self.session.transcript.append(entry)
+
+    def _on_anchor(self, url: QUrl) -> None:
+        if url.scheme() != THINKING_SCHEME:
+            return  # the transcript has no other links; nothing is opened
+        try:
+            index = int(url.path())
+        except ValueError:
+            return
+        self.toggle_reasoning(index)
+
+    def toggle_reasoning(self, index: int) -> None:
+        """Open a closed Thinking block, close an open one. The transcript
+        is drawn again; the view stays where it was (at the end, if it was
+        there)."""
+        if not 0 <= index < len(self._entries) or self._entries[index]["kind"] != "reasoning":
+            return
+        self._open ^= {index}
+        bar = self.transcript.verticalScrollBar()
+        at_end, value = bar.value() >= bar.maximum(), bar.value()
+        self.transcript.setUpdatesEnabled(False)
+        try:
+            self.transcript.clear()
+            for i in range(len(self._entries)):
+                self.transcript.append(self._entry_html(i))
+        finally:
+            self.transcript.setUpdatesEnabled(True)
+        bar.setValue(bar.maximum() if at_end else min(value, bar.maximum()))
 
     # -- attachments ------------------------------------------------------------------------
 
@@ -779,22 +1139,113 @@ class AgentTab(QWidget):
     # -- topics -------------------------------------------------------------------------------
 
     def _fill_topics_menu(self) -> None:
+        from core.agent_topics import command_of
+
         menu = self.topics_menu
         menu.clear()
+        menu.setToolTipsVisible(True)
         source = None
         for topic in self.dock.topics():
             if source is not None and topic.source != source:
                 menu.addSeparator()
             source = topic.source
-            action = menu.addAction(topic.title)
+            action = menu.addAction(f"{topic.title}\t/{command_of(topic)}")
             action.setToolTip(topic.description)
             action.setStatusTip(topic.description)
             action.triggered.connect(lambda _c=False, t=topic: self.use_topic(t))
+        # Own topics: written here, stored in work_prompts.json (core.agent_topics).
+        menu.addSeparator()
+        menu.addAction(tr("+ New Topic…"), self.new_topic)
+        menu.addAction(tr("Save This Task as Topic…"), self.save_task_as_prompt)
+        menu.addAction(tr("Edit or Delete My Topics…"), self.manage_prompts)
+
+    # -- work prompts: "/" commands ---------------------------------------------------------
+
+    def _slash_token(self) -> tuple[str, str] | None:
+        """("/command", rest) when the task starts like a slash command:
+        "/" then letters, digits or "-" up to the first space or line end.
+        A path ("/etc/ssh/…") is no command."""
+        match = _SLASH.match(self.input.toPlainText())
+        if match is None:
+            return None
+        return "/" + match.group(1), (match.group(2) or "").strip()
+
+    def slash_matches(self) -> list[str]:
+        """The commands that start with what was typed after "/"."""
+        from core.agent_topics import command_of
+
+        token = self._slash_token()
+        if token is None:
+            return []
+        prefix = token[0][1:].lower()
+        return sorted(f"/{command_of(t)}" for t in self.dock.topics()
+                      if command_of(t).startswith(prefix))
+
+    def _update_slash_popup(self) -> None:
+        token = self._slash_token()
+        matches = self.slash_matches() if token is not None and not token[1] else []
+        popup = self.slash_completer.popup()
+        if not matches or matches == [token[0]]:
+            popup.hide()
+            return
+        self.slash_model.setStringList(matches)
+        self.slash_completer.setCompletionPrefix(token[0])
+        rect = self.input.cursorRect()
+        rect.setWidth(max(240, popup.sizeHintForColumn(0) + 24))
+        self.slash_completer.complete(rect)
+        # Return takes the first match, as in a command palette.
+        popup.setCurrentIndex(self.slash_completer.completionModel().index(0, 0))
+
+    def _slash_chosen(self, command: str) -> None:
+        token = self._slash_token()
+        self.apply_slash(command, token[1] if token else "")
+
+    def apply_slash(self, command: str, extra: str = "") -> bool:
+        """Fill the task field from the topic of *command*, with *extra*
+        (what was typed after the command) below it. False: no such topic."""
+        from core.agent_topics import find_topic
+
+        topic = find_topic(self.dock.topics(), command)
+        if topic is None:
+            return False
+        self.slash_completer.popup().hide()
+        self.use_topic(topic)
+        if extra:
+            self.input.setPlainText(self.input.toPlainText().rstrip() + "\n\n" + extra)
+        return True
+
+    def manage_prompts(self):
+        from ui.work_prompts_dialog import WorkPromptsDialog
+
+        dlg = WorkPromptsDialog(self)
+        dlg.exec()
+        return dlg
+
+    def new_topic(self):
+        """Topics ▸ + New Topic…: an empty form for an own topic."""
+        from ui.work_prompts_dialog import WorkPromptsDialog
+
+        dlg = WorkPromptsDialog(self, new=True)
+        dlg.exec()
+        return dlg
+
+    def save_task_as_prompt(self):
+        from ui.work_prompts_dialog import WorkPromptsDialog
+
+        dlg = WorkPromptsDialog(self, task=self.input.toPlainText().strip())
+        dlg.exec()
+        return dlg
 
     def use_topic(self, topic) -> None:
         """Type the topic's task into the task field; the user sends it."""
         backend = next((a["backend"] for a in self._attachments if not a["local"]), "") or ""
         self.input.setPlainText(topic.render(self.root_edit.text().strip(), backend))
+        if topic.groups:
+            wanted = set(topic.groups)
+            for i in range(self.groups.count()):
+                item = self.groups.item(i)
+                if item.text() in wanted:
+                    item.setCheckState(Qt.CheckState.Checked)
         if topic.mode and self.mode_combo.findData(topic.mode) >= 0:
             self.mode_combo.setCurrentIndex(self.mode_combo.findData(topic.mode))
         missing = []
@@ -942,7 +1393,7 @@ class AgentTab(QWidget):
         self.input.setTextCursor(cursor)
 
     def _escape(self) -> None:
-        if self.busy():
+        if self.busy() or self.voice.speaking() or self._conversation:
             self.stop()
 
     def new_conversation(self) -> None:
@@ -952,6 +1403,8 @@ class AgentTab(QWidget):
         self._agent_key = None
         self._close_agent()
         self.transcript.clear()
+        self._entries.clear()
+        self._open.clear()
         self.session.transcript.clear()
         self.session.messages.clear()
         self._plan_ready = False
@@ -967,8 +1420,29 @@ class AgentTab(QWidget):
 
     def send(self) -> None:
         task = self.input.toPlainText().strip()
+        if VT.is_pod_bay_request(task):
+            self.input.clear()
+            self.dock.voice_tab = self
+            self.voice.play_line()
+            return
         if not task or self.busy():
             return
+        self.voice.stop_speaking()
+        token = self._slash_token()
+        if token is not None:
+            # A work prompt's command fills the field; the user reads it and
+            # sends again. An unknown bare command is said, not sent; text
+            # after an unknown "/word" is an ordinary task ("/tmp is full").
+            if self.apply_slash(token[0], token[1]):
+                return
+            if not token[1]:
+                self._append(
+                    tr("axross:"),
+                    tr("No topic {command}. Type / to see the commands, or Topics ▸ "
+                       "+ New Topic… to write one.").format(command=token[0]),
+                    muted=True,
+                )
+                return
         self._send(task)
 
     def _send(self, task: str) -> None:
@@ -1001,6 +1475,7 @@ class AgentTab(QWidget):
             config.groups,
             config.allow_write,
             config.allow_exec,
+            config.files_read_only,
             config.system_prompt,
             tuple(config.extra_roots),
             self.session.sandbox,
@@ -1038,13 +1513,12 @@ class AgentTab(QWidget):
                 self._agent = A.Agent(config, confirm=self._wait_for_answer,
                                       on_event=self._bridge.event.emit, cancel=self._cancel)
                 if history:
-                    history[0:1] = [{"role": "system", "content": config.system_prompt}] \
-                        if history and history[0].get("role") == "system" else history[0:1]
-                    if history[0].get("role") != "system":
-                        history.insert(0, {"role": "system", "content": config.system_prompt})
-                    self._agent.messages = history
+                    # The agent's own system message names the folder of now.
+                    self._agent.messages = A.with_system_message(history,
+                                                                 self._agent.messages[0])
             self._agent_key = key
         self._cancel.clear()
+        self._refusals_said = set()
         self.input.clear()
         context = self._context_text()
         self.clear_attachments()
@@ -1056,6 +1530,13 @@ class AgentTab(QWidget):
         self._recall_index = len(self._history)
         self._plan_ready = False
         agent = self._agent
+        # The active prompt profile's user prompt wraps what was typed; the
+        # transcript keeps the typed task. "Run the plan" is axross's own.
+        sent = task
+        if task != RUN_PLAN_TASK:
+            from core.agent_prompts import render_task
+
+            sent = render_task(self.dock.agent_settings.active_prompts().user_prompt, task)
         self._started = time.monotonic()
         self._tool_calls = 0
         self._steps = 0
@@ -1065,7 +1546,7 @@ class AgentTab(QWidget):
 
         def work() -> None:
             try:
-                result = agent.run(context + task)
+                result = agent.run(context + sent)
                 self._bridge.finished.emit(result, "")
             except A.AgentError as exc:
                 self._bridge.finished.emit(None, str(exc))
@@ -1084,6 +1565,12 @@ class AgentTab(QWidget):
     def stop(self) -> None:
         self._cancel.set()
         self._answer(False)
+        voice = getattr(self.dock, "voice", None)
+        if voice is not None and self.dock.voice_tab in (self, None):
+            self._conversation = False
+            voice.cancel_listening()
+            voice.stop_speaking()
+            self.update_voice_look()
 
     def _close_agent(self) -> None:
         agent, self._agent = self._agent, None
@@ -1155,13 +1642,33 @@ class AgentTab(QWidget):
         kind = event.get("type")
         if kind == "assistant":
             self._steps += 1
-            self._append(tr("Agent:"), str(event.get("text", "")))
+            # A reasoning model sends "\n\n" before its answer (LM Studio,
+            # Qwen): shown, that is empty lines under "Agent:". The history
+            # sent back to the model keeps what the model wrote.
+            text = str(event.get("text", "")).strip()
+            # Terms marked for the voice ({Pull Request}) are shown plain.
+            self._append(tr("Agent:"), VT.strip_term_braces(text)
+                         if self.voice.settings.output_enabled else text)
+        elif kind == "reasoning":
+            # Not an answer: not counted, not spoken (only result.answer is).
+            self._append(tr("Thinking:"), str(event.get("text", "")), muted=True,
+                         kind="reasoning")
+        elif kind == "connection":
+            if self.link.on_event(event):
+                self.dock.show_link()
         elif kind == "tool_call":
             self._tool_calls += 1
             args = json.dumps(event.get("args", {}), ensure_ascii=False)
             self._append("→", f"{event.get('name')} {args[:300]}", muted=True)
         elif kind == "tool_result":
-            self._append("←", f"{event.get('name')}: {event.get('outcome')}", muted=True)
+            detail = event.get("detail")
+            line = f"{event.get('name')}: {event.get('outcome')}"
+            self._append("←", f"{line} - {detail}" if isinstance(detail, str) and detail else line,
+                         muted=True)
+            reason = event.get("reason")
+            if reason in A.REFUSAL_REASONS and reason not in self._refusals_said:
+                self._refusals_said.add(reason)
+                self.voice.say_refusal(reason)
         elif kind == "plan":
             text = "\n".join(str(line) for line in event.get("steps") or [])
             self.plan_label.setText(text)
@@ -1200,6 +1707,12 @@ class AgentTab(QWidget):
                 self._append(tr("axross:"), tr("Stopped."), muted=True)
             elif self._mode_of_run == "plan" and result.answer:
                 self._plan_ready = True
+        spoken = False
+        if result is not None and result.stopped == "answered" and result.answer:
+            self.dock.voice_tab = self
+            spoken = self.voice.speak_answer(result.answer)
+        if self._conversation and not spoken:
+            QTimer.singleShot(0, self._listen_again)
         agent = self._agent
         if agent is not None:
             self.session.messages = list(getattr(agent, "messages", []) or [])
@@ -1254,9 +1767,13 @@ class AgentDock(QDockWidget):
         remote_backends: Callable[[], list] | None = None,
         mcp_pool: McpClientPool | None = None,
         extensions: Callable[[], object] | None = None,
+        voice_factory: Callable[[AgentDock], object] | None = None,
     ) -> None:
         super().__init__(tr("Agent"), parent)
         self.setObjectName("axAgentDock")
+        #: The tab the voice listens and speaks for.
+        self.voice_tab: AgentTab | None = None
+        self.voice = (voice_factory or _default_voice)(self)
         self.llm_settings = settings_loader or LP.LLMSettings.load
         self._save_llm_settings = settings_saver or (lambda s: s.save())
         self.key_lookup = key_lookup or LP.get_api_key
@@ -1276,6 +1793,15 @@ class AgentDock(QDockWidget):
         self.mcp_pool = mcp_pool if mcp_pool is not None else McpClientPool()
         #: The extension host (ui.extension_host), or None.
         self._extensions = extensions or (lambda: None)
+        from ui.agent_link_lamp import LinkLamp
+
+        #: Whether the current tab's LLM is reachable (core.agent_link); the
+        #: main window puts it in the title bar (show_lamp_in).
+        self.lamp = LinkLamp(self)
+        self.lamp.hide()  # until a title bar shows it, never over the tabs
+        self.lamp.clicked.connect(lambda: self.check_link(when="always"))
+        self._link_bridge = _LinkBridge(self)
+        self._link_bridge.checked.connect(self._on_link_checked)
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
@@ -1284,6 +1810,8 @@ class AgentDock(QDockWidget):
         self.tabs.currentChanged.connect(
             lambda _i: self.current_tab() and self.current_tab().follow_folder()
         )
+        self.tabs.currentChanged.connect(lambda _i: self.check_link(when="stale"))
+        self.visibilityChanged.connect(lambda shown: shown and self.check_link(when="stale"))
         self.tabs.tabBarDoubleClicked.connect(self.rename_tab)
         new_tab = QToolButton()
         new_tab.setText("+")
@@ -1294,11 +1822,25 @@ class AgentDock(QDockWidget):
         QShortcut(QKeySequence("Ctrl+T"), self.tabs, activated=lambda: self.new_tab(),
                   context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
+        self.voice.transcribed.connect(self._on_voice_text)
+        self.voice.notice.connect(self._on_voice_notice)
+        self.voice.state_changed.connect(lambda _s: self.update_voice_look())
+        self.voice.speaking_finished.connect(self._on_speaking_finished)
+        self.voice.level.connect(self._on_voice_level)
+        self.voice.line_started.connect(self._on_line_started)
+        self.voice.line_finished.connect(self._on_line_finished)
+        from ui.voice_settings_page import register_settings_page
+
+        register_settings_page()
+
         restored = self.store.all() if self.agent_settings.keep_sessions else []
         for session in restored:
             self._add_tab(session)
+        #: The tab the dock opened by itself, until someone uses it: Start
+        #: Agent takes it over instead of leaving it empty beside a new one.
+        self._placeholder: AgentTab | None = None
         if not restored:
-            self.new_tab(save=False)
+            self._placeholder = self.new_tab(save=False)
 
     # -- tabs ---------------------------------------------------------------------------------
 
@@ -1383,7 +1925,21 @@ class AgentDock(QDockWidget):
         self.store.delete(tab.session.id)
         tab.deleteLater()
         if self.tabs.count() == 0:
-            self.new_tab()
+            self._placeholder = self.new_tab()
+
+    def start_tab(self, folder: str) -> AgentTab:
+        """A tab working in *folder* (Start Agent, New Agent Tab Here): the
+        dock's own first tab while nobody used it, else a new one."""
+        tab, self._placeholder = self._placeholder, None
+        untouched = (tab is not None and self.tabs.indexOf(tab) >= 0 and not tab.busy()
+                     and not tab.session.transcript and not tab.input.toPlainText().strip())
+        if not untouched:
+            return self.new_tab(folder=folder)
+        tab.set_folder(folder)
+        self.tabs.setCurrentWidget(tab)
+        self._save(tab)
+        tab.input.setFocus()
+        return tab
 
     def _save(self, tab: AgentTab) -> None:
         if not self.agent_settings.keep_sessions:
@@ -1393,9 +1949,70 @@ class AgentDock(QDockWidget):
         except OSError as exc:
             log.warning("agent session could not be saved: %s", exc)
 
+    # -- voice ---------------------------------------------------------------------------------
+
+    def _voice_target(self) -> AgentTab | None:
+        tab = self.voice_tab
+        return tab if tab is not None and self.tabs.indexOf(tab) >= 0 else self.current_tab()
+
+    def voice_profile(self) -> tuple:
+        """(LLM profile, API key) of the tab the voice works for: its
+        speech recognition settings."""
+        tab = self._voice_target()
+        profile = tab.profile() if tab is not None else None
+        if profile is None:
+            return None, ""
+        try:
+            key = self.key_lookup(profile.name) or ""
+        except Exception:  # noqa: BLE001 - no keyring: recognition without a key
+            log.exception("API key lookup failed for %s", profile.name)
+            key = ""
+        return profile, key
+
+    def update_voice_look(self) -> None:
+        for tab in self.all_tabs():
+            tab.update_voice_look()
+
+    def reload_voice(self) -> None:
+        """The Voice settings were saved: speak and listen as they say now."""
+        self.voice.reload()
+        self.update_voice_look()
+
+    def _on_voice_text(self, text: str) -> None:
+        tab = self._voice_target()
+        if tab is not None:
+            tab.on_voice_text(text)
+
+    def _on_voice_notice(self, text: str) -> None:
+        tab = self._voice_target()
+        if tab is not None:
+            tab._show(tr("axross:"), text, muted=True)
+
+    def _on_speaking_finished(self) -> None:
+        tab = self._voice_target()
+        self.update_voice_look()
+        if tab is not None:
+            tab.on_speaking_finished()
+
+    def _on_voice_level(self, value: float) -> None:
+        tab = self._voice_target()
+        if tab is not None and not tab.lens.isHidden():
+            tab.lens.set_level(value)
+
+    def _on_line_started(self) -> None:
+        tab = self._voice_target()
+        if tab is not None:
+            tab.lens.start(self.voice.line_text())
+
+    def _on_line_finished(self) -> None:
+        for tab in self.all_tabs():
+            tab.lens.finish()
+
     def reload_settings(self) -> None:
         """Agent Settings were saved: every tab offers what they say now."""
         self.agent_settings = self._load_agent_settings()
+        self.voice.reload()
+        self.update_voice_look()
         self.mcp_pool.keep_only([s for s in self.agent_settings.mcp_servers if s.enabled])
         for tab in self.all_tabs():
             tab.refresh_choices()
@@ -1440,10 +2057,11 @@ class AgentDock(QDockWidget):
         )
 
     def topics(self) -> list:
-        from core.agent_topics import BUILTIN_TOPICS
+        from core.agent_topics import BUILTIN_TOPICS, load_user_topics
 
         host = self._extensions()
-        return [*BUILTIN_TOPICS, *(host.agent_topics() if host is not None else [])]
+        return [*BUILTIN_TOPICS, *(host.agent_topics() if host is not None else []),
+                *load_user_topics()]
 
     def refresh_extensions(self) -> None:
         for tab in self.all_tabs():
@@ -1472,11 +2090,74 @@ class AgentDock(QDockWidget):
     def emit_event(self, tab: AgentTab, event: dict) -> None:
         self.agent_event.emit(tab.session.id, event)
 
+    # -- the connection lamp ------------------------------------------------------------------
+
+    def show_lamp_in(self, title_bar) -> None:
+        """Put the lamp into *title_bar* (ui.dock_titlebar.DockTitleBar)."""
+        title_bar.add_indicator(self.lamp)
+        self.show_link()
+
+    def check_link(self, tab: AgentTab | None = None, *, when: str = "stale") -> None:
+        """Follow *tab*'s profile (default: the current tab) and check its
+        endpoint off the GUI thread - *when* "changed": only for another
+        profile than before, "stale": also when it is not known to be
+        reachable, "always": in any case (a click on the lamp). Nothing is
+        asked while the dock is hidden or a request is on its way."""
+        tab = tab or self.current_tab()
+        if tab is None:
+            return
+        profile = tab.profile()
+        if profile is None:
+            tab.link.no_profile()
+            self.show_link()
+            return
+        changed = tab.link.reset(profile)
+        wanted = {"changed": changed, "stale": changed or tab.link.needs_check(),
+                  "always": True}.get(when, False)
+        if wanted and self.isVisible() and tab.link.state != AL.TRYING:
+            self._start_check(tab, profile)
+        self.show_link()
+
+    def _start_check(self, tab: AgentTab, profile: LP.LLMProfile) -> None:
+        token = tab.link.begin_check()
+        profile = dataclasses.replace(profile)  # the thread's own copy
+        lookup, bridge = self.key_lookup, self._link_bridge
+
+        def work() -> None:
+            try:
+                key = lookup(profile.name) or ""
+            except Exception:  # noqa: BLE001 - no keyring: ask without a key
+                key = ""
+            try:
+                ok, detail = AL.probe(profile, key)
+            except Exception as exc:  # noqa: BLE001 - a check must end, whatever happens
+                log.exception("the LLM connection check failed")
+                ok, detail = False, f"{type(exc).__name__}: {exc}"
+            try:
+                bridge.checked.emit(tab, token, ok, detail)
+            except RuntimeError:
+                pass  # the dock is gone
+
+        threading.Thread(target=work, name="axross-llm-check", daemon=True).start()
+
+    def _on_link_checked(self, tab, token: int, ok: bool, detail: str) -> None:
+        if tab in self.all_tabs() and tab.link.end_check(token, ok, detail):
+            self.show_link()
+
+    def show_link(self) -> None:
+        """The lamp shows the current tab's state."""
+        tab = self.current_tab()
+        if tab is None:
+            return
+        self.lamp.set_state(tab.link.state, tab.link.tooltip())
+
     # -- the current tab (the main window and older callers) ------------------------------------
 
     def refresh_profiles(self) -> None:
         for tab in self.all_tabs():
             tab.refresh_choices()
+        # The profiles may name another endpoint now, or a server came up.
+        self.check_link(when="stale")
 
     def follow_folder(self) -> None:
         tab = self.current_tab()
@@ -1502,6 +2183,7 @@ class AgentDock(QDockWidget):
     def shutdown(self) -> None:
         for tab in self.all_tabs():
             tab.shutdown()
+        self.voice.shutdown()
         self.mcp_pool.close_all()
 
     def __getattr__(self, name):

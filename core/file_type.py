@@ -52,6 +52,13 @@ DEFAULT_TIMEOUT = 15.0
 FILE_COMMAND_TIMEOUT = 3.0
 #: Longest ``file(1)`` description kept.
 FILE_COMMAND_MAX_CHARS = 300
+#: Identify Files in This Folder: files looked at, at most.
+FOLDER_MAX_FILES = 2000
+#: Seconds listing that folder may take.
+FOLDER_LIST_TIMEOUT = 60.0
+#: Bytes the partition note of one disk image may read (core.disk_image
+#: probes the head, the tail, a GPT and each partition's first sectors).
+IMAGE_NOTE_MAX_BYTES = 4 * 1024 * 1024
 
 KIND_FILE = "file"
 KIND_DIRECTORY = "directory"
@@ -273,6 +280,14 @@ def _looks_like_text(data: bytes) -> bool:
 
 def _detect(data: bytes) -> tuple[str, str, str]:
     """``(mime, description, engine)`` for non-empty *data*."""
+    from core.disk_image import detect_container
+
+    disk_mime, disk = detect_container(data)
+    if disk:
+        # Virtual disks and GPT disks: core.disk_image names the container
+        # and its size, which the generic databases do not; the MIME type is
+        # the container's own, so a correctly named one is no mismatch.
+        return disk_mime, disk, "disk image"
     db = _mime_db()
     if db is not None:
         found = db.mimeTypeForData(data)
@@ -679,11 +694,141 @@ def identify(
     return info
 
 
+# -- a whole folder -------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FolderListing:
+    """The files Identify Files in This Folder looks at: ``files`` as
+    ``(path, item)`` sorted by name; ``folders`` subfolders (not entered),
+    ``skipped`` entries whose name is no single safe path component (a
+    hostile remote's ``../x``), ``truncated`` when there were more than
+    the cap."""
+
+    files: list
+    folders: int = 0
+    skipped: int = 0
+    truncated: bool = False
+
+
+def list_folder(
+    backend,
+    folder: str,
+    *,
+    max_files: int = FOLDER_MAX_FILES,
+    timeout: float = FOLDER_LIST_TIMEOUT,
+    cancel=None,
+) -> FolderListing:
+    """The files directly in *folder* (any backend, through ``list_dir``),
+    at most *max_files*. Raises what the listing raises (``OSError``,
+    ``TimeoutError``, ``InterruptedError`` on cancel) and ``ValueError``
+    for a non-positive *max_files*."""
+    from core.path_policy import safe_join
+
+    if int(max_files) <= 0:
+        raise ValueError(f"max_files must be positive, not {max_files!r}")
+    _check_limits(1, timeout)
+    items = _run_with_deadline(lambda: list(backend.list_dir(folder)), timeout,
+                               _cancel_check(cancel))
+    files, folders, skipped = [], 0, 0
+    for item in sorted(items, key=lambda i: (str(getattr(i, "name", "")).casefold(),
+                                             str(getattr(i, "name", "")))):
+        name = getattr(item, "name", "")
+        if not name or name in (".", ".."):
+            continue
+        if getattr(item, "is_dir", False):
+            folders += 1
+            continue
+        try:
+            path = safe_join(backend, folder, name)
+        except ValueError:
+            skipped += 1
+            continue
+        files.append((path, item))
+    truncated = len(files) > int(max_files)
+    return FolderListing(files=files[: int(max_files)], folders=folders, skipped=skipped,
+                         truncated=truncated)
+
+
+def is_disk_image(info: FileTypeInfo) -> bool:
+    """A file whose content (or, failing that, name) says disk image - the
+    rows that get *Disk Image…*."""
+    if info.kind != KIND_FILE:
+        return False
+    from core import disk_image as DI
+
+    return DI.type_says_image(info.mime, info.engine) or DI.looks_like_image(info.name)
+
+
+class _Budget:
+    """A read-only view of a binary file that hands out at most *budget*
+    bytes in total; then every read is empty, as at the end of the file."""
+
+    def __init__(self, fh, budget: int) -> None:
+        self._fh = fh
+        self.left = int(budget)
+
+    def read(self, size: int = -1) -> bytes:
+        if self.left <= 0:
+            return b""
+        size = self.left if size is None or size < 0 else min(size, self.left)
+        data = self._fh.read(size)
+        self.left -= len(data)
+        return data
+
+    def seekable(self) -> bool:
+        try:
+            return bool(self._fh.seekable())
+        except (AttributeError, OSError, ValueError):
+            return False
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._fh.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._fh.tell()
+
+
+def disk_image_note(
+    backend,
+    path: str,
+    *,
+    size: int | None = None,
+    max_bytes: int = IMAGE_NOTE_MAX_BYTES,
+    timeout: float = DEFAULT_TIMEOUT,
+    cancel=None,
+) -> str:
+    """What :mod:`core.disk_image` reads from the image at *path* in one line
+    (container, partition table, ``N partitions``, size), reading at most
+    *max_bytes* within *timeout*; ``""`` when it cannot tell or fails."""
+    from core import disk_image as DI
+
+    _check_limits(max_bytes, timeout)
+
+    def probe() -> str:
+        length = size
+        if length is None:
+            length = int(getattr(backend.stat(path), "size", 0) or 0)
+        with backend.open_read(path) as fh:
+            info = DI.inspect(_Budget(fh, max_bytes), int(length))
+        return info.summary() if info.kind != "unknown" else ""
+
+    try:
+        return _run_with_deadline(probe, timeout, _cancel_check(cancel)) or ""
+    except Exception as exc:  # noqa: BLE001 - a note is optional, never an error
+        log.debug("disk image note for %s: %s", path, exc)
+        return ""
+
+
 __all__ = [
     "BINARY_SIGNATURES",
     "DEFAULT_MAX_BYTES",
     "DEFAULT_TIMEOUT",
+    "FOLDER_LIST_TIMEOUT",
+    "FOLDER_MAX_FILES",
     "FileTypeInfo",
+    "FolderListing",
+    "IMAGE_NOTE_MAX_BYTES",
     "KIND_CANCELLED",
     "KIND_DIRECTORY",
     "KIND_ERROR",
@@ -695,9 +840,12 @@ __all__ = [
     "SIGNATURES",
     "Signature",
     "UNKNOWN",
+    "disk_image_note",
     "file_command_description",
     "identify",
     "identify_bytes",
+    "is_disk_image",
+    "list_folder",
     "name_of",
     "read_prefix",
 ]

@@ -18,12 +18,12 @@ import os
 import posixpath
 import sys
 import tempfile
-import webbrowser
 from datetime import datetime, timezone
 from typing import IO
 
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
+from core.desktop_open import open_in_browser
 from core.read_spool import spool_response
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
@@ -318,7 +318,7 @@ class DropboxSession(SessionLifecycle):
         authorize_url = auth_flow.start()
 
         log.info("Dropbox: opening browser for authorization")
-        webbrowser.open(authorize_url)
+        open_in_browser(authorize_url)
         if not sys.stdin.isatty():
             log.error("Dropbox authorization requires interactive stdin")
             raise OSError(

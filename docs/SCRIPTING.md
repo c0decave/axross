@@ -8,6 +8,27 @@ scripts.
 
 [English](SCRIPTING.md) · [Deutsch](SCRIPTING_de.md) · [Español](SCRIPTING_es.md)
 
+**Contents**
+
+- [The ways to run code against axross](#the-ways-to-run-code-against-axross)
+- [The Scripts dock](#the-scripts-dock)
+- [The `axross.*` API](#the-axross-api)
+  - [Open / connect](#open--connect)
+  - [File I/O](#file-io)
+  - [Encryption + archives](#encryption--archives)
+  - [Bookmarks](#bookmarks)
+  - [Script directory](#script-directory)
+  - [Per-protocol passthroughs](#per-protocol-passthroughs)
+  - [Network helpers](#network-helpers)
+  - [File metadata](#file-metadata)
+  - [Safety + diagnostics](#safety--diagnostics)
+  - [Duplicate index](#duplicate-index)
+- [REPL slash-commands](#repl-slash-commands)
+- [Bundled example scripts](#bundled-example-scripts)
+- [The MCP tool surface](#the-mcp-tool-surface)
+- [Scripts a machine runs](#scripts-a-machine-runs)
+- [See also](#see-also)
+
 ---
 
 ## The ways to run code against axross
@@ -71,7 +92,7 @@ How a run behaves:
   until they finish.
 - Scripts that a scheduled job runs are marked `[scheduled]`; renaming
   or deleting one warns first, because the job refers to it by name.
-- In **paranoid** security mode (*Tools > Paranoid Security Mode*) Run
+- In **paranoid** security mode (*Edit > Settings > Security*) Run
   and Run in Console are disabled (the tooltip says why); `.run` and
   the child process refuse as well.
 

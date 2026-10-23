@@ -284,7 +284,7 @@ class MainWindowShortcutsTest(_Qt):
         from PyQt6.QtWidgets import QDialog
 
         from ui import shortcuts_dialog
-        from ui.llm_settings_dialog import LLMSettingsDialog
+        from ui.settings_dialog import SettingsDialog
 
         def children():
             self.app.processEvents()
@@ -294,13 +294,13 @@ class MainWindowShortcutsTest(_Qt):
             return [
                 d
                 for d in self.win.findChildren(QDialog)
-                if isinstance(d, (shortcuts_dialog.ShortcutsDialog, LLMSettingsDialog))
+                if isinstance(d, (shortcuts_dialog.ShortcutsDialog, SettingsDialog))
             ]
 
         before = len(children())
         with (
             mock.patch.object(shortcuts_dialog.ShortcutsDialog, "exec", return_value=0),
-            mock.patch.object(LLMSettingsDialog, "exec", return_value=0),
+            mock.patch.object(SettingsDialog, "exec", return_value=0),
         ):
             for _ in range(3):
                 self.win._show_shortcuts()

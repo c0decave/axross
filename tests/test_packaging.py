@@ -499,16 +499,19 @@ class PackagingFlavourDeltaTests(unittest.TestCase):
         )
 
     def test_full_binary_under_size_budget(self) -> None:
-        # Budget: 180 MB. Full carries cloud OAuth but anything
-        # above this means semgrep / pytest / another dev dep
-        # re-entered the bundle.
+        # Budget: 300 MiB. 180 held until the voice stack joined full
+        # (0.13.13-0.13.21: onnxruntime, ctranslate2, piper, faster-whisper,
+        # PyAV and numpy, ~350 MiB unpacked) and the Linux bundles stopped
+        # being stripped (0.13.23). 0.13.84 measured 274 MiB. A dev package
+        # in the bundle is checked directly (test_no_dev_package_is_bundled);
+        # this stays as the tripwire for anything else that grows it.
         full = _binary_for("full")
         _skip_if_missing(full)
         size_mb = full.stat().st_size / 1024 / 1024
         self.assertLess(
             size_mb,
-            180,
-            f"full binary is {size_mb:.1f} MB — budget is 180 MB",
+            300,
+            f"full binary is {size_mb:.1f} MiB — budget is 300 MiB",
         )
 
 
@@ -906,15 +909,47 @@ class BundledSubprocessEnvironmentTests(unittest.TestCase):
         self.assertIn("HAS_LD False", result.stdout, result.stdout + result.stderr)
         self.assertIn("HAS_ORIG False", result.stdout)
 
-    def test_bundle_still_sets_the_loader_path_for_itself(self) -> None:
-        """Guard against over-correcting: the frozen interpreter needs
-        its own LD_LIBRARY_PATH, and clearing it process-wide instead of
-        per-child would break the application itself."""
-        result = self._run_in_bundle(
-            "slim",
-            "import os\nprint('SELF', 'LD_LIBRARY_PATH' in os.environ)\n",
+    def test_bundle_keeps_loading_its_own_libraries_after_the_restore(self) -> None:
+        """main() clears the bundle's LD_LIBRARY_PATH (and Qt paths) from
+        os.environ at start, so that EVERY child - also those third-party
+        code starts - runs with the host's libraries
+        (core.subprocess_env.restore_loader_env). The process itself must
+        keep loading from the bundle: glibc reads LD_LIBRARY_PATH only at
+        process start. The TIFF plugin is loaded on first use, after the
+        restore, and needs the bundle's libtiff.so.5. (This test used to
+        assert the variable stays set - the per-child design before the
+        process-wide restore was measured to be safe.)"""
+        for flavor in ("slim", "full"):
+            result = self._run_in_bundle(
+                flavor,
+                "import os, sys\n"
+                "print('LD_INTO_BUNDLE', sys._MEIPASS in os.environ.get('LD_LIBRARY_PATH', ''))\n"
+                "from PyQt6.QtGui import QGuiApplication, QImageReader\n"
+                "app = QGuiApplication(['x'])\n"
+                "fmts = [bytes(f) for f in QImageReader.supportedImageFormats()]\n"
+                "print('TIFF', b'tiff' in fmts)\n",
+            )
+            out = result.stdout + result.stderr
+            self.assertIn("LD_INTO_BUNDLE False", result.stdout, (flavor, out))
+            self.assertIn("TIFF True", result.stdout, (flavor, out))
+
+    def test_no_dev_package_is_bundled(self) -> None:
+        """What the size budgets stood in for, checked directly: no test,
+        lint or packaging tool in either bundle."""
+        script = (
+            "import os, sys\n"
+            "dev = {'pytest', '_pytest', 'semgrep', 'mypy', 'ruff', 'black', 'pylint', 'coverage',\n"
+            "       'hypothesis', 'IPython', 'jupyter', 'setuptools', 'pip', 'pyinstaller',\n"
+            "       'PyInstaller', 'twine', 'build'}\n"
+            "names = set(os.listdir(sys._MEIPASS))\n"
+            "names |= {m.split('.')[0] for m in sys.modules}\n"
+            "import pkgutil\n"
+            "names |= {m.name for m in pkgutil.iter_modules()}\n"
+            "print('DEV', sorted(dev & names))\n"
         )
-        self.assertIn("SELF True", result.stdout, result.stdout + result.stderr)
+        for flavor in ("slim", "full"):
+            result = self._run_in_bundle(flavor, script)
+            self.assertIn("DEV []", result.stdout, (flavor, result.stdout + result.stderr))
 
 
 class BundledResourcesTests(unittest.TestCase):

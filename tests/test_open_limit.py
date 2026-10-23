@@ -214,7 +214,11 @@ class PaneDecisionTest(_QtCase):
         self.assertIn("huge.log", text)
 
 
-class MenuTest(_QtCase):
+class SettingsPageTest(_QtCase):
+    """The limit moved from View > Open Size Limit… to Edit > Settings… >
+    Files & Panes (the matrix in tests/test_settings_matrix.py covers it
+    with the other settings)."""
+
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
@@ -224,36 +228,42 @@ class MenuTest(_QtCase):
         from ui.main_window import MainWindow
 
         cls.win = MainWindow()
+        cls.win._reconnect_timer.stop()
 
     @classmethod
     def tearDownClass(cls) -> None:
+        cls.win.close()
         cls.win.deleteLater()
         cls._patch.stop()
         __import__("shutil").rmtree(cls._home, ignore_errors=True)
 
-    def _action(self):
+    def _dialog(self):
+        from ui.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.win, window=self.win)
+        self.addCleanup(dialog.deleteLater)
+        dialog.show_page("files")
+        return dialog
+
+    def test_the_view_menu_no_longer_has_the_entry(self) -> None:
         from PyQt6.QtGui import QAction
 
-        for a in self.win.findChildren(QAction):
-            if "Open Size Limit" in a.text().replace("&", ""):
-                return a
-        return None
-
-    def test_view_menu_has_the_entry(self) -> None:
-        self.assertIsNotNone(self._action())
+        labels = [a.text().replace("&", "") for a in self.win.findChildren(QAction)]
+        self.assertFalse([t for t in labels if "Open Size Limit" in t])
 
     def test_choosing_a_value_stores_it(self) -> None:
-        with mock.patch("ui.main_window.QInputDialog.getInt", return_value=(96, True)) as ask:
-            self._action().trigger()
+        dialog = self._dialog()
+        spin = dialog.page("files").open_limit_spin
+        self.assertEqual(spin.value(), OL.DEFAULT_MAX_OPEN_MB)  # the current value
+        self.assertEqual((spin.minimum(), spin.maximum()), (OL.MIN_MAX_OPEN_MB, OL.MAX_MAX_OPEN_MB))
+        spin.setValue(96)
+        self.assertTrue(dialog.apply())
         self.assertEqual(OL.max_open_mb(), 96)
-        args = ask.call_args
-        self.assertEqual(args[0][3], OL.DEFAULT_MAX_OPEN_MB)  # pre-filled with the current value
-        self.assertEqual(args[0][4], OL.MIN_MAX_OPEN_MB)
-        self.assertEqual(args[0][5], OL.MAX_MAX_OPEN_MB)
 
     def test_cancel_changes_nothing(self) -> None:
-        with mock.patch("ui.main_window.QInputDialog.getInt", return_value=(500, False)):
-            self._action().trigger()
+        dialog = self._dialog()
+        dialog.page("files").open_limit_spin.setValue(500)
+        dialog.reject()
         self.assertEqual(OL.max_open_mb(), OL.DEFAULT_MAX_OPEN_MB)
 
 

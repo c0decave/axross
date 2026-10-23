@@ -98,6 +98,10 @@ class CompareClosedPaneTest(unittest.TestCase):
     def test_happy_delete_with_both_panes_open_removes_the_one_sided_file(self) -> None:
         dlg = self.open_compare()
         dlg.delete_requested.emit("left", [str(self.left_dir / "only_left.txt")])
+        # The pane deletes in the background (its removal job).
+        end = time.time() + 10
+        while self.left.removal_running and time.time() < end:
+            self.settle(0.02)
         self.settle()
         self.assertEqual(self.errors, [])
         self.assertFalse((self.left_dir / "only_left.txt").exists())

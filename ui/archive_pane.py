@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import time
 from typing import Callable
 
@@ -45,8 +46,12 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QTreeView,
     QVBoxLayout,
@@ -57,9 +62,11 @@ from core.archive import (
     ArchiveEntry,
     RarUnavailable,
     UnsafeArchive,
+    is_supported_archive,
     list_archive,
     strip_archive_extension,
 )
+from core.i18n import tr
 
 log = logging.getLogger("ui.archive_pane")
 
@@ -215,6 +222,8 @@ def build_archive_tree(entries: list[ArchiveEntry]) -> QStandardItemModel:
             ratio=_fmt_ratio(entry),
             modified=_fmt_mtime(entry.mtime),
         )
+        if is_supported_archive(entry.name):
+            row[COL_NAME].setToolTip(tr("An archive: double-click opens it here"))
         parent.appendRow(row)
 
     return model
@@ -298,6 +307,85 @@ def selected_member_names(tree_view: QTreeView) -> list[str]:
     return ordered
 
 
+def format_label(path: str) -> str:
+    """Short uppercase format tag from the extension chain (``TAR.GZ``),
+    for headers and the Type of a member. Cosmetic only."""
+    base = os.path.basename(path.rstrip("/"))
+    stem = strip_archive_extension(base)
+    ext = base[len(stem):].lstrip(".")
+    return ext.upper() if ext else "archive"
+
+
+_KIND_LABELS = {
+    "dir": "Folder",
+    "symlink": "Symbolic link",
+    "hardlink": "Hard link",
+    "other": "Special file",
+}
+_KIND_BITS = {"dir": stat.S_IFDIR, "symlink": stat.S_IFLNK}
+
+
+def member_info(entry: ArchiveEntry) -> list[tuple[str, str]]:
+    """``(label, value)`` rows of the Properties of one member: name,
+    type, size, compressed size, modification time and mode. PURE."""
+    from ui.format_utils import format_size
+
+    kind = "dir" if entry.is_dir else entry.kind
+    if kind in _KIND_LABELS:
+        kind_text = tr(_KIND_LABELS[kind])
+    elif is_supported_archive(entry.name):
+        kind_text = tr("Archive ({format})").format(format=format_label(entry.name))
+    else:
+        kind_text = tr("File")
+    if entry.mode is None:
+        mode_text = "—"
+    else:
+        bits = _KIND_BITS.get(kind, stat.S_IFREG) | entry.mode
+        mode_text = f"{stat.filemode(bits)} ({entry.mode:04o})"
+    if entry.mtime is None:
+        modified = "—"
+    else:
+        try:
+            modified = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry.mtime))
+        except (ValueError, OverflowError, OSError):
+            modified = "—"
+    return [
+        ("Name", entry.name),
+        ("Type", kind_text),
+        ("Size", format_size(max(0, entry.size))),
+        ("Compressed", f"{max(0, entry.compressed)} bytes"),
+        ("Modified", modified),
+        ("Mode", mode_text),
+    ]
+
+
+class MemberPropertiesDialog(QDialog):
+    """The Properties of one archive member (or folder in it)."""
+
+    def __init__(self, rows: list[tuple[str, str]], parent: QWidget | None = None) -> None:
+        from ui.close_corner import add_close_corner
+
+        super().__init__(parent)
+        self._values = dict(rows)
+        self.setWindowTitle(tr("Properties") + f" — {self._values.get('Name', '')}")
+        layout = QVBoxLayout(self)
+        add_close_corner(self)
+        form = QFormLayout()
+        for label, value in rows:
+            text = QLabel(value, self)
+            text.setTextFormat(Qt.TextFormat.PlainText)  # member names are not markup
+            text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            text.setWordWrap(True)
+            form.addRow(tr(label) + ":", text)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def values(self) -> dict[str, str]:
+        return dict(self._values)
+
+
 class ArchivePaneWidget(QWidget):
     """Non-modal archive preview pane.
 
@@ -333,18 +421,27 @@ class ArchivePaneWidget(QWidget):
     extract_selected = pyqtSignal(list)
     extract_to = pyqtSignal()
     open_member = pyqtSignal(str)
+    #: Extract the selected members into a folder the user picks.
+    extract_selected_to = pyqtSignal(list)
+    #: Back to the archive this nested one was opened from.
+    back_requested = pyqtSignal()
 
     def __init__(
         self,
         archive_path: str,
         on_open_member: Callable[[str], None] | None = None,
         parent: QWidget | None = None,
+        *,
+        chain: tuple[str, ...] = (),
     ) -> None:
         super().__init__(parent)
         self._archive_path = archive_path
         self._on_open_member = on_open_member
+        #: The names of the archives this one is nested in, outermost first.
+        self.chain = tuple(chain)
         self.load_error: str | None = None
         self._entries: list[ArchiveEntry] = []
+        self._properties_dialog: MemberPropertiesDialog | None = None
 
         self._build_ui()
         self._load()
@@ -354,9 +451,17 @@ class ArchivePaneWidget(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
+        top = QHBoxLayout()
+        self._btn_back = QPushButton(tr("Back"))
+        self._btn_back.setToolTip(tr("Back to the archive this one is in"))
+        self._btn_back.clicked.connect(self.back_requested.emit)
+        self._btn_back.setVisible(bool(self.chain))
+        top.addWidget(self._btn_back)
         self._header_label = QLabel()
         self._header_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self._header_label)
+        self._header_label.setTextFormat(Qt.TextFormat.PlainText)
+        top.addWidget(self._header_label, stretch=1)
+        layout.addLayout(top)
 
         self._tree = QTreeView()
         self._tree.setSelectionMode(
@@ -365,6 +470,8 @@ class ArchivePaneWidget(QWidget):
         self._tree.setUniformRowHeights(True)
         self._tree.setAlternatingRowColors(True)
         self._tree.doubleClicked.connect(self._on_double_clicked)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_context_menu)
         # Columns as in the file pane: every divider draggable, the numbers
         # as wide as their content, Name the free width; a column the user
         # dragged keeps its width (ui.column_fit).
@@ -399,7 +506,7 @@ class ArchivePaneWidget(QWidget):
         """List the archive and populate the tree. Any listing failure is
         caught and surfaced via :attr:`load_error` + the status label;
         the widget never raises out of ``__init__``."""
-        basename = os.path.basename(self._archive_path)
+        basename = self.display_name()
         try:
             self._entries = list_archive(self._archive_path)
         except RarUnavailable as exc:
@@ -452,11 +559,11 @@ class ArchivePaneWidget(QWidget):
     def _format_label(path: str) -> str:
         """Short uppercase format tag derived from the extension, for the
         header label. Best-effort cosmetic only."""
-        base = os.path.basename(path)
-        stem = strip_archive_extension(base)
-        # The stripped-off remainder (if any) is the extension chain.
-        ext = base[len(stem):].lstrip(".")
-        return ext.upper() if ext else "archive"
+        return format_label(path)
+
+    def display_name(self) -> str:
+        """``outer.tar › inner.zip``: where this archive is."""
+        return " › ".join((*self.chain, os.path.basename(self._archive_path)))
 
     # -- Signals / interaction -------------------------------------------
 
@@ -484,6 +591,119 @@ class ArchivePaneWidget(QWidget):
             return
         member = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(member, str) and member:
-            self.open_member.emit(member)
-            if self._on_open_member is not None:
-                self._on_open_member(member)
+            self._open(member)
+
+    def _open(self, member: str) -> None:
+        self.open_member.emit(member)
+        if self._on_open_member is not None:
+            self._on_open_member(member)
+
+    # -- right-click menu and properties ---------------------------------
+
+    def _selected_items(self) -> list[QStandardItem]:
+        model = self._tree.model()
+        sel = self._tree.selectionModel()
+        if model is None or sel is None or not hasattr(model, "itemFromIndex"):
+            return []
+        items = [model.itemFromIndex(ix) for ix in sel.selectedRows(COL_NAME)]
+        return [i for i in items if i is not None]
+
+    #: Each entry's file pane command (ui.file_pane.CONTEXT_COMMANDS): its
+    #: icon is the one this entry shows, so a command looks the same in both.
+    _ICON_OF = {
+        "open": "open-text",
+        "open-archive": "preview-archive",
+        "extract-selected": "extract",
+        "extract-selected-to": "extract",
+        "extract-all": "extract",
+        "extract-to": "extract",
+        "properties": "properties",
+    }
+
+    def build_context_menu(self) -> QMenu:
+        """Open / Open Archive for one file, Extract Selected (To…) for a
+        selection, Extract All (To…), and Properties for one row."""
+        from ui.file_pane import CONTEXT_COMMANDS
+        from ui.icon_provider import icon
+
+        menu = QMenu(self)
+        items = self._selected_items()
+
+        def entry(command: str, label: str, slot, icon_of: str = "") -> None:
+            action = menu.addAction(label)
+            action.setProperty("axCommand", command)
+            icon_name = CONTEXT_COMMANDS[self._ICON_OF[icon_of or command]][0]
+            if icon_name:
+                action.setProperty("axIcon", icon_name)
+                action.setIcon(icon(icon_name))
+            action.triggered.connect(lambda _checked=False: slot())
+
+        if len(items) == 1 and not _is_folder_item(items[0]):
+            member = items[0].data(Qt.ItemDataRole.UserRole)
+            nested = is_supported_archive(member)
+            label = tr("&Open Archive") if nested else tr("&Open")
+            entry("open", label, lambda m=member: self._open(m),
+                  icon_of="open-archive" if nested else "open")
+            menu.addSeparator()
+        if items:
+            entry("extract-selected", tr("E&xtract Selected"), self._emit_extract_selected)
+            entry(
+                "extract-selected-to",
+                tr("Extract Selected &To…"),
+                lambda: self.extract_selected_to.emit(self.selected_members()),
+            )
+            menu.addSeparator()
+        entry("extract-all", tr("Extract &All"), self.extract_all.emit)
+        entry("extract-to", tr("Extract A&ll To…"), self.extract_to.emit)
+        if len(items) == 1:
+            menu.addSeparator()
+            member = items[0].data(Qt.ItemDataRole.UserRole)
+            entry("properties", tr("&Properties…"), lambda m=member: self.show_properties(m))
+        return menu
+
+    def _show_context_menu(self, pos) -> None:
+        self.build_context_menu().exec(self._tree.viewport().mapToGlobal(pos))
+
+    def member_entry(self, member: str) -> ArchiveEntry | None:
+        return next((e for e in self._entries if e.name == member), None)
+
+    def properties_rows(self, member: str) -> list[tuple[str, str]]:
+        """What Properties shows for *member*: its listing entry, or for a
+        folder the archive implies without an entry a summary of what is
+        in it; plus where the archive is."""
+        entry = self.member_entry(member)
+        if entry is None:
+            entry = ArchiveEntry(member, 0, 0, None, member.endswith("/"), None,
+                                 "dir" if member.endswith("/") else "file")
+        rows = member_info(entry)
+        if entry.is_dir:
+            # Compared by segments, as build_archive_tree places them: a
+            # member stored as ``dir\file`` or ``dir//file`` is in ``dir/``.
+            base = _split_segments(member)
+            inside = []  # (entry, its segments below the folder)
+            for e in self._entries:
+                segments = _split_segments(e.name)
+                if len(segments) > len(base) and segments[: len(base)] == base:
+                    inside.append((e, segments[len(base):]))
+            files = [e for e, _parts in inside if not e.is_dir]
+            folders: set[str] = set()  # every folder below, implied or listed
+            for e, parts in inside:
+                for depth in range(1, len(parts) + (1 if e.is_dir else 0)):
+                    folders.add("/".join(parts[:depth]))
+            total = sum(max(0, e.size) for e in files)
+            from ui.format_utils import human_bytes
+
+            rows = [r for r in rows if r[0] not in ("Size", "Compressed")]
+            rows.insert(2, ("Contents", tr("{files} file(s), {folders} folder(s), {size}").format(
+                files=len(files), folders=len(folders), size=human_bytes(total))))
+        rows.append(("Archive", self.display_name()))
+        return rows
+
+    def show_properties(self, member: str) -> MemberPropertiesDialog:
+        old = self._properties_dialog
+        if old is not None:
+            old.close()
+        dialog = MemberPropertiesDialog(self.properties_rows(member), parent=self)
+        self._properties_dialog = dialog
+        dialog.show()
+        return dialog

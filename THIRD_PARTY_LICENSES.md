@@ -44,6 +44,47 @@ for the distribution-layer license notice.
 | `[archive]` | py7zr | LGPL-2.1-or-later | https://github.com/miurahr/py7zr |
 | `[tftp]` | tftpy | MIT | https://github.com/msoulier/tftpy |
 | `[metadata]` | pypdf | BSD-3-Clause | https://github.com/py-pdf/pypdf |
+| `[voice]` | piper-tts | GPL-3.0-or-later | https://github.com/OHF-voice/piper1-gpl |
+| `[voice]` | onnxruntime | MIT | https://github.com/microsoft/onnxruntime |
+| `[voice]` | faster-whisper | MIT | https://github.com/SYSTRAN/faster-whisper |
+| `[voice]` | ctranslate2 | MIT | https://github.com/OpenNMT/CTranslate2 |
+
+## Binaries bundled in axross-full (Linux)
+
+Static builds fetched by `Dockerfile.build` with pinned SHA-256 sums; their
+licence files ship in the bundle under `licenses/search-tools/`.
+
+| Tool | Binary | SPDX license | Purpose |
+|---|---|---|---|
+| ripgrep 15.2.0 | `rg` | MIT OR Unlicense | Find Files: content search (`core/file_search.py`) |
+| fd 10.5.0 | `fd` | MIT OR Apache-2.0 | Find Files: name walk (`core/file_search.py`) |
+
+## Speech components bundled in axross-full
+
+The Agent dock's voice (`axross[voice]`) is part of axross-full. Its
+packages ship in the bundle; the voices and the speech recognition models
+are not bundled - Help > Features… downloads them (pinned SHA-256,
+`core/voice_models.py`).
+
+| Component | Version | SPDX license | Note |
+|---|---|---|---|
+| piper-tts | piper-tts 1.8.0 | GPL-3.0-or-later | speech synthesis; contains espeak-ng |
+| espeak-ng | 1.52.0.1 (commit 724808c5a83f9ef95fdd0db886ba7ba537ff224a) | GPL-3.0-or-later | statically linked into piper's `espeakbridge`, with its data |
+| onnxruntime | onnxruntime 1.31.0 | MIT | runs the voice models |
+| faster-whisper | faster-whisper 1.2.1 | MIT | local speech recognition |
+| ctranslate2 | ctranslate2 4.8.3 | MIT | runs the Whisper models |
+| PyAV (av) | as resolved by faster-whisper | BSD-3-Clause | audio decoding (faster-whisper dependency) |
+
+Because axross-full ships GPL-3.0-or-later code (as it already does with
+PyQt6), the bundle carries the GPL-3 text (`licenses/voice/COPYING`, from
+piper's distribution) and a written offer for the corresponding source
+(`licenses/voice/SOURCE-OFFER.txt`, kept in `build/licenses/voice/`).
+
+Downloaded at run time, not bundled: the Piper voices of
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) v1.0.0
+(MIT; each voice's dataset terms in its `MODEL_CARD`: Thorsten CC0, Kerstin,
+Ryan and Lessac as stated there) and Systran's faster-whisper conversions of
+OpenAI Whisper base and small (MIT).
 
 ## System tools invoked via subprocess
 

@@ -17,6 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
+from PyQt6.QtCore import QEvent  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import extensions as EX  # noqa: E402
@@ -70,6 +71,9 @@ def window(tmp_path):
     yield win
     win.close()
     win.deleteLater()
+    # processEvents() never runs DeferredDelete: without this every window
+    # lives on and each new one's stylesheet repolishes all of them.
+    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     pump()
 
 
@@ -135,6 +139,68 @@ def test_happy_a_context_action_gets_the_selection(window, tmp_path) -> None:
     pane._table.clearSelection()
     labels = [a.text() for a in pane._build_context_menu().actions()]
     assert "Count Files" not in labels and "Folder Only" in labels
+
+
+def _ctx_with(*entries):
+    from types import SimpleNamespace
+
+    from ui.extension_host import ExtensionContext
+
+    items = tuple(SimpleNamespace(name=n, is_dir=d) for n, d in entries)
+    return ExtensionContext(backend=None, folder="/f", paths=(), items=items)
+
+
+def test_happy_single_folder_applies_to_exactly_one_folder() -> None:
+    from ui.extension_host import APPLIES_TO, _applies
+
+    assert "single_folder" in APPLIES_TO
+    assert _applies(_ctx_with(("repo", True)), "single_folder", ())
+
+
+def test_sad_single_folder_is_not_offered_for_two_folders_or_a_file() -> None:
+    from ui.extension_host import _applies
+
+    assert not _applies(_ctx_with(("a", True), ("b", True)), "single_folder", ())
+    assert not _applies(_ctx_with(("a", True), ("x.txt", False)), "single_folder", ())
+    assert not _applies(_ctx_with(("x.txt", False)), "single_folder", ())
+
+
+def test_edge_single_folder_ignores_the_parent_entry_and_needs_a_selection() -> None:
+    from ui.extension_host import _applies
+
+    assert not _applies(_ctx_with(), "single_folder", ())
+    assert _applies(_ctx_with(("..", True), ("repo", True)), "single_folder", ())
+
+
+def test_e2e_a_single_folder_action_shows_for_one_selected_folder_only(window, tmp_path) -> None:
+    write_ext(
+        "onefolder",
+        """
+        SEEN = []
+
+        def activate(api):
+            api.add_context_action("One Folder", lambda ctx: SEEN.append(list(ctx.paths)),
+                                   applies_to="single_folder")
+        """,
+    )
+    EX.set_enabled("user:onefolder", True)
+    window.extension_host.reload()
+    folder = tmp_path / "data"
+    (folder / "a").mkdir(parents=True)
+    (folder / "b").mkdir()
+    pane = window._active_pane
+    pane.navigate(str(folder))
+    pane._table.selectAll()
+    labels = [a.text() for a in pane._build_context_menu().actions()]
+    assert "One Folder" not in labels  # two folders selected
+    pane._table.clearSelection()
+    pane._table.selectRow(next(
+        r for r in range(pane._proxy.rowCount())
+        if pane._proxy.data(pane._proxy.index(r, 0)) == "a"
+    ))
+    menu = pane._build_context_menu()
+    next(a for a in menu.actions() if a.text() == "One Folder").trigger()
+    assert window.extension_host.module("user:onefolder").SEEN == [[str(folder / "a")]]
 
 
 def test_happy_a_dock_and_an_event(window, tmp_path) -> None:
@@ -424,3 +490,83 @@ def test_edge_closing_the_window_deactivates_extensions(tmp_path) -> None:
     win.deleteLater()
     pump()
     assert marker.read_text() == "bye"
+
+
+# --- what a drop is about (api.drop_context) ----------------------------------
+
+
+def _api(window):
+    from ui.extension_host import ExtensionAPI
+
+    info = EX.ExtensionInfo(ext_id="user:drop", source="user", module_name="drop",
+                            path="drop.py", name="Drop")
+    return ExtensionAPI(window.extension_host, info)
+
+
+def test_happy_drop_context_of_a_pane_drag_names_the_pane_backend(window, tmp_path) -> None:
+    from unittest import mock
+
+    from PyQt6.QtCore import QMimeData
+
+    from core.ram_fs import RamFsSession
+    from ui.file_pane import TRANSFER_MIME_TYPE
+
+    pane = window._active_pane
+    pane.navigate(str(tmp_path))
+    mime = QMimeData()
+    mime.setData(TRANSFER_MIME_TYPE, pane._encode_transfer_payload([str(tmp_path / "a.mp3")]))
+    ctx = _api(window).drop_context(mime)
+    assert ctx.is_local and ctx.paths == (str(tmp_path / "a.mp3"),) and ctx.pane is pane
+    ram = RamFsSession("drop-ram")
+    with mock.patch.object(type(pane), "backend", new_callable=mock.PropertyMock,
+                           return_value=ram):
+        mime.setData(TRANSFER_MIME_TYPE, pane._encode_transfer_payload(["/m/b.ogg"]))
+        ctx = _api(window).drop_context(mime)
+        assert ctx.backend is ram and not ctx.is_local and ctx.paths == ("/m/b.ogg",)
+
+
+def test_happy_drop_context_of_desktop_files_is_local(window, tmp_path) -> None:
+    from PyQt6.QtCore import QMimeData, QUrl
+
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(tmp_path / "x.flac")), QUrl("https://example.com/y")])
+    ctx = _api(window).drop_context(mime)
+    assert ctx.is_local and ctx.paths == (str(tmp_path / "x.flac"),)
+    assert ctx.folder == str(tmp_path)
+
+
+def test_sad_drop_context_of_anything_else_is_none(window) -> None:
+    from PyQt6.QtCore import QMimeData, QUrl
+
+    from ui.file_pane import TRANSFER_MIME_TYPE
+
+    text = QMimeData()
+    text.setText("/etc/passwd")
+    garbage = QMimeData()
+    garbage.setData(TRANSFER_MIME_TYPE, b"\xff not json")
+    web = QMimeData()
+    web.setUrls([QUrl("https://example.com/a.mp3")])
+    api = _api(window)
+    assert [api.drop_context(m) for m in (None, text, garbage, web)] == [None] * 4
+
+
+def test_edge_drop_context_from_a_pane_that_closed(window) -> None:
+    """The payload outlives its pane: a local one still means the local
+    disk, a remote one's connection is gone."""
+    import json
+
+    from PyQt6.QtCore import QMimeData
+
+    from ui.file_pane import TRANSFER_MIME_TYPE
+
+    def payload(filesystem):
+        mime = QMimeData()
+        mime.setData(TRANSFER_MIME_TYPE, json.dumps(
+            {"paths": ["/m/a.mp3"], "source_pane_id": "12345", "dirs": [],
+             "filesystem": filesystem}).encode())
+        return mime
+
+    api = _api(window)
+    ctx = api.drop_context(payload("Local"))
+    assert ctx is not None and ctx.is_local and ctx.paths == ("/m/a.mp3",)
+    assert api.drop_context(payload("remote:nas")) is None

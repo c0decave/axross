@@ -90,7 +90,9 @@ def normalise_language(value: str | None) -> str | None:
     ``None`` means "no usable signal here" so the caller can move on to
     the next one, rather than settling on English prematurely.
     """
-    if not value:
+    # The stored setting is hand-editable JSON: a number or a list is no
+    # signal either (and must not stop the start, which reads it first).
+    if not value or not isinstance(value, str):
         return None
     text = value.strip().lower()
     if text in _NEUTRAL:

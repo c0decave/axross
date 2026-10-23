@@ -87,10 +87,10 @@ class DialogTest(unittest.TestCase):
         real = MX._index_item
         gate = threading.Event()
 
-        def slow(db, bid, path, item):
+        def slow(db, bid, path, item, **kw):
             self.seen.append(path)
             gate.wait(timeout=0.03)
-            return real(db, bid, path, item)
+            return real(db, bid, path, item, **kw)
 
         self.gate = gate
         p2 = mock.patch.object(MX, "_index_item", slow)

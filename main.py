@@ -7,6 +7,7 @@ import argparse
 import logging
 import logging.handlers
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,7 +15,9 @@ LOG_DIR = Path.home() / ".local" / "state" / "axross" / "logs"
 LOG_FILE = LOG_DIR / "axross.log"
 
 
-def setup_logging(debug: bool = False) -> None:
+def setup_logging(debug: bool = False, verbose: bool = False) -> None:
+    """The log file always; with *debug* (DEBUG) or *verbose* (INFO) the
+    terminal too."""
     level = logging.DEBUG if debug else logging.INFO
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -41,7 +44,7 @@ def setup_logging(debug: bool = False) -> None:
     except OSError:
         pass
 
-    if debug:
+    if debug or verbose:
         console = logging.StreamHandler(sys.stderr)
         console._axross_handler = True  # type: ignore[attr-defined]
         console.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
@@ -57,7 +60,9 @@ _crash_file = None
 
 def enable_crash_traces() -> Path | None:
     """Have a segfault or abort write every thread's Python stack to
-    <log dir>/crash.log, after a header with version and platform.
+    <log dir>/crash.log, after a header with version and platform - and,
+    for a hang, ``kill -USR1 <pid>`` (POSIX) too, without ending the
+    process.
 
     A crash in Qt ends the process without a Python traceback, and the
     regular log stops at whatever ran last. The file is private (0600),
@@ -68,6 +73,7 @@ def enable_crash_traces() -> Path | None:
     global _crash_file
     import faulthandler
     import platform
+    import signal
     import time
 
     from axross._version import __version__
@@ -85,8 +91,12 @@ def enable_crash_traces() -> Path | None:
             f"{time.strftime('%Y-%m-%d %H:%M:%S %z')}, {sys.platform} "
             f"({platform.platform()}), Python {platform.python_version()} ---\n"
         )
+        if hasattr(signal, "SIGUSR1"):
+            handle.write(f"(hanging? kill -USR1 {os.getpid()} writes every thread's stack here)\n")
         handle.flush()
         faulthandler.enable(file=handle, all_threads=True)
+        if hasattr(signal, "SIGUSR1"):
+            faulthandler.register(signal.SIGUSR1, file=handle, all_threads=True)
     except OSError:
         return None
     if _crash_file is not None and _crash_file is not handle:
@@ -292,7 +302,148 @@ def _no_screen_message(app) -> str | None:
     )
 
 
+#: Set in the environment of the re-executed child of a detached start.
+DETACHED_ENV = "AXROSS_DETACHED"
+#: How long a detached start watches its child for an immediate failure
+#: before it gives the terminal back.
+DETACH_CHECK_SECONDS = 1.0
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def should_detach(
+    args, environ, streams, platform: str = os.name, system: str = sys.platform
+) -> bool:
+    """Whether this start gives the terminal back by re-executing itself
+    in the background.
+
+    Only a GUI start from a terminal detaches: on POSIX, with stdout or
+    stderr a terminal, without --foreground / --debug / --verbose. Every
+    mode that prints or talks over stdio (--version and --help exit in the
+    parser already; --script, the MCP server, --mcp-list-tools, the worker
+    modes) stays. Output to a pipe or file on both streams means a caller
+    reads it or waits for the exit status (a launcher, the bundle smoke,
+    systemd) - nothing to give back there, and detaching would break it.
+    Windows: the frozen GUI build is a windowed (GUI subsystem) program,
+    which the console does not wait for; a source start stays as it is.
+    On Linux and the BSDs a start without DISPLAY, WAYLAND_DISPLAY or
+    QT_QPA_PLATFORM (an SSH login without X forwarding) stays too: the
+    "no screen" message must reach the terminal, not /dev/null.
+    """
+    if platform != "posix":
+        return False
+    if system != "darwin" and not any(
+        environ.get(name) for name in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM")
+    ):
+        return False
+    if args.foreground or args.debug or args.verbose:
+        return False
+    if args.script or args.mcp_server or args.mcp_list_tools:
+        return False
+    if environ.get("AXROSS_MCP", "").strip().lower() in _TRUTHY:
+        return False
+    if "AXROSS_SMOKE_GUI_MS" in environ or environ.get(DETACHED_ENV):
+        return False
+    return any(_is_tty(stream) for stream in streams)
+
+
+def _is_tty(stream) -> bool:
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (AttributeError, ValueError, OSError):  # closed or replaced stream
+        return False
+
+
+def consume_detached_marker(environ=os.environ) -> bool:
+    """True in the re-executed child of a detached start. The marker is
+    removed, so a terminal or an axross started from inside this one
+    detaches normally."""
+    return environ.pop(DETACHED_ENV, None) is not None
+
+
+def _child_command() -> list[str]:
+    """This start's command line: the frozen binary with its arguments, or
+    the interpreter with its own options, ``-m axross`` / the script path,
+    and the arguments (``sys.orig_argv``)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *sys.argv[1:]]
+    return [sys.executable, *sys.orig_argv[1:]]
+
+
+def detach_from_terminal() -> bool:
+    """Start this command again in a new session (no controlling terminal,
+    so closing the terminal does not take it down) with stdin, stdout and
+    stderr on /dev/null. A re-exec and not a bare fork: Qt has not been
+    imported yet, but a forked copy of a process with threads is not safe
+    to continue. A frozen one-file child extracts itself again
+    (core.subprocess_env.relaunch_env): this process's folder is deleted
+    when it exits. False when the child cannot be started, or ends with an
+    error at once - its output goes nowhere, so the caller then runs in
+    the foreground, where the error reaches the terminal."""
+    from core.subprocess_env import relaunch_env
+
+    env = relaunch_env(os.environ, frozen=bool(getattr(sys, "frozen", False)))
+    env[DETACHED_ENV] = "1"
+    try:
+        child = subprocess.Popen(
+            _child_command(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            env=env,
+        )
+    except OSError:
+        return False
+    try:
+        code = child.wait(timeout=DETACH_CHECK_SECONDS)
+    except subprocess.TimeoutExpired:
+        return True  # still starting: the normal case
+    if code == 0:
+        return True
+    print(f"axross: the background start ended with status {code}; "
+          "starting in the foreground instead (--foreground does this directly).",
+          file=sys.stderr)
+    return False
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Axross File Manager")
+    from axross._version import __version__
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"axross {__version__}",
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug logging (also on the terminal)"
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Log to the terminal as well as to the log file; stays in the foreground",
+    )
+    parser.add_argument(
+        "--foreground",
+        action="store_true",
+        help="Keep the terminal: started from a terminal, the window otherwise "
+        "runs in the background and the prompt returns at once",
+    )
+    _add_mode_arguments(parser)
+    return parser
+
+
 def main() -> int:
+    # Before anything can start a child: give the process the environment
+    # it started with (a frozen bundle points LD_LIBRARY_PATH, QT_PLUGIN_PATH
+    # and more into its unpacked folder, and host programs then load our
+    # libraries). See core.subprocess_env.restore_loader_env.
+    from core.subprocess_env import restore_loader_env
+
+    restore_loader_env(bundle_dir=getattr(sys, "_MEIPASS", None) if getattr(sys, "frozen", False)
+                       else None)
     if sys.argv[1:] == ["--agent-worker"]:
         # The agent in its own process (core.agent_sandbox starts it, mostly
         # in a sandbox): no GUI, no log files, stdin/stdout are its channel.
@@ -305,15 +456,21 @@ def main() -> int:
         from core.analysis_worker import _child_main
 
         return _child_main()
-    parser = argparse.ArgumentParser(description="Axross File Manager")
-    from axross._version import __version__
+    if sys.argv[1:] == ["--voice-worker"]:
+        # Speech synthesis and recognition for the Agent dock
+        # (core.voice_worker starts it): no GUI, stdin/stdout are its channel.
+        from core.voice_worker import _child_main as voice_worker_main
 
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"axross {__version__}",
-    )
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+        return voice_worker_main()
+    args = build_parser().parse_args()
+    detach = should_detach(args, os.environ, (sys.stdout, sys.stderr))
+    consume_detached_marker(os.environ)
+    if detach and detach_from_terminal():
+        return 0
+    return _run(args)
+
+
+def _add_mode_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--script",
         default=None,
@@ -404,15 +561,19 @@ def main() -> int:
         "enabled when all three of --mcp-cert / --mcp-key / --mcp-ca "
         "are supplied.",
     )
-    args = parser.parse_args()
 
-    setup_logging(args.debug)
+
+def _run(args) -> int:
+    setup_logging(args.debug, args.verbose)
     log = logging.getLogger("axross")
     crash_log = enable_crash_traces()
     if crash_log is not None:
         log.info("Crash traces go to %s", crash_log)
         if args.debug:
             print(f"axross: a crash writes every thread's stack to {crash_log}", file=sys.stderr)
+            if hasattr(__import__("signal"), "SIGUSR1"):
+                print(f"axross: hanging? kill -USR1 {os.getpid()} writes them there too",
+                      file=sys.stderr)
 
     # Interface language, before any window is built. Precedence and the
     # reasoning behind it live in core.i18n: a deliberate locale
@@ -445,7 +606,7 @@ def main() -> int:
     # via --mcp-server or via AXROSS_MCP={1,true,yes,on}. Anything
     # else boots the GUI as before — PyQt isn't imported on the MCP
     # path so the server runs on headless machines without a display.
-    truthy = {"1", "true", "yes", "on"}
+    truthy = _TRUTHY
     mcp_env = os.environ.get("AXROSS_MCP", "").strip().lower()
     write_env = os.environ.get("AXROSS_MCP_WRITE", "").strip().lower()
     if args.mcp_list_tools or args.mcp_server or mcp_env in truthy:
@@ -611,6 +772,13 @@ def main() -> int:
 
     init_registry()
 
+    # The security mode chosen in Edit > Settings > Security comes back;
+    # AXROSS_SECURITY_MODE, when set, wins. Only the window: the MCP server
+    # and --script take their limits from flags and the environment.
+    from core.security_mode import apply_stored_mode
+
+    apply_stored_mode()
+
     from PyQt6.QtWidgets import QApplication
 
     from ui.main_window import MainWindow
@@ -620,6 +788,8 @@ def main() -> int:
     app.setOrganizationName("axross")
     no_screen = _no_screen_message(app)
     if no_screen:
+        # Also in the log: a start detached from the terminal has no stderr.
+        log.error("%s", no_screen)
         print(no_screen, file=sys.stderr)
         return 1
 

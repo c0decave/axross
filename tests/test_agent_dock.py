@@ -217,6 +217,26 @@ class EdgeTest(_Base):
         self.assertIn("write_file", names)
         self.assertIn("continues with them", self.dock.transcript.toPlainText())
 
+    def test_edge_a_new_folder_is_told_to_the_continued_conversation(self) -> None:
+        # The conversation goes on with new settings; its system message must
+        # name the folder the tab works in now, not the one it started in.
+        import json
+
+        other = Path(self.tmp.name) / "other"
+        other.mkdir()
+        server = self.make({"content": "a"}, {"content": "b"})
+        self.say("one")
+        first = server.requests[0]["messages"][0]["content"]
+        self.assertIn(json.dumps(str(self.root)), first)
+        self.dock.root_edit.setText(str(other))
+        self.say("two")
+        system = server.requests[1]["messages"][0]
+        self.assertEqual(system["role"], "system")
+        self.assertIn(json.dumps(str(other)), system["content"])
+        self.assertNotIn(json.dumps(str(self.root)), system["content"])
+        roles = [m["role"] for m in server.requests[1]["messages"]]
+        self.assertEqual(roles, ["system", "user", "assistant", "user"])
+
     def test_edge_html_in_the_answer_is_shown_as_text(self) -> None:
         self.make({"content": "<img src=http://evil/x> <b>bold</b>"})
         self.say("hi")

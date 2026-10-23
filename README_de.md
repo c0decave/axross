@@ -10,13 +10,23 @@ MCP-Tool-Oberfläche, mit der ein LLM das Ganze fernsteuern kann.**
 - **30+ Protokolle in einem Fenster** — SFTP, SMB, S3, WebDAV, Cloud-Drives, IMAP, Git, Datenbanken und mehr.
 - **Kopieren zwischen beliebigen Backends** — S3 → SFTP, WebDAV → SMB, direkt, ohne Umweg über die lokale Platte.
 - **Multi-Pane-Layout im Commander-Stil** — beliebig viele Split-Panes, Layout-Presets, Drag & Drop.
+- **Workspaces** — benannte Pane-Layouts als Tabs, abtrennbar in ein eigenes Fenster, beim nächsten Start wiederhergestellt.
+- **LLM-Agent eingebaut** — Agent-Dock mit Tabs und Sandboxes für LM Studio, Ollama, vLLM oder llama.cpp, read-only per Default.
+- **Mit dem Agent sprechen** — Push-to-Talk, gesprochene Antworten auf Deutsch und Englisch, Speech Recognition lokal oder auf dem LLM-Server.
+- **MCP-Server und -Client** — LLMs steuern axross über stdio oder HTTP, und der Agent nutzt die Tools weiterer MCP-Server.
 - **Eingebautes Python-Scripting** — REPL, Scripts-Dock und 32 fertige Scripts auf einer `axross.*`-API.
-- **LLM-Agent eingebaut** — Agent-Dock mit Tabs und Sandboxes, MCP über stdio oder HTTP, read-only per Default.
+- **Text-Editor mit Tabs** — Syntax Highlighting, Find/Replace, Encodings und Line Endings, für lokale und Remote-Dateien.
+- **Find Files** — nach Name, Typ, Inhalt, Größe oder Tag, auch in Archiven, gespeichert als Smart Folder.
+- **Farbige Tags** — auf jeder Datei, folgen Rename und Move, als Filter in Find Files.
+- **Disk-Images und Forensik** — Partitionen und Dateisysteme, read-only Loop Mount, Hashes, The Sleuth Kit, PhotoRec.
+- **Media Player** — Playlist, M3U, Shuffle/Repeat, 10-Band-Equalizer und Spektrum.
 - **Duplikate finden, Metadaten entfernen** — Duplicate Finder per Content-Hash, EXIF/GPS raus vor dem Teilen.
 - **Verschlüsselung ohne Klartext auf der Platte** — `.axenc`-Overlay auf jedem Backend, entschlüsselt nur in den RAM.
 - **Sicher per Default** — Preview vor Delete/Move, Operation-Journal, `paranoid` Mode, Proxies mit SSRF-Guard.
 - **Resumable Transfers** — überstehen Ctrl-C und VPN-Abbrüche, weiter ab dem letzten verifizierten Segment.
-- **Installation in einer Zeile** — `pip install axross` oder ein Single-File-Binary von der Release-Page.
+- **Archive wie Ordner** — ZIP, TAR und 7z durchblättern, auch verschachtelt, nur das Gewählte extrahieren, Zip-Bomb-sicher.
+- **Extensions** — Media Player, Forensic Tools, Treemap, VirtualBox und mehr, jede aus, bis du sie einschaltest.
+- **Installation in einer Zeile** — `pip install axross` oder ein Single-File-Binary für Linux, macOS und Windows.
 
 Axross ist ein Multi-Protokoll-Dateimanager und Security-Toolkit auf
 Basis von Python und PyQt6. SFTP, SMB, S3, WebDAV, Cloud-Drives, IMAP,
@@ -37,6 +47,50 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 ![Upload von einem lokalen Pane nach SFTP mit dem Transfers-Dock](docs/screenshots/remote-transfer.png)
 
 *Upload nach SFTP.* Vier Fotos vom lokalen Pane auf das NAS kopiert; das Transfers-Dock zeigt jede Datei mit Richtung, Größe und Status.
+
+![Workspaces als Tabs, ein File-Pane und eine lokale Shell nebeneinander](docs/screenshots/workspaces.png)
+
+*Workspaces.* Benannte Pane-Layouts als Tabs - hier **Website** mit seinem File-Pane und einer lokalen Shell daneben. Ein Workspace lässt sich in ein eigenes Fenster abtrennen und kommt als Tab zurück.
+
+![Die Toolbar mit einem Icon je Werkzeug über zwei Panes und der Bookmark-Sidebar](docs/screenshots/toolbar.png)
+
+*Toolbar.* Ein Button je Werkzeug - Agent, Analysis, Terminal, Find Files, Scripts, Python-Console, Tags, Trash, Media Player, Treemap, Drives, Settings, Features. In einem schmalen Fenster rücken die Werkzeuge in eine zweite Zeile, statt zu verschwinden.
+
+![Das Fenster Tagged Files mit den Dateien eines Tags](docs/screenshots/tags.png)
+
+*Tags.* Farbige Punkte in der Name-Spalte; **Tagged Files** listet jeden Tag und seine Dateien auf jedem Backend, **Go to File** öffnet den Ordner in einem Pane.
+
+![Der Text-Editor mit Tabs, Python-Highlighting und Find-Leiste](docs/screenshots/editor.png)
+
+*Text-Editor.* Tabs für lokale und Remote-Dateien, Pygments-Highlighting, Find und Replace mit Regex, Encoding und Line Endings in der Statusleiste.
+
+![Find Files mit Typ-Presets und Treffern aus mehreren Ordnern](docs/screenshots/find-files.png)
+
+*Find Files.* Name, Inhalt, Größe, Datum, Tag und Typ-Presets, auch in Archiven; mit einem Klick wird die Suche zum **Smart Folder**.
+
+![Das Media-Player-Panel mit Cover, Spektrum, Equalizer und Playlist](docs/screenshots/media-player.png)
+
+*Media Player.* Ein Extension-Panel: Cover und Titel, ein animiertes Spektrum, ein 10-Band-Equalizer mit Presets und eine Playlist, gefüllt per Drag & Drop.
+
+![Die Partitionen eines Disk-Images, bereit für einen read-only Mount](docs/screenshots/disk-image.png)
+
+*Disk-Images.* Die Partitionen und Dateisysteme eines Images, gelesen, ohne etwas zu schreiben; **Mount Read-Only** bringt eine davon in ein Pane.
+
+![Settings, Seite Voice: gesprochene Antworten, Push-to-Talk und die Hold-Taste](docs/screenshots/voice.png)
+
+*Voice.* Gesprochene Antworten auf Deutsch oder Englisch, Push-to-Talk auf einer Hold-Taste, und wohin der erkannte Text geht.
+
+![Manage Bookmarks mit Gruppen, einem Terminal-Bookmark und Remote-Orten](docs/screenshots/bookmarks.png)
+
+*Bookmarks.* Gruppen, lokale und Remote-Orte und ein Terminal-Bookmark in einem Manager; sortieren, verschieben und mehrere auf einmal bearbeiten.
+
+![Edit, Settings: alle Settings in einem Dialog mit Suchfeld](docs/screenshots/settings.png)
+
+*Settings.* Jede Einstellung in einem Dialog, mit Suchfeld.
+
+![Help, Features: was installiert ist, was fehlt und wie man es bekommt](docs/screenshots/features.png)
+
+*Features.* Was installiert ist und was fehlt, mit dem Befehl oder dem Download, der es nachrüstet.
 
 ![Vier File-Panes und zwei lokale Terminals im Hacker Mode](docs/screenshots/quad-files-shells.png)
 
@@ -100,7 +154,7 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 ---
 
-## 26 Highlights
+## 37 Highlights
 
 1. **30+ Protokolle, eine konsistente UI.** SFTP/SCP, FTP/FTPS,
    SMB/CIFS, WebDAV, S3-kompatibel, Rsync, NFS, Azure Blob/Files,
@@ -300,8 +354,9 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 23. **Extensions.** Python-Plugins fügen Einträge im Extensions-Menü,
     Rechtsklick-Aktionen und Panels hinzu (**Extensions → Manage
     Extensions…**). Jede Extension startet ausgeschaltet, sie zu finden
-    führt sie nie aus, und der `paranoid` Mode lädt keine. Sechs
-    mitgelieferte Beispiele. Siehe [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+    führt sie nie aus, und der `paranoid` Mode lädt keine. Elf
+    mitgelieferte, darunter Media Player, Forensic Tools, Drives Overview,
+    VirtualBox und Backup Repositories. Siehe [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 24. **Ein LLM-Agent im eigenen Dock.** **View → Panels → Agent** spricht
     mit dem Modell, das du in den **Agent Settings** wählst (Ollama,
@@ -310,9 +365,16 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
     JSON-Datei; die Protection Modes `ask`, `plan`, `auto` und `bypass`
     entscheiden, was ohne Rückfrage läuft; **Topics** bietet fertige
     Aufgaben; **+** und Drag & Drop aus einem Pane übergeben Dateien, und
-    die Remote-Verbindungen der Panes lassen sich ihm leihen. Die
-    mitgelieferte Extension **Agent Stats** zählt Runs, Tool Calls und
-    Tokens.
+    die Remote-Verbindungen der Panes lassen sich ihm leihen. Das
+    Thinking eines Modells steht getrennt von seiner Antwort, auf eine
+    Zeile eingeklappt, bis du es anklickst; eine Lampe in der Titelzeile
+    des Docks ist grün, solange das LLM antwortet, orange, während es
+    gefragt wird, und rot, wenn es nicht erreichbar ist. **Topics ▸ + New
+    Topic…** speichert eigene Aufgaben; **Settings → Agent → Prompts**
+    verwaltet benannte System-/User-Prompt-Profile; **Fetch models**
+    öffnet eine Liste mit Größe, Parametern, Quantisierung und dem
+    geladenen Modell. Die mitgelieferte Extension **Agent Stats** zählt
+    Runs, Tool Calls und Tokens.
 
 25. **Agents in einer Sandbox.** Jeder Tab kann seinen Agent in
     bubblewrap, podman oder docker laufen lassen, auf dem Level `lax`,
@@ -327,6 +389,74 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
     weitere MCP-Server an (stdio oder HTTP); ihre Tools erscheinen in der
     **Tools**-Liste des Tabs und fragen vor jedem Aufruf oder nur vor
     Schreibzugriffen.
+
+27. **Workspaces.** Benannte Pane-Layouts als Tabs (**Workspace → New
+    Workspace**), jedes abtrennbar in ein eigenes Fenster - auf einen
+    anderen Bildschirm oder daneben - und zurück als Tab, wenn das
+    Fenster schließt. Ein neues Workspace startet mit einer Dateiliste
+    oder einem lokalen Terminal, Panes wandern per Menü oder Drag & Drop
+    zwischen Workspaces, und mehrere Shells stehen nebeneinander. Die
+    Workspaces kommen beim nächsten Start wieder.
+
+28. **Mit dem Agent sprechen.** Push-to-Talk (F9), Toggle oder
+    Conversation Mode im Agent-Dock. Antworten kommen gesprochen auf
+    Deutsch oder Englisch mit Piper-Voices, englische IT-Begriffe bleiben
+    englisch; Speech Recognition läuft lokal mit faster-whisper oder auf
+    dem LLM-Server, pro Profil gewählt. Die Modelle werden bei Bedarf
+    geladen. In `axross-full` enthalten, sonst `pip install
+    axross[voice]`.
+
+29. **Ein Text-Editor mit Tabs.** Jeder Tab ist eine Datei auf einem
+    beliebigen Backend: Pygments-Syntax-Highlighting, Find und Replace
+    (Regex, Groß-/Kleinschreibung, ganzes Wort), Encodings und Line
+    Endings, New / Open… / Save As…, Auto-Indent; große Dateien werden
+    abseits des GUI-Threads gelext.
+
+30. **Find Files.** **Edit → Find Files…** (Alt+F7) durchsucht Ordner
+    auf jeder offenen Verbindung nach Name, Typ-Preset, Inhalt, Größe,
+    Datum und Tag, auch in Archiven. Treffer laufen ein, während das
+    Fenster bedienbar bleibt, und eine Suche wird als **Smart Folder** in
+    den Bookmarks gespeichert. Der Offline-Index entfernt Dateien, die
+    seit dem letzten Indexieren gelöscht wurden.
+
+31. **Farbige Tags.** Jede Datei auf jedem Backend lässt sich markieren
+    - **Important** und **Review later** gibt es von Anfang an. Tags
+    folgen Rename und Move und sind ein Filter in Find Files.
+
+32. **Disk-Images und Forensik.** axross liest qcow2-, VDI-, VMDK-,
+    VHD/VHDX- und E01-Header, MBR- und GPT-Partitionstabellen und ihre
+    Dateisysteme, ohne etwas zu schreiben, und mountet eine Partition
+    read-only über ein Loop Device. Die Extension **Forensic Tools**
+    ergänzt MD5 / SHA-1 / SHA-256 in einem Durchgang, `qemu-img`, The
+    Sleuth Kit (durchblättern und extrahieren, gelöschte Dateien
+    eingeschlossen) und TestDisk/PhotoRec.
+
+33. **Media Player.** Ein Extension-Panel für MP3, FLAC, Ogg, Opus, AAC
+    und mehr: Playlist mit Drag & Drop und M3U, Seeking, Shuffle und
+    Repeat, ein einklappbarer 10-Band-Equalizer mit Presets, fünf
+    Visualisierungen (Spektrum, gespiegelt, radial, Oszilloskop,
+    VU-Meter), zwischen denen ein Klick darauf wechselt, Titel, Interpret
+    und Cover.
+
+34. **Bookmarks für viele Orte.** Mehrfachauswahl, Gruppen sortiert nach
+    Name, Pfad oder Alter, Terminal-Bookmarks (auf einem Profil, einem
+    bloßen Host oder lokal) und **Manage Bookmarks** als vollwertiger
+    Manager.
+
+35. **Alle Settings an einem Ort.** **Edit → Settings…** enthält jede
+    Option; **Help → Features** zeigt, welche optionalen Teile installiert
+    sind und welche fehlen; **Help → Scripting Guide** öffnet den
+    API-Guide.
+
+36. **Eine Toolbar für die Werkzeuge.** Buttons mit Icons für Agent,
+    Analysis, Terminal, Find Files, Scripts, die Python-Console, Tags,
+    Trash, Media Player, Treemap, Drives, Settings und Features, in jedem
+    Theme.
+
+37. **Archive wie Ordner.** ZIP-, TAR- und 7z-Archive öffnen sich in der
+    Archiv-Ansicht; verschachtelte Archive lassen sich betreten, und
+    extrahiert wird alles oder nur die Auswahl, mit Zip-Bomb- und
+    Zip-Slip-Schutz.
 
 ---
 

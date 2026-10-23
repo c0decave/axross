@@ -10,8 +10,9 @@ Where the bytes come from
 * A file on the local file system is read where it is.
 * A file on any other backend is copied into a private temp directory with
   :func:`core.file_analysis.copy_bounded` (the analysis dock's bounded copy),
-  at most the configured open size limit (*View -> Open Size Limit...*); for
-  images also at most :data:`core.previews.MAX_INPUT_SIZE`. A file the
+  at most the configured open size limit (*Edit -> Settings... -> Files &
+  Panes -> Open Size Limit*); for images also at most
+  :data:`core.previews.MAX_INPUT_SIZE`. A file the
   listing shows as larger is not downloaded at all; one that turns out
   larger while copying is cut off and refused. Images and thumbnails drop
   the copy as soon as they are decoded; a PDF or video keeps it until the
@@ -94,7 +95,7 @@ def _mb(size: int) -> str:
 def too_large_text(size: int, limit: int) -> str:
     text = f"too large to show: {_mb(size)}, limit {_mb(limit)}"
     if limit == open_limits.max_open_bytes():  # the user's own setting, not a decoder cap
-        text += " (View → Open Size Limit…)"
+        text += " (Edit → Settings… → Files & Panes → Open Size Limit)"
     return text
 
 

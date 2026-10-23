@@ -204,6 +204,21 @@ Bounded: per-backend hit cap (default 500), total hit cap (5000),
 per-backend timeout (60 s), parallelism (8). Caps mark the result
 `truncated=True` so the caller knows to narrow the query.
 
+The walker reads the first 64 KiB of each file for `contains=` (line by
+line; case is ignored unless the query sets `case_sensitive=True`). A
+`SearchQuery` passed as `query=` also takes the Find Files fields:
+`categories=("images", "crypto_wallets", …)` (ids from
+`core.file_categories`), `search_archives=True` (hits inside archives read
+`archive.zip!/member`, with `SearchHit.archive_path` / `.member`) and
+`include_hidden=False`:
+
+```python
+>>> from core.search_federation import SearchQuery
+>>> rep = axross.federated_search(
+...     backends, SearchQuery(categories=("disk_images",), search_archives=True, roots=["/srv"]),
+... )
+```
+
 ---
 
 ## `resumable_copy` — checkpointed cross-backend copy

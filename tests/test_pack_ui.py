@@ -73,7 +73,7 @@ def _select(pane, *names) -> None:
 
 def _pack_menu(pane) -> QMenu | None:
     for action in pane._build_context_menu().actions():
-        if action.menu() is not None and action.text() == "Pack":
+        if action.menu() is not None and action.text().replace("&", "") == "Pack":
             return action.menu()
     return None
 

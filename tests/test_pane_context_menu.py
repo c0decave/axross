@@ -49,7 +49,7 @@ def pane(tmp_path):
 
 
 def _menu_texts(widget) -> list[str]:
-    return [a.text() for a in widget._build_context_menu().actions()]
+    return [a.text().replace("&", "") for a in widget._build_context_menu().actions()]
 
 
 def test_happy_duplicate_finder_is_offered_without_a_selection(pane):

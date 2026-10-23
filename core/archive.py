@@ -52,6 +52,7 @@ import contextlib
 import logging
 import os
 import shutil
+import stat
 import tarfile
 import tempfile
 import time
@@ -94,6 +95,13 @@ except ImportError:  # pragma: no cover
 # any realistic real-world archive.
 MAX_EXTRACT_FILES = 10_000
 
+# Max entries of one archive that are listed (the archive preview, an
+# archive nested in another, MCP list_archive) or read to extract a
+# selection of it. Every entry costs memory while it is listed (~700
+# bytes measured), and tar headers compress to almost nothing: a 918 KiB
+# tar.gz held 200 000 of them. Linux kernel sources hold about 90 000.
+MAX_LIST_ENTRIES = 250_000
+
 # Max total uncompressed bytes. 1 GiB is generous for realistic
 # archives (a 600 MiB app-bundle expands to a few hundred MiB),
 # tight enough that a 42-kB bomb expanding to 4 GiB is refused.
@@ -104,6 +112,13 @@ MAX_EXTRACT_TOTAL_BYTES = 1 * 1024 * 1024 * 1024
 # accommodates legitimate text archives (which can legitimately
 # compress 20:1 or so) without admitting the pathological case.
 MAX_COMPRESSION_RATIO = 100
+
+# An archive inside an archive is opened in the preview by extracting it
+# (with every guard above) to a temp folder first. Each level is one more
+# such copy, so both the depth and the size of one nested archive are
+# bounded: four levels of 256 MiB are at most 1 GiB of temp files.
+MAX_NESTED_DEPTH = 4
+MAX_NESTED_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
 # --------------------------------------------------------------------------
@@ -214,6 +229,12 @@ class ArchiveEntry:
     compressed: int
     mtime: float | None
     is_dir: bool
+    #: The stored permission bits (``0o644``), None when the format or the
+    #: maker of the archive stores none.
+    mode: int | None = None
+    #: ``file``, ``dir``, ``symlink``, ``hardlink`` or ``other`` (a device
+    #: or FIFO entry of a tar). Extraction refuses all but files and dirs.
+    kind: str = "file"
 
     @property
     def ratio(self) -> float:
@@ -253,6 +274,32 @@ def is_supported_archive(name_or_path: str) -> bool:
             if lower.endswith(ext):
                 return True
     return False
+
+
+def archive_family(name_or_path: str) -> str | None:
+    """How :func:`list_archive` would read *name_or_path*: ``"zip"``,
+    ``"tar"``, ``"single"`` (one compressed file), ``"7z"`` or ``"rar"``
+    - or ``None`` when the name is no archive this installation can read
+    (the same availability rules as :func:`is_supported_archive`)."""
+    if not is_supported_archive(name_or_path):
+        return None
+    lower = name_or_path.lower()
+    if lower.endswith(_RAR_EXTENSIONS):
+        return "rar"
+    if lower.endswith(_TAR_EXTENSIONS):
+        return "tar"
+    if lower.endswith(_ZIP_EXTENSIONS):
+        return "zip"
+    if lower.endswith(_SEVEN_Z_EXTENSIONS):
+        return "7z"
+    return "single"
+
+
+def check_bomb_ratio(uncompressed: int, compressed: int, member_name: str) -> None:
+    """Raise :class:`UnsafeArchive` when one member's compression ratio
+    is above :data:`MAX_COMPRESSION_RATIO` - the guard extraction uses,
+    for callers that read members themselves (Find Files)."""
+    _check_bomb_ratio(uncompressed, compressed, member_name)
 
 
 def strip_archive_extension(name_or_path: str) -> str:
@@ -392,6 +439,49 @@ def _safe_member_path(target_root: str, member_name: str) -> str:
     return resolved_member
 
 
+def _tar_members_capped(tf: tarfile.TarFile, cap: int) -> list[tarfile.TarInfo]:
+    """The members of *tf*, read header by header, and
+    :class:`UnsafeArchive` as soon as there are more than *cap*:
+    ``getmembers()`` reads every header before anyone can count them."""
+    members: list[tarfile.TarInfo] = []
+    for member in tf:
+        if len(members) >= cap:
+            raise UnsafeArchive(f"archive has more than {cap} entries; cap is {cap}")
+        members.append(member)
+    return members
+
+
+def zip_declared_entries(fh) -> tuple[int, int] | None:
+    """``(entries, directory bytes)`` from the end-of-central-directory
+    record, read before ``zipfile`` builds every entry; None when there
+    is no plain record (zip64 and odd files are left to zipfile)."""
+    try:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        tail = min(size, 65536 + 22)
+        fh.seek(size - tail)
+        data = fh.read(tail)
+        fh.seek(0)
+    except (OSError, ValueError):
+        return None
+    pos = data.rfind(b"PK\x05\x06")
+    if pos < 0 or len(data) - pos < 22:
+        return None
+    entries = int.from_bytes(data[pos + 10 : pos + 12], "little")
+    dir_size = int.from_bytes(data[pos + 12 : pos + 16], "little")
+    return entries, dir_size
+
+
+def _check_zip_entry_count(archive_path: str, cap: int) -> None:
+    """Refuse a ZIP whose directory declares more than *cap* entries
+    before ``zipfile`` parses it (0xFFFF is the zip64 marker, not a count:
+    those are counted once parsed)."""
+    with open(archive_path, "rb") as fh:
+        declared = zip_declared_entries(fh)
+    if declared is not None and declared[0] != 0xFFFF and declared[0] > cap:
+        raise UnsafeArchive(f"archive declares {declared[0]} entries; cap is {cap}")
+
+
 def _collision_key(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
 
@@ -444,6 +534,7 @@ def _extract_zip(
     """Extract a ZIP-family archive. Returns the count of files
     actually written (directories don't count; they're created as
     a side effect of ensuring parents for file entries)."""
+    _check_zip_entry_count(archive_path, MAX_EXTRACT_FILES)
     with zipfile.ZipFile(archive_path) as zf:
         infos = zf.infolist()
         if len(infos) > MAX_EXTRACT_FILES:
@@ -592,11 +683,7 @@ def _extract_tar(
     the magic bytes so a single ``mode='r:*'`` open handles all
     four compressed variants."""
     with _open_tar(archive_path) as tf:
-        members = tf.getmembers()
-        if len(members) > MAX_EXTRACT_FILES:
-            raise UnsafeArchive(
-                f"archive has {len(members)} entries; cap is {MAX_EXTRACT_FILES}",
-            )
+        members = _tar_members_capped(tf, MAX_EXTRACT_FILES)
         total_uncompressed = sum(max(0, m.size) for m in members if m.isfile())
         if total_uncompressed > MAX_EXTRACT_TOTAL_BYTES:
             raise UnsafeArchive(
@@ -868,8 +955,13 @@ def _extract_members_zip(
     (zip-slip, duplicate, bomb-ratio, count + total-byte caps) but
     applies them ONLY to the SELECTED subset. Caps are enforced across
     the selection, not the whole archive."""
+    _check_zip_entry_count(archive_path, MAX_LIST_ENTRIES)
     with zipfile.ZipFile(archive_path) as zf:
         infos = zf.infolist()
+        if len(infos) > MAX_LIST_ENTRIES:
+            raise UnsafeArchive(
+                f"archive has {len(infos)} entries; cap is {MAX_LIST_ENTRIES}"
+            )
         requested = _resolve_selection([i.filename for i in infos], members)
         selected = [i for i in infos if _is_selected(i.filename, requested)]
         sel_files = [i for i in selected if not i.is_dir()]
@@ -915,7 +1007,7 @@ def _extract_members_tar(
     (symlink/hardlink + non-file/dir refusal, zip-slip, duplicate, count
     + total-byte caps) applied ONLY to the SELECTED subset."""
     with _open_tar(archive_path) as tf:
-        members_all = tf.getmembers()
+        members_all = _tar_members_capped(tf, MAX_LIST_ENTRIES)
         requested = _resolve_selection([m.name for m in members_all], members)
         selected = [m for m in members_all if _is_selected(m.name, requested)]
         sel_files = [m for m in selected if m.isfile()]
@@ -1100,8 +1192,19 @@ def _zip_date_time_to_epoch(date_time: tuple[int, ...]) -> float | None:
 
 def _list_zip(p: str) -> list[ArchiveEntry]:
     out: list[ArchiveEntry] = []
+    _check_zip_entry_count(p, MAX_LIST_ENTRIES)
     with zipfile.ZipFile(p) as zf:
-        for zi in zf.infolist():
+        infos = zf.infolist()
+        if len(infos) > MAX_LIST_ENTRIES:
+            raise UnsafeArchive(f"archive has {len(infos)} entries; cap is {MAX_LIST_ENTRIES}")
+        for zi in infos:
+            unix = (zi.external_attr >> 16) if zi.create_system == 3 else 0
+            if zi.is_dir():
+                kind = "dir"
+            elif unix and stat.S_ISLNK(unix):
+                kind = "symlink"
+            else:
+                kind = "file"
             out.append(
                 ArchiveEntry(
                     name=zi.filename,
@@ -1109,6 +1212,8 @@ def _list_zip(p: str) -> list[ArchiveEntry]:
                     compressed=int(zi.compress_size),
                     mtime=_zip_date_time_to_epoch(zi.date_time),
                     is_dir=zi.is_dir(),
+                    mode=_zip_mode(zi),
+                    kind=kind,
                 ),
             )
     return out
@@ -1117,7 +1222,7 @@ def _list_zip(p: str) -> list[ArchiveEntry]:
 def _list_tar(p: str) -> list[ArchiveEntry]:
     out: list[ArchiveEntry] = []
     with _open_tar(p) as tf:
-        for ti in tf.getmembers():
+        for ti in _tar_members_capped(tf, MAX_LIST_ENTRIES):
             is_dir = ti.isdir()
             name = ti.name + "/" if is_dir and not ti.name.endswith("/") else ti.name
             size = int(ti.size)
@@ -1130,9 +1235,21 @@ def _list_tar(p: str) -> list[ArchiveEntry]:
                     compressed=size,
                     mtime=float(ti.mtime) if ti.mtime is not None else None,
                     is_dir=is_dir,
+                    mode=(ti.mode & 0o7777) if ti.mode is not None else None,
+                    kind=_tar_kind(ti),
                 ),
             )
     return out
+
+
+def _tar_kind(ti: tarfile.TarInfo) -> str:
+    if ti.isdir():
+        return "dir"
+    if ti.issym():
+        return "symlink"
+    if ti.islnk():
+        return "hardlink"
+    return "file" if ti.isreg() else "other"
 
 
 def _list_7z(p: str) -> list[ArchiveEntry]:
@@ -1237,6 +1354,62 @@ def list_archive(archive_path: str) -> list[ArchiveEntry]:
     raise UnsafeArchive(
         f"unsupported archive extension: {archive_path!r}",
     )
+
+
+def extract_nested_archive(
+    archive_path: str,
+    member: str,
+    workdir: str,
+    *,
+    depth: int,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> str:
+    """Extract *member* of *archive_path* - itself an archive - into
+    *workdir* so it can be listed and extracted like any archive, and
+    return its path there (it keeps its file name, which picks the format).
+
+    *depth* is the nesting level the member would open at: 1 for an archive
+    inside the archive on disk. Refused with :class:`UnsafeArchive` past
+    :data:`MAX_NESTED_DEPTH`, for a member that is not a supported archive,
+    a folder, or larger than :data:`MAX_NESTED_ARCHIVE_BYTES` - by the
+    listing and again by the bytes written, as a listing can lie. The
+    extraction is :func:`extract_members` with all its guards (zip-slip,
+    links, ratio, count and size caps). A missing member is a
+    :class:`KeyError`; *workdir* holds nothing of a refused member.
+    *progress* is handed to :func:`extract_members` (it may raise
+    :class:`ExtractCancelled`).
+    """
+    if depth > MAX_NESTED_DEPTH:
+        raise UnsafeArchive(
+            f"archives nested deeper than {MAX_NESTED_DEPTH} levels are not opened"
+        )
+    if not is_supported_archive(member):
+        raise UnsafeArchive(f"not an archive: {member!r}")
+    entry = next((e for e in list_archive(archive_path) if e.name == member), None)
+    if entry is None:
+        raise KeyError(f"not in the archive: {member}")
+    if entry.is_dir:
+        raise UnsafeArchive(f"a folder, not an archive: {member!r}")
+    if entry.size > MAX_NESTED_ARCHIVE_BYTES:
+        raise UnsafeArchive(
+            f"{member!r} is larger than {MAX_NESTED_ARCHIVE_BYTES} bytes, the limit "
+            "for an archive opened inside another one"
+        )
+    target = os.path.join(workdir, "nested")
+    extract_members(archive_path, target, [member], progress=progress)
+    path = os.path.join(target, *[seg for seg in member.replace("\\", "/").split("/") if seg])
+    try:
+        if not os.path.isfile(path):
+            raise UnsafeArchive(f"{member!r} did not extract to a file")
+        if os.path.getsize(path) > MAX_NESTED_ARCHIVE_BYTES:
+            raise UnsafeArchive(
+                f"{member!r} extracted to more than {MAX_NESTED_ARCHIVE_BYTES} bytes, the "
+                "limit for an archive opened inside another one"
+            )
+    except BaseException:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+    return path
 
 
 # --------------------------------------------------------------------------
@@ -1355,6 +1528,10 @@ def extract(
         raise
 
 
+#: Public name of :func:`_open_tar` for readers outside this module.
+open_tar_archive = _open_tar
+
+
 def _measure_tree_bytes(root: str) -> int:
     """Sum the sizes of all regular files under *root*, skipping
     symlinks (we never write them; following them during
@@ -1387,14 +1564,22 @@ __all__ = [
     "MAX_COMPRESSION_RATIO",
     "MAX_EXTRACT_FILES",
     "MAX_EXTRACT_TOTAL_BYTES",
+    "MAX_LIST_ENTRIES",
     "RAR_AVAILABLE",
     "RarUnavailable",
     "SEVEN_Z_AVAILABLE",
     "UnsafeArchive",
+    "archive_family",
     "auto_suffix_dir",
+    "MAX_NESTED_ARCHIVE_BYTES",
+    "MAX_NESTED_DEPTH",
+    "check_bomb_ratio",
     "extract",
     "extract_members",
+    "extract_nested_archive",
     "is_supported_archive",
     "list_archive",
+    "open_tar_archive",
     "strip_archive_extension",
+    "zip_declared_entries",
 ]

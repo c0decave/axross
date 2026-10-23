@@ -452,26 +452,26 @@ def _pane_at(window, path: Path):
 
 
 def _open_image_from_pane(pane, name: str, drive) -> dict:
-    """Select *name* in the pane, press Return (the modal viewer runs its
-    own loop), and run *drive(dialog)* inside that loop."""
+    """Select *name* in the pane, press Return (the viewer opens as a window
+    of its own), run *drive(dialog)* on it and close it."""
     seen: dict = {}
 
-    def step() -> None:
-        dlg = QApplication.activeModalWidget()
-        if not isinstance(dlg, ImageViewerDialog):
-            QTimer.singleShot(10, step)
-            return
-        try:
-            drive(dlg, seen)
-        finally:
-            dlg.reject()
+    def viewers():
+        return [w for w in QApplication.topLevelWidgets()
+                if isinstance(w, ImageViewerDialog) and w.isVisible()]
 
     proxy = pane._proxy
     row = next(r for r in range(proxy.rowCount()) if proxy.data(proxy.index(r, 0)) == name)
     pane._table.setCurrentIndex(proxy.index(row, 0))
     pane._table.selectRow(row)
-    QTimer.singleShot(0, step)
     _key(pane._table, Qt.Key.Key_Return)
+    assert wait_until(lambda: len(viewers()) == 1)
+    dlg = viewers()[0]
+    try:
+        drive(dlg, seen)
+    finally:
+        dlg.reject()
+    APP.processEvents()
     return seen
 
 

@@ -923,7 +923,7 @@ def move(
     log.info("axross.move cross-backend: %s:%s -> %s:%s", src_label, src_path, dst_label, dst_path)
     from contextlib import ExitStack
 
-    from core.server_ops import refuse_changed_source, source_size
+    from core.server_ops import refuse_changed_source, refuse_short_copy, source_size
 
     with ExitStack() as gates:
         gates.enter_context(
@@ -949,6 +949,7 @@ def move(
             overwrite=False,
         )
         try:
+            refuse_short_copy(src_path, size_before, transferred, dst_path)
             refuse_changed_source(src_backend, src_path, size_before, dst_path)
             src_backend.remove(src_path)
         except OSError as exc:

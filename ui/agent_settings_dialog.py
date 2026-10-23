@@ -1,11 +1,16 @@
-"""Tools > Agent Settings…: how the agent works, what it may reach, and the
-sandboxes it runs in (core.agent_settings).
+"""The agent's settings: how the agent works, what it may reach, and the
+sandboxes it runs in (core.agent_settings). :class:`AgentSettingsPage` is
+the Agent page of Edit > Settings… (Tools > Agent Settings… opens it);
+:class:`AgentSettingsDialog` is the same form as a dialog of its own.
 
-Five pages:
+Six pages:
 
 * **General** - the LLM profile and protection mode of new tabs, whether
   bypass may be chosen at all, step and output limits, whether tabs are
   kept, the tool groups new tabs offer.
+* **Prompts** - the prompt profiles (core.agent_prompts): a system prompt
+  and a user prompt (a template for the typed task) each, the built-in
+  Default read-only, and the profile new requests use.
 * **Access** - the ceiling of every tab (core.agent_access): the master
   switch for axross functions (tools axross runs outside the agent's
   sandbox) and each function - remote files, saved connections, remote
@@ -42,6 +47,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -51,6 +57,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import agent_prompts as AP
 from core import agent_settings as S
 from core import llm_profiles as LP
 from core import mcp_client as MC
@@ -83,24 +90,31 @@ CONFIRM_LABELS = {
 }
 
 
-class AgentSettingsDialog(QDialog):
-    #: Emitted after a successful save.
-    saved = pyqtSignal()
-    #: (server name, result line, tool names): a Test finished.
-    _tested = pyqtSignal(str, str, str)
+#: The tabs of the agent's settings, in order: (id, title).
+AGENT_TABS: tuple[tuple[str, str], ...] = (
+    ("general", "General"),
+    ("prompts", "Prompts"),
+    ("access", "Access"),
+    ("sandboxes", "Sandboxes"),
+    ("mcp", "MCP Servers"),
+    ("sessions", "Sessions"),
+)
 
-    def __init__(
+
+class _AgentSettingsForm:
+    """The tabs of the agent's settings (AGENT_TABS); :class:`AgentSettingsPage`
+    (Edit > Settings… > Agent) and :class:`AgentSettingsDialog` share it.
+    The class it is mixed into is the widget and has the signals ``saved``
+    and ``_tested``."""
+
+    def _build_form(
         self,
-        parent=None,
-        *,
         settings_path=None,
         llm_settings: LP.LLMSettings | None = None,
         sessions=None,
         store_session=None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(tr("Agent Settings"))
-        self.resize(820, 560)
+    ) -> QTabWidget:
+        """Build the tabs; returns the tab widget for the widget to place."""
         self._path = settings_path
         self.settings = S.AgentSettings.load(settings_path)
         self._llm = llm_settings if llm_settings is not None else LP.LLMSettings.load()
@@ -118,23 +132,45 @@ class AgentSettingsDialog(QDialog):
         #: applied on Save.
         self._session_edits: dict[str, tuple] = {}
         self._session_row = -1
+        #: The built-in prompt profile (row 0 of the Prompts list) and the
+        #: user's profile shown in the form (None: the built-in one).
+        self._prompt_default = AP.default_profile()
+        self._prompt_current: AP.PromptProfile | None = None
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._general_page(), tr("General"))
-        self.tabs.addTab(self._access_page(), tr("Access"))
-        self.tabs.addTab(self._sandbox_page(), tr("Sandboxes"))
-        self.tabs.addTab(self._mcp_page(), tr("MCP Servers"))
-        self.tabs.addTab(self._sessions_page(), tr("Sessions"))
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._save_and_close)
-        buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.tabs, 1)
-        layout.addWidget(buttons)
+        builders = {
+            "general": self._general_page,
+            "prompts": self._prompts_page,
+            "access": self._access_page,
+            "sandboxes": self._sandbox_page,
+            "mcp": self._mcp_page,
+            "sessions": self._sessions_page,
+        }
+        for tab_id, title in AGENT_TABS:
+            self.tabs.addTab(builders[tab_id](), tr(title))
         self._load_general()
-        add_close_corner(self)
+        return self.tabs
+
+    def show_tab(self, tab_id: str) -> None:
+        """Bring the tab *tab_id* (an id of AGENT_TABS) to the front."""
+        ids = [t for t, _title in AGENT_TABS]
+        if tab_id in ids:
+            self.tabs.setCurrentIndex(ids.index(tab_id))
+
+    def refresh_llm_choices(self, names) -> None:
+        """Offer the LLM profiles *names* as the profile of new tabs - the
+        LLM Profiles page may have added or renamed some before they were
+        saved. The choice made stays when its profile is still there."""
+        chosen = self.profile_combo.currentData()
+        self.profile_combo.blockSignals(True)
+        try:
+            self.profile_combo.clear()
+            self.profile_combo.addItem(tr("The active LLM profile"), "")
+            for name in names:
+                self.profile_combo.addItem(name, name)
+            self.profile_combo.setCurrentIndex(max(0, self.profile_combo.findData(chosen)))
+        finally:
+            self.profile_combo.blockSignals(False)
 
     # -- General ---------------------------------------------------------------------
 
@@ -197,15 +233,207 @@ class AgentSettingsDialog(QDialog):
                 Qt.CheckState.Checked if item.text() in s.groups else Qt.CheckState.Unchecked
             )
         self.axross_check.setChecked(s.access.axross_functions)
+        self.files_read_only_check.setChecked(s.access.files_read_only)
         for name, box in self._function_checks().items():
             box.setChecked(getattr(s.access, name))
         self._update_access_page()
+
+    # -- Prompts ---------------------------------------------------------------------
+
+    def _prompts_page(self) -> QWidget:
+        page = QWidget()
+        top = QHBoxLayout(page)
+        left = QVBoxLayout()
+        self.prompt_list = QListWidget()
+        self.prompt_list.currentRowChanged.connect(self._show_prompt_profile)
+        left.addWidget(self.prompt_list, 1)
+        row = QHBoxLayout()
+        self.prompt_new_button = QPushButton(tr("New"))
+        self.prompt_new_button.clicked.connect(self.add_prompt_profile)
+        self.prompt_duplicate_button = QPushButton(tr("Duplicate"))
+        self.prompt_duplicate_button.clicked.connect(self.duplicate_prompt_profile)
+        self.prompt_delete_button = QPushButton(tr("Delete"))
+        self.prompt_delete_button.clicked.connect(self.delete_prompt_profile)
+        for button in (self.prompt_new_button, self.prompt_duplicate_button,
+                       self.prompt_delete_button):
+            row.addWidget(button)
+        left.addLayout(row)
+        left.addWidget(QLabel(tr("Prompt profile of new requests")))
+        self.prompt_active_combo = QComboBox()
+        self.prompt_active_combo.currentIndexChanged.connect(self._mark_active_prompt)
+        left.addWidget(self.prompt_active_combo)
+        top.addLayout(left, 1)
+
+        form_widget = QWidget()
+        form = QFormLayout(form_widget)
+        self.prompt_name_edit = QLineEdit()
+        self.prompt_name_edit.setMaxLength(AP.MAX_NAME)
+        form.addRow(tr("Name"), self.prompt_name_edit)
+        self.prompt_system_edit = QPlainTextEdit()
+        self.prompt_system_edit.setPlaceholderText(tr("The rules the model gets before the task"))
+        form.addRow(tr("System prompt"), self.prompt_system_edit)
+        self.prompt_user_edit = QPlainTextEdit()
+        self.prompt_user_edit.setMaximumHeight(110)
+        self.prompt_user_edit.setPlaceholderText(
+            tr("Empty: the task is sent as typed. {task} becomes the typed task, e.g. "
+               "\"Answer in German: {task}\"; text without {task} goes in front of the task."))
+        form.addRow(tr("User prompt"), self.prompt_user_edit)
+        note = QLabel(tr(
+            "Each tab adds the folder it works in, the Plan mode and the read-aloud rules to the "
+            "system prompt. Default is axross's own prompt and cannot be changed: Duplicate it "
+            "to change a copy. A change applies to the next request."))
+        note.setWordWrap(True)
+        form.addRow("", note)
+        top.addWidget(form_widget, 2)
+
+        self.prompt_name_edit.textChanged.connect(self._store_prompt_profile)
+        self.prompt_system_edit.textChanged.connect(self._store_prompt_profile)
+        self.prompt_user_edit.textChanged.connect(self._store_prompt_profile)
+        self._rebuild_prompt_list(active=self.settings.prompt_profile)
+        self.prompt_list.setCurrentRow(0)
+        return page
+
+    def _prompt_rows(self) -> list[AP.PromptProfile]:
+        """The Prompts list in order: the built-in Default, then the user's."""
+        return [self._prompt_default, *self.settings.prompt_profiles]
+
+    def _prompt_label(self, profile: AP.PromptProfile) -> str:
+        name = (tr("{name} (built-in)").format(name=profile.name) if profile.builtin
+                else profile.name or tr("(unnamed)"))
+        rows = self._prompt_rows()
+        index = next((i for i, p in enumerate(rows) if p is profile), -1)
+        return name + ("  ✓" if index == self.prompt_active_combo.currentIndex() else "")
+
+    def _rebuild_prompt_list(self, *, active: str | None = None,
+                             active_index: int | None = None) -> None:
+        """Fill the list and the "new requests" combo (one entry per list
+        row, in the same order). The combo keeps *active_index*, else the
+        profile named *active*, else its current row."""
+        rows = self._prompt_rows()
+        if active_index is None:
+            if active is not None:
+                active_index = next((i for i, p in enumerate(rows)
+                                     if not p.builtin and p.name == active), 0)
+            else:
+                active_index = self.prompt_active_combo.currentIndex()
+        self.prompt_active_combo.blockSignals(True)
+        try:
+            self.prompt_active_combo.clear()
+            for profile in rows:
+                self.prompt_active_combo.addItem(
+                    profile.name if not profile.builtin
+                    else tr("{name} (built-in)").format(name=profile.name),
+                    "" if profile.builtin else profile.name)
+            self.prompt_active_combo.setCurrentIndex(
+                active_index if 0 <= active_index < len(rows) else 0)
+        finally:
+            self.prompt_active_combo.blockSignals(False)
+        row = self.prompt_list.currentRow()
+        self.prompt_list.blockSignals(True)
+        try:
+            self.prompt_list.clear()
+            for profile in rows:
+                self.prompt_list.addItem(self._prompt_label(profile))
+            if 0 <= row < len(rows):
+                self.prompt_list.setCurrentRow(row)
+        finally:
+            self.prompt_list.blockSignals(False)
+
+    def _mark_active_prompt(self, *_args) -> None:
+        for i, profile in enumerate(self._prompt_rows()):
+            item = self.prompt_list.item(i)
+            if item is not None:
+                item.setText(self._prompt_label(profile))
+
+    def _show_prompt_profile(self, row: int) -> None:
+        rows = self._prompt_rows()
+        if not 0 <= row < len(rows):
+            return
+        profile = rows[row]
+        self._loading = True
+        try:
+            self._prompt_current = None if profile.builtin else profile
+            self.prompt_name_edit.setText(profile.name)
+            self.prompt_system_edit.setPlainText(profile.system_prompt)
+            self.prompt_user_edit.setPlainText(profile.user_prompt)
+            for edit in (self.prompt_name_edit, self.prompt_system_edit, self.prompt_user_edit):
+                edit.setReadOnly(profile.builtin)
+            self.prompt_delete_button.setEnabled(not profile.builtin)
+        finally:
+            self._loading = False
+
+    def _store_prompt_profile(self, *_args) -> None:
+        if self._loading or self._prompt_current is None:
+            return
+        p = self._prompt_current
+        p.name = self.prompt_name_edit.text().strip()
+        p.system_prompt = self.prompt_system_edit.toPlainText()
+        p.user_prompt = self.prompt_user_edit.toPlainText()
+        index = 1 + next(i for i, q in enumerate(self.settings.prompt_profiles) if q is p)
+        item = self.prompt_list.item(index)
+        if item is not None:
+            item.setText(self._prompt_label(p))
+        # The combo follows a rename: its entry for this row gets the new name.
+        self.prompt_active_combo.setItemText(index, p.name)
+        self.prompt_active_combo.setItemData(index, p.name)
+
+    def _unique_prompt_name(self, base: str) -> str:
+        names = {p.name for p in self._prompt_rows()}
+        name, n = base, 1
+        while name in names:
+            n += 1
+            name = f"{base} {n}"
+        return name
+
+    def _append_prompt_profile(self, profile: AP.PromptProfile) -> None:
+        self.settings.prompt_profiles.append(profile)
+        self._rebuild_prompt_list()
+        self.prompt_list.setCurrentRow(len(self.settings.prompt_profiles))
+        self.prompt_name_edit.setFocus()
+
+    def add_prompt_profile(self) -> None:
+        """A new profile, starting from axross's own system prompt."""
+        self._append_prompt_profile(AP.PromptProfile(
+            self._unique_prompt_name(tr("Prompt profile")), self._prompt_default.system_prompt))
+
+    def duplicate_prompt_profile(self) -> None:
+        rows = self._prompt_rows()
+        row = self.prompt_list.currentRow()
+        if not 0 <= row < len(rows):
+            return
+        self._store_prompt_profile()
+        source = rows[row]
+        self._append_prompt_profile(AP.PromptProfile(
+            self._unique_prompt_name(f"{source.name} {tr('copy')}"),
+            source.system_prompt, source.user_prompt))
+
+    def delete_prompt_profile(self) -> None:
+        row = self.prompt_list.currentRow()
+        if not 1 <= row <= len(self.settings.prompt_profiles):
+            return  # the built-in Default stays
+        active = self.prompt_active_combo.currentIndex()
+        self.settings.prompt_profiles.pop(row - 1)
+        self._prompt_current = None
+        if active == row:
+            active = 0
+        elif active > row:
+            active -= 1
+        self._rebuild_prompt_list(active_index=active)
+        self.prompt_list.setCurrentRow(min(row, len(self.settings.prompt_profiles)))
+        self._show_prompt_profile(self.prompt_list.currentRow())
 
     # -- Access ----------------------------------------------------------------------
 
     def _access_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        # Independent of the master switch below: it limits every tab.
+        self.files_read_only_check = QCheckBox(tr("Files read-only in every tab"))
+        self.files_read_only_check.setToolTip(tr(
+            "Agents read files but change none: no writing, deleting or moving, no remote "
+            "commands, no writing tools of MCP servers or extensions. Enforced whatever a tab "
+            "chooses."))
+        layout.addWidget(self.files_read_only_check)
         self.axross_check = QCheckBox(tr("Let agents use axross functions"))
         self.axross_check.setToolTip(tr(
             "Tools axross runs itself, outside the agent's sandbox and with axross's rights. "
@@ -252,7 +480,10 @@ class AgentSettingsDialog(QDialog):
 
     def _ceiling(self) -> S.Access:
         """Access as the page shows it now (the Sessions page's ceiling)."""
-        access = S.Access(axross_functions=self.axross_check.isChecked())
+        access = S.Access(
+            axross_functions=self.axross_check.isChecked(),
+            files_read_only=self.files_read_only_check.isChecked(),
+        )
         for name, box in self._function_checks().items():
             setattr(access, name, box.isChecked())
         return access
@@ -852,6 +1083,12 @@ class AgentSettingsDialog(QDialog):
 
     def problems(self) -> list[str]:
         out = []
+        self._store_prompt_profile()
+        prompt_names = [p.name for p in self.settings.prompt_profiles]
+        for p in self.settings.prompt_profiles:
+            out.extend(p.problems())
+            if p.name and prompt_names.count(p.name) > 1:
+                out.append(tr("Two prompt profiles are named {name}.").format(name=p.name))
         names = [p.name for p in self.settings.sandboxes]
         for p in self.settings.sandboxes:
             if not p.name:
@@ -879,6 +1116,24 @@ class AgentSettingsDialog(QDialog):
                 )
         return list(dict.fromkeys(out))
 
+    def _general_values(self) -> dict:
+        """The General / Access / default-sandbox choices as the tabs show them."""
+        return {
+            "profile": self.profile_combo.currentData() or "",
+            "allow_bypass": self.bypass_check.isChecked(),
+            "mode": self.mode_combo.currentData() or "ask",
+            "max_steps": self.steps_spin.value(),
+            "max_tool_chars": self.chars_spin.value(),
+            "keep_sessions": self.keep_check.isChecked(),
+            "groups": tuple(
+                self.groups_list.item(i).text() for i in range(self.groups_list.count())
+                if self.groups_list.item(i).checkState() == Qt.CheckState.Checked
+            ),
+            "access": self._ceiling(),
+            "sandbox": self.default_sandbox_combo.currentData() or "",
+            "prompt_profile": self.prompt_active_combo.currentData() or "",
+        }
+
     def save(self) -> bool:
         self._store_sandbox()
         self._store_server()
@@ -887,16 +1142,8 @@ class AgentSettingsDialog(QDialog):
             QMessageBox.warning(self, tr("Agent Settings"), "\n".join(problems))
             return False
         s = self.settings
-        s.profile = self.profile_combo.currentData() or ""
-        s.allow_bypass = self.bypass_check.isChecked()
-        s.mode = self.mode_combo.currentData() or "ask"
-        s.max_steps = self.steps_spin.value()
-        s.max_tool_chars = self.chars_spin.value()
-        s.keep_sessions = self.keep_check.isChecked()
-        s.groups = tuple(self.groups_list.item(i).text() for i in range(self.groups_list.count())
-                         if self.groups_list.item(i).checkState() == Qt.CheckState.Checked)
-        s.access = self._ceiling()
-        s.sandbox = self.default_sandbox_combo.currentData() or ""
+        for name, value in self._general_values().items():
+            setattr(s, name, value)
         try:
             s.save(self._path)
         except OSError as exc:
@@ -918,6 +1165,84 @@ class AgentSettingsDialog(QDialog):
         self._save_sessions()
         self.saved.emit()
         return True
+
+
+
+class AgentSettingsPage(_AgentSettingsForm, QWidget):
+    """Edit > Settings… > Agent (Tools > Agent Settings… opens it)."""
+
+    #: Emitted after a successful save.
+    saved = pyqtSignal()
+    #: (server name, result line, tool names): a Test finished.
+    _tested = pyqtSignal(str, str, str)
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        settings_path=None,
+        llm_settings: LP.LLMSettings | None = None,
+        sessions=None,
+        store_session=None,
+    ) -> None:
+        QWidget.__init__(self, parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(
+            self._build_form(settings_path, llm_settings, sessions, store_session), 1
+        )
+        self._baseline = self._snapshot()
+
+    def _snapshot(self):
+        return (
+            repr(self._general_values()),
+            repr([p.to_dict() for p in self.settings.sandboxes]),
+            repr([server.to_dict() for server in self.settings.mcp_servers]),
+            repr([p.to_dict() for p in self.settings.prompt_profiles]),
+            tuple(sorted(self._tokens.items())),
+            repr(sorted(self._session_edits.items())),
+        )
+
+    def is_dirty(self) -> bool:
+        return self._snapshot() != self._baseline
+
+    def save(self) -> bool:
+        if not super().save():
+            return False
+        self._baseline = self._snapshot()
+        return True
+
+
+class AgentSettingsDialog(_AgentSettingsForm, QDialog):
+    """The agent's settings as a dialog of their own (Save / Cancel)."""
+
+    #: Emitted after a successful save.
+    saved = pyqtSignal()
+    #: (server name, result line, tool names): a Test finished.
+    _tested = pyqtSignal(str, str, str)
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        settings_path=None,
+        llm_settings: LP.LLMSettings | None = None,
+        sessions=None,
+        store_session=None,
+    ) -> None:
+        QDialog.__init__(self, parent)
+        self.setWindowTitle(tr("Agent Settings"))
+        self.resize(820, 560)
+        tabs = self._build_form(settings_path, llm_settings, sessions, store_session)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save_and_close)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(tabs, 1)
+        layout.addWidget(buttons)
+        add_close_corner(self)
 
     def _save_and_close(self) -> None:
         if self.save():

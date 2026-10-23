@@ -1,4 +1,8 @@
-"""Tools > Network & Proxy: the default proxy every "Default" profile uses."""
+"""Network & Proxy: the default proxy every "Default" profile uses.
+
+:class:`NetworkProxyPage` is the page of Edit > Settings… (Tools > Network
+& Proxy… opens it there); :class:`NetworkProxyDialog` is the same form as a
+dialog of its own."""
 
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import proxy_settings
+from core.i18n import tr
 from core.proxy import compose_proxy_type, parse_proxy_type
 from ui.close_corner import add_close_corner
 
@@ -110,96 +115,92 @@ class _ProbeThread(QThread):
         self.finished_with.emit(result.ok, result.stage, result.message, result.seconds)
 
 
-class NetworkProxyDialog(QDialog):
-    """Edit the default proxy, bypass list, PAC location and test them."""
+class _ProxyForm:
+    """The Network & Proxy form: default proxy, bypass list, PAC location
+    and a test. Shared by :class:`NetworkProxyPage` (Edit > Settings…) and
+    :class:`NetworkProxyDialog`; the class it is mixed into is the widget."""
 
-    def __init__(
-        self, profile_manager=None, parent: QWidget | None = None, path: Path | None = None
-    ):
-        super().__init__(parent)
-        self.setWindowTitle("Network & Proxy")
-        self.setMinimumWidth(520)
+    def _build_form(self, layout: QVBoxLayout, profile_manager, path: Path | None) -> None:
         self._profile_manager = profile_manager
         self._path = path
         self._probe: _ProbeThread | None = None
 
-        layout = QVBoxLayout(self)
         intro = QLabel(
-            "The default proxy is used by every connection profile set to "
-            "“Default proxy”, by Quick Connect and by scripts that name no proxy."
+            tr("The default proxy is used by every connection profile set to "
+               "“Default proxy”, by Quick Connect and by scripts that name no proxy.")
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        group = QGroupBox("Default proxy")
+        group = QGroupBox(tr("Default proxy"))
         form = QFormLayout(group)
 
         self._type = QComboBox()
-        self._type.addItem("None (connect directly)", "none")
+        self._type.addItem(tr("None (connect directly)"), "none")
         for label, value in TRANSPORT_CHOICES:
             self._type.addItem(label, value)
-        form.addRow("Type:", self._type)
+        form.addRow(tr("Type:"), self._type)
 
         self._auth = QComboBox()
         for label, _value in AUTH_CHOICES:
             self._auth.addItem(label)
-        form.addRow("Authentication:", self._auth)
+        form.addRow(tr("Authentication:"), self._auth)
 
         self._host = QLineEdit()
-        self._host.setPlaceholderText("proxy hostname or IP")
-        form.addRow("Host:", self._host)
+        self._host.setPlaceholderText(tr("proxy hostname or IP"))
+        form.addRow(tr("Host:"), self._host)
 
         self._port = QSpinBox()
         self._port.setRange(1, 65535)
         self._port.setValue(1080)
-        form.addRow("Port:", self._port)
+        form.addRow(tr("Port:"), self._port)
 
         self._username = QLineEdit()
-        self._username.setPlaceholderText("(optional)")
-        form.addRow("Username:", self._username)
+        self._username.setPlaceholderText(tr("(optional)"))
+        form.addRow(tr("Username:"), self._username)
 
         self._password = QLineEdit()
         self._password.setEchoMode(QLineEdit.EchoMode.Password)
-        self._password.setPlaceholderText("(unchanged)")
-        form.addRow("Password:", self._password)
+        self._password.setPlaceholderText(tr("(unchanged)"))
+        form.addRow(tr("Password:"), self._password)
 
-        self._store_pw = QCheckBox("Save password in keyring")
+        self._store_pw = QCheckBox(tr("Save password in keyring"))
         form.addRow("", self._store_pw)
 
         ca_row = QHBoxLayout()
         self._ca_file = QLineEdit()
-        self._ca_file.setPlaceholderText("CA bundle for an HTTPS proxy (empty = system store)")
+        self._ca_file.setPlaceholderText(tr("CA bundle for an HTTPS proxy (empty = system store)"))
         ca_row.addWidget(self._ca_file)
-        browse = QPushButton("Browse…")
+        browse = QPushButton(tr("Browse…"))
         browse.clicked.connect(self._browse_ca)
         ca_row.addWidget(browse)
-        form.addRow("CA file:", ca_row)
+        form.addRow(tr("CA file:"), ca_row)
 
         self._pac = QLineEdit()
-        self._pac.setPlaceholderText("http(s) URL or file path of a PAC script (optional)")
-        form.addRow("PAC script:", self._pac)
+        self._pac.setPlaceholderText(tr("http(s) URL or file path of a PAC script (optional)"))
+        form.addRow(tr("PAC script:"), self._pac)
         layout.addWidget(group)
 
-        bypass_group = QGroupBox("No proxy for")
+        bypass_group = QGroupBox(tr("No proxy for"))
         bypass_layout = QVBoxLayout(bypass_group)
         self._bypass = QPlainTextEdit()
         self._bypass.setPlaceholderText(
-            "One entry per line: hostnames, .example.com, *.lan, 10.0.0.0/8, host:port"
+            tr("One entry per line: hostnames, .example.com, *.lan, 10.0.0.0/8, host:port")
         )
         self._bypass.setFixedHeight(90)
         bypass_layout.addWidget(self._bypass)
         layout.addWidget(bypass_group)
 
-        test_group = QGroupBox("Test")
+        test_group = QGroupBox(tr("Test"))
         test_layout = QHBoxLayout(test_group)
         self._test_host = QLineEdit()
-        self._test_host.setPlaceholderText("target host, e.g. example.com")
+        self._test_host.setPlaceholderText(tr("target host, e.g. example.com"))
         test_layout.addWidget(self._test_host, stretch=1)
         self._test_port = QSpinBox()
         self._test_port.setRange(1, 65535)
         self._test_port.setValue(443)
         test_layout.addWidget(self._test_port)
-        self._test_btn = QPushButton("Test proxy")
+        self._test_btn = QPushButton(tr("Test proxy"))
         self._test_btn.clicked.connect(self._run_test)
         test_layout.addWidget(self._test_btn)
         layout.addWidget(test_group)
@@ -207,23 +208,14 @@ class NetworkProxyDialog(QDialog):
         self._test_result.setWordWrap(True)
         layout.addWidget(self._test_result)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        self._adopt_btn = buttons.addButton(
-            "Use for all profiles…", QDialogButtonBox.ButtonRole.ActionRole
-        )
+        self._adopt_btn = QPushButton(tr("Use for all profiles…"))
         self._adopt_btn.setEnabled(profile_manager is not None)
         self._adopt_btn.clicked.connect(self._adopt_for_all)
-        buttons.accepted.connect(self._save)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
 
         self._type.currentIndexChanged.connect(self._update_enabled)
         self._pac.textChanged.connect(self._update_enabled)
         self._load()
         self._update_enabled()
-        add_close_corner(self)
 
     # -- load / collect ------------------------------------------------
     def _load(self) -> None:
@@ -244,7 +236,7 @@ class NetworkProxyDialog(QDialog):
         self._bypass.setPlainText("\n".join(d.bypass))
 
     def collect(self) -> proxy_settings.ProxyDefaults:
-        """The dialog state as :class:`ProxyDefaults` (not validated)."""
+        """The form state as :class:`ProxyDefaults` (not validated)."""
         if self._type.currentIndex() == 0:
             kind = "none"
         else:
@@ -261,6 +253,14 @@ class NetworkProxyDialog(QDialog):
             pac_url=self._pac.text().strip(),
         )
 
+    def problems(self) -> list[str]:
+        """Why the form cannot be saved ([] when it can)."""
+        try:
+            proxy_settings.validate(self.collect())
+        except ValueError as exc:
+            return [str(exc)]
+        return []
+
     # -- enable / disable ---------------------------------------------
     def _update_enabled(self) -> None:
         index = self._type.currentIndex()
@@ -276,7 +276,7 @@ class NetworkProxyDialog(QDialog):
         self._ca_file.setEnabled(https_kind or has_pac)
 
     def _browse_ca(self) -> None:
-        name, _ = QFileDialog.getOpenFileName(self, "CA bundle", self._ca_file.text())
+        name, _ = QFileDialog.getOpenFileName(self, tr("CA bundle"), self._ca_file.text())
         if name:
             self._ca_file.setText(name)
 
@@ -287,7 +287,7 @@ class NetworkProxyDialog(QDialog):
     def _run_test(self) -> None:
         host = self._test_host.text().strip()
         if not host:
-            self._show_result(False, "Enter a target host to test, e.g. example.com.")
+            self._show_result(False, tr("Enter a target host to test, e.g. example.com."))
             return
         defaults = self.collect()
         try:
@@ -298,7 +298,7 @@ class NetworkProxyDialog(QDialog):
         if self._probe is not None and self._probe.isRunning():
             return
         self._test_btn.setEnabled(False)
-        self._show_result(None, "Testing…")
+        self._show_result(None, tr("Testing…"))
         # A typed password wins; otherwise resolve() reads the keyring entry.
         self._probe = _ProbeThread(
             defaults, self._typed_password(), host, self._test_port.value(), self
@@ -306,15 +306,14 @@ class NetworkProxyDialog(QDialog):
         self._probe.finished_with.connect(self._on_probe_done)
         self._probe.start()
 
-    def done(self, result: int) -> None:  # noqa: D102 - Qt override
-        # A probe still running must neither report to the closed dialog
-        # nor be destroyed with it (the window keeps this dialog until exit).
+    def _detach_probe(self) -> None:
+        """A probe still running must neither report to a closed form nor be
+        destroyed with it (the window keeps its children until exit)."""
         from ui.thread_lifetime import detach_running_thread
 
         if self._probe is not None:
             detach_running_thread(self._probe, self._probe.finished_with)
             self._test_btn.setEnabled(True)
-        super().done(result)
 
     def _on_probe_done(self, ok: bool, stage: str, message: str, seconds: float) -> None:
         self._test_btn.setEnabled(True)
@@ -323,32 +322,43 @@ class NetworkProxyDialog(QDialog):
         elif ok:
             self._show_result(True, f"{message} ({seconds:.2f} s)")
         else:
-            self._show_result(False, f"Failed at stage “{stage}”: {message}")
+            self._show_result(False, tr("Failed at stage “{stage}”: {message}").format(
+                stage=stage, message=message))
 
     def _show_result(self, ok: bool | None, text: str) -> None:
         prefix = "" if ok is None else ("✔ " if ok else "✘ ")
         self._test_result.setText(prefix + text)
 
-    def _save(self) -> None:
+    def apply_settings(self) -> bool:
+        """Validate and store the form; False (after a message) when it
+        could not be stored."""
         defaults = self.collect()
         try:
             proxy_settings.save(defaults, self._path)
         except (ValueError, OSError) as exc:
-            QMessageBox.warning(self, "Network & Proxy", str(exc))
-            return
+            QMessageBox.warning(self, tr("Network & Proxy"), str(exc))
+            return False
+        # The field reads "(unchanged)": left empty, the password stays what
+        # it was - typed for this session, or in the keyring.
         typed = self._typed_password()
-        # Without the keyring the typed password lives for this session, so
-        # real connections use what "Test proxy" used.
-        proxy_settings.set_session_password("" if defaults.store_password else typed)
-        if defaults.store_password and typed:
-            if not proxy_settings.set_password(typed):
+        if defaults.store_password:
+            # Moving to the keyring takes a password typed for this session along.
+            password = typed or proxy_settings.session_password()
+            proxy_settings.set_session_password("")
+            if password and not proxy_settings.set_password(password):
                 QMessageBox.warning(
-                    self, "Keyring Error", "Could not save the proxy password to the keyring."
+                    self,
+                    tr("Keyring Error"),
+                    tr("Could not save the proxy password to the keyring."),
                 )
-                return
-        elif not defaults.store_password:
+                return False
+        else:
+            # Without the keyring the typed password lives for this session, so
+            # real connections use what "Test proxy" used.
+            if typed:
+                proxy_settings.set_session_password(typed)
             proxy_settings.set_password("")
-        self.accept()
+        return True
 
     def _adopt_for_all(self) -> None:
         if self._profile_manager is None:
@@ -356,10 +366,10 @@ class NetworkProxyDialog(QDialog):
         profiles = self._profile_manager.all_profiles()
         reply = QMessageBox.question(
             self,
-            "Use for all profiles",
-            "Switch every profile whose protocol can use a proxy to the default proxy?\n"
-            "Their own proxy settings are kept but no longer used. Profiles that "
-            "reach their host through a ProxyCommand (jump host) keep it.",
+            tr("Use for all profiles"),
+            tr("Switch every profile whose protocol can use a proxy to the default proxy?\n"
+               "Their own proxy settings are kept but no longer used. Profiles that "
+               "reach their host through a ProxyCommand (jump host) keep it."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -368,5 +378,70 @@ class NetworkProxyDialog(QDialog):
         if changed:
             self._profile_manager.save()
         QMessageBox.information(
-            self, "Use for all profiles", f"{len(changed)} profile(s) now use the default proxy."
+            self,
+            tr("Use for all profiles"),
+            tr("{n} profile(s) now use the default proxy.").format(n=len(changed)),
         )
+
+
+class NetworkProxyPage(_ProxyForm, QWidget):
+    """Edit > Settings… > Network & Proxy."""
+
+    def __init__(
+        self, profile_manager=None, parent: QWidget | None = None, path: Path | None = None
+    ) -> None:
+        QWidget.__init__(self, parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._build_form(layout, profile_manager, path)
+        row = QHBoxLayout()
+        row.addWidget(self._adopt_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+        layout.addStretch(1)
+        self._baseline = self._snapshot()
+
+    def _snapshot(self):
+        return (self.collect(), self._typed_password())
+
+    def is_dirty(self) -> bool:
+        return self._snapshot() != self._baseline
+
+    def save(self) -> bool:
+        if not self.apply_settings():
+            return False
+        self._password.clear()
+        self._baseline = self._snapshot()
+        return True
+
+    def shutdown(self) -> None:
+        self._detach_probe()
+
+
+class NetworkProxyDialog(_ProxyForm, QDialog):
+    """The Network & Proxy form as a dialog of its own (Save / Cancel)."""
+
+    def __init__(
+        self, profile_manager=None, parent: QWidget | None = None, path: Path | None = None
+    ):
+        QDialog.__init__(self, parent)
+        self.setWindowTitle(tr("Network & Proxy"))
+        self.setMinimumWidth(520)
+        layout = QVBoxLayout(self)
+        self._build_form(layout, profile_manager, path)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.addButton(self._adopt_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        add_close_corner(self)
+
+    def done(self, result: int) -> None:  # noqa: D102 - Qt override
+        self._detach_probe()
+        super().done(result)
+
+    def _save(self) -> None:
+        if self.apply_settings():
+            self.accept()

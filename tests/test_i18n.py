@@ -404,3 +404,18 @@ def test_edge_a_stored_value_for_an_unsupported_language_is_ignored(tmp_path):
     path = tmp_path / "session.json"
     path.write_text(json.dumps({"window": {"language": "klingon"}}))
     assert stored_language(path) is None
+
+
+def test_sad_a_stored_language_that_is_no_text_is_ignored_not_a_crash(tmp_path):
+    # Found by tests/test_settings_matrix.py: a hand-edited "language": 5 (or
+    # a list) raised AttributeError out of stored_language(), which main.py
+    # calls before the window exists - axross did not start at all.
+    import json
+
+    from core.i18n import normalise_language, stored_language
+
+    path = tmp_path / "session.json"
+    for bad in (5, ["de"], {"de": 1}, True, 1.5):
+        path.write_text(json.dumps({"window": {"language": bad}}))
+        assert stored_language(path) is None, bad
+        assert normalise_language(bad) is None, bad

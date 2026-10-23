@@ -280,6 +280,24 @@ def _resolve_protocol_id(backend) -> str:
     return ""
 
 
+#: Protocols whose listing never leaves the machine: a poll costs a
+#: directory read or a dict lookup. Everything else is listed over a network
+#: (or USB, MTP: seconds per folder) on every poll.
+_CHEAP_TO_POLL = frozenset({"local", "ramfs", "sqlite"})
+
+
+def auto_refresh_by_default(backend) -> bool:
+    """Whether a pane on *backend* watches its folder before the user asks.
+
+    True for local and in-process backends and for protocols with a push
+    watcher (idle costs nothing). False for the rest: their watcher is a
+    PollingWatcher that lists the folder again every couple of seconds for
+    as long as the pane is open - on S3 or a cloud drive a paid,
+    rate-limited request. An unknown backend counts as remote."""
+    proto = _resolve_protocol_id(backend)
+    return proto in _CHEAP_TO_POLL or proto in _WATCHER_FACTORIES
+
+
 def watch(
     backend,
     path: str,

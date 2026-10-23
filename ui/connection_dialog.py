@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -29,9 +30,11 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend_registry import all_backends, init_registry
+from core.i18n import tr
 from core.profiles import SIMPLE_PASSWORD_PROTOCOLS, ConnectionProfile, ProfileManager
 from core.ssh_client import SSHSession, UnknownHostKeyError
 from ui.close_corner import add_close_corner
+from ui.features_dialog import offer_features
 from ui.network_proxy_dialog import (
     AUTH_CHOICES,
     TRANSPORT_CHOICES,
@@ -134,6 +137,9 @@ class ConnectionDialog(QDialog):
         for name in self._profile_manager.list_names():
             self._profile_combo.addItem(name)
         self._profile_combo.currentTextChanged.connect(self._on_profile_selected)
+        # Right click: delete the config shown (the Delete button's flow).
+        self._profile_combo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._profile_combo.customContextMenuRequested.connect(self._show_profile_menu)
         profile_layout.addWidget(self._profile_combo, stretch=1)
 
         self._btn_save_profile = QPushButton("Save")
@@ -161,8 +167,10 @@ class ConnectionDialog(QDialog):
         for info in backends:
             label = info.display_name
             if not info.available:
-                extra = info.required_extra or info.protocol_id
-                label += f"  (pip install axross[{extra}])"
+                if info.required_extra:
+                    label += f"  (pip install axross[{info.required_extra}])"
+                elif info.install_hint:
+                    label += f"  (needs {info.install_hint})"
             self._protocol_combo.addItem(label)
             self._protocol_ids.append(info.protocol_id)
         # Default to SFTP
@@ -1001,21 +1009,29 @@ class ConnectionDialog(QDialog):
             self._loaded_profile, _proxy_password_override=None, **fields
         )
 
-    def _validate(self) -> bool:
-        proto = self._selected_protocol()
-
-        # Check backend availability
+    def _validate_backend_available(self) -> bool:
+        """False (and Help > Features… offered) when the chosen backend's
+        dependencies are missing. A backend without a pip extra names the
+        system command it needs - never a made-up "axross[...]"."""
+        from core import features as F
         from core.backend_registry import get as get_backend
 
+        proto = self._selected_protocol()
         info = get_backend(proto)
-        if info and not info.available:
-            extra = info.required_extra or proto
-            QMessageBox.warning(
-                self,
-                "Validation",
-                f"{info.display_name} is not installed.\nInstall with: pip install axross[{extra}]",
-            )
+        if info is None or info.available:
+            return True
+        feature = next((f for f in F.collect() if f.key == f"backend:{proto}"), None)
+        how = F.how_to_get(feature) if feature is not None else (info.install_hint or "")
+        offer_features(
+            self, f"backend:{proto}",
+            tr("{name} is not installed. To get it: {how}").format(name=info.display_name, how=how),
+        )
+        return False
+
+    def _validate(self) -> bool:
+        if not self._validate_backend_available():
             return False
+        proto = self._selected_protocol()
 
         profile_name = self._profile_name.text().strip()
         host = self._host.text().strip()
@@ -1237,6 +1253,20 @@ class ConnectionDialog(QDialog):
 
         QMessageBox.information(self, "Saved", f"Profile '{profile.name}' saved.")
 
+    def _build_profile_menu(self) -> QMenu:
+        menu = QMenu(self)
+        delete = menu.addAction("Delete Connection Config…")
+        delete.setEnabled(self._profile_combo.currentText() != "(New Connection)")
+        delete.triggered.connect(lambda _checked=False: self._delete_profile())
+        return menu
+
+    def _show_profile_menu(self, pos) -> None:
+        menu = self._build_profile_menu()
+        try:
+            menu.exec(self._profile_combo.mapToGlobal(pos))
+        finally:
+            menu.deleteLater()
+
     def _delete_profile(self) -> None:
         name = self._profile_combo.currentText()
         if name == "(New Connection)":
@@ -1244,7 +1274,7 @@ class ConnectionDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "Delete Profile",
-            f"Delete profile '{name}'?",
+            f"Delete this profile?\n\n{name}",  # never markup in the first line
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:

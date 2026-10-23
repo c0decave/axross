@@ -8,6 +8,19 @@ LLM-Agent eigene Skripte schreiben und ausführen kann.
 
 [English](SCRIPTING.md) · [Deutsch](SCRIPTING_de.md) · [Español](SCRIPTING_es.md)
 
+**Inhalt**
+
+- [Wege, Code gegen axross laufen zu lassen](#wege-code-gegen-axross-laufen-zu-lassen)
+- [Das Scripts-Dock](#das-scripts-dock)
+- [Die `axross.*`-API](#die-axross-api)
+  - [Datei-Metadata](#datei-metadata)
+  - [Safety & Diagnostics](#safety--diagnostics)
+- [REPL-Slash-Commands](#repl-slash-commands)
+- [Mitgelieferte Beispiel-Skripte](#mitgelieferte-beispiel-skripte)
+- [MCP-Tool-Oberfläche](#mcp-tool-oberfläche)
+- [Skripte, die eine Maschine ausführt](#skripte-die-eine-maschine-ausführt)
+- [Siehe auch](#siehe-auch)
+
 ---
 
 ## Wege, Code gegen axross laufen zu lassen

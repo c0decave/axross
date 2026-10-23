@@ -51,10 +51,12 @@ FUSE.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import logging
 import os
 import posixpath
+import signal
 import stat as stat_mod
 import threading
 import time
@@ -1127,6 +1129,44 @@ def _stat_errno(exc: OSError) -> int:
 # --------------------------------------------------------------------------
 
 
+#: Signals whose handling libfuse touches: it installs handlers for those
+#: still at their default and, when the loop ends, sets them back to the
+#: default - SIGPIPE too, which Python ignores and libfuse never installed.
+_FUSE_SIGNALS = ("SIGHUP", "SIGINT", "SIGTERM", "SIGPIPE")
+
+
+@contextlib.contextmanager
+def preserved_signal_dispositions():
+    """Save the process's handling of :data:`_FUSE_SIGNALS` and restore it
+    on exit, from any thread (raw sigaction through libc: Python's
+    signal.signal works in the main thread only). Without it, an unmount
+    left SIGPIPE at its default and the next write to a dead pipe or
+    socket killed axross silently (status 141)."""
+    saved = []
+    libc = None
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        for name in _FUSE_SIGNALS:
+            number = getattr(signal, name, None)
+            if number is None:
+                continue
+            # An opaque buffer larger than any struct sigaction: read back
+            # and written as it is, never interpreted.
+            buffer = ctypes.create_string_buffer(512)
+            if libc.sigaction(int(number), None, buffer) == 0:
+                saved.append((int(number), buffer))
+    except (OSError, AttributeError) as exc:  # no libc sigaction (not POSIX)
+        log.debug("signal dispositions not saved: %s", exc)
+    try:
+        yield
+    finally:
+        for number, buffer in saved:
+            if libc.sigaction(number, buffer, None) != 0:
+                log.warning("could not restore the handling of signal %d", number)
+
+
 @dataclass
 class MountHandle:
     """Returned by :func:`mount`. Call ``.unmount()`` to release."""
@@ -1220,14 +1260,16 @@ def mount(
 
     def _loop() -> None:
         try:
-            FUSE(  # type: ignore[misc]
-                adapter,
-                mount_point,
-                foreground=True,
-                ro=not writeable,
-                nothreads=True,
-                allow_other=False,
-            )
+            # libfuse resets signal handling when its loop ends.
+            with preserved_signal_dispositions():
+                FUSE(  # type: ignore[misc]
+                    adapter,
+                    mount_point,
+                    foreground=True,
+                    ro=not writeable,
+                    nothreads=True,
+                    allow_other=False,
+                )
         except Exception as exc:  # noqa: BLE001 — log + die quietly
             log.warning("FUSE loop exited with %s", exc)
         finally:

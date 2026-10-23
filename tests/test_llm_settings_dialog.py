@@ -13,6 +13,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from core import agent as A  # noqa: E402
 from core import llm_profiles as LP  # noqa: E402
 
 
@@ -241,7 +242,8 @@ class DialogReviewFixesTest(_Qt):
         d._fetch_token += 1  # a fetch for profile a is under way
         pending = d._fetch_token
         d.profile_list.setCurrentRow(1)  # the user moves on to profile b
-        d._on_models(pending, ["a-only-model:7b"], "")  # profile a's answer arrives
+        # profile a's answer arrives (core.agent.model_inventory's entries)
+        d._on_models(pending, [A.ModelEntry("a-only-model:7b")], "")
         self.assertEqual(d.model_combo.count(), 0)
         self.assertEqual(d.model_combo.currentText(), "b1")
         self.assertTrue(d.save())
@@ -253,7 +255,7 @@ class DialogReviewFixesTest(_Qt):
         d = self.dlg()
         d.profile_list.setCurrentRow(0)
         d._fetch_token += 1
-        d._on_models(d._fetch_token, ["m1", "m2"], "")
+        d._on_models(d._fetch_token, [A.ModelEntry("m1"), A.ModelEntry("m2")], "")
         self.assertEqual([d.model_combo.itemText(i) for i in range(2)], ["m1", "m2"])
 
     def test_sad_server_text_is_shown_as_plain_text(self) -> None:
@@ -299,3 +301,54 @@ class DialogRemoteWarningTest(_Qt):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FirstProfileIsActiveTest(_Qt):
+    """Found while recording the feature video: a first profile saved
+    without "Use for analysis" left the Agent dock with "No LLM profile is
+    active" - the new user's first try failed."""
+
+    _fill = DialogTest._fill
+
+    def test_happy_the_first_profile_becomes_the_active_one(self) -> None:
+        d = self.dlg()
+        self._fill(d, name="Local Qwen", provider="openai",
+                   endpoint="http://127.0.0.1:18080/v1", model="m1", key="")
+        self.assertTrue(d.save())
+        s = LP.LLMSettings.load(self.path)
+        self.assertEqual(s.active, "Local Qwen")
+        self.assertEqual(s.active_profile().name, "Local Qwen")
+
+    def test_sad_a_chosen_active_profile_is_kept(self) -> None:
+        d = self.dlg()
+        self._fill(d, name="one", provider="openai", endpoint="http://127.0.0.1:1/v1", model="m")
+        self._fill(d, name="two", provider="openai", endpoint="http://127.0.0.1:2/v1", model="m")
+        d.make_active()  # "two" is the shown one
+        self.assertTrue(d.save())
+        self.assertEqual(LP.LLMSettings.load(self.path).active, "two")
+
+    def test_edge_deleting_the_active_one_makes_the_next_active(self) -> None:
+        d = self.dlg()
+        self._fill(d, name="one", provider="openai", endpoint="http://127.0.0.1:1/v1", model="m")
+        d.make_active()
+        self._fill(d, name="two", provider="openai", endpoint="http://127.0.0.1:2/v1", model="m")
+        d.profile_list.setCurrentRow(0)
+        d.delete_profile()
+        self.assertTrue(d.save())
+        self.assertEqual(LP.LLMSettings.load(self.path).active, "two")
+
+    def test_edge_no_profiles_no_active(self) -> None:
+        d = self.dlg()
+        self.assertTrue(d.save())
+        self.assertEqual(LP.LLMSettings.load(self.path).active, "")
+
+
+
+class NoGuessInCoreTest(unittest.TestCase):
+    """The Analysis dock offers no LLM while no profile is named active
+    (tests/test_analysis_dock.py); the dialog names the first one, the core
+    does not guess."""
+
+    def test_sad_a_single_unnamed_profile_is_not_active(self) -> None:
+        s = LP.LLMSettings([LP.LLMProfile(name="only")], "")
+        self.assertIsNone(s.active_profile())

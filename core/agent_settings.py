@@ -13,7 +13,8 @@
       "groups": ["metadata", "filetype", "archive"],
       "access": {"axross_functions": false,   # master switch: tools axross runs outside the sandbox
                  "remote_files": false, "saved_profiles": false, "remote_commands": false,
-                 "mcp_servers": true, "extensions": true},   # the ceiling of every tab
+                 "mcp_servers": true, "extensions": true,    # the ceiling of every tab
+                 "files_read_only": false},  # true: no tab changes a file
       "sandbox": "",              # sandbox profile of new tabs; "" = no sandbox
       "mcp_servers": [            # further MCP servers (core.mcp_client)
         {"name": "git", "transport": "stdio", "command": ["mcp-git"], "env": {},
@@ -24,6 +25,11 @@
         {"name": "Normal", "engine": "auto", "level": "normal",
          "hosts": ["db.example:5432"], "mounts": [{"path": "/srv/data", "mode": "ro"}],
          "image": "localhost/axross-agent:<version>"}
+      ],
+      "prompt_profile": "",       # prompt profile of new requests; "" = the built-in Default
+      "prompt_profiles": [        # system / user prompt profiles (core.agent_prompts)
+        {"name": "Terse", "system_prompt": "You operate axross ...",
+         "user_prompt": "Answer in one line: {task}"}
       ]
     }
 
@@ -43,6 +49,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from core.agent import DEFAULT_MAX_STEPS, DEFAULT_MAX_TOOL_CHARS
+from core.agent_prompts import PromptProfile, default_profile
 from core.agent_sandbox import SandboxProfile, default_profiles, sandbox_command
 from core.mcp_client import McpServerConfig
 
@@ -84,6 +91,9 @@ class Access:
     mcp_servers: bool = True
     #: Tools of axross extensions.
     extensions: bool = True
+    #: Files read-only in every tab: agents read files but change none
+    #: (core.agent.read_only), whatever a tab chooses.
+    files_read_only: bool = False
 
 
 @dataclass
@@ -100,6 +110,10 @@ class AgentSettings:
     sandbox: str = ""
     sandboxes: list[SandboxProfile] = field(default_factory=default_profiles)
     mcp_servers: list[McpServerConfig] = field(default_factory=list)
+    #: The prompt profile new requests use; "" is the built-in Default.
+    prompt_profile: str = ""
+    #: The user's prompt profiles (the built-in Default is not among them).
+    prompt_profiles: list[PromptProfile] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data) -> AgentSettings:
@@ -125,7 +139,7 @@ class AgentSettings:
         access = data.get("access")
         if isinstance(access, dict):
             for name in ("axross_functions", "remote_files", "saved_profiles", "remote_commands",
-                         "mcp_servers", "extensions"):
+                         "mcp_servers", "extensions", "files_read_only"):
                 if isinstance(access.get(name), bool):
                     setattr(out.access, name, access[name])
         if isinstance(data.get("sandboxes"), list):
@@ -146,6 +160,17 @@ class AgentSettings:
                 if server is not None and server.name not in (s.name for s in servers):
                     servers.append(server)
             out.mcp_servers = servers
+        if isinstance(data.get("prompt_profiles"), list):
+            prompts: list[PromptProfile] = []
+            for raw in data["prompt_profiles"]:
+                prompt = PromptProfile.from_dict(raw)
+                if prompt is not None and prompt.name not in (p.name for p in prompts):
+                    prompts.append(prompt)
+            out.prompt_profiles = prompts
+        if isinstance(data.get("prompt_profile"), str) and (
+            data["prompt_profile"] in (p.name for p in out.prompt_profiles)
+        ):
+            out.prompt_profile = data["prompt_profile"]
         if out.mode == "bypass" and not out.allow_bypass:
             out.mode = "ask"
         return out
@@ -155,7 +180,14 @@ class AgentSettings:
         data["groups"] = list(self.groups)
         data["sandboxes"] = [p.to_dict() for p in self.sandboxes]
         data["mcp_servers"] = [s.to_dict() for s in self.mcp_servers]
+        data["prompt_profiles"] = [p.to_dict() for p in self.prompt_profiles]
         return {"version": 1, **data}
+
+    def active_prompts(self) -> PromptProfile:
+        """The prompt profile new requests use: the chosen one, or the
+        built-in Default when none (or a gone one) is chosen."""
+        chosen = next((p for p in self.prompt_profiles if p.name == self.prompt_profile), None)
+        return chosen if self.prompt_profile and chosen is not None else default_profile()
 
     def sandbox_profile(self, name: str | None = None) -> SandboxProfile | None:
         """The sandbox profile *name* (default: new tabs'), None for none."""

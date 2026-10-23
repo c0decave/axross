@@ -1,7 +1,7 @@
 """A file pane becomes the active pane once the mouse rests in it.
 
-View > Activate Pane: "On Click", or after 1, 2 or 3 seconds of hovering
-(the default is 1 s). Stored as ``pane_activation`` in settings.json. The
+Edit > Settings > General > Activate a pane: "On Click", or after 0.5, 1, 2
+or 3 seconds of hovering (the default is 0.5 s). Stored as ``pane_activation`` in settings.json. The
 hover activation never takes the keyboard away from a text field: it moves
 keyboard focus only when that sat in another pane's file list.
 """
@@ -160,26 +160,36 @@ def test_edge_keyboard_focus_moves_from_another_list_not_from_a_text_field(app, 
     host.deleteLater()
 
 
-# --- the menu -------------------------------------------------------------
+# --- the setting in Edit > Settings > General ---------------------------------
 
 
-def test_happy_the_view_menu_offers_click_and_half_to_three_seconds(app):
-    from PyQt6.QtWidgets import QMenu
+def test_happy_settings_offer_click_and_half_to_three_seconds(app):
+    from PyQt6.QtCore import QEvent
 
     from ui.main_window import MainWindow
+    from ui.settings_dialog import SettingsDialog
 
-    class Window:
-        _build_pane_activation_menu = MainWindow._build_pane_activation_menu
-        _set_pane_activation = MainWindow._set_pane_activation
-
-    window, menu = Window(), QMenu()
-    window._build_pane_activation_menu(menu)
-    actions = window._pane_activation_actions
-    assert list(actions) == [PA.CLICK, 0.5, 1, 2, 3]
-    assert actions[0.5].isChecked() and not actions[2].isChecked()  # the default
-    assert actions[0.5].text() == "After 0.5 s in the Pane"
-    actions[2].trigger()
-    assert PA.activation() == 2
-    assert actions[2].isChecked() and not actions[0.5].isChecked()
-    actions[PA.CLICK].trigger()
-    assert PA.activation_delay_ms() is None
+    win = MainWindow()
+    win._reconnect_timer.stop()
+    try:
+        dialog = SettingsDialog(win, window=win)
+        combo = dialog.page("general").activation_combo
+        values = [combo.itemData(i) for i in range(combo.count())]
+        assert values == [PA.CLICK, 0.5, 1, 2, 3]
+        assert combo.currentData() == 0.5  # the default
+        assert combo.itemText(1) == "After 0.5 s in the Pane"
+        combo.setCurrentIndex(values.index(2))
+        assert dialog.apply()
+        assert PA.activation() == 2
+        combo.setCurrentIndex(values.index(PA.CLICK))
+        assert dialog.apply()
+        assert PA.activation_delay_ms() is None
+        again = SettingsDialog(win, window=win)
+        assert again.page("general").activation_combo.currentData() == PA.CLICK
+        for d in (dialog, again):
+            d.reject()
+            d.deleteLater()
+    finally:
+        win.close()
+        win.deleteLater()
+        app.sendPostedEvents(None, QEvent.Type.DeferredDelete)

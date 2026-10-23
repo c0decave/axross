@@ -22,7 +22,7 @@ import logging
 from collections import OrderedDict
 
 from PyQt6.QtCore import QItemSelectionModel, QModelIndex, QRect, QSize, Qt
-from PyQt6.QtGui import QPainter, QPixmap
+from PyQt6.QtGui import QFontMetrics, QPainter, QPixmap
 from PyQt6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemDelegate
 
 from core import media_collect as MC
@@ -75,16 +75,26 @@ class _TileDelegate(QStyledItemDelegate):
                 painter.drawPixmap(x, y, scaled)
             text_rect = QRect(rect.left(), pic_rect.bottom() + 2, rect.width(), _TEXT_HEIGHT - 2)
             name = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-            text = option.fontMetrics.elidedText(
+            # The model's font and colour (hidden entries: italic, muted or
+            # the user's colour) - the tile draws the name itself.
+            font = option.font
+            model_font = index.data(Qt.ItemDataRole.FontRole)
+            if model_font is not None:
+                font = model_font.resolve(option.font)
+            painter.setFont(font)
+            text = QFontMetrics(font).elidedText(
                 name, Qt.TextElideMode.ElideMiddle, text_rect.width()
             )
             selected = bool(option.state & QStyle.StateFlag.State_Selected)
-            role = (
+            colour = option.palette.color(
                 option.palette.ColorRole.HighlightedText
                 if selected
                 else option.palette.ColorRole.Text
             )
-            painter.setPen(option.palette.color(role))
+            brush = None if selected else index.data(Qt.ItemDataRole.ForegroundRole)
+            if brush is not None:
+                colour = brush.color()
+            painter.setPen(colour)
             painter.drawText(
                 text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, text
             )
@@ -151,16 +161,20 @@ class ThumbnailView(QListView):
         self._pane._start_drag()
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt override
-        self._pane.dragEnterEvent(event)
+        self._pane.dragEnterEvent(event, origin=self.viewport())
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
-        self._pane.dragMoveEvent(event, self._pane._folder_at(event.position().toPoint(), self))
+        self._pane.dragMoveEvent(
+            event, self._pane._folder_at(event.position().toPoint(), self), origin=self.viewport()
+        )
 
     def dragLeaveEvent(self, event) -> None:  # noqa: N802 - Qt override
         self._pane.dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
-        self._pane.dropEvent(event, self._pane._folder_at(event.position().toPoint(), self))
+        self._pane.dropEvent(
+            event, self._pane._folder_at(event.position().toPoint(), self), origin=self.viewport()
+        )
 
     # -- pictures -----------------------------------------------------------
     def _media_item(self, index: QModelIndex):

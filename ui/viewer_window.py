@@ -15,6 +15,11 @@
   never on a resize, and merged so every other key in the file stays.
 * A remembered geometry is clamped to the available screen on restore, so
   a window saved on a larger or detached monitor never opens off-screen.
+* :func:`show_independent` shows a viewer or editor (text, hex, image,
+  properties, checksum, ...) as a window of its own: non-modal, owned by
+  the main window, deleted when closed. ``QDialog.exec()`` made each of
+  them application-modal with a nested event loop, so an open hex window
+  froze the editor window and the main window until it closed.
 """
 
 from __future__ import annotations
@@ -345,6 +350,67 @@ def save_window_state(window: QWidget, name: str) -> None:
         log.warning("Could not save the %s viewer window state: %s", name, exc)
 
 
+# -- independent windows ---------------------------------------------------------
+
+#: Every window shown with show_independent that still exists.
+_INDEPENDENT: list[QWidget] = []
+
+
+def owner_window(widget: QWidget | None) -> QWidget | None:
+    """The outermost window *widget* lies in: the main window for a pane in
+    it and for a pane in a detached workspace window (whose parent is the
+    main window); *widget*'s own window when nothing is above it."""
+    top = widget.window() if widget is not None else None
+    while top is not None and top.parentWidget() is not None:
+        top = top.parentWidget().window()
+    return top
+
+
+def _forget(window: QWidget) -> None:
+    for index, other in enumerate(_INDEPENDENT):
+        if other is window:
+            del _INDEPENDENT[index]
+            return
+
+
+def show_independent(window: QWidget) -> QWidget:
+    """Show *window* - a viewer or editor dialog - as a window of its own:
+    non-modal (it blocks neither the main window nor any other viewer, and
+    the caller returns at once), deleted when it closes, raised. It stays
+    listed for :func:`close_independent_windows` until it is destroyed."""
+    window.setWindowModality(Qt.WindowModality.NonModal)
+    window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+    if not any(other is window for other in _INDEPENDENT):
+        _INDEPENDENT.append(window)
+        window.destroyed.connect(lambda _obj=None, w=window: _forget(w))
+    window.show()
+    window.raise_()
+    window.activateWindow()
+    return window
+
+
+def independent_windows(owner: QWidget | None = None) -> list[QWidget]:
+    """The windows shown with show_independent that still exist - all of
+    them, or those *owner* (a main window) owns."""
+    alive = [w for w in _INDEPENDENT if not sip.isdeleted(w)]
+    _INDEPENDENT[:] = alive
+    if owner is None:
+        return list(alive)
+    return [w for w in alive if owner_window(w.parentWidget()) is owner]
+
+
+def close_independent_windows(owner: QWidget) -> bool:
+    """Close every open window *owner* owns, each asking about its unsaved
+    changes as when closed by hand. False - and the rest stay open - as
+    soon as one is kept open."""
+    for window in independent_windows(owner):
+        if sip.isdeleted(window) or not window.isVisible():
+            continue
+        if not window.close():
+            return False
+    return True
+
+
 __all__ = [
     "DEFAULT_SIZES",
     "EMULATED_MAXIMIZE",
@@ -353,14 +419,18 @@ __all__ = [
     "VIEWERS_KEY",
     "allow_maximize",
     "clamp_to_screen",
+    "close_independent_windows",
+    "independent_windows",
     "install_window_keys",
     "is_maximized",
     "leave_fullscreen",
     "load_state",
     "maximize_shortcut",
     "normal_geometry",
+    "owner_window",
     "restore_window_state",
     "save_window_state",
+    "show_independent",
     "toggle_fullscreen",
     "toggle_maximized",
     "WM_GRACE_MS",

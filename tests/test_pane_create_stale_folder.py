@@ -137,15 +137,17 @@ class DirSizeDuringFolderLoadTest(_Base):
         gate = self.fs.hold(str(self.root / "b"))
         if load_finishes:
             self.pane.navigate_async(str(self.root / "b"))
-        with mock.patch("ui.file_pane.QMessageBox.information") as info:
-            self.pane._calculate_dir_size()
-            gate.set()  # the load (if any) and the walk both go on now
-            self.assertTrue(self.settle())
-            end = time.time() + 5
-            while not info.called and time.time() < end:
-                self.app.processEvents()
-                time.sleep(0.005)
-        return info.call_args[0][2]
+        self.pane._calculate_dir_size()
+        gate.set()  # the load (if any) and the walk both go on now
+        self.assertTrue(self.settle())
+        end = time.time() + 5
+        while getattr(self.pane, "_size_dialog", None) is None and time.time() < end:
+            self.app.processEvents()
+            time.sleep(0.005)
+        dialog = self.pane._size_dialog  # the result table (ui.dir_size_dialog)
+        self.addCleanup(dialog.close)
+        name, size = dialog.displayed_rows()[0][:2]
+        return f"{name}: {size}"
 
     def test_happy_size_of_the_selected_folder(self) -> None:
         self.assertEqual(self.run_size(load_finishes=False), "b: 6 B")
@@ -154,9 +156,10 @@ class DirSizeDuringFolderLoadTest(_Base):
         self.assertEqual(self.run_size(load_finishes=True), "b: 6 B")
 
     def test_edge_nothing_selected_measures_nothing(self) -> None:
-        with mock.patch("ui.file_pane.QMessageBox.information") as info:
-            self.pane._calculate_dir_size()
-        info.assert_not_called()
+        self.pane._calculate_dir_size()
+        self.app.processEvents()
+        self.assertIsNone(self.pane._size_job)
+        self.assertIsNone(getattr(self.pane, "_size_dialog", None))
 
 
 if __name__ == "__main__":

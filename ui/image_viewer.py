@@ -1,4 +1,4 @@
-"""Modal image viewer — zoom, pan, rotate, next/prev.
+"""Image viewer window — zoom, pan, rotate, next/prev.
 
 Opened from the file pane via F3 / double-click on an allowlisted
 image MIME. Decoding routes through :mod:`core.previews` so the
@@ -79,6 +79,12 @@ class ImageViewerDialog(QDialog):
         VW.restore_window_state(self, "image")
         self._build_ui()
         self._load_current()
+
+    @property
+    def loaded(self) -> bool:
+        """Whether an image is shown; a viewer whose first image failed to
+        decode said why and is not shown."""
+        return self._original is not None
 
     # ------------------------------------------------------------------
     # UI

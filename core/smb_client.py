@@ -20,11 +20,11 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import IO
 
+from core import removal_cancel
 from core.backend import SessionLifecycle
 from core.client_identity import SMB_CLIENT_NAME
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from models.file_item import FileItem
-from security.protocol_line_split import split_lf_only_stream
 
 log = logging.getLogger(__name__)
 
@@ -543,6 +543,7 @@ class SmbSession(SessionLifecycle):
                 ) from exc
             children.append((item, child))
         for item, child in children:
+            removal_cancel.checkpoint(child)  # the pane's Cancel stops here
             if item.is_link:
                 # Never descend through a link: its target may lie outside
                 # the tree being deleted. Only the link itself goes.
@@ -554,6 +555,7 @@ class SmbSession(SessionLifecycle):
                 self._rmdir_recursive(child, depth + 1)
             else:
                 smbclient.remove(self._unc(child), **self._kw)
+            removal_cancel.removed(child)
         smbclient.rmdir(self._unc(path), **self._kw)
 
     def rename(self, src: str, dst: str) -> None:
@@ -617,75 +619,30 @@ class SmbSession(SessionLifecycle):
 
     @staticmethod
     def shares_list(
-        host: str, *, username: str = "", password: str = "", timeout: float = 10.0
+        host: str, *, username: str = "", password: str = "", timeout: float = 10.0,
+        domain: str = "", port: int = 445,
     ) -> list[dict]:
         """Enumerate shares published by ``host``. Static method so a
         script can browse before mounting a specific share.
 
-        Implementation: shells out to the system ``smbclient -L``
-        (samba-client package). Pure-Python NetShareEnum via DCE-RPC
-        over IPC$ would be possible with smbprotocol but adds ~400 LOC;
-        every Linux distro that ships SMB tools also ships ``smbclient``,
-        so the shellout is a fair trade.
+        Implementation: NetShareEnum over the SRVSVC pipe through impacket
+        (:func:`core.smb_shares.list_shares`) - no ``smbclient`` binary, so
+        the password never reaches a child process.
 
-        Returns one dict per share ``{name, type, comment}`` where
-        ``type`` is ``Disk``, ``Printer``, ``IPC``, or whatever the
-        server reports.
+        Returns one dict per share ``{name, type, comment, special}`` where
+        ``type`` is ``Disk``, ``Printer``, ``Device`` or ``IPC`` and
+        ``special`` marks the hidden admin shares (``C$``, ``IPC$``).
 
-        Raises ``OSError`` when ``smbclient`` is missing.
+        Raises ``ValueError`` for a bad host, ``PermissionError`` for a
+        refused logon, ``OSError`` when the host cannot be reached or
+        impacket is missing.
         """
-        import shutil as _shutil
-        import subprocess as _sp
+        from core.smb_shares import list_shares
 
         if "\r" in host or "\n" in host:
             raise ValueError("SMB shares_list host must not contain CR/LF")
-        binary = _shutil.which("smbclient")
-        if not binary:
-            raise OSError(
-                "shares_list requires the system 'smbclient' binary (install samba-client / samba)"
-            )
-        from core.subprocess_env import clean_child_env
-
-        cmd = [binary, "-L", f"//{host}", "-g"]
-        env = clean_child_env()
-        env.pop("PASSWD", None)
-        if username:
-            # Never "-U user%password": argv is world readable in /proc
-            # and ps, and smbclient scrubs it only after startup. smbclient
-            # reads the PASSWD environment variable instead (smbclient(1)),
-            # which only this user can see. It splits "-U" at "%" itself,
-            # so a "%" in the name would turn the rest into a password.
-            if "%" in username:
-                raise ValueError("SMB shares_list username must not contain '%'")
-            cmd += ["-U", username]
-            env["PASSWD"] = password
-        else:
-            cmd += ["-N"]  # no auth
-        try:
-            proc = _sp.run(cmd, capture_output=True, text=True, timeout=float(timeout), env=env)
-        except _sp.TimeoutExpired as exc:
-            raise OSError(f"smbclient -L {host} timed out") from exc
-        if proc.returncode != 0:
-            stderr = (proc.stderr or proc.stdout).strip() or "smbclient -L returned non-zero"
-            raise OSError(f"smbclient -L {host}: {stderr}")
-        # ``-g`` (grepable) emits ``Type|Name|Comment`` lines; rows
-        # without ``Disk|`` / ``Printer|`` / ``IPC|`` prefix are skipped.
-        out: list[dict] = []
-        for line in split_lf_only_stream(proc.stdout):
-            parts = line.split("|", 2)
-            if len(parts) < 2:
-                continue
-            kind = parts[0].strip()
-            if kind not in ("Disk", "Printer", "IPC"):
-                continue
-            out.append(
-                {
-                    "name": parts[1].strip(),
-                    "type": kind,
-                    "comment": parts[2].strip() if len(parts) > 2 else "",
-                }
-            )
-        return out
+        return list_shares(host, username=username, password=password, domain=domain,
+                           port=port, timeout=timeout)
 
     def _query_security(self, unc: str) -> bytes:
         """The raw security descriptor of *unc* (owner, group, DACL):

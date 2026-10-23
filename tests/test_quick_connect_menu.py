@@ -84,11 +84,14 @@ def _right_click(menu, action):
 # --- happy -----------------------------------------------------------------
 
 
-def test_happy_the_right_click_menu_lists_the_three_entries_in_order(window) -> None:
+def test_happy_the_right_click_menu_lists_the_entries_in_order(window) -> None:
     menu = _menu(window)
     profile = menu.profile_of(_entry(menu, "alpha"))
     labels = [a.text() for a in menu.build_profile_menu(profile).actions()]
-    assert labels == ["Connect", "Connect in Background", "Edit Config…"]
+    # Delete Connection Config… (punch list item 27) sits apart, after a separator.
+    assert labels == [
+        "Connect", "Connect in Background", "Edit Config…", "", "Delete Connection Config…"
+    ]
     menu.close()
 
 

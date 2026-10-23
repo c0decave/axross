@@ -204,7 +204,7 @@ class SessionSaveTest(_WindowStateTest):
         # Compact is read at start like the theme (test_compact_mode_persists);
         # what is saved is the window's state, here switched off again.
         self.assertTrue(win._compact_mode)
-        win._compact_action.setChecked(False)
+        win.set_compact_mode(False, store=False)
         self.close()
         data = json.loads(self.session.read_text())
         self.assertEqual(data["window"]["language"], "sv")
@@ -275,7 +275,9 @@ class LayoutOnStartTest(_WindowStateTest):
         win = self.win
         self.connects = self.watch(mock.patch.object(win._connection_manager, "connect"))
         self.async_connects = self.watch(mock.patch.object(win, "_run_connect_async"))
-        self.prompts = self.watch(mock.patch.object(self.MW.QInputDialog, "getText"))
+        from PyQt6.QtWidgets import QInputDialog
+
+        self.prompts = self.watch(mock.patch.object(QInputDialog, "getText"))
         self.dialogs = [
             self.watch(mock.patch.object(self.MW.QMessageBox, name))
             for name in ("information", "warning", "critical", "question")
@@ -519,21 +521,22 @@ class LayoutOnStartTest(_WindowStateTest):
         from PyQt6.QtCore import Qt
 
         win = self.start_window()
-        self.assertTrue(win._restore_on_start_action.isChecked())
+        self.assertTrue(win.current_window_prefs().restore_layout_on_start)
         win._split_pane(Qt.Orientation.Horizontal)
-        win._restore_on_start_action.trigger()  # the user switches it off
+        # The user switches it off (Edit > Settings > General).
+        win.set_restore_on_start(False)
         stored = json.loads(self.session.read_text())
         self.assertIs(stored["window"]["restore_layout_on_start"], False)
         self.close_window()
 
         win = self.start_window()
         self.assertFalse(self.restored)
-        self.assertFalse(win._restore_on_start_action.isChecked())
+        self.assertFalse(win.current_window_prefs().restore_layout_on_start)
         self.assert_default_layout(win)
         # Switched back on, the next start restores again.
         win._split_pane(Qt.Orientation.Horizontal)
-        win._restore_on_start_action.trigger()
-        self.assertTrue(win._restore_on_start_action.isChecked())
+        win.set_restore_on_start(True)
+        self.assertTrue(win.current_window_prefs().restore_layout_on_start)
         shape = _shape(win._root_splitter)
         self.close_window()
         win = self.start_window()
@@ -546,7 +549,7 @@ class LayoutOnStartTest(_WindowStateTest):
             restore_layout_on_start="no",
         )
         win = self.start_window()
-        self.assertTrue(win._restore_on_start_action.isChecked())
+        self.assertTrue(win.current_window_prefs().restore_layout_on_start)
         self.assertTrue(self.restored)
 
     # --- edge ------------------------------------------------------------

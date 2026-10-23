@@ -32,6 +32,17 @@ protokollspezifische Optionen. Sensible Felder (Passwörter,
 OAuth-Secrets, Azure-Connection-Strings) gehen in den OS-Keyring; die
 Profil-JSON selbst enthält nie Klartext-Credentials.
 
+- **Fehlende Features.** *Help > Features…* listet jedes optionale
+  Feature - Verbindungen, Dateianalyse und Archive, externe Tools wie
+  ripgrep, rsync oder qemu-img, Sleuth Kit, TestDisk / PhotoRec und
+  VBoxManage der Forensic- und VirtualBox-Extensions - als installiert
+  oder fehlend, mit dem Weg dahin.
+  *Install Selected* startet `python -m pip install …` in der Python,
+  die axross ausführt, nach einer Rückfrage mit dem Befehl (Ausgabe im
+  Log, meist ohne Neustart); ein Frozen-Build verlinkt den
+  axross-full-Download desselben Releases; ein Tool zeigt den
+  Paketbefehl dieses Systems zum Kopieren. Ein Backend mit fehlenden
+  Abhängigkeiten oder eine Analyse ohne sift bietet dasselbe Fenster an.
 - **Host-Key-Verifizierung.** Erstkontakt bei SSH zeigt einen
   SHA-256-Fingerprint-Dialog vor dem Connect; vertraute Keys
   persistieren in `~/.ssh/known_hosts`.
@@ -64,13 +75,48 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
 - Aktives Pane bekommt blauen Rahmen; das **Ziel**-Pane (Kopierziel)
   bekommt einen grünen. Letztes fokussiertes Pane wird Ziel.
 - Ein Pane wird aktiv, wenn die Maus 0,5 s darin ruht.
-  **View → Activate Pane** stellt 0,5, 1, 2 oder 3 s ein, oder **On Click**.
+  **Edit → Settings… → General → Activate a pane** stellt 0,5, 1, 2 oder
+  3 s ein, oder **On Click**.
   Der Tastaturfokus folgt nur aus der Dateiliste eines anderen Panes,
   nie aus einem Textfeld.
 - **Alt+Links / Alt+Rechts** durchschreiten Pane-Historie;
   **Tab** / **Shift+Tab** in einer Dateiliste wechseln das Pane.
 - Drag-and-Drop zwischen Panes startet einen Transfer (lokal↔remote,
   remote↔remote, cross-Protokoll).
+
+### Workspaces — mehrere Layouts, auf mehreren Bildschirmen
+
+Ein Workspace ist ein eigenes, benanntes Pane-Layout. **Workspace → New
+Workspace → With File List** (**Ctrl+Alt+N**) öffnet einen mit einem
+lokalen Pane, **With Terminal** (**Ctrl+Alt+Shift+N**) einen mit einer
+lokalen Shell; ab dem zweiten stehen die Workspaces als Tabs über den
+Panes. **Ctrl+Alt+PgDown /
+PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
+
+- **Mehrere Shells:** **Workspace → Add Terminal Pane** (auch im
+  Rechtsklick-Menü des Tabs) legt eine weitere lokale Shell in den
+  Workspace, neben die Panes, die schon da sind.
+- **Umbenennen:** Doppelklick auf den Tab, sein Rechtsklick-Menü oder
+  **Workspace → Rename Workspace…**.
+- **Detach to Window** (Workspace-Menü oder Rechtsklick auf den Tab)
+  legt den Workspace in ein eigenes Fenster — etwa auf einen anderen
+  Bildschirm. Schließt man das Fenster, kommt der Workspace als Tab
+  zurück.
+- **Pane verschieben:** **Workspace → Move Pane to Workspace** schickt
+  das aktive Pane in einen anderen (oder neuen) Workspace; oder den
+  Pane-Header auf ein Pane eines anderen Workspace oder Fensters ziehen.
+  File-Panes und Terminal-Panes lassen sich gleich ziehen (ein
+  Terminal-Pane auch über seinen ⇄-Button); hält man ein gezogenes Pane
+  eine halbe Sekunde über einen Workspace-Tab, öffnet sich dieser Tab —
+  so erreicht ein Pane auch einen Workspace im Hintergrund.
+- **Close Workspace** schließt ihn mit seinen Panes (nach Rückfrage);
+  schließt das letzte Pane eines Workspace, geht der Workspace mit. Ein
+  Workspace bleibt immer.
+- Ein Layout-Preset (**View → Layout Preset**) ersetzt nur die Panes
+  des aktuellen Workspace.
+- Alle Workspaces — Namen, Reihenfolge, der aktuelle, Layouts mit ihren
+  Terminals und Ordnern, welche abgelöst sind und wo ihre Fenster stehen
+  — kommen beim nächsten Start zurück (siehe unten).
 
 ### Das Layout kommt beim Start zurück
 
@@ -94,7 +140,8 @@ des Placeholders, auf seinen gespeicherten Ordner. Bei einem Terminal
 Passwort, kein Prompt). Der Restore führt keine Scripts und keine
 Extensions aus, und der Paranoid Security Mode bleibt unberührt.
 
-**File > Restore Layout on Start** (standardmäßig an) schaltet das ab;
+*Restore the layout of the last session on start* (**Edit → Settings… →
+General**, standardmäßig an) schaltet das ab;
 die Wahl landet sofort in `session.json`, und ein Start zeigt dann das
 Default-Layout mit einem Pane. Eine fehlende, unlesbare oder ungültige
 `session.json` startet ebenfalls mit dem Default-Layout; der Grund steht
@@ -109,13 +156,18 @@ untere Dock zeigt Fortschritt, Throughput und ETA. Transfers laufen in
 Worker-Threads und überleben einen abgewiesenen Dialog oder ein
 geschlossenes Pane.
 
-- **Atomare Semantik.** Jeder Schreibvorgang geht in eine Sibling-
-  Tempdatei (`.tmp-<hex>.tmp`) und wird am Ende reingerannt. Auf
+- **Atomare Semantik.** Jeder Schreibvorgang geht in eine versteckte
+  Sibling-Tempdatei (`.<name>.part-<job>-<fingerprint>`) und wird am
+  Ende reingerannt. Auf
   S3 / Azure / Dropbox / GDrive / OneDrive / IMAP / Rsync ist der
   Upload selbst schon atomar; sonst ist der Rename der Commit-Punkt.
 - **Resume.** Fehlgeschlagene Transfers können fortgesetzt werden;
-  die Teilbytes auf dem Ziel werden wiederaufgenommen.
-- **Retry.** „Retry Failed" wiederholt jeden Fehler-Transfer der Queue.
+  die Teilbytes auf dem Ziel werden wiederaufgenommen. Ein Transfer,
+  der an einem vollen Ziel scheitert, löscht seine Teildatei.
+- **Retry.** „Retry Failed" wiederholt jeden Fehler-Transfer der Queue,
+  jeden genau einmal.
+- **Cancel All** stoppt auch eine Kopie oder einen Move, dessen
+  Ordner-Walk noch läuft: keine seiner Dateien kommt in die Queue.
 - **Verify.** Pro-Job-Flag `verify_checksum` re-hasht das Ziel nach
   dem Upload und lehnt bei Mismatch ab.
 
@@ -135,7 +187,7 @@ native Protokoll sie nicht kennt.
 | `core.encrypted_overlay` | AES-256-GCM at-rest, PBKDF2-HMAC-SHA256 mit 200 k Iterationen. |
 | `core.cas` | Content-Addressable-Layer: SQLite-Index `(backend, path) → checksum`, Duplikat-Erkennung, `ax-cas://<algo>:<hex>`-URLs. |
 | `core.snapshot_browser` | Uniforme Versionshistorie über S3, Dropbox, GDrive, OneDrive, Azure Blob. |
-| `core.metadata_index` | Offline-SQLite-Suche nach Name / Ext / Größe / mtime. |
+| `core.metadata_index` | Offline-SQLite-Suche nach Name / Ext / Größe / mtime. Eine Datei: `$AXROSS_METADATA_DB`, sonst `$XDG_DATA_HOME/axross/metadata.sqlite`, sonst `~/.local/share/axross/metadata.sqlite` (ein Index, der schon dort liegt, bleibt in Gebrauch). Gefüllt nur über *Index Active Folder…*, nicht durchs Browsen — Details im Handbuch, Abschnitt *Metadata-Index*. |
 | `core.previews` | Lokaler Bild-Thumbnailer mit MIME-Allowlist, Größenkappen, Qt-Allocator-Gate. F3 / Doppelklick. |
 | `core.archive` | Sichere Entpackung von zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Zip-Slip-/Bomb-/Lying-Metadata-Guards; `.7z` braucht das `[archive]`-Extra. |
 | `core.elevated_io` | `pkexec`-gated lokales Lesen für `/etc/shadow` & Co. — Axross hält selbst keine Privilegien. „Open as root…"-Kontextmenü. |
@@ -146,16 +198,20 @@ native Protokoll sie nicht kennt.
 
 | Aktion | Trigger | Was passiert |
 |---|---|---|
+| Disk Image… | Rechtsklick (eine `.img .raw .dd .iso .qcow2 .vdi .vmdk .vhd(x) .e01 …`-Datei) | Container (qcow2, VDI, VMDK, VHD/VHDX, E01), Partitionstabelle (MBR mit logischen Partitionen, GPT) sowie Dateisystem und Label jedes Volumes, in reinem Python über jedes Backend gelesen. Ein lokales Image mountet ein Volume über ein Loop-Device genau über dessen Bytes: zuerst `udisksctl` ohne Abfrage (wo polkit es erlaubt), dann `sudo`, dann `pkexec`, zuletzt `udisksctl` mit polkit-Abfrage. Das sudo-Passwort wird einmal gefragt und im Speicher gehalten, solange axross läuft (nie auf Platte, nie auf einer Kommandozeile); *Remember the sudo password* (*Edit → Settings… → Security*) schaltet das ab, dann gilt wieder `udisksctl` (polkit fragt), `pkexec`, `sudo` mit Abfrage jedes Mal. Im Paranoid Security Mode wird es nie gemerkt. sudo, pkexec und udisksctl laufen nur aus root-eigenen Systemordnern, nie aus `$PATH`. **Read-only**, außer *Allow writing* ist angehakt und bestätigt. Der Mount-Ordner öffnet sich in einem neuen Pane; *Unmount* gibt das Loop-Device zurück. Von axross angelegte Mounts bleiben über Neustarts bekannt (`~/.config/axross/mounts.json`, nur noch gemountete kommen zurück). *Identify File Type…* erkennt Disk-Images auch am Inhalt (GPT, MBR, virtuelle Disks) und bietet für so eine Zeile *Disk Image…* an, egal wie die Datei heißt. qcow2 / dynamisches VDI / VMDK erst konvertieren (`qemu-img convert -O raw`); ein festes VDI mountet direkt. |
+| Tags ▸ | Rechtsklick auf eine Auswahl | Einen farbigen Tag anhaken (Important und Review later gibt es; New Tag… legt einen an) für jede gewählte Datei auf jedem Backend; Punkte in der Namensspalte, die Tags im Tooltip; `tag:<name>` im Filterfeld zeigt nur diese Dateien; *View > Tagged Files…* listet die Dateien jedes Tags und springt hin. Gespeichert in `~/.config/axross/tags.json`. |
 | Neuer Ordner | Rechtsklick | `backend.mkdir(path)` auf jedem schreibfähigen Backend. |
 | Neue Datei… | Rechtsklick | 0-Byte-Datei via `backend.open_write(path).write(b"")`. |
 | Neuer Symlink… | Rechtsklick | Zwei Prompts. Sichtbar nur auf Backends mit `supports_symlinks=True`. |
 | Neuer Hardlink… | Rechtsklick | Gleiche Form; Cross-Device → `OSError(EXDEV)`. |
 | Find in Index | `Strg+Shift+F` | Suche im Offline-Metadaten-Index. |
+| Calculate Size (N dirs) | Rechtsklick auf Ordner | Gesamtgröße, Datei- und Ordnerzahl jedes gewählten Ordners, im Hintergrund über die Connection gezählt (*Cancel* in der Statuszeile); die Ergebnistabelle sortiert, und die Größen stehen in der Size-Spalte des Panes, bis der Ordner neu geladen wird. **Hidden Files zählen mit**: Dotfiles, versteckte Ordner und Einträge mit Hidden-Flag des Backends werden wie jeder andere Eintrag summiert — wie bei `du` —, egal ob das Pane sie anzeigt. Ein Link zählt mit seiner eigenen Größe und wird nie verfolgt; ein Ordner, der sich nicht lesen lässt, wird im Ergebnis genannt und übersprungen. |
+| Identify Files in This Folder… | Rechtsklick (auch auf freie Fläche); der Button im Fenster *Identify File Type* | Jede Datei direkt im Ordner (ein gewählter Ordner, sonst der angezeigte; Unterordner werden gezählt, nicht betreten; Hidden Files eingeschlossen) wie bei *Identify File Type…* am Inhalt erkannt, im Hintergrund und über die Connection — also auch in Remote-Panes. Begrenzt: höchstens 2000 Dateien, 64 KiB je Datei, 15 s Timeout je Lesevorgang, *Cancel*; `file(1)` wird nicht gefragt. Die Spalten sortieren: Name, erkannter Typ, MIME-Type, *mismatch*-Verdict, Größe, eine Notiz — bei einem Disk-Image Container, Partitionstabelle und Partitionszahl (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; dafür höchstens 4 MiB gelesen) — und für lokale Dateien mit installiertem `sift`-Extra die Art laut sift. Eine Zeile öffnet *Disk Image…* (Disk-Images) oder *Properties…*; Doppelklick nimmt das Passende. |
 | Duplicate Finder | View-Menü | Gruppieren nach Content-Hash, `ax-cas://…`-URLs kopieren; markierte Kopien in den axross-Trash verschieben, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. |
 | View Media… / View Selected Media… | Rechtsklick, View-Menü | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
 | Show / Remove / Export Metadata… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
 | Move to Trash | Rechtsklick | Universaler Papierkorb. Läuft wie Delete Permanently: im Hintergrund, mit derselben zweiten Rückfrage für Hidden Entries. |
-| Delete Permanently | Rechtsklick, `Del` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, Hidden Entries), dann die Rückfrage. Ein ausgewählter Ordner mit Hidden Entries (Dotfiles oder Hidden-Flag des Backends) - oder einer, den die Prüfung nicht vollständig lesen konnte - braucht ein zweites OK mit No als Default. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, Cancel hält nach dem laufenden Eintrag an (Gelöschtes bleibt gelöscht), Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
+| Delete Permanently | Rechtsklick, `Del` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, Hidden Entries), dann die Rückfrage. Ein ausgewählter Ordner mit Hidden Entries (Dotfiles oder Hidden-Flag des Backends) - oder einer, den die Prüfung nicht vollständig lesen konnte - braucht ein zweites OK mit No als Default. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, Cancel hält beim nächsten Eintrag an - auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird; die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einem Request löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) - Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
 | Show Trash… | Rechtsklick | Wiederherstellen / Permanent-Löschen-Dialog. |
 | Show Versions… | Rechtsklick | Snapshot-Browser — Save Version As, Restore as Current. |
 | Show Checksum… | Rechtsklick | Native-Checksum (S3 ETag, Drive md5, ssh sha256sum…) mit Stream-Hash-Fallback. |
@@ -181,17 +237,60 @@ native Protokoll sie nicht kennt.
   ein fehlender Ordner oder ein Remote, das nicht antwortet, wird
   gemeldet und nichts eingereiht, ein Remote-Bookmark ohne offene
   Connection verbindet zuerst und überträgt dann.
+- **Terminal-Bookmarks** öffnen eine Shell statt eines Ordners: eine
+  lokale Shell, eine auf einem SSH-Profile (SFTP/SCP) oder eine auf einem
+  bloßen Host — *SSH Host (no profile)*: Host oder IP-Adresse, Port (22),
+  User, optional eine Key-Datei —, optional mit Arbeitsverzeichnis, in
+  das gewechselt wird. Angelegt über den ☆-Button eines Terminal-Panes
+  (*Bookmark this Terminal*) oder *New Terminal Bookmark…* im
+  Rechtsklickmenü der Sidebar; ein Klick öffnet ein Terminal-Pane neben
+  dem aktiven Pane. Ein Bookmark enthält nie ein Credential: ein
+  Profile-Bookmark nennt das Profile; ein Host-Bookmark verbindet wie
+  Quick Connect — im Hintergrund, fragt bei unbekanntem Host-Key, ob er
+  vertraut werden soll (known_hosts, nie stillschweigend), nimmt die
+  Key-Datei oder einen laufenden ssh-agent, fragt das Passwort, wenn das
+  nicht reicht, und die Passphrase eines verschlüsselten Keys; nichts
+  Eingetippte wird gespeichert, der Proxy aus *Settings → Network & Proxy*
+  gilt. Ein fehlendes Profile, eines ohne Shell oder ein Host, der kein
+  Hostname ist, wird gemeldet, und nichts öffnet sich. Die Shell eines
+  Host-Bookmarks gehört nicht zum gespeicherten Layout.
 
 ## Editoren und Viewer
 
 Jeder Viewer, Editor und Dialog hat oben rechts zwei Buttons: [x]
 schließt ihn, der Button links daneben maximiert ihn über den ganzen
 Bildschirm und stellt die vorherige Größe wieder her. `Ctrl+M` tut
-dasselbe, ebenso der Maximize-Button der Titelleiste.
+dasselbe, ebenso der Maximize-Button der Titelleiste. Im Dialog
+verschiebt ein Ziehen mit der linken Maustaste auf dem Rest dieser
+oberen Zeile den Dialog, auf der Titelleiste eines floating Panels das
+Panel - auch wo der Window Manager keine Titelleiste zeichnet
+(spectrwm, andere Tiling-Setups) oder das Fenster maximiert hält
+(spectrwm-Layout `fullscreen`), und unter Wayland: axross lässt es dann
+vom Window Manager verschieben. Ein Doppelklick auf die Titelleiste
+eines floating Panels dockt es wieder an.
 
-- **Texteditor** (built-in) — für Dateien < 1 MB, mit Konflikt-
-  Erkennung beim Speichern.
-- **Hex-Editor** — read-only; nützlich für Triage auf Remote-Dateien.
+- **Texteditor** (built-in) — jede zum Bearbeiten geöffnete Datei ist
+  ein Tab eines Editor-Fensters (*Edit* / F4 im Pane, lokal oder
+  remote): Syntax-Highlighting (Pygments; die Sprache nach Name oder
+  `#!`-Zeile, in der Statusleiste änderbar), Zeilennummern, Suchen und
+  Ersetzen mit Regex, Case und ganzem Wort (Strg+F / Strg+H, F3), Gehe
+  zu Zeile (Strg+G), Umbruch, Zoom, Zeilenenden (LF / CRLF / CR) und
+  Encoding (UTF-8, UTF-8 BOM, Latin-1, UTF-16) unter *Format*, Save /
+  Save All. *File → New* (Strg+N) öffnet einen Tab ohne Datei, *Open…*
+  (Strg+O) lokale Dateien (Remote-Dateien öffnet ihr Pane), *Save As…*
+  (Strg+Umschalt+S) schreibt einen lokalen Tab in eine lokale Datei und
+  einen Remote-Tab in einen Pfad auf seinem Backend und fragt, bevor er
+  eine Datei ersetzt; Save All ist Strg+L. Enter übernimmt die
+  Einrückung der Zeile, nach `:` (Python, YAML) oder `{`
+  (Klammer-Sprachen) eine Ebene mehr. *Tools → Text Editor* öffnet das
+  Fenster ohne Datei. Ein Save behält das Zeilenende jeder unberührten Zeile, ein
+  BOM und geschützte Leerzeichen, schreibt atomar und fragt nach, wenn
+  die Datei seit dem Öffnen geändert wurde; das Pane mit dem Ordner
+  wird aktualisiert. Schließen mit ungespeicherten Änderungen fragt Save
+  / Discard / Cancel; der letzte geschlossene Tab schließt das Fenster,
+  rechts in der Menüleiste sitzen Maximize und [x]. Geöffnet werden Dateien bis zum Open-Size-Limit
+  (32 MB vorgegeben, *Edit → Settings… → Files & Panes*).
+- **Hex-Editor** — nützlich für Triage auf Remote-Dateien.
 - **Bild-Viewer** — F3 / Doppelklick, MIME-Allowlist, Größen-
   kappen.
 - **PDF** — F3 / Doppelklick öffnet das PDF allein im Media Viewer
@@ -230,6 +329,40 @@ dasselbe, ebenso der Maximize-Button der Titelleiste.
   `I` (oder der *Info*-Button) zeigt die Metadata des aktuellen
   Elements in einem Side-Panel, mit *Remove metadata* — auch im
   Bild-Viewer.
+- **Media Player** (mitgelieferte Extension, *Extensions → Manage
+  Extensions…*) — ein Dock, das MP3, WAV, Ogg Vorbis, FLAC, Opus, AAC
+  und mehr abspielt. Tracks kommen per Rechtsklick → *Play in Media
+  Player*, *Add…* oder per Drag & Drop von Dateien und Ordnern aus
+  einem Datei-Pane oder vom Desktop auf die Playlist dazu (Ordner
+  liefern ihre Audiodateien sortiert, höchstens 2000, 6 Ebenen tief;
+  was kein Audio ist, wird mit Hinweis übersprungen; Remote-Dateien
+  werden abseits des GUI-Threads in einen temporären Ordner kopiert,
+  je Datei höchstens 512 MB, je Drop 2 GB). Zeilen lassen sich per
+  Drag umsortieren; der laufende Track (fett, Play-Icon, im
+  Dock-Titel) spielt weiter. Spulen mit dem Positions-Slider (Klick
+  oder Ziehen, `1:23 / 4:56`). ⏮ startet den Track nach 3 s neu,
+  sonst geht es zurück; Shuffle spielt jeden Track einmal pro Runde,
+  Repeat ist off / all / one. Ein nicht abspielbarer Track wird
+  markiert und übersprungen. *Load…* / *Save…* lesen und schreiben
+  M3U-/M3U8-Playlists (UTF-8, relative Pfade für Tracks unter dem
+  Ordner der Playlist, `#EXTINF`-Titel und -Längen; URLs, fehlende
+  oder Nicht-Audio-Einträge werden übersprungen, Dateien über 1 MiB
+  oder mit NUL-Bytes abgelehnt; temporäre Kopien von Remote-Tracks
+  werden nicht gespeichert). Liste, aktueller Track samt Position,
+  Lautstärke, Mute, Shuffle und Repeat kommen beim nächsten Start
+  wieder (`~/.config/axross/media_player.json`, Mode 0600). Die
+  Lautstärke folgt einer wahrnehmungsgerechten (kubischen) Kurve;
+  Mute-Button. Tasten, solange der Player den Fokus hat: Space
+  Play/Pause, Enter spielt die markierte Zeile, Delete entfernt die
+  markierten Zeilen, Links / Rechts spulen 5 s (mit Shift 30 s),
+  Strg+Links / Strg+Rechts vorheriger / nächster Track, M Mute,
+  + / - Lautstärke. Mit numpy: 10-Band-Equalizer mit Presets (der
+  Pfeil links von *Equalizer* klappt die Band-Slider ein und gibt der
+  Playlist den Platz) und eine animierte Visualisierung: Spektrum,
+  gespiegeltes Spektrum, radiales Spektrum, Oszilloskop oder Stereo-VU-
+  Meter - ein Klick darauf wechselt zur nächsten. Gewählte
+  Visualisierung und eingeklappter Equalizer kommen beim nächsten Start
+  wieder.
 - **SSH-Terminal** — Tab-Dock neben der Transfer-Queue. Lokales PTY
   (`pty.fork()`) und remote-SSH-über-paramiko stehen beide bereit;
   die SSH-Variante reused die bestehende Verbindung.
@@ -258,7 +391,8 @@ Hintergrund mit Fortschritt und *Cancel*. In Bild- und Media-Viewer
 | PDF | pypdf, sonst QtPdf | Info-Dictionary, XMP-Streams, PieceInfo, frühere Revisionen (komplettes Neuschreiben) | — braucht das Extra `[metadata]` (`pip install 'axross[metadata]'`) |
 | Audio / Video | `ffprobe` | alle Tags und Kapitel, Data-Streams (GPS-Spuren von Kameras), das Cover-Bild von Audio-Dateien (`ffmpeg -c copy`, keine Neukodierung) | die Streams |
 
-**Wie geschrieben wird** — *Tools → Metadata Settings…*:
+**Wie geschrieben wird** — *Edit → Settings… → Metadata* (*Tools →
+Metadata Settings…* öffnet sie):
 
 - **In place** (Default): die Datei wird atomar ersetzt, das Original
   bleibt im axross-Trash. Ein Lauf — eine Datei oder ein ganzer
@@ -444,13 +578,43 @@ sie). Das Modell arbeitet mit denselben Tools wie der MCP-Server, im
 oben angezeigten Ordner (dem des aktiven Panes, wenn es lokale Dateien
 zeigt).
 
+**Ollama** betreibt ein Modell ohne weitere Angabe mit einem Context von
+4096 Tokens, und schon die Anweisungen und Tools des Agents brauchen
+2.000 bis 5.000 Tokens (5.259 mit *Allow changes to files*). Den Server
+mit `OLLAMA_CONTEXT_LENGTH=16384` starten oder `PARAMETER num_ctx 16384`
+in einem Modelfile setzen: Ollama kürzt einen Request, der nicht passt,
+ohne Meldung, und seine OpenAI-kompatible API nimmt keine Context-Größe
+an. Hat eine Antwort den Context gefüllt, sagt der Tab das.
+
 **Tabs.** Jeder Tab ist ein eigener Verlauf mit eigenem Modell,
 Protection-Mode, Sandbox, Ordner und Tools: „+" oder Ctrl+T öffnet
 einen, ein Doppelklick benennt ihn um. Mit *Keep tabs* (Tools > Agent
 Settings…) ist jeder Tab eine JSON-Datei in
 `~/.config/axross/agent/sessions/` (`0o600`) und kommt beim nächsten
-Start wieder. Ctrl+Enter sendet, Esc stoppt, Pfeil hoch/runter holt
-frühere Aufgaben zurück.
+Start wieder. Ctrl+Enter sendet, Esc oder Stop beendet die Aufgabe
+sofort - auch während das Modell noch an der Antwort schreibt (der
+Request wird abgebrochen, der Server hört auf zu generieren) - und
+Pfeil hoch/runter holt frühere Aufgaben zurück. Schreibt ein
+Reasoning-Modell seine ganze Antwort nur ins Reasoning (Qwen3 in LM
+Studio tut das manchmal), wird sie so gekennzeichnet angezeigt; endet
+ein Modell ganz ohne Antwort, steht das da.
+
+**Thinking.** Was ein Reasoning-Modell denkt, bevor es antwortet oder
+ein Tool aufruft (`reasoning_content` bzw. `reasoning` neben der
+Antwort, oder `<think>…</think>` an ihrem Anfang), steht getrennt von
+der Antwort: eine graue, kursive Zeile **▸ Thinking** mit dem ersten
+Satz. Ein Klick auf *Thinking* klappt den ganzen Text auf, ein zweiter
+wieder zu. Vorgelesen wird nur die Antwort. Gespeicherte Tabs behalten
+das Thinking, zugeklappt.
+
+**Die Lampe** in der Title-Bar des Docks zeigt, ob das LLM des Tabs
+antwortet: **grün** - der letzte Request an seinen Endpoint (eine
+Modell-Liste oder ein Request einer Aufgabe) hat geklappt; **orange** -
+einer läuft; **rot** - er ist gescheitert, es gibt kein Profil, oder der
+Endpoint ist remote und hat noch keinen Consent (gefragt wird erst bei
+der ersten Aufgabe). Der Tooltip nennt Endpoint, Modell und Grund; ein
+Klick prüft erneut. Die Prüfung holt im Hintergrund die Modell-Liste des
+Servers, nur solange das Dock sichtbar ist.
 
 **Protection-Modes** (je Tab):
 
@@ -478,8 +642,31 @@ dich etwas) und `update_plan` (eine Checkliste über dem Eingabefeld).
 
 **Topics ▸** füllt das Eingabefeld mit einer vorbereiteten Aufgabe —
 System inventory, Install or update software (im Plan-Mode), Service
-status, Collect logs, Disk usage, Summarise a folder, Read data out —
-zum Ergänzen und Absenden. Extensions können eigene hinzufügen.
+status, Collect logs, Disk usage, Summarise a folder, Read data out,
+Review a config folder, Free disk space (mit den Tools des Duplicate
+Finders) — zum Ergänzen und Absenden. Extensions können eigene
+hinzufügen.
+
+**Eigene Topics** („Work prompts"): Topics ▸ *+ New Topic…* öffnet ein
+leeres Formular, *Save This Task as Topic…* übernimmt das Eingabefeld,
+*Edit or Delete My Topics…* ändert oder löscht sie. Ein Topic speichert
+Titel, Slash-Command,
+den Prompt (`{folder}` und `{backend}` werden eingesetzt), den
+vorgeschlagenen Mode, was er braucht und welche Tool-Gruppen er
+anhakt, in `~/.config/axross/agent/work_prompts.json`. Jedes Topic hat
+einen Command: `/` im Eingabefeld zeigt sie (`/free-space`,
+`/review-config`, eigene); Text nach dem Command bleibt unter dem Prompt
+stehen. Ein Command füllt das Feld — du liest und sendest.
+
+**Prompts** (*Edit → Settings… → Agent → Prompts*): System-Prompt (die
+Regeln, die das Modell zuerst bekommt) und User-Prompt (ein Template für
+jede Aufgabe: `{task}` wird zum getippten Text, Text ohne `{task}` kommt
+davor, leer schickt die Aufgabe wie getippt) als benannte Profile.
+*Default* ist axross' eigener Prompt und lässt sich weder ändern noch
+löschen — *Duplicate* legt eine änderbare Kopie an. *Prompt profile of
+new requests* wählt das Profil für die nächste Anfrage jedes Tabs; der
+Tab ergänzt weiter Ordner, Plan-Mode und Vorlese-Regeln. Gespeichert in
+`~/.config/axross/agent/settings.json`.
 
 **axross-Funktionen** sind die Tools, die axross selbst für den Agent
 ausführt — außerhalb seiner Sandbox, mit den Rechten von axross:
@@ -573,13 +760,88 @@ Ein MCP-Client kann dem gleichen lokalen Modell mit `--mcp-tools agent`
 (`agent_run`) eine Aufgabe übergeben; dieses Modell kann nur lesen
 ([MCP_de.md](MCP_de.md) §9.9).
 
+### Mit dem Agent sprechen
+
+Der Button **🎤** im Tab spricht mit dem Agent, **🔊** liest seine
+Antworten vor. Sprache erkennt das LLM-Profil des Tabs (LLM Profiles,
+*Advanced*): lokal mit Whisper — nichts verlässt den Rechner — oder ein
+OpenAI-kompatibler Server (`/audio/transcriptions`; ein entfernter fragt,
+bevor er eine Aufnahme hört). Antworten spricht eine lokale Piper-Stimme.
+
+- **Mikrofon-Modi** (Settings > Voice): *Push-to-talk* (Button halten,
+  oder die Hold-Taste, Default **F9**, solange das Agent-Dock den Fokus
+  hat), *Toggle* (Klick startet, erneuter Klick oder eine Pause beendet)
+  und *Conversation* (nach jeder gesprochenen Antwort hört es wieder zu;
+  Klick auf den Button beendet).
+- **Erkannter Text** landet im Aufgabenfeld zum Lesen und Senden, oder
+  wird sofort gesendet (eine Conversation sendet immer).
+- **Was gesprochen wird:** nur die Antwort - keine Tool-Aufrufe, kein Code
+  (ein kurzer Satz sagt, dass Code angezeigt wird), keine URLs oder langen
+  Pfade. Stop, Esc, Tippen oder eine neue Aufgabe beenden es. Lehnt axross
+  einen Tool-Aufruf ab (Files read-only, nicht erlaubt, keine Permission),
+  sagt die Stimme das kurz; die erste Sprachnutzung einer Session grüßt.
+- **Stimme und Sprache:** männlich oder weiblich, Deutsch oder Englisch,
+  oder *der Antwort folgen*. In deutscher Sprache werden englische
+  IT-Begriffe (Server, Backup, Pull Request, …) englisch gesprochen; ein
+  Begriff, den die Antwort in `{Klammern}` schreibt, ebenso (die Klammern
+  werden nicht angezeigt).
+- **Einrichtung:** `pip install axross[voice]` (piper-tts, faster-whisper;
+  in axross-full enthalten), dann *Help > Features…*, Gruppe **Voice**:
+  Stimmen und ein Whisper-Modell herunterladen (gepinnte Checksummen,
+  nach `~/.local/share/axross/voice/`).
+- **Sicherheit:** Bestätigungen werden immer geklickt, nie gesprochen; im
+  paranoiden Security Mode ist das Mikrofon aus; Audio und Transkripte
+  bleiben im Speicher.
+
+## Settings
+
+**Edit → Settings…** (**Strg+,**; unter macOS im Application-Menü) bündelt
+alle Einstellungen von axross in einem Fenster: links die Kategorien,
+rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
+über ihren Namen findet (*sudo*, *proxy* oder *zoom* tippen).
+
+| Kategorie | Einstellungen |
+|---|---|
+| General | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane) |
+| Appearance | Theme, Compact Mode, Monochrome Icons, Schriftgröße (Zoom), Hidden Files hervorheben und ihre Farbe (eine auf dem Theme schwer lesbare Farbe erst nach Rückfrage) |
+| Files & Panes | Hidden Files zeigen, Open Size Limit, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und Temp-Dateien im RAM (gilt ab dem nächsten Start) |
+| Network & Proxy | Default-Proxy, Bypass-Liste, PAC-Script, ein Test |
+| LLM Profiles | Die LLM-Server von Agent- und Analysis-Dock; *Fetch models* öffnet eine Liste mit Größe, Parametern, Quantisierung und dem geladenen Modell, soweit der Server sie meldet |
+| Agent | General, Prompts, Access, Sandboxes, MCP Servers, Sessions |
+| Voice | Antworten vorlesen, gesprochene Sprache, Stimme, Mikrofon-Modus, Hold-Taste, erkannten Text einfügen oder senden, die Pause, die das Sprechen beendet |
+| Metadata | Wie Remove Metadata schreibt, vorher fragen |
+| Search | Gleichzeitig durchsuchte Hosts von *Find on Network Hosts*; wo Offline- und Duplicate-Index liegen |
+| Security | Paranoid Security Mode (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` im Environment gewinnt), sudo-Passwort merken |
+| Extensions | Welche Extensions eingeschaltet sind |
+
+**OK, Apply, Cancel** gelten auf jeder Seite gleich: geschrieben werden
+nur Seiten, deren Werte geändert wurden; OK und Apply prüfen zuerst jede
+geänderte Seite und speichern gar nichts, solange eine ein Problem hat
+(diese Seite wird gezeigt, das Problem steht darüber); dann wird jede
+geänderte Seite gespeichert und wirkt sofort. Cancel, Esc und das [x]
+verwerfen, was nicht übernommen wurde.
+
+*Tools → Network & Proxy…, LLM Profiles…, Agent Settings…, Metadata
+Settings…* und *Extensions → Manage Extensions…* öffnen das Settings-
+Fenster auf ihrer Seite. *View → Show Hidden Files* (**Strg+H**), *View →
+Theme* und *View → Zoom* bleiben schnelle Schalter; sie werden sofort
+gespeichert, wie die Seite.
+
 ## Konfigurationsdateien
 
 - `~/.config/axross/profiles.json` — Verbindungsprofile (`0o600`).
 - `~/.config/axross/bookmarks.json` — Bookmark-Bar.
 - `~/.config/axross/session.json` — Pane-Layout, Window-Geometry und
   Dock-Layout beim letzten Beenden; beim Start wiederhergestellt,
-  außer File > Restore Layout on Start ist aus.
+  außer *Restore the layout of the last session on start* (Settings >
+  General) ist aus. Das `window`-Objekt hält auch das Aussehen (Theme,
+  Compact, Monochrome Icons, Schriftgröße, Hidden Files) und die Sprache.
+- `~/.config/axross/settings.json` — kleine Einstellungen: Open Size
+  Limit, Pane-Aktivierung, Metadata-Schreibweise und -Nachfrage, sudo-
+  Passwort merken, gleichzeitig durchsuchte Hosts, der Security Mode.
+- `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — Default-
+  Proxy, LLM-Profile, eingeschaltete Extensions (Secrets im Keyring).
+- `~/.config/axross/agent/voice.json` — die Voice-Einstellungen (`0o600`).
 - `~/.config/axross/column_prefs.json` — Spaltenbreiten und
   ausgeblendete Spalten, eine Datei für alle Panes.
 - `~/.config/axross/agent/settings.json` — Agent Settings (Modes, Access,

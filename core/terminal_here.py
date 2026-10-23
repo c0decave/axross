@@ -67,6 +67,16 @@ def ssh_transport(backend):
         return None
 
 
+#: Connection profiles whose session carries an SSH transport a shell can
+#: be opened on (the terminal pane and terminal bookmarks use it).
+SHELL_PROTOCOLS: tuple[str, ...] = ("sftp", "scp")
+
+
+def profile_has_shell(profile) -> bool:
+    """Whether a saved connection *profile* can open a terminal."""
+    return getattr(profile, "protocol", "") in SHELL_PROTOCOLS
+
+
 def shell_kind(backend) -> str:
     """:data:`LOCAL`, :data:`SSH` or :data:`NONE` for a pane's backend."""
     from core.local_fs import LocalFS
@@ -103,11 +113,19 @@ def remote_cd_command(path: str) -> bytes:
     characters are refused: they would reach the remote tty's line
     discipline (``^C``, ``^U``, a newline ending the line early) before any
     quoting applies.
+
+    ``~`` and ``~/...`` (a terminal bookmark's folder is typed by hand) name
+    the remote home folder: the tilde stays unquoted so the remote shell
+    expands it, the rest is quoted. Every other path - all a pane sends are
+    absolute - is quoted whole.
     """
     if not path:
         raise ValueError("remote folder is empty")
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in path):
         raise ValueError(f"remote folder contains a control character: {path!r}")
+    if path == "~" or path.startswith("~/"):
+        rest = path[2:]
+        return (f" cd -- ~/{shlex.quote(rest)}\n" if rest else " cd -- ~\n").encode()
     return f" cd -- {shlex.quote(path)}\n".encode()
 
 

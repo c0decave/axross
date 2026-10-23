@@ -154,3 +154,138 @@ def test_sad_a_narrow_view_keeps_the_fill_column_readable():
     assert w[0] >= min(t.sizeHintForColumn(0), vp // 2), w
     for c in (1, 2):
         assert w[c] >= h.minimumSectionSize(), (c, w)  # elided, never gone
+
+
+# -- keep: a column that identifies the row is never squeezed away --------
+# Reported: "wenn man extension folder öffnet sieht man manchmal den namen
+# nicht der extension dafuer beschreibung und ob geladen". In the
+# Extensions list the description is the fill column; Name was one of the
+# "others" that share what is left in proportion to their content, so a
+# long description and a long status took its width (Name 48 px in a
+# 560 px Settings dialog, "Ch…").
+
+_EXT_ROWS = [
+    ["", "Chatty Extension With A Long Name", "1.0", "user", "x " * 120,
+     "no EXTENSION manifest " * 3],
+    ["", "Drives Overview", "1.0", "bundled", "A panel with every drive " * 6, "off"],
+]
+
+
+def _ext_table(rows=_EXT_ROWS):
+    from PyQt6.QtWidgets import QTableWidgetItem
+
+    t = QTableWidget(len(rows), 6)
+    t.setHorizontalHeaderLabels(["On", "Name", "Version", "Source", "Description", "Status"])
+    for r, row in enumerate(rows):
+        for c, text in enumerate(row):
+            t.setItem(r, c, QTableWidgetItem(text))
+    return t
+
+
+def _kept_need(t, col):
+    return min(t.sizeHintForColumn(col), t.viewport().width() // 3)
+
+
+@pytest.mark.parametrize("width", [900, 560, 400])
+def test_happy_a_kept_column_gets_its_content_before_the_others_share(width):
+    from ui.column_fit import ColumnFitter
+
+    t = _ext_table()
+    ColumnFitter(t, fill=4, keep=(1,))
+    _show(t, width)
+    w = _widths(t)
+    assert w[1] >= _kept_need(t, 1), (width, w)
+    assert all(x >= t.horizontalHeader().minimumSectionSize() for x in w), w
+
+
+def test_sad_without_keep_the_name_is_squeezed_the_reported_look():
+    """Negative control: the old fit gives Name less than it needs."""
+    from ui.column_fit import ColumnFitter
+
+    t = _ext_table()
+    ColumnFitter(t, fill=4)
+    _show(t, 560)
+    assert _widths(t)[1] < _kept_need(t, 1)
+
+
+def test_sad_keep_naming_a_missing_hidden_or_the_fill_column_does_not_fail():
+    from ui.column_fit import ColumnFitter
+
+    t = _ext_table()
+    t.setColumnHidden(3, True)
+    ColumnFitter(t, fill=4, keep=(1, 3, 4, 99))
+    _show(t, 560)
+    w = _widths(t)
+    assert w[1] >= _kept_need(t, 1)
+    assert t.horizontalHeader().isSectionHidden(3)
+
+
+def test_edge_a_dragged_kept_column_keeps_the_dragged_width():
+    from ui.column_fit import ColumnFitter
+
+    t = _ext_table()
+    fitter = ColumnFitter(t, fill=4, keep=(1,))
+    _show(t, 700)
+    t.horizontalHeader().resizeSection(1, 40)  # the user makes it narrow
+    APP.processEvents()
+    APP.processEvents()
+    assert 1 in fitter.user_sized
+    t.resize(500, 300)
+    APP.processEvents()
+    APP.processEvents()
+    assert _widths(t)[1] == 40
+
+
+def test_edge_a_short_kept_column_takes_no_more_than_its_content():
+    from ui.column_fit import ColumnFitter
+
+    rows = [["", "Ab", "1.0", "user", "x " * 120, "off"]]
+    t = _ext_table(rows)
+    ColumnFitter(t, fill=4, keep=(1,))
+    _show(t, 560)
+    h = t.horizontalHeader()
+    content = max(t.sizeHintForColumn(1), h.sectionSizeHint(1), h.minimumSectionSize())
+    assert _widths(t)[1] <= content
+
+
+@pytest.mark.parametrize(
+    "module, name_col",
+    [
+        ("ui/extensions_dialog.py", "1, 2, 3"),
+        ("ui/find_files_dialog.py", "COL_NAME"),
+        ("ui/metadata_search_dialog.py", "0"),
+        ("ui/cas_dialog.py", "COL_NAME"),
+    ],
+)
+def test_happy_views_whose_fill_is_not_the_name_keep_the_name(module, name_col):
+    """The same squeeze in every view where a path or description fills
+    and the name is one of the others."""
+    text = (ROOT / module).read_text(encoding="utf-8")
+    assert re.search(rf"ColumnFitter\([^)]*keep=\({name_col},?\)", text), module
+
+
+def test_happy_with_kept_columns_the_others_keep_their_header_label():
+    """A long description fills, a long error is the status: the fill gives
+    way so "Version" and "Status" stay readable instead of "…"."""
+    from ui.column_fit import ColumnFitter
+
+    t = _ext_table()
+    ColumnFitter(t, fill=4, keep=(1, 2, 3))
+    _show(t, 560)
+    h = t.horizontalHeader()
+    w = _widths(t)
+    for c in (2, 3, 5):  # Version, Source, Status
+        assert w[c] >= h.sectionSizeHint(c), (c, w)
+    assert sum(w) == t.viewport().width(), w
+
+
+def test_edge_when_not_even_the_labels_fit_the_share_stays_proportional():
+    from ui.column_fit import ColumnFitter
+
+    t = _ext_table()
+    ColumnFitter(t, fill=4, keep=(1, 2, 3))
+    _show(t, 300)
+    h = t.horizontalHeader()
+    w = _widths(t)
+    assert all(x >= h.minimumSectionSize() for x in w), w
+    assert w[1] >= _kept_need(t, 1), w

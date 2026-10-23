@@ -91,10 +91,19 @@ class MainWindowDialogsFreedTest(unittest.TestCase):
 
         self._assert_no_growth(ConnectionDialog, self.win._on_connect)
 
-    def test_happy_network_proxy_dialog_is_freed(self) -> None:
-        from ui.network_proxy_dialog import NetworkProxyDialog
+    def test_happy_settings_dialog_is_freed(self) -> None:
+        from ui.settings_dialog import SettingsDialog
 
-        self._assert_no_growth(NetworkProxyDialog, self.win._show_network_proxy)
+        for opener in (
+            self.win._show_network_proxy,
+            self.win._show_llm_profiles,
+            self.win._show_agent_settings,
+            self.win._show_metadata_settings,
+            self.win._show_extensions_dialog,
+            self.win.open_settings,
+        ):
+            with self.subTest(opener=opener.__name__):
+                self._assert_no_growth(SettingsDialog, opener)
 
     def test_happy_disk_usage_dialog_is_freed(self) -> None:
         from ui.disk_usage_dialog import DiskUsageDialog

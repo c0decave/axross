@@ -57,9 +57,24 @@ class LLMProfile:
     #: consent of an older version (``confirmed_host``, the host alone) is
     #: not read: it did not say for which scheme and port it was given.
     confirmed_origin: str = ""
+    #: Speech recognition for the Agent dock's microphone: "local"
+    #: (faster-whisper in a worker, nothing leaves the machine) or "server"
+    #: (an OpenAI-compatible ``POST {endpoint}/audio/transcriptions``).
+    stt_engine: str = "local"
+    #: The transcription server; "" = this profile's own endpoint.
+    stt_endpoint: str = ""
+    #: local: a Whisper model of core.voice_models ("" = base); server: the
+    #: model name it expects ("" = whisper-1).
+    stt_model: str = ""
 
     def resolved_endpoint(self) -> str:
-        return self.endpoint.strip() or DEFAULT_ENDPOINTS.get(self.provider, "")
+        """The endpoint in use: the typed one, or the provider's default. An
+        OpenAI-compatible server typed without a path means its ``/v1``
+        (LM Studio answers ``/models`` with an error object)."""
+        typed = self.endpoint.strip()
+        if not typed:
+            return DEFAULT_ENDPOINTS.get(self.provider, "")
+        return typed if self.provider == "ollama" else with_api_path(typed)
 
     def is_remote(self) -> bool:
         endpoint = self.resolved_endpoint()
@@ -101,28 +116,96 @@ class LLMProfile:
     def consent(self) -> None:
         self.confirmed_origin = self.consent_key()
 
+    # -- speech recognition --------------------------------------------------
+
+    def stt_resolved_endpoint(self) -> str:
+        typed = self.stt_endpoint.strip()
+        return with_api_path(typed) if typed else self.resolved_endpoint()
+
+    def transcription_url(self) -> str:
+        return self.stt_resolved_endpoint().rstrip("/") + "/audio/transcriptions"
+
+    def stt_server_model(self) -> str:
+        return self.stt_model.strip() or "whisper-1"
+
+    def stt_needs_consent(self) -> bool:
+        """A recording would go to a remote server (or through a proxy)
+        whose origin has no consent: the LLM's consent counts when the
+        transcription server is the same origin."""
+        if self.stt_engine != "server":
+            return False
+        probe = LLMProfile(name=self.name, provider="openai",
+                           endpoint=self.stt_resolved_endpoint(),
+                           confirmed_origin=self.confirmed_origin)
+        return probe.needs_consent()
+
+    def stt_host(self) -> str:
+        return LLMProfile(name=self.name, provider="openai",
+                          endpoint=self.stt_resolved_endpoint()).host()
+
+    def stt_problems(self) -> list[str]:
+        from core.voice_models import WHISPER_MODELS
+
+        out = []
+        if self.stt_engine not in STT_ENGINES:
+            out.append(f"unknown speech recognition {self.stt_engine!r}")
+        if self.stt_endpoint.strip() and not _http_url(self.stt_endpoint):
+            out.append("the transcription endpoint is not an http(s) URL")
+        if self.stt_engine == "local" and self.stt_model.strip() not in ("", *WHISPER_MODELS):
+            out.append(f"unknown local Whisper model {self.stt_model!r}")
+        return out
+
     def problems(self) -> list[str]:
         out = []
         if not self.name.strip():
             out.append("the name is empty")
         if self.provider not in PROVIDERS:
             out.append(f"unknown provider {self.provider!r}")
-        if self.endpoint.strip():
-            try:
-                parts = urlsplit(self.endpoint.strip())
-                valid = parts.scheme in ("http", "https") and bool(parts.hostname)
-                parts.port  # noqa: B018 - raises ValueError for a port that is no number
-            except ValueError:  # "http://[::1:1234", "http://h:99999"
-                valid = False
-            if not valid:
-                out.append("the endpoint is not an http(s) URL")
+        if self.endpoint.strip() and not _http_url(self.endpoint):
+            out.append("the endpoint is not an http(s) URL")
         if not 0 < self.timeout <= 3600:
             out.append("the timeout must be 1 s to 1 h")
         if not 0 <= self.temperature <= 2:
             out.append("the temperature must be 0 to 2")
         if not 1 <= self.max_output_tokens <= 1_000_000:
             out.append("max output tokens out of range")
-        return out
+        return out + self.stt_problems()
+
+
+#: Speech recognition of a profile (core.voice_worker / core.voice_stt).
+STT_ENGINES = ("local", "server")
+
+
+def with_api_path(endpoint: str) -> str:
+    """*endpoint* with ``/v1`` when it names no path at all (``http://h:1234``
+    or ``http://h:1234/``) - where every OpenAI-compatible server (LM Studio,
+    llama.cpp, vLLM, mlx-lm, OpenAI itself) serves its API. A path that is
+    given is kept as it is, and so is anything that is no http(s) URL."""
+    try:
+        parts = urlsplit(endpoint)
+    except ValueError:
+        return endpoint
+    if parts.scheme not in ("http", "https") or parts.path.strip("/") or parts.query:
+        return endpoint
+    return parts._replace(path="/v1", fragment="").geturl()
+
+
+def endpoint_problem(url: str) -> str:
+    """Why *url* cannot be an LLM endpoint ("" when it can)."""
+    if _http_url(url):
+        return ""
+    return (f"the endpoint {url!r} is not an http(s) URL; type it with http:// or https://, "
+            "e.g. http://192.168.1.10:1234/v1")
+
+
+def _http_url(text: str) -> bool:
+    try:
+        parts = urlsplit(text.strip())
+        valid = parts.scheme in ("http", "https") and bool(parts.hostname)
+        parts.port  # noqa: B018 - raises ValueError for a port that is no number
+    except ValueError:  # "http://[::1:1234", "http://h:99999"
+        return False
+    return valid
 
 
 #: Addresses that are this machine or its own network. Deliberately not
@@ -215,6 +298,10 @@ def _profile_from(raw) -> LLMProfile | None:
         if isinstance(value, expected):
             kw[f.name] = float(value) if f.type == "float" else value
     profile = LLMProfile(**kw)
+    if profile.stt_problems():
+        # The voice settings came later than the profile: an odd value
+        # there falls back to local recognition, it never drops the profile.
+        profile.stt_engine, profile.stt_endpoint, profile.stt_model = "local", "", ""
     return None if profile.problems() else profile
 
 

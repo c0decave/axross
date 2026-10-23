@@ -248,12 +248,20 @@ class TransferManager(QObject):
         self._queued_count = 0
         self._active_count = 0
         self._dirs_to_remove_after_move: list[tuple] = []  # (backend, dir_path)
+        # Move source folders the cleanup kept because something was still
+        # in them (a file whose move failed), deepest first. Retrying such
+        # a file puts the folders above it back on the cleanup list.
+        self._kept_move_dirs: list[tuple] = []  # (backend, dir_path)
         # A walk thread collects its jobs here instead of registering them;
         # the GUI thread registers them when the walk is done.
         self._local = threading.local()
-        # Walks in flight: [source_backend, dest_backend] per walk.
+        # Walks in flight: [source_backend, dest_backend, cancel event] per
+        # walk. cancel_all sets the event: the walk stops and queues nothing.
         self._walks: list[list] = []
         self._shut_down = False
+        # Cancel All presses so far: work that starts before it queues its
+        # jobs (the conflict check of F5 / F6) compares and drops them.
+        self._cancel_epoch = 0
         self._walk_done.connect(self._finish_walk)
 
         # Worker thread
@@ -409,6 +417,8 @@ class TransferManager(QObject):
         jobs = []
         dest_listing = _DestListings(dest_backend)
         for src_path in source_paths:
+            if self._walk_cancelled():
+                break
             sep = source_backend.separator()
             filename = src_path.rsplit(sep, 1)[-1] if sep in src_path else src_path
             try:
@@ -502,13 +512,16 @@ class TransferManager(QObject):
         builds the jobs; they are registered and queued on the GUI thread
         once it is done, in the order transfer_files would give them, and
         *on_done* gets them there. :meth:`busy` is True for both backends
-        meanwhile. After :meth:`shutdown` a walk's result is dropped."""
-        walk = [source_backend, dest_backend]
+        meanwhile. After :meth:`shutdown` a walk's result is dropped, and
+        after :meth:`cancel_all` too: then the walk stops listing, *on_done*
+        gets no jobs and a move removes no source folder."""
+        walk = [source_backend, dest_backend, threading.Event()]
         self._walks.append(walk)
 
         def run() -> None:
             self._local.pending = []
             self._local.move_dirs = []
+            self._local.cancelled = walk[2]
             jobs: list[TransferJob] = []
             try:
                 jobs = self.transfer_files(
@@ -526,6 +539,7 @@ class TransferManager(QObject):
                 payload = (walk, jobs, self._local.pending, self._local.move_dirs, move, on_done)
                 self._local.pending = None
                 self._local.move_dirs = None
+                self._local.cancelled = None
                 try:
                     self._walk_done.emit(payload)
                 except RuntimeError:  # the manager is gone (app quit)
@@ -540,11 +554,24 @@ class TransferManager(QObject):
             self._walks.remove(walk)
         if self._shut_down:
             return
-        for job, refusal in pending:
-            self._commit(job, refusal)
-        self._dirs_to_remove_after_move.extend(move_dirs)
-        if move and self._active_count == 0 and self._queued_count == 0:
-            self._cleanup_move_dirs()
+        if walk[2].is_set():
+            # Cancel All ran while the walk was listing: queuing its jobs
+            # now would carry out the transfer the user just cancelled.
+            log.info("Transfer walk cancelled: %d job(s) not queued", len(pending))
+            for job, refusal in pending:
+                if refusal is None:
+                    # Its operation was opened in the journal when it was
+                    # built; close it instead of leaving it open for good.
+                    job.status = TransferStatus.CANCELLED
+                    job.error_message = "Cancelled"
+                    TransferWorker._finish_journal(job, status="cancelled", error="Cancelled")
+            jobs = []
+        else:
+            for job, refusal in pending:
+                self._commit(job, refusal)
+            self._dirs_to_remove_after_move.extend(move_dirs)
+            if move and self._active_count == 0 and self._queued_count == 0:
+                self._cleanup_move_dirs()
         if on_done is not None:
             try:
                 on_done(jobs)
@@ -570,6 +597,11 @@ class TransferManager(QObject):
         self._queued_count += 1
         self.job_added.emit(job)
         self._worker.enqueue(job)
+
+    def _walk_cancelled(self) -> bool:
+        """True inside a background walk that Cancel All stopped."""
+        event = getattr(self._local, "cancelled", None)
+        return event is not None and event.is_set()
 
     def busy(self, backend: object) -> bool:
         """True while a job or a background walk still uses *backend*."""
@@ -684,6 +716,8 @@ class TransferManager(QObject):
             return jobs
 
         for item in items:
+            if self._walk_cancelled():
+                return jobs
             try:
                 safe_name = _safe_basename(item.name, source_backend, dest_backend)
                 src_path = safe_join(source_backend, source_dir, safe_name)
@@ -764,9 +798,22 @@ class TransferManager(QObject):
             log.info("Cancel requested for %s", job_id)
 
     def cancel_all(self) -> None:
+        """Cancel every pending or running job and every walk still
+        building jobs (see :meth:`transfer_files_in_background`); work that
+        has not reached the manager yet sees :attr:`cancel_epoch` change."""
+        self._cancel_epoch += 1
+        for walk in self._walks:
+            walk[2].set()
         for job in self._jobs.values():
             if job.status in (TransferStatus.PENDING, TransferStatus.ACTIVE):
                 job.cancel_event.set()
+
+    @property
+    def cancel_epoch(self) -> int:
+        """How often :meth:`cancel_all` ran: a caller that prepares a
+        transfer (a conflict check) notes it first and queues nothing when
+        it changed meanwhile."""
+        return self._cancel_epoch
 
     def get_job(self, job_id: str) -> TransferJob | None:
         return self._jobs.get(job_id)
@@ -787,14 +834,21 @@ class TransferManager(QObject):
         ]
 
     def retry_job(self, job_id: str) -> TransferJob | None:
-        """Retry a failed or cancelled job, resuming from partial data if possible."""
+        """Retry a failed or cancelled job, resuming from partial data if possible.
+
+        Once per job: the old row stays in the list as failed, and "Retry
+        Failed" would otherwise queue it again on every press. Its retry,
+        should that fail as well, can be retried in turn."""
         old_job = self._jobs.get(job_id)
         if not old_job:
             return None
         if old_job.status not in (TransferStatus.ERROR, TransferStatus.CANCELLED):
             return None
-        if not old_job.retryable:
+        if not old_job.retryable or old_job.retried:
             return None
+        old_job.retried = True
+        if old_job.move:
+            self._reclaim_kept_move_dirs(old_job.source_backend, old_job.source_path)
 
         new_job = TransferJob(
             source_path=old_job.source_path,
@@ -848,6 +902,8 @@ class TransferManager(QObject):
         ]
         for jid in to_remove:
             del self._jobs[jid]
+        # No failed move is left to retry, so no kept folder will empty.
+        self._kept_move_dirs.clear()
 
     def shutdown(self) -> None:
         self._shut_down = True  # a walk still running registers nothing
@@ -914,8 +970,26 @@ class TransferManager(QObject):
                 if not remaining:
                     backend.remove(dir_path)
                     log.info("Move: removed empty source directory %s", dir_path)
-                else:
-                    log.debug("Move: source directory %s not empty, keeping", dir_path)
+                    continue
+                log.debug("Move: source directory %s not empty, keeping", dir_path)
             except OSError as e:
                 log.warning("Move: could not remove source directory %s: %s", dir_path, e)
+            if not any(b is backend and d == dir_path for b, d in self._kept_move_dirs):
+                self._kept_move_dirs.append((backend, dir_path))
         self._dirs_to_remove_after_move.clear()
+
+    def _reclaim_kept_move_dirs(self, backend, source_path: str) -> None:
+        """Put the kept move folders that hold *source_path* back on the
+        cleanup list (a retry of its failed move may empty them)."""
+        sep = backend.separator() if backend is not None else "/"
+        sep = sep if isinstance(sep, str) and sep else "/"
+        above = [
+            entry for entry in self._kept_move_dirs
+            if entry[0] is backend and source_path.startswith(entry[1].rstrip(sep) + sep)
+        ]
+        if not above:
+            return
+        self._kept_move_dirs = [
+            e for e in self._kept_move_dirs if not any(e is a for a in above)
+        ]
+        self._dirs_to_remove_after_move.extend(above)

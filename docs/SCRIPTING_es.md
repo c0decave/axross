@@ -8,6 +8,19 @@ que permite a un agente LLM escribir y ejecutar sus propios scripts.
 
 [English](SCRIPTING.md) · [Deutsch](SCRIPTING_de.md) · [Español](SCRIPTING_es.md)
 
+**Contenido**
+
+- [Formas de ejecutar código contra axross](#formas-de-ejecutar-código-contra-axross)
+- [El dock Scripts](#el-dock-scripts)
+- [La API `axross.*`](#la-api-axross)
+  - [Metadata de ficheros](#metadata-de-ficheros)
+  - [Seguridad + diagnósticos](#seguridad--diagnósticos)
+- [Comandos slash del REPL](#comandos-slash-del-repl)
+- [Scripts de ejemplo incluidos](#scripts-de-ejemplo-incluidos)
+- [Superficie de herramientas MCP](#superficie-de-herramientas-mcp)
+- [Scripts que ejecuta una máquina](#scripts-que-ejecuta-una-máquina)
+- [Véase también](#véase-también)
+
 ---
 
 ## Formas de ejecutar código contra axross

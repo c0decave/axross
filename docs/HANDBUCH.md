@@ -95,9 +95,21 @@ axross funktioniert auch mit Basis-Installation.
 
 ### Start-Modi
 
+Aus einem Terminal gestartet gibt axross das Terminal sofort zurück: das
+Fenster läuft in einer eigenen Session im Hintergrund weiter, auf dem
+Terminal erscheint nichts, das Log geht wie immer in die Log-Datei.
+`--foreground`, `--verbose` und `--debug` bleiben im Vordergrund;
+`--script`, `--mcp-server`, `--mcp-list-tools`, `--version` und `--help`
+laufen ohnehin im Terminal, ebenso ein Start, dessen Ausgabe in eine Pipe
+oder Datei geht. Unter Linux ohne `DISPLAY`/`WAYLAND_DISPLAY` (SSH ohne
+X-Forwarding) bleibt axross ebenfalls im Vordergrund, damit die Meldung
+„no screen" im Terminal ankommt.
+
 ```bash
-axross                       # Normal-Start (GUI)
-axross --debug               # Mit Debug-Logging auf stderr
+axross                       # Normal-Start (GUI); aus einem Terminal im Hintergrund
+axross --foreground          # GUI, das Terminal bleibt belegt
+axross --verbose             # GUI im Vordergrund, Log (INFO) auch auf stderr
+axross --debug               # Mit Debug-Logging auf stderr (Vordergrund)
 axross --mcp-server          # Als MCP-Server auf stdio (siehe §9)
 axross --mcp-server --mcp-http 127.0.0.1:7331   # MCP als HTTP
 ```
@@ -377,6 +389,24 @@ Rechtsklick → "Show Checksum…". Bevorzugt native Backend-Checksums
 Wenn das Backend keinen bereitstellt, wird ein Stream-Hash via
 `open_read` berechnet — mit Fortschritts-Dialog und Cancel-Button.
 
+### Calculate Size
+
+Rechtsklick auf Ordner → "Calculate Size (N dirs)". Zählt Größe, Dateien
+und Ordner jedes gewählten Ordners im Hintergrund über die Connection
+(Cancel in der Statuszeile) und zeigt eine sortierbare Tabelle. **Hidden
+Files zählen mit** — Dotfiles, versteckte Ordner und Einträge mit
+Hidden-Flag des Backends, wie bei `du` —, auch wenn das Pane sie nicht
+anzeigt. Links zählen mit ihrer eigenen Größe und werden nicht verfolgt.
+
+### Identify Files in This Folder
+
+Rechtsklick (auch auf freie Fläche) → "Identify Files in This Folder…",
+oder der gleichnamige Button im Fenster *Identify File Type*. Erkennt jede
+Datei direkt im Ordner am Inhalt, Hidden Files eingeschlossen (höchstens 2000 Dateien, 64 KiB je
+Datei, abbrechbar), auch auf Remote-Connections; die Tabelle sortiert,
+Disk-Images zeigen Container, Partitionstabelle und Partitionszahl und
+öffnen per Zeile *Disk Image…*, jede Zeile *Properties…*.
+
 ---
 
 ## 7. Feature-Module
@@ -440,11 +470,87 @@ hält, gespeist beim Checksum-Berechnen. Features:
 ### Metadata-Index
 
 Noch ein lokaler SQLite-Index — diesmal für Name / Extension /
-Size / Mtime. Wird inkrementell gefüllt beim Navigieren.
+Size / Mtime. Gefüllt wird er nur über **Edit → Index Active Folder…**
+(oder den Button *Index Current Pane…* im Suchdialog): das Verzeichnis
+des aktiven Panes wird rekursiv eingelesen. Navigieren allein füllt
+ihn nicht. Gespeichert ist er in einer Datei:
+`$AXROSS_METADATA_DB`, sonst `$XDG_DATA_HOME/axross/metadata.sqlite`
+(wenn `XDG_DATA_HOME` ein absoluter Pfad ist), sonst
+`~/.local/share/axross/metadata.sqlite`. Ein Index, der schon am alten
+Ort liegt, bleibt in Gebrauch, solange am neuen keiner liegt — wer
+`XDG_DATA_HOME` setzt, verliert nichts. Der Duplikat-Index `cas.sqlite`
+folgt denselben Regeln (`$AXROSS_CAS_DB`); *Edit → Settings… → Search*
+zeigt beide Pfade, der Suchdialog den des Metadata-Index.
 
+- **Was drinsteht:** je Datei und Ordner eine Zeile — Connection,
+  voller Pfad, Name, Größe, Ordner ja/nein, Extension, Änderungszeit und
+  wann indexiert wurde. Kein Inhalt, keine Checksummen.
+- **Wie er gefüllt und aktualisiert wird:** rekursiver Walk über die
+  Connection (jedes Backend, Hidden Entries eingeschlossen), höchstens
+  50 Ebenen und 1 000 000 Einträge je Lauf, in Batches zu 500
+  geschrieben, abbrechbar (Indexiertes bleibt). Ein zweiter Lauf über
+  denselben Ordner aktualisiert die Zeilen; Zeilen von inzwischen
+  gelöschten Dateien entfernt die GUI **nicht** (das MCP-Tool
+  `index_build` mit `prune` tut es).
 - **`Ctrl+Shift+F`** → Suchdialog. Substring über Name, optional
   nach Extension / Min-Size / Max-Size / Zeitraum filterbar,
-  optional auf das Backend des aktiven Panes beschränkt.
+  optional auf das Backend des aktiven Panes beschränkt. Extension,
+  Größe und Datum nutzen SQLite-Indizes; ein Namens-Substring
+  (`LIKE '%…%'`) kann keinen nutzen und liest jede Zeile.
+- **Gemessen** auf der Entwicklungsmaschine mit `/usr` (290 872 Einträge,
+  lokale Platte, Maschine unter fremder Last): erster Lauf 125 s (rund
+  2 300 Einträge/s), zweiter Lauf 53 s, Indexdatei 98 MiB; eine
+  Namenssuche 0,4–1,2 s (jede Zeile wird gelesen; viele Treffer dauern
+  länger), eine Extension-Suche 37 ms. Gut für „wo lag die Datei" über
+  Connections, die gerade offline sind; eine Inhaltssuche ist er nicht
+  (das ist *Find Files → Contains*, live).
+- **Und sift?** sift ist ein Datei-*Analyzer*, keine Suchmaschine: es
+  baut keinen Index und hat keine Suche — Kommandozeile und API fassen
+  Dateien zusammen, gespeichert wird nur ein Cache der Zusammenfassungen,
+  nach dem Content-Hash der Datei. Ein besserer Index ist dort also nicht
+  zu holen.
+
+### Find Files
+
+**Edit → Find Files…** (`Alt+F7` / `Ctrl+Alt+F`, im Pane per Rechtsklick
+*Find in This Folder…*) sucht über mehrere Verzeichnisse auf allen
+offenen Connections gleichzeitig: nach Name (Text oder Pattern wie
+`*.jpg`, optional Regex), Inhalt (Text oder Regex, zeilenweise), Size,
+Datum und **Typen** — Images, Videos, Audio, Documents, Archives,
+Disk & VM images (dd/raw/img, ISO, qcow2, VDI, VMDK, VHD(X), E01, …),
+Crypto wallets (`wallet.dat`, Electrum, Ethereum-Keystores `UTC--…`,
+Exodus, Monero, MetaMask & Co.), Keys & certificates, Source code,
+Email, Databases. Optional auch **in Archiven** (zip, tar.*, gz/bz2/xz/zst,
+verschachtelt; 7z/rar nach Namen) und im Offline-Index. **Tag** beschränkt
+die Treffer auf Dateien mit diesem Tag (ein getaggtes Archiv zählt für
+seine Mitglieder); ein Smart Folder behält den Tag.
+
+Lokal arbeiten `fd` und `ripgrep` (`rg`), wenn sie installiert sind;
+sonst liefert ein eingebauter Walker dieselben Ergebnisse. Die
+Ergebnisse kommen laufend, *Stop* bricht ab, Doppelklick zeigt die
+Datei markiert im Pane. **Save as Smart Folder…** legt die Suche als
+Smart Folder in die Bookmarks; ein Klick darauf startet sie erneut.
+
+**Kann sift das schon?** Nein — Suchen über Ordner, nach Typ und in
+Archiven ist Find Files von axross selbst (`core.file_search`,
+`core.file_categories`, `core.archive`); sift sucht nicht. Was Find Files
+von sift nimmt: ist das `sift`-Extra installiert (`axross[sift]`), fragt
+der *Types*-Filter `sift.detect` nach lokalen Dateien, deren Name nichts
+verrät (keine Extension, die ein Preset kennt), und ordnet dessen Art
+(image, pdf, docx, archive, sqlite, email, source code, …) einem Preset
+zu. Remote-Dateien und Archiv-Member werden nur nach Name und Ordner
+typisiert. Einen Schalter gibt es nicht: ist sift da, wird es benutzt. In
+Archiven listet sift die Member in seiner Zusammenfassung (Analysis-Dock),
+durchsucht sie aber nicht; das macht *Inside archives* von Find Files.
+
+**Wo sind sifts Optionen?** *View → Panels → Analysis* (`Ctrl+Shift+I`)
+erklärt die gewählte Datei — ohne Modell automatisch, mit dem aktiven
+LLM-Profile auf *Analyse with LLM*. Der Button *LLM…* im Dock öffnet
+*Edit → Settings… → LLM Profiles* (die Modell-Server). *Help → Features…*
+zeigt, ob das sift-Extra installiert ist, und bietet die Installation an
+(`pip install axross[sift]`; ein Frozen Build bietet stattdessen den
+Download von axross-full). *Identify Files in This Folder…* zeigt sifts
+Art lokaler Dateien als eigene Spalte.
 
 Funktioniert offline — ein S3-Pane mit 10M Objekten braucht keine
 Online-Abfrage sobald einmal indiziert.
@@ -684,6 +790,7 @@ gehen.
 | `Ctrl+Shift+H`     | Pane horizontal splitten              |
 | `Ctrl+Shift+V`     | Pane vertikal splitten                |
 | `Ctrl+Shift+F`     | Find in Index (Metadata-Search)       |
+| `Alt+F7`, `Ctrl+Alt+F` | Find Files (Name, Typ, Inhalt, Archive) |
 | `F3` / Doppelklick | Viewer (Bild / Text / Hex)            |
 | `F5`               | Dateien zum Ziel-Pane kopieren        |
 | `F2`               | Umbenennen                            |
@@ -692,6 +799,7 @@ gehen.
 | `Alt+Left`         | Pfad-Historie: zurück                 |
 | `Alt+Right`        | Pfad-Historie: vor                    |
 | `Tab`              | Zum nächsten Pane wechseln            |
+| `Ctrl+,`           | Settings: alle Einstellungen nach Kategorien (Edit → Settings…) |
 
 ---
 
@@ -768,10 +876,11 @@ policykit-1` bzw. `pacman -S polkit` installiert den Daemon.
 spezifischen Key-Typ den dein Agent nicht hat. Schalte auf "Key
 File" um und gib den Pfad direkt an.
 
-**"Metadata-Search findet nichts"** — Der Index wird nur gefüllt
-wenn du in Verzeichnissen navigierst. Ein Pane-Open auf `/` füllt
-nur `/`. Navigiere einmal durch die Bereiche die du durchsuchbar
-haben willst.
+**"Metadata-Search findet nichts"** — Der Index wird nur über
+**Edit → Index Active Folder…** gefüllt, nicht beim Navigieren. Öffne
+den Bereich, den du durchsuchbar haben willst, im aktiven Pane und
+starte dort die Indexierung. Ohne Index sucht **Edit → Find Files…**
+direkt in den Verzeichnissen.
 
 ---
 

@@ -250,6 +250,16 @@ class ConflictPlan:
         else:  # pragma: no cover - exhaustive over ConflictAction
             raise ValueError(f"unknown conflict action: {action!r}")
 
+    def keeps_inside(self, folder: str) -> bool:
+        """True when an answer skips a destination below *folder*: that
+        entry's source is not moved, so the source folder is not emptied."""
+        sep = self._backend.separator() or "/"
+        prefix = folder.rstrip(sep) + sep
+        return any(
+            target is None and path.startswith(prefix)
+            for path, (target, _mode) in self._decisions.items()
+        )
+
     def resolve(self, dest_path: str) -> tuple[str, str] | None:
         """``(dest_path, if_exists)`` for the job, or ``None`` to skip it."""
         target, mode = self._decisions.get(dest_path, (dest_path, IF_EXISTS_FAIL))

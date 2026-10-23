@@ -101,6 +101,17 @@ class SearchQuery:
             their protocol uses different navigation.
         ignore_dirs: skip directories whose basename matches any of
             these globs. Default skips the obvious noise.
+        categories: file categories (ids from :mod:`core.file_categories`,
+            e.g. ``("images", "crypto_wallets")``); a file must be in at
+            least one. Empty → no category filter.
+        search_archives: also look inside archives (zip, tar.*, single
+            gz / bz2 / xz / zst files, 7z / rar names) and archives
+            nested in them; members are reported as
+            ``archive!/member``.
+        include_hidden: also find dot files and files in dot folders
+            (and entries a backend flags hidden).
+        case_sensitive: ``contains`` (literal or regex) tells upper and
+            lower case apart. Default: it does not.
     """
 
     name: str = ""
@@ -125,6 +136,10 @@ class SearchQuery:
         ".cache",
         ".pytest_cache",
     )
+    categories: tuple[str, ...] = ()
+    search_archives: bool = False
+    include_hidden: bool = True
+    case_sensitive: bool = False
     _compiled_regex: re.Pattern[str] | None = field(
         default=None,
         init=False,
@@ -165,14 +180,28 @@ class SearchQuery:
             _validate_text(root, "roots[]")
         if not isinstance(self.roots, list):
             self.roots = list(self.roots)
+        for flag in ("contains_is_regex", "search_archives", "include_hidden", "case_sensitive"):
+            if not isinstance(getattr(self, flag), bool):
+                raise ValueError(f"{flag} must be true or false")
+        from core.file_categories import validate_categories
+
+        self.categories = validate_categories(self.categories)
         self._compiled_regex = _compile_user_regex(self.regex, "regex")
         if self.contains_is_regex:
             self._compiled_contains = _compile_user_regex(
                 self.contains,
                 "contains",
+                self._contains_flags(),
             )
         else:
             self._compiled_contains = None
+
+    def _contains_flags(self) -> int:
+        """Line-wise like grep / rg: ``^`` and ``$`` are line anchors."""
+        flags = re.MULTILINE
+        if not self.case_sensitive:
+            flags |= re.IGNORECASE
+        return flags
 
     def matches_name(self, name: str) -> bool:
         if self.name and not fnmatch.fnmatch(name.lower(), self.name.lower()):
@@ -207,11 +236,12 @@ class SearchQuery:
             self._compiled_contains = _compile_user_regex(
                 self.contains,
                 "contains",
+                self._contains_flags(),
             )
         return self._compiled_contains
 
 
-def _compile_user_regex(pattern: str, field_name: str) -> re.Pattern[str] | None:
+def _compile_user_regex(pattern: str, field_name: str, flags: int = 0) -> re.Pattern[str] | None:
     if not pattern:
         return None
     if len(pattern) > MAX_REGEX_CHARS:
@@ -219,7 +249,7 @@ def _compile_user_regex(pattern: str, field_name: str) -> re.Pattern[str] | None
     if _DANGEROUS_REGEX_RE.search(pattern):
         raise ValueError(f"{field_name} regex rejected: nested quantified groups are unsafe")
     try:
-        return re.compile(pattern)
+        return re.compile(pattern, flags)
     except re.error as exc:
         raise ValueError(f"{field_name} regex is invalid: {exc}") from exc
 
@@ -260,6 +290,12 @@ class SearchHit:
     snippet: str = ""  # Short content excerpt for ``contains`` matches.
     score: float = 1.0  # Reserved for ranked-search adapters.
     warning: str = ""  # Non-fatal note from the adapter.
+    category: str = ""  # First matching core.file_categories id, if any.
+    # A member of an archive: ``path`` is ``<archive>!/<member>``,
+    # ``archive_path`` the archive file on the backend and ``member`` the
+    # member chain (``inner.zip!/file.txt`` for a nested archive).
+    archive_path: str = ""
+    member: str = ""
 
 
 @dataclass
@@ -340,79 +376,29 @@ def _backend_protocol(backend) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Bytes of each file the generic walker searches for ``contains`` - the
+#: prefix a client-side grep reads over a paid-per-request cloud API.
+GENERIC_CONTENT_CAP_BYTES = 64 * 1024
+
+
 def _generic_adapter(
     backend,
     query: SearchQuery,
     max_hits: int,
 ) -> list[SearchHit]:
-    """Walk the tree client-side. Slow but always correct."""
-    label = _label(backend)
-    hits: list[SearchHit] = []
-    roots = query.roots or [backend.home() if hasattr(backend, "home") else "/"]
-    visited: set[str] = set()
+    """Walk the tree client-side. Slow but always correct.
 
-    def _push(item: Any, full_path: str) -> bool:
-        size = int(getattr(item, "size", 0) or 0)
-        if not query.matches_size(size):
-            return False
-        mtime = _to_epoch(getattr(item, "modified", None))
-        if not query.matches_mtime(mtime):
-            return False
-        snippet = ""
-        if query.contains:
-            snippet = _read_snippet_for_match(backend, full_path, query)
-            if not snippet:
-                return False
-        hits.append(
-            SearchHit(
-                backend_label=label,
-                path=full_path,
-                size=size,
-                mtime=mtime,
-                is_dir=bool(getattr(item, "is_dir", False)),
-                snippet=snippet,
-            )
-        )
-        return True
+    The walk is :func:`core.file_search.collect_hits`: hidden files,
+    categories and archives follow the query, ``contains`` is searched in
+    the first :data:`GENERIC_CONTENT_CAP_BYTES` of each file."""
+    from core.file_search import collect_hits
 
-    def _walk(path: str, depth: int) -> None:
-        if len(hits) >= max_hits:
-            return
-        if len(visited) >= MAX_GENERIC_VISITED:
-            log.warning(
-                "search: visited cap of %d paths reached on %s",
-                MAX_GENERIC_VISITED,
-                label,
-            )
-            return
-        if path in visited:
-            return
-        visited.add(path)
-        try:
-            entries = backend.list_dir(path)
-        except OSError as exc:
-            log.debug("search: list_dir(%s) failed on %s: %s", path, label, exc)
-            return
-        for item in entries:
-            if len(hits) >= max_hits:
-                return
-            name = item.name
-            if any(fnmatch.fnmatch(name, ign) for ign in query.ignore_dirs):
-                continue
-            if hasattr(backend, "join"):
-                full = backend.join(path, name)
-            else:
-                full = f"{path.rstrip('/')}/{name}"
-            if getattr(item, "is_dir", False):
-                if query.max_depth < 0 or depth < query.max_depth:
-                    _walk(full, depth + 1)
-                continue
-            if query.matches_name(name):
-                _push(item, full)
-
-    for root in roots:
-        _walk(root, 0)
-    return hits
+    return collect_hits(
+        backend,
+        query,
+        max_hits=max_hits,
+        max_content_bytes=GENERIC_CONTENT_CAP_BYTES,
+    )
 
 
 def _to_epoch(raw: Any) -> float:
@@ -427,55 +413,6 @@ def _to_epoch(raw: Any) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _read_snippet_for_match(
-    backend,
-    path: str,
-    query: SearchQuery,
-    *,
-    cap: int = 64 * 1024,
-) -> str:
-    """Read up to ``cap`` bytes and check ``query.contains``.
-
-    Returns a short text snippet (the matching line + 60 chars context)
-    on hit, or the empty string on miss / unreadable. NEVER raises.
-    """
-    try:
-        handle = backend.open_read(path)
-    except OSError as exc:
-        log.debug("search: open_read(%s) failed: %s", path, exc)
-        return ""
-    try:
-        data = handle.read(cap)
-    except OSError:
-        return ""
-    finally:
-        try:
-            handle.close()
-        except Exception as exc:  # noqa: BLE001
-            log.debug("search: close raised: %s", exc)
-    text = data.decode("utf-8", errors="replace")
-    if query.contains_is_regex:
-        pattern = query.contains_regex()
-        if pattern is None:
-            return ""
-        m = pattern.search(text)
-        if not m:
-            return ""
-        start = max(0, m.start() - 30)
-        end = min(len(text), m.end() + 30)
-        return text[start:end].replace("\n", " ⏎ ")[:200]
-    needle = query.contains
-    idx = text.find(needle) if needle else -1
-    if idx < 0:
-        # Case-insensitive second pass.
-        idx = text.lower().find(needle.lower())
-        if idx < 0:
-            return ""
-    start = max(0, idx - 30)
-    end = min(len(text), idx + len(needle) + 30)
-    return text[start:end].replace("\n", " ⏎ ")[:200]
 
 
 # ---------------------------------------------------------------------------

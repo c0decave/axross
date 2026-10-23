@@ -10,6 +10,7 @@ import posixpath
 import shlex
 import socket
 import stat as stat_module
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from typing import IO, TYPE_CHECKING
 
 import paramiko
 
+from core import removal_cancel
 from core.backend import SessionLifecycle
 from core.client_identity import SSH_LOCAL_VERSION, apply_paramiko_banner_override
 from core.exec_util import COMMAND_NOT_FOUND, digest_from_sum_output
@@ -27,6 +29,7 @@ from core.profiles import ConnectionProfile
 from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
 from core.redaction import redact_text
 from core.ssh_config import expand_proxy_command
+from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -214,6 +217,33 @@ def drain_exec_channel(
         truncated_stdout=stdout_truncated,
         truncated_stderr=stderr_truncated,
     )
+
+
+class CleanEnvProxyCommand(paramiko.ProxyCommand):
+    """paramiko's ProxyCommand, but the command gets a clean environment.
+
+    paramiko starts it with ``subprocess.Popen`` and no ``env``, so it
+    inherits this process's - in a frozen one-file build that includes
+    LD_LIBRARY_PATH pointing at the extraction folder, and a ``bash -c``,
+    ``nc`` or ``ssh -W`` jump resolves its libraries against the bundled
+    ones (dist/axross-full 0.13.22: ``bash -c true`` "symbol lookup
+    error"). paramiko's ``__init__`` takes no environment, so this one
+    sets the same three attributes its send/recv/close use (a test holds
+    them equal to paramiko's) and starts the process itself."""
+
+    def __init__(self, command_line: str) -> None:
+        # Deliberately not super().__init__(): it would start the command
+        # with the inherited environment.
+        self.cmd = shlex.split(command_line)
+        self.process = subprocess.Popen(
+            self.cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            env=clean_child_env(),
+        )
+        self.timeout = None
 
 
 class HostKeyVerificationError(paramiko.SSHException):
@@ -461,7 +491,7 @@ class SSHSession(SessionLifecycle):
                     resolve_profile=resolve_profile,
                 )
                 log.info("Using ProxyCommand for %s: %s", profile.host, redact_text(cmd))
-                sock = paramiko.ProxyCommand(cmd)
+                sock = CleanEnvProxyCommand(cmd)
             elif (profile.proxy_type or "none").lower() != "none":
                 if not profile.proxy_host:
                     raise OSError(
@@ -736,6 +766,18 @@ class SSHSession(SessionLifecycle):
         "Channel closed.", which reads like a dropped connection."""
         try:
             return paramiko.SFTPClient.from_transport(self._transport)
+        except paramiko.ChannelException as exc:
+            # The server would not open one more channel at all - not an
+            # SFTP question (ChannelException is an SSHException, so it
+            # must come first).
+            raise OSError(
+                f"{self.name}: the server refused to open another channel"
+                f" ({exc.code}: {exc.text or 'no reason given'})."
+                " SSH servers limit the channels per connection (OpenSSH"
+                " MaxSessions, 10 by default); every pane, terminal and transfer"
+                " on this host uses one. Close some of them, or raise the limit"
+                " on the server."
+            ) from exc
         except (paramiko.SSHException, EOFError) as exc:
             if self._transport is not None and self._transport.is_active():
                 raise OSError(
@@ -822,10 +864,12 @@ class SSHSession(SessionLifecycle):
                 ) from exc
             children.append((attr, child))
         for attr, child in children:
+            removal_cancel.checkpoint(child)  # the pane's Cancel stops here
             if stat_module.S_ISDIR(attr.st_mode or 0):
                 self._rmtree(child, depth + 1)
             else:
                 self.sftp.remove(child)
+            removal_cancel.removed(child)
         self.sftp.rmdir(path)
 
     @_sftp_errors_as_oserror

@@ -1,0 +1,32 @@
+Written offer for source code - axross-full, speech components
+==============================================================
+
+axross-full contains the following programs licensed under the GNU General
+Public License, version 3 or (at your option) any later version
+(GPL-3.0-or-later). The licence text is in COPYING next to this file.
+
+  piper-tts 1.8.0 (GPL-3.0-or-later)
+    Source: https://github.com/OHF-voice/piper1-gpl/tree/v1.8.0
+    Source distribution: https://pypi.org/project/piper-tts/1.8.0/
+      piper_tts-1.8.0.tar.gz, SHA-256
+      830588aded347df579c91a32703e0fc2a3685d84f1e3533b14f2de69135d4904
+
+  espeak-ng 1.52.0.1 (GPL-3.0-or-later), statically linked into piper-tts
+  (piper/espeakbridge) together with its espeak-ng-data
+    Source: https://github.com/espeak-ng/espeak-ng/tree/724808c5a83f9ef95fdd0db886ba7ba537ff224a
+    (the commit piper1-gpl v1.8.0 builds, CMakeLists.txt GIT_TAG 724808c)
+
+axross-full includes these programs unmodified, as published in the
+piper-tts 1.8.0 wheel on PyPI.
+
+For at least three years from the date you received this copy of
+axross-full, and for as long as spare parts or customer support for it are
+offered, anyone who received it may ask for the complete corresponding
+source code of the programs above. We will provide it on a durable physical
+medium customarily used for software interchange, for a price no more than
+our reasonable cost of physically performing this distribution, or at no
+charge over the network. Ask through the issue tracker of axross:
+https://github.com/c0decave/axross/issues
+
+The rest of axross is licensed under the Apache License 2.0 (LICENSE); the
+whole axross-full binary is redistributed under GPL-3.0 terms (NOTICE).

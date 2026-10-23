@@ -21,6 +21,7 @@ from typing import IO
 from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetime
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
+from core.desktop_open import install_clean_webbrowser
 from core.path_policy import safe_leaf
 from core.read_spool import new_read_spool
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
@@ -274,6 +275,8 @@ class GDriveSession(SessionLifecycle):
                     "consent page is outside axross and may use browser or "
                     "system proxy settings."
                 )
+            # The consent page opens through webbrowser (core.desktop_open).
+            install_clean_webbrowser()
             creds = flow.run_local_server(port=0)
 
             # Persist token for reuse (atomic, 0o600)

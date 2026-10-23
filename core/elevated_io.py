@@ -169,6 +169,10 @@ def _trusted_which(name: str, dirs: tuple[str, ...] = _TRUSTED_DIRS) -> str | No
     return None
 
 
+#: Public name for core.loop_mount and others that hand a password or root to a tool.
+trusted_which = _trusted_which
+
+
 def _resolve_helpers() -> _Pkexec | None:
     """Resolve absolute paths to pkexec + the helper binaries. Returns
     None when pkexec or any required helper is missing."""
@@ -412,4 +416,5 @@ __all__ = [
     "elevated_stat",
     "elevated_write",
     "is_pkexec_available",
+    "trusted_which",
 ]

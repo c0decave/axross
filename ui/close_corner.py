@@ -7,6 +7,10 @@ besides the bottom button; this puts a conventional close control in
 the corner. It calls the dialog's own close handler, so the
 unsaved-changes prompt applies exactly as for the bottom Close button.
 
+The row of the two buttons is also a handle: a left drag on it (not on a
+button) moves the dialog - spectrwm floats dialogs without a title bar,
+so that row is what a user grabs (see :mod:`ui.window_move`).
+
 The maximize corner brings what the image and media viewer had alone:
 the Maximize button in the title bar, Ctrl+M maximized <-> normal, and
 a button whose icon shows which of the two a click goes to.
@@ -20,6 +24,7 @@ from PyQt6.QtCore import QEvent, QObject, QSize
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
 
 from ui import viewer_window as VW
+from ui import window_move
 
 from ui.icon_provider import icon
 
@@ -58,6 +63,11 @@ class _FollowWindowState(QObject):
         self._button.setAccessibleName(tip.split(" ")[0])
 
     def eventFilter(self, watched, event) -> bool:
+        # A filter keeps getting events while Python tears it down (its
+        # attributes already cleared): an exception here would end the
+        # process, PyQt6 aborts on one.
+        if "_window" not in self.__dict__:
+            return False
         # Resize too: axross maximizes by geometry where the window manager
         # ignores the request (no state change then).
         if watched is self._window and event.type() in (
@@ -112,14 +122,23 @@ class _KeepInCorner(QObject):
             button.raise_()
 
     def eventFilter(self, watched, event) -> bool:
+        if "_buttons" not in self.__dict__:  # torn down (see _FollowWindowState)
+            return False
         if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             self.place(watched)
         return False
 
 
+def _install_top_row_mover(dialog: QDialog, *buttons: QToolButton) -> None:
+    """A left drag above the corner buttons' lower edge moves *dialog*."""
+    window_move.TopRowMover(
+        dialog, lambda: max(b.geometry().bottom() for b in buttons) + _CORNER_MARGIN)
+
+
 def add_close_corner(dialog: QDialog) -> QToolButton | None:
     """Put the [x] at the top right of *dialog*, the maximize / restore
-    button left of it (see ``make_maximize_corner``).
+    button left of it (see ``make_maximize_corner``); a left drag on the
+    rest of that top row moves the dialog.
 
     With a ``QVBoxLayout`` they get a slim row of their own above the
     content; any other dialog gets them laid over its top-right corner and
@@ -135,6 +154,7 @@ def add_close_corner(dialog: QDialog) -> QToolButton | None:
     if not isinstance(layout, QVBoxLayout):
         btn = make_close_corner(dialog, lambda: dialog.reject())
         _KeepInCorner(dialog, maximize, btn)
+        _install_top_row_mover(dialog, maximize, btn)
         return btn
     row = QHBoxLayout()
     row.setContentsMargins(0, 0, 0, 0)
@@ -143,6 +163,7 @@ def add_close_corner(dialog: QDialog) -> QToolButton | None:
     row.addWidget(maximize)
     row.addWidget(btn)
     layout.insertLayout(0, row)
+    _install_top_row_mover(dialog, maximize, btn)
     return btn
 
 

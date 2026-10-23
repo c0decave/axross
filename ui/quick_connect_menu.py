@@ -10,6 +10,8 @@ a small menu instead of connecting:
   profiles can be opened one after the other.
 * **Edit Config…** - the list closes and the connection dialog opens with
   that profile loaded.
+* **Delete Connection Config…** - the list closes; after a confirmation
+  the profile is deleted, with its stored password.
 
 A QMenu triggers an action on the release of any mouse button, the right
 one included, so the right button is taken off the menu's own handling.
@@ -24,6 +26,7 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMenu
 
 PROFILE_MENU_LABELS = ("Connect", "Connect in Background", "Edit Config…")
+DELETE_LABEL = "Delete Connection Config…"
 
 
 class QuickConnectMenu(QMenu):
@@ -37,11 +40,13 @@ class QuickConnectMenu(QMenu):
         on_connect: Callable,
         on_background: Callable,
         on_edit: Callable,
+        on_delete: Callable | None = None,
     ) -> None:
         super().__init__(title, parent)
         self._on_connect = on_connect
         self._on_background = on_background
         self._on_edit = on_edit
+        self._on_delete = on_delete
         self._profiles: dict[QAction, object] = {}
 
     def add_profile(self, label: str, profile) -> QAction:
@@ -61,6 +66,11 @@ class QuickConnectMenu(QMenu):
         connect.triggered.connect(lambda _checked=False: self._connect_now(profile))
         background.triggered.connect(lambda _checked=False: self._on_background(profile))
         edit.triggered.connect(lambda _checked=False: self._edit(profile))
+        if self._on_delete is not None:
+            # Apart from the harmless entries: this one destroys something.
+            menu.addSeparator()
+            delete = menu.addAction(DELETE_LABEL)
+            delete.triggered.connect(lambda _checked=False: self._delete(profile))
         return menu
 
     def _connect_now(self, profile) -> None:
@@ -70,6 +80,11 @@ class QuickConnectMenu(QMenu):
     def _edit(self, profile) -> None:
         self.close()
         self._on_edit(profile)
+
+    def _delete(self, profile) -> None:
+        # The list closes first: its entries would name a deleted profile.
+        self.close()
+        self._on_delete(profile)
 
     def show_profile_menu(self, action: QAction, global_pos: QPoint) -> bool:
         """Open the right-click menu for *action*; False when it is not a
@@ -119,4 +134,4 @@ class QuickConnectMenu(QMenu):
         super().keyPressEvent(event)
 
 
-__all__ = ["PROFILE_MENU_LABELS", "QuickConnectMenu"]
+__all__ = ["DELETE_LABEL", "PROFILE_MENU_LABELS", "QuickConnectMenu"]

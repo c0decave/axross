@@ -31,6 +31,7 @@ REVIEWED_INT_SIGNALS = {
     "ui/permissions_dialog.py:mode_changed",
     "ui/llm_settings_dialog.py:done",
     "ui/agent_dock.py:recall",
+    "ui/agent_dock.py:checked",  # a connection check's token: a change counter
     "ui/terminal_widget.py:grid_resized",
     "ui/analysis_dock.py:finished",
     "ui/analysis_dock.py:event",
@@ -40,6 +41,11 @@ REVIEWED_INT_SIGNALS = {
     "ui/media_viewer.py:_done",
     "ui/media_viewer.py:open_requested",
     "ui/media_viewer.py:index_changed",
+    "ui/code_editor.py:_lexed",  # lexing generation, one step per edit
+    # speech generation (one step per Stop) and the sample rate in Hz
+    "ui/voice.py:audio",
+    "ui/voice.py:spoken",
+    "ui/voice.py:heard",
 }
 
 

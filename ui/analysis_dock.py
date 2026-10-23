@@ -307,6 +307,8 @@ def _ask_remote(parent, profile: LP.LLMProfile, host: str) -> tuple[bool, bool]:
 
 class AnalysisDock(QDockWidget):
     settings_requested = pyqtSignal()
+    #: A feature key (core.features) to show in Help > Features….
+    features_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -372,6 +374,7 @@ class AnalysisDock(QDockWidget):
         layout.addWidget(self.progress_label)
         self.body = QTextBrowser()
         self.body.setOpenLinks(False)
+        self.body.anchorClicked.connect(self._on_link)
         self.body.setOpenExternalLinks(False)
         layout.addWidget(self.body, 1)
         self.batch_button = QPushButton()
@@ -565,6 +568,10 @@ class AnalysisDock(QDockWidget):
         self._update_buttons()
 
     # -- requests --------------------------------------------------------------
+    def _on_link(self, url) -> None:
+        if url.scheme() == "axross" and url.path().startswith("features/"):
+            self.features_requested.emit(url.path().split("/", 1)[1])
+
     def analyse(self, target: Target, *, force: bool = False) -> None:
         if not self._available():
             self.show_message(
@@ -572,6 +579,9 @@ class AnalysisDock(QDockWidget):
                     "File analysis needs the sift package, which is not installed in this "
                     "Python environment."
                 )
+            )
+            self.body.append(
+                '<p><a href="axross:features/extra:sift">' + _esc(tr("Show in Features…")) + "</a></p>"
             )
             return
         if not force and target == self._target:

@@ -120,3 +120,103 @@ def test_edge_extra_overrides_are_applied_on_top():
     env = clean_child_env({"PATH": "/usr/bin"}, TERM="xterm")
     assert env["TERM"] == "xterm"
     assert env["PATH"] == "/usr/bin"
+
+
+# --------------------------------------------------------------------------
+# Starting axross itself again (the detached start of a terminal launch)
+# --------------------------------------------------------------------------
+#
+# Reproduced 2026-10-22 with dist/axross-full 0.13.22: started from a shell
+# without arguments, the re-executed child inherited _PYI_APPLICATION_HOME_DIR,
+# the extraction folder of the first process. That process exits at once and
+# its bootloader deletes the folder; the child then showed only "Axross -
+# Unexpected Error: FileNotFoundError ... _MEI.../base_library.zip" instead of
+# the window. PyInstaller's remedy: PYINSTALLER_RESET_ENVIRONMENT=1 makes the
+# child a top-level process that extracts itself again.
+
+from core.subprocess_env import relaunch_env  # noqa: E402
+
+_FROZEN = {
+    "_PYI_ARCHIVE_FILE": "/opt/axross-full",
+    "_PYI_PARENT_PROCESS_LEVEL": "1",
+    "_PYI_LINUX_PROCESS_NAME": "axross-full",
+    "_PYI_APPLICATION_HOME_DIR": "/tmp/_MEI1234",
+    "_MEIPASS2": "/tmp/_MEI1234",
+    "LD_LIBRARY_PATH": "/tmp/_MEI1234:/opt/lib",
+    "LD_LIBRARY_PATH_ORIG": "/opt/lib",
+    "DISPLAY": ":0",
+    "HOME": "/home/u",
+}
+
+
+def test_happy_a_frozen_relaunch_forgets_the_extraction_folder():
+    env = relaunch_env(_FROZEN, frozen=True)
+    assert not [k for k in env if k.startswith("_PYI_") or k == "_MEIPASS2"]
+    assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert env["LD_LIBRARY_PATH"] == "/opt/lib"
+    assert env["DISPLAY"] == ":0" and env["HOME"] == "/home/u"
+    assert "/tmp/_MEI1234" not in "".join(env.values())
+
+
+def test_sad_a_frozen_relaunch_without_an_own_library_path_gets_none():
+    env = relaunch_env({k: v for k, v in _FROZEN.items() if k != "LD_LIBRARY_PATH_ORIG"},
+                       frozen=True)
+    assert "LD_LIBRARY_PATH" not in env
+
+
+def test_edge_a_source_relaunch_keeps_the_environment_as_it_is():
+    # From the source tree nothing is extracted; the user's own
+    # LD_LIBRARY_PATH (no _ORIG marker) must survive.
+    mine = {"LD_LIBRARY_PATH": "/home/u/lib", "DISPLAY": ":0"}
+    env = relaunch_env(mine, frozen=False)
+    assert env == mine and env is not mine
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in env
+
+
+def test_edge_the_input_of_a_relaunch_is_not_mutated():
+    before = dict(_FROZEN)
+    relaunch_env(_FROZEN, frozen=True)
+    assert _FROZEN == before
+
+
+# --------------------------------------------------------------------------
+# Starting axross itself as a worker this process waits on
+# --------------------------------------------------------------------------
+#
+# Measured 2026-10-22 with dist/axross-full 0.13.22: a frozen child started
+# with this process's _PYI_* variables reuses its extraction folder, and its
+# bootloader does NOT set LD_LIBRARY_PATH again. With clean_child_env() such
+# a child loaded /usr/lib/libssl.so.3 and /usr/lib/libstdc++.so.6.0.36 into
+# the bundled interpreter; with the inherited environment it loaded the
+# bundled copies. Its own host programs still start cleanly: the child's
+# clean_child_env() strips the inherited folder (bash -c true: rc 0).
+
+from core.subprocess_env import worker_env  # noqa: E402
+
+
+def test_happy_a_worker_keeps_the_bundle_library_path():
+    env = worker_env(_FROZEN)
+    assert env["LD_LIBRARY_PATH"] == "/tmp/_MEI1234:/opt/lib"
+    assert env["_PYI_APPLICATION_HOME_DIR"] == "/tmp/_MEI1234"
+
+
+def test_happy_a_worker_keeps_the_orig_marker_for_its_own_children():
+    # The worker's own clean_child_env() gives its host programs the
+    # user's value back only if the marker travels along.
+    env = worker_env(_FROZEN)
+    assert env["LD_LIBRARY_PATH_ORIG"] == "/opt/lib"
+    assert clean_child_env(env)["LD_LIBRARY_PATH"] == "/opt/lib"
+
+
+def test_sad_a_reset_request_is_never_passed_to_a_worker():
+    # It would make the worker extract the whole bundle again on every start.
+    env = worker_env({**_FROZEN, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in env
+
+
+def test_edge_a_worker_env_is_a_copy_and_defaults_to_the_real_environment(monkeypatch):
+    before = dict(_FROZEN)
+    env = worker_env(_FROZEN)
+    assert env is not _FROZEN and _FROZEN == before
+    monkeypatch.setenv("AXROSS_WORKER_PROBE", "1")
+    assert worker_env()["AXROSS_WORKER_PROBE"] == "1"

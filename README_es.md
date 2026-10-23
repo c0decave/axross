@@ -10,13 +10,23 @@ superficie de herramientas MCP para que un LLM lo controle todo.**
 - **Más de 30 protocolos en una ventana** — SFTP, SMB, S3, WebDAV, nubes, IMAP, Git, bases de datos y más.
 - **Copia entre dos backends cualesquiera** — S3 → SFTP, WebDAV → SMB, directo, sin pasar por el disco local.
 - **Paneles múltiples estilo Commander** — tantos split panes como quieras, presets de layout, drag & drop.
+- **Workspaces** — layouts de paneles con nombre como pestañas, separables en su propia ventana, restaurados en el siguiente arranque.
+- **Un agente LLM integrado** — Agent dock con pestañas y sandboxes para LM Studio, Ollama, vLLM o llama.cpp, read-only por defecto.
+- **Habla con el agente** — push-to-talk, respuestas habladas en alemán e inglés, speech recognition en local o en el servidor LLM.
+- **Servidor y cliente MCP** — los LLM manejan axross por stdio o HTTP, y el agente usa las tools de otros servidores MCP.
 - **Scripting en Python integrado** — REPL, dock de Scripts y 32 scripts listos sobre una sola API `axross.*`.
-- **Un agente LLM integrado** — dock Agent con tabs y sandboxes, MCP por stdio o HTTP, read-only por defecto.
+- **Editor de texto con pestañas** — syntax highlighting, buscar/reemplazar, encodings y line endings, en archivos locales y remotos.
+- **Find Files** — por nombre, tipo, contenido, tamaño o tag, también dentro de archivos comprimidos, guardado como Smart Folder.
+- **Tags de colores** — en cualquier archivo, siguen renombrados y movimientos, como filtro en Find Files.
+- **Imágenes de disco y forense** — particiones y sistemas de archivos, loop mount read-only, hashes, The Sleuth Kit, PhotoRec.
+- **Media Player** — playlist, M3U, shuffle/repeat, ecualizador de 10 bandas y espectro.
 - **Busca duplicados, quita metadatos** — Duplicate Finder por hash de contenido, fuera EXIF/GPS antes de compartir.
 - **Cifrado sin texto plano en disco** — overlay `.axenc` en cualquier backend, descifrado solo en RAM.
 - **Seguro por defecto** — preview antes de delete/move, journal de operaciones, modo `paranoid`, proxies con guard SSRF.
 - **Transfers reanudables** — sobreviven a Ctrl-C y caídas de VPN, siguen desde el último segmento verificado.
-- **Instalación en una línea** — `pip install axross` o un binario de un solo archivo desde la página de releases.
+- **Archivos comprimidos como carpetas** — explora ZIP, TAR y 7z, también anidados, extrae solo lo elegido, a salvo de zip bombs.
+- **Extensions** — Media Player, Forensic Tools, Treemap, VirtualBox y más, cada una apagada hasta que la enciendes.
+- **Instalación en una línea** — `pip install axross` o un binario de un solo archivo para Linux, macOS y Windows.
 
 Axross es un gestor de ficheros multiprotocolo y caja de herramientas
 de seguridad construido sobre Python y PyQt6. SFTP, SMB, S3, WebDAV,
@@ -38,6 +48,50 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 ![Subida de un panel local a SFTP con el dock Transfers](docs/screenshots/remote-transfer.png)
 
 *Subida a SFTP.* Cuatro fotos copiadas del panel local al NAS; el dock Transfers muestra cada archivo con su dirección, tamaño y estado.
+
+![Workspaces como pestañas, un panel de archivos y una shell local lado a lado](docs/screenshots/workspaces.png)
+
+*Workspaces.* Layouts de paneles con nombre como pestañas - aquí **Website** con su panel de archivos y una shell local al lado. Un workspace se separa en su propia ventana y vuelve como pestaña.
+
+![La toolbar con un icono por herramienta sobre dos paneles y la barra de bookmarks](docs/screenshots/toolbar.png)
+
+*Toolbar.* Un botón por herramienta - Agent, Analysis, Terminal, Find Files, Scripts, consola Python, Tags, Trash, Media Player, Treemap, Drives, Settings, Features. En una ventana estrecha las herramientas pasan a una segunda fila en lugar de desaparecer.
+
+![La ventana Tagged Files con los archivos de un tag](docs/screenshots/tags.png)
+
+*Tags.* Puntos de colores en la columna Name; **Tagged Files** lista cada tag y sus archivos en cualquier backend, **Go to File** abre la carpeta en un panel.
+
+![El editor de texto con pestañas, resaltado de Python y la barra de búsqueda](docs/screenshots/editor.png)
+
+*Editor de texto.* Pestañas para archivos locales y remotos, resaltado con Pygments, buscar y reemplazar con regex, encoding y line endings en la barra de estado.
+
+![Find Files con presets de tipo y resultados de varias carpetas](docs/screenshots/find-files.png)
+
+*Find Files.* Nombre, contenido, tamaño, fecha, tag y presets de tipo, también dentro de archivos comprimidos; con un clic la búsqueda queda como **Smart Folder**.
+
+![El panel Media Player con portada, espectro, ecualizador y playlist](docs/screenshots/media-player.png)
+
+*Media Player.* Un panel de extensión: portada y título, un espectro animado, un ecualizador de 10 bandas con presets y una playlist que se llena con drag & drop.
+
+![Las particiones de una imagen de disco, listas para montarse read-only](docs/screenshots/disk-image.png)
+
+*Imágenes de disco.* Las particiones y sistemas de archivos de una imagen, leídos sin escribir nada; **Mount Read-Only** lleva una a un panel.
+
+![Settings, página Voice: respuestas habladas, push-to-talk y la tecla de mantener](docs/screenshots/voice.png)
+
+*Voice.* Respuestas habladas en alemán o inglés, push-to-talk con una tecla mantenida, y adónde va el texto reconocido.
+
+![Manage Bookmarks con grupos, un bookmark de terminal y ubicaciones remotas](docs/screenshots/bookmarks.png)
+
+*Bookmarks.* Grupos, ubicaciones locales y remotas y un bookmark de terminal en un solo gestor; ordena, mueve y edita varios a la vez.
+
+![Edit, Settings: todos los settings en un diálogo con campo de búsqueda](docs/screenshots/settings.png)
+
+*Settings.* Todos los ajustes en un diálogo, con campo de búsqueda.
+
+![Help, Features: qué está instalado, qué falta y cómo conseguirlo](docs/screenshots/features.png)
+
+*Features.* Qué está instalado y qué falta, con el comando o la descarga que lo añade.
 
 ![Cuatro paneles de archivos y dos terminales locales en Hacker Mode](docs/screenshots/quad-files-shells.png)
 
@@ -101,7 +155,7 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 ---
 
-## 26 puntos fuertes
+## 37 puntos fuertes
 
 1. **Más de 30 protocolos, una UI consistente.** SFTP/SCP, FTP/FTPS,
    SMB/CIFS, WebDAV, S3-compatible, Rsync, NFS, Azure Blob/Files,
@@ -307,8 +361,9 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 23. **Extensions.** Plugins en Python añaden entradas al menú Extensions,
     acciones del clic derecho y paneles (**Extensions → Manage
     Extensions…**). Cada extensión empieza desactivada, encontrarla nunca
-    la ejecuta y el modo `paranoid` no carga ninguna. Seis ejemplos
-    incluidos. Ver [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+    la ejecuta y el modo `paranoid` no carga ninguna. Once incluidas,
+    entre ellas Media Player, Forensic Tools, Drives Overview, VirtualBox
+    y Backup Repositories. Ver [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 24. **Un agente LLM en su propio dock.** **View → Panels → Agent** habla
     con el modelo que eliges en **Agent Settings** (Ollama, LM Studio,
@@ -317,8 +372,15 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
     protection modes `ask`, `plan`, `auto` y `bypass` deciden qué corre
     sin preguntar; **Topics** ofrece tareas listas; **+** y drag & drop
     desde un panel le pasan archivos, y las conexiones remotas abiertas
-    en los paneles se le pueden prestar. La extensión incluida
-    **Agent Stats** cuenta runs, tool calls y tokens.
+    en los paneles se le pueden prestar. El thinking de un modelo se ve
+    aparte de su respuesta, plegado en una línea hasta que haces clic; una
+    lámpara en la barra de título del dock está verde mientras el LLM
+    responde, naranja mientras se le pregunta y roja si no se le alcanza.
+    **Topics ▸ + New Topic…** guarda tareas propias; **Settings → Agent →
+    Prompts** gestiona perfiles de system/user prompt con nombre;
+    **Fetch models** abre una lista con tamaño, parámetros, cuantización y
+    el modelo cargado. La extensión incluida **Agent Stats** cuenta runs,
+    tool calls y tokens.
 
 25. **Agentes en un sandbox.** Cada tab puede ejecutar su agente en
     bubblewrap, podman o docker, con el nivel `lax`, `normal`, `high` o
@@ -333,6 +395,72 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
     más servidores MCP (stdio o HTTP); sus tools aparecen en la lista
     **Tools** del tab y preguntan antes de cada llamada o solo antes de
     escribir.
+
+27. **Workspaces.** Layouts de paneles con nombre como pestañas
+    (**Workspace → New Workspace**), cada uno separable en su propia
+    ventana - otra pantalla o al lado - y de vuelta como pestaña al
+    cerrar esa ventana. Un workspace nuevo empieza con una lista de
+    archivos o un terminal local, los paneles pasan de un workspace a
+    otro por menú o drag & drop, y varias shells quedan una al lado de
+    otra. Los workspaces se restauran en el siguiente arranque.
+
+28. **Habla con el agente.** Push-to-talk (F9), modo toggle o
+    conversación en el Agent dock. Las respuestas se oyen en alemán o
+    inglés con voces Piper, y los términos IT en inglés siguen en
+    inglés; el speech recognition corre en local con faster-whisper o en
+    el servidor LLM, elegido por perfil. Los modelos se descargan cuando
+    hacen falta. Incluido en `axross-full`, si no `pip install
+    axross[voice]`.
+
+29. **Un editor de texto con pestañas.** Cada pestaña es un archivo en
+    cualquier backend: syntax highlighting con Pygments, buscar y
+    reemplazar (regex, mayúsculas, palabra entera), encodings y line
+    endings, New / Open… / Save As…, auto-indent; los archivos grandes
+    se analizan fuera del hilo de la GUI.
+
+30. **Find Files.** **Edit → Find Files…** (Alt+F7) busca en carpetas
+    de cualquier conexión abierta por nombre, preset de tipo, contenido,
+    tamaño, fecha y tag, también dentro de archivos comprimidos. Los
+    resultados van llegando mientras la ventana sigue usable, y una
+    búsqueda se guarda como **Smart Folder** en los bookmarks. El índice
+    offline elimina los archivos borrados desde la última indexación.
+
+31. **Tags de colores.** Marca cualquier archivo en cualquier backend -
+    **Important** y **Review later** existen desde el principio. Los
+    tags siguen renombrados y movimientos y son un filtro en Find Files.
+
+32. **Imágenes de disco y forense.** axross lee cabeceras qcow2, VDI,
+    VMDK, VHD/VHDX y E01, tablas de particiones MBR y GPT y sus sistemas
+    de archivos sin escribir nada, y monta una partición read-only con
+    un loop device. La extensión **Forensic Tools** añade MD5 / SHA-1 /
+    SHA-256 en una pasada, `qemu-img`, The Sleuth Kit (explorar y
+    extraer, archivos borrados incluidos) y TestDisk/PhotoRec.
+
+33. **Media Player.** Un panel de extensión para MP3, FLAC, Ogg, Opus,
+    AAC y más: playlist con drag & drop y M3U, seeking, shuffle y
+    repeat, un ecualizador de 10 bandas con presets que se pliega, cinco
+    visualizaciones (espectro, espejo, radial, osciloscopio, vúmetro)
+    entre las que cambia un clic sobre ellas, título, artista y portada.
+
+34. **Bookmarks para muchos sitios.** Selección múltiple, grupos
+    ordenados por nombre, ruta o antigüedad, bookmarks de terminal (en
+    un perfil, un host sin perfil o en local) y **Manage Bookmarks**
+    como gestor completo.
+
+35. **Todos los settings en un sitio.** **Edit → Settings…** reúne cada
+    opción; **Help → Features** muestra qué partes opcionales están
+    instaladas y cuáles faltan; **Help → Scripting Guide** abre la guía
+    de la API.
+
+36. **Una toolbar para las herramientas.** Botones con iconos para
+    Agent, Analysis, Terminal, Find Files, Scripts, la consola Python,
+    Tags, Trash, Media Player, Treemap, Drives, Settings y Features, en
+    cada tema.
+
+37. **Archivos comprimidos como carpetas.** Los archivos ZIP, TAR y 7z
+    se abren en la vista de archivo; se puede entrar en archivos
+    anidados y extraer todo o solo la selección, con protección contra
+    zip bombs y zip slip.
 
 ---
 

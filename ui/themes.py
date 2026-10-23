@@ -10,8 +10,10 @@ Two families live here:
   light, hacker and amber themes), kept byte-for-byte so nothing a
   user relied on moves.
 
-Everything in this module is Qt-free except :func:`system_scheme`, so
-the palette and the resolution rules are unit-testable headless.
+Everything in this module is Qt-free except :func:`system_scheme` and the
+helpers that take or build a QPalette (:func:`qpalette_for`,
+:func:`hidden_entry_color`, which import Qt lazily), so the palette and the
+resolution rules are unit-testable headless.
 """
 from __future__ import annotations
 
@@ -457,6 +459,9 @@ MODERN_DARK: dict[str, str] = {
     "selection_text": "#ffffff",
     "danger": "#ff6b6b",
     "radius": "6px",
+    # The line between two header sections - where a column is dragged:
+    # 3.1:1 against the header (surface), WCAG 1.4.11 for a control edge.
+    "header_divider": "#646b7e",
 }
 
 MODERN_LIGHT: dict[str, str] = {
@@ -474,6 +479,7 @@ MODERN_LIGHT: dict[str, str] = {
     "selection_text": "#12172b",
     "danger": "#c92a2a",
     "radius": "6px",
+    "header_divider": "#8a91a3",  # 3.2:1 against the header (surface)
 }
 
 _MODERN_TEMPLATE = """
@@ -560,6 +566,9 @@ QHeaderView::section {{
     padding: 6px 8px;
     font-weight: 600;
 }}
+QHeaderView::section:horizontal {{
+    border-right: 1px solid {header_divider};
+}}
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
     background-color: {surface};
     border: 1px solid {border};
@@ -595,6 +604,11 @@ QPushButton:hover {{
 }}
 QPushButton:pressed {{
     background-color: {selection};
+}}
+QPushButton:checked {{
+    background-color: {selection};
+    color: {selection_text};
+    border-color: {accent};
 }}
 QPushButton:default {{
     background-color: {accent};
@@ -736,6 +750,48 @@ _CLASSIC_MUTED_LIGHT = '\nQLabel[role="muted"] {\n    color: #666666;\n}\n'
 
 _MODERN_VARIANTS = {"modern-light": MODERN_LIGHT, "modern-dark": MODERN_DARK}
 
+# Added to the classic stylesheets above (which stay as they were):
+# a line at the right edge of every horizontal header section - where a
+# column is dragged - at 3:1 or more against the header background (WCAG
+# 1.4.11; their own 1px border reached 1.2-1.4:1), and a checked button
+# that looks checked (Auto-Scroll in the Log dock looked the same on and
+# off). Values: (header divider, checked background, checked border,
+# checked text).
+_CLASSIC_EXTRA_COLOURS: dict[str, tuple[str, str, str, str]] = {
+    "classic": ("#6c7086", "#45475a", "#89b4fa", "#cdd6f4"),  # 3.6:1 on #181825
+    "hacker": ("#00802b", "#004400", "#00ff41", "#00ff41"),  # 3.8:1 on #0d0d0d
+    "amber": ("#995200", "#442200", "#ff8c00", "#ffaa00"),  # 3.3:1 on #0d0d0d
+}
+
+
+def _classic_extra_css(resolved: str) -> str:
+    divider, checked_bg, checked_border, checked_text = _CLASSIC_EXTRA_COLOURS[resolved]
+    return (
+        "\nQHeaderView::section:horizontal {\n"
+        f"    border-right: 1px solid {divider};\n"
+        "}\n"
+        "QPushButton:checked {\n"
+        f"    background-color: {checked_bg};\n"
+        f"    color: {checked_text};\n"
+        f"    border-color: {checked_border};\n"
+        "}\n"
+    )
+
+
+# The native light theme keeps the desktop's look and palette; its header
+# divider comes from that palette (Fusion's own line reached 2.0:1, Breeze
+# draws a short one). ``shadow`` is the palette's darkest edge colour.
+_NATIVE_HEADER_CSS = """
+QHeaderView::section:horizontal {
+    background-color: palette(button);
+    color: palette(button-text);
+    border: none;
+    border-bottom: 1px solid palette(mid);
+    border-right: 1px solid palette(shadow);
+    padding: 4px;
+}
+"""
+
 
 def normalize(theme: object) -> str:
     """Return a valid theme id; anything unknown becomes the default."""
@@ -769,13 +825,13 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
     if resolved in _MODERN_VARIANTS:
         css = build_modern_qss(_MODERN_VARIANTS[resolved])
     elif resolved in ("classic", "dark"):
-        css = DARK_THEME + _CLASSIC_MUTED_DARK
+        css = DARK_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("classic")
     elif resolved == "hacker":
-        css = HACKER_THEME + _CLASSIC_MUTED_DARK
+        css = HACKER_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("hacker")
     elif resolved == "amber":
-        css = AMBER_THEME + _CLASSIC_MUTED_DARK
+        css = AMBER_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("amber")
     else:
-        css = _CLASSIC_MUTED_LIGHT
+        css = _CLASSIC_MUTED_LIGHT + _NATIVE_HEADER_CSS
     if compact:
         css += COMPACT_CSS
     return css
@@ -874,6 +930,53 @@ def qpalette_for(tokens: dict[str, str]):
     for qt_role in (role.WindowText, role.Text, role.ButtonText):
         palette.setColor(disabled, qt_role, QColor(tokens["text_muted"]))
     return palette
+
+
+#: WCAG AA for normal text: the least contrast a text colour may have.
+MIN_TEXT_CONTRAST = 4.5
+
+
+def is_hex_colour(value: object) -> bool:
+    """``#rrggbb`` and nothing else - the one colour form the session file
+    and the colour settings store."""
+    return (
+        isinstance(value, str)
+        and len(value) == 7
+        and value[0] == "#"
+        and all(c in "0123456789abcdefABCDEF" for c in value[1:])
+    )
+
+
+def _relative_luminance(hex_colour: str) -> float:
+    value = hex_colour.lstrip("#")
+    channels = [int(value[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(a: str, b: str) -> float:
+    """WCAG contrast ratio of two ``#rrggbb`` colours (1.0 to 21.0)."""
+    la, lb = _relative_luminance(a), _relative_luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def hidden_entry_color(palette):
+    """Text colour for hidden entries in a file listing: the palette's
+    muted text colour (``PlaceholderText``; the themes map ``text_muted``
+    there), or ``None`` when it is not readable on both row backgrounds
+    (``Base`` and ``AlternateBase``) - then hidden entries are only set in
+    italics. A desktop palette is not ours to trust: a light grey on white
+    would make hidden files hard to read."""
+    from PyQt6.QtGui import QPalette
+
+    role = QPalette.ColorRole
+    muted = palette.color(role.PlaceholderText)
+    worst = min(
+        contrast_ratio(muted.name(), palette.color(role.Base).name()),
+        contrast_ratio(muted.name(), palette.color(role.AlternateBase).name()),
+    )
+    return muted if worst >= MIN_TEXT_CONTRAST else None
 
 
 def system_scheme() -> str | None:

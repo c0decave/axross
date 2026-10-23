@@ -22,6 +22,7 @@ from urllib.parse import quote
 from core.answer_fields import as_dict, as_list, as_size, as_str, as_utc_datetime
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
+from core.desktop_open import install_clean_webbrowser
 from core.read_spool import spool_response
 from core.secure_storage import adopt_legacy_secret_file, write_secret_file
 from models.file_item import FileItem
@@ -261,6 +262,8 @@ class OneDriveSession(SessionLifecycle):
                     "outside axross and may use browser or system proxy "
                     "settings."
                 )
+            # msal opens the login page through webbrowser (core.desktop_open).
+            install_clean_webbrowser()
             result = self._app.acquire_token_interactive(
                 scopes=self._scopes,
                 redirect_uri="http://localhost",

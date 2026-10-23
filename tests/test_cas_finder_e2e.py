@@ -95,8 +95,14 @@ class HotkeyTest(_Window):
 
         users = [d for _s, keys, d in SHORTCUTS for k in keys if k == HOTKEY]
         self.assertEqual(len(users), 1)
+        # The pane binds no key of its own to it: its one mention is the
+        # right-click entry's shown key (file_pane.CONTEXT_COMMANDS, a
+        # Qt.WidgetShortcut that never fires).
         source = (Path(__file__).resolve().parents[1] / "ui" / "file_pane.py").read_text()
-        self.assertNotIn(HOTKEY, source)
+        self.assertEqual(source.count(HOTKEY), 1)
+        from ui.file_pane import CONTEXT_COMMANDS
+
+        self.assertEqual(CONTEXT_COMMANDS["duplicates"][1], HOTKEY)
 
     def test_edge_toolbar_button_and_history_menu_entry(self) -> None:
         from PyQt6.QtWidgets import QToolBar

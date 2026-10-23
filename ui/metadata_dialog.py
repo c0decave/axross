@@ -11,9 +11,10 @@
   Cancel; the window never blocks.
 * :class:`MetadataDetailsDialog` - every field of one file, grouped, one
   field per line with the value wrapped; Copy and Remove Metadata.
-* :class:`MetadataSettingsDialog` - Tools -> Metadata Settings…: write mode
-  (in place / cleaned copy) and whether to confirm before removing (off by
-  default).
+* :class:`MetadataSettingsPage` - Edit -> Settings… -> Metadata (Tools ->
+  Metadata Settings… opens it): write mode (in place / cleaned copy) and
+  whether to confirm before removing (off by default);
+  :class:`MetadataSettingsDialog` is the same form as a dialog.
 * :class:`MetadataPanel` - the side panel of the image and media viewers
   (toggled with I): the current item's metadata and "Remove metadata".
 
@@ -727,13 +728,11 @@ class MetadataDetailsDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 
-class MetadataSettingsDialog(QDialog):
-    """Tools -> Metadata Settings…"""
+class _MetadataSettingsForm:
+    """Write mode and confirmation; :class:`MetadataSettingsPage` (Edit >
+    Settings… > Metadata) and :class:`MetadataSettingsDialog` share it."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(tr("Metadata Settings"))
-        layout = QVBoxLayout(self)
+    def _build_form(self, layout: QVBoxLayout) -> None:
         layout.addWidget(QLabel(tr("When metadata is removed:")))
         self.in_place_radio = QRadioButton(
             tr("Replace the file (the original is kept in the trash; Edit → Undo restores it)")
@@ -756,6 +755,45 @@ class MetadataSettingsDialog(QDialog):
             note.setProperty("role", "muted")
             note.setWordWrap(True)
             layout.addWidget(note)
+
+    def _chosen(self) -> tuple[str, bool]:
+        mode = MT.MODE_COPY if self.copy_radio.isChecked() else MT.MODE_IN_PLACE
+        return mode, self.confirm_box.isChecked()
+
+    def _store(self) -> None:
+        mode, confirm = self._chosen()
+        MT.set_write_mode(mode)
+        MT.set_confirm_before_remove(confirm)
+
+
+class MetadataSettingsPage(_MetadataSettingsForm, QWidget):
+    """Edit > Settings… > Metadata (Tools > Metadata Settings… opens it)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        QWidget.__init__(self, parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._build_form(layout)
+        layout.addStretch(1)
+        self._baseline = self._chosen()
+
+    def is_dirty(self) -> bool:
+        return self._chosen() != self._baseline
+
+    def save(self) -> bool:
+        self._store()
+        self._baseline = self._chosen()
+        return True
+
+
+class MetadataSettingsDialog(_MetadataSettingsForm, QDialog):
+    """The metadata settings as a dialog of their own (OK / Cancel)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        QDialog.__init__(self, parent)
+        self.setWindowTitle(tr("Metadata Settings"))
+        layout = QVBoxLayout(self)
+        self._build_form(layout)
         box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -765,8 +803,7 @@ class MetadataSettingsDialog(QDialog):
         add_close_corner(self)
 
     def accept(self) -> None:
-        MT.set_write_mode(MT.MODE_COPY if self.copy_radio.isChecked() else MT.MODE_IN_PLACE)
-        MT.set_confirm_before_remove(self.confirm_box.isChecked())
+        self._store()
         super().accept()
 
 
@@ -903,5 +940,6 @@ __all__ = [
     "MetadataDialog",
     "MetadataPanel",
     "MetadataSettingsDialog",
+    "MetadataSettingsPage",
     "summary_line",
 ]

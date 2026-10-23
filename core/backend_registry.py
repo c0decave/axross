@@ -538,6 +538,11 @@ class _ImportProbe:
     def resolved(self) -> bool:
         return self._result is not None
 
+    def reset(self) -> None:
+        """Forget the answer: the next read imports again (after an install)."""
+        with self._lock:
+            self._result = None
+
     def __call__(self) -> bool:
         if self._result is None:
             with self._lock:

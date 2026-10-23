@@ -25,15 +25,60 @@ from core.llm_profiles import LLMProfile
 
 
 class _Fake:
-    """An OpenAI-compatible /chat/completions that answers from a script."""
+    """An OpenAI-compatible /chat/completions that answers from a script.
+
+    A reply with ``"_delay": seconds`` is sent that much later, like a long
+    generation; a client that closes the connection meanwhile is counted in
+    ``aborted`` and gets no answer."""
 
     def __init__(self, replies):
         self.replies = list(replies)
         self.requests: list[dict] = []
         self.headers: list[dict] = []
+        self.aborted = 0
+        #: The model ids GET /models lists; None answers 501 as before (no GET).
+        self.models: list[str] | None = None
+        #: Seconds GET /models waits before it answers.
+        self.models_delay = 0.0
+        #: The paths of the GET requests.
+        self.gets: list[str] = []
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - http.server API
+                import time
+
+                fake.gets.append(self.path)
+                time.sleep(fake.models_delay)
+                # Only the OpenAI-compatible listing: LM Studio's own
+                # /api/v0/models (load states) stays unknown, as before.
+                if fake.models is None or self.path != "/v1/models":
+                    self.send_error(501)
+                    return
+                data = json.dumps({"object": "list", "data": [
+                    {"id": name, "object": "model"} for name in fake.models]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _client_left(self, seconds: float) -> bool:
+                import select
+                import socket
+                import time
+
+                end = time.monotonic() + seconds
+                while time.monotonic() < end:
+                    readable, _w, _x = select.select([self.connection], [], [], 0.02)
+                    if readable:
+                        try:
+                            if self.connection.recv(1, socket.MSG_PEEK) == b"":
+                                return True
+                        except OSError:
+                            return True
+                return False
+
             def do_POST(self):  # noqa: N802 - http.server API
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append({"path": self.path, **body})
@@ -45,6 +90,9 @@ class _Fake:
                     self.wfile.write(b'{"error": "boom"}')
                     return
                 reply = dict(reply)
+                if self._client_left(float(reply.pop("_delay", 0))):
+                    fake.aborted += 1
+                    return
                 finish = reply.pop(
                     "finish_reason", "tool_calls" if reply.get("tool_calls") else "stop"
                 )

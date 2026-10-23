@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.vt_screen import DEFAULT_SCROLLBACK, MAX_ROWS, VTScreen
+from ui.pane_drag import PANE_MIME_TYPE
 
 if TYPE_CHECKING:
     import paramiko
@@ -324,9 +325,13 @@ class TerminalEmulator(QPlainTextEdit):
     def _has_plain_text(source) -> bool:
         # Not hasText(): in Qt 6 it is also true for URLs alone (files
         # dragged from a pane), and their text is a file:// URL.
-        return source is not None and any(
-            fmt.split(";")[0].strip() == "text/plain" for fmt in source.formats()
-        )
+        if source is None:
+            return False
+        if source.hasFormat(PANE_MIME_TYPE):
+            # A dragged pane is never input for the host, whatever else the
+            # drag carries; the terminal pane around this widget takes it.
+            return False
+        return any(fmt.split(";")[0].strip() == "text/plain" for fmt in source.formats())
 
     def canInsertFromMimeData(self, source) -> bool:  # noqa: N802 - Qt override
         return self._has_plain_text(source)
@@ -418,7 +423,10 @@ class TerminalEmulator(QPlainTextEdit):
         self._shown = (screen, screen.scrolled_total, alternate, len(lines))
         block = doc.findBlockByNumber(doc.blockCount() - len(lines) + row)
         caret = QTextCursor(block)
-        caret.setPosition(block.position() + min(len(prefix), max(0, block.length() - 1)))
+        # QTextCursor counts UTF-16 units: an emoji or a Nerd Font icon from
+        # the supplementary planes is two, one Python character.
+        units = len(prefix.encode("utf-16-le", "surrogatepass")) // 2
+        caret.setPosition(block.position() + min(units, max(0, block.length() - 1)))
         self.setTextCursor(caret)
         self.ensureCursorVisible()
 

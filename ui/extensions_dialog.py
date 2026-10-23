@@ -1,22 +1,28 @@
-"""Extensions > Manage Extensions…: every extension found, switched on or
-off one by one, with the reason when one cannot be loaded."""
+"""Every extension found, switched on or off one by one, with the reason
+when one cannot be loaded: :class:`ExtensionsPage` in Edit > Settings…
+(Extensions > Manage Extensions… opens it), :class:`ExtensionsDialog` as a
+dialog of its own."""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QDesktopServices
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
+from core import desktop_open
 from core import extensions as EX
 from core.i18n import tr
 from ui.close_corner import add_close_corner
@@ -30,16 +36,23 @@ WARNING = (
 )
 
 
-class ExtensionsDialog(QDialog):
-    def __init__(self, host, parent=None) -> None:
-        super().__init__(parent)
+class _ExtensionsForm:
+    """The extension table with the warning, Open Extensions Folder and
+    Reload. :class:`ExtensionsDialog` switches an extension at once;
+    :class:`ExtensionsPage` (Edit > Settings…) keeps the switches until the
+    Settings dialog saves, like every other setting there."""
+
+    #: True: a tick switches the extension at once; False: on save().
+    _immediate = True
+
+    def _build_form(self, host, layout: QVBoxLayout) -> QHBoxLayout:
+        """Build the form into *layout*; returns the button row."""
         self._host = host
         self._ids: list[str] = []
         self._filling = False
-        self.setWindowTitle(tr("Extensions"))
-        self.resize(860, 420)
+        #: ext id -> on/off chosen here and not yet applied (deferred mode).
+        self._pending: dict[str, bool] = {}
 
-        layout = QVBoxLayout(self)
         self._warning = QLabel(tr(WARNING))
         self._warning.setWordWrap(True)
         layout.addWidget(self._warning)
@@ -56,25 +69,26 @@ class ExtensionsDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         from ui.column_fit import ColumnFitter
 
-        # The description takes the free width; every divider stays draggable.
-        self._columns = ColumnFitter(self.table, fill=4)
+        # The description takes the free width; name, version and source
+        # keep their content (a long description and status squeezed the
+        # name to "…"); every divider stays draggable.
+        self._columns = ColumnFitter(self.table, fill=4, keep=(1, 2, 3))
         self.table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()
         folder_btn = QPushButton(tr("Open Extensions Folder"))
-        folder_btn.clicked.connect(open_extensions_folder)
+        # The desktop's file manager: this page sits in the modal Settings
+        # dialog, so a pane behind it would not be seen.
+        folder_btn.clicked.connect(lambda _checked=False: open_extensions_folder(self))
         reload_btn = QPushButton(tr("Reload"))
         reload_btn.clicked.connect(self._reload)
         buttons.addWidget(folder_btn)
         buttons.addWidget(reload_btn)
         buttons.addStretch(1)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        box.rejected.connect(self.reject)
-        buttons.addWidget(box)
         layout.addLayout(buttons)
         self.refresh()
-        add_close_corner(self)
+        return buttons
 
     # -- table ----------------------------------------------------------------
     def refresh(self) -> None:
@@ -95,15 +109,16 @@ class ExtensionsDialog(QDialog):
                 if allowed and not info.error:
                     flags |= Qt.ItemFlag.ItemIsEnabled
                 check.setFlags(flags)
-                check.setCheckState(
-                    Qt.CheckState.Checked if info.ext_id in enabled else Qt.CheckState.Unchecked
-                )
+                on = self._pending.get(info.ext_id, info.ext_id in enabled)
+                check.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
                 self.table.setItem(row, 0, check)
                 status = info.error or self._host.error(info.ext_id)
                 if not status:
                     status = (
                         tr("loaded") if self._host.module(info.ext_id) is not None else tr("off")
                     )
+                if info.ext_id in self._pending:
+                    status = tr("switched on when saved") if on else tr("switched off when saved")
                 cells = (info.name, info.version, info.source, info.description, status)
                 for col, text in enumerate(cells, start=1):
                     item = QTableWidgetItem(text)
@@ -116,7 +131,13 @@ class ExtensionsDialog(QDialog):
         if self._filling or item.column() != 0:
             return
         ext_id = self._ids[item.row()]
-        self._host.set_enabled(ext_id, item.checkState() == Qt.CheckState.Checked)
+        on = item.checkState() == Qt.CheckState.Checked
+        if self._immediate:
+            self._host.set_enabled(ext_id, on)
+        elif on == (ext_id in EX.enabled_ids()):
+            self._pending.pop(ext_id, None)  # back to what is stored
+        else:
+            self._pending[ext_id] = on
         # Not from inside the table's own signal: refresh() rebuilds the rows.
         QTimer.singleShot(0, self.refresh)
 
@@ -140,13 +161,89 @@ class ExtensionsDialog(QDialog):
         return self._warning.text()
 
 
-def open_extensions_folder() -> None:
-    """Create the user's extension folder if needed and show it."""
-    from PyQt6.QtCore import QUrl
+class ExtensionsPage(_ExtensionsForm, QWidget):
+    """Edit > Settings… > Extensions (Extensions > Manage Extensions… opens
+    it): the ticks are applied when the Settings dialog saves."""
 
+    _immediate = False
+
+    def __init__(self, host, parent=None) -> None:
+        QWidget.__init__(self, parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._build_form(host, layout)
+
+    def pending(self) -> dict[str, bool]:
+        return dict(self._pending)
+
+    def is_dirty(self) -> bool:
+        return bool(self._pending)
+
+    def save(self) -> bool:
+        """Switch the chosen extensions on or off (each is stored by the host)."""
+        for ext_id, on in list(self._pending.items()):
+            try:
+                self._host.set_enabled(ext_id, on)
+            except OSError as exc:
+                QMessageBox.warning(self, tr("Extensions"), str(exc))
+                return False
+            del self._pending[ext_id]
+        self.refresh()
+        return True
+
+
+class ExtensionsDialog(_ExtensionsForm, QDialog):
+    """The extension table as a dialog of its own; a tick switches at once."""
+
+    def __init__(self, host, parent=None) -> None:
+        QDialog.__init__(self, parent)
+        self.setWindowTitle(tr("Extensions"))
+        self.resize(860, 420)
+        layout = QVBoxLayout(self)
+        buttons = self._build_form(host, layout)
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        box.rejected.connect(self.reject)
+        buttons.addWidget(box)
+        add_close_corner(self)
+
+
+def ensure_extensions_folder() -> Path:
+    """The user's extension folder, created (owner only) when missing.
+    Raises ``OSError`` when it cannot be."""
     folder = EX.extensions_dir()
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+    return folder
 
 
-__all__ = ["ExtensionsDialog", "WARNING", "open_extensions_folder"]
+def open_extensions_folder(parent: QWidget | None = None) -> bool:
+    """Create the user's extension folder if needed and show it in the
+    desktop's file manager; a failure is shown in a message box. Returns
+    whether the file manager could be started."""
+    try:
+        folder = ensure_extensions_folder()
+    except OSError as exc:
+        QMessageBox.warning(
+            parent,
+            tr("Extensions"),
+            tr("Could not create {folder}: {error}").format(
+                folder=EX.extensions_dir(), error=exc.strerror or exc
+            ),
+        )
+        return False
+    if not desktop_open.open_url(QUrl.fromLocalFile(str(folder))):
+        QMessageBox.warning(
+            parent,
+            tr("Extensions"),
+            tr("Could not open {folder} in the desktop's file manager.").format(folder=folder),
+        )
+        return False
+    return True
+
+
+__all__ = [
+    "ExtensionsDialog",
+    "ExtensionsPage",
+    "WARNING",
+    "ensure_extensions_folder",
+    "open_extensions_folder",
+]

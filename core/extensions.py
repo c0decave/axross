@@ -212,29 +212,51 @@ def _read_settings() -> tuple[dict, bool]:
     return data, True
 
 
-def enabled_ids() -> set[str]:
+def _id_list(key: str) -> set[str]:
+    """The extension ids stored under *key*; a missing or malformed entry
+    is an empty set."""
     data, _ok = _read_settings()
-    ids = data.get("enabled")
+    ids = data.get(key)
     if not isinstance(ids, list):
         return set()
     return {i for i in ids if isinstance(i, str)}
 
 
-def set_enabled(ext_id: str, on: bool) -> None:
+def _set_member(key: str, ext_id: str, on: bool) -> None:
+    """Add *ext_id* to (or remove it from) the list under *key*, keeping
+    every other key of the settings file."""
     from core.secure_storage import keep_unreadable_copy, write_secret_file
 
     data, readable = _read_settings()
     if not readable and not keep_unreadable_copy(settings_file()):
         raise OSError(f"{settings_file()} is unreadable and could not be kept aside")
-    ids = enabled_ids() if readable else set()
+    ids = _id_list(key) if readable else set()
     if on:
         ids.add(ext_id)
     else:
         ids.discard(ext_id)
     data = dict(data) if readable else {}
-    data["enabled"] = sorted(ids)
+    data[key] = sorted(ids)
     os.makedirs(settings_file().parent, mode=0o700, exist_ok=True)
     write_secret_file(str(settings_file()), json.dumps(data, indent=2) + "\n")
+
+
+def enabled_ids() -> set[str]:
+    return _id_list("enabled")
+
+
+def set_enabled(ext_id: str, on: bool) -> None:
+    _set_member("enabled", ext_id, on)
+
+
+def paused_ids() -> set[str]:
+    """Extensions the user paused: loaded, but no pane events reach them
+    (``ui.extension_host.ExtensionHost.set_paused``)."""
+    return _id_list("paused")
+
+
+def set_paused(ext_id: str, on: bool) -> None:
+    _set_member("paused", ext_id, on)
 
 
 __all__ = [
@@ -245,6 +267,8 @@ __all__ = [
     "enabled_ids",
     "extensions_allowed",
     "extensions_dir",
+    "paused_ids",
     "set_enabled",
+    "set_paused",
     "settings_file",
 ]

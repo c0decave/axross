@@ -7124,6 +7124,18 @@
         {
           "name": "warning",
           "annotation": "str"
+        },
+        {
+          "name": "category",
+          "annotation": "str"
+        },
+        {
+          "name": "archive_path",
+          "annotation": "str"
+        },
+        {
+          "name": "member",
+          "annotation": "str"
         }
       ]
     },
@@ -7177,6 +7189,22 @@
         {
           "name": "ignore_dirs",
           "annotation": "tuple[str, ...]"
+        },
+        {
+          "name": "categories",
+          "annotation": "tuple[str, ...]"
+        },
+        {
+          "name": "search_archives",
+          "annotation": "bool"
+        },
+        {
+          "name": "include_hidden",
+          "annotation": "bool"
+        },
+        {
+          "name": "case_sensitive",
+          "annotation": "bool"
         },
         {
           "name": "_compiled_regex",

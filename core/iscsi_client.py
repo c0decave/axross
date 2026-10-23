@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
-from core import posix_compat
+from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
 from core.local_fs import entry_stat, group_name, owner_name
 from core.path_policy import confined_path
@@ -215,7 +215,7 @@ class IscsiSession(SessionLifecycle):
             os.remove(real)
         elif stat_module.S_ISDIR(st.st_mode):
             if recursive:
-                shutil.rmtree(real)
+                removal_cancel.rmtree(real)
             else:
                 os.rmdir(real)
         else:

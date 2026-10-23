@@ -125,6 +125,9 @@ FULL_MODS=(
     "pysnmp:axross.snmp_get/walk/set"
     "manuf:axross.mac_lookup IEEE OUI database"
     "sift:Analysis dock file explainer (pip: sift-summarizer)"
+    "numpy:Media Player equalizer and spectrum"
+    "piper:Agent dock speech output (pip: piper-tts, GPL-3.0-or-later)"
+    "faster_whisper:Agent dock speech recognition (pip: faster-whisper)"
 )
 
 if [[ "$FLAVOR" == "full" ]]; then
@@ -213,6 +216,29 @@ if ! QT_QPA_PLATFORM=offscreen timeout 30 "$ELF_PATH" --script - <<<'import core
     exit 4
 fi
 echo "    ✓ bundled scripts present"
+
+# Every system library a bundled ELF needs must be bundled or one the target
+# system provides (bundle_options.HOST_PROVIDED): PyInstaller leaves what it
+# cannot find on the build machine to the target system without a word, and
+# Qt's TIFF and xcb plugins then needed libtiff.so.5 and libxcb-cursor.so.0.
+echo ">>> Checking the system libraries $ELF_PATH needs"
+if ! QT_QPA_PLATFORM=offscreen timeout 300 python scripts/bundle_smoke.py --system-libs "$ELF_PATH"; then
+    echo "ERROR: $ELF_PATH needs a system library it does not bundle" >&2
+    exit 6
+fi
+echo "    ✓ system libraries bundled or host-provided"
+
+# The native libraries of the full bundle must load inside it: a library the
+# bundling broke (0.13.22: numpy's OpenBLAS after strip) passes both checks
+# above and fails only when voice or analysis first needs it.
+if [[ "$FLAVOR" == "full" ]]; then
+    echo ">>> Smoke-testing the native libraries of $ELF_PATH"
+    if ! QT_QPA_PLATFORM=offscreen timeout 300 python scripts/bundle_smoke.py --libs "$(dirname "$ELF_PATH")"; then
+        echo "ERROR: a native library does not load inside $ELF_PATH" >&2
+        exit 5
+    fi
+    echo "    ✓ native libraries load"
+fi
 
 # --------------------------------------------------------------------------
 # AppImage wrap

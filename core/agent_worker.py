@@ -154,6 +154,7 @@ def _config_from(data: dict):
         root=str(data["root"]),
         groups=allowed_groups(frozenset(str(g) for g in data.get("groups") or ())),
         allow_write=bool(data.get("allow_write")),
+        files_read_only=bool(data.get("files_read_only")),
         # Credentials and remote commands stay with axross: never offered here.
         allow_exec=False,
         max_steps=int(data.get("max_steps", A.DEFAULT_MAX_STEPS)),
@@ -222,7 +223,9 @@ def serve(reader, writer) -> int:
     )
     history = first["config"].get("messages")
     if isinstance(history, list) and history and all(isinstance(m, dict) for m in history):
-        agent.messages = list(history)
+        # The system message of this agent: the host's history may carry an
+        # older one (another root, other rules).
+        agent.messages = A.with_system_message(history, agent.messages[0])
     hosts = [h for h in first["config"].get("hosts") or () if isinstance(h, str)]
     if hosts:
         from core.agent_net import WorkerBridge

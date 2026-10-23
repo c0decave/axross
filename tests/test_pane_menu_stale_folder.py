@@ -34,7 +34,7 @@ def _all_actions(menu):
 
 
 def _find(menu, prefix: str):
-    return next(a for a in _all_actions(menu) if a.text().startswith(prefix))
+    return next(a for a in _all_actions(menu) if a.text().replace("&", "").startswith(prefix))
 
 
 class MenuStaleFolderTest(_Base):

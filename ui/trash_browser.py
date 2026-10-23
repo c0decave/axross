@@ -6,6 +6,12 @@ Empty-Trash buttons. Each action runs on a background job (one at a
 time, with a status strip and Cancel between entries), so a large
 trashed folder on a slow share does not freeze the window; failures
 collect per-item and get shown once at the end.
+
+The listing loads on its own background job too (one listing plus one
+sidecar read per entry, which on a slow share took long enough to freeze
+the window before it showed): the window opens at once with "Loading the
+trash…", the action buttons wait for the rows, and a newer load supersedes
+an older one, whose result is dropped.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import trash as T
+from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
 
@@ -95,6 +102,11 @@ class TrashBrowserDialog(QDialog):
         self._busy_strip = BusyStrip(self._job, self, cancel_text="Cancel")
         root.addWidget(self._busy_strip)
         self._on_done = None
+        # The listing has its own job: replacing a running load drops the
+        # older result, so a slow, stale listing never overwrites a newer one.
+        self._load_job = ScanJob(self)
+        self._load_job.finished.connect(self._on_loaded)
+        self._loading = False
 
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         close.rejected.connect(self.reject)
@@ -106,16 +118,39 @@ class TrashBrowserDialog(QDialog):
     # ------------------------------------------------------------------
     # Data
     # ------------------------------------------------------------------
+    @property
+    def loading(self) -> bool:
+        """The listing is being read in the background."""
+        return self._loading
+
     def _reload(self) -> None:
-        try:
-            entries = T.list_trash(self._backend)
-        except OSError as exc:
+        """Read the trash listing off the GUI thread; the rows are filled by
+        :meth:`_on_loaded`. A load already running is superseded."""
+        backend = self._backend
+
+        def work(_cancelled, _report):
+            return T.list_trash(backend)
+
+        self._loading = True
+        self._update_buttons()
+        self._info.setText(tr("Loading the trash…"))
+        self._load_job.start(work, replace=True)
+
+    def _on_loaded(self, kind: str, value, _cancelled: bool) -> None:
+        self._loading = False
+        self._update_buttons()
+        if kind == "error":
+            log.warning("Could not list the trash: %s", value)
+            self._fill([])
             QMessageBox.warning(
                 self,
                 "Trash",
-                f"Could not list trash:\n{exc}",
+                tr("Could not list trash:\n{error}").format(error=value),
             )
-            entries = []
+            return
+        self._fill(value)
+
+    def _fill(self, entries) -> None:
         self._table.setRowCount(0)
         for e in entries:
             row = self._table.rowCount()
@@ -151,8 +186,14 @@ class TrashBrowserDialog(QDialog):
     # ------------------------------------------------------------------
     @property
     def busy(self) -> bool:
-        """An action of this dialog is running in the background."""
-        return self._on_done is not None
+        """An action of this dialog, or its listing, runs in the background."""
+        return self._on_done is not None or self._loading
+
+    def _update_buttons(self) -> None:
+        # An action needs the current rows and runs one at a time.
+        enabled = not self.busy
+        for button in (self._restore_btn, self._delete_btn, self._empty_btn):
+            button.setEnabled(enabled)
 
     def _progress_text(self, state: dict) -> str:
         return (
@@ -163,18 +204,15 @@ class TrashBrowserDialog(QDialog):
         """Start *work(cancelled, report)* in the background; *on_done(kind,
         value, cancelled)* runs on the GUI thread when it ends. Refused
         while another action runs."""
-        if self._on_done is not None:
+        if self.busy:
             return False
         self._on_done = on_done
-        for button in (self._restore_btn, self._delete_btn, self._empty_btn):
-            button.setEnabled(False)
+        self._update_buttons()
         self._job.start(work)
         return True
 
     def _on_job_finished(self, kind: str, value, cancelled: bool) -> None:
         on_done, self._on_done = self._on_done, None
-        for button in (self._restore_btn, self._delete_btn, self._empty_btn):
-            button.setEnabled(True)
         self._reload()
         if on_done is not None:
             on_done(kind, value, cancelled)
@@ -183,7 +221,9 @@ class TrashBrowserDialog(QDialog):
         # Closing while an action runs: it stops after the entry in progress
         # and nothing is reported to a dialog that is gone.
         self._job.abandon()
+        self._load_job.abandon()
         self._on_done = None
+        self._loading = False
         super().done(result)
 
     def _per_entry(self, entries, action):

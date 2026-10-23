@@ -284,6 +284,78 @@ def _sha256_of(backend, path: str) -> str:
     return digest.hexdigest()
 
 
+def recreate_parent_folders(backend, path: str) -> list[str]:
+    """Create the folder *path* belongs in, with any missing above it, and
+    return the folders created, outermost first.
+
+    Restoring a trashed entry, or undoing a move, leads back into a folder
+    that may be gone since (emptied and deleted, or a folder move that
+    removed its emptied source folders); a rename or a transfer into it
+    cannot succeed until it is there again. Raises :class:`OSError` when
+    something that is not a folder holds the place of one - a link to a
+    folder (``~/Pictures -> /data/pics``) is left to the caller's write.
+    A folder that cannot be created takes the ones made before it back.
+    """
+    missing: list[str] = []
+    current = backend.parent(path)
+    while current and not backend.exists(current):
+        missing.append(current)
+        above = backend.parent(current)
+        if above == current:
+            current = ""
+            break
+        current = above
+    if current:
+        info = backend.stat(current)
+        if not getattr(info, "is_dir", False) and not getattr(info, "is_link", False):
+            raise OSError(f"{current} is not a folder; {path} cannot be put back there")
+    created: list[str] = []
+    try:
+        for folder in reversed(missing):
+            backend.mkdir(folder)
+            created.append(folder)
+            log.info("recreated the folder %s", folder)
+    except BaseException:
+        remove_created_folders(backend, created)
+        raise
+    return created
+
+
+def remove_created_folders(backend, created: list[str]) -> None:
+    """Take back what :func:`recreate_parent_folders` made, innermost
+    first, as far as the folders are still empty."""
+    for folder in reversed(created):
+        try:
+            backend.remove(folder)
+        except OSError as exc:
+            log.debug("could not remove the recreated folder %s: %s", folder, exc)
+            return
+
+
+def _into_parent_folder(backend, path: str, put) -> None:
+    """Run *put* (which writes *path*); when it fails because the folder of
+    *path* is gone (emptied and deleted since the entry was trashed),
+    recreate that folder and run it once more - and take the folders back
+    if it still fails. A backend that writes a path without its folder (an
+    object store's keys) never gets one created."""
+    try:
+        put()
+        return
+    except OSError as first:
+        try:
+            parent_there = backend.exists(backend.parent(path))
+        except OSError:
+            raise first from None
+        if parent_there:
+            raise
+    created = recreate_parent_folders(backend, path)
+    try:
+        put()
+    except BaseException:
+        remove_created_folders(backend, created)
+        raise
+
+
 def _remove_quietly(backend, path: str) -> None:
     try:
         if backend.exists(path):
@@ -436,18 +508,23 @@ def restore_over(
                 f"{target} was changed after its metadata was removed; putting the "
                 "original back would discard that change. The original is still in the trash."
             )
-    if _is_local(backend):
-        try:
-            os.replace(data_file, target)
-        except OSError as exc:
-            if exc.errno != errno.EXDEV:
-                raise
-            _replace_across_devices(backend, data_file, target)
-    else:
-        from core.atomic_io import atomic_write_stream
 
-        with backend.open_read(data_file) as src:
-            atomic_write_stream(backend, target, src)
+    def put_back() -> None:
+        if _is_local(backend):
+            try:
+                os.replace(data_file, target)
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
+                _replace_across_devices(backend, data_file, target)
+        else:
+            from core.atomic_io import atomic_write_stream
+
+            with backend.open_read(data_file) as src:
+                atomic_write_stream(backend, target, src)
+
+    _into_parent_folder(backend, target, put_back)
+    if not _is_local(backend):
         _remove_quietly(backend, data_file)
     _remove_quietly(backend, meta_file)
     return target
@@ -592,10 +669,10 @@ def restore(backend, trash_id: str, root: str | None = None, target: str | None 
     if backend.exists(dst):
         raise OSError(f"restore: target already exists: {dst}")
 
-    try:
-        from core.server_ops import server_side_move
+    from core.server_ops import server_side_move
 
-        server_side_move(backend, data_file, dst)
+    try:
+        _into_parent_folder(backend, dst, lambda: server_side_move(backend, data_file, dst))
     except OSError as exc:
         raise OSError(f"restore: move {data_file} -> {dst} failed: {exc}") from exc
 

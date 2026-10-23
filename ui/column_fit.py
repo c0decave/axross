@@ -8,6 +8,13 @@ content and header, one *fill* column the rest of the viewport. A column
 the user dragged keeps its width from then on; the fill column then takes
 what is left (and the view scrolls when nothing is left).
 
+In a narrow view the fill column gets its content (up to half the width)
+first and the others share the rest in proportion to their content. A
+*keep* column - the name that tells the rows apart, where the fill column
+is a path or a description - gets its content (up to a third of the width)
+before that share, so a long description or status never squeezes it to
+an ellipsis (reported for the Extensions list).
+
 The fit runs after the viewport is resized or shown and after the model
 changes (rows, data, a new model), coalesced to one pass per event-loop
 turn. ``QAbstractItemView.sizeHintForColumn`` reads at most the header's
@@ -39,10 +46,14 @@ def _header(view: QAbstractItemView) -> QHeaderView:
 class ColumnFitter(QObject):
     """Fit *view*'s columns, *fill* taking the free width; see the module."""
 
-    def __init__(self, view: QAbstractItemView, fill: int = 0) -> None:
+    def __init__(
+        self, view: QAbstractItemView, fill: int = 0, keep: tuple[int, ...] = ()
+    ) -> None:
         super().__init__(view)
         self._view = view
         self._fill = fill
+        #: Columns that get their content before the others share the rest.
+        self._keep = tuple(keep)
         self._fitting = False
         self._pending = False
         self._model = None
@@ -123,14 +134,38 @@ class ColumnFitter(QObject):
                 max(minimum, viewport // 2),
             )
             fixed = sum(header.sectionSize(c) for c in visible if c != fill and c not in want)
-            room = max(0, viewport - fixed - need)
-            total = sum(want.values())
-            if fitted and total > room:
-                # The others share what is left in proportion to what they
-                # want; an elided "Compr…" reads better than a name that is
-                # not there at all.
-                for c in fitted:
-                    want[c] = max(minimum, want[c] * room // total)
+            # A kept column (the name, where a path or a description
+            # fills): its content, up to a third of the width, before the
+            # fill column and the others.
+            kept = [c for c in self._keep if c in want]
+            for c in kept:
+                want[c] = min(want[c], max(minimum, viewport // 3))
+            kept_width = sum(want[c] for c in kept)
+            shared = [c for c in fitted if c not in kept]
+            # What the others need to show their header label at least.
+            floors = {c: min(want[c], max(minimum, header.sectionSizeHint(c))) for c in shared}
+            if kept:
+                # With kept columns the fill gives way down to what leaves
+                # the others their labels (a long description took half the
+                # width and left "Status" and "Version" as "…").
+                need = min(need, max(minimum, viewport - fixed - kept_width - sum(floors.values())))
+            room = max(0, viewport - fixed - need - kept_width)
+            total = sum(want[c] for c in shared)
+            if shared and total > room:
+                spare = room - sum(floors.values())
+                if spare >= 0:
+                    # Each its header label, the rest in proportion to what
+                    # it wants beyond that.
+                    over = {c: want[c] - floors[c] for c in shared}
+                    over_total = sum(over.values()) or 1
+                    for c in shared:
+                        want[c] = floors[c] + over[c] * spare // over_total
+                else:
+                    # Not even the labels fit: in proportion to what they
+                    # want; an elided "Compr…" reads better than a name
+                    # that is not there at all.
+                    for c in shared:
+                        want[c] = max(minimum, want[c] * room // total)
         self._fitting = True
         try:
             for col in fitted:

@@ -37,17 +37,27 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from core.secure_storage import data_file_path
 from core.trash import TRASH_DIRNAME
 
 log = logging.getLogger(__name__)
 
-# Default location follows XDG. Callers can override by passing their
-# own path to every function that takes ``db_path``.
-_DEFAULT_DB = Path(
-    os.environ.get("AXROSS_CAS_DB") or Path.home() / ".local" / "share" / "axross" / "cas.sqlite"
-)
+# Default location follows XDG (core.secure_storage.data_file_path). Callers
+# can override by passing their own path to every function that takes
+# ``db_path``.
+_DEFAULT_DB = data_file_path("cas.sqlite", "AXROSS_CAS_DB")
 
 CAS_URL_SCHEME = "ax-cas"
+
+
+def default_db_path() -> Path:
+    """Where the duplicate index lives unless a caller passes ``db_path``:
+    ``$AXROSS_CAS_DB``, else ``$XDG_DATA_HOME/axross/cas.sqlite``, else
+    ``~/.local/share/axross/cas.sqlite`` - an index already at that old
+    place stays in use while the new one does not exist (read when this
+    module was imported)."""
+    return _DEFAULT_DB
+
 
 # See core/metadata_index.py for the rationale on LIKE escaping.
 _LIKE_ESCAPE = "!"
@@ -1255,6 +1265,7 @@ def resolve_url(url: str, db_path=None) -> list[CasEntry]:
 
 
 __all__ = [
+    "default_db_path",
     "CasEntry",
     "DedupeResult",
     "DeleteOutcome",

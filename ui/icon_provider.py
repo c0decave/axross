@@ -157,6 +157,11 @@ _TOOL_ICONS = {
         '<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3'
         'm0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>',
     ),
+    # Pause / resume an extension panel's updates.
+    "pause": _svg(
+        '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
+    ),
+    "play": _svg('<polygon points="6 4 20 12 6 20 6 4"/>'),
     "refresh": _svg(
         '<polyline points="23 4 23 10 17 10"/>'
         '<polyline points="1 20 1 14 7 14"/>'
@@ -209,15 +214,72 @@ _TOOL_ICONS = {
         '<rect x="2" y="4" width="20" height="4" rx="1"/>'
         '<polyline points="9 13 12 16 15 13"/><line x1="12" y1="10" x2="12" y2="16"/>',
     ),
+    # The tools of the toolbar's last group.
+    # A speech bubble with a spark: the Agent dock.
+    "agent": _svg(
+        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
+        '<path d="M12 6.5v6M9 9.5h6"/>',
+    ),
+    # A magnifier over bars: the Analysis dock (sift).
+    "analysis": _svg(
+        '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16" y2="16"/>'
+        '<path d="M8.5 13.5v-2M11 13.5V8.5M13.5 13.5v-3.5"/>',
+    ),
+    # A page with a magnifier: Find Files.
+    "find-files": _svg(
+        '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h5"/><polyline points="13 2 13 8 19 8"/>'
+        '<path d="M19 8v2"/><circle cx="16" cy="16" r="3"/><line x1="18.2" y1="18.2" x2="21" y2="21"/>',
+    ),
+    # A page with a play mark: the Scripts dock.
+    "scripts": _svg(
+        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+        '<polyline points="14 2 14 8 20 8"/><polygon points="10 11 15 14 10 17 10 11"/>',
+    ),
+    # A window with a ">>" prompt: the Python console, axross's scripting
+    # engine (the terminal beside it is ">_" without a frame).
+    "console": _svg(
+        '<rect x="2" y="4" width="20" height="16" rx="2"/>'
+        '<polyline points="6 9 9 12 6 15"/><polyline points="11 9 14 12 11 15"/>'
+        '<line x1="16" y1="15" x2="18" y2="15"/>',
+    ),
+    # Equalizer sliders: the Media Player.
+    "media-player": _svg(
+        '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>'
+        '<path d="M1 14h6M9 8h6M17 16h6"/>',
+    ),
+    # Tiles of different sizes: the Folder Treemap.
+    "treemap": _svg(
+        '<rect x="3" y="3" width="18" height="18" rx="2"/>'
+        '<path d="M12 3v18M3 12h9M12 15h9M16.5 15v6"/>',
+    ),
+    # A drive: the Drives Overview.
+    "drives": _svg(
+        '<line x1="22" y1="12" x2="2" y2="12"/>'
+        '<path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89'
+        'A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>'
+        '<line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/>',
+    ),
+    # Three tiles and a check: Help > Features (installed or not).
+    "features": _svg(
+        '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>'
+        '<rect x="3" y="14" width="7" height="7" rx="1"/><polyline points="14 17.5 16.5 20 21 15"/>',
+    ),
     # A puzzle piece: extensions.
     "extensions": _svg(
         '<path d="M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z"/>',
     ),
+    # The toolbar's overflow button (more buttons than fit).
+    "chevrons-right": _svg('<polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/>'),
+    # Buttons that once were emoji (no emoji font on a plain Linux install).
+    "pin": _svg('<line x1="12" y1="17" x2="12" y2="22"/>'
+                '<path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24z"/>'),
+    "mic": _svg('<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>'
+                '<path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>'
+                '<line x1="8" y1="23" x2="16" y2="23"/>'),
+    "speaker": _svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>'
+                    '<path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>'),
 }
 
-
-# Icon category: bookmark / sidebar icons. Users pick one per
-# bookmark from the edit dialog.
 _BOOKMARK_ICONS = {
     "bookmark": _svg(
         '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
@@ -572,6 +634,10 @@ ICONS: dict[str, str] = {**_TOOL_ICONS, **_BOOKMARK_ICONS, **_EMOJI_ICONS, **_TH
 # follow the theme's foreground — makes the toolbar feel like a native
 # part of the menubar chrome.
 _ICON_COLORS: dict[str, str | None] = {
+    "chevrons-right": "#95a5a6",
+    "pin": "#e67e22",
+    "mic": "#e74c3c",
+    "speaker": "#3498db",
     # Tool verbs — semantically coloured too (original V1 left them
     # as ``None`` for theme-match; user wanted colour across the
     # whole surface). Values picked to stay distinguishable without
@@ -598,9 +664,22 @@ _ICON_COLORS: dict[str, str | None] = {
     "find-index": "#4a90e2",  # blue search
     "compare": "#6c5ce7",  # indigo, between the layout violets and the copy blue
     "disk-usage": "#f1c40f",  # yellow pie
+    "pause": "#e67e22",  # orange: held
+    "play": "#27ae60",  # green: running again
     "metadata": "#1abc9c",  # turquoise info
     "pack": "#d35400",  # burnt orange box
     "extensions": "#8e44ad",  # purple puzzle
+    # The tool group; each reads on dark (#1e1e2e, >= 3:1) and light themes
+    # (tests/test_toolbar_tool_buttons.py measures it).
+    "agent": "#00b894",  # mint speech bubble
+    "analysis": "#0984e3",  # blue magnifier
+    "find-files": "#2e86de",  # blue, beside the index search
+    "scripts": "#8c7ae6",  # lavender
+    "console": "#f0932b",  # orange, beside the lavender scripts
+    "media-player": "#ff6b6b",  # coral, like the music icon
+    "treemap": "#e1b12c",  # mustard tiles
+    "drives": "#4b9ce2",  # sky blue
+    "features": "#00a8a8",  # teal
     "x": "#95a5a6",  # neutral grey close cross
     "window-maximize": "#95a5a6",  # same grey as the [x] beside it
     "window-restore": "#95a5a6",

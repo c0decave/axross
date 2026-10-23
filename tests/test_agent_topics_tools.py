@@ -38,7 +38,9 @@ def test_happy_a_topic_fills_the_task_with_the_folder(env):
     tab = env.dock().current_tab()
     tab.use_topic(_topic("Disk usage"))
     assert str(env.root) in tab.input.toPlainText()
-    titles = [a.text() for a in (tab._fill_topics_menu() or tab.topics_menu.actions()) if a.text()]
+    # The menu shows "<title>\t/<command>" (work prompts): compare the title.
+    titles = [a.text().split("\t")[0] for a in (tab._fill_topics_menu() or tab.topics_menu.actions())
+              if a.text()]
     assert "System inventory" in titles
 
 

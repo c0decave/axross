@@ -1,6 +1,6 @@
 """What the READMEs promise on their first screen, and the screenshots.
 
-- Every README opens with the same ten benefits, one line each, right
+- Every README opens with the same twenty benefits, one line each, right
   under the tagline - the same count in every language.
 - The three language READMEs show the same screenshots; each one exists,
   and docs/screenshots holds no image that none of them shows.
@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LANGUAGE_READMES = ("README.md", "README_de.md", "README_es.md")
 ALL_READMES = (*LANGUAGE_READMES, "README_PYPI.md")
 SHOTS = ROOT / "docs" / "screenshots"
-BENEFITS = 10
+BENEFITS = 20
 _IMAGE = re.compile(r"!\[[^\]]*\]\((docs/screenshots/[^)\s]+)\)")
 _PNG_CHUNKS_ALLOWED = {b"IHDR", b"IDAT", b"IEND", b"pHYs"}
 
@@ -82,7 +82,7 @@ def ci_operating_systems() -> set[str]:
 
 
 @pytest.mark.parametrize("name", ALL_READMES)
-def test_happy_each_readme_opens_with_ten_one_line_benefits(name):
+def test_happy_each_readme_opens_with_twenty_one_line_benefits(name):
     block = benefit_block((ROOT / name).read_text(encoding="utf-8"))
     assert len(block) == BENEFITS, block
     for line in block:

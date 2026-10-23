@@ -6,7 +6,7 @@ import logging
 import weakref
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat
+from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QComboBox,
     QDockWidget,
@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from core.i18n import tr
 
 
 class _LogSignalBridge(QObject):
@@ -107,6 +109,9 @@ class LogDock(QDockWidget):
         self._btn_scroll = QPushButton("Auto-Scroll")
         self._btn_scroll.setCheckable(True)
         self._btn_scroll.setChecked(True)
+        self._btn_scroll.setToolTip(tr("Keep the newest line in view"))
+        # Switched on: the newest line at once, not only with the next record.
+        self._btn_scroll.toggled.connect(self._on_auto_scroll_toggled)
         toolbar.addWidget(self._btn_scroll)
 
         toolbar.addStretch()
@@ -127,6 +132,10 @@ class LogDock(QDockWidget):
             "QPlainTextEdit { background-color: #1e1e1e; color: #d4d4d4; }"
         )
         layout.addWidget(self._log_view, stretch=1)
+        # The scroll range also changes after a record: when the layout runs
+        # late (a dock behind another tab), on a resize, when the line cap
+        # drops the oldest lines. Auto-Scroll follows every one of them.
+        self._log_view.verticalScrollBar().rangeChanged.connect(self._follow_newest)
 
         self.setWidget(container)
         self._msg_count = 0
@@ -162,17 +171,33 @@ class LogDock(QDockWidget):
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(color))
 
-        cursor = self._log_view.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
+        # A cursor of its own: the view's cursor is where the user clicked
+        # or marked text, and must stay there.
+        cursor = QTextCursor(self._log_view.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(message + "\n", fmt)
 
         self._msg_count += 1
         self._count_label.setText(f"{self._msg_count} messages")
 
-        if self._btn_scroll.isChecked():
-            self._log_view.ensureCursorVisible()
+        self._follow_newest()
 
         self.activity.emit()
+
+    def _follow_newest(self, *_range) -> None:
+        """With Auto-Scroll on, show the newest line.
+
+        By the scroll bar, not ``ensureCursorVisible()``: that shows the
+        view's text cursor, which a click into the log moves - Auto-Scroll
+        then pinned the view to the clicked line (reported: "auto scroll
+        ... scheint ... nicht zu funktionieren")."""
+        if self._btn_scroll.isChecked():
+            bar = self._log_view.verticalScrollBar()
+            bar.setValue(bar.maximum())
+
+    def _on_auto_scroll_toggled(self, on: bool) -> None:
+        if on:
+            self._follow_newest()
 
     def _on_level_changed(self, text: str) -> None:
         level_map = {

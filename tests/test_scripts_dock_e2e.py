@@ -204,12 +204,12 @@ def test_sad_the_paranoid_toggle_disables_run_at_once(window, name) -> None:
     assert dock.run_action.isEnabled()
     try:
         with mock.patch("ui.main_window.QMessageBox.information"):
-            window._toggle_paranoid_mode(True)
+            window.set_paranoid_mode(True)
         assert not dock.run_action.isEnabled()
         assert "paranoid" in dock.run_action.toolTip()
     finally:
         with mock.patch("ui.main_window.QMessageBox.information"):
-            window._toggle_paranoid_mode(False)
+            window.set_paranoid_mode(False)
     assert security_mode.current_policy().allow_scripts
     assert dock.run_action.isEnabled()
 

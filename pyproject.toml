@@ -98,6 +98,12 @@ ntp = ["ntplib>=0.4"]
 metadata = ["pypdf>=6.4.0"]
 # File analysis (Analysis dock), an opt-in extra: not part of "all".
 sift = ["sift-summarizer>=0.1.86"]
+# Media Player extension: equalizer and spectrum (playback works without).
+media = ["numpy>=2.0"]
+# Talking with the Agent dock: Piper speech output and local faster-whisper
+# recognition. An opt-in extra, not part of "all": piper-tts is
+# GPL-3.0-or-later. Voices and models are downloaded in Help > Features….
+voice = ["piper-tts>=1.8.0", "onnxruntime>=1.31.0", "faster-whisper>=1.2.1", "ctranslate2>=4.8.3"]
 all = [
     "smbprotocol>=1.13",
     "defusedxml>=0.7",
@@ -149,6 +155,7 @@ packages = [
     "resources.scripts",
     "resources.extensions",
     "resources.wordlists",
+    "resources.voice",
 ]
 
 [tool.setuptools.package-data]
@@ -156,6 +163,7 @@ packages = [
 "resources.logo.concepts" = ["*.svg"]
 "resources.scripts" = ["*.md"]
 "resources.wordlists" = ["*.txt"]
+"resources.voice" = ["*.txt"]
 "examples" = ["*.md"]
 "examples.scripting_api" = ["*.md"]
 

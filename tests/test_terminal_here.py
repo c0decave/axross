@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -172,7 +173,7 @@ def _close(widget) -> None:
 
 
 def _action(widget, text):
-    return next((a for a in widget._build_context_menu().actions() if a.text() == text), None)
+    return next((a for a in widget._build_context_menu().actions() if a.text().replace("&", "") == text), None)
 
 
 # --------------------------------------------------------------------------
@@ -428,7 +429,7 @@ def local_pane(tmp_path):
 
 
 def test_happy_local_pane_offers_both_entries_on_empty_space(local_pane):
-    texts = [a.text() for a in local_pane._build_context_menu().actions()]
+    texts = [a.text().replace("&", "") for a in local_pane._build_context_menu().actions()]
     assert EMBEDDED in texts and EXTERNAL in texts
     assert _action(local_pane, EMBEDDED).isEnabled()
 
@@ -566,3 +567,44 @@ def test_happy_main_window_opens_an_ssh_shell_for_an_ssh_pane(window):
     _action(pane, EMBEDDED).trigger()
     assert transport.channels, "no shell was opened on the pane's transport"
     assert transport.channels[-1].sent[-1] == TH.remote_cd_command("/home/me and you")
+
+
+# --- round-2 verification: a working folder typed as ~/... (terminal bookmarks) ------
+
+
+def _bash_cwd(line: bytes, home) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "--norc", "--noprofile", "-c", line.decode() + " pwd"],
+        capture_output=True, text=True, env={"HOME": str(home), "PATH": os.environ["PATH"]},
+        cwd=str(home.parent), timeout=10,
+    )
+
+
+def test_happy_remote_cd_expands_the_home_tilde(tmp_path):
+    """A terminal bookmark's folder is typed by hand, and ~/ is how a shell
+    user names the home folder: the remote shell must expand it, while the
+    rest stays quoted."""
+    home = tmp_path / "home"
+    (home / "my dir").mkdir(parents=True)
+    done = _bash_cwd(TH.remote_cd_command("~/my dir"), home)
+    assert done.stdout.strip() == str(home / "my dir"), done
+    done = _bash_cwd(TH.remote_cd_command("~"), home)
+    assert done.stdout.strip() == str(home), done
+
+
+def test_sad_the_part_after_the_tilde_stays_quoted(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    marker = tmp_path / "ran"
+    done = _bash_cwd(TH.remote_cd_command(f"~/$(touch {marker})"), home)
+    assert not marker.exists() and done.returncode == 0, done
+    with pytest.raises(ValueError):
+        TH.remote_cd_command("~/a\nrm -rf ~")
+
+
+def test_edge_other_tilde_forms_stay_literal():
+    """Only ~ and ~/... name the home folder here; ~user and a ~ inside a
+    name are literal, as for every absolute path a pane sends."""
+    for path in ("~other/x", "/srv/~/x", "~x"):
+        assert shlex.split(TH.remote_cd_command(path).decode()) == ["cd", "--", path]
+        assert b"'" in TH.remote_cd_command(path)

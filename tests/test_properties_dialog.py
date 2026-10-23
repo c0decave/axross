@@ -328,7 +328,7 @@ def test_context_menu_offers_properties(tmp_path):
     pane = _pane(tmp_path)
     try:
         _select(pane, "a.txt")
-        texts = [a.text() for a in pane._build_context_menu().actions()]
+        texts = [a.text().replace("&", "") for a in pane._build_context_menu().actions()]
         assert any("Properties" in t for t in texts), texts
     finally:
         pane.close()

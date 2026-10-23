@@ -6,17 +6,19 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from core.i18n import tr
+from ui.pane_drag import DraggableHeader, PaneDropZones
 from ui.terminal_widget import (
     LocalTerminalSession,
     SSHTerminalSession,
@@ -37,6 +39,11 @@ class TerminalPaneWidget(QWidget):
 
     close_requested = pyqtSignal()
     pane_focused = pyqtSignal()
+    #: "Bookmark this Terminal": the main window makes a terminal bookmark.
+    bookmark_requested = pyqtSignal()
+    #: A pane was dropped here: dragged pane id, this pane, zone
+    #: ("left"/"right"/"top"/"bottom") - as FilePaneWidget.pane_drop_requested.
+    pane_drop_requested = pyqtSignal(str, object, str)
 
     def __init__(
         self,
@@ -51,13 +58,17 @@ class TerminalPaneWidget(QWidget):
         self._transport = transport
         self._label_text = label
         self._profile = profile
-        # Working folder of a local shell (None: the application's own).
+        # Folder the shell starts in: a local shell is started there, a
+        # remote one is sent a ``cd`` there. None: the application's folder
+        # (local) or the login folder (remote).
         self._cwd = cwd
         self._connection_manager = connection_manager
         self._session: LocalTerminalSession | SSHTerminalSession | None = None
         # ConnectionManager references this pane holds; shutdown gives
         # back exactly these, never one it did not take.
         self._refs = 0
+        #: The window the pin's key filter is installed on (see _pin_to).
+        self._pin_window = None
 
         self._setup_ui()
         self._start_session()
@@ -76,9 +87,20 @@ class TerminalPaneWidget(QWidget):
         return self._session is not None and self._session.is_active
 
     @property
+    def holds_session(self) -> bool:
+        """This pane holds a reference on its profile's connection (given
+        back by :meth:`shutdown`)."""
+        return self._refs > 0
+
+    @property
     def is_local(self) -> bool:
         """A local shell: neither a profile nor a transport behind it."""
         return self._profile is None and self._transport is None
+
+    @property
+    def start_directory(self) -> str | None:
+        """The folder the shell was started in (local) or sent to (remote)."""
+        return self._cwd
 
     def working_directory(self) -> str | None:
         """The folder a local shell is in now, when that is cheap to know:
@@ -97,6 +119,9 @@ class TerminalPaneWidget(QWidget):
 
     def _setup_ui(self) -> None:
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Pane drags only (ui/pane_drag.py): a text drop is the terminal
+        # widget's, which takes it before it gets here.
+        self.setAcceptDrops(True)
         self.setMinimumWidth(220)
         self.setMinimumHeight(150)
 
@@ -122,7 +147,12 @@ class TerminalPaneWidget(QWidget):
         header = QHBoxLayout()
         header.setSpacing(4)
 
-        self._title = QLabel(f"\u2588 {self._label_text}")  # █ block char
+        # The drag handle, as a file pane's header: drag it onto another
+        # pane (or a workspace tab) to move this pane there.
+        self._title = DraggableHeader(self)
+        self._title.setText(f"\u2588 {self._label_text}")  # █ block char
+        self._title.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._title.setToolTip(tr("Drag to move the pane"))
         font = QFont()
         font.setBold(True)
         self._title.setFont(font)
@@ -130,7 +160,23 @@ class TerminalPaneWidget(QWidget):
 
         header.addStretch()
 
-        self._btn_pin = QPushButton("\U0001f4cc")  # 📌
+        self._btn_bookmark = QPushButton("\u2606")  # ☆, as the file pane's button
+        self._btn_bookmark.setFixedSize(22, 22)
+        self._btn_bookmark.setToolTip(tr("Bookmark this Terminal"))
+        self._btn_bookmark.clicked.connect(lambda _checked=False: self.bookmark_requested.emit())
+        header.addWidget(self._btn_bookmark)
+
+        # Move to Workspace ▸ (ui/workspaces.py): filled by the window.
+        self._btn_workspace = QPushButton("\u21c4")  # ⇄
+        self._btn_workspace.setFixedSize(22, 22)
+        self._btn_workspace.setToolTip(tr("Move to Workspace"))
+        self._btn_workspace.setMenu(self.workspace_menu())
+        header.addWidget(self._btn_workspace)
+
+        self._btn_pin = QPushButton()
+        from ui.icon_provider import icon
+
+        self._btn_pin.setIcon(icon("pin"))
         self._btn_pin.setFixedSize(22, 22)
         self._btn_pin.setCheckable(True)
         self._btn_pin.setToolTip("Pin: capture all keyboard input (Ctrl+Shift+P)")
@@ -166,6 +212,10 @@ class TerminalPaneWidget(QWidget):
         self._terminal.data_ready.connect(self._on_input)
         self._terminal.grid_resized.connect(self._on_grid_resized)
         inner_layout.addWidget(self._terminal, stretch=1)
+
+        # Drop zones for a dragged pane, drawn over the terminal
+        self._pane_drop = PaneDropZones(self)
+        self._drop_overlay = self._pane_drop.overlay
 
         # Poll timer
         self._read_timer = QTimer(self)
@@ -255,6 +305,7 @@ class TerminalPaneWidget(QWidget):
                 self._session = SSHTerminalSession(
                     transport,
                     suppress_history=suppress,
+                    initial_dir=self._cwd,
                     rows=rows,
                     cols=cols,
                 )
@@ -276,18 +327,51 @@ class TerminalPaneWidget(QWidget):
         self._terminal.clear()
         self._start_session()
 
+    def _pin_to(self, window) -> None:
+        """Move the pin's key filter to *window* (None: no window at all).
+
+        The filter sits on the window it was installed on, not on this
+        pane: removing it from ``self.window()`` after the pane moved to
+        another window (a detach, a move to another workspace) left it on
+        the old one, whose keys then went on to this terminal for good."""
+        old = self._pin_window
+        if old is window:
+            return
+        self._pin_window = None
+        if old is not None and not sip.isdeleted(old):
+            old.removeEventFilter(self)
+            try:
+                old.destroyed.disconnect(self._pin_window_destroyed)
+            except TypeError:  # not connected
+                pass
+        if window is not None:
+            window.installEventFilter(self)
+            window.destroyed.connect(self._pin_window_destroyed)
+            self._pin_window = window
+
+    def _pin_window_destroyed(self, *_args) -> None:
+        # The window went (a detached workspace came back as a tab): the
+        # pin goes on in the window this pane is in now - once the window
+        # is fully gone, which may take this pane with it (application end).
+        self._pin_window = None
+        QTimer.singleShot(0, lambda: self._repin_after_window_loss())
+
+    def _repin_after_window_loss(self) -> None:
+        if sip.isdeleted(self) or not self.is_pinned or self._pin_window is not None:
+            return
+        self._pin_to(self.window())
+
     def _toggle_pin(self, pinned: bool) -> None:
         """Pin/unpin: when pinned, intercept ALL keyboard input for the terminal."""
-        window = self.window()
         if pinned:
-            window.installEventFilter(self)
+            self._pin_to(self.window())
             self._terminal.setFocus()
             self._border_frame.setStyleSheet(
                 "QFrame#axPaneBorder { border: 2px solid #e5c07b; border-radius: 4px; }"
             )
             log.info("Terminal pane pinned: %s", self._label_text)
         else:
-            window.removeEventFilter(self)
+            self._pin_to(None)
             self._border_frame.setStyleSheet(
                 "QFrame#axPaneBorder { border: 2px solid #569cd6; border-radius: 4px; }"
             )
@@ -299,6 +383,14 @@ class TerminalPaneWidget(QWidget):
 
     def eventFilter(self, obj, event: QEvent) -> bool:
         """When pinned, intercept key events and shortcut events from the whole window."""
+        window = self.window()
+        if obj is not window:
+            # This pane moved to another window while pinned: the old
+            # window's keys are its own again, the pin goes with the pane.
+            # (Not while it is lifted out of a layout and is its own window.)
+            if obj is self._pin_window and window is not self:
+                self._pin_to(window if self.is_pinned else None)
+            return False
         etype = event.type()
 
         if etype == QEvent.Type.ShortcutOverride:
@@ -330,6 +422,39 @@ class TerminalPaneWidget(QWidget):
 
         return False
 
+    def workspace_menu(self):
+        """The header button's menu: the window's other workspaces."""
+        from PyQt6.QtWidgets import QMenu
+
+        menu = getattr(self, "_workspace_menu", None)
+        if menu is None:
+            menu = QMenu(self)
+            menu.aboutToShow.connect(self._fill_workspace_menu)
+            self._workspace_menu = menu
+        return menu
+
+    def _fill_workspace_menu(self) -> None:
+        filler = getattr(self.window(), "fill_move_menu_for", None)
+        self._workspace_menu.clear()
+        if filler is None:
+            self._workspace_menu.addAction(tr("No workspaces here")).setEnabled(False)
+            return
+        filler(self, self._workspace_menu)
+
+    def run_command(self, argv: list[str]) -> bool:
+        """Type *argv*, quoted for a POSIX shell, into this local shell and
+        press Enter - for interactive tools (TestDisk, PhotoRec). False for
+        a remote shell or one that did not start."""
+        import shlex
+
+        if not self.is_local or not argv:
+            return False
+        self._start_session()
+        if not (self._session and self._session.is_active):
+            return False
+        self._session.write((shlex.join(argv) + "\n").encode("utf-8"))
+        return True
+
     def _on_input(self, data: bytes) -> None:
         if self._session and self._session.is_active:
             self._session.write(data)
@@ -360,6 +485,29 @@ class TerminalPaneWidget(QWidget):
             self._session.close()
             self._session = None
         self._release_refs()
+
+    # -- a dragged pane dropped here ------------------------------------------------
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if not self._pane_drop.enter(event):
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if not self._pane_drop.move(event):
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._pane_drop.leave()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
+        pane_drop = self._pane_drop.drop(event)
+        if pane_drop is None:
+            event.ignore()
+            return
+        source_id, zone = pane_drop
+        self.pane_drop_requested.emit(source_id, self, zone)
+        log.info("Pane drop: zone=%s onto terminal %s", zone, self._label_text)
 
     def mousePressEvent(self, event):
         self.pane_focused.emit()

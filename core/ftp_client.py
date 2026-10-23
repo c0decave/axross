@@ -20,6 +20,7 @@ from ftplib import FTP, FTP_TLS, error_perm  # nosec B402
 from ftplib import Error as _FtpLibError  # nosec B402
 from typing import IO, NoReturn
 
+from core import removal_cancel
 from core.backend import SessionLifecycle
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from core.read_spool import READ_CHUNK, new_read_spool
@@ -1211,10 +1212,12 @@ class FtpSession(SessionLifecycle):
                 )
             children.append((descend, child))
         for descend, child in children:
+            removal_cancel.checkpoint(child)  # the pane's Cancel stops here
             if descend:
                 self._rmdir_recursive(child, depth + 1)
             else:
                 ftp.delete(child)
+            removal_cancel.removed(child)
         ftp.rmd(path)
 
     @_ftp_errors_as_oserror

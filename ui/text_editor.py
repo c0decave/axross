@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import difflib
 import logging
-import re
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont, QKeySequence
 from PyQt6.QtWidgets import (
     QDialog,
@@ -32,85 +31,23 @@ log = logging.getLogger(__name__)
 MAX_FILE_SIZE = DEFAULT_MAX_OPEN_MB * 1024 * 1024
 
 
-class EditorReadLimitError(OSError):
-    """Raised when a backend returns more data than the editor cap."""
-
-
-_UTF8_BOM = b"\xef\xbb\xbf"
-
-
-#: Everything QPlainTextEdit turns into a block break. The widget keeps
-#: none of them, so the save has to put back the one each line had.
-_LINE_BREAK = re.compile("(\r\n|\r|\n|\u2029)")
-
-
-def _split_lines(text: str) -> tuple[list[str], list[str]]:
-    """*text* as the editor's blocks and the break that ended each one
-    (``""`` after the last block)."""
-    parts = _LINE_BREAK.split(text)
-    return parts[0::2], parts[1::2] + [""]
-
-
-def _common_newline(endings: list[str]) -> str:
-    """The line ending most lines use (first seen wins a tie), else LF.
-    New lines get it."""
-    counts: dict[str, int] = {}
-    for ending in endings:
-        if ending in ("\r\n", "\r", "\n"):
-            counts[ending] = counts.get(ending, 0) + 1
-    return max(counts, key=counts.get) if counts else "\n"
-
-
-def _line_endings(old_lines, old_endings, new_lines, default: str) -> list[str]:
-    """The ending for each of *new_lines*: a line that is still there, or
-    was edited in place, keeps the one it had; a new line gets *default*.
-
-    Joining every line with one ending rewrote the untouched lines of a
-    file that mixes LF and CRLF."""
-    endings = [default] * len(new_lines)
-    # Common head and tail first: an edit is local, and the matcher then
-    # only sees the changed middle of a large file.
-    head = 0
-    limit = min(len(old_lines), len(new_lines))
-    while head < limit and old_lines[head] == new_lines[head]:
-        endings[head] = old_endings[head]
-        head += 1
-    tail = 0
-    while (
-        tail < limit - head
-        and old_lines[len(old_lines) - 1 - tail] == new_lines[len(new_lines) - 1 - tail]
-    ):
-        endings[len(new_lines) - 1 - tail] = old_endings[len(old_lines) - 1 - tail]
-        tail += 1
-    old_mid = old_lines[head : len(old_lines) - tail]
-    new_mid = new_lines[head : len(new_lines) - tail]
-    matcher = difflib.SequenceMatcher(None, old_mid, new_mid, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag not in ("equal", "replace"):
-            continue
-        for k in range(min(i2 - i1, j2 - j1)):
-            endings[head + j1 + k] = old_endings[head + i1 + k]
-    for k in range(len(endings) - 1):
-        if not endings[k]:
-            endings[k] = default
-    if endings:
-        endings[-1] = ""
-    return endings
-
-
-def _read_capped(handle, cap: int | None = None) -> bytes:
-    if cap is None:
-        cap = max_open_bytes()
-    data = handle.read(cap + 1)
-    if isinstance(data, str):
-        data = data.encode("utf-8", errors="replace")
-    if len(data) > cap:
-        raise EditorReadLimitError(f"file exceeds {cap} byte editor cap")
-    return bytes(data)
+# The byte-faithful helpers live in core.text_document, shared with the
+# tabbed editor (ui/editor_window.py); imported here under their old names.
+from core.text_document import (  # noqa: E402
+    _UTF8_BOM,
+    EditorReadLimitError,
+    _common_newline,
+    _line_endings,
+    _read_capped,
+    _split_lines,
+)
 
 
 class TextEditorDialog(QDialog):
     """Simple text editor for viewing/editing files via any FileBackend."""
+
+    #: A save went through: the pane showing the file's folder refreshes.
+    saved = pyqtSignal()
 
     def __init__(
         self,
@@ -142,6 +79,11 @@ class TextEditorDialog(QDialog):
 
         self._setup_ui()
         self._load_file()
+
+    @property
+    def loaded(self) -> bool:
+        """Whether the file was read; a dialog whose load failed is not shown."""
+        return self._loaded_once
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -215,7 +157,8 @@ class TextEditorDialog(QDialog):
                     self,
                     "File Too Large",
                     f"File is {stat.size_human} — only files up to {describe_limit()} "
-                    "are opened (change it under View → Open Size Limit…).",
+                    "are opened (change it under Edit → Settings… → Files & Panes → "
+                    "Open Size Limit).",
                 )
                 self.reject()
                 return
@@ -334,6 +277,7 @@ class TextEditorDialog(QDialog):
             self._btn_save.setEnabled(False)
             self._status_label.setText("Saved")
             log.info("Saved file: %s (%d bytes)", self._file_path, len(content))
+            self.saved.emit()
 
         except OSError as e:
             log.error("Cannot save file %s: %s", self._file_path, e)

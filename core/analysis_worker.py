@@ -49,6 +49,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from core.subprocess_env import worker_env
+
 log = logging.getLogger(__name__)
 
 #: Seconds sift may spend on one file (its own, cooperative bound).
@@ -199,7 +201,9 @@ class AnalysisWorker:
         return proc.pid if proc is not None and proc.poll() is None else None
 
     def _start(self) -> subprocess.Popen:
-        env = dict(os.environ)
+        # The frozen child reuses this process's extraction folder and its
+        # libraries: the loader variables stay (core.subprocess_env.worker_env).
+        env = worker_env()
         root = _package_root()
         env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         if self._cache_dir:

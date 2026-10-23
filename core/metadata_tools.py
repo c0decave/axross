@@ -281,7 +281,7 @@ def _name(backend, path: str) -> str:
 def _too_large(size: int, limit: int) -> str:
     return (
         f"too large ({size / 1048576:.1f} MB, limit {limit / 1048576:.0f} MB; "
-        "View → Open Size Limit…)"
+        "Edit → Settings… → Files & Panes → Open Size Limit)"
     )
 
 

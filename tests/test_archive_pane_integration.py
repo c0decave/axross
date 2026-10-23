@@ -34,6 +34,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import zipfile
 
 import pytest
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QDockWidget, QMessageBox
 
 from ui.archive_pane import ArchivePaneWidget
@@ -59,6 +60,11 @@ def window():
     yield win
     win._cleanup_archive_tempdirs()
     win.close()
+    # Deleted, not left to the end of the run: every window that lives on
+    # is repolished by the next one's stylesheet (processEvents() never
+    # runs DeferredDelete).
+    win.deleteLater()
+    APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def _archive_docks(win) -> list[QDockWidget]:

@@ -35,6 +35,7 @@ from core.profiles import ConnectionProfile
 from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
 from core.redaction import redact_text
 from core.ssh_client import (
+    CleanEnvProxyCommand,
     HostKeyMismatchError,
     RevokedHostKeyError,
     UnknownHostKeyError,
@@ -368,7 +369,7 @@ class SCPSession(SessionLifecycle):
                     resolve_profile=resolve_profile,
                 )
                 log.info("Using ProxyCommand for %s: %s", profile.host, redact_text(cmd))
-                sock = paramiko.ProxyCommand(cmd)
+                sock = CleanEnvProxyCommand(cmd)
             elif (profile.proxy_type or "none").lower() != "none":
                 if not profile.proxy_host:
                     raise OSError(

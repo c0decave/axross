@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui import window_move
 from ui.icon_provider import icon
 
 
@@ -47,6 +48,13 @@ class DockTitleBar(QWidget):
     * **close** hides the dock. Same effect as ``DockWidgetClosable``
       — the dock stays in the widget tree so ``toggleViewAction()``
       can re-show it later.
+    * a left drag on the bar (not on a button) moves a floating panel.
+      Qt does that itself by ``QWidget::move()`` and docks the panel again
+      when it is dropped on a dock area; where the window manager refuses
+      such a move (Wayland, a window it keeps maximized - spectrwm's
+      ``fullscreen`` layout) the window manager moves it instead
+      (:mod:`ui.window_move`). A double-click docks a floating panel
+      again either way (Qt's QDockWidget behaviour).
     * **close all** hides every dock sharing this one's dock area. The
       bottom strip stacks four tabified panels, and because only the
       front tab shows a title bar, clearing them one at a time means
@@ -68,6 +76,7 @@ class DockTitleBar(QWidget):
         after a close (extension panels: the Extensions menu)."""
         super().__init__(parent or dock)
         self._dock = dock
+        self._drag = window_move.WindowDrag(dock)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 3, 4, 3)
         layout.setSpacing(6)
@@ -114,6 +123,89 @@ class DockTitleBar(QWidget):
         self._close_all_btn.clicked.connect(self._close_all)
         layout.addWidget(self._close_all_btn)
 
+    def add_indicator(self, widget: QWidget) -> None:
+        """Show *widget* (a status lamp) left of the buttons, after the
+        title: the panel's state at a glance, in its top row."""
+        widget.setParent(self)
+        layout = self.layout()
+        layout.insertWidget(layout.indexOf(self._float_btn), widget)
+        widget.show()
+
+    def enable_pause(self, on_toggle, *, paused: bool = False) -> None:
+        """Add a Pause / Resume toggle left of the float button (extension
+        panels: no pane events while paused). *on_toggle(paused)* runs on a
+        click; :meth:`set_paused` shows the state."""
+        from core.i18n import tr
+
+        self._title = self._title_label.text()
+        self._pause_btn = QToolButton(self)
+        self._pause_btn.setCheckable(True)
+        self._pause_btn.setIconSize(QSize(16, 16))
+        self._pause_btn.setAutoRaise(True)
+        self._pause_btn.setFixedSize(QSize(22, 22))
+        self._pause_btn.setAccessibleName(tr("Pause"))
+        self._pause_btn.clicked.connect(lambda checked: on_toggle(bool(checked)))
+        layout = self.layout()
+        layout.insertWidget(layout.indexOf(self._float_btn), self._pause_btn)
+        self.set_paused(paused)
+
+    def set_paused(self, paused: bool) -> None:
+        """Show the pause state: the button's icon and tooltip, and
+        "(Paused)" after the title."""
+        from core.i18n import tr
+
+        button = getattr(self, "_pause_btn", None)
+        if button is None:
+            return
+        button.setChecked(paused)
+        button.setIcon(icon("play" if paused else "pause", 16))
+        button.setToolTip(
+            tr("Resume: deliver folder and selection changes again")
+            if paused
+            else tr("Pause: stop reloading on folder and selection changes")
+        )
+        suffix = " " + tr("(Paused)") if paused else ""
+        self._title_label.setText(self._title + suffix)
+
+    # -- moving a floating panel ---------------------------------------------------------
+    # A press the bar does not take travels on to QDockWidget, which then
+    # drags the panel itself (undock, move, dock again). The bar takes it
+    # only where that drag cannot move the window.
+
+    def _wm_moves(self) -> bool:
+        return self._dock.isFloating() and window_move.wm_must_move(self._dock)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt
+        if event.button() == Qt.MouseButton.LeftButton and self._wm_moves():
+            self._drag.press(event.globalPosition().toPoint())
+            event.accept()
+            return
+        self._drag.release()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt
+        if self._drag.active:
+            if event.buttons() & Qt.MouseButton.LeftButton:
+                self._drag.move(event.globalPosition().toPoint())
+                event.accept()
+                return
+            self._drag.release()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt
+        if self._drag.active:
+            self._drag.release()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt
+        # QWidget's default hands a double-click to mousePressEvent, which
+        # would take it while the window manager moves the panel: ignored,
+        # it reaches QDockWidget, which floats / docks the panel.
+        self._drag.release()
+        event.ignore()
+
     def _toggle_float(self) -> None:
         self._dock.setFloating(not self._dock.isFloating())
 
@@ -154,7 +246,11 @@ class DockTitleBar(QWidget):
         label once a custom title bar is installed — callers that
         previously flipped the title need to call this instead.
         """
-        self._title_label.setText(title)
+        self._title = title
+        if getattr(self, "_pause_btn", None) is not None:
+            self.set_paused(self._pause_btn.isChecked())
+        else:
+            self._title_label.setText(title)
 
 
 __all__ = ["DockTitleBar"]

@@ -10,13 +10,23 @@ surface so an LLM can drive the whole thing.**
 - **30+ protocols in one window** — SFTP, SMB, S3, WebDAV, cloud drives, IMAP, Git, databases and more.
 - **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
 - **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
+- **Workspaces** — named pane layouts as tabs, detachable into their own window, restored on the next start.
+- **An LLM agent built in** — Agent dock with tabs and sandboxes for LM Studio, Ollama, vLLM or llama.cpp, read-only by default.
+- **Talk to the agent** — push-to-talk, spoken answers in German and English, speech recognition locally or on the LLM server.
+- **MCP server and client** — LLMs drive axross over stdio or HTTP, and the agent uses the tools of further MCP servers.
 - **Built-in Python scripting** — REPL, Scripts dock and 32 ready-made scripts on one `axross.*` API.
-- **An LLM agent built in** — Agent dock with tabs and sandboxes, MCP over stdio or HTTP, read-only by default.
+- **Tabbed text editor** — syntax highlighting, find/replace, encodings and line endings, for local and remote files.
+- **Find Files** — by name, type, content, size or tag, inside archives too, kept as a Smart Folder.
+- **Coloured tags** — on any file, following renames and moves, a filter in Find Files.
+- **Disk images and forensics** — partitions and file systems, read-only loop mount, hashes, The Sleuth Kit, PhotoRec.
+- **Media Player** — playlist, M3U, shuffle/repeat, 10-band equalizer and spectrum.
 - **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
 - **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
 - **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
 - **Resumable transfers** — survive Ctrl-C and VPN drops, resume from the last verified segment.
-- **Install in one line** — `pip install axross`, or a single-file binary from the release page.
+- **Archives as folders** — browse ZIP, TAR and 7z, nested ones too, extract only what you pick, zip-bomb-safe.
+- **Extensions** — Media Player, Forensic Tools, Treemap, VirtualBox and more, each off until you switch it on.
+- **Install in one line** — `pip install axross`, or a single-file binary for Linux, macOS and Windows.
 
 Axross is a multi-protocol file manager and security toolkit built
 with Python and PyQt6. SFTP, SMB, S3, WebDAV, Cloud drives, IMAP,
@@ -37,6 +47,50 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 ![Upload from a local pane to SFTP with the Transfers dock](docs/screenshots/remote-transfer.png)
 
 *Upload to SFTP.* Four photos copied from the local pane to the NAS; the Transfers dock lists each file with its direction, size and status.
+
+![Workspaces as tabs, a file pane and a local shell side by side](docs/screenshots/workspaces.png)
+
+*Workspaces.* Named pane layouts as tabs - here **Website** with its file pane and a local shell next to it. A workspace detaches into a window of its own and comes back as a tab.
+
+![The toolbar with an icon per tool above two panes and the bookmark sidebar](docs/screenshots/toolbar.png)
+
+*Toolbar.* One button per tool - Agent, Analysis, Terminal, Find Files, Scripts, Python console, Tags, Trash, Media Player, Treemap, Drives, Settings, Features. On a narrow window the tools move to a second row instead of disappearing.
+
+![The Tagged Files window listing the files of one tag](docs/screenshots/tags.png)
+
+*Tags.* Coloured dots in the Name column; **Tagged Files** lists every tag and its files on any backend, **Go to File** opens the folder in a pane.
+
+![The tabbed text editor with Python highlighting and the find bar](docs/screenshots/editor.png)
+
+*Text editor.* Tabs for local and remote files, Pygments highlighting, find and replace with regex, encoding and line endings in the status bar.
+
+![Find Files with type presets and results from several folders](docs/screenshots/find-files.png)
+
+*Find Files.* Name, content, size, date, tag and type presets, inside archives too; the search is kept as a **Smart Folder** with one click.
+
+![The Media Player panel with cover, spectrum, equalizer and playlist](docs/screenshots/media-player.png)
+
+*Media Player.* An extension panel: cover and title, an animated spectrum, a 10-band equalizer with presets, and a playlist filled by drag & drop.
+
+![The partitions of a disk image, ready for a read-only mount](docs/screenshots/disk-image.png)
+
+*Disk images.* The partitions and file systems of an image, read without writing anything; **Mount Read-Only** puts one into a pane.
+
+![Settings, Voice page: spoken answers, push-to-talk and the hold key](docs/screenshots/voice.png)
+
+*Voice.* Spoken answers in German or English, push-to-talk on a hold key, and where the recognised text goes.
+
+![Manage Bookmarks with groups, a terminal bookmark and remote locations](docs/screenshots/bookmarks.png)
+
+*Bookmarks.* Groups, local and remote locations and a terminal bookmark in one manager; sort, move and edit several at once.
+
+![Edit, Settings: every setting in one dialog with a search field](docs/screenshots/settings.png)
+
+*Settings.* Every setting in one dialog, with a search field.
+
+![Help, Features: what is installed, what is missing and how to get it](docs/screenshots/features.png)
+
+*Features.* What is installed and what is missing, with the command or the download that adds it.
 
 ![Four file panes and two local terminals in Hacker Mode](docs/screenshots/quad-files-shells.png)
 
@@ -100,7 +154,7 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 ---
 
-## 26 highlights
+## 37 highlights
 
 1. **30+ protocols, one consistent UI.** SFTP/SCP, FTP/FTPS, SMB/CIFS,
    WebDAV, S3-compatible, Rsync, NFS, Azure Blob/Files, OneDrive,
@@ -289,7 +343,8 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 23. **Extensions.** Python plugins add Extensions-menu entries, right-click
     actions and panels (**Extensions → Manage Extensions…**). Every
     extension starts switched off, finding one never runs it, and
-    `paranoid` mode loads none. Six bundled examples. See
+    `paranoid` mode loads none. Eleven bundled ones, among them Media Player, Forensic Tools,
+    Drives Overview, VirtualBox and Backup Repositories. See
     [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 24. **An LLM agent in its own dock.** **View → Panels → Agent** talks to
@@ -298,8 +353,14 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
     file; protection modes `ask`, `plan`, `auto` and `bypass` decide what
     runs without a question; **Topics** offers ready-made tasks; **+**
     and drag & drop from a pane hand files over, and the remote
-    connections open in the panes can be lent to it. The bundled
-    **Agent Stats** extension counts runs, tool calls and tokens.
+    connections open in the panes can be lent to it. A model's thinking
+    shows apart from its answer, folded to one line until you click it;
+    a lamp in the dock's title bar is green while the LLM answers, orange
+    while it is being asked and red when it cannot be reached. **Topics ▸
+    + New Topic…** keeps your own tasks; **Settings → Agent → Prompts**
+    holds named system/user prompt profiles; **Fetch models** opens a
+    list with size, parameters, quantisation and the loaded model. The
+    bundled **Agent Stats** extension counts runs, tool calls and tokens.
 
 25. **Agents in a sandbox.** Each tab can run its agent in bubblewrap,
     podman or docker, at the level `lax`, `normal`, `high` or `paranoid`
@@ -312,6 +373,65 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 26. **An MCP client, too.** **Agent Settings → MCP Servers** connects
     further MCP servers (stdio or HTTP); their tools appear in the tab's
     **Tools** list and ask before every call or before writes only.
+
+27. **Workspaces.** Named pane layouts as tabs (**Workspace → New
+    Workspace**), each detachable to a window of its own - another screen,
+    or side by side - and back as a tab when that window closes. A new
+    workspace starts with a file list or a local terminal, panes move
+    between workspaces from the menu or by drag & drop, and several shells
+    sit side by side. The workspaces are restored on the next start.
+
+28. **Talk to the agent.** Push-to-talk (F9), toggle or conversation
+    mode in the Agent dock. Answers are spoken in German or English with
+    Piper voices, English IT terms kept English; speech is recognised
+    locally with faster-whisper or on the LLM server, chosen per profile.
+    The models are downloaded on demand. Bundled in `axross-full`,
+    otherwise `pip install axross[voice]`.
+
+29. **A tabbed text editor.** Every tab is a file on any backend:
+    Pygments syntax highlighting, find and replace (regex, case, whole
+    word), encodings and line endings, New / Open… / Save As…,
+    auto-indent; large files are lexed off the GUI thread.
+
+30. **Find Files.** **Edit → Find Files…** (Alt+F7) searches folders on
+    any open connection by name, type preset, content, size, date and
+    tag, inside archives too. Hits stream in while the window stays
+    usable, and a search is kept as a **Smart Folder** in the bookmarks.
+    The offline index drops files deleted since the last indexing.
+
+31. **Coloured tags.** Label any file on any backend - **Important** and
+    **Review later** exist from the start. Tags follow renames and moves
+    and are a filter in Find Files.
+
+32. **Disk images and forensics.** axross reads qcow2, VDI, VMDK,
+    VHD/VHDX and E01 headers, MBR and GPT partition tables and their file
+    systems without writing anything, and mounts a partition read-only
+    through a loop device. The **Forensic Tools** extension adds MD5 /
+    SHA-1 / SHA-256 in one pass, `qemu-img`, The Sleuth Kit (browse and
+    extract, deleted files included) and TestDisk/PhotoRec.
+
+33. **Media Player.** An extension panel for MP3, FLAC, Ogg, Opus, AAC
+    and more: playlist with drag & drop and M3U, seeking, shuffle and
+    repeat, a 10-band equalizer with presets that folds away, five
+    visualizations (spectrum, mirrored, radial, oscilloscope, VU meter) a
+    click on them switches between, title, artist and cover.
+
+34. **Bookmarks for many places.** Multi-select, groups sorted by name,
+    path or age, terminal bookmarks (on a profile, a bare host or
+    locally), and **Manage Bookmarks** as a full manager.
+
+35. **Every setting in one place.** **Edit → Settings…** holds every
+    option; **Help → Features** shows which optional parts are installed
+    and which are missing; **Help → Scripting Guide** opens the API
+    guide.
+
+36. **A toolbar for the tools.** Buttons with icons for Agent, Analysis,
+    Terminal, Find Files, Scripts, the Python console, Tags, Trash, Media
+    Player, Treemap, Drives, Settings and Features, in every theme.
+
+37. **Archives as folders.** ZIP, TAR and 7z archives open in the
+    archive view; step into nested archives and extract everything or
+    only the selection, with zip-bomb and zip-slip protection.
 
 ---
 
@@ -380,7 +500,7 @@ Full table of extras + system tools per protocol:
 | [INSTALL.md](INSTALL.md) | Prerequisites, per-protocol extras, OAuth setup, wheel build, dev setup. |
 | [docs/USAGE.md](docs/USAGE.md) · [USAGE_de.md](docs/USAGE_de.md) · [USAGE_es.md](docs/USAGE_es.md) | User guide — connections, panes, transfers, terminal, right-click actions. |
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + `axross.*` API + slash-commands + 32 bundled scripts + MCP scripting tools. |
-| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the six bundled examples. |
+| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the eleven bundled extensions. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
 | [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | For LLM agents: how to drive axross over MCP and the `axross.*` API correctly, with the tool catalog generated from the manifest. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |

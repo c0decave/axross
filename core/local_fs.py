@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+from core import removal_cancel
 from core.backend import SessionLifecycle
 from models.file_item import FileItem
 
@@ -176,7 +177,8 @@ class LocalFS(SessionLifecycle):
             os.remove(path)
         elif stat_module.S_ISDIR(st.st_mode):
             if recursive:
-                shutil.rmtree(path)
+                # shutil.rmtree, stoppable between entries by the pane's Cancel.
+                removal_cancel.rmtree(path)
             else:
                 os.rmdir(path)
         else:

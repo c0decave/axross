@@ -121,18 +121,37 @@ def test_sad_an_uncaught_exception_is_reported_with_type_message_and_traceback(
 def test_sad_a_looping_script_is_stopped_at_its_timeout(tools, script, tmp_path) -> None:
     pidfile = tmp_path / "grandchild.pid"
     name = script(
-        "import subprocess, time\n"
-        f"p = subprocess.Popen(['sleep', '300'])\nopen({str(pidfile)!r}, 'w').write(str(p.pid))\n"
+        "import os, subprocess, time\n"
+        f"p = subprocess.Popen(['sleep', '300'])\nopen({str(pidfile)!r} + '.tmp', 'w').write(str(p.pid))\n"
+        f"os.replace({str(pidfile)!r} + '.tmp', {str(pidfile)!r})\n"
         "while True:\n    time.sleep(0.05)\n"
     )
+    # Long enough for the child to reach its first lines under load (it
+    # normally needs well under a second); 1.5 s let it time out before it
+    # wrote the pid file now and then (FileNotFoundError, 1 in 25 runs).
+    timeout_s = 10.0
     started = time.monotonic()
-    reply = _run(tools, name, timeout_s=1.5)
+    reply = _run(tools, name, timeout_s=timeout_s)
     elapsed = time.monotonic() - started
     assert reply["timed_out"] is True
     assert reply["exit"] == -signal.SIGTERM
-    assert elapsed < 1.5 + SR.STOP_GRACE_SECONDS + SR.OUTPUT_DRAIN_SECONDS + 2
+    assert elapsed < timeout_s + SR.STOP_GRACE_SECONDS + SR.OUTPUT_DRAIN_SECONDS + 2
+    assert pidfile.exists(), "precondition: the script did not start its grandchild in time"
     # The process group went down with it: no grandchild survives the run.
     assert _gone(int(pidfile.read_text()))
+
+
+def _run_ignoring_sigterm(tools, name: str, **args):
+    """Run *name* in a child that ignores SIGTERM from its first instruction:
+    an ignored signal stays ignored across fork and exec, so the child is
+    started while this process ignores it. The script's own SIG_IGN came too
+    late whenever the child needed longer than the timeout to start (seen
+    1 in 3 runs: exit -15 instead of the SIGKILL after the grace)."""
+    previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    try:
+        return _run(tools, name, **args)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def test_sad_a_script_ignoring_sigterm_is_killed_after_the_grace(tools, script) -> None:
@@ -140,7 +159,19 @@ def test_sad_a_script_ignoring_sigterm_is_killed_after_the_grace(tools, script) 
         "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
         "while True:\n    time.sleep(0.05)\n"
     )
-    reply = _run(tools, name, timeout_s=0.5)
+    reply = _run_ignoring_sigterm(tools, name, timeout_s=0.5)
+    assert reply["timed_out"] is True and reply["exit"] == -signal.SIGKILL
+
+
+def test_edge_a_slow_starting_script_that_ignores_sigterm_is_still_killed(tools, script) -> None:
+    # The race above, made certain: the script would set its handler only
+    # after the timeout. Ignored from the start, SIGTERM cannot end it, so
+    # the runner's SIGKILL after the grace must.
+    name = script(
+        "import signal, time\ntime.sleep(1.0)\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "while True:\n    time.sleep(0.05)\n"
+    )
+    reply = _run_ignoring_sigterm(tools, name, timeout_s=0.5)
     assert reply["timed_out"] is True and reply["exit"] == -signal.SIGKILL
 
 
@@ -167,11 +198,20 @@ def test_sad_a_flooding_script_is_stopped_at_the_output_cap(tools, script, monke
 def test_sad_a_cancelled_call_kills_the_child(tools, script, tmp_path) -> None:
     pidfile = tmp_path / "child.pid"
     name = script(
-        f"import os, time\nopen({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        f"import os, time\nopen({str(pidfile)!r} + '.tmp', 'w').write(str(os.getpid()))\n"
+        f"os.replace({str(pidfile)!r} + '.tmp', {str(pidfile)!r})\n"
         "while True:\n    time.sleep(0.05)\n"
     )
     ctx = M._ToolContext(cancel_event=threading.Event())
-    threading.Timer(1.0, ctx.cancel_event.set).start()
+    # Cancel once the child runs (its pid file is there), not after a fixed
+    # second: a slower start was cancelled before it wrote the file.
+    def cancel_when_running() -> None:
+        deadline = time.monotonic() + 30
+        while not pidfile.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        ctx.cancel_event.set()
+
+    threading.Thread(target=cancel_when_running, daemon=True).start()
     with pytest.raises(M.CancelledError):
         _run(tools, name, ctx=ctx, timeout_s=60)
     assert _gone(int(pidfile.read_text()))

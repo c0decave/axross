@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import logging
 import os
@@ -137,6 +138,42 @@ def _read_exact(handle, size: int) -> bytes:
     return b"".join(parts)
 
 
+#: errno values that say the destination has no room: its file system or
+#: the user's quota is full, or the file is larger than it allows.
+_OUT_OF_SPACE_ERRNOS = frozenset(
+    code for code in (getattr(errno, name, None) for name in ("ENOSPC", "EDQUOT", "EFBIG"))
+    if code is not None
+)
+#: NT status codes (an SMB server's answer, as smbprotocol carries it in
+#: ``.status`` of its own, non-OSError exceptions) for the same: the disk
+#: or the quota is full.
+_OUT_OF_SPACE_NT_STATUS = frozenset({0xC000007F, 0xC0000044})
+
+
+def is_out_of_space(exc: BaseException) -> bool:
+    """True when *exc*, or an error it was raised from, says the
+    destination ran out of space (ENOSPC, EDQUOT, EFBIG, a RamFS cap, an
+    SMB STATUS_DISK_FULL or STATUS_QUOTA_EXCEEDED)."""
+    from core.ram_fs import RamFsCapacityError
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, RamFsCapacityError):
+            return True
+        if isinstance(current, OSError) and current.errno in _OUT_OF_SPACE_ERRNOS:
+            return True
+        status = getattr(current, "status", None)
+        if isinstance(status, int) and status in _OUT_OF_SPACE_NT_STATUS:
+            return True
+        # The error it was raised from, as a traceback shows it.
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return False
+
+
 def _backend_label(backend) -> str:
     """The label the operation journal records for *backend*."""
     if backend is None:
@@ -233,6 +270,10 @@ class TransferJob:
     # False for a failed row that no retry can fix (a name that cannot be
     # joined safely); retry_job refuses it.
     retryable: bool = True
+    # True once retry_job queued a new job for this failed one: "Retry
+    # Failed" walks every failed row, and a second press must not queue
+    # the same transfer again.
+    retried: bool = False
 
     @property
     def eta_seconds(self) -> float:
@@ -393,6 +434,10 @@ class TransferWorker(QObject):
                 # was queued: a symlink is listed with the length of its
                 # target path, and a source may have grown since.
                 job.transferred_bytes = job.total_bytes = written
+                # Now, not only after DONE: progress signals queued before
+                # still carry the listing's size, and the GUI thread applies
+                # them to this job; the written size must come after them.
+                self.progress.emit(job.job_id, written, written)
 
             # Post-transfer integrity check: native compare when both
             # backends produce matching-algorithm hashes cheaply. When
@@ -403,8 +448,9 @@ class TransferWorker(QObject):
 
             # Move mode: delete source after successful transfer
             if job.move and job.source_backend:
-                from core.server_ops import refuse_changed_source
+                from core.server_ops import refuse_changed_source, refuse_short_copy
 
+                refuse_short_copy(job.source_path, size_before, written, job.dest_path)
                 refuse_changed_source(
                     job.source_backend, job.source_path, size_before, job.dest_path
                 )
@@ -887,8 +933,11 @@ class TransferWorker(QObject):
         except InterruptedError:
             keep_partial = transferred > 0 or resume_offset > 0
             raise
-        except Exception:
-            keep_partial = transferred > 0 or resume_offset > 0
+        except Exception as exc:
+            # Kept for a resume - unless the destination is full: the
+            # hidden partial is what fills it, and a resume needs the
+            # room as well.
+            keep_partial = (transferred > 0 or resume_offset > 0) and not is_out_of_space(exc)
             raise
         finally:
             if cleanup_temp and not keep_partial:

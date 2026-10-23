@@ -303,8 +303,80 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
         )
 
 
-def opener_without_redirects() -> urllib.request.OpenerDirector:
+def opener_without_redirects(*handlers) -> urllib.request.OpenerDirector:
     """urllib's opener (environment proxies included) that never follows a
     redirect: urllib would send the Authorization header on to the host the
-    redirect names - an API key or token past the allowed hosts."""
-    return urllib.request.build_opener(_RefuseRedirects)
+    redirect names - an API key or token past the allowed hosts. *handlers*
+    are added (an :class:`AbortableConnections`' ones)."""
+    return urllib.request.build_opener(_RefuseRedirects, *handlers)
+
+
+class AbortableConnections:
+    """The connections of one opener, so another thread can cut them: Stop
+    during a model request. Shutting the socket down wakes the request's
+    blocked read at once, and the server sees the client leave and stops
+    generating. A connection made after :meth:`abort` is cut as it opens."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._connections: list = []
+        self.aborted = False
+
+    def handlers(self) -> tuple:
+        return (_TrackingHTTPHandler(self), _TrackingHTTPSHandler(self))
+
+    def _factory(self, http_class):
+        def make(host, **kwargs):
+            connection = http_class(host, **kwargs)
+            connect = connection.connect
+
+            def connect_and_track() -> None:
+                connect()
+                self._opened(connection)
+
+            connection.connect = connect_and_track
+            return connection
+
+        return make
+
+    def _opened(self, connection) -> None:
+        with self._lock:
+            self._connections.append(connection)
+            aborted = self.aborted
+        if aborted:
+            _cut(connection)
+
+    def abort(self) -> None:
+        with self._lock:
+            self.aborted = True
+            connections = list(self._connections)
+        for connection in connections:
+            _cut(connection)
+
+
+def _cut(connection) -> None:
+    sock = getattr(connection, "sock", None)
+    if sock is None:
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass  # already closed
+
+
+class _TrackingHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, tracker: AbortableConnections) -> None:
+        super().__init__()
+        self._tracker = tracker
+
+    def do_open(self, http_class, req, **kwargs):  # noqa: D401 - urllib API
+        return super().do_open(self._tracker._factory(http_class), req, **kwargs)
+
+
+class _TrackingHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, tracker: AbortableConnections) -> None:
+        super().__init__()
+        self._tracker = tracker
+
+    def do_open(self, http_class, req, **kwargs):  # noqa: D401 - urllib API
+        return super().do_open(self._tracker._factory(http_class), req, **kwargs)

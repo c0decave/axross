@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -84,6 +85,28 @@ def _sanitize_icon_name(value: object, default: str = "bookmark") -> str:
     return cleaned or default
 
 
+def _sanitize_created(value: object) -> float:
+    """A creation time read from JSON: seconds since the epoch, or 0.0
+    (undated - a bookmark from before the field existed, or garbage)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    value = float(value)
+    return value if math.isfinite(value) and value > 0 else 0.0
+
+
+#: What a bookmark opens: a folder in a pane, or a terminal on a host.
+KIND_FOLDER = "folder"
+KIND_TERMINAL = "terminal"
+KINDS: tuple[str, ...] = (KIND_FOLDER, KIND_TERMINAL)
+#: The profile name of a terminal bookmark for a local shell.
+LOCAL_SHELL = "local"
+
+#: The orders :meth:`BookmarkManager.sort_children` knows.
+SORT_KEYS: tuple[str, ...] = ("name", "path", "name_path", "age")
+#: The sort keys whose reverse order also reverses the groups (by name).
+_GROUP_REVERSING_KEYS: frozenset[str] = frozenset({"name", "name_path"})
+
+
 def _sanitize_color(value: object) -> str:
     """``#rrggbb`` or empty (= the icon's own colour). Anything else is
     dropped: the value ends up inside an SVG source string."""
@@ -102,6 +125,24 @@ class Bookmark:
     typo or a legacy bookmark entry never crashes the sidebar.
     ``color`` is an optional ``#rrggbb`` that recolours the icon so
     related bookmarks are recognisable at a glance.
+    ``created`` is when it was added (seconds since the epoch); 0.0 means
+    undated - a bookmark saved before the field existed.
+
+    ``kind`` is :data:`KIND_FOLDER` (open *path* in a pane) or
+    :data:`KIND_TERMINAL`: open a shell through the connection profile
+    *profile_name* (:data:`LOCAL_SHELL` for a local one) and change into
+    *path* when it is not empty. A terminal bookmark holds no credential;
+    the profile keeps those.
+
+    A terminal bookmark with a *host* needs no profile: it connects over SSH
+    to *host*:*port* as *username* (agent, *key_file* or a password asked
+    for at the click - see :func:`host_bookmark_profile`). It stores no
+    password or passphrase either. ``backend_name`` and ``profile_name``
+    are then its address (:func:`host_address`); the profile name is never
+    looked up, it is set so that an older axross, which turns a terminal
+    bookmark without a profile into a local shell, reports a missing
+    profile instead of running the host's commands here. The four host
+    fields are written to the file only for such a bookmark.
     """
 
     name: str
@@ -110,6 +151,172 @@ class Bookmark:
     profile_name: str = ""  # connection profile name (empty = local)
     icon_name: str = "bookmark"
     color: str = ""
+    #: A saved Find Files search (:func:`core.file_search.saved_search_to_dict`).
+    #: Non-empty makes this bookmark a Smart Folder: a click runs the search
+    #: again, ``path`` is a unique ``search:<id>`` key and ``backend_name``
+    #: :data:`SMART_FOLDER_BACKEND`.
+    search: dict = field(default_factory=dict)
+    created: float = 0.0
+    kind: str = KIND_FOLDER
+    #: A terminal bookmark on a bare host (no profile): see the class doc.
+    host: str = ""
+    port: int = 22
+    username: str = ""
+    key_file: str = ""
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.kind == KIND_TERMINAL
+
+    @property
+    def is_host_terminal(self) -> bool:
+        """A terminal bookmark that connects to its own host, no profile."""
+        return self.kind == KIND_TERMINAL and bool(self.host)
+
+    @property
+    def is_smart_folder(self) -> bool:
+        return bool(self.search)
+
+
+#: ``backend_name`` of every Smart Folder.
+SMART_FOLDER_BACKEND = "Smart Folder"
+#: A stored search larger than this (as JSON) is dropped on load.
+MAX_SEARCH_JSON_BYTES = 64 * 1024
+
+
+def new_smart_folder(name: str, search: dict, icon_name: str = "find-index") -> Bookmark:
+    """A Smart Folder bookmark for *search* (a saved-search mapping)."""
+    return Bookmark(
+        name=name,
+        path=f"search:{uuid.uuid4().hex[:12]}",
+        backend_name=SMART_FOLDER_BACKEND,
+        icon_name=icon_name,
+        search=dict(search),
+    )
+
+
+#: The fields only a host terminal bookmark writes (see :func:`bookmark_dict`).
+HOST_FIELDS: tuple[str, ...] = ("host", "port", "username", "key_file")
+DEFAULT_SSH_PORT = 22
+#: Marks the connection profile :func:`host_bookmark_profile` builds: it is
+#: no saved profile and must never be stored or looked up by name.
+_HOST_PROFILE_MARK = "_axross_host_bookmark"
+_HOST_CHARS = re.compile(r"[A-Za-z0-9._:%\[\]-]+")
+
+
+def _has_control(text: str) -> bool:
+    return any(ord(c) < 0x20 or ord(c) == 0x7F for c in text)
+
+
+def _sanitize_port(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value < 65536:
+        return DEFAULT_SSH_PORT
+    return value
+
+
+def host_address(host: str, port: int, username: str = "") -> str:
+    """``user@host:port`` (an IPv6 address in brackets) - the label and the
+    ``backend_name`` of a host terminal bookmark."""
+    shown = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return f"{username}@{shown}:{port}" if username else f"{shown}:{port}"
+
+
+def host_bookmark_problem(bookmark: Bookmark) -> str | None:
+    """Why the host terminal *bookmark* cannot connect, or ``None``. Checked
+    before anything is sent: a name with blanks or control characters, or one
+    that starts like a command-line option, is no host."""
+    host = bookmark.host
+    if _has_control(host) or _has_control(bookmark.username) or _has_control(bookmark.key_file):
+        return "The host, user or key file contains control characters."
+    if not host or host.startswith("-") or not _HOST_CHARS.fullmatch(host):
+        return f"'{host}' is no host name or IP address."
+    if isinstance(bookmark.port, bool) or not isinstance(bookmark.port, int) or not (
+        0 < bookmark.port < 65536
+    ):
+        return f"The port {bookmark.port!r} is not between 1 and 65535."
+    if any(c.isspace() or c == "@" for c in bookmark.username):
+        return f"'{bookmark.username}' is no user name."
+    return None
+
+
+def host_bookmark_profile(bookmark: Bookmark, auth_type: str | None = None):
+    """The connection profile a click on the host terminal *bookmark* uses:
+    SFTP to its host, never saved (``store_password`` off, so no keyring
+    read or write), the application's proxy setting. *auth_type* defaults to
+    ``key`` with a key file, else ``agent`` when an ssh-agent is running
+    (``SSH_AUTH_SOCK``), else ``password``. An empty user is the local one,
+    as ``ssh`` does it."""
+    import getpass
+
+    from core.profiles import ConnectionProfile
+
+    if auth_type is None:
+        if bookmark.key_file:
+            auth_type = "key"
+        elif os.environ.get("SSH_AUTH_SOCK"):
+            auth_type = "agent"
+        else:
+            auth_type = "password"
+    username = bookmark.username
+    if not username:
+        try:
+            username = getpass.getuser()
+        except Exception:  # noqa: BLE001 - no passwd entry: leave it empty
+            username = ""
+    profile = ConnectionProfile(
+        name=host_address(bookmark.host, bookmark.port, username),
+        protocol="sftp",
+        host=bookmark.host.strip("[]"),
+        port=bookmark.port,
+        username=username,
+        auth_type=auth_type,
+        key_file=bookmark.key_file,
+        store_password=False,
+        proxy_mode="default",
+    )
+    return as_host_profile(profile)
+
+
+def as_host_profile(profile):
+    """Mark *profile* as one :func:`host_bookmark_profile` built (a copy made
+    with ``dataclasses.replace`` loses the mark) and return it."""
+    setattr(profile, _HOST_PROFILE_MARK, True)
+    return profile
+
+
+def is_host_profile(profile: object) -> bool:
+    """True for a profile :func:`host_bookmark_profile` built."""
+    return bool(getattr(profile, _HOST_PROFILE_MARK, False))
+
+
+def bookmark_dict(bookmark: Bookmark) -> dict:
+    """*bookmark* as stored: every field, the host fields only for a host
+    terminal bookmark, so files of other bookmarks keep their shape."""
+    data = asdict(bookmark)
+    if not bookmark.is_host_terminal:
+        for name in HOST_FIELDS:
+            data.pop(name, None)
+    return data
+
+
+def _loaded_search(item: dict) -> dict | None:
+    """The ``search`` of a stored bookmark: ``{}`` for a plain bookmark, the
+    mapping for a Smart Folder, ``None`` when it is damaged (not a mapping,
+    or absurdly large) - the entry is then dropped like any malformed one.
+    Whether the search itself is valid is checked when it runs."""
+    search = item.get("search", {})
+    if not isinstance(search, dict):
+        log.warning("Dropping bookmark %r: its search is not a mapping", item.get("name"))
+        return None
+    if search:
+        try:
+            size = len(json.dumps(search))
+        except (TypeError, ValueError):
+            size = MAX_SEARCH_JSON_BYTES + 1
+        if size > MAX_SEARCH_JSON_BYTES:
+            log.warning("Dropping bookmark %r: its search is too large", item.get("name"))
+            return None
+    return search
 
 
 @dataclass(eq=False)
@@ -128,6 +335,24 @@ class BookmarkGroup:
 
 
 Node = Bookmark | BookmarkGroup
+
+
+def _normalise_kind(bookmark: Bookmark) -> None:
+    """The same rules load() applies: a known kind; a terminal bookmark on
+    a host has no profile and its address as backend name; any other
+    terminal bookmark without a profile is a local shell."""
+    if bookmark.kind not in KINDS:
+        bookmark.kind = KIND_FOLDER
+    for name in ("host", "username", "key_file"):
+        if not isinstance(getattr(bookmark, name), str):
+            setattr(bookmark, name, "")
+    bookmark.port = _sanitize_port(bookmark.port)
+    if bookmark.is_host_terminal:
+        # Never empty: see the Bookmark doc (an older version's local shell).
+        bookmark.backend_name = host_address(bookmark.host, bookmark.port, bookmark.username)
+        bookmark.profile_name = bookmark.backend_name
+    elif bookmark.kind == KIND_TERMINAL and not bookmark.profile_name:
+        bookmark.profile_name = LOCAL_SHELL
 
 
 def _index_by_identity(nodes: list, node: object) -> int:
@@ -192,12 +417,17 @@ class BookmarkManager:
         walk(self._root, 0)
         return out
 
-    def find(self, path: str, backend_name: str) -> Bookmark | None:
-        """The bookmark for *path* on *backend_name* anywhere in the tree
-        (the live node), or ``None``. This is the duplicate rule
-        :meth:`add` applies."""
+    def find(self, path: str, backend_name: str, kind: str = KIND_FOLDER) -> Bookmark | None:
+        """The *kind* bookmark for *path* on *backend_name* anywhere in the
+        tree (the live node), or ``None``. This is the duplicate rule
+        :meth:`add` applies: a folder and a terminal bookmark on the same
+        path are two bookmarks."""
         for existing in self.all():
-            if existing.path == path and existing.backend_name == backend_name:
+            if (
+                existing.path == path
+                and existing.backend_name == backend_name
+                and existing.kind == kind
+            ):
                 return existing
         return None
 
@@ -277,10 +507,10 @@ class BookmarkManager:
 
     @staticmethod
     def _flatten(dumped: list[dict]) -> tuple[dict, dict]:
-        """Bookmarks of a dumped tree keyed by ``(backend_name, path)`` as
+        """Bookmarks of a dumped tree keyed by ``(kind, backend_name, path)`` as
         ``key -> (group path, fields)``, plus its groups as
         ``group path -> fields``. A group path is the tuple of group names."""
-        marks: dict[tuple[str, str], tuple[tuple[str, ...], dict]] = {}
+        marks: dict[tuple[str, str, str], tuple[tuple[str, ...], dict]] = {}
         groups: dict[tuple[str, ...], dict] = {}
 
         def walk(nodes: list[dict], gpath: tuple[str, ...]) -> None:
@@ -290,7 +520,8 @@ class BookmarkManager:
                     groups.setdefault(sub, item)
                     walk(item["children"], sub)
                 else:
-                    marks.setdefault((item["backend_name"], item["path"]), (gpath, item))
+                    key = (item.get("kind", KIND_FOLDER), item["backend_name"], item["path"])
+                    marks.setdefault(key, (gpath, item))
 
         walk(dumped, ())
         return marks, groups
@@ -324,7 +555,7 @@ class BookmarkManager:
     def _merge_from_disk(self, bf: Path) -> None:
         """Fold in what another writer changed in the file since this
         manager last read or wrote it. Bookmarks are matched by
-        ``(backend_name, path)``: one the other writer added is added
+        ``(kind, backend_name, path)``: one the other writer added is added
         here, one it removed is removed here unless this manager changed
         it, and one it edited takes the edit unless this manager edited
         it too. Removals made here are never undone."""
@@ -334,8 +565,8 @@ class BookmarkManager:
         base_marks, base_groups = self._flatten(self._base)
         disk_marks, disk_groups = self._flatten(disk)
         for mark in self.all():
-            key = (mark.backend_name, mark.path)
-            if key not in base_marks or asdict(mark) != base_marks[key][1]:
+            key = (mark.kind, mark.backend_name, mark.path)
+            if key not in base_marks or bookmark_dict(mark) != base_marks[key][1]:
                 continue  # added or changed here: this manager's version wins
             if key not in disk_marks:
                 siblings = self._siblings(self.parent_of(mark))
@@ -343,7 +574,7 @@ class BookmarkManager:
             elif disk_marks[key][1] != base_marks[key][1]:
                 for name, value in disk_marks[key][1].items():
                     setattr(mark, name, value)
-        known = {(m.backend_name, m.path) for m in self.all()}
+        known = {(m.kind, m.backend_name, m.path) for m in self.all()}
         for gpath in disk_groups:
             if gpath not in base_groups:
                 self._group_at(gpath, disk_groups)
@@ -376,22 +607,37 @@ class BookmarkManager:
                     )
                 )
                 continue
+            search = _loaded_search(item)
             if (
-                isinstance(item.get("name"), str)
+                search is not None
+                and isinstance(item.get("name"), str)
                 and isinstance(item.get("path"), str)
                 and isinstance(item.get("backend_name", "Local"), str)
                 and isinstance(item.get("profile_name", ""), str)
             ):
-                nodes.append(
-                    Bookmark(
-                        name=item["name"],
-                        path=item["path"],
-                        backend_name=item.get("backend_name", "Local"),
-                        profile_name=item.get("profile_name", ""),
-                        icon_name=_sanitize_icon_name(item.get("icon_name", "bookmark")),
-                        color=_sanitize_color(item.get("color")),
-                    )
+                # An unknown kind (a newer version's) opens as a folder: never
+                # dropped, so the next save cannot lose it.
+                kind = item.get("kind") if item.get("kind") in KINDS else KIND_FOLDER
+                bookmark = Bookmark(
+                    name=item["name"],
+                    path=item["path"],
+                    backend_name=item.get("backend_name", "Local"),
+                    profile_name=item.get("profile_name", ""),
+                    icon_name=_sanitize_icon_name(item.get("icon_name", "bookmark")),
+                    color=_sanitize_color(item.get("color")),
+                    search=search,
+                    created=_sanitize_created(item.get("created")),
+                    kind=kind,
                 )
+                if kind == KIND_TERMINAL:
+                    # Damaged host fields fall back to defaults; without a
+                    # usable host the bookmark stays what it was before.
+                    bookmark.host = item.get("host", "")
+                    bookmark.port = item.get("port", DEFAULT_SSH_PORT)
+                    bookmark.username = item.get("username", "")
+                    bookmark.key_file = item.get("key_file", "")
+                _normalise_kind(bookmark)
+                nodes.append(bookmark)
         return nodes
 
     @classmethod
@@ -410,7 +656,7 @@ class BookmarkManager:
                     }
                 )
             else:
-                out.append(asdict(node))
+                out.append(bookmark_dict(node))
         return out
 
     def save(self) -> None:
@@ -473,13 +719,15 @@ class BookmarkManager:
         (clamped; ``None`` appends). Returns ``False`` without changing
         anything when the same path on the same backend is already
         bookmarked anywhere in the tree (see :meth:`find`)."""
-        if self.find(bookmark.path, bookmark.backend_name) is not None:
+        _normalise_kind(bookmark)
+        if self.find(bookmark.path, bookmark.backend_name, bookmark.kind) is not None:
             log.debug(
                 "Skipping duplicate bookmark for %s on %s", bookmark.path, bookmark.backend_name
             )
             return False
         bookmark.icon_name = _sanitize_icon_name(bookmark.icon_name)
         bookmark.color = _sanitize_color(bookmark.color)
+        bookmark.created = _sanitize_created(bookmark.created) or time.time()
         siblings = self._siblings(group)
         if index is None:
             siblings.append(bookmark)
@@ -526,6 +774,9 @@ class BookmarkManager:
         # Normalise the same way load() does.
         new.icon_name = _sanitize_icon_name(new.icon_name)
         new.color = _sanitize_color(new.color)
+        _normalise_kind(new)
+        # An edit is not a new bookmark: it keeps its age.
+        new.created = _sanitize_created(new.created) or old.created
         siblings = self._siblings(parent)
         siblings[_index_by_identity(siblings, old)] = new
         if group is not _KEEP and group is not parent:
@@ -602,6 +853,139 @@ class BookmarkManager:
             index -= 1
         dest.insert(max(0, min(index, len(dest))), node)
         self.save()
+
+    def _outermost(self, nodes: list) -> list:
+        """*nodes* in tree order, without duplicates and without any node
+        that lies inside another one of them (it moves or goes with its
+        group). Raises ``KeyError`` for a node that is not in the tree."""
+        for node in nodes:
+            self.parent_of(node)  # KeyError for unknown nodes
+        order: list = []
+
+        def walk(siblings: list) -> None:
+            for node in siblings:
+                order.append(node)
+                if isinstance(node, BookmarkGroup):
+                    walk(node.children)
+
+        walk(self._root)
+        chosen = [n for n in order if any(n is m for m in nodes)]
+        groups = [g for g in chosen if isinstance(g, BookmarkGroup)]
+        return [n for n in chosen if not any(g is not n and self._holds(g, n) for g in groups)]
+
+    @staticmethod
+    def _holds(group: BookmarkGroup, node: object) -> bool:
+        """True when *node* (bookmark or group) lies anywhere below *group*."""
+        return any(
+            child is node
+            or (isinstance(child, BookmarkGroup) and BookmarkManager._holds(child, node))
+            for child in group.children
+        )
+
+    def move_nodes(
+        self, nodes: list, parent: BookmarkGroup | None, index: int | None = None
+    ) -> bool:
+        """Move several nodes into *parent* (``None`` = top level) at *index*,
+        in tree order, with one save. *index* means what it means for
+        :meth:`move`. A node inside another moved group goes with that group.
+        All or nothing: ``KeyError`` for an unknown node, ``ValueError`` when
+        a group would land inside itself. Returns whether anything moved."""
+        moving = self._outermost(nodes)
+        if parent is not None:
+            self.parent_of(parent)
+        for node in moving:
+            if isinstance(node, BookmarkGroup) and parent is not None and self._contains(
+                node, parent
+            ):
+                raise ValueError("a group cannot be moved into itself or its descendants")
+        if not moving:
+            return False
+        dest = self._siblings(parent)
+        if index is None:
+            index = len(dest)
+        # Entries taken out of the destination list in front of the drop
+        # position shift it, as move() compensates for one node.
+        index -= sum(1 for pos, n in enumerate(dest) if pos < index and any(n is m for m in moving))
+        for node in moving:
+            siblings = self._siblings(self.parent_of(node))
+            siblings.pop(_index_by_identity(siblings, node))
+        index = max(0, min(index, len(dest)))
+        dest[index:index] = moving
+        self.save()
+        return True
+
+    def remove_nodes(self, nodes: list) -> int:
+        """Delete several nodes with one save: bookmarks are removed, groups
+        are dissolved like :meth:`remove_group` (their children move up).
+        Returns how many of *nodes* were deleted."""
+        unique: list = []
+        for node in nodes:
+            self.parent_of(node)  # KeyError before anything changes
+            if not any(node is u for u in unique):
+                unique.append(node)
+        nodes = unique
+        done = 0
+        # Bookmarks first, then groups: a dissolved group's children move up
+        # in its place, so a selected child is still found where it went.
+        for node in sorted(nodes, key=lambda n: isinstance(n, BookmarkGroup)):
+            siblings = self._siblings(self.parent_of(node))
+            pos = _index_by_identity(siblings, node)
+            if isinstance(node, BookmarkGroup):
+                siblings[pos : pos + 1] = node.children
+                node.children = []
+            else:
+                siblings.pop(pos)
+            done += 1
+        if done:
+            self.save()
+            log.info("Removed %d bookmark entries", done)
+        return done
+
+    def sort_children(
+        self, group: BookmarkGroup | None, key: str, reverse: bool = False
+    ) -> bool:
+        """Sort the direct entries of *group* (``None`` = top level) and
+        store that order. *key* is one of :data:`SORT_KEYS`: ``name``,
+        ``path`` (then backend), ``name_path`` (name, then path) or ``age``
+        (creation time). Groups always come first, ordered by name: A-Z for
+        the path and age keys (a group has neither), while the name keys
+        reverse them too, so Name (Reverse) is Z-A for everything named.
+        Undated bookmarks (``created`` 0) always come last. Ties keep their
+        order. Returns whether the order changed (only then is it saved)."""
+        if key not in SORT_KEYS:
+            raise ValueError(f"unknown sort key {key!r}; one of {', '.join(SORT_KEYS)}")
+        if group is not None:
+            self.parent_of(group)  # KeyError when the group is not in the tree
+        siblings = self._siblings(group)
+
+        def fold(text: str) -> tuple[str, str]:
+            return (text.casefold(), text)
+
+        keys = {
+            "name": lambda b: fold(b.name),
+            "path": lambda b: (fold(b.path), fold(b.backend_name)),
+            # The path decides between names that differ only in case.
+            "name_path": lambda b: (b.name.casefold(), fold(b.path), b.name),
+            "age": lambda b: b.created,
+        }
+        groups = sorted(
+            (n for n in siblings if isinstance(n, BookmarkGroup)),
+            key=lambda g: fold(g.name),
+            reverse=reverse and key in _GROUP_REVERSING_KEYS,
+        )
+        marks = [n for n in siblings if not isinstance(n, BookmarkGroup)]
+        if key == "age":
+            undated = [b for b in marks if not b.created]
+            marks = [b for b in marks if b.created]
+        else:
+            undated = []
+        marks = sorted(marks, key=keys[key], reverse=reverse) + undated
+        ordered = groups + marks
+        if all(a is b for a, b in zip(ordered, siblings, strict=True)):
+            return False
+        siblings[:] = ordered
+        self.save()
+        return True
 
     def move_by(self, node: Node, delta: int) -> bool:
         """Shift *node* by *delta* places inside its parent (clamped).

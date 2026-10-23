@@ -73,7 +73,8 @@ def _root_ok(win) -> None:
     root = win._root_splitter
     assert not sip.isdeleted(root)
     assert isinstance(root, QSplitter)
-    assert win.centralWidget() is root
+    # The root of the current workspace (ui/workspaces.py).
+    assert win._workspace_tabs.currentWidget() is root
 
 
 def _connect_like_quick_connect(win, monkeypatch) -> None:
