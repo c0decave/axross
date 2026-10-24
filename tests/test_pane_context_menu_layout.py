@@ -44,7 +44,7 @@ WINDOW_ONLY = {
     "disk-usage", "extensions",
     # The tool group (window tools, no file in question).
     "agent", "analysis", "terminal", "find-files", "scripts", "console", "tag", "media-player",
-    "treemap",
+    "audio-settings", "treemap",
     "drives", "settings", "features",
 }
 

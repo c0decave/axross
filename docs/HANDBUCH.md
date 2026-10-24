@@ -599,6 +599,32 @@ Position und Maximize-Zustand werden beim Schließen in `session.json`
 Nur lokale Backends — Remote-Bilder werden erst in einen Temp-
 Bereich gespiegelt, dann gerendert.
 
+### Audio
+
+*Edit → Settings… → Audio* konfiguriert und testet den Sound von axross
+(Media Player, Media-Preview, Voice des Agent-Docks):
+
+- **Backend:** Automatic, PipeWire oder PulseAudio (`QT_AUDIO_BACKEND`).
+  Automatic nimmt PipeWire, wo sein Daemon läuft, sonst PulseAudio (das
+  `pipewire-pulse` ebenfalls bedient). Gezeigt wird das Backend dieses
+  Laufs; Qt liest die Wahl einmal pro Prozess, eine Änderung gilt also
+  ab dem nächsten Start. Ein selbst gesetztes `QT_AUDIO_BACKEND` gewinnt.
+- **Output:** Device (System-Default oder ein bestimmtes) und Volume,
+  das alles skaliert, was axross abspielt; *Play Test Tone* spielt 1 s
+  Sinus auf dem gewählten Device in der gewählten Volume.
+- **Input:** Device und Volume (Gain); *Test Microphone* zeigt ein
+  Level-Meter, *Record 3 s and Play Back* nimmt 3 s auf und spielt sie
+  auf dem gewählten Output ab.
+- **Status:** das Ergebnis des Audio-Checks (ein eigener Prozess, bevor
+  axross Qt Multimedia anfasst) und *Check Audio Again*. Scheitert der
+  Check, sind die Tests aus, das Backend lässt sich trotzdem wählen.
+
+Gespeichert in `~/.config/axross/audio.json` (`0o600`); laufende Player
+übernehmen Volume und Output-Device sofort, wo Qt es erlaubt, sonst beim
+nächsten Abspielen. Ein Device, das nicht eingesteckt ist, wird durch
+den System-Default ersetzt (eine Log-Zeile). Startet im Media Player das
+Audio nicht, führen *Try Again* und *Audio Settings…* von dort weiter.
+
 ### Elevated IO (pkexec)
 
 Rechtsklick → "Open as root…". Nutzt `pkexec` um `cat`/`tee`/`stat`

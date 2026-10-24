@@ -68,8 +68,9 @@ def clean_child_env(env: dict | None = None, **overrides: str) -> dict:
     # Qt Multimedia) is not the user's choice: a host program gets the
     # environment the user would give it.
     from core.multimedia_env import set_by_axross
+    from core.tls_env import set_by_axross as tls_set_by_axross
 
-    for name in set_by_axross():
+    for name in set_by_axross() | tls_set_by_axross():
         result.pop(name, None)
 
     result.update(overrides)

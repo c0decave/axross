@@ -44,6 +44,7 @@ from PyQt6.QtCore import QPointF, Qt  # noqa: E402
 from PyQt6.QtGui import QColor, QEnterEvent  # noqa: E402
 from PyQt6.QtWidgets import QMessageBox  # noqa: E402
 
+from core import audio_settings as AS  # noqa: E402
 from core import extensions as EX  # noqa: E402
 from core import i18n  # noqa: E402
 from core import metadata_tools as MT  # noqa: E402
@@ -365,6 +366,44 @@ def _voice_row(field, values, set_ui, shown, bad):
                lambda c, v: _edit_voice(c, field, v), bad, _voice_effect(field))
 
 
+def _edit_audio(ctx, key, value) -> None:
+    path = AS.settings_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = _read_json(path) or {}
+    data[key] = value
+    path.write_text(json.dumps(data))
+
+
+def _audio_effect(field):
+    """What the players read (core.audio_route) and, for the backend, what
+    main() hands Qt as QT_AUDIO_BACKEND at the next start."""
+
+    def effect(ctx, win, value) -> None:
+        from core import audio_route as AR
+        from core import multimedia_env as ME
+
+        AR.forget()
+        assert AR.settings().get(field) == value
+        if field == "backend":
+            ctx.monkeypatch.setattr(ME, "_SET_BY_AXROSS", set())
+            env: dict = {}
+            AS.apply_saved_backend(env)
+            assert env.get(ME.AUDIO_BACKEND_VAR) == (None if value == "auto" else value)
+        elif field == "output_volume":
+            assert AR.output_gain() == value / 100
+        else:
+            assert AR.input_gain() == value / 100
+
+    return effect
+
+
+def _audio_row(field, values, set_ui, shown, bad):
+    return Row(f"audio_{field}", "audio", f"audio.json {field}", values,
+               AS.AudioSettings().get(field), set_ui, shown,
+               lambda c: AS.AudioSettings.load().get(field),
+               lambda c, v: _edit_audio(c, field, v), bad, _audio_effect(field))
+
+
 def _set_hotkey(ctx, dialog, value) -> None:
     from PyQt6.QtGui import QKeySequence
 
@@ -669,6 +708,12 @@ ROWS = [
                _combo_shown("voice", "after_combo"), ("print", False)),
     _voice_row("silence_seconds", (2.5, 0.5), _set_spin("voice", "silence_spin"),
                _page_attr("voice", "silence_spin", "value"), (0.1, 99, "1", True)),
+    _audio_row("backend", ("pulseaudio", "pipewire"), _set_combo("audio", "backend_combo"),
+               _combo_shown("audio", "backend_combo"), ("alsa", 1, None)),
+    _audio_row("output_volume", (40, 0), _set_spin("audio", "output_slider"),
+               _page_attr("audio", "output_slider", "value"), (101, -1, "50", True, 50.5)),
+    _audio_row("input_volume", (75,), _set_spin("audio", "input_slider"),
+               _page_attr("audio", "input_slider", "value"), (200, "loud", False)),
     Row("metadata_write_mode", "metadata", "settings.json metadata_write_mode", (MT.MODE_COPY,),
         MT.MODE_IN_PLACE,
         lambda c, d, v: (d.page("metadata").copy_radio if v == MT.MODE_COPY

@@ -21,6 +21,7 @@ from typing import Callable
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
+from core import audio_route as AR
 from core import multimedia_probe as MPROBE
 from core import voice_audio as VA
 from core import voice_models as VM
@@ -66,13 +67,17 @@ def _audio_ready() -> None:
 
 
 class QtRecorder(QObject):
-    """The default microphone at 16 kHz mono int16 (converted when the
-    device offers something else)."""
+    """The microphone at 16 kHz mono int16 (converted when the device
+    offers something else). *device_id* and *volume* (0.0-1.0) default to
+    the saved choice (Edit > Settings… > Audio, core.audio_route); "" is
+    the system's default input."""
 
     data = pyqtSignal(bytes)
 
-    def __init__(self) -> None:
+    def __init__(self, device_id: str | None = None, volume: float | None = None) -> None:
         super().__init__()
+        self._device_id = device_id
+        self._volume = volume
         self._source = None
         self._io = None
         self._convert = None
@@ -81,7 +86,7 @@ class QtRecorder(QObject):
         _audio_ready()
         from PyQt6.QtMultimedia import QAudioFormat, QAudioSource, QMediaDevices
 
-        device = QMediaDevices.defaultAudioInput()
+        device = AR.input_device(self._device_id) or QMediaDevices.defaultAudioInput()
         if device.isNull():
             raise OSError(tr("No microphone found"))
         fmt = QAudioFormat()
@@ -98,6 +103,7 @@ class QtRecorder(QObject):
         rate, channels = fmt.sampleRate(), fmt.channelCount()
         self._convert = lambda raw: VA.to_mono16k(raw, rate, channels, kind)
         self._source = QAudioSource(device, fmt, self)
+        self._source.setVolume(AR.input_gain() if self._volume is None else self._volume)
         self._io = self._source.start()
         if self._io is None:
             raise OSError(tr("The microphone could not be opened"))
@@ -116,13 +122,15 @@ class QtRecorder(QObject):
         self._source = self._io = None
 
 
-def _qt_sink(rate: int):
+def _qt_sink(rate: int, device_id: str | None = None, volume: float | None = None):
     """(QAudioSink, its QIODevice, the rate it plays) for mono int16 at
-    *rate*, or the device's own rate when it takes no other."""
+    *rate*, or the device's own rate when it takes no other. *device_id*
+    and *volume* (0.0-1.0) default to the saved choice (core.audio_route);
+    "" is the system's default output."""
     _audio_ready()
     from PyQt6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 
-    device = QMediaDevices.defaultAudioOutput()
+    device = AR.output_device(device_id) or QMediaDevices.defaultAudioOutput()
     if device.isNull():
         raise OSError(tr("No audio output found"))
     fmt = QAudioFormat()
@@ -135,6 +143,7 @@ def _qt_sink(rate: int):
             raise OSError(tr("The audio output plays no 16-bit mono sound"))
     sink = QAudioSink(device, fmt)
     sink.setBufferSize(fmt.sampleRate() * 2 // 4)  # 250 ms
+    sink.setVolume(AR.output_gain() if volume is None else volume)
     io = sink.start()
     if io is None or sink.error() != QAudio.Error.NoError:
         sink.deleteLater()

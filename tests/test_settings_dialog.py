@@ -33,7 +33,7 @@ APP = app()
 
 CATEGORIES = [
     "General", "Appearance", "Files & Panes", "Network & Proxy", "LLM Profiles", "Agent",
-    "Voice", "Metadata", "Search", "Security", "Extensions",
+    "Voice", "Audio", "Metadata", "Search", "Security", "Extensions",
 ]
 
 

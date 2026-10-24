@@ -43,7 +43,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -88,15 +88,77 @@ STEP_LABELS = {
 
 
 @dataclass(frozen=True)
+class AudioDeviceInfo:
+    """An audio device as the child saw it. *device_id* is QAudioDevice.id()
+    as text - the same under PulseAudio and PipeWire."""
+
+    device_id: str
+    description: str
+    is_default: bool = False
+
+
+@dataclass(frozen=True)
 class ProbeResult:
     """What the child found. *reason* is a sentence fragment for the user
-    ("" when *ok*)."""
+    ("" when *ok*). *backend* is the QT_AUDIO_BACKEND the child ran with
+    ("" - Qt's own choice)."""
 
     ok: bool
     reason: str = ""
     seconds: float = 0.0
     outputs: int = 0
     inputs: int = 0
+    backend: str = ""
+    output_devices: tuple[AudioDeviceInfo, ...] = ()
+    input_devices: tuple[AudioDeviceInfo, ...] = ()
+    step: str = ""  # the step a failed child stopped at ("" when ok)
+
+
+#: The steps that talk to the audio server: only a failure there is worth
+#: trying another audio backend for (the decoder step hangs in the GPU
+#: drivers whatever the backend).
+AUDIO_STEPS = frozenset({"audio devices", "audio output"})
+#: The backends' names in messages.
+BACKEND_NAMES = {"pipewire": "PipeWire", "pulseaudio": "PulseAudio", "": "Qt Multimedia"}
+#: The child names the process allowed to debug it (core: a native stack of a hung child).
+PARENT_ENV = "AXROSS_MULTIMEDIA_PROBE_PARENT"
+#: Seconds the child gives an empty device list to fill (a backend that lists
+#: devices as its server announces them).
+_DEVICE_SETTLE_SECONDS = 1.0
+#: Seconds all native stacks of a hung child may take together (the
+#: message waits for them), and the lines logged.
+_STACK_SECONDS = 3.0
+_STACK_LINES = 80
+
+
+def pipewire_running(environ: dict | None = None) -> bool:
+    """Whether a PipeWire daemon listens: its socket (or PIPEWIRE_REMOTE)."""
+    environ = os.environ if environ is None else environ
+    if environ.get("PIPEWIRE_REMOTE"):
+        return True
+    runtime = environ.get("XDG_RUNTIME_DIR")
+    return bool(runtime) and os.path.exists(os.path.join(runtime, "pipewire-0"))
+
+
+def backend_order(setting: str, environ: dict | None = None, *, platform: str | None = None,
+                  pipewire: bool | None = None) -> list[str]:
+    """The QT_AUDIO_BACKEND values the probe tries, in order. Linux only
+    ("" elsewhere: Qt has one backend there). The user's own variable and
+    an explicit setting are tried alone; "auto" tries PipeWire where its
+    daemon runs, then PulseAudio (which pipewire-pulse also serves)."""
+    from core.multimedia_env import users_audio_backend
+
+    environ = os.environ if environ is None else environ
+    platform = sys.platform if platform is None else platform
+    if not platform.startswith("linux"):
+        return [""]
+    own = users_audio_backend(environ)
+    if own is not None:
+        return [own]
+    if setting in ("pulseaudio", "pipewire"):
+        return [setting]
+    running = pipewire_running(environ) if pipewire is None else pipewire
+    return ["pipewire", "pulseaudio"] if running else ["pulseaudio"]
 
 
 def probe_seconds() -> float:
@@ -195,19 +257,106 @@ def _parse(stdout: str) -> tuple[str, dict | None]:
     return step, reply
 
 
+def _devices(reply: dict, key: str) -> tuple[AudioDeviceInfo, ...]:
+    """The well-formed entries of the device list under *key*."""
+    found = []
+    entries = reply.get(key)
+    for entry in entries if isinstance(entries, list) else ():
+        if (isinstance(entry, dict) and isinstance(entry.get("id"), str)
+                and isinstance(entry.get("description"), str)):
+            found.append(AudioDeviceInfo(entry["id"], entry["description"],
+                                         entry.get("default") is True))
+    return tuple(found)
+
+
+def _result_from_reply(reply: dict, seconds: float) -> ProbeResult:
+    """The result of a child that answered ok."""
+    backend = reply.get("backend") if isinstance(reply.get("backend"), str) else ""
+    return ProbeResult(True, "", seconds, _count(reply, "outputs"), _count(reply, "inputs"),
+                       backend=backend, output_devices=_devices(reply, "output_devices"),
+                       input_devices=_devices(reply, "input_devices"))
+
+
+def _descendants(pid: int) -> list[int]:
+    """*pid* and every process below it (Linux; a one-file binary runs its
+    Python in a child of its own)."""
+    found, todo = [], [pid]
+    while todo:
+        current = todo.pop()
+        found.append(current)
+        try:
+            text = Path(f"/proc/{current}/task/{current}/children").read_text()
+        except OSError:
+            continue
+        todo.extend(int(p) for p in text.split())
+    return found
+
+
+def _native_stack(pid: int) -> str:
+    """The native stacks of *pid* and its children by eu-stack or gdb, ""
+    when neither is there or may attach. The child allowed this process
+    (and what it starts) to attach (:func:`_allow_parent_debugger`)."""
+    if not sys.platform.startswith("linux"):
+        return ""
+    import shutil
+
+    from core.subprocess_env import clean_child_env
+
+    # No symbol downloads: they took seconds (the user waits for the
+    # message) and would send the build ids of every library to a server.
+    env = clean_child_env()
+    env.pop("DEBUGINFOD_URLS", None)
+    deadline = time.monotonic() + _STACK_SECONDS
+    texts = []
+    for target in _descendants(pid):
+        for tool in (["eu-stack", "-p", str(target)],
+                     ["gdb", "-p", str(target), "-batch", "-ex", "thread apply all bt 30"]):
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return "\n".join(texts)
+            found = shutil.which(tool[0])
+            if not found:
+                continue
+            try:
+                run = subprocess.run([found, *tool[1:]], capture_output=True, text=True, errors="replace",
+                                     timeout=left, env=env, stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            frames = [ln for ln in run.stdout.splitlines()
+                      if ln.startswith(("TID", "Thread", "#"))]
+            if frames:
+                texts.append(f"pid {target} ({tool[0]}):\n" + "\n".join(frames[:_STACK_LINES]))
+                break
+    return "\n".join(texts)
+
+
+def _log_native_stack(pid: int) -> None:
+    try:
+        stack = _native_stack(pid)
+    except Exception:  # noqa: BLE001 - a diagnosis must not break the probe
+        log.debug("no native stack of the Qt Multimedia check", exc_info=True)
+        return
+    if stack:
+        log.warning("The Qt Multimedia check hung; its native stacks:\n%s", stack)
+
+
 def _count(reply: dict, key: str) -> int:
     value = reply.get(key)
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
 def run_probe(timeout: float | None = None, *, command: list[str] | None = None,
-              env: dict | None = None) -> ProbeResult:
+              env: dict | None = None, backend: str = "") -> ProbeResult:
     """Run the child once (no cache) and return what it found. Blocks for
     up to *timeout* seconds (default :func:`probe_seconds`) plus the reap
-    of a killed child - call it off the GUI thread."""
+    of a killed child - call it off the GUI thread. *backend* is the
+    QT_AUDIO_BACKEND it runs with ("" - this process's environment)."""
     timeout = probe_seconds() if timeout is None else float(timeout)
     command = command or probe_command()
     child_env = dict(worker_env() if env is None else env)
+    if backend:
+        child_env["QT_AUDIO_BACKEND"] = backend
+    child_env[PARENT_ENV] = str(os.getpid())
     root = _package_root()
     child_env["PYTHONPATH"] = root + (os.pathsep + child_env["PYTHONPATH"]
                                       if child_env.get("PYTHONPATH") else "")
@@ -226,7 +375,8 @@ def run_probe(timeout: float | None = None, *, command: list[str] | None = None,
     with _live_lock:
         _LIVE.add(proc)
     try:
-        return _wait(proc, timeout, start)
+        result = _wait(proc, timeout, start)
+        return replace(result, backend=backend or child_env.get("QT_AUDIO_BACKEND", ""))
     finally:
         with _live_lock:
             _LIVE.discard(proc)
@@ -239,6 +389,7 @@ def _wait(proc: subprocess.Popen, timeout: float, start: float) -> ProbeResult:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
+        _log_native_stack(proc.pid)
         # Killed while it is still unreaped: its pid is the group's id and
         # cannot belong to anyone else yet.
         _kill(proc)
@@ -256,22 +407,23 @@ def _wait(proc: subprocess.Popen, timeout: float, start: float) -> ProbeResult:
         label = tr(STEP_LABELS.get(step, step))
         return ProbeResult(False, tr("Qt Multimedia did not answer within {seconds} s "
                                      "(it hung while {step})")
-                           .format(seconds=_seconds_text(timeout), step=label), seconds)
+                           .format(seconds=_seconds_text(timeout), step=label), seconds,
+                           step=step)
     if reply is not None:
         if reply["ok"]:
-            return ProbeResult(True, "", seconds, _count(reply, "outputs"), _count(reply, "inputs"))
+            return _result_from_reply(reply, seconds)
         error = str(reply.get("error") or "")[:_STDERR_QUOTED] or tr("unknown error")
         return ProbeResult(False, tr("Qt Multimedia failed: {error}").format(error=error),
-                           seconds)
+                           seconds, step=step)
     code = proc.returncode
     if code is not None and code < 0:
         return ProbeResult(False, tr("the Qt Multimedia check crashed ({signal}) while {step}")
                            .format(signal=_signal_name(-code),
-                                   step=tr(STEP_LABELS.get(step, step))), seconds)
+                                   step=tr(STEP_LABELS.get(step, step))), seconds, step=step)
     tail = (err or b"").decode("utf-8", "replace").strip().splitlines()
     quoted = tail[-1][:_STDERR_QUOTED] if tail else ""
     text = tr("the Qt Multimedia check ended with status {code} and no answer").format(code=code)
-    return ProbeResult(False, f"{text}: {quoted}" if quoted else text, seconds)
+    return ProbeResult(False, f"{text}: {quoted}" if quoted else text, seconds, step=step)
 
 
 # -- the process-wide result ---------------------------------------------------------------
@@ -280,6 +432,10 @@ _run_lock = threading.Lock()
 _result: ProbeResult | None = None
 #: Counts :func:`reset` calls: a probe that ran across one is not kept.
 _generation = 0
+#: The backend of the first probe that answered ok in this process: the one
+#: Qt uses here (it reads QT_AUDIO_BACKEND once per process, and no
+#: multimedia object exists before a probe answered ok). Never reset.
+_active_backend: str | None = None
 
 
 def cached() -> ProbeResult | None:
@@ -287,10 +443,17 @@ def cached() -> ProbeResult | None:
     return _result
 
 
+def active_backend() -> str | None:
+    """The QT_AUDIO_BACKEND this process plays through ("" - Qt's own
+    choice), None while no probe answered ok. A later check that answered
+    with another backend does not change it: that takes a restart."""
+    return _active_backend
+
+
 def probe(timeout: float | None = None) -> ProbeResult:
     """This run's result; the first caller runs the child, concurrent
     callers wait for the same answer. Blocks - not on the GUI thread."""
-    global _result
+    global _result, _active_backend
     result = _result
     if result is not None:
         return result
@@ -298,14 +461,53 @@ def probe(timeout: float | None = None) -> ProbeResult:
         if _result is not None:
             return _result
         generation = _generation
-        result = run_probe(timeout)
+        result = _probe_backends(timeout)
         if result.ok:
-            log.info("Qt Multimedia answered in %.2f s", result.seconds)
+            log.info("Qt Multimedia answered in %.2f s (audio backend: %s)", result.seconds,
+                     BACKEND_NAMES.get(result.backend, result.backend))
+            if _active_backend is None:
+                # The first answer is what this process plays through: Qt
+                # reads QT_AUDIO_BACKEND once, so a later check (another
+                # saved backend) must not change it for this process or the
+                # workers it starts - that takes a restart.
+                _active_backend = result.backend
+                if result.backend:
+                    from core.multimedia_env import apply_audio_backend
+
+                    apply_audio_backend(result.backend)
         else:
             log.warning("Qt Multimedia is off for this run: %s", result.reason)
         if generation == _generation:
             _result = result
         return result
+
+
+def _saved_backend() -> str:
+    try:
+        from core.audio_settings import AudioSettings
+
+        return AudioSettings.load().backend
+    except Exception:  # noqa: BLE001 - a broken settings file is "auto"
+        return "auto"
+
+
+def _probe_backends(timeout: float | None) -> ProbeResult:
+    """Try each backend of :func:`backend_order` until one answers; the
+    failure names every backend tried."""
+    failures = []
+    for backend in backend_order(_saved_backend()):
+        result = run_probe(timeout, backend=backend)
+        if result.ok:
+            if failures:
+                log.warning("Qt Multimedia: %s; using %s", "; ".join(failures),
+                            BACKEND_NAMES.get(backend, backend))
+            return result
+        failures.append(f"{BACKEND_NAMES.get(backend, backend)}: {result.reason}")
+        if result.step not in AUDIO_STEPS:
+            break  # not the audio server: another backend would hang the same way
+    if len(failures) == 1:
+        return result
+    return ProbeResult(False, "; ".join(failures), result.seconds, step=result.step)
 
 
 def reset() -> None:
@@ -442,10 +644,35 @@ def _die_with_parent() -> None:
         os._exit(1)
 
 
+def _allow_parent_debugger() -> None:
+    """Linux with Yama (ptrace_scope 1): let the axross process that started
+    this child - and the eu-stack it starts - read this child's native
+    stack when it hangs. Without it only an ancestor may attach."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        parent = int(os.environ.get(PARENT_ENV, ""))
+    except ValueError:
+        return
+    try:
+        import ctypes
+
+        pr_set_ptracer = 0x59616D61
+        ctypes.CDLL(None, use_errno=True).prctl(pr_set_ptracer, parent, 0, 0, 0)
+    except (OSError, AttributeError):
+        pass
+
+
+def _device_entries(devices) -> list[dict]:
+    return [{"id": bytes(d.id()).decode("utf-8", "replace"), "description": d.description(),
+             "default": bool(d.isDefault())} for d in devices]
+
+
 def _child_main() -> int:
     """Create what axross creates, step by step, and say how far it got."""
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     _die_with_parent()
+    _allow_parent_debugger()
     deadline = _own_deadline()
     if deadline is not None:
         # A C thread: it needs no GIL, so a hang inside a native Qt call
@@ -456,6 +683,17 @@ def _child_main() -> int:
         from PyQt6.QtGui import QGuiApplication
 
         app = QGuiApplication.instance() or QGuiApplication([sys.argv[0] or "axross"])
+        # Deliver one event first. PyQt's QGuiApplication.notify() asks
+        # Python (under the GIL) whether it is overridden, once per object,
+        # and caches the answer. Qt 6.10's PipeWire backend sends an event
+        # from its own thread while holding its loop lock, and the main
+        # thread waits for that lock inside QMediaDevices holding the GIL:
+        # a fresh app that never delivered an event deadlocked there
+        # (measured on the release binary; the running GUI had long made
+        # the check).
+        from PyQt6.QtCore import QCoreApplication, QEvent
+
+        QCoreApplication.sendEvent(app, QEvent(QEvent.Type.User))
         from PyQt6.QtMultimedia import (
             QAudioDecoder,
             QAudioOutput,
@@ -469,23 +707,32 @@ def _child_main() -> int:
         player = QMediaPlayer()
         _say({"step": "audio devices"})
         outputs = QMediaDevices.audioOutputs()
+        settle = time.monotonic() + _DEVICE_SETTLE_SECONDS
+        while not outputs and time.monotonic() < settle:
+            app.processEvents()
+            time.sleep(0.05)
+            outputs = QMediaDevices.audioOutputs()
         QMediaDevices.defaultAudioOutput()
         inputs = QMediaDevices.audioInputs()
         QMediaDevices.defaultAudioInput()
         _say({"step": "audio output"})
         output = QAudioOutput()
         player.setAudioOutput(output)
-        del decoder, player, output, app
+        outputs, inputs = list(outputs), list(inputs)
+        del decoder, player, output
     except Exception as exc:  # noqa: BLE001 - reported to the parent
         _say({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
         return 1
-    _say({"ok": True, "outputs": len(outputs), "inputs": len(inputs)})
+    _say({"ok": True, "outputs": len(outputs), "inputs": len(inputs),
+          "backend": os.environ.get("QT_AUDIO_BACKEND", ""),
+          "output_devices": _device_entries(outputs), "input_devices": _device_entries(inputs)})
     return 0
 
 
 __all__ = [
-    "DEADLINE_ENV", "PROBE_SECONDS", "SECONDS_ENV", "STEP_LABELS", "ProbeResult", "cached",
-    "child_deadline", "probe",
+    "BACKEND_NAMES", "DEADLINE_ENV", "PROBE_SECONDS", "SECONDS_ENV", "STEP_LABELS",
+    "AudioDeviceInfo", "ProbeResult", "active_backend", "backend_order", "cached", "child_deadline",
+    "pipewire_running", "probe",
     "probe_async", "probe_command", "probe_seconds", "reset", "run_probe", "start",
     "unavailable_text",
 ]

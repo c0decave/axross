@@ -85,6 +85,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import audio_route as AR
 from core import media_collect as MC
 from core import media_load as ML
 from core import multimedia_probe as MPROBE
@@ -740,6 +741,7 @@ class MediaViewer(QWidget):
         self._pdf_doc = None
         self._pdf_view = None
         self._player = None
+        self._audio = None
         self._video_widget = None
         #: (index, entry) of the video waiting for core.multimedia_probe.
         self._probe_wait = None
@@ -863,10 +865,34 @@ class MediaViewer(QWidget):
                 self._player.setAudioOutput(self._audio)
             except Exception:  # noqa: BLE001 - no audio device: play silently
                 log.debug("no audio output", exc_info=True)
+            else:
+                self._audio_settings_saved(None)
+                # Edit > Settings… > Audio saved: device and volume at once.
+                AR.notifier().changed.connect(self._audio_settings_saved)
             self._player.setVideoOutput(self._video_widget)
             self._player.mediaStatusChanged.connect(self._on_media_status)
             self._player.errorOccurred.connect(self._on_media_error)
         return self._player
+
+    def _route_audio(self) -> None:
+        """The output device and volume of Edit > Settings… > Audio
+        (core.audio_route): the system's default when none is chosen or the
+        chosen one is not connected."""
+        from PyQt6.QtMultimedia import QMediaDevices
+
+        self._audio.setDevice(AR.output_device() or QMediaDevices.defaultAudioOutput())
+        self._audio.setVolume(AR.output_gain())
+
+    def _audio_settings_saved(self, _saved) -> None:
+        """Take the saved output device and volume (at the start and when
+        the Audio page saves); a failure leaves the output as it was."""
+        if self._audio is None:
+            return
+        try:
+            self._route_audio()
+        except Exception:  # noqa: BLE001 - the preview plays on as it was
+            log.warning("the media preview could not take the new audio settings",
+                        exc_info=True)
 
     # -- public state --------------------------------------------------------
     def items(self) -> list[MC.MediaItem]:

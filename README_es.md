@@ -55,7 +55,7 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 ![La toolbar con un icono por herramienta sobre dos paneles y la barra de bookmarks](docs/screenshots/toolbar.png)
 
-*Toolbar.* Un botón por herramienta - Agent, Analysis, Terminal, Find Files, Scripts, consola Python, Tags, Trash, Media Player, Treemap, Drives, Settings, Features. En una ventana estrecha las herramientas pasan a una segunda fila en lugar de desaparecer.
+*Toolbar.* Un botón por herramienta - Agent, Analysis, Terminal, Find Files, Scripts, consola Python, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. En una ventana estrecha las herramientas pasan a una segunda fila en lugar de desaparecer. Un botón se mueve arrastrándolo a lo largo de su barra; el orden se conserva, y el menú contextual de la toolbar tiene Reset Toolbar Order.
 
 ![La ventana Tagged Files con los archivos de un tag](docs/screenshots/tags.png)
 
@@ -448,14 +448,18 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
     como gestor completo.
 
 35. **Todos los settings en un sitio.** **Edit → Settings…** reúne cada
-    opción; **Help → Features** muestra qué partes opcionales están
-    instaladas y cuáles faltan; **Help → Scripting Guide** abre la guía
-    de la API.
+    opción - **Edit → Settings… → Audio** elige PipeWire o PulseAudio, el
+    dispositivo de salida y el de entrada con su volumen, y prueba cada
+    uno con un tono, un medidor de nivel y una grabación reproducida;
+    **Help → Features** muestra qué partes opcionales están instaladas y
+    cuáles faltan; **Help → Scripting Guide** abre la guía de la API.
 
 36. **Una toolbar para las herramientas.** Botones con iconos para
     Agent, Analysis, Terminal, Find Files, Scripts, la consola Python,
-    Tags, Trash, Media Player, Treemap, Drives, Settings y Features, en
-    cada tema.
+    Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives,
+    Settings y Features, en cada tema. Los botones se mueven con drag and
+    drop; el orden se conserva entre arranques, y Reset Toolbar Order (clic
+    derecho en la toolbar) restaura el orden por defecto.
 
 37. **Archivos comprimidos como carpetas.** Los archivos ZIP, TAR y 7z
     se abren en la vista de archivo; se puede entrar en archivos

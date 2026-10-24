@@ -139,7 +139,10 @@ def test_e2e_a_deaf_audio_server_turns_into_a_message(tmp_path):
     server = DeafAudioServer()
     try:
         home = _home(tmp_path)
-        shown, rc, out, err = _start_app([], _env(home, **server.env()))
+        # Both servers deaf: the probe tries PipeWire, then PulseAudio (3 s
+        # each), so the window stays up long enough for both answers.
+        shown, rc, out, err = _start_app([], _env(home, AXROSS_SMOKE_GUI_MS="20000",
+                                                  **server.env()))
     finally:
         server.close()
     log = _log(home)
@@ -147,3 +150,5 @@ def test_e2e_a_deaf_audio_server_turns_into_a_message(tmp_path):
     assert rc == 0, err[-1500:]
     assert PANEL_ERROR in log, log[-3000:]
     assert "listing the audio devices" in log
+    assert "PipeWire: Qt Multimedia did not answer" in log
+    assert "PulseAudio: Qt Multimedia did not answer" in log

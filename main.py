@@ -477,12 +477,23 @@ def main() -> int:
 
     restore_loader_env(bundle_dir=getattr(sys, "_MEIPASS", None) if getattr(sys, "frozen", False)
                        else None)
+    # Before anything opens a TLS connection: the one-file binary's OpenSSL
+    # looks for RHEL's CA paths; elsewhere it found no CA certificate and
+    # every download failed (core.tls_env).
+    from core.tls_env import apply_ca_bundle
+
+    apply_ca_bundle()
     # Before anything can create a Qt Multimedia object: Qt's FFmpeg backend
     # must not try the GPU drivers (an NVIDIA driver hung in cuInit inside
     # QAudioDecoder() and the window never came). See core.multimedia_env.
     from core.multimedia_env import apply_no_gpu_probe
 
     apply_no_gpu_probe()
+    # The audio backend the user chose (PipeWire or PulseAudio) - Qt reads
+    # it once, so before anything can create a multimedia object.
+    from core.audio_settings import apply_saved_backend
+
+    apply_saved_backend()
     if sys.argv[1:] == ["--agent-worker"]:
         # The agent in its own process (core.agent_sandbox starts it, mostly
         # in a sandbox): no GUI, no log files, stdin/stdout are its channel.

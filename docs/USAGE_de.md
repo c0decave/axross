@@ -352,7 +352,12 @@ eines floating Panels dockt es wieder an.
   Lautstärke, Mute, Shuffle und Repeat kommen beim nächsten Start
   wieder (`~/.config/axross/media_player.json`, Mode 0600). Die
   Lautstärke folgt einer wahrnehmungsgerechten (kubischen) Kurve;
-  Mute-Button. Tasten, solange der Player den Fokus hat: Space
+  Mute-Button. Output-Device und Output-Volume aus *Edit → Settings… →
+  Audio* gelten obendrauf (eine Änderung dort erreicht einen laufenden
+  Track sofort). Startet das Audio nicht, sagt das Panel warum:
+  *Try Again* prüft noch einmal und startet den Player, sobald das
+  Audio antwortet, *Audio Settings…* öffnet die Audio-Seite (anderes
+  Backend oder Device). Tasten, solange der Player den Fokus hat: Space
   Play/Pause, Enter spielt die markierte Zeile, Delete entfernt die
   markierten Zeilen, Links / Rechts spulen 5 s (mit Shift 30 s),
   Strg+Links / Strg+Rechts vorheriger / nächster Track, M Mute,
@@ -809,10 +814,19 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 | LLM Profiles | Die LLM-Server von Agent- und Analysis-Dock; *Fetch models* öffnet eine Liste mit Größe, Parametern, Quantisierung und dem geladenen Modell, soweit der Server sie meldet |
 | Agent | General, Prompts, Access, Sandboxes, MCP Servers, Sessions |
 | Voice | Antworten vorlesen, gesprochene Sprache, Stimme, Mikrofon-Modus, Hold-Taste, erkannten Text einfügen oder senden, die Pause, die das Sprechen beendet |
+| Audio | Audio-Backend (Automatic, PipeWire, PulseAudio; das Backend dieses Laufs wird gezeigt, eine Änderung gilt ab dem nächsten Start), Output-Device und Volume (skaliert alles, was axross abspielt) mit *Play Test Tone*, Input-Device und Volume (Gain) mit *Test Microphone* (ein Level-Meter) und *Record 3 s and Play Back*, das Ergebnis des Audio-Checks und *Check Audio Again* |
 | Metadata | Wie Remove Metadata schreibt, vorher fragen |
 | Search | Gleichzeitig durchsuchte Hosts von *Find on Network Hosts*; wo Offline- und Duplicate-Index liegen |
 | Security | Paranoid Security Mode (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` im Environment gewinnt), sudo-Passwort merken |
 | Extensions | Welche Extensions eingeschaltet sind |
+
+Die **Audio**-Seite fasst Qt Multimedia erst an, wenn der Audio-Check
+(ein eigener Prozess) geantwortet hat; scheitert er, nennt die Seite den
+Grund, die Tests bleiben aus, und das Backend lässt sich trotzdem wählen
+und speichern. Ein gespeichertes Device, das nicht eingesteckt ist,
+bleibt als *(not connected)* in seiner Liste - bis es wieder da ist,
+spielt der System-Default. Ein Device, das bei offener Seite eingesteckt
+wird, erscheint sofort.
 
 **OK, Apply, Cancel** gelten auf jeder Seite gleich: geschrieben werden
 nur Seiten, deren Werte geändert wurden; OK und Apply prüfen zuerst jede
@@ -842,6 +856,8 @@ gespeichert, wie die Seite.
 - `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — Default-
   Proxy, LLM-Profile, eingeschaltete Extensions (Secrets im Keyring).
 - `~/.config/axross/agent/voice.json` — die Voice-Einstellungen (`0o600`).
+- `~/.config/axross/audio.json` — die Audio-Einstellungen: Backend,
+  Output- und Input-Device, Volumes (`0o600`).
 - `~/.config/axross/column_prefs.json` — Spaltenbreiten und
   ausgeblendete Spalten, eine Datei für alle Panes.
 - `~/.config/axross/agent/settings.json` — Agent Settings (Modes, Access,

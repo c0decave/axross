@@ -828,17 +828,20 @@ class MultiViewTests(unittest.TestCase):
         # share one global deadline with the first probe.
         class SlowStat(_StaticBackend):
             def stat(self, path: str) -> FileItem:
-                time.sleep(0.05)
+                time.sleep(0.3)
                 return _make_file_item(path.rsplit("/", 1)[-1], size=1)
 
         for b in (b1 := SlowStat("seq-a", {"/": []}),
                   b2 := SlowStat("seq-b", {"/": []})):
             b._listings["/foo"] = []
 
+        # Each probe fits its budget with 0.2 s to spare (0.05 vs 0.08 tore
+        # on a loaded host); both together (0.6 s) would not fit one shared
+        # deadline, which is what the test catches.
         rep = multi_view.inspect_targets(
             [(b1, "/foo"), (b2, "/foo")],
             parallelism=1,
-            per_target_timeout_s=0.08,
+            per_target_timeout_s=0.5,
         )
         self.assertEqual(len(rep.targets), 2)
         for probe in rep.targets:

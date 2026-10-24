@@ -43,10 +43,12 @@ axross has, to ``host_call``; axross checks and confirms it there.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import hashlib
 import json
 import logging
 import re
+import socket
 import threading
 import urllib.error
 import urllib.request
@@ -238,10 +240,49 @@ def _send_chat(opener, request, profile: LLMProfile) -> dict:
             ) from None
         raise AgentError(f"the LLM server at {profile.host()} answered HTTP {exc.code}") from None
     except (urllib.error.URLError, OSError) as exc:
-        reason = getattr(exc, "reason", exc)
-        raise AgentError(f"cannot reach the LLM server at {profile.host()}: {reason}") from None
+        raise AgentError(unreachable_text(profile, exc)) from None
     except ValueError:
         raise AgentError(f"the LLM server at {profile.host()} did not answer JSON") from None
+
+
+def unreachable_text(profile: LLMProfile, exc: BaseException) -> str:
+    """What a failed connection to the profile's server means, for a person.
+
+    A connect that is refused, one that gets no answer at all, no route,
+    an unknown name and a server that accepted but stayed silent past the
+    profile's timeout each need a different action - one "cannot reach"
+    read as "the LLM server is dead" when the whole machine had dropped
+    off the network (ping, SSH and the server port all timed out)."""
+    host = profile.host()
+    connect = isinstance(exc, urllib.error.URLError)
+    reason = exc.reason if connect else exc
+    head = f"cannot reach the LLM server at {host}: {reason}"
+    if not connect and isinstance(exc, TimeoutError) and not getattr(exc, "errno", None):
+        return (f"the LLM server at {host} did not answer within {profile.timeout:g} s: the "
+                "model may still be working on a long prompt (raise the profile's timeout), "
+                "or the machine stopped answering")
+    if isinstance(reason, socket.gaierror):
+        name = urlsplit(profile.resolved_endpoint()).hostname or host
+        return f"{head} - the name {name} is not known (a typo, or no DNS on this network)"
+    code = getattr(reason, "errno", None)
+    if isinstance(reason, ConnectionRefusedError) or code == errno.ECONNREFUSED:
+        return (f"{head} - the machine answered, but nothing listens on port "
+                f"{_endpoint_port(profile)}: is the LLM server running (LM Studio's server, "
+                "ollama serve)?")
+    if code == errno.ETIMEDOUT or (isinstance(reason, TimeoutError) and code is None):
+        return (f"{head} - the machine does not answer at all (not even to connect): is it "
+                "asleep, switched off or on another network, or did its address change?")
+    if code in (errno.EHOSTUNREACH, errno.ENETUNREACH):
+        return f"{head} - no route to {host}: this computer is not on that machine's network"
+    return head
+
+
+def _endpoint_port(profile: LLMProfile) -> int:
+    parts = urlsplit(profile.resolved_endpoint())
+    try:
+        return parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return 443 if parts.scheme == "https" else 80
 
 
 def _require_http(profile: LLMProfile) -> None:
@@ -300,8 +341,7 @@ def _model_listing(profile: LLMProfile, api_key: str) -> list[dict]:
             ) from None
         raise AgentError(f"the LLM server at {profile.host()} answered HTTP {exc.code}") from None
     except (urllib.error.URLError, OSError) as exc:
-        reason = getattr(exc, "reason", exc)
-        raise AgentError(f"cannot reach the LLM server at {profile.host()}: {reason}") from None
+        raise AgentError(unreachable_text(profile, exc)) from None
     except ValueError:
         raise AgentError(f"the LLM server at {profile.host()} did not answer JSON") from None
     if not isinstance(data, dict):

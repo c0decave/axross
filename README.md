@@ -54,7 +54,7 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 ![The toolbar with an icon per tool above two panes and the bookmark sidebar](docs/screenshots/toolbar.png)
 
-*Toolbar.* One button per tool - Agent, Analysis, Terminal, Find Files, Scripts, Python console, Tags, Trash, Media Player, Treemap, Drives, Settings, Features. On a narrow window the tools move to a second row instead of disappearing.
+*Toolbar.* One button per tool - Agent, Analysis, Terminal, Find Files, Scripts, Python console, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. On a narrow window the tools move to a second row instead of disappearing. Drag a button along its bar to move it; the order is kept, and the toolbar's right-click menu has Reset Toolbar Order.
 
 ![The Tagged Files window listing the files of one tag](docs/screenshots/tags.png)
 
@@ -421,13 +421,18 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
     locally), and **Manage Bookmarks** as a full manager.
 
 35. **Every setting in one place.** **Edit → Settings…** holds every
-    option; **Help → Features** shows which optional parts are installed
-    and which are missing; **Help → Scripting Guide** opens the API
-    guide.
+    option - **Edit → Settings… → Audio** picks PipeWire or PulseAudio,
+    the output and input device and their volume, and tests each with a
+    tone, a level meter and a recording played back; **Help → Features**
+    shows which optional parts are installed and which are missing;
+    **Help → Scripting Guide** opens the API guide.
 
 36. **A toolbar for the tools.** Buttons with icons for Agent, Analysis,
     Terminal, Find Files, Scripts, the Python console, Tags, Trash, Media
-    Player, Treemap, Drives, Settings and Features, in every theme.
+    Player, Audio & Video Settings, Treemap, Drives, Settings and Features,
+    in every theme. Drag a button to move it; the order is kept across
+    starts, and Reset Toolbar Order (right-click the toolbar) brings back
+    the default.
 
 37. **Archives as folders.** ZIP, TAR and 7z archives open in the
     archive view; step into nested archives and extract everything or

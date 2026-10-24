@@ -56,6 +56,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import audio_route
 from core.i18n import tr
 
 log = logging.getLogger(__name__)
@@ -739,12 +740,15 @@ class MemorySink:
 
 
 class QtSink:
-    """The sound card: QAudioSink in push mode."""
+    """The sound card: QAudioSink in push mode, on the output device chosen
+    in Edit > Settings… > Audio (core.audio_route; the system's default
+    when none is or it is not connected)."""
 
     def __init__(self, fmt) -> None:
         from PyQt6.QtMultimedia import QAudioSink, QMediaDevices
 
-        self._sink = QAudioSink(QMediaDevices.defaultAudioOutput(), fmt)
+        device = audio_route.output_device() or QMediaDevices.defaultAudioOutput()
+        self._sink = QAudioSink(device, fmt)
         self._sink.setBufferSize(RATE * 2 * 4 // 4)  # 250 ms
         self._io = None
 
@@ -963,6 +967,18 @@ class EqEngine(QObject):
         if self._sink is not None:
             self._sink.set_volume(self.volume)
 
+    def reroute(self) -> None:
+        """The output device was changed (Edit > Settings… > Audio): a
+        playing or paused track goes on through a new sink, which the sink
+        factory opens on the device now chosen. What the old sink still
+        held (at most its 250 ms buffer) is not played."""
+        if self._sink is None or self.state not in ("playing", "paused"):
+            return
+        self._sink.stop()
+        self._sink = self._new_sink()
+        if self.state == "paused":
+            self._sink.suspend()
+
     def position_ms(self) -> int:
         if self.state == "stopped":
             return int(self._start_frames * 1000 // RATE)
@@ -1146,6 +1162,9 @@ class SimpleEngine(QObject):
 
         self._player = QMediaPlayer(self)
         self._output = QAudioOutput(self)
+        device = audio_route.output_device()
+        if device is not None:
+            self._output.setDevice(device)
         self._player.setAudioOutput(self._output)
         self._player.mediaStatusChanged.connect(self._status)
         self._player.errorOccurred.connect(lambda _e, text: self._fail(text))
@@ -1223,6 +1242,13 @@ class SimpleEngine(QObject):
 
     def set_volume(self, volume: float) -> None:
         self._output.setVolume(volume)
+
+    def reroute(self) -> None:
+        """The output device was changed: QAudioOutput moves at once."""
+        from PyQt6.QtMultimedia import QMediaDevices
+
+        self._output.setDevice(audio_route.output_device()
+                               or QMediaDevices.defaultAudioOutput())
 
     def set_gains(self, gains) -> None:
         pass
@@ -1684,8 +1710,11 @@ class PlayerPanel(QWidget):
     engine_failed = pyqtSignal(str)
 
     def __init__(self, engine=None, state_path=None, run_in_background=None, *,
-                 engine_factory=None, audio_probe=None) -> None:
+                 engine_factory=None, audio_probe=None, open_audio_settings=None) -> None:
         super().__init__()
+        #: open_audio_settings() opens Edit > Settings… > Audio (the host
+        #: window's); None: no "Audio Settings…" button.
+        self.open_audio_settings = open_audio_settings
         #: engine_factory() -> engine, called on the GUI thread once the probe passed.
         self._engine_factory = engine_factory or default_engine
         #: audio_probe() -> core.multimedia_probe.ProbeResult; blocks, so it
@@ -1736,6 +1765,23 @@ class PlayerPanel(QWidget):
         self.audio_status.setWordWrap(True)
         self.audio_status.setVisible(not self.engine_ready)
         root.addWidget(self.audio_status)
+        # Shown while audio is off: check again, or choose another backend
+        # or device first.
+        self.retry_button = QPushButton(tr("Try Again"))
+        self.retry_button.setToolTip(tr("Check the audio again and start the player when it "
+                                        "answers"))
+        self.retry_button.clicked.connect(self.retry_audio)
+        self.audio_settings_button = QPushButton(tr("Audio Settings…"))
+        self.audio_settings_button.setToolTip(tr("Edit > Settings… > Audio: backend, devices, "
+                                                 "volume and a test"))
+        self.audio_settings_button.clicked.connect(self._open_audio_settings)
+        audio_row = QHBoxLayout()
+        audio_row.setContentsMargins(0, 0, 0, 0)
+        audio_row.addWidget(self.retry_button)
+        audio_row.addWidget(self.audio_settings_button)
+        audio_row.addStretch(1)
+        root.addLayout(audio_row)
+        self._show_audio_buttons(False)
         position = QHBoxLayout()
         self.seek_slider = SeekSlider()
         self.seek_slider.setRange(0, 0)
@@ -1866,6 +1912,9 @@ class PlayerPanel(QWidget):
         self.note.setWordWrap(True)
         root.addWidget(self.note)
         self._update_repeat_button()
+        #: The output device the engine plays on (core.audio_route), to see a change.
+        self._output_device = audio_route.settings().output_device
+        audio_route.notifier().changed.connect(self._audio_settings_saved)
         self._apply_volume()
         self._update_control_icons()
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -1941,9 +1990,35 @@ class PlayerPanel(QWidget):
         self.audio_error = text
         self.audio_status.setText(text)
         self.audio_status.setVisible(True)
+        self._show_audio_buttons(True)
         self._set_transport_enabled(False)
         log.warning("Media Player: %s", text)
         self.engine_failed.emit(text)
+
+    def _show_audio_buttons(self, on: bool) -> None:
+        self.retry_button.setVisible(on)
+        self.audio_settings_button.setVisible(on and self.open_audio_settings is not None)
+
+    def retry_audio(self) -> None:
+        """Try Again: check Qt Multimedia once more (this run's answer is
+        forgotten, core.multimedia_probe.reset) and build the engine when it
+        answers now - after a changed backend or device, a started audio
+        server, a plugged-in card."""
+        if self._gone() or self.engine_ready:
+            return
+        self._show_audio_buttons(False)
+        self.audio_error = ""
+        self.audio_status.setText(tr("Starting audio…"))
+        self.audio_status.setVisible(True)
+        if self._audio_probe is None:
+            from core import multimedia_probe
+
+            multimedia_probe.reset()
+        self._start_engine()
+
+    def _open_audio_settings(self) -> None:
+        if self.open_audio_settings is not None:
+            self.open_audio_settings()
 
     def _attach_engine(self, engine) -> None:
         """Use *engine* from now on and hand it what was asked for while
@@ -1956,6 +2031,7 @@ class PlayerPanel(QWidget):
         self.engine_ready = True
         self.audio_error = ""
         self.audio_status.setVisible(False)
+        self._show_audio_buttons(False)
         self._set_transport_enabled(True)
         self._apply_volume()
         if pending is None:
@@ -2389,8 +2465,27 @@ class PlayerPanel(QWidget):
         self._schedule_save()
 
     def _apply_volume(self) -> None:
+        """The slider's level (perceptual), scaled by the output volume of
+        Edit > Settings… > Audio."""
         level = 0.0 if self.muted else perceptual_to_linear(self.volume.value() / 100)
-        self.engine.set_volume(level)
+        self.engine.set_volume(level * audio_route.output_gain())
+
+    def _audio_settings_saved(self, saved) -> None:
+        """Edit > Settings… > Audio saved: the volume at once, a new output
+        device for the running engine where it can move (else its next
+        playback takes it)."""
+        if self._gone():
+            return
+        self._apply_volume()
+        if saved.output_device != self._output_device:
+            self._output_device = saved.output_device
+            reroute = getattr(self.engine, "reroute", None)
+            if callable(reroute):
+                try:
+                    reroute()
+                except Exception:  # noqa: BLE001 - the player goes on on the old device
+                    log.warning("Media Player: the output device could not be changed",
+                                exc_info=True)
 
     def step_volume(self, steps: int) -> None:
         self.volume.setValue(self.volume.value() + steps * VOLUME_STEP)
@@ -2745,9 +2840,13 @@ def deactivate(api):
 
 
 def activate(api):
+    window = getattr(api, "window", None)
+    open_settings = getattr(window, "open_settings", None)
     panel = PlayerPanel(state_path=str(state_file()),
                         run_in_background=lambda work, done, error: api.run_in_background(
-                            work, on_done=done, on_error=error))
+                            work, on_done=done, on_error=error),
+                        open_audio_settings=(lambda: open_settings("audio"))
+                        if callable(open_settings) else None)
     panel.drop_resolver = getattr(api, "drop_context", None)
     panel.engine_failed.connect(api.notify)
     if panel.audio_error:  # a host that answered at once

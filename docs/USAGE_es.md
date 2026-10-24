@@ -359,7 +359,12 @@ vuelve a acoplar.
   posición, el volumen, mute, shuffle y repeat vuelven en el
   siguiente arranque (`~/.config/axross/media_player.json`, modo
   0600). El volumen sigue una curva perceptual (cúbica); botón de
-  mute. Teclas mientras el reproductor tiene el foco: Space
+  mute. El dispositivo de salida y el volumen de salida de *Edit →
+  Settings… → Audio* se aplican encima (un cambio allí llega al
+  momento a una pista que suena). Si el audio no arranca, el panel dice
+  por qué: *Try Again* comprueba otra vez y arranca el reproductor en
+  cuanto el audio responde, *Audio Settings…* abre la página Audio
+  (otro backend u otro dispositivo). Teclas mientras el reproductor tiene el foco: Space
   play/pausa, Enter reproduce la fila seleccionada, Delete quita las
   filas seleccionadas, Izquierda / Derecha avanzan 5 s (con Shift
   30 s), Ctrl+Izquierda / Ctrl+Derecha pista anterior / siguiente, M
@@ -817,10 +822,19 @@ encuentra un ajuste por su nombre (escribe *sudo*, *proxy* o *zoom*).
 | LLM Profiles | Los servidores LLM de los docks Agent y Analysis; *Fetch models* abre una lista con tamaño, parámetros, cuantización y el modelo cargado de cada uno, en la medida en que el servidor los indica |
 | Agent | General, Prompts, Access, Sandboxes, MCP Servers, Sessions |
 | Voice | Leer las respuestas en voz alta, idioma hablado, voz, modo del micrófono, tecla de mantener, texto reconocido insertado o enviado, la pausa que termina de hablar |
+| Audio | Backend de audio (Automatic, PipeWire, PulseAudio; se muestra el de esta ejecución, un cambio se aplica en el próximo arranque), dispositivo de salida y volumen (escala todo lo que axross reproduce) con *Play Test Tone*, dispositivo de entrada y volumen (ganancia) con *Test Microphone* (un medidor de nivel) y *Record 3 s and Play Back*, el resultado de la comprobación de audio y *Check Audio Again* |
 | Metadata | Cómo escribe Remove Metadata, preguntar antes |
 | Search | Hosts buscados a la vez por *Find on Network Hosts*; dónde están el índice offline y el de duplicados |
 | Security | Paranoid security mode (se mantiene al siguiente arranque; `AXROSS_SECURITY_MODE` en el entorno tiene prioridad), recordar la contraseña de sudo |
 | Extensions | Qué extensions están activadas |
+
+La página **Audio** solo toca Qt Multimedia cuando la comprobación de
+audio (un proceso aparte) ha respondido; si falla, la página da el motivo,
+las pruebas quedan desactivadas y el backend se puede elegir y guardar
+igualmente. Un dispositivo guardado que no está conectado sigue en su
+lista como *(not connected)*: hasta que vuelva suena el predeterminado
+del sistema. Un dispositivo conectado con la página abierta aparece al
+momento.
 
 **OK, Apply, Cancel** funcionan igual en todas las páginas: solo se
 escriben las páginas cuyos valores cambiaron; OK y Apply comprueban antes
@@ -852,6 +866,8 @@ página.
   por defecto, los perfiles LLM, las extensions activadas (secretos en el
   keyring).
 - `~/.config/axross/agent/voice.json` — los ajustes de Voice (`0o600`).
+- `~/.config/axross/audio.json` — los ajustes de Audio: backend,
+  dispositivo de salida y de entrada, volúmenes (`0o600`).
 - `~/.config/axross/column_prefs.json` — anchos y columnas ocultas,
   un solo archivo para todos los panels.
 - `~/.config/axross/agent/settings.json` — Agent Settings (modos, accesos,

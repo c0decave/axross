@@ -888,11 +888,23 @@ class AgentTab(QWidget):
 
     def _update_buttons(self) -> None:
         busy = self.busy()
-        self.send_button.setEnabled(not busy and self.profile() is not None)
         voice = getattr(self.dock, "voice", None)
-        self.stop_button.setEnabled(busy or bool(voice is not None and voice.speaking()))
-        self.new_button.setEnabled(not busy)
-        self.plan_button.setVisible(self._plan_ready and not busy)
+        usable = {
+            self.send_button: not busy and self.profile() is not None,
+            self.stop_button: busy or bool(voice is not None and voice.speaking()),
+            self.new_button: not busy,
+            self.plan_button: self._plan_ready and not busy,
+        }
+        # A clicked button keeps the keyboard focus. Disabled or hidden, Qt
+        # hands it to the next widget (the tab bar, the microphone) and the
+        # next task typed is lost: the task field takes it instead.
+        focus = self.window().focusWidget()
+        if focus in usable and not usable[focus]:
+            self.input.setFocus()
+        self.send_button.setEnabled(usable[self.send_button])
+        self.stop_button.setEnabled(usable[self.stop_button])
+        self.new_button.setEnabled(usable[self.new_button])
+        self.plan_button.setVisible(usable[self.plan_button])
 
     def selected_groups(self) -> frozenset:
         return frozenset(
@@ -1399,16 +1411,23 @@ class AgentTab(QWidget):
     def new_conversation(self) -> None:
         if self.busy():
             return
-        self._agent = None
-        self._agent_key = None
+        # Closed, not just dropped: the connections it opened would stay open.
         self._close_agent()
+        self._agent_key = None
         self.transcript.clear()
         self._entries.clear()
         self._open.clear()
         self.session.transcript.clear()
         self.session.messages.clear()
         self._plan_ready = False
+        self.plan_label.clear()
+        self.plan_label.hide()
+        self._started = 0.0
+        self._update_status()
         self._update_buttons()
+        # The click left the keyboard focus on this button: the next task
+        # is typed into the field, as in a new tab (AgentDock.new_tab).
+        self.input.setFocus()
         self.changed.emit()
 
     def run_plan(self) -> None:

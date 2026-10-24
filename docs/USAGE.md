@@ -492,7 +492,12 @@ bar docks it again.
   are not saved). The list, the current track and position, volume,
   mute, shuffle and repeat come back on the next start
   (`~/.config/axross/media_player.json`, mode 0600). Volume follows a
-  perceptual (cubic) curve; mute button. Keys while the player has
+  perceptual (cubic) curve; mute button. The output device and the
+  output volume of *Edit → Settings… → Audio* apply on top (a change
+  there reaches a playing track at once). When audio does not start,
+  the panel says why: *Try Again* checks once more and starts the
+  player when audio answers, *Audio Settings…* opens the Audio page
+  (another backend or device). Keys while the player has
   the focus: Space play/pause, Enter play the selected row, Delete
   remove the selected rows, Left / Right seek 5 s (with Shift 30 s),
   Ctrl+Left / Ctrl+Right previous / next, M mute, + / - volume. With
@@ -1027,10 +1032,18 @@ finds a setting by its name (type *sudo*, *proxy* or *zoom*).
 | LLM Profiles | The LLM servers of the Agent and Analysis docks; *Fetch models* opens a list with each model's size, parameters, quantisation and which one is loaded, as far as the server reports them |
 | Agent | General, Prompts, Access, Sandboxes, MCP Servers, Sessions |
 | Voice | Read answers aloud, spoken language, voice, microphone mode, hold key, recognised text inserted or sent, the pause that ends speaking |
+| Audio | Audio backend (Automatic, PipeWire, PulseAudio; the one this run plays through is shown, a change applies at the next start), output device and volume (it scales everything axross plays) with *Play Test Tone*, input device and volume (gain) with *Test Microphone* (a level meter) and *Record 3 s and Play Back*, the result of the audio check and *Check Audio Again* |
 | Metadata | How Remove Metadata writes, asking first |
 | Search | Hosts searched at once by *Find on Network Hosts*; where the offline and duplicate indexes are |
 | Security | Paranoid security mode (kept for the next start; `AXROSS_SECURITY_MODE` in the environment wins), remember the sudo password |
 | Extensions | Which extensions are switched on |
+
+The **Audio** page touches Qt Multimedia only after the audio check (a
+separate process) has answered; when the check fails, the page names the
+reason, the tests stay off and the backend can still be chosen and saved.
+A saved device that is not plugged in stays in its list as
+*(not connected)* - until it is back, the system default plays. A device
+plugged in while the page is open appears at once.
 
 **OK, Apply, Cancel** work the same on every page: only pages whose values
 were changed are written; OK and Apply check every changed page first and
@@ -1061,6 +1074,8 @@ on their page. *View → Show Hidden Files* (**Ctrl+H**), *View → Theme* and
   default proxy, the LLM profiles, the switched-on extensions (secrets in
   the keyring).
 - `~/.config/axross/agent/voice.json` — the Voice settings (`0o600`).
+- `~/.config/axross/audio.json` — the Audio settings: backend, output and
+  input device, volumes (`0o600`).
 - `~/.config/axross/agent/settings.json` — Agent Settings (modes, access,
   sandbox profiles, MCP servers; `0o600`).
 - `~/.config/axross/agent/sessions/` — one JSON file per kept Agent tab (`0o600`).

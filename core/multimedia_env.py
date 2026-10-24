@@ -57,9 +57,44 @@ def apply_no_gpu_probe(environ: dict | None = None) -> list[str]:
     return applied
 
 
+#: Qt's choice of audio backend on Linux. Measured (Qt 6.10 and 6.11):
+#: unset - PipeWire when its daemon runs, else PulseAudio; "pipewire";
+#: "pulseaudio"; any other value - PulseAudio.
+AUDIO_BACKEND_VAR = "QT_AUDIO_BACKEND"
+AUDIO_BACKENDS = ("pulseaudio", "pipewire")
+
+
+def apply_audio_backend(backend: str, environ: dict | None = None) -> str | None:
+    """Make Qt use *backend* ("auto", "pulseaudio" or "pipewire") in
+    *environ* (default ``os.environ``); return the value set, None when
+    nothing was. "auto" leaves Qt's own choice. A value the user set keeps
+    winning; one axross set before (the saved choice, replaced by the
+    probe's fallback) may be replaced. Before the first multimedia object
+    only: Qt reads it once per process."""
+    environ = os.environ if environ is None else environ
+    if backend != "auto" and backend not in AUDIO_BACKENDS:
+        raise ValueError(f"unknown audio backend {backend!r}")
+    if AUDIO_BACKEND_VAR in environ and AUDIO_BACKEND_VAR not in _SET_BY_AXROSS:
+        return None
+    if backend == "auto":
+        return None
+    environ[AUDIO_BACKEND_VAR] = backend
+    _SET_BY_AXROSS.add(AUDIO_BACKEND_VAR)
+    return backend
+
+
+def users_audio_backend(environ: dict | None = None) -> str | None:
+    """The QT_AUDIO_BACKEND the user set themselves, None without one."""
+    environ = os.environ if environ is None else environ
+    if AUDIO_BACKEND_VAR in environ and AUDIO_BACKEND_VAR not in _SET_BY_AXROSS:
+        return environ[AUDIO_BACKEND_VAR]
+    return None
+
+
 def set_by_axross() -> frozenset[str]:
-    """The names :func:`apply_no_gpu_probe` set in this process."""
+    """The names this module set in this process (not the user)."""
     return frozenset(_SET_BY_AXROSS)
 
 
-__all__ = ["GPU_PROBE_ENV", "HW_DEVICE_VARS", "apply_no_gpu_probe", "set_by_axross"]
+__all__ = ["AUDIO_BACKENDS", "AUDIO_BACKEND_VAR", "GPU_PROBE_ENV", "HW_DEVICE_VARS",
+           "apply_audio_backend", "apply_no_gpu_probe", "set_by_axross", "users_audio_backend"]

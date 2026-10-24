@@ -422,3 +422,154 @@ def test_edge_every_control_child_is_a_widget():
         assert panel.audio_status.window() is panel.window()
     finally:
         panel.close()
+
+
+# --- Try Again and Audio Settings… (Edit > Settings… > Audio) --------------------------------
+
+
+def _shown(widget) -> bool:
+    return widget.isVisibleTo(widget.parentWidget() or widget)
+
+
+def test_happy_try_again_starts_the_engine_once_audio_answers():
+    answers = [HUNG, OK]
+    background = Background()
+    made: list[FakeEngine] = []
+    panel = MP.PlayerPanel(run_in_background=background,
+                           engine_factory=lambda: made.append(FakeEngine()) or made[-1],
+                           audio_probe=lambda: answers.pop(0))
+    try:
+        background.run_all()
+        assert not panel.engine_ready and _shown(panel.retry_button)
+        panel.retry_button.click()
+        assert "Starting audio" in panel.audio_status.text()
+        assert not _shown(panel.retry_button)  # one try at a time
+        background.run_all()
+        assert panel.engine_ready and panel.engine is made[0]
+        assert transport_enabled(panel) == [True] * 4
+        assert not _shown(panel.retry_button) and not _shown(panel.audio_status)
+    finally:
+        panel.close()
+
+
+def test_happy_try_again_runs_the_real_check_again(monkeypatch):
+    """Without an injected probe Try Again forgets this run's answer
+    (core.multimedia_probe.reset) and the child runs once more."""
+    calls = []
+    answers = [HUNG, OK]
+    monkeypatch.setattr(MPROBE, "run_probe",
+                        lambda timeout=None, **_kw: calls.append(1) or answers.pop(0))
+    MPROBE.reset()
+    try:
+        panel = MP.PlayerPanel(engine_factory=FakeEngine)
+        assert not panel.engine_ready and calls == [1]
+        panel.retry_button.click()
+        assert calls == [1, 1] and panel.engine_ready
+        assert MPROBE.cached().ok
+        panel.close()
+    finally:
+        MPROBE.reset()
+
+
+def test_happy_audio_settings_opens_the_audio_page():
+    opened = []
+    panel, background, _made, _ = late_panel(HUNG)
+    panel.open_audio_settings = lambda: opened.append("audio")
+    try:
+        background.run_all()
+        assert _shown(panel.audio_settings_button)
+        assert panel.audio_settings_button.text() == "Audio Settings…"
+        panel.audio_settings_button.click()
+        assert opened == ["audio"]
+    finally:
+        panel.close()
+
+
+def test_happy_the_extension_opens_edit_settings_at_audio(monkeypatch, tmp_path):
+    monkeypatch.setattr(MP, "state_file", lambda: tmp_path / "media_player.json")
+    monkeypatch.setattr(MPROBE, "run_probe", lambda timeout=None, **_kw: HUNG)
+    MPROBE.reset()
+    pages = []
+
+    class Window:
+        def open_settings(self, page=None, sub=None):
+            pages.append(page)
+            return 0
+
+    class Api:
+        window = Window()
+
+        def __init__(self):
+            self.docks = []
+
+        def add_dock(self, title, widget):
+            self.docks.append(widget)
+            return None
+
+        def add_context_action(self, *a, **kw):
+            pass
+
+        def run_in_background(self, work, on_done=None, on_error=None):
+            try:
+                value = work()
+            except Exception as exc:  # noqa: BLE001
+                on_error(exc)
+            else:
+                on_done(value)
+
+        def notify(self, text, timeout_ms=5000):
+            pass
+
+    api = Api()
+    try:
+        MP.activate(api)
+        api.docks[0].audio_settings_button.click()
+        assert pages == ["audio"]
+    finally:
+        MP.deactivate(api)
+        MPROBE.reset()
+
+
+def test_sad_try_again_that_fails_again_says_so_again():
+    panel, background, made, probes = late_panel(HUNG)
+    failures = []
+    panel.engine_failed.connect(failures.append)
+    try:
+        background.run_all()
+        panel.retry_button.click()
+        background.run_all()
+        assert probes == [1, 1] and made == []
+        assert HUNG.reason in panel.audio_status.text() and len(failures) == 2
+        assert _shown(panel.retry_button)
+    finally:
+        panel.close()
+
+
+def test_edge_the_buttons_only_show_while_audio_is_off():
+    panel, background, _made, _ = late_panel(OK)
+    panel.open_audio_settings = lambda: None
+    try:
+        assert not _shown(panel.retry_button) and not _shown(panel.audio_settings_button)
+        background.run_all()
+        assert not _shown(panel.retry_button) and not _shown(panel.audio_settings_button)
+    finally:
+        panel.close()
+
+
+def test_edge_without_a_host_window_there_is_no_audio_settings_button():
+    panel, background, _made, _ = late_panel(HUNG)
+    try:
+        background.run_all()
+        assert _shown(panel.retry_button) and not _shown(panel.audio_settings_button)
+    finally:
+        panel.close()
+
+
+def test_edge_try_again_after_shutdown_does_nothing():
+    panel, background, made, probes = late_panel(HUNG)
+    background.run_all()
+    panel.shutdown()
+    panel.retry_audio()
+    background.run_all()
+    assert probes == [1] and made == []
+    panel.close()

@@ -58,6 +58,7 @@ from ui.themes import (  # noqa: F401  (theme constants stay importable from her
     DARK_THEME,
     HACKER_THEME,
 )
+from ui.toolbar_order import TOOL_ID_PROPERTY
 from ui.transfer_dock import TransferDock
 
 # The window keys of session.json the preferences use; ui.window_prefs reads
@@ -477,6 +478,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         self.extension_host.load_enabled()
         # The tool buttons need the docks and the extension host.
         self._add_tool_buttons(self._tools_toolbar)
+        self._setup_toolbar_reorder()
         self._fit_toolbars()
 
         # Debounce timer for post-transfer refresh
@@ -791,6 +793,12 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         start_agent_action.triggered.connect(lambda _checked=False: self._new_agent_tab())
         agent_settings_action = tools_menu.addAction(tr("A&gent Settings…"))
         agent_settings_action.triggered.connect(lambda _checked=False: self._show_agent_settings())
+        # Opens Settings on the page titled "Audio" (playback, voice); the
+        # toolbar shows it beside the Media Player.
+        self._av_settings_action = tools_menu.addAction(tr("Audio && &Video Settings…"))
+        self._av_settings_action.triggered.connect(
+            lambda _checked=False: self.open_audio_video_settings()
+        )
         metadata_settings_action = tools_menu.addAction(tr("&Metadata Settings…"))
         metadata_settings_action.setToolTip(
             "How Remove Metadata writes (in place or a cleaned copy) and whether it asks first"
@@ -932,8 +940,11 @@ class MainWindow(WorkspaceMixin, QMainWindow):
             (dupes_btn, "duplicates"),
         ):
             # Remembered on the action so a theme / monochrome switch can
-            # re-icon the bar without matching on translated labels.
+            # re-icon the bar without matching on translated labels; the
+            # stable id keeps the button's place in a stored order
+            # (ui.toolbar_order).
             act.setProperty("axIcon", icon_name)
+            act.setProperty(TOOL_ID_PROPERTY, icon_name)
             act.setIcon(_ico(icon_name))
         self._add_feature_buttons(toolbar)
         self._main_toolbar = toolbar
@@ -988,6 +999,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
             toolbar.addAction(action)
             action.setToolTip(tip)
             action.setProperty("axIcon", icon_name)
+            action.setProperty(TOOL_ID_PROPERTY, icon_name)
             action.setIcon(_ico(icon_name))
 
     #: The extension tools with a toolbar button: (icon, extension id, title).
@@ -1027,6 +1039,10 @@ class MainWindow(WorkspaceMixin, QMainWindow):
                 lambda _checked=False, e=ext_id, t=title: self._toggle_extension_tool(e, t))
             self._extension_buttons[ext_id] = action
             buttons.append((action, icon_name, f"{title} (extension)"))
+            if icon_name == "media-player":
+                # The equalizer: what plays and how (Settings > Audio).
+                buttons.append((self._av_settings_action, "audio-settings",
+                                "Audio & Video Settings: playback and voice"))
         buttons += [
             (self._settings_action, "settings", "Settings (Ctrl+,)"),
             (self._features_action, "features", "Features: what is installed, what is missing"),
@@ -1037,6 +1053,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
             toolbar.addAction(action)
             action.setToolTip(tip)
             action.setProperty("axIcon", icon_name)
+            action.setProperty(TOOL_ID_PROPERTY, icon_name)
             action.setIcon(_ico(icon_name))
         # The right-click menu's own "Show Trash…" entry (its icon too).
         self._trash_action.setProperty("axCommand", "trash-browser")
@@ -1608,16 +1625,21 @@ class MainWindow(WorkspaceMixin, QMainWindow):
 
     # --- Edit > Settings… (ui.settings_dialog) ---
 
-    def open_settings(self, page: str | None = None, sub: str | None = None) -> int:
+    def open_settings(
+        self, page: str | None = None, sub: str | None = None, *, title: str | None = None
+    ) -> int:
         """Open the Settings dialog, on *page* (a category id of
-        ui.settings_dialog, *sub* one of its sub-pages) when given. Returns
-        the dialog's result. The dialog is a child of the window only while
-        it is open."""
+        ui.settings_dialog, *sub* one of its sub-pages) when given, or on the
+        page titled *title* (the dialog's first page when none has it).
+        Returns the dialog's result. The dialog is a child of the window
+        only while it is open."""
         from ui.settings_dialog import SettingsDialog
 
         dialog = SettingsDialog(self, window=self)
         if page is not None:
             dialog.show_page(page, sub)
+        elif title is not None and not dialog.show_page_titled(title):
+            log.info("Settings: no page titled %r, opening the first page", title)
         try:
             return dialog.exec()
         finally:
@@ -1646,6 +1668,14 @@ class MainWindow(WorkspaceMixin, QMainWindow):
 
     def _show_agent_settings(self) -> None:
         self.open_settings("agent")
+
+    #: The Settings page of playback and voice ("Audio & Video Settings").
+    AUDIO_SETTINGS_TITLE = "Audio"
+
+    def open_audio_video_settings(self) -> int:
+        """Tools > Audio & Video Settings… and its toolbar button: Settings
+        on the page titled "Audio"."""
+        return self.open_settings(title=self.AUDIO_SETTINGS_TITLE)
 
     def _on_analysis_visibility(self, visible: bool) -> None:
         if visible:
@@ -7170,6 +7200,105 @@ and an MCP server.</p>
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt
         super().resizeEvent(event)
         self._fit_toolbars()
+
+    # --- Toolbar order: drag and drop, kept in session.json (ui.toolbar_order) ---
+
+    def _order_bars(self) -> list[QToolBar]:
+        return [bar for bar in (getattr(self, "_main_toolbar", None),
+                                getattr(self, "_tools_toolbar", None)) if bar is not None]
+
+    def _setup_toolbar_reorder(self) -> None:
+        """Remember each bar's default order, bring back the stored one and
+        let the buttons be dragged."""
+        from ui import toolbar_order
+
+        self._default_toolbar_orders = {
+            bar.objectName(): toolbar_order.bar_order(bar) for bar in self._order_bars()
+        }
+        self._toolbar_reorder: dict[str, toolbar_order.ToolbarReorder] = {}
+        stored = self._stored_toolbar_orders()
+        for bar in self._order_bars():
+            name = bar.objectName()
+            if name in stored:
+                toolbar_order.apply_order(
+                    bar, toolbar_order.merge(stored[name], self._default_toolbar_orders[name])
+                )
+            reorder = toolbar_order.ToolbarReorder(bar)
+            reorder.reordered.connect(self._on_toolbar_reordered)
+            self._toolbar_reorder[name] = reorder
+
+    def _stored_toolbar_orders(self) -> dict[str, list[str]]:
+        from ui import toolbar_order
+
+        try:
+            data = _read_json_file(self._SESSION_FILE)
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            log.debug("Toolbar order: could not read %s: %s", self._SESSION_FILE, exc)
+            return {}
+        window = data.get("window") if isinstance(data, dict) else None
+        if not isinstance(window, dict):
+            return {}
+        return toolbar_order.parse(window.get(toolbar_order.ORDER_KEY))
+
+    def _on_toolbar_reordered(self, _bar=None) -> None:
+        self._store_toolbar_order()
+        self._fit_toolbars()
+
+    def _store_toolbar_order(self) -> None:
+        """Store the order of each bar that differs from its default (a bar
+        left as it was follows the default of a later version)."""
+        from ui import toolbar_order
+
+        orders = {}
+        for bar in self._order_bars():
+            order = toolbar_order.bar_order(bar)
+            if order != self._default_toolbar_orders.get(bar.objectName()):
+                orders[bar.objectName()] = order
+        try:
+            self.store_window_prefs(**{toolbar_order.ORDER_KEY: orders})
+        except OSError:
+            self.statusBar().showMessage(tr("Could not store the toolbar order"), 5000)
+
+    def reset_toolbar_order(self) -> None:
+        """The toolbar's right-click menu: every bar back to its default
+        order, and no stored order."""
+        from ui import toolbar_order
+
+        for bar in self._order_bars():
+            default = self._default_toolbar_orders.get(bar.objectName())
+            if default is not None:
+                toolbar_order.apply_order(bar, default)
+            reorder = self._toolbar_reorder.get(bar.objectName())
+            if reorder is not None:
+                reorder.arm()  # the bar rebuilt the buttons it moved
+        self._store_toolbar_order()
+        self._fit_toolbars()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt
+        super().showEvent(event)
+        for reorder in getattr(self, "_toolbar_reorder", {}).values():
+            reorder.arm()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt
+        # Before the window can be destroyed (a close hides it first): the
+        # toolbar's Python event filter must be off the buttons by then.
+        for reorder in getattr(self, "_toolbar_reorder", {}).values():
+            reorder.disarm()
+        super().hideEvent(event)
+
+    def createPopupMenu(self):  # noqa: N802 - Qt
+        """Qt's right-click menu of the toolbars and docks, plus "Reset
+        Toolbar Order"."""
+        menu = super().createPopupMenu() or QMenu(self)
+        if getattr(self, "_toolbar_reorder", None):
+            if menu.actions():
+                menu.addSeparator()
+            reset = menu.addAction(tr("Reset Toolbar Order"))
+            reset.setToolTip(tr("Put the toolbar buttons back in their default order"))
+            reset.triggered.connect(lambda _checked=False: self.reset_toolbar_order())
+        return menu
 
     def _rebuild_dock_titlebars(self) -> None:
         """Re-install the dock title bars so their icons re-rasterise

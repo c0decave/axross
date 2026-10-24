@@ -60,15 +60,19 @@ def _svg(*paths: str) -> str:
     return _SVG_OPEN + "".join(paths) + _SVG_CLOSE
 
 
+# The robot: the LLM - the Agent (its dock, its toolbar button, "Send to
+# Agent") and the file analysis with an LLM.
+_ROBOT = (
+    '<rect x="4" y="8" width="16" height="12" rx="2"/>'
+    '<path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.5"/>'
+    '<path d="M9 13v2M15 13v2M2 14h2M20 14h2"/>'
+)
+
 # Icon category: tool actions (toolbar / menubar verbs).
 # Each entry is (name, svg-body-without-wrapper).
 _TOOL_ICONS = {
     # File analysis: with / without an LLM.
-    "bot": _svg(
-        '<rect x="4" y="8" width="16" height="12" rx="2"/>'
-        '<path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.5"/>'
-        '<path d="M9 13v2M15 13v2M2 14h2M20 14h2"/>',
-    ),
+    "bot": _svg(_ROBOT),
     "bot-off": _svg(
         '<rect x="4" y="8" width="16" height="12" rx="2"/>'
         '<path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.5"/>'
@@ -215,11 +219,9 @@ _TOOL_ICONS = {
         '<polyline points="9 13 12 16 15 13"/><line x1="12" y1="10" x2="12" y2="16"/>',
     ),
     # The tools of the toolbar's last group.
-    # A speech bubble with a spark: the Agent dock.
-    "agent": _svg(
-        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
-        '<path d="M12 6.5v6M9 9.5h6"/>',
-    ),
+    # The robot of the Agent dock's title bar: the Agent dock. (Before, a
+    # speech bubble with a plus that nothing else showed for the Agent.)
+    "agent": _svg(_ROBOT),
     # A magnifier over bars: the Analysis dock (sift).
     "analysis": _svg(
         '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16" y2="16"/>'
@@ -242,8 +244,14 @@ _TOOL_ICONS = {
         '<polyline points="6 9 9 12 6 15"/><polyline points="11 9 14 12 11 15"/>'
         '<line x1="16" y1="15" x2="18" y2="15"/>',
     ),
-    # Equalizer sliders: the Media Player.
+    # A music note (one eighth note; the file category "music" has two):
+    # the Media Player.
     "media-player": _svg(
+        '<circle cx="7" cy="18" r="3.5"/><path d="M10.5 18V2.5c0 3.5 8 4 8 9.5"/>',
+    ),
+    # Equalizer sliders: Audio & Video Settings (the Media Player's icon
+    # before it got the note).
+    "audio-settings": _svg(
         '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>'
         '<path d="M1 14h6M9 8h6M17 16h6"/>',
     ),
@@ -671,12 +679,13 @@ _ICON_COLORS: dict[str, str | None] = {
     "extensions": "#8e44ad",  # purple puzzle
     # The tool group; each reads on dark (#1e1e2e, >= 3:1) and light themes
     # (tests/test_toolbar_tool_buttons.py measures it).
-    "agent": "#00b894",  # mint speech bubble
+    "agent": "#00b894",  # mint robot
     "analysis": "#0984e3",  # blue magnifier
     "find-files": "#2e86de",  # blue, beside the index search
     "scripts": "#8c7ae6",  # lavender
     "console": "#f0932b",  # orange, beside the lavender scripts
     "media-player": "#ff6b6b",  # coral, like the music icon
+    "audio-settings": "#e056fd",  # magenta sliders, apart from the coral note
     "treemap": "#e1b12c",  # mustard tiles
     "drives": "#4b9ce2",  # sky blue
     "features": "#00a8a8",  # teal

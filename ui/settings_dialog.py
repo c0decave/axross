@@ -18,6 +18,8 @@ LLM         the LLM profiles (ui.llm_settings_dialog)        llm.json + keyring
 Agent       the agent's settings, five sub-pages             agent/settings.json + keyring
             (ui.agent_settings_dialog)
 Voice       registered by the voice feature (register_page)  its own
+Audio       audio backend, output and input device and       audio.json
+            volume, a test of each (ui.audio_settings_page)
 Metadata    how Remove Metadata writes, asking first         settings.json
 Search      hosts searched at once by Find on Network        settings.json
             Hosts, where the indexes are (information)
@@ -99,6 +101,7 @@ CATEGORY_ORDER: tuple[str, ...] = (
     "llm",
     "agent",
     "voice",
+    "audio",
     "metadata",
     "search",
     "security",
@@ -583,6 +586,18 @@ def _agent_page(parent, window):
     return page
 
 
+def _audio_page(parent, window):
+    from ui.audio_settings_page import AudioPage
+
+    return AudioPage(parent)
+
+
+def _audio_keywords() -> tuple[str, ...]:
+    from ui.audio_settings_page import KEYWORDS
+
+    return KEYWORDS
+
+
 def _metadata_page(parent, window):
     from ui.metadata_dialog import MetadataSettingsPage
 
@@ -616,6 +631,7 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "agent": ("Agent", _agent_page,
               ("agent", "sandbox", "mcp", "access", "sessions", "bypass", "prompt",
                "system prompt", "user prompt"), _agent_sub_pages),
+    "audio": ("Audio", _audio_page, _audio_keywords(), None),
     "metadata": ("Metadata", _metadata_page, ("metadata", "exif", "remove", "clean"), None),
     "search": ("Search", lambda p, w: SearchPage(w, p),
                ("search", "network hosts", "smb", "parallel", "index"), None),
@@ -802,6 +818,19 @@ class SettingsDialog(QDialog):
                     item = item.child(i)
                     break
         self.tree.setCurrentItem(item)
+
+    def show_page_titled(self, title: str) -> bool:
+        """Select the first category whose list title is *title* (in English
+        or in the interface language). False, and the selection unchanged,
+        when no category has that title."""
+        if not title:
+            return False
+        wanted = {title, tr(title)}
+        for page_id, page_title in self._titles.items():
+            if page_title in wanted:
+                self.show_page(page_id)
+                return True
+        return False
 
     def _on_item_changed(self, item, _previous=None) -> None:
         if item is None:
