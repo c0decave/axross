@@ -22,8 +22,14 @@
       "transcript": [{"who": "You:", "text": "…", "muted": false},
                      {"who": "Thinking:", "text": "…", "muted": true,
                       "kind": "reasoning"}],      # "kind" is optional
-      "messages": [{"role": "user", "content": "…"}]   # what the model saw
+      "messages": [{"role": "user", "content": "…"}],  # what the model saw
+      "detached": "workspace"           # optional: a panel of its own, see below
     }
+
+``detached`` says the conversation is a panel of its own instead of a tab
+of the Agent dock (ui.agent_panels): "all" on All Workspaces, "workspace"
+on a workspace (the main window's session layout says which one and
+where). Missing or anything else: a tab.
 
 The transcript is what the tab shows; the messages are the conversation
 the model continues from. Both hold file content the agent read: the
@@ -46,6 +52,8 @@ from core.agent_access import SessionAccess
 log = logging.getLogger(__name__)
 
 MODES = ("ask", "plan", "auto", "bypass")
+#: Where a detached conversation is: All Workspaces, or a workspace.
+DETACHED_PLACES = ("all", "workspace")
 _ID = re.compile(r"^[0-9a-f]{32}$")
 #: Largest session file read back (a conversation with big tool results).
 MAX_FILE_BYTES = 32 * 1024 * 1024
@@ -82,6 +90,8 @@ class AgentSession:
     access: SessionAccess | None = None
     transcript: list = field(default_factory=list)
     messages: list = field(default_factory=list)
+    #: "" a tab of the Agent dock, else a panel of its own (DETACHED_PLACES).
+    detached: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -104,6 +114,7 @@ class AgentSession:
             **({"access": self.access.to_dict()} if self.access is not None else {}),
             "transcript": self.transcript,
             "messages": self.messages,
+            **({"detached": self.detached} if self.detached in DETACHED_PLACES else {}),
         }
 
     @classmethod
@@ -120,6 +131,8 @@ class AgentSession:
                 setattr(out, name, data[name])
         if data.get("mode") in MODES:
             out.mode = data["mode"]
+        if isinstance(data.get("detached"), str) and data["detached"] in DETACHED_PLACES:
+            out.detached = data["detached"]
         for name in ("allow_write", "allow_exec", "files_read_only"):
             if isinstance(data.get(name), bool):
                 setattr(out, name, data[name])

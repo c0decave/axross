@@ -21,6 +21,7 @@ import tempfile
 from datetime import datetime, timezone
 from typing import IO
 
+from core import auth_prompt
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.desktop_open import open_in_browser
@@ -319,23 +320,24 @@ class DropboxSession(SessionLifecycle):
 
         log.info("Dropbox: opening browser for authorization")
         open_in_browser(authorize_url)
-        if not sys.stdin.isatty():
-            log.error("Dropbox authorization requires interactive stdin")
+        # Dropbox shows a code to paste back (no redirect URI): the window
+        # asks for it (core.auth_prompt); a terminal only when there is none.
+        if auth_prompt.has_handler():
+            auth_code = auth_prompt.ask_code("Dropbox", authorize_url) or ""
+        elif sys.stdin is not None and sys.stdin.isatty():
+            print("=" * 60)
+            print("Dropbox authorization required.")
+            print("A browser window should have opened. If not, visit:")
+            print(f"  {authorize_url}")
+            print()
+            auth_code = input("Enter the authorization code: ").strip()
+            print("=" * 60)
+        else:
+            log.error("Dropbox authorization needs a window or a terminal to ask for the code")
             raise OSError(
                 "Dropbox authorization requires interactive input. "
                 f"Open this URL, complete the flow, and retry: {authorize_url}"
             )
-
-        # Prompt the user to paste the authorization code
-        # (DropboxOAuth2FlowNoRedirect does not use a redirect URI)
-        log.info("Dropbox authorization requires a pasted code from the browser flow")
-        print("=" * 60)
-        print("Dropbox authorization required.")
-        print("A browser window should have opened. If not, visit:")
-        print(f"  {authorize_url}")
-        print()
-        auth_code = input("Enter the authorization code: ").strip()
-        print("=" * 60)
 
         if not auth_code:
             raise OSError("Dropbox authorization cancelled: no code provided")

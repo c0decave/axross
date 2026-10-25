@@ -110,6 +110,8 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     # info / analysis
     "identify": (None, None),
     "identify-folder": (None, None),
+    "analyse-sift": ("analysis", None),
+    "analyse-folder-sift": ("analysis", None),
     "disk-image": ("disk-usage", None),
     "checksum": (None, None),
     "versions": (None, None),
@@ -774,6 +776,11 @@ class FilePaneWidget(QWidget):
     send_to_agent_requested = pyqtSignal(list)
     # New Agent Tab Here: the local folder shown, "" on a remote backend.
     new_agent_tab_requested = pyqtSignal(str)
+    #: Analyse with sift: [(path, FileItem), ...] of the selected files, as the
+    #: right-click menu showed them. The main window owns the Analysis dock.
+    analyse_requested = pyqtSignal(list)
+    #: Analyse Folder with sift: the folder (selected, else the one shown).
+    analyse_folder_requested = pyqtSignal(str)
     # Emitted from the watcher background thread so the GUI thread
     # owns the actual list refresh. Internal: connect via Qt's auto
     # cross-thread queueing (PyQt does this when the receiver lives
@@ -3116,6 +3123,7 @@ class FilePaneWidget(QWidget):
             tr("Detect the real type of every file in this folder (or the selected one) "
                "from its content; disk images show their partitions")
         )
+        self._add_sift_actions(entry, files, hostile)
         # Metadata acts on the selection, or on this folder when nothing is
         # selected - "remove all metadata" for a directory is one click.
         for command, label, meta_action in (
@@ -3162,6 +3170,32 @@ class FilePaneWidget(QWidget):
         if menu.actions() and menu.actions()[-1].isSeparator():
             menu.removeAction(menu.actions()[-1])
         return menu
+
+    def _add_sift_actions(self, entry, files, hostile: bool) -> None:
+        """Analyse with sift (the selected files) and Analyse Folder with sift
+        (the selected folder, else the one shown), both in the window's
+        Analysis dock - offered only where a window listens."""
+        if self.receivers(self.analyse_requested) > 0 and not hostile:
+            chosen = [(path, item) for item in files
+                      if (path := self._safe_item_path(item, warn=False)) is not None]
+            if chosen:
+                action = entry("analyse-sift", tr("Analyse with sift"),
+                               lambda _checked=False, c=chosen: self.analyse_requested.emit(c))
+                action.setToolTip(
+                    tr("Explain the file in the Analysis dock (sift); several files are "
+                       "offered as one batch for the LLM")
+                )
+        if self.receivers(self.analyse_folder_requested) > 0:
+            action = entry(
+                "analyse-folder-sift",
+                tr("Analyse Folder with sift"),
+                lambda _checked=False: self.analyse_folder_requested.emit(
+                    self.terminal_directory()),
+            )
+            action.setToolTip(
+                tr("Offer the files of this folder (or the selected one) in the Analysis dock "
+                   "(sift), as one batch for the LLM")
+            )
 
     def _add_archive_actions(self, menu: QMenu, entry, item, path: str) -> None:
         """Preview Archive / Extract… for one local file whose name is a

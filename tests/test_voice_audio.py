@@ -133,3 +133,68 @@ def test_edge_resample_same_rate_or_nothing_is_unchanged():
 def test_sad_resample_with_a_bad_rate_returns_the_input():
     pcm = tone(0.01, 1000)
     assert VA.resample(pcm, 0, 48000) == pcm
+
+
+# -- pitch (the voice settings' "higher / lower") ------------------------------------------
+
+
+def dominant_hz(pcm: bytes, rate: int) -> float:
+    """The strongest frequency of *pcm* (FFT peak, parabolic interpolation)."""
+    import numpy as np
+
+    audio = np.frombuffer(pcm, dtype="<i2").astype(np.float64)
+    spectrum = np.abs(np.fft.rfft(audio * np.hanning(len(audio))))
+    k = int(np.argmax(spectrum[1:])) + 1
+    a, b, c = spectrum[k - 1], spectrum[k], spectrum[k + 1]
+    shift = 0.5 * (a - c) / (a - 2 * b + c)
+    return (k + shift) * rate / len(audio)
+
+
+@pytest.mark.parametrize("semitones", [12.0, 5.0, 0.5, -3.0, -12.0])
+def test_happy_pitch_shift_moves_the_tone_by_semitones_and_the_length_by_the_same_factor(
+        semitones):
+    rate, hz = 22050, 220.0
+    pcm = tone(1.0, 12000, rate=rate, freq=hz)
+    out = VA.pitch_shift(pcm, semitones)
+    factor = 2 ** (semitones / 12)
+    assert abs(dominant_hz(out, rate) - hz * factor) < 1.0
+    assert abs(len(out) // 2 - round(rate / factor)) <= 1
+    assert VA.pitch_factor(semitones) == pytest.approx(factor)
+
+
+def test_happy_pitch_shift_keeps_the_loudness():
+    pcm = tone(0.5, 12000, rate=22050, freq=300.0)
+    assert VA.rms(VA.pitch_shift(pcm, 4.0)) == pytest.approx(VA.rms(pcm), rel=0.03)
+
+
+def test_happy_shifting_up_leaves_no_alias_of_a_tone_above_the_new_nyquist():
+    """A 9 kHz tone an octave up is above 11 kHz: it is filtered out, not
+    folded back down into the audible band."""
+    rate = 22050
+    pcm = tone(0.5, 12000, rate=rate, freq=9000.0)
+    assert VA.rms(VA.pitch_shift(pcm, 12.0)) < 200
+
+
+@pytest.mark.parametrize("bad", [24.5, -30, float("nan"), float("inf"), "2", None, True])
+def test_sad_pitch_shift_refuses_what_is_no_sensible_shift(bad):
+    with pytest.raises(ValueError):
+        VA.pitch_shift(tone(0.1, 1000, rate=22050), bad)
+
+
+def test_edge_pitch_shift_of_nothing_zero_and_odd_bytes():
+    pcm = tone(0.1, 1000, rate=22050)
+    assert VA.pitch_shift(pcm, 0) == pcm
+    assert VA.pitch_shift(b"", 5.0) == b""
+    assert VA.pitch_shift(b"\x01", 5.0) == b""
+    assert len(VA.pitch_shift(pcm + b"\x01", 0.0)) == len(pcm)
+    assert len(VA.pitch_shift(b"\x10\x00", 12.0)) == 2  # one sample stays one sample
+
+
+def test_edge_pitch_shift_of_a_full_scale_square_does_not_wrap_around():
+    import numpy as np
+
+    square = np.where(np.arange(22050) % 100 < 50, 32767, -32768).astype("<i2").tobytes()
+    out = np.frombuffer(VA.pitch_shift(square, -5.0), dtype="<i2")
+    # Ringing at the edges is clipped, never wrapped to the other sign.
+    assert out.max() <= 32767 and out.min() >= -32768
+    assert np.mean(np.abs(out.astype(np.int64))) > 20000

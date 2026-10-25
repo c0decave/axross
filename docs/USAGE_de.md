@@ -47,7 +47,10 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   SHA-256-Fingerprint-Dialog vor dem Connect; vertraute Keys
   persistieren in `~/.ssh/known_hosts`.
 - **OAuth-Flows.** OneDrive / SharePoint / Google Drive / Dropbox
-  öffnen einen Browser für den Consent-Schritt. Tokens werden unter
+  öffnen einen Browser für den Consent-Schritt (Dropbox fragt danach den
+  angezeigten Code in einem Fenster ab). Der Verbindungsdialog nennt je Dienst,
+  was wo anzulegen ist; Googles Client-Datei füllt beide Felder (Import Client
+  JSON…). Tokens werden unter
   `~/.config/axross/<provider>_token.json` mit `0o600` ab Geburt
   gespeichert. Profil-Proxies gelten für API-/Token-Traffic, den
   Axross selbst kontrolliert; die externe Browser-Consent-Seite kann
@@ -109,9 +112,27 @@ PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
   Terminal-Pane auch über seinen ⇄-Button); hält man ein gezogenes Pane
   eine halbe Sekunde über einen Workspace-Tab, öffnet sich dieser Tab —
   so erreicht ein Pane auch einen Workspace im Hintergrund.
+- **Extension-Panels** (Media Player, Drives Overview, Markdown Preview,
+  …) sind auf allen Workspaces, bis man eines auf einen Workspace legt:
+  der ⇄-Button in seiner Titelleiste (oder ein Rechtsklick darauf) bietet
+  jeden Workspace, **New Workspace** und **All Workspaces**, und
+  **Workspace → Add Extension Panel** (auch im Rechtsklick-Menü des Tabs)
+  holt ein Panel in einen Workspace. Dort ist es ein Pane: es erscheint
+  nur mit seinem Workspace, geht mit, wenn der Workspace abgelöst wird,
+  lässt sich an der Titelleiste auf ein anderes Pane ziehen und nimmt
+  gezogene Panes an, wird über den Splitter in der Größe geändert und von
+  **Equalize Pane Sizes** mit ausgeglichen. Sein [x] nimmt es aus dem
+  Workspace; über das **Extensions**-Menü wieder eingeblendet, kommt es
+  an seinen Platz zurück. Schließt der Workspace, parkt er seine Panels
+  auf All Workspaces (ausgeblendet, mit ihrem Zustand); wird die
+  Extension ausgeschaltet, gehen ihre Panels heraus, eingeschaltet kommen
+  sie zurück.
 - **Close Workspace** schließt ihn mit seinen Panes (nach Rückfrage);
   schließt das letzte Pane eines Workspace, geht der Workspace mit. Ein
   Workspace bleibt immer.
+- **Equalize Pane Sizes** (**Ctrl+Shift+E**) gleicht den Workspace auf
+  dem Bildschirm aus — auch einen, der nur Terminals oder
+  Extension-Panels hält.
 - Ein Layout-Preset (**View → Layout Preset**) ersetzt nur die Panes
   des aktuellen Workspace.
 - Alle Workspaces — Namen, Reihenfolge, der aktuelle, Layouts mit ihren
@@ -207,6 +228,7 @@ native Protokoll sie nicht kennt.
 | Find in Index | `Strg+Shift+F` | Suche im Offline-Metadaten-Index. |
 | Calculate Size (N dirs) | Rechtsklick auf Ordner | Gesamtgröße, Datei- und Ordnerzahl jedes gewählten Ordners, im Hintergrund über die Connection gezählt (*Cancel* in der Statuszeile); die Ergebnistabelle sortiert, und die Größen stehen in der Size-Spalte des Panes, bis der Ordner neu geladen wird. **Hidden Files zählen mit**: Dotfiles, versteckte Ordner und Einträge mit Hidden-Flag des Backends werden wie jeder andere Eintrag summiert — wie bei `du` —, egal ob das Pane sie anzeigt. Ein Link zählt mit seiner eigenen Größe und wird nie verfolgt; ein Ordner, der sich nicht lesen lässt, wird im Ergebnis genannt und übersprungen. |
 | Identify Files in This Folder… | Rechtsklick (auch auf freie Fläche); der Button im Fenster *Identify File Type* | Jede Datei direkt im Ordner (ein gewählter Ordner, sonst der angezeigte; Unterordner werden gezählt, nicht betreten; Hidden Files eingeschlossen) wie bei *Identify File Type…* am Inhalt erkannt, im Hintergrund und über die Connection — also auch in Remote-Panes. Begrenzt: höchstens 2000 Dateien, 64 KiB je Datei, 15 s Timeout je Lesevorgang, *Cancel*; `file(1)` wird nicht gefragt. Die Spalten sortieren: Name, erkannter Typ, MIME-Type, *mismatch*-Verdict, Größe, eine Notiz — bei einem Disk-Image Container, Partitionstabelle und Partitionszahl (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; dafür höchstens 4 MiB gelesen) — und für lokale Dateien mit installiertem `sift`-Extra die Art laut sift. Eine Zeile öffnet *Disk Image…* (Disk-Images) oder *Properties…*; Doppelklick nimmt das Passende. |
+| Analyse with sift / Analyse Folder with sift | Rechtsklick (der Ordner-Eintrag auch auf freie Fläche), das Actions-Menü, *Tools → Analyse with sift* | Öffnet das Dock *Analysis (sift)* (sifts Sieb-Icon, `Ctrl+Shift+I`) und erklärt die Datei dort ohne Modell. Mehrere gewählte Dateien oder ein Ordner (der gewählte, sonst der angezeigte) werden als ein Batch für das aktive LLM-Profil angeboten; *Tools → Analyse with sift* nimmt die Auswahl, ohne Auswahl den angezeigten Ordner. sifts eigene Directory-Zusammenfassung (`sift --dir-summary`, ab sift 0.1.96) gehört nicht zum Dock: ein Ordner wird Datei für Datei analysiert. Ohne sift (axross-slim oder eine Source-Installation ohne das Extra `sift`) sagt jeder Eintrag, dass sift in axross-full oder im Extra `axross[sift]` steckt, mit Link auf *Help → Features…*. |
 | Duplicate Finder | View-Menü | Gruppieren nach Content-Hash, `ax-cas://…`-URLs kopieren; markierte Kopien in den axross-Trash verschieben, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. |
 | View Media… / View Selected Media… | Rechtsklick, View-Menü | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
 | Show / Remove / Export Metadata… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
@@ -334,8 +356,11 @@ eines floating Panels dockt es wieder an.
   und mehr abspielt. Tracks kommen per Rechtsklick → *Play in Media
   Player*, *Add…* oder per Drag & Drop von Dateien und Ordnern aus
   einem Datei-Pane oder vom Desktop auf die Playlist dazu (Ordner
-  liefern ihre Audiodateien sortiert, höchstens 2000, 6 Ebenen tief;
-  was kein Audio ist, wird mit Hinweis übersprungen; Remote-Dateien
+  liefern ihre Audiodateien sortiert, höchstens 2000, 6 Ebenen tief,
+  Links auf Ordner werden einmal verfolgt; auch .m4b, .wv, .webm und
+  weitere Formate, die die Engine abspielt, zählen; was keinen Track
+  ergibt - kein Audio, nicht lesbar, zu tief -, nennt der Hinweis mit
+  Anzahl, Dateien neben gefundenen Tracks wie Cover nicht; Remote-Dateien
   werden abseits des GUI-Threads in einen temporären Ordner kopiert,
   je Datei höchstens 512 MB, je Drop 2 GB). Zeilen lassen sich per
   Drag umsortieren; der laufende Track (fett, Play-Icon, im
@@ -364,10 +389,28 @@ eines floating Panels dockt es wieder an.
   + / - Lautstärke. Mit numpy: 10-Band-Equalizer mit Presets (der
   Pfeil links von *Equalizer* klappt die Band-Slider ein und gibt der
   Playlist den Platz) und eine animierte Visualisierung: Spektrum,
-  gespiegeltes Spektrum, radiales Spektrum, Oszilloskop oder Stereo-VU-
-  Meter - ein Klick darauf wechselt zur nächsten. Gewählte
-  Visualisierung und eingeklappter Equalizer kommen beim nächsten Start
-  wieder.
+  gespiegeltes Spektrum, radiales Spektrum, Oszilloskop, Stereo-VU-
+  Meter, Linien-Spektrum (logarithmische Frequenzachse), Waterfall
+  (Spektrogramm), Polar-Spektrum, Stereo-Scope (Goniometer: L gegen R)
+  oder ein Starfield, das mit dem Bass schneller wird - ein Klick darauf
+  wechselt zur nächsten. Ihr Rechtsklick-Menü listet jede
+  Visualisierung und jedes Farbschema (Classic, Fire, Ice, Neon, Mono,
+  *Follow the theme*, *Custom*), die Anzahl der Balken und das
+  Frame-Rate-Limit; *Visualizer Settings…* (auch *Extensions → Media
+  Player Visualizer…*) ergänzt die eigenen Farben (Hintergrund, leise
+  und laute Balken, Peaks - eine Peak-Farbe ohne 3:1-Kontrast zum
+  Hintergrund wird angepasst), Peak-Fall-Speed und Smoothing.
+  *Fullscreen* (Menü, Doppelklick oder F11 auf der Visualisierung) zeigt
+  sie allein auf dem Bildschirm wie einen Screensaver - Esc, F11 oder
+  ein Doppelklick beenden das, der Mauszeiger verschwindet nach 2,5 s
+  ohne Bewegung (abschaltbar); *Detach into a Window* legt sie in ein
+  eigenes Fenster beliebiger Größe, das weiterläuft, *Attach to the
+  Panel* oder das Schließen des Fensters holt sie zurück. Der Pfeil links
+  von *Playlist* (oder *Show Playlist* im Menü) klappt die Playlist ein:
+  das Panel ist dann Steuerung und Visualisierung, die Tasten wirken
+  weiter, und auf das Panel gezogene Dateien landen weiterhin in der
+  Playlist. Visualisierung, ihre Farben und Optionen, eingeklappter
+  Equalizer und eingeklappte Playlist kommen beim nächsten Start wieder.
 - **SSH-Terminal** — Tab-Dock neben der Transfer-Queue. Lokales PTY
   (`pty.fork()`) und remote-SSH-über-paramiko stehen beide bereit;
   die SSH-Variante reused die bestehende Verbindung.
@@ -577,7 +620,7 @@ Für LLM-Clients: [LLM_GUIDE.md](LLM_GUIDE.md) (englisch).
 ## Agent-Dock — ein lokales LLM arbeitet mit axross
 
 View > Panels > Agent (Ctrl+Shift+A) öffnet einen Chat mit einem
-LLM-Profil (die Profile des Analyse-Docks: LM Studio, Ollama, vLLM,
+LLM-Profil (die Profile des Analysis-Docks (sift): LM Studio, Ollama, vLLM,
 llama.cpp oder ein anderer OpenAI-kompatibler Server; LLM… verwaltet
 sie). Das Modell arbeitet mit denselben Tools wie der MCP-Server, im
 oben angezeigten Ordner (dem des aktiven Panes, wenn es lokale Dateien
@@ -603,6 +646,29 @@ Pfeil hoch/runter holt frühere Aufgaben zurück. Schreibt ein
 Reasoning-Modell seine ganze Antwort nur ins Reasoning (Qwen3 in LM
 Studio tut das manchmal), wird sie so gekennzeichnet angezeigt; endet
 ein Modell ganz ohne Antwort, steht das da.
+
+**Verläufe als eigene Panels.** Rechtsklick auf einen Tab → **Detach as
+Panel** - oder den Tab weit aus der Tab-Leiste ziehen - macht den
+Verlauf zu einem eigenen Panel; **Tools → New Agent Window** (oder ⧉
+neben „+") öffnet einen neuen Verlauf gleich als Panel. Es wandert
+derselbe Verlauf: eine laufende Aufgabe läuft weiter, ihre Rückfragen
+kommen weiterhin, nichts startet neu. Ein solches Panel liegt wie ein
+Extension-Panel: auf **All Workspaces** (im Dock-Bereich des Fensters)
+oder - über den ⇄-Button bzw. Rechtsklick auf seine Titelleiste (*Move
+to Workspace*) oder **Workspace → Add Extension Panel** - auf einem
+Workspace, wo es ein Pane ist: an der Titelleiste ziehen, in der Größe
+ändern, beim Detach des Workspace geht es mit. ⇲ (oder *Attach to Agent
+Dock* im Rechtsklick-Menü) setzt es als Tab zurück. Sein [x] schließt
+den Verlauf wie das Schließen seines Tabs: gibt es einen Verlauf, fragt
+es vorher, dann ist er gelöscht. Wird sein Workspace geschlossen, bleibt
+es auf All Workspaces; *close all panels in this area* setzt es zurück
+ins Agent-Dock. Jedes Panel hat seine eigene Lampe; die Voice arbeitet
+für den Verlauf, in dem sie gestartet wurde, sonst für den, in dem
+zuletzt getippt wurde; Settings, Profile und Extensions erreichen jeden
+Verlauf. Mit *Keep tabs* kommen abgelöste Verläufe nach einem Neustart
+auf ihrem Workspace bzw. auf All Workspaces wieder; einer, dessen
+Workspace nicht wiederkommt (das Layout wird nicht wiederhergestellt),
+ist wieder ein Tab.
 
 **Thinking.** Was ein Reasoning-Modell denkt, bevor es antwortet oder
 ein Tool aufruft (`reasoning_content` bzw. `reasoning` neben der
@@ -741,6 +807,51 @@ Server als read-only markiert, ohne Frage laufen. Ein Programm kann in
 einem Sandbox-Profil laufen; der Token eines HTTP-Servers liegt im
 Keyring.
 
+*Tools → MCP Servers…* öffnet diese Seite (Edit → Settings… → Agent →
+MCP Servers). **Add from Catalog…** durchsucht die *MCP-Quellen* und
+installiert einen Server in **rootless podman**; nichts davon läuft auf
+dem Host:
+
+- **Quellen** (Agent Settings → MCP Sources, jede abschaltbar): der
+  mitgelieferte Katalog (offizielle Referenz-Server aus Dockers
+  kuratiertem `mcp/*`-Namespace plus zwei Security-Server, per Digest
+  gepinnt, geht offline), Docker Hubs `mcp`-Namespace, die offizielle
+  MCP Registry (`registry.modelcontextprotocol.io`) und eigene
+  Katalogdateien oder `https://`-URLs. *Check* liest eine und nennt, was
+  sie enthält oder warum sie abgelehnt wird (falsches Schema, größer als
+  1 MiB, kein JSON, ein Eintrag ohne gepinnten Digest …). Was eine Quelle
+  sagt, wird als reiner Text gezeigt.
+- **Install**: ein Image wird per Digest gepullt (bei Docker Hub wird der
+  Digest des Tags vorher erfragt; andere werden auf den Digest gepinnt,
+  den podman meldet). Ein npm- oder pypi-Paket wird in einem Container
+  eines gepinnten `node:22-slim`- / `python:3.13-slim`-Images installiert
+  (`npm --ignore-scripts`, `pip --only-binary=:all:`), dessen einziges
+  Netz die Paket-Registry ist, und als `localhost/axross-mcp:<name>-<version>`
+  committet - nie npx, uvx, npm oder pip auf dem Host. Ein Remote-Server
+  (Streamable HTTP, https) wird ein HTTP-Server. Der Fortschritt wird
+  gezeigt, *Cancel Install* bricht ab; danach wird der Server getestet
+  (initialize, tools/list) und eingeschaltet, wenn der Test bestand.
+  **Save** behält ihn.
+- **Wie er läuft**: `podman run --rm -i --init --pull=never` ohne
+  Capabilities, ohne neue Privilegien, mit read-only Root, kleinem
+  noexec-`/tmp`, Prozess- und Speicherlimits. Netz standardmäßig
+  **None**; **Allowlist** erreicht nur die angegebenen `host:port` über
+  einen Proxy in axross (für Programme, die `HTTPS_PROXY` beachten; die
+  anderen haben gar keine Route); **Full** jeden Host. Ordner nur wie
+  gewählt, read-only, solange *Writable* nicht angehakt ist. Umgebungswerte
+  und Secrets (im Keyring) erreichen den Container über eine Pipe, nie auf
+  der Kommandozeile oder in einer Datei.
+- **Uninstall** entfernt den Server und beim Speichern sein Image per ID
+  (`podman rmi`, nie erzwungen: ein Image in Benutzung, anders getaggt
+  oder schon vor der Installation vorhanden bleibt). **Check for Update**
+  zeigt einen neueren Digest oder eine neuere Version; aktualisiert wird
+  nichts von selbst.
+
+Eine eigene Katalogdatei hat das Schema `axross-mcp-catalog`, Version 1
+(Beispiel in [USAGE.md](USAGE.md)); `kind` ist `oci` (gepinnt per
+`digest`), `npm` oder `pypi` (`package` und eine exakte `version`) oder
+`remote` (`url`, `bearer`).
+
 **Extensions** können den Agent starten (`api.run_agent`,
 `api.open_agent_tab`), ihm Tools geben (`api.add_agent_tool`), Topics
 hinzufügen (`api.add_agent_topic`) und seinen Events folgen
@@ -785,15 +896,28 @@ bevor er eine Aufnahme hört). Antworten spricht eine lokale Piper-Stimme.
   Pfade. Stop, Esc, Tippen oder eine neue Aufgabe beenden es. Lehnt axross
   einen Tool-Aufruf ab (Files read-only, nicht erlaubt, keine Permission),
   sagt die Stimme das kurz; die erste Sprachnutzung einer Session grüßt.
-- **Stimme und Sprache:** männlich oder weiblich, Deutsch oder Englisch,
-  oder *der Antwort folgen*. In deutscher Sprache werden englische
-  IT-Begriffe (Server, Backup, Pull Request, …) englisch gesprochen; ein
-  Begriff, den die Antwort in `{Klammern}` schreibt, ebenso (die Klammern
-  werden nicht angezeigt).
+- **Sprache:** Deutsch oder Englisch, oder *der Antwort folgen*. In
+  deutscher Sprache werden englische IT-Begriffe (Server, Backup, Pull
+  Request, …) englisch gesprochen; ein Begriff, den die Antwort in
+  `{Klammern}` schreibt, ebenso (die Klammern werden nicht angezeigt).
+- **Voices** (ein Tab je Sprache): die Stimme, die die Sprache spricht
+  (Deutsch: Thorsten oder Kerstin, Englisch: Ryan oder Lessac), ob sie
+  heruntergeladen ist, **Download** (ein zweiter Klick bricht ab) und
+  **Listen** - spricht zwei Beispielsätze mit den Werten des Tabs,
+  gespeichert oder nicht, über den Output aus *Settings > Audio*; ein
+  zweiter Klick stoppt. Jede Stimme behält eigene Werte, wie sie spricht:
+  *Speed* (0,5-2×), *Pitch* (±6 Halbtöne; Piper kennt keine Tonhöhe, also
+  wird die Sprache um den Faktor langsamer erzeugt und dann um ihn höher
+  resampelt - die Länge bleibt), *Expressiveness* und *Rhythm variation*
+  (wie stark Tonfall und Lautlängen variieren, 0-200 %), *Volume* (Anteil
+  am Output-Volume, 10-100 %) und *Pause between sentences* (0-2 s);
+  *Reset* setzt einen Wert zurück, *Reset All* alle Werte der Stimme.
+  Jede gesprochene Antwort nutzt sie.
 - **Einrichtung:** `pip install axross[voice]` (piper-tts, faster-whisper;
-  in axross-full enthalten), dann *Help > Features…*, Gruppe **Voice**:
-  Stimmen und ein Whisper-Modell herunterladen (gepinnte Checksummen,
-  nach `~/.local/share/axross/voice/`).
+  in axross-full enthalten), dann **Download** neben einer Stimme auf der
+  Seite Voice, oder *Help > Features…*, Gruppe **Voice**, für Stimmen und
+  ein Whisper-Modell (gepinnte Checksummen, nach
+  `~/.local/share/axross/voice/`).
 - **Sicherheit:** Bestätigungen werden immer geklickt, nie gesprochen; im
   paranoiden Security Mode ist das Mikrofon aus; Audio und Transkripte
   bleiben im Speicher.
@@ -809,16 +933,30 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 |---|---|
 | General | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane) |
 | Appearance | Theme, Compact Mode, Monochrome Icons, Schriftgröße (Zoom), Hidden Files hervorheben und ihre Farbe (eine auf dem Theme schwer lesbare Farbe erst nach Rückfrage) |
+| Toolbar | Buttons nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Buttons zeigen, die Farbe jeder Kategorie (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
 | Files & Panes | Hidden Files zeigen, Open Size Limit, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und Temp-Dateien im RAM (gilt ab dem nächsten Start) |
 | Network & Proxy | Default-Proxy, Bypass-Liste, PAC-Script, ein Test |
 | LLM Profiles | Die LLM-Server von Agent- und Analysis-Dock; *Fetch models* öffnet eine Liste mit Größe, Parametern, Quantisierung und dem geladenen Modell, soweit der Server sie meldet |
-| Agent | General, Prompts, Access, Sandboxes, MCP Servers, Sessions |
-| Voice | Antworten vorlesen, gesprochene Sprache, Stimme, Mikrofon-Modus, Hold-Taste, erkannten Text einfügen oder senden, die Pause, die das Sprechen beendet |
+| Analysis (sift) | Automatische Analyse der gewählten Datei (aus: eine Auswahl nennt die Datei nur, *Analyse* erklärt sie), das LLM-Profil von *Analyse with LLM* (das aktive oder ein eigenes - der Agent behält seine Wahl), Max Bytes pro Datei (begrenzt auch die Kopie einer Remote-Datei), Time Budget pro Datei, Vision, Context Tokens (0 = was der Server meldet), Tags pro Datei, Categories (eine pro Zeile), sifts Ergebnisse im Cache behalten, *Clear Cache*; sifts Version, oder ein Link zu *Help → Features…*, wenn dieser Build kein sift hat |
+| Agent | General, Prompts, Access, Sandboxes, MCP Servers, MCP Sources, Sessions |
+| Voice | Antworten vorlesen, gesprochene Sprache, die Stimme jeder Sprache (Download, Listen) und wie sie spricht (Speed, Pitch, Expressiveness, Rhythm variation, Volume, Pause zwischen Sätzen), Mikrofon-Modus, Hold-Taste, erkannten Text einfügen oder senden, die Pause, die das Sprechen beendet |
 | Audio | Audio-Backend (Automatic, PipeWire, PulseAudio; das Backend dieses Laufs wird gezeigt, eine Änderung gilt ab dem nächsten Start), Output-Device und Volume (skaliert alles, was axross abspielt) mit *Play Test Tone*, Input-Device und Volume (Gain) mit *Test Microphone* (ein Level-Meter) und *Record 3 s and Play Back*, das Ergebnis des Audio-Checks und *Check Audio Again* |
 | Metadata | Wie Remove Metadata schreibt, vorher fragen |
 | Search | Gleichzeitig durchsuchte Hosts von *Find on Network Hosts*; wo Offline- und Duplicate-Index liegen |
 | Security | Paranoid Security Mode (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` im Environment gewinnt), sudo-Passwort merken |
 | Extensions | Welche Extensions eingeschaltet sind |
+
+Die Seite **Analysis (sift)** schreibt `~/.config/axross/analysis.json`;
+das offene Analysis-Dock nutzt eine gespeicherte Änderung sofort und
+erklärt die gezeigte Datei neu. Die Grenzen sind sifts eigene - ein Wert,
+den sift ablehnen würde (ein Context von 100 Tokens, eine Category
+doppelt), wird über der Seite genannt, und nichts wird gespeichert. sifts
+Ergebnisse liegen im Cache `~/.cache/axross/sift`
+(`$XDG_CACHE_HOME/axross/sift`, nur für dich lesbar); *Clear Cache*
+entfernt dort sifts Einträge und sonst nichts. Eine kaputte
+`analysis.json` liest sich als Defaults und bleibt als
+`analysis.json.unreadable-…` daneben liegen, bevor das nächste Speichern
+sie ersetzt.
 
 Die **Audio**-Seite fasst Qt Multimedia erst an, wenn der Audio-Check
 (ein eigener Prozess) geantwortet hat; scheitert er, nennt die Seite den
@@ -835,7 +973,7 @@ geänderte Seite und speichern gar nichts, solange eine ein Problem hat
 geänderte Seite gespeichert und wirkt sofort. Cancel, Esc und das [x]
 verwerfen, was nicht übernommen wurde.
 
-*Tools → Network & Proxy…, LLM Profiles…, Agent Settings…, Metadata
+*Tools → Network & Proxy…, LLM Profiles…, Agent Settings…, MCP Servers…, Metadata
 Settings…* und *Extensions → Manage Extensions…* öffnen das Settings-
 Fenster auf ihrer Seite. *View → Show Hidden Files* (**Strg+H**), *View →
 Theme* und *View → Zoom* bleiben schnelle Schalter; sie werden sofort

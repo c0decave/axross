@@ -26,6 +26,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from core import voice_settings as VS  # noqa: E402
 from core import voice_worker as VW  # noqa: E402
 
 FAKE = textwrap.dedent(r'''
@@ -283,3 +284,196 @@ def test_edge_pcm_conversion_clips_and_scales():
     values = array.array("h", out).tolist()
     assert values[0] == 0 and values[3] == 32767 and values[4] == -32767
     assert 16000 < values[1] < 16500
+
+
+# -- the child's synthesis with the voice settings (speed, pitch, ...) ---------------------------
+
+#: The fake voice's own inference defaults (a .onnx.json "inference" block).
+_FAKE_DEFAULTS = {"length_scale": 1.0, "noise_scale": 0.667, "noise_w_scale": 0.8}
+_FAKE_RATE = 22050
+_FAKE_HZ = 220.0
+#: Seconds of one sentence at length_scale 1.0.
+_FAKE_SECONDS = 0.5
+
+
+class _FakeSynthesisConfig:
+    def __init__(self, length_scale=None, noise_scale=None, noise_w_scale=None, **_kw):
+        self.length_scale, self.noise_scale, self.noise_w_scale = (length_scale, noise_scale,
+                                                                   noise_w_scale)
+
+
+class _FakeVoice:
+    """Piper's PiperVoice as the child uses it: a tone whose length follows
+    length_scale, like Piper's phoneme durations do."""
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.config = SimpleNamespace(sample_rate=_FAKE_RATE, phoneme_id_map={"a": [1], "b": [2]},
+                                      **_FAKE_DEFAULTS)
+        self.synthesized: list = []
+
+    def phonemize(self, text):
+        return [list("ab")]
+
+    def phonemes_to_ids(self, phonemes):
+        return [1] * len(phonemes)
+
+    def phoneme_ids_to_audio(self, ids, syn):
+        import numpy as np
+
+        self.synthesized.append(syn)
+        scale = syn.length_scale if syn.length_scale is not None else self.config.length_scale
+        n = int(_FAKE_RATE * _FAKE_SECONDS * scale)
+        return 0.3 * np.sin(2 * np.pi * _FAKE_HZ * np.arange(n) / _FAKE_RATE)
+
+
+@pytest.fixture
+def child(monkeypatch):
+    """The real child (core.voice_worker._Child) with a fake piper module."""
+    import types
+
+    voice = _FakeVoice()
+    piper = types.ModuleType("piper")
+    piper.SynthesisConfig = _FakeSynthesisConfig
+    piper.PiperVoice = types.SimpleNamespace(load=lambda model, config_path=None: voice)
+    monkeypatch.setitem(sys.modules, "piper", piper)
+    monkeypatch.setattr(VW, "piper_available", lambda: True)
+    out = VW._Child()
+    out.sent = []
+    out.voice = voice
+    monkeypatch.setattr(out, "_send", out.sent.append)
+    monkeypatch.setattr(out, "_phonemize", lambda lang, text: "ab")
+    return out
+
+
+def _speak(child, lang="en", sentences=2, **params):
+    req = {"id": 7, "op": "speak", "voice": "/v.onnx", "config": "/v.onnx.json", "lang": lang,
+           "sentences": [[[lang, "ab"]]] * sentences, **params}
+    child.handle(json.dumps(req).encode())
+    audio = [base64.b64decode(m["pcm"]) for m in child.sent if m.get("event") == "audio"]
+    return audio, child.sent[-1]
+
+
+def _hz(pcm: bytes) -> float:
+    from tests.test_voice_audio import dominant_hz
+
+    return dominant_hz(pcm, _FAKE_RATE)
+
+
+def _samples(pcm: bytes) -> int:
+    return len(pcm) // 2
+
+
+def test_happy_without_settings_the_voice_speaks_as_before(child):
+    audio, done = _speak(child)
+    assert done == {"id": 7, "ok": True, "done": True}
+    syn = child.voice.synthesized[0]
+    assert (syn.length_scale, syn.noise_scale, syn.noise_w_scale) == tuple(_FAKE_DEFAULTS.values())
+    pause = int(_FAKE_RATE * VW.SENTENCE_PAUSE)
+    assert _samples(audio[0]) == int(_FAKE_RATE * _FAKE_SECONDS)
+    assert _samples(audio[1]) == pause + int(_FAKE_RATE * _FAKE_SECONDS)
+    assert VW.SENTENCE_PAUSE == VS.TUNING["pause"].default
+
+
+def test_happy_german_speech_starts_from_the_german_synthesis(child):
+    _audio, done = _speak(child, lang="de", speed=1.0, expressiveness=1.0, rhythm=1.0)
+    assert done["ok"] is True
+    syn = child.voice.synthesized[0]
+    assert (syn.length_scale, syn.noise_scale, syn.noise_w_scale) == (
+        VW.GERMAN_SYNTHESIS["length_scale"], VW.GERMAN_SYNTHESIS["noise_scale"],
+        VW.GERMAN_SYNTHESIS["noise_w_scale"])
+
+
+@pytest.mark.parametrize("speed", [2.0, 1.25, 0.5])
+def test_happy_speed_divides_the_length_scale_and_the_speech_length(child, speed):
+    audio, _done = _speak(child, sentences=1, speed=speed)
+    assert child.voice.synthesized[0].length_scale == pytest.approx(1.0 / speed)
+    assert _samples(audio[0]) == pytest.approx(_FAKE_RATE * _FAKE_SECONDS / speed, abs=2)
+    assert _hz(audio[0]) == pytest.approx(_FAKE_HZ, abs=1.0)  # speed is not pitch
+
+
+@pytest.mark.parametrize("semitones", [6.0, 2.5, -4.0])
+def test_happy_pitch_raises_the_tone_and_keeps_the_length(child, semitones):
+    factor = 2 ** (semitones / 12)
+    audio, _done = _speak(child, sentences=1, pitch=semitones)
+    # Piper is asked for speech `factor` slower, then it is resampled `factor` higher.
+    assert child.voice.synthesized[0].length_scale == pytest.approx(factor)
+    assert _hz(audio[0]) == pytest.approx(_FAKE_HZ * factor, abs=1.5)
+    assert _samples(audio[0]) == pytest.approx(_FAKE_RATE * _FAKE_SECONDS, abs=2)
+
+
+def test_happy_speed_and_pitch_together(child):
+    audio, _done = _speak(child, sentences=1, speed=1.5, pitch=-3.0)
+    assert _samples(audio[0]) == pytest.approx(_FAKE_RATE * _FAKE_SECONDS / 1.5, abs=2)
+    assert _hz(audio[0]) == pytest.approx(_FAKE_HZ * 2 ** (-3 / 12), abs=1.5)
+
+
+def test_happy_a_caller_length_scale_is_the_base_of_speed(child):
+    """The fixed line asks for length_scale 1.15 of its own."""
+    _speak(child, sentences=1, length_scale=1.15, speed=2.0)
+    assert child.voice.synthesized[0].length_scale == pytest.approx(1.15 / 2.0)
+
+
+def test_happy_expressiveness_and_rhythm_scale_the_noise(child):
+    _speak(child, sentences=1, expressiveness=0.5, rhythm=1.5)
+    syn = child.voice.synthesized[0]
+    assert syn.noise_scale == pytest.approx(0.667 * 0.5)
+    assert syn.noise_w_scale == pytest.approx(0.8 * 1.5)
+    _speak(child, lang="de", sentences=1, expressiveness=0.0, rhythm=2.0)
+    syn = child.voice.synthesized[-1]
+    assert syn.noise_scale == 0.0
+    assert syn.noise_w_scale == pytest.approx(VW.GERMAN_SYNTHESIS["noise_w_scale"] * 2.0)
+
+
+def test_happy_volume_is_a_share_of_the_full_level(child):
+    import numpy as np
+
+    full, _ = _speak(child, sentences=1, volume=1.0)
+    half, _ = _speak(child, sentences=1, volume=0.5)
+
+    def peak(pcm):
+        return int(np.max(np.abs(np.frombuffer(pcm, dtype="<i2").astype(int))))
+
+    assert peak(full[0]) == pytest.approx(0.95 * 32767, abs=2)
+    assert peak(half[-1]) == pytest.approx(0.475 * 32767, abs=2)
+
+
+@pytest.mark.parametrize("pause", [0.0, 1.0, 2.0])
+def test_happy_the_pause_between_sentences(child, pause):
+    audio, _done = _speak(child, sentences=2, pause=pause)
+    gap = int(_FAKE_RATE * pause)
+    assert _samples(audio[1]) == gap + _samples(audio[0])
+    assert audio[1][: gap * 2] == b"\0\0" * gap
+    assert _samples(audio[0]) == int(_FAKE_RATE * _FAKE_SECONDS)  # the first has none
+
+
+@pytest.mark.parametrize("name,bad", [
+    ("speed", 0.1), ("speed", 9), ("speed", "fast"), ("speed", True), ("pitch", 13),
+    ("pitch", -6.5), ("expressiveness", -0.1), ("rhythm", 2.5), ("volume", 0.0),
+    ("volume", 1.5), ("pause", -1), ("pause", 60), ("speed", float("nan")),
+])
+def test_sad_the_child_refuses_a_value_outside_its_range(child, name, bad):
+    req = json.dumps({"id": 7, "op": "speak", "voice": "/v.onnx", "config": "/v.onnx.json",
+                      "lang": "en", "sentences": [[["en", "ab"]]], name: bad})
+    child.handle(req.encode())
+    assert [m for m in child.sent if m.get("event")] == []
+    reply = child.sent[-1]
+    assert reply["ok"] is False and name in reply["error"]
+    assert child.voice.synthesized == []
+
+
+def test_edge_null_values_are_the_defaults(child):
+    audio, done = _speak(child, sentences=1, speed=None, pitch=None, expressiveness=None,
+                         rhythm=None, volume=None, pause=None)
+    assert done["ok"] is True
+    assert child.voice.synthesized[0].length_scale == 1.0
+    assert _samples(audio[0]) == int(_FAKE_RATE * _FAKE_SECONDS)
+
+
+def test_edge_the_extremes_of_every_range_are_spoken(child):
+    lows = {n: t.low for n, t in VS.TUNING.items()}
+    highs = {n: t.high for n, t in VS.TUNING.items()}
+    for params in (lows, highs):
+        _audio, done = _speak(child, sentences=2, **params)
+        assert done["ok"] is True, done

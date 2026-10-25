@@ -68,6 +68,16 @@ _ROBOT = (
     '<path d="M9 13v2M15 13v2M2 14h2M20 14h2"/>'
 )
 
+# The sieve with grains falling through: sift, the file analyser behind the
+# Analysis dock (its title bar, its toolbar button, "Analyse with sift").
+# Before, the dock's title bar showed the Agent's robot.
+_SIEVE = (
+    '<path d="M2 8h16.5L22 4.5"/>'
+    '<path d="M3.5 8l1.3 5.6a3.5 3.5 0 0 0 3.4 2.8h5.6a3.5 3.5 0 0 0 3.4-2.8L18.5 8"/>'
+    '<path d="M8.5 8v8.4M13.5 8v8.4M4.3 11.5h13.4"/>'
+    '<path d="M8 20v.01M11 21.8v.01M14 20v.01"/>'
+)
+
 # Icon category: tool actions (toolbar / menubar verbs).
 # Each entry is (name, svg-body-without-wrapper).
 _TOOL_ICONS = {
@@ -222,11 +232,10 @@ _TOOL_ICONS = {
     # The robot of the Agent dock's title bar: the Agent dock. (Before, a
     # speech bubble with a plus that nothing else showed for the Agent.)
     "agent": _svg(_ROBOT),
-    # A magnifier over bars: the Analysis dock (sift).
-    "analysis": _svg(
-        '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16" y2="16"/>'
-        '<path d="M8.5 13.5v-2M11 13.5V8.5M13.5 13.5v-3.5"/>',
-    ),
+    # sift's sieve: the Analysis dock. "analysis" is the toolbar button's id
+    # (a saved toolbar order names it), so it stays and draws the sieve.
+    "sift": _svg(_SIEVE),
+    "analysis": _svg(_SIEVE),
     # A page with a magnifier: Find Files.
     "find-files": _svg(
         '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h5"/><polyline points="13 2 13 8 19 8"/>'
@@ -680,7 +689,8 @@ _ICON_COLORS: dict[str, str | None] = {
     # The tool group; each reads on dark (#1e1e2e, >= 3:1) and light themes
     # (tests/test_toolbar_tool_buttons.py measures it).
     "agent": "#00b894",  # mint robot
-    "analysis": "#0984e3",  # blue magnifier
+    "sift": "#0984e3",  # blue sieve
+    "analysis": "#0984e3",  # the same sieve: the Analysis dock is sift
     "find-files": "#2e86de",  # blue, beside the index search
     "scripts": "#8c7ae6",  # lavender
     "console": "#f0932b",  # orange, beside the lavender scripts
@@ -845,6 +855,19 @@ def get_tint() -> str | None:
     return _tint
 
 
+def stroke_colour(name: str) -> str:
+    """The colour :func:`icon` strokes *name* with now: the theme tint, the
+    icon's own colour, or black (``currentColor`` rasterises black in a
+    pixmap: QSvgRenderer has no widget palette to resolve it against)."""
+    if _tint:
+        return _tint
+    if not _monochrome:
+        colour = _ICON_COLORS.get(name)
+        if colour:
+            return colour
+    return "#000000"
+
+
 def entry_icon(is_dir: bool, size: int = 32) -> QIcon:
     """Icon for a file-list row: our own folder / file glyph (never the
     desktop's system icon, which ignores the theme). Under a tint the
@@ -950,4 +973,5 @@ __all__ = [
     "is_monochrome",
     "set_monochrome",
     "set_tint",
+    "stroke_colour",
 ]

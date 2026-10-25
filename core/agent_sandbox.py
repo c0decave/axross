@@ -58,6 +58,7 @@ from typing import Callable
 
 from axross._version import __version__
 from core import agent as A
+from core import process_launcher
 from core.agent_net import HostRelay, parse_hosts
 from core.subprocess_env import clean_child_env
 
@@ -749,7 +750,9 @@ class SandboxedAgent:
             "agent sandbox: starting %s (%s)", argv[0], profile.level if profile else "no sandbox"
         )
         try:
-            self._proc = subprocess.Popen(
+            # From the launcher thread: bwrap's --die-with-parent watches the
+            # thread that forks it, and a task's run thread ends after the task.
+            self._proc = process_launcher.popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 cwd=str(_package_root()), env=env, start_new_session=True,
             )

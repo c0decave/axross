@@ -11,11 +11,19 @@ General     language, restore the layout on start, when a    session.json (windo
 Appearance  theme, compact mode, monochrome icons, font      session.json (window)
             size (zoom), highlight hidden files and their
             colour
+Toolbar     group the buttons by category, the category      session.json (window)
+            colours on or off, each category's colour
+            (ui.toolbar_categories)
 Files       show hidden files, open size limit, RAM          session.json, settings.json,
             workspaces and temporary files in RAM            ramfs.json
 Network     the default proxy (ui.network_proxy_dialog)      proxy.json + keyring
 LLM         the LLM profiles (ui.llm_settings_dialog)        llm.json + keyring
-Agent       the agent's settings, five sub-pages             agent/settings.json + keyring
+Analysis    automatic analysis, the LLM profile of the       analysis.json
+(sift)      Analysis dock, sift's read limit, time budget,
+            vision, context, tags, categories, the cache
+            and Clear Cache (ui.analysis_settings_page)
+Agent       the agent's settings, seven sub-pages (MCP       agent/settings.json + keyring
+            Servers and MCP Sources among them)
             (ui.agent_settings_dialog)
 Voice       registered by the voice feature (register_page)  its own
 Audio       audio backend, output and input device and       audio.json
@@ -96,9 +104,11 @@ MIB = 1024 * 1024
 CATEGORY_ORDER: tuple[str, ...] = (
     "general",
     "appearance",
+    "toolbar",
     "files",
     "network",
     "llm",
+    "analysis",
     "agent",
     "voice",
     "audio",
@@ -380,6 +390,119 @@ class AppearancePage(_FormPage):
             win.set_hidden_color(changed["colour"])
 
 
+class ToolbarPage(_FormPage):
+    """The toolbar's groups and colours (ui.toolbar_categories): its own
+    page, not a part of Appearance - seven colour buttons, two switches and
+    a reset would double that page, and "Toolbar" in the list is where one
+    looks for the toolbar."""
+
+    def __init__(self, window, parent: QWidget | None = None) -> None:
+        super().__init__(window, parent)
+        from ui import toolbar_categories as TC
+
+        style = window.toolbar_style()
+        self.grouping_check = QCheckBox(tr("Group the buttons by category"))
+        self.grouping_check.setToolTip(tr(
+            "One category after another, a separator between them; a button is "
+            "dragged only inside its group."))
+        self.grouping_check.setChecked(style.grouping)
+        self.tint_check = QCheckBox(tr("Show each category's colour behind its buttons"))
+        self.tint_check.setChecked(style.tint)
+        self.tint_check.toggled.connect(self._sync_enabled)
+        self.layout_.addWidget(self.grouping_check)
+        self.layout_.addWidget(self.tint_check)
+
+        self.colours_box = QGroupBox(tr("Category colours"))
+        form = QFormLayout(self.colours_box)
+        self._colours: dict[str, str] = style.colour_map()
+        self.colour_buttons: dict[str, QPushButton] = {}
+        self.colour_labels: dict[str, QLabel] = {}
+        for category in TC.CATEGORIES:
+            label = QLabel(tr(category.title))
+            button = QPushButton()
+            button.setToolTip(tr("Choose the colour of {category}").format(
+                category=tr(category.title)))
+            button.clicked.connect(
+                lambda _checked=False, c=category.id: self.choose_colour(c))
+            self.colour_labels[category.id] = label
+            self.colour_buttons[category.id] = button
+            form.addRow(label, button)
+        self.layout_.addWidget(self.colours_box)
+
+        self.reset_button = QPushButton(tr("Reset to Defaults"))
+        self.reset_button.setToolTip(tr("Grouping and colours on, every category's own colour"))
+        self.reset_button.clicked.connect(self.reset_to_defaults)
+        row = QHBoxLayout()
+        row.addWidget(self.reset_button)
+        row.addStretch(1)
+        self.layout_.addLayout(row)
+        self.layout_.addWidget(_note(tr(
+            "Drag a button along its bar to move it. Right-click the toolbar > "
+            "Reset Toolbar Order puts the buttons back in their default order.")))
+        self._show_colours()
+        self._sync_enabled()
+        self._finish()
+
+    def _show_colours(self) -> None:
+        from PyQt6.QtGui import QIcon, QPixmap
+
+        for category, button in self.colour_buttons.items():
+            colour = self._colours[category]
+            swatch = QPixmap(16, 16)
+            swatch.fill(QColor(colour))
+            button.setIcon(QIcon(swatch))
+            button.setText(colour)
+
+    def _sync_enabled(self, *_args) -> None:
+        self.colours_box.setEnabled(self.tint_check.isChecked())
+
+    def choose_colour(self, category: str) -> None:
+        """QColorDialog for *category*; Cancel changes nothing. No contrast
+        question: the tint weakens itself until every icon stays readable
+        (ui.toolbar_categories.button_colours)."""
+        from ui import toolbar_categories as TC
+
+        title = next(c.title for c in TC.CATEGORIES if c.id == category)
+        chosen = QColorDialog.getColor(QColor(self._colours[category]), self,
+                                       tr("Colour of {category}").format(category=tr(title)))
+        if not chosen.isValid():
+            return
+        self._colours[category] = chosen.name()
+        self._show_colours()
+
+    def reset_to_defaults(self) -> None:
+        """Grouping and colours on and the default colours, here; stored on
+        OK or Apply like every other change."""
+        from ui import toolbar_categories as TC
+
+        self.grouping_check.setChecked(True)
+        self.tint_check.setChecked(True)
+        self._colours = TC.default_colours()
+        self._show_colours()
+
+    def colour_overrides(self) -> dict[str, str]:
+        """The colours chosen here that differ from the defaults."""
+        from ui import toolbar_categories as TC
+
+        return dict(TC.normalise_colours(self._colours))
+
+    def _values(self) -> dict:
+        from ui import toolbar_categories as TC
+
+        return {
+            "grouping": self.grouping_check.isChecked(),
+            "tint": self.tint_check.isChecked(),
+            "colours": TC.normalise_colours(self._colours),
+        }
+
+    def _store(self, changed: dict) -> None:
+        from ui import toolbar_categories as TC
+
+        values = self._values()
+        self._window.set_toolbar_style(TC.ToolbarStyle(
+            grouping=values["grouping"], tint=values["tint"], colours=values["colours"]))
+
+
 class FilesPage(_FormPage):
     """Show hidden files, the open size limit, RAM workspaces."""
 
@@ -586,6 +709,18 @@ def _agent_page(parent, window):
     return page
 
 
+def _analysis_page(parent, window):
+    from ui.analysis_settings_page import AnalysisPage
+
+    return AnalysisPage(parent, window=window)
+
+
+def _analysis_keywords() -> tuple[str, ...]:
+    from ui.analysis_settings_page import KEYWORDS
+
+    return KEYWORDS
+
+
 def _audio_page(parent, window):
     from ui.audio_settings_page import AudioPage
 
@@ -623,13 +758,19 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "appearance": ("Appearance", lambda p, w: AppearancePage(w, p),
                    ("theme", "compact", "monochrome", "icons", "font", "zoom", "hidden", "colour",
                     "color", "dark", "light"), None),
+    "toolbar": ("Toolbar", lambda p, w: ToolbarPage(w, p),
+                ("toolbar", "icon bar", "buttons", "category", "categories", "group",
+                 "colour", "color", "tint"), None),
     "files": ("Files & Panes", lambda p, w: FilesPage(w, p),
               ("hidden", "open size limit", "ram", "tmpfs", "memory", "workspace"), None),
     "network": ("Network & Proxy", _network_page,
                 ("proxy", "socks", "http", "pac", "bypass", "network"), None),
     "llm": ("LLM Profiles", _llm_page, ("llm", "model", "endpoint", "api key", "ollama"), None),
+    # The dock's title (ui.analysis_dock.DOCK_TITLE): the page is its settings.
+    "analysis": ("Analysis (sift)", _analysis_page, _analysis_keywords(), None),
     "agent": ("Agent", _agent_page,
-              ("agent", "sandbox", "mcp", "access", "sessions", "bypass", "prompt",
+              ("agent", "sandbox", "mcp", "mcp servers", "mcp sources", "catalog", "podman",
+               "docker", "registry", "access", "sessions", "bypass", "prompt",
                "system prompt", "user prompt"), _agent_sub_pages),
     "audio": ("Audio", _audio_page, _audio_keywords(), None),
     "metadata": ("Metadata", _metadata_page, ("metadata", "exif", "remove", "clean"), None),
@@ -644,6 +785,7 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
 _AFTER_SAVE = {
     "network": "refresh_proxy_indicators",
     "llm": "refresh_llm_profiles",
+    "analysis": "refresh_analysis_settings",
 }
 
 
@@ -842,7 +984,7 @@ class SettingsDialog(QDialog):
         sub = item.data(0, _SUB_ROLE)
         if sub and hasattr(page, "show_tab"):
             page.show_tab(sub)
-        if page_id == "agent":
+        if page_id in ("agent", "analysis"):
             self._offer_llm_profiles()
 
     def _follow_tab(self, page_id: str, index: int) -> None:
@@ -855,10 +997,14 @@ class SettingsDialog(QDialog):
 
     def _offer_llm_profiles(self) -> None:
         """Profiles added or renamed on the LLM page, not yet saved, can be
-        chosen for new agent tabs already."""
-        llm, agent = self._pages.get("llm"), self._pages.get("agent")
-        if hasattr(llm, "profile_names") and hasattr(agent, "refresh_llm_choices"):
-            agent.refresh_llm_choices(llm.profile_names())
+        chosen for new agent tabs and for analysis already."""
+        llm = self._pages.get("llm")
+        if not hasattr(llm, "profile_names"):
+            return
+        for page_id in ("agent", "analysis"):
+            page = self._pages.get(page_id)
+            if hasattr(page, "refresh_llm_choices"):
+                page.refresh_llm_choices(llm.profile_names())
 
     def _preview_paranoid(self, on: bool) -> None:
         """The Extensions page says what the Security page's switch will do."""
@@ -974,6 +1120,7 @@ __all__ = [
     "SearchPage",
     "SecurityPage",
     "SettingsDialog",
+    "ToolbarPage",
     "register_page",
     "unregister_page",
 ]

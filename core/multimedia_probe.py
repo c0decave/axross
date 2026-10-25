@@ -140,12 +140,26 @@ def pipewire_running(environ: dict | None = None) -> bool:
     return bool(runtime) and os.path.exists(os.path.join(runtime, "pipewire-0"))
 
 
+def pulse_running(environ: dict | None = None) -> bool:
+    """Whether a PulseAudio server listens (PulseAudio itself or
+    pipewire-pulse): its socket, or PULSE_SERVER."""
+    environ = os.environ if environ is None else environ
+    if environ.get("PULSE_SERVER"):
+        return True
+    runtime = environ.get("XDG_RUNTIME_DIR")
+    return bool(runtime) and os.path.exists(os.path.join(runtime, "pulse", "native"))
+
+
 def backend_order(setting: str, environ: dict | None = None, *, platform: str | None = None,
-                  pipewire: bool | None = None) -> list[str]:
+                  pipewire: bool | None = None, pulse: bool | None = None) -> list[str]:
     """The QT_AUDIO_BACKEND values the probe tries, in order. Linux only
     ("" elsewhere: Qt has one backend there). The user's own variable and
-    an explicit setting are tried alone; "auto" tries PipeWire where its
-    daemon runs, then PulseAudio (which pipewire-pulse also serves)."""
+    an explicit setting are tried alone. "auto" tries PulseAudio first
+    where a pulse server answers (PulseAudio, or pipewire-pulse on a
+    PipeWire system), then PipeWire: measured on real sinks, PulseAudio
+    played on every one (mono, 8-48 kHz, Int16) while Qt's PipeWire
+    backend left every mono sink silent. Without a pulse server PipeWire
+    comes first."""
     from core.multimedia_env import users_audio_backend
 
     environ = os.environ if environ is None else environ
@@ -158,7 +172,10 @@ def backend_order(setting: str, environ: dict | None = None, *, platform: str | 
     if setting in ("pulseaudio", "pipewire"):
         return [setting]
     running = pipewire_running(environ) if pipewire is None else pipewire
-    return ["pipewire", "pulseaudio"] if running else ["pulseaudio"]
+    pulse_up = pulse_running(environ) if pulse is None else pulse
+    if not running:
+        return ["pulseaudio"]
+    return ["pulseaudio", "pipewire"] if pulse_up else ["pipewire", "pulseaudio"]
 
 
 def probe_seconds() -> float:
@@ -495,8 +512,14 @@ def _probe_backends(timeout: float | None) -> ProbeResult:
     """Try each backend of :func:`backend_order` until one answers; the
     failure names every backend tried."""
     failures = []
-    for backend in backend_order(_saved_backend()):
+    order = backend_order(_saved_backend())
+    for index, backend in enumerate(order):
         result = run_probe(timeout, backend=backend)
+        if result.ok and result.outputs == 0 and index + 1 < len(order):
+            # It answered but lists no output (a pulse client without a
+            # server, a PipeWire without devices): the next may do better.
+            failures.append(f"{BACKEND_NAMES.get(backend, backend)}: {tr('no audio output')}")
+            continue
         if result.ok:
             if failures:
                 log.warning("Qt Multimedia: %s; using %s", "; ".join(failures),
@@ -732,7 +755,7 @@ def _child_main() -> int:
 __all__ = [
     "BACKEND_NAMES", "DEADLINE_ENV", "PROBE_SECONDS", "SECONDS_ENV", "STEP_LABELS",
     "AudioDeviceInfo", "ProbeResult", "active_backend", "backend_order", "cached", "child_deadline",
-    "pipewire_running", "probe",
+    "pipewire_running", "probe", "pulse_running",
     "probe_async", "probe_command", "probe_seconds", "reset", "run_probe", "start",
     "unavailable_text",
 ]

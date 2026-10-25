@@ -79,7 +79,7 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Window", ("Ctrl+Shift+N",), "Connection Manager"),
     ("Window", ("Ctrl+Shift+T",), "Open a shell terminal"),
     ("Window", ("Ctrl+Shift+R",), "Restore the last session"),
-    ("Window", ("Ctrl+Shift+I",), "Show / hide the Analysis panel"),
+    ("Window", ("Ctrl+Shift+I",), "Show / hide the Analysis (sift) panel"),
     ("Window", ("Ctrl+H",), "Show / hide hidden files"),
     ("Window", ("Ctrl+Shift+G",), "Thumbnail view for the active pane (images, PDFs, videos)"),
     ("Window", ("Ctrl+C",), "Copy the selected paths"),
@@ -93,7 +93,8 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
         "Maximize / restore the window: viewers, editors and dialogs "
         "(also the button left of the [x])",
     ),
-    ("Viewers", ("F11",), "Fullscreen on / off (image and media viewer)"),
+    ("Viewers", ("F11",), "Fullscreen on / off (image and media viewer, Media Player "
+                          "visualization)"),
     ("Viewers", ("Delete",), "Delete the shown file (image and media viewer)"),
     (
         "Viewers",

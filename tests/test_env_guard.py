@@ -37,3 +37,40 @@ def test_edge_a_removed_or_added_variable_counts_too() -> None:
     finally:
         restore_isolation_env(saved)
     assert {"HOME", "PYTHON_KEYRING_BACKEND"} <= set(ISOLATION_VARS)
+
+
+# -- what axross sets for itself at run time -----------------------------------------
+
+def test_happy_runtime_vars_set_by_a_test_are_taken_back(monkeypatch):
+    from tests.env_guard import RUNTIME_VARS, restore_runtime_env, snapshot_runtime_env
+
+    for name in RUNTIME_VARS:
+        monkeypatch.delenv(name, raising=False)
+    saved = snapshot_runtime_env()
+    os.environ["QT_AUDIO_BACKEND"] = "pulseaudio"   # what multimedia_probe.probe() does
+    os.environ["SSL_CERT_FILE"] = "/etc/ssl/cert.pem"
+    restore_runtime_env(saved)
+    assert "QT_AUDIO_BACKEND" not in os.environ and "SSL_CERT_FILE" not in os.environ
+
+
+def test_edge_a_runtime_var_the_run_started_with_is_put_back(monkeypatch):
+    from tests.env_guard import restore_runtime_env, snapshot_runtime_env
+
+    monkeypatch.setenv("QT_AUDIO_BACKEND", "pipewire")
+    saved = snapshot_runtime_env()
+    os.environ["QT_AUDIO_BACKEND"] = "pulseaudio"
+    restore_runtime_env(saved)
+    assert os.environ["QT_AUDIO_BACKEND"] == "pipewire"
+
+
+def test_edge_the_registries_forget_what_was_taken_back(monkeypatch):
+    from core import multimedia_env, tls_env
+    from tests.env_guard import restore_runtime_env, snapshot_runtime_env
+
+    monkeypatch.delenv("QT_AUDIO_BACKEND", raising=False)
+    saved = snapshot_runtime_env()
+    multimedia_env.apply_audio_backend("pulseaudio")
+    assert "QT_AUDIO_BACKEND" in multimedia_env.set_by_axross()
+    restore_runtime_env(saved)
+    assert "QT_AUDIO_BACKEND" not in multimedia_env.set_by_axross()
+    assert "SSL_CERT_FILE" not in tls_env.set_by_axross() or "SSL_CERT_FILE" in os.environ

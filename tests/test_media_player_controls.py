@@ -1051,7 +1051,8 @@ def test_happy_a_dropped_folder_adds_its_audio_sorted_and_bounded(tmp_path, monk
         touch(music / name)
     files, skipped, truncated = MP.collect_local([str(music)])
     assert [os.path.relpath(p, music) for p, _t in files] == ["a.wav", "b/01.mp3", "b/02.ogg"]
-    assert skipped == 0 and not truncated  # cover.jpg inside a folder is no note
+    # cover.jpg beside tracks is no note; deep.mp3 lies below MAX_DROP_DEPTH: one lost entry
+    assert skipped == 1 and not truncated
     monkeypatch.setattr(MP, "MAX_DROP_FILES", 2)
     files, _skipped, truncated = MP.collect_local([str(music)])
     assert len(files) == 2 and truncated
@@ -1121,7 +1122,7 @@ def test_happy_remote_files_and_folders_are_copied_to_a_bounded_temp(tmp_path):
         assert [t for _p, t in files] == ["a.wav", "b.wav", "a.wav"]
         assert len({p for p, _t in files}) == 3  # same names, no clash
         assert all(Path(p).read_bytes().startswith(b"RIFF") for p, _t in files)
-        assert skipped == 1 and not truncated
+        assert skipped == 1 and not truncated  # the dropped readme; the one in /music is no news
         assert all(p.startswith(folder) for p, _t in files)
     finally:
         import shutil

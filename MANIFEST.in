@@ -24,3 +24,4 @@ recursive-include resources/scripts *.md *.py
 recursive-include resources/extensions *.py
 recursive-include resources/wordlists *.txt
 recursive-include resources/voice *.txt
+recursive-include resources/mcp *.json

@@ -89,6 +89,17 @@ def _isolation_env_unchanged():
 
 
 @pytest.fixture(autouse=True)
+def _axross_runtime_env_restored():
+    """Take back what axross set for itself during the test (the audio
+    backend, the CA bundle, no GPU probing - tests/env_guard.py)."""
+    from tests.env_guard import restore_runtime_env, snapshot_runtime_env
+
+    saved = snapshot_runtime_env()
+    yield
+    restore_runtime_env(saved)
+
+
+@pytest.fixture(autouse=True)
 def _no_held_modifier_keys():
     """Release any keyboard modifier a test left held.
 

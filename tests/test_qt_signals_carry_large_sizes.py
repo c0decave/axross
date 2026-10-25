@@ -32,11 +32,13 @@ REVIEWED_INT_SIGNALS = {
     "ui/llm_settings_dialog.py:done",
     "ui/agent_dock.py:recall",
     "ui/agent_dock.py:checked",  # a connection check's token: a change counter
+    "ui/agent_panels.py:detach_requested",  # the index of the tab dragged out
     "ui/terminal_widget.py:grid_resized",
     "ui/analysis_dock.py:finished",
     "ui/analysis_dock.py:event",
     "ui/analysis_dock.py:started",
     "ui/analysis_dock.py:listed",
+    "ui/analysis_settings_page.py:cache_cleared",  # how many cache entries Clear Cache removed
     "ui/cas_history_dialog.py:show_duplicates_requested",
     "ui/media_viewer.py:_done",
     "ui/media_viewer.py:open_requested",

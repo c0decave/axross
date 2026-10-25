@@ -137,7 +137,7 @@ Beim ersten Start siehst du:
 ┌─────────────────────────────────────────────────────────┐
 │ [Menüleiste]                                            │
 ├─────────────────────────────────────────────────────────┤
-│ [Toolbar: Connect, Split, Refresh, ...]                 │
+│ [Toolbar: Connections | Panes | Files | Media | ...]    │
 ├─────────────────────────────────────────────────────────┤
 │ [Pfadleiste]                    [Pfadleiste]           │
 │ ┌─────────────────────┐        ┌─────────────────────┐ │
@@ -153,6 +153,19 @@ Beim ersten Start siehst du:
 │ └──────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
+
+**Toolbar** = ein Button je Werkzeug, nach Kategorie gruppiert:
+Connections, Windows & Panes, Files & Search (Main-Leiste), Media,
+LLM & Agent, Tools & System, Extensions (Tools-Leiste, in einem schmalen
+Fenster in der zweiten Zeile). Ein Separator trennt die Gruppen, und die
+Farbe der Kategorie liegt als dezenter Tint hinter jedem Button; ein
+gedrückter oder aktiver Button (z. B. ein offenes Dock) hat zusätzlich
+eine Linie unten. Ein Button lässt sich per Drag and Drop innerhalb seiner
+Gruppe verschieben; Rechtsklick auf die Toolbar → *Reset Toolbar Order*
+stellt die Default-Reihenfolge wieder her. *Edit → Settings… → Toolbar*
+schaltet Gruppierung und Farben ab und setzt die Farbe jeder Kategorie
+(*Reset to Defaults* stellt alles zurück). Ein Button, den eine Extension
+mitbringt, landet in Extensions.
 
 **Aktives Pane** = blauer Rahmen. **Ziel-Pane** = grüner Rahmen.
 Klick in ein Pane → wird aktiv, das vorherige wird Ziel. Das ist
@@ -556,7 +569,8 @@ typisiert. Einen Schalter gibt es nicht: ist sift da, wird es benutzt. In
 Archiven listet sift die Member in seiner Zusammenfassung (Analysis-Dock),
 durchsucht sie aber nicht; das macht *Inside archives* von Find Files.
 
-**Wo sind sifts Optionen?** *View → Panels → Analysis* (`Ctrl+Shift+I`)
+**Wo sind sifts Optionen?** *View → Panels → Analysis (sift)*
+(`Ctrl+Shift+I`; Rechtsklick → *Analyse with sift*)
 erklärt die gewählte Datei — ohne Modell automatisch, mit dem aktiven
 LLM-Profile auf *Analyse with LLM*. Der Button *LLM…* im Dock öffnet
 *Edit → Settings… → LLM Profiles* (die Modell-Server). *Help → Features…*
@@ -611,7 +625,10 @@ Bereich gespiegelt, dann gerendert.
   ab dem nächsten Start. Ein selbst gesetztes `QT_AUDIO_BACKEND` gewinnt.
 - **Output:** Device (System-Default oder ein bestimmtes) und Volume,
   das alles skaliert, was axross abspielt; *Play Test Tone* spielt 1 s
-  Sinus auf dem gewählten Device in der gewählten Volume.
+  Sinus auf dem gewählten Device in der gewählten Volume. Die Stimmen des
+  Agent-Docks haben unter *Settings > Voice* zusätzlich je ein eigenes
+  *Volume* als Anteil davon, neben *Speed*, *Pitch* und den anderen Werten,
+  wie sie sprechen; **Listen** spielt dort eine Probe über diesen Output.
 - **Input:** Device und Volume (Gain); *Test Microphone* zeigt ein
   Level-Meter, *Record 3 s and Play Back* nimmt 3 s auf und spielt sie
   auf dem gewählten Output ab.

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import gc
+import re
 from collections.abc import Iterator
 
 DEFAULT_THEME = "modern"
@@ -835,6 +836,17 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
     if compact:
         css += COMPACT_CSS
     return css
+
+
+_TOOLBAR_BACKGROUND = re.compile(r"QToolBar\s*\{[^}]*?background-color:\s*(#[0-9a-fA-F]{6})")
+
+
+def toolbar_background(resolved: str) -> str | None:
+    """The toolbar's background colour in the resolved theme, read from its
+    stylesheet (``QToolBar { background-color: ... }``); ``None`` when the
+    stylesheet leaves it to the palette (the native light theme)."""
+    match = _TOOLBAR_BACKGROUND.search(stylesheet_for(resolved, None))
+    return match.group(1).lower() if match else None
 
 
 # Icon colour of the tinted themes — the foreground colour of the

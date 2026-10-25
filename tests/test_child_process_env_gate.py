@@ -45,6 +45,15 @@ ALLOWED = {
         "runs pip only from a Python install; core.features.can_pip_install refuses a frozen build",
 }
 
+#: Modules whose own child start only passes the caller's arguments on; each
+#: call of theirs is checked as a child start instead (_LAUNCHER_CALLS).
+PASS_THROUGH = {
+    "core/process_launcher.py":
+        "popen(args, **kwargs) forks on its own thread with the caller's env=",
+}
+#: Calls that start a child through a PASS_THROUGH module.
+_LAUNCHER_CALLS = {("process_launcher", "popen"), ("core.process_launcher", "popen")}
+
 _SUBPROCESS_STARTS = {"run", "Popen", "call", "check_call", "check_output"}
 _SUBPROCESS_NO_ENV = {"getoutput", "getstatusoutput"}
 _DESKTOP_MODULE = "core/desktop_open.py"
@@ -100,6 +109,12 @@ def violations(source: str, rel: str) -> list[str]:
         where = f"{rel}:{node.lineno}"
         if (head in sub_modules and attr in _SUBPROCESS_STARTS) or (
                 not head and sub_names.get(attr) in _SUBPROCESS_STARTS):
+            if rel in PASS_THROUGH:
+                continue
+            starts += 1
+            if "env" not in keywords:
+                found.append(f"{where}: {name}() without env= inherits the loader path")
+        elif (head, attr) in _LAUNCHER_CALLS:
             starts += 1
             if "env" not in keywords:
                 found.append(f"{where}: {name}() without env= inherits the loader path")
@@ -163,6 +178,7 @@ def test_no_module_starts_a_child_with_the_inherited_loader_path():
 
 def test_every_allowed_module_exists():
     assert all((ROOT / rel).is_file() for rel in ALLOWED)
+    assert all((ROOT / rel).is_file() for rel in PASS_THROUGH)
 
 
 # -- the gate itself: each rule fires on a module that breaks it ----------------------------
@@ -218,3 +234,19 @@ def test_edge_a_stale_allow_list_entry_is_reported():
     assert _check("x = 1\n", "core/elevated_io.py") == [
         "core/elevated_io.py: listed in ALLOWED but starts no child process any more"]
 
+
+
+def test_sad_the_gate_flags_a_launcher_start_without_env():
+    """core.process_launcher.popen is Popen from another thread: each call
+    needs its env= like any child start."""
+    found = _check("from core import process_launcher\nprocess_launcher.popen(['ls'])\n")
+    assert "core/x.py:2: process_launcher.popen() without env= inherits the loader path" in found
+    assert "core/x.py: starts child processes without core.subprocess_env" in found
+
+
+def test_happy_the_launcher_itself_passes_env_through_and_its_callers_are_checked():
+    assert not _check("from core import process_launcher\n"
+                      "from core.subprocess_env import clean_child_env\n"
+                      "process_launcher.popen(['ls'], env=clean_child_env())\n")
+    source = (ROOT / "core" / "process_launcher.py").read_text()
+    assert not violations(source, "core/process_launcher.py")

@@ -12,7 +12,14 @@ version does not have is ignored, and a tool the stored order does not name
 The drag (:class:`ToolbarReorder`) follows the mouse with an event filter on
 the bar's buttons instead of a QDrag: a press, a move along the bar beyond
 the drag distance, a release between two buttons. A plain click stays a
-click; a drag never triggers the button.
+click; a drag never triggers the button. Bounded (:meth:`ToolbarReorder.
+set_bounded`, while the buttons are grouped by category), a drop stays
+between the separators around the dragged button.
+
+This order is the one of the plain bars (grouping by category off). With
+grouping on, ui.toolbar_categories lays the bars out and keeps the order per
+category instead (``window`` -> ``toolbar_group_order``); :func:`apply_layout`
+moves the buttons between the bars.
 """
 
 from __future__ import annotations
@@ -134,6 +141,25 @@ def apply_order(bar: QToolBar, order: list[str]) -> None:
         action.deleteLater()
 
 
+def apply_layout(bars: list[QToolBar], layout: dict[str, list[str]]) -> None:
+    """Rearrange several bars at once: *layout* maps a bar's object name to
+    its order (ids and separators). A tool the layout puts on another bar
+    moves there; a tool the layout does not name stays on its bar, at the
+    end (:func:`apply_order`)."""
+    by_name = {bar.objectName(): bar for bar in bars}
+    home = {item: name for name, order in layout.items() for item in order if item != SEPARATOR}
+    for bar in bars:
+        for action in bar.actions():
+            target = by_name.get(home.get(tool_id(action) or ""))
+            if action.isSeparator() or target is None or target is bar:
+                continue
+            bar.removeAction(action)
+            target.addAction(action)
+    for bar in bars:
+        if bar.objectName() in layout:
+            apply_order(bar, layout[bar.objectName()])
+
+
 #: The Python state of a ToolbarReorder; without it (torn down) it does nothing.
 _STATE = frozenset({"_indicator", "_button", "_start", "_dragging"})
 
@@ -159,6 +185,9 @@ class ToolbarReorder(QObject):
         self._button: QToolButton | None = None
         self._start = QPoint()
         self._dragging = False
+        # Bounded: a drop stays between the separators around the dragged
+        # button (the groups of ui.toolbar_categories).
+        self._bounded = False
         bar.visibilityChanged.connect(self._follow_visibility)
         self.arm()
 
@@ -171,6 +200,17 @@ class ToolbarReorder(QObject):
     def indicator(self) -> QFrame | None:
         """The line that shows where a drop lands (None once torn down)."""
         return self.__dict__.get("_indicator")
+
+    def set_bounded(self, bounded: bool) -> None:
+        """Keep each drop inside the group of the dragged button: the
+        buttons between the separators around it. A drop beyond the group
+        lands at the group's nearer end."""
+        if "_dragging" in self.__dict__:
+            self._bounded = bool(bounded)
+
+    @property
+    def bounded(self) -> bool:
+        return bool(self.__dict__.get("_bounded"))
 
     # -- the buttons ------------------------------------------------------
     def arm(self) -> None:
@@ -245,7 +285,8 @@ class ToolbarReorder(QObject):
             self._indicator.hide()
             obj.setDown(False)
             action = obj.defaultAction()
-            before = self.drop_target(bar.mapFromGlobal(event.globalPosition().toPoint()))
+            before = self.drop_target(bar.mapFromGlobal(event.globalPosition().toPoint()),
+                                      action)
             # Later: moving the action deletes this button, which is still
             # inside its own event handler.
             QTimer.singleShot(0, lambda a=action, b=before: self._move(a, b))
@@ -262,12 +303,43 @@ class ToolbarReorder(QObject):
         return [a for a in bar.actions()
                 if bar.widgetForAction(a) is not None and bar.widgetForAction(a).isVisible()]
 
-    def drop_target(self, pos: QPoint):
+    def drop_target(self, pos: QPoint, action=None):
         """The action a button dropped at *pos* (bar coordinates) goes in
-        front of; None: the end of the bar."""
+        front of; None: the end of the bar. While bounded, the target is
+        kept inside the group of *action* (default: the dragged button's)."""
         bar = self.bar
         if bar is None:
             return None
+        target = self._free_target(bar, pos)
+        if not self.bounded:
+            return target
+        if action is None:
+            button = self.__dict__.get("_button")
+            action = button.defaultAction() if button is not None else None
+        return self._clamp(bar, action, target) if action is not None else target
+
+    @staticmethod
+    def _clamp(bar: QToolBar, action, target):
+        """*target* moved into the group of *action*: the actions between
+        the separators around it."""
+        actions = bar.actions()
+        if action not in actions or (target is not None and target not in actions):
+            return target
+        index = actions.index(action)
+        start = index
+        while start > 0 and not actions[start - 1].isSeparator():
+            start -= 1
+        end = index  # the separator that closes the group, or the end
+        while end < len(actions) and not actions[end].isSeparator():
+            end += 1
+        at = len(actions) if target is None else actions.index(target)
+        if at < start:
+            return actions[start]
+        if at > end:
+            return actions[end] if end < len(actions) else None
+        return target
+
+    def _free_target(self, bar: QToolBar, pos: QPoint):
         horizontal = self._horizontal(bar)
         coordinate = pos.x() if horizontal else pos.y()
         shown = self._shown(bar)
@@ -338,6 +410,7 @@ __all__ = [
     "SEPARATOR",
     "TOOL_ID_PROPERTY",
     "ToolbarReorder",
+    "apply_layout",
     "apply_order",
     "bar_order",
     "merge",

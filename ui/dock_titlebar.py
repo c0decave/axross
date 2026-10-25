@@ -237,8 +237,14 @@ class DockTitleBar(QWidget):
         ]
 
     def _close_all(self) -> None:
+        # A panel that must not simply close (a detached Agent conversation
+        # would be deleted) says what "close with the area" means for it.
         for dock in self.sibling_docks():
-            dock.close()
+            close_in_area = getattr(dock, "close_in_area", None)
+            if callable(close_in_area):
+                close_in_area()
+            else:
+                dock.close()
 
     def set_title(self, title: str) -> None:
         """Programmatic title update. The dock's

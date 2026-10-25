@@ -1,0 +1,179 @@
+{
+  "schema": "axross-mcp-catalog",
+  "version": 1,
+  "title": "axross built-in catalog",
+  "description": "Images from Docker's curated mcp/* namespace on Docker Hub, pinned by digest. Each digest was read from the Docker Hub API and the registry's manifest on 2026-10-25, and each server was started under axross's container flags (initialize, tools/list, one call).",
+  "entries": [
+    {
+      "id": "git",
+      "name": "git",
+      "title": "Git (Reference)",
+      "description": "Git repository interaction: status, diff, log, show, add, commit, branches. The chosen repository is mounted at /repo; tools take repo_path \"/repo\". Read-only unless write is allowed.",
+      "category": "Files & Dev",
+      "tags": ["git", "dev", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/git",
+      "tag": "latest",
+      "digest": "sha256:ad6af958e79466a14b895891e772fdda28fdc12c06fff4a70637b66773303a2c",
+      "mounts": [
+        {"target": "/repo", "description": "The git repository the server works on", "required": true}
+      ],
+      "network": "none"
+    },
+    {
+      "id": "filesystem",
+      "name": "filesystem",
+      "title": "Filesystem (Reference)",
+      "description": "Read, search and (with write allowed) change files in the chosen folders only. Each folder appears as /projects/<folder name>.",
+      "category": "Files & Dev",
+      "tags": ["files", "dev", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/filesystem",
+      "tag": "latest",
+      "digest": "sha256:35fcf0217ca0d5bf7b0a5bd68fb3b89e08174676c0e0b4f431604512cf7b3f67",
+      "args": ["/projects"],
+      "mounts": [
+        {"target": "/projects/{name}", "description": "A folder the server may reach", "required": true, "repeat": true}
+      ],
+      "network": "none"
+    },
+    {
+      "id": "fetch",
+      "name": "fetch",
+      "title": "Fetch (Reference)",
+      "description": "Fetches a URL from the internet and extracts its contents as markdown. Needs network: Full, or Allowlist with the hosts it may fetch from.",
+      "category": "Web & Data",
+      "tags": ["web", "http", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT (upstream src/fetch; Docker Hub states Other)",
+      "kind": "oci",
+      "image": "docker.io/mcp/fetch",
+      "tag": "latest",
+      "digest": "sha256:1a7a0996a565a0b8ca5c41b42830d4e5f334d33f851596bbd9debb2beedb22d3",
+      "network": "full"
+    },
+    {
+      "id": "sqlite",
+      "name": "sqlite",
+      "title": "SQLite (Reference)",
+      "description": "Queries and changes an SQLite database. By default the database lives in the container's /tmp and is gone when the server stops; to keep it, mount a folder at /data, allow write and set the argument to --db-path /data/db.sqlite.",
+      "category": "Web & Data",
+      "tags": ["database", "sql", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/sqlite",
+      "tag": "latest",
+      "digest": "sha256:efbc05ccace18df122f26b674bd1730c76ece716551df2b3961d519909c34696",
+      "args": ["--db-path", "/tmp/db.sqlite"],
+      "mounts": [
+        {"target": "/data", "description": "A folder for a database that is kept"}
+      ],
+      "network": "none"
+    },
+    {
+      "id": "memory",
+      "name": "memory",
+      "title": "Memory (Reference)",
+      "description": "A knowledge graph the model can write to and read back: entities, relations, observations. By default it lives in the container's /tmp; to keep it, mount a folder at /data, allow write and set MEMORY_FILE_PATH to /data/memory.json.",
+      "category": "Knowledge & Reasoning",
+      "tags": ["memory", "knowledge graph", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/memory",
+      "tag": "latest",
+      "digest": "sha256:db0c2db07a44b6797eba7a832b1bda142ffc899588aae82c92780cbb2252407f",
+      "env": [
+        {"name": "MEMORY_FILE_PATH", "description": "Where the graph is stored inside the container", "default": "/tmp/memory.json", "required": true}
+      ],
+      "mounts": [
+        {"target": "/data", "description": "A folder for a graph that is kept"}
+      ],
+      "network": "none"
+    },
+    {
+      "id": "sequentialthinking",
+      "name": "sequentialthinking",
+      "title": "Sequential Thinking (Reference)",
+      "description": "Step-by-step, revisable problem solving through a sequence of thoughts.",
+      "category": "Knowledge & Reasoning",
+      "tags": ["reasoning", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/sequentialthinking",
+      "tag": "latest",
+      "digest": "sha256:cd3174b2ecf37738654cf7671fb1b719a225c40a78274817da00c4241f465e5f",
+      "network": "none"
+    },
+    {
+      "id": "time",
+      "name": "time",
+      "title": "Time (Reference)",
+      "description": "The current time in a time zone and conversion between time zones.",
+      "category": "Knowledge & Reasoning",
+      "tags": ["time", "timezone", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/time",
+      "tag": "latest",
+      "digest": "sha256:9c46a918633fb474bf8035e3ee90ebac6bcf2b18ccb00679ac4c179cba0ebfcf",
+      "network": "none"
+    },
+    {
+      "id": "everything",
+      "name": "everything",
+      "title": "Everything (Reference test server)",
+      "description": "The MCP test server: echo, add, environment, long-running operations, images and resources - for trying a client, not for work.",
+      "category": "Testing",
+      "tags": ["test", "reference"],
+      "repository": "https://github.com/modelcontextprotocol/servers",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/everything",
+      "tag": "latest",
+      "digest": "sha256:330885a0c4b2eed6f0cd3aae0f0b37152ccdf2852e2f6af6d616a5d5c1e9817d",
+      "network": "none"
+    },
+    {
+      "id": "vuln-nist",
+      "name": "vuln-nist",
+      "title": "Vuln NIST (NVD / CVE lookups)",
+      "description": "Queries NIST's National Vulnerability Database: CVEs by id, keyword or CPE, CISA KEV entries, CVE change history. No API key needed. Needs network to services.nvd.nist.gov.",
+      "category": "Security",
+      "tags": ["security", "cve", "nvd", "vulnerabilities"],
+      "repository": "https://github.com/HaroldFinchIFT/vuln-nist-mcp-server",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/vuln-nist-mcp-server",
+      "tag": "latest",
+      "digest": "sha256:e5025e66c0d28a4fb4b00f4762b91309f2538ab5ade9a9d2ea10cfacf5c04645",
+      "network": "allowlist",
+      "hosts": ["services.nvd.nist.gov:443"]
+    },
+    {
+      "id": "shodan",
+      "name": "shodan",
+      "title": "Shodan (Cyreslab)",
+      "description": "Shodan host, service, SSL and IoT search. Needs a Shodan API key (kept in the keyring) and network to api.shodan.io.",
+      "category": "Security",
+      "tags": ["security", "osint", "shodan", "recon"],
+      "repository": "https://github.com/Cyreslab-AI/shodan-mcp-server",
+      "license": "MIT",
+      "kind": "oci",
+      "image": "docker.io/mcp/cyreslab-ai-shodan",
+      "tag": "latest",
+      "digest": "sha256:f99f2d2d69555aafcc67229ea7b757db57073d501ed1d60beb47049d3f60e08c",
+      "env": [
+        {"name": "SHODAN_API_KEY", "description": "Your Shodan API key", "secret": true, "required": true}
+      ],
+      "network": "full"
+    }
+  ]
+}

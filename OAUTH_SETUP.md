@@ -24,7 +24,9 @@ You need to register your own app with each provider to get Client IDs/Secrets.
    - Add scope: `https://www.googleapis.com/auth/drive`
    - Add your email as a test user (while in "Testing" status)
 
-Enter the Client ID and Client Secret in the Axross connection dialog.
+Enter the Client ID and Client Secret in the Axross connection dialog - or download the
+client's JSON file (the download button next to the client in *Credentials*) and use
+**Import Client JSON…** in the dialog. Connecting opens the browser for the sign-in.
 
 ## Microsoft OneDrive / SharePoint
 
@@ -67,7 +69,9 @@ For SharePoint, also enter the Site URL (e.g. `https://company.sharepoint.com/si
    - `account_info.read`
 5. Click **Submit** to save permissions
 
-Enter the App Key and App Secret in the Axross connection dialog.
+Enter the App Key in the Axross connection dialog; the App Secret is optional (axross
+signs in with PKCE). Connecting opens the browser; Dropbox then shows a code, which
+axross asks for in a window.
 
 ## Token Storage
 

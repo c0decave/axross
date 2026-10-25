@@ -5,6 +5,12 @@ LLM profile, protection mode, sandbox, folder and tools. Tabs are kept in
 one JSON file each and come back at the next start when "Keep tabs" is on
 (Tools > Agent Settings…).
 
+A tab can be detached into a panel of its own (tab menu > Detach as Panel,
+or dragged out of the tab bar) and attached back; Tools > New Agent Window
+opens a new conversation as such a panel (ui.agent_panels). A detached
+conversation stays a tab of this dock in all but the place it is shown:
+voice, settings, the link lamp and agent events cover it as well.
+
 Protection modes:
 
 * **Ask** - every change and every remote command waits for Yes.
@@ -64,9 +70,10 @@ from core import agent_link as AL
 from core import agent_settings as AGS
 from core import llm_profiles as LP
 from core import voice_text as VT
-from core.agent_session import AgentSession, SessionStore
+from core.agent_session import DETACHED_PLACES, AgentSession, SessionStore
 from core.mcp_client import McpClientPool
 from core.i18n import tr
+from ui.agent_panels import AgentPanel, DetachTabBar, alive, weak_call
 
 log = logging.getLogger(__name__)
 
@@ -1792,6 +1799,18 @@ class AgentDock(QDockWidget):
         self.setObjectName("axAgentDock")
         #: The tab the voice listens and speaks for.
         self.voice_tab: AgentTab | None = None
+        #: The conversation the keyboard focus was in last (a tab here or a
+        #: detached panel): the voice's target while no tab listens.
+        self.focus_tab: AgentTab | None = None
+        #: The detached conversations (ui.agent_panels.AgentPanel).
+        self._panels: list[AgentPanel] = []
+        #: The window that lays the panels out (the main window:
+        #: add_agent_panel / remove_agent_panel); None: they float.
+        self.panel_host = None
+        #: Between restore_detached and settle_detached: the places of the
+        #: restored panels are not written (the layout restore moves them).
+        self._settling = False
+        self._closing = False
         self.voice = (voice_factory or _default_voice)(self)
         self.llm_settings = settings_loader or LP.LLMSettings.load
         self._save_llm_settings = settings_saver or (lambda s: s.save())
@@ -1823,6 +1842,11 @@ class AgentDock(QDockWidget):
         self._link_bridge.checked.connect(self._on_link_checked)
 
         self.tabs = QTabWidget()
+        bar = DetachTabBar()
+        self.tabs.setTabBar(bar)
+        bar.detach_requested.connect(lambda index: self.detach_tab(self.tabs.widget(index)))
+        bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        bar.customContextMenuRequested.connect(self._show_tab_menu)
         self.tabs.setTabsClosable(True)
         self.tabs.setMovable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
@@ -1830,13 +1854,26 @@ class AgentDock(QDockWidget):
             lambda _i: self.current_tab() and self.current_tab().follow_folder()
         )
         self.tabs.currentChanged.connect(lambda _i: self.check_link(when="stale"))
+        self.tabs.currentChanged.connect(lambda _i: self._follow_current())
         self.visibilityChanged.connect(lambda shown: shown and self.check_link(when="stale"))
         self.tabs.tabBarDoubleClicked.connect(self.rename_tab)
+        corner = QWidget()
+        corner_row = QHBoxLayout(corner)
+        corner_row.setContentsMargins(0, 0, 0, 0)
+        corner_row.setSpacing(0)
         new_tab = QToolButton()
         new_tab.setText("+")
         new_tab.setToolTip(tr("New tab (Ctrl+T)"))
         new_tab.clicked.connect(lambda: self.new_tab())
-        self.tabs.setCornerWidget(new_tab, Qt.Corner.TopRightCorner)
+        corner_row.addWidget(new_tab)
+        self.new_window_button = QToolButton()
+        self.new_window_button.setText("⧉")  # ⧉: a window of its own
+        self.new_window_button.setToolTip(
+            tr("New Agent Window: a conversation in a panel of its own"))
+        self.new_window_button.setAccessibleName(tr("New Agent Window"))
+        self.new_window_button.clicked.connect(lambda: self.new_window())
+        corner_row.addWidget(self.new_window_button)
+        self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
         self.setWidget(self.tabs)
         QShortcut(QKeySequence("Ctrl+T"), self.tabs, activated=lambda: self.new_tab(),
                   context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -1852,6 +1889,12 @@ class AgentDock(QDockWidget):
 
         register_settings_page()
 
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(weak_call(self, "_on_focus_changed"))
+
         restored = self.store.all() if self.agent_settings.keep_sessions else []
         for session in restored:
             self._add_tab(session)
@@ -1863,10 +1906,14 @@ class AgentDock(QDockWidget):
 
     # -- tabs ---------------------------------------------------------------------------------
 
-    def _add_tab(self, session: AgentSession) -> AgentTab:
+    def _make_tab(self, session: AgentSession) -> AgentTab:
         tab = AgentTab(self, session)
         tab.changed.connect(lambda t=tab: self._save(t))
         tab.title_changed.connect(lambda title, t=tab: self._retitle(t, title))
+        return tab
+
+    def _add_tab(self, session: AgentSession) -> AgentTab:
+        tab = self._make_tab(session)
         index = self.tabs.addTab(tab, session.title)
         self.tabs.setCurrentIndex(index)
         return tab
@@ -1885,11 +1932,9 @@ class AgentDock(QDockWidget):
                 return
         self.store.save(session)
 
-    def new_tab(
-        self, *, save: bool = True, task: str | None = None, folder: str | None = None
-    ) -> AgentTab:
+    def _new_session(self, folder: str | None) -> AgentSession:
         s = self.agent_settings
-        session = AgentSession(
+        return AgentSession(
             profile=s.profile,
             mode=s.mode if s.mode != "bypass" or bypass_allowed(s) else "ask",
             sandbox=s.sandbox,
@@ -1897,7 +1942,11 @@ class AgentDock(QDockWidget):
             folder=folder or "",
             access=X.SessionAccess.from_settings(s.access),
         )
-        tab = self._add_tab(session)
+
+    def new_tab(
+        self, *, save: bool = True, task: str | None = None, folder: str | None = None
+    ) -> AgentTab:
+        tab = self._add_tab(self._new_session(folder))
         if save:
             self._save(tab)
         if task:
@@ -1909,14 +1958,22 @@ class AgentDock(QDockWidget):
         widget = self.tabs.currentWidget()
         return widget if isinstance(widget, AgentTab) else None
 
-    def all_tabs(self) -> list[AgentTab]:
+    def docked_tabs(self) -> list[AgentTab]:
+        """The conversations shown as tabs of this dock."""
         return [self.tabs.widget(i) for i in range(self.tabs.count())]
+
+    def all_tabs(self) -> list[AgentTab]:
+        """Every conversation: the tabs, then the detached panels'."""
+        return [*self.docked_tabs(), *(panel.tab for panel in self.panels())]
 
     def _retitle(self, tab: AgentTab, title: str) -> None:
         index = self.tabs.indexOf(tab)
         if index >= 0:
             self.tabs.setTabText(index, title)
             self.tabs.setTabToolTip(index, title)
+        panel = self.panel_of(tab)
+        if panel is not None:
+            panel.set_title(title)
 
     def rename_tab(self, index: int) -> None:
         tab = self.tabs.widget(index)
@@ -1928,17 +1985,23 @@ class AgentDock(QDockWidget):
             self._retitle(tab, tab.session.title)
             self._save(tab)
 
+    def _may_close(self, tab: AgentTab, heading: str) -> bool:
+        """Closing *tab* deletes its conversation: asked first when there is
+        one (or a task runs), as a closed tab always did."""
+        if not (tab.busy() or tab.session.transcript):
+            return True
+        answer = QMessageBox.question(
+            self, heading,
+            tr("Close {title}? Its conversation is deleted.").format(title=tab.session.title),
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def close_tab(self, index: int) -> None:
         tab = self.tabs.widget(index)
         if not isinstance(tab, AgentTab):
             return
-        if tab.busy() or tab.session.transcript:
-            answer = QMessageBox.question(
-                self, tr("Close tab"),
-                tr("Close {title}? Its conversation is deleted.").format(title=tab.session.title),
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        if not self._may_close(tab, tr("Close tab")):
+            return
         tab.shutdown()
         self.tabs.removeTab(index)
         self.store.delete(tab.session.id)
@@ -1968,11 +2031,221 @@ class AgentDock(QDockWidget):
         except OSError as exc:
             log.warning("agent session could not be saved: %s", exc)
 
+    # -- detached conversations (ui.agent_panels) ----------------------------------------------
+
+    def panels(self) -> list[AgentPanel]:
+        """The detached conversations' panels, in the order they were made."""
+        self._panels = [p for p in self._panels if alive(p)]
+        return list(self._panels)
+
+    def panel_of(self, tab) -> AgentPanel | None:
+        """The panel *tab* is detached into, or None (a tab of the dock)."""
+        return next((p for p in self.panels() if p.tab is tab), None)
+
+    def tab_menu(self, index: int) -> QMenu:
+        """The right-click menu of the tab at *index* (a new one each time)."""
+        menu = QMenu(self)
+        tab = self.tabs.widget(index)
+        if not isinstance(tab, AgentTab):
+            return menu
+        menu.addAction(tr("Detach as Panel")).triggered.connect(
+            lambda _checked=False, t=tab: self.detach_tab(t))
+        menu.addAction(tr("Rename…")).triggered.connect(
+            lambda _checked=False, t=tab: self.rename_tab(self.tabs.indexOf(t)))
+        menu.addSeparator()
+        menu.addAction(tr("Close")).triggered.connect(
+            lambda _checked=False, t=tab: self.close_tab(self.tabs.indexOf(t)))
+        return menu
+
+    def _show_tab_menu(self, pos) -> None:
+        bar = self.tabs.tabBar()
+        index = bar.tabAt(pos)
+        if index < 0:
+            return
+        menu = self.tab_menu(index)
+        menu.exec(bar.mapToGlobal(pos))
+        menu.deleteLater()
+
+    def detach_tab(self, tab) -> AgentPanel | None:
+        """Take the tab *tab* out of the dock into a panel of its own, on
+        All Workspaces. The same tab moves - its session, a running task,
+        an open question - nothing restarts. None for anything that is no
+        tab of this dock."""
+        if not isinstance(tab, AgentTab) or tab.dock is not self or self.tabs.indexOf(tab) < 0:
+            return None
+        panel = self._detach(tab)
+        tab.session.detached = "all"
+        self._save(tab)
+        log.info("Agent conversation %s detached", tab.session.id)
+        return panel
+
+    def _detach(self, tab: AgentTab) -> AgentPanel:
+        if self._placeholder is tab:
+            self._placeholder = None
+        self.tabs.removeTab(self.tabs.indexOf(tab))
+        panel = self._make_panel(tab)
+        if self.tabs.count() == 0:
+            # Never an empty dock: a fresh tab, as after closing the last one.
+            self._placeholder = self.new_tab(save=False)
+        return panel
+
+    def _make_panel(self, tab: AgentTab) -> AgentPanel:
+        host = self.panel_host
+        panel = AgentPanel(tab, host if host is not None else self)
+        self._panels.append(panel)
+        panel.close_requested.connect(weak_call(self, "_on_panel_close"))
+        panel.place_changed.connect(weak_call(self, "_on_panel_place"))
+        panel.park_requested.connect(
+            lambda p, attach=weak_call(self, "attach_panel"): attach(p, show=False))
+        panel.titleBarWidget().attach_requested.connect(
+            lambda p=panel, check=weak_call(self, "attach_panel"): check(p))
+        check = weak_call(self, "check_link")
+        panel.lamp.clicked.connect(lambda _checked=False, t=tab: check(t, when="always"))
+        panel.visibilityChanged.connect(
+            lambda shown, t=tab: shown and check(t, when="stale"))
+        if host is not None:
+            host.add_agent_panel(panel)
+        else:
+            panel.setFloating(True)
+            panel.show()
+        self.show_link()
+        return panel
+
+    def new_window(self, folder: str | None = None) -> AgentPanel:
+        """New Agent Window: a new conversation directly in a panel of its
+        own (for *folder*, else the active pane's folder)."""
+        tab = self._make_tab(self._new_session(folder))
+        tab.session.detached = "all"
+        panel = self._make_panel(tab)
+        self._save(tab)
+        tab.input.setFocus()
+        return panel
+
+    def attach_panel(self, panel, *, show: bool = True) -> AgentTab | None:
+        """Put a detached conversation back as a tab of the dock (the dock
+        comes to the front when *show*); its panel goes. The untouched tab
+        the dock opened by itself goes as well. None for anything that is
+        no panel of this dock."""
+        if not isinstance(panel, AgentPanel) or panel not in self.panels():
+            return None
+        tab = panel.tab
+        self._panels.remove(panel)
+        index = self.tabs.addTab(tab, tab.session.title)
+        self.tabs.setTabToolTip(index, tab.session.title)
+        self.tabs.setCurrentIndex(index)
+        tab.show()
+        tab.session.detached = ""
+        self._save(tab)
+        self._remove_panel(panel)
+        placeholder, self._placeholder = self._placeholder, None
+        if placeholder is not None and placeholder is not tab and self._untouched(placeholder):
+            placeholder.shutdown()
+            self.tabs.removeTab(self.tabs.indexOf(placeholder))
+            self.store.delete(placeholder.session.id)
+            placeholder.deleteLater()
+        if show:
+            self.show()
+            self.raise_()
+            tab.input.setFocus()
+        self.show_link()
+        log.info("Agent conversation %s attached", tab.session.id)
+        return tab
+
+    def _untouched(self, tab: AgentTab) -> bool:
+        return (alive(tab) and self.tabs.indexOf(tab) >= 0 and not tab.busy()
+                and not tab.session.transcript and not tab.input.toPlainText().strip())
+
+    def _remove_panel(self, panel: AgentPanel) -> None:
+        panel.closing = True
+        host = self.panel_host
+        if host is not None:
+            host.remove_agent_panel(panel)
+        panel.hide()
+        panel.deleteLater()
+
+    def _on_panel_close(self, panel) -> None:
+        """[x] on a detached conversation: closed as its tab would be -
+        asked first when there is a conversation, then it is deleted."""
+        if panel not in self.panels():
+            return
+        tab = panel.tab
+        if not self._may_close(tab, tr("Close conversation")):
+            return
+        self._panels.remove(panel)
+        tab.shutdown()
+        self.store.delete(tab.session.id)
+        # Out of the window once its close event is over.
+        QTimer.singleShot(0, lambda p=panel: alive(p) and self._remove_panel(p))
+        self.show_link()
+
+    def _on_panel_place(self, panel) -> None:
+        """A panel moved: its session keeps whether it is on a workspace."""
+        if self._settling or self._closing or panel not in self.panels():
+            return
+        place = "workspace" if panel.in_layout() else "all"
+        if panel.tab.session.detached != place:
+            panel.tab.session.detached = place
+            self._save(panel.tab)
+
+    def restore_detached(self) -> None:
+        """At the start, once the window can hold panels: the kept
+        conversations that were detached become panels again (on All
+        Workspaces; the layout restore puts the others on their
+        workspace, settle_detached the rest back into tabs)."""
+        self._settling = True
+        for tab in self.docked_tabs():
+            if tab.session.detached in DETACHED_PLACES:
+                self._detach(tab)
+
+    def settle_detached(self) -> None:
+        """After the layout restore (or none): a conversation that was on a
+        workspace the restored layout does not hold comes back as a tab.
+        Once; later moves write their places again."""
+        if not self._settling:
+            return
+        self._settling = False
+        for panel in self.panels():
+            if panel.tab.session.detached == "workspace" and not panel.in_layout():
+                log.info("Agent conversation %s: its workspace is gone, back as a tab",
+                         panel.tab.session.id)
+                self.attach_panel(panel, show=False)
+            else:
+                self._on_panel_place(panel)
+
+    def _on_focus_changed(self, _old, new) -> None:
+        """The keyboard focus moved: into a conversation of this dock (a tab
+        or a detached panel), the voice follows it. Within one window only:
+        a dialog over the dock (a confirmation) is no conversation."""
+        widget = new
+        while alive(widget):
+            if isinstance(widget, AgentTab):
+                if widget.dock is self:
+                    self.focus_tab = widget
+                return
+            if widget is self:
+                self.focus_tab = self.current_tab()  # the tab bar, the corner buttons
+                return
+            if widget.isWindow():
+                return
+            widget = widget.parentWidget()
+
+    def _follow_current(self) -> None:
+        """Another tab came to the front: the voice follows it, unless the
+        focus is in a detached conversation."""
+        focus = self.focus_tab
+        if not alive(focus) or self.tabs.indexOf(focus) >= 0 or self.panel_of(focus) is None:
+            self.focus_tab = self.current_tab()
+
     # -- voice ---------------------------------------------------------------------------------
 
     def _voice_target(self) -> AgentTab | None:
-        tab = self.voice_tab
-        return tab if tab is not None and self.tabs.indexOf(tab) >= 0 else self.current_tab()
+        """The tab the voice listens for, else the conversation the focus
+        was in last (a tab or a detached panel), else the current tab."""
+        tabs = self.all_tabs()
+        for tab in (self.voice_tab, self.focus_tab):
+            if tab is not None and any(t is tab for t in tabs):
+                return tab
+        return self.current_tab()
 
     def voice_profile(self) -> tuple:
         """(LLM profile, API key) of the tab the voice works for: its
@@ -2125,6 +2398,8 @@ class AgentDock(QDockWidget):
         tab = tab or self.current_tab()
         if tab is None:
             return
+        panel = self.panel_of(tab)
+        shown = panel.isVisible() if panel is not None else self.isVisible()
         profile = tab.profile()
         if profile is None:
             tab.link.no_profile()
@@ -2133,7 +2408,7 @@ class AgentDock(QDockWidget):
         changed = tab.link.reset(profile)
         wanted = {"changed": changed, "stale": changed or tab.link.needs_check(),
                   "always": True}.get(when, False)
-        if wanted and self.isVisible() and tab.link.state != AL.TRYING:
+        if wanted and shown and tab.link.state != AL.TRYING:
             self._start_check(tab, profile)
         self.show_link()
 
@@ -2164,11 +2439,13 @@ class AgentDock(QDockWidget):
             self.show_link()
 
     def show_link(self) -> None:
-        """The lamp shows the current tab's state."""
+        """The lamp shows the current tab's state, each detached panel's
+        lamp its own conversation's."""
         tab = self.current_tab()
-        if tab is None:
-            return
-        self.lamp.set_state(tab.link.state, tab.link.tooltip())
+        if tab is not None:
+            self.lamp.set_state(tab.link.state, tab.link.tooltip())
+        for panel in self.panels():
+            panel.lamp.set_state(panel.tab.link.state, panel.tab.link.tooltip())
 
     # -- the current tab (the main window and older callers) ------------------------------------
 
@@ -2200,6 +2477,7 @@ class AgentDock(QDockWidget):
         return self.current_tab().selected_groups()
 
     def shutdown(self) -> None:
+        self._closing = True  # the window goes: no panel place is written now
         for tab in self.all_tabs():
             tab.shutdown()
         self.voice.shutdown()

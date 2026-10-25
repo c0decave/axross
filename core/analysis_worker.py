@@ -21,7 +21,9 @@ from a library goes to stderr.
 Request:  {"id": n, "path": str, "display_name": str, "time_budget": s,
            "cpu_seconds": s, "llm": {provider, endpoint, model, api_key,
            temperature, timeout, max_output_tokens, allow_model_load} | null,
-           "model_time_budget": s (LLM mode only)}
+           "model_time_budget": s (LLM mode only),
+           "sift": {max_bytes, vision, context_tokens, tags, categories,
+           cache} (each optional; the Analysis settings, core.analysis_settings)}
 Event:    {"id": n, "event": "progress", "answer": chars, "reasoning": chars}
           {"id": n, "event": "call", "usage": {...}}       (LLM mode only)
 Reply:    {"id": n, "ok": bool, "summary": dict | null, "error": str,
@@ -39,6 +41,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import math
 import os
 import selectors
 import subprocess
@@ -49,6 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from core.secure_storage import ensure_private_dir
 from core.subprocess_env import worker_env
 
 log = logging.getLogger(__name__)
@@ -79,6 +83,9 @@ PROGRESS_INTERVAL = 0.15
 MAX_REPLY_BYTES = 8 * 1024**2
 #: How long a fresh child may take to import sift and answer its first file.
 STARTUP_SECONDS = 30.0
+#: The keys of a request's "sift" options that set a field of sift's Config
+#: of the same name (core.analysis_settings); anything else is not passed on.
+SIFT_OPTIONS = ("max_bytes", "vision", "context_tokens", "tags", "categories")
 
 
 class WorkerProtocolError(Exception):
@@ -165,6 +172,15 @@ def llm_silence_bound(llm_timeout: float, time_budget: float) -> float:
     return float(time_budget) + SIFT_SILENT_REQUESTS * float(llm_timeout) + WALL_MARGIN
 
 
+def cpu_seconds_for(time_budget: float) -> int:
+    """The CPU bound of one file for a time budget: the default's ratio
+    (DEFAULT_CPU_SECONDS for DEFAULT_TIME_BUDGET), never below the default -
+    a larger budget set in the Analysis settings is not ended by the kernel
+    before sift's own bound."""
+    ratio = DEFAULT_CPU_SECONDS / DEFAULT_TIME_BUDGET
+    return max(DEFAULT_CPU_SECONDS, math.ceil(ratio * float(time_budget)))
+
+
 def _package_root() -> str:
     """The directory that holds the ``core`` package, for the child's path."""
     return str(Path(__file__).resolve().parent.parent)
@@ -206,10 +222,15 @@ class AnalysisWorker:
         env = worker_env()
         root = _package_root()
         env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        env.pop("AXROSS_SIFT_CACHE", None)
         if self._cache_dir:
-            env["AXROSS_SIFT_CACHE"] = self._cache_dir
-        else:
-            env.pop("AXROSS_SIFT_CACHE", None)
+            # sift's results describe the files' content: a folder of the
+            # user's own, 0700, or no cache at all.
+            try:
+                ensure_private_dir(self._cache_dir)
+                env["AXROSS_SIFT_CACHE"] = self._cache_dir
+            except OSError as exc:
+                log.warning("sift's cache folder %s is not usable: %s", self._cache_dir, exc)
         proc = subprocess.Popen(
             self._command,
             stdin=subprocess.PIPE,
@@ -271,10 +292,14 @@ class AnalysisWorker:
         timeout: float | None = None,
         cpu_seconds: int = DEFAULT_CPU_SECONDS,
         llm: dict | None = None,
+        sift: dict | None = None,
         on_event: Callable[[dict], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> WorkerResult:
         """``cancel_event`` set (by the caller, or by cancel()) ends this request only.
+
+        ``sift`` holds the Analysis settings the child sets in sift's Config
+        (SIFT_OPTIONS) and ``cache``: False keeps this file out of sift's cache.
 
         ``timeout`` bounds the whole request. Left out, it is
         ``time_budget + WALL_MARGIN`` without ``llm``; with ``llm`` there is
@@ -317,6 +342,8 @@ class AnalysisWorker:
                 }
                 if llm:
                     request["model_time_budget"] = MODEL_TIME_BUDGET
+                if sift:
+                    request["sift"] = sift
                 proc.stdin.write(json.dumps(request).encode() + b"\n")
                 proc.stdin.flush()
                 reply = self._read_reply(
@@ -492,8 +519,12 @@ def _usage(call) -> dict:
 
 def _config_for(request: dict):
     """sift's Config for one request: the time limits are the ones the
-    parent sent and bounds its wait with (llm_silence_bound)."""
-    from sift.config import Config
+    parent sent and bounds its wait with (llm_silence_bound), the request's
+    "sift" options (SIFT_OPTIONS) set the fields of the same name. sift
+    checks those options by its own rules (sift.config.validate on a Config
+    holding them; ConfigError for a value it refuses) - the options alone:
+    the LLM profile's values reach sift as they did before the options."""
+    from sift.config import Config, validate
 
     llm = request.get("llm") if isinstance(request.get("llm"), dict) else None
     if llm:
@@ -512,6 +543,16 @@ def _config_for(request: dict):
     else:
         config = Config(no_llm=True, provider="none")
     config.time_budget = float(request.get("time_budget") or DEFAULT_TIME_BUDGET)
+    raw = request.get("sift") if isinstance(request.get("sift"), dict) else {}
+    options = {
+        key: list(raw[key]) if isinstance(raw[key], list) else raw[key]
+        for key in SIFT_OPTIONS
+        if key in raw
+    }
+    if options:
+        validate(Config(**options))
+        for key, value in options.items():
+            setattr(config, key, value)
     return config
 
 
@@ -573,11 +614,12 @@ def _child_main() -> int:
 
                     client.on_progress = progress
                     client.on_call = on_call
+            options = request.get("sift") if isinstance(request.get("sift"), dict) else {}
             summary = summarize_path(
                 Path(request["path"]),
                 config,
                 client,
-                cache,
+                cache if options.get("cache", True) is not False else None,
                 display_name=str(request.get("display_name") or ""),
             )
             if client is not None:  # the last counts, whatever the throttle held back

@@ -44,6 +44,7 @@ from PyQt6.QtCore import QPointF, Qt  # noqa: E402
 from PyQt6.QtGui import QColor, QEnterEvent  # noqa: E402
 from PyQt6.QtWidgets import QMessageBox  # noqa: E402
 
+from core import analysis_settings as ANS  # noqa: E402
 from core import audio_settings as AS  # noqa: E402
 from core import extensions as EX  # noqa: E402
 from core import i18n  # noqa: E402
@@ -59,6 +60,7 @@ from core import voice_settings as VS  # noqa: E402
 from tests.proxy_testkit import EchoServer, FakeSocks5Server, allow_loopback_proxy  # noqa: E402
 from tests.settings_testkit import app, isolate  # noqa: E402
 from ui import themes, window_prefs  # noqa: E402
+from ui import toolbar_categories as TC  # noqa: E402
 
 APP = app()
 MIB = 1024 * 1024
@@ -242,6 +244,45 @@ def effect_colour(ctx, win, value) -> None:
     assert [p._model.hidden_color for p in win._panes] == [value] * len(win._panes)
 
 
+def _toolbar_style(ctx):
+    data = _read_json(ctx.stores.session) or {}
+    return TC.parse_style(data.get("window"))
+
+
+def _tools_bar(win):
+    from PyQt6.QtWidgets import QToolBar
+
+    return next(tb for tb in win.findChildren(QToolBar) if tb.windowTitle() == "Tools")
+
+
+def effect_toolbar_grouping(ctx, win, value) -> None:
+    assert win.toolbar_style().grouping is value
+    ids = [a.property("axToolId") for a in _tools_bar(win).actions() if not a.isSeparator()]
+    # Grouped, the Tools bar starts with the Media group; plain, with the Agent.
+    assert ids[0] == ("thumbnails" if value else "agent")
+
+
+def effect_toolbar_tint(ctx, win, value) -> None:
+    assert win.toolbar_style().tint is value
+    assert bool(_tools_bar(win).styleSheet()) is value
+
+
+def effect_toolbar_colours(ctx, win, value) -> None:
+    assert win.toolbar_style().colour_map() == {**TC.default_colours(), **value}
+    css = _tools_bar(win).styleSheet()
+    for category, colours in win.toolbar_button_colours().items():
+        assert f'[axCategory="{category}"] {{\n    background-color: {colours.normal};' in css
+
+
+def set_toolbar_colours(ctx, dialog, value) -> None:
+    page = dialog.page("toolbar")
+    page.reset_button.click()
+    for category, colour in value.items():
+        with mock.patch("ui.settings_dialog.QColorDialog.getColor",
+                        return_value=QColor(colour)):
+            page.colour_buttons[category].click()
+
+
 def effect_show_hidden(ctx, win, value) -> None:
     names = _listing(ctx, win)
     assert (".dotfile" in names) is value and "plain.txt" in names
@@ -335,9 +376,12 @@ def _voice_effect(field):
             assert tab.mic_button.isCheckable() is (value != "push_to_talk")
         elif field == "hotkey":
             assert value in tab.mic_button.toolTip()
-        elif field == "gender":
-            assert VS.voice_for("de", dock.voice.settings.gender) == (
-                "piper-de-kerstin" if value == "female" else "piper-de-thorsten")
+        elif field in ("voice_de", "voice_en"):
+            assert dock.voice.settings.voice(field[-2:]) == value
+        elif field == "tuning":
+            for voice_id in (v for ids in VS.VOICES.values() for v in ids):
+                assert dock.voice.settings.tuning_for(voice_id) == value.get(
+                    voice_id, VS.default_tuning())
         elif field == "language":
             answer = "The file is there and it is fine."
             assert VS.spoken_language(dock.voice.settings.language, answer) == (
@@ -357,6 +401,32 @@ def _voice_effect(field):
             assert detector.silence_seconds == value
 
     return effect
+
+
+def _set_voice_combo(lang):
+    return lambda ctx, d, v: _combo_data(d.page("voice").voice_combos[lang], v)
+
+
+def _voice_combo_shown(lang):
+    return lambda d: d.page("voice").voice_combos[lang].currentData()
+
+
+def _set_tuning(ctx, dialog, value) -> None:
+    """Every voice's sliders to *value* (voice id -> tuning; the defaults
+    for a voice it leaves out), the chosen voices unchanged."""
+    page = dialog.page("voice")
+    for lang, combo in page.voice_combos.items():
+        chosen = combo.currentData()
+        for voice_id in VS.VOICES[lang]:
+            _combo_data(combo, voice_id)
+            tuning = value.get(voice_id, VS.default_tuning())
+            for name, slider in page.sliders[lang].items():
+                slider.setValue(round(tuning[name] / VS.TUNING[name].step))
+        _combo_data(combo, chosen)
+
+
+def _tuning_shown(dialog):
+    return dialog.page("voice").values()["tuning"]
 
 
 def _voice_row(field, values, set_ui, shown, bad):
@@ -402,6 +472,55 @@ def _audio_row(field, values, set_ui, shown, bad):
                AS.AudioSettings().get(field), set_ui, shown,
                lambda c: AS.AudioSettings.load().get(field),
                lambda c, v: _edit_audio(c, field, v), bad, _audio_effect(field))
+
+
+def _edit_analysis(ctx, key, value) -> None:
+    path = ANS.settings_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = _read_json(path) or {}
+    data[key] = value
+    path.write_text(json.dumps(data))
+
+
+def _analysis_effect(field):
+    """What the open Analysis dock runs with (the dialog told it after the
+    save) and what a fresh load of analysis.json gives."""
+
+    def effect(ctx, win, value) -> None:
+        dock = win._analysis_dock
+        assert dock._analysis.get(field) == value
+        assert ANS.AnalysisSettings.load().get(field) == value
+        if field in dock._options():
+            assert dock._options()[field] == value
+
+    return effect
+
+
+def _analysis_value(field):
+    return lambda d: d.page("analysis").values()[field]
+
+
+def _set_analysis_mb(ctx, dialog, value) -> None:
+    dialog.page("analysis").max_bytes_spin.setValue(value // 1_000_000)
+
+
+def _set_analysis_seconds(ctx, dialog, value) -> None:
+    dialog.page("analysis").time_spin.setValue(round(value))
+
+
+def _set_analysis_profile(ctx, dialog, value) -> None:
+    dialog.page("analysis")._select_profile(value)
+
+
+def _set_analysis_categories(ctx, dialog, value) -> None:
+    dialog.page("analysis").categories_edit.setPlainText("\n".join(value))
+
+
+def _analysis_row(field, values, set_ui, bad):
+    return Row(f"analysis_{field}", "analysis", f"analysis.json {field}", values,
+               ANS.AnalysisSettings().get(field), set_ui, _analysis_value(field),
+               lambda c: ANS.AnalysisSettings.load().get(field),
+               lambda c, v: _edit_analysis(c, field, v), bad, _analysis_effect(field))
 
 
 def _set_hotkey(ctx, dialog, value) -> None:
@@ -639,6 +758,24 @@ ROWS = [
         lambda c: _window_pref(c, "hidden_color"),
         lambda c, v: _edit_window(c, window_prefs.HIDDEN_COLOR_KEY, v), ("#12", 7, "red"),
         effect_colour, new_window=True),
+    Row("toolbar_grouping", "toolbar", "session.json window.toolbar_grouping", (False,), True,
+        _set_check("toolbar", "grouping_check"), _page_attr("toolbar", "grouping_check"),
+        lambda c: _toolbar_style(c).grouping,
+        lambda c, v: _edit_window(c, TC.GROUPING_KEY, v), ("no", 0, None),
+        effect_toolbar_grouping, new_window=True),
+    Row("toolbar_category_tint", "toolbar", "session.json window.toolbar_category_tint",
+        (False,), True,
+        _set_check("toolbar", "tint_check"), _page_attr("toolbar", "tint_check"),
+        lambda c: _toolbar_style(c).tint,
+        lambda c, v: _edit_window(c, TC.TINT_KEY, v), ("off", 0),
+        effect_toolbar_tint, new_window=True),
+    Row("toolbar_category_colors", "toolbar", "session.json window.toolbar_category_colors",
+        ({"media": "#ff0000"}, {"llm": "#00ff00", "files": "#123456"}), {},
+        set_toolbar_colours, lambda d: d.page("toolbar").colour_overrides(),
+        lambda c: _toolbar_style(c).overrides(),
+        lambda c, v: _edit_window(c, TC.COLORS_KEY, v),
+        ("red", 5, {"media": "#12"}, {"nope": "#ffffff"}, ["#ffffff"]),
+        effect_toolbar_colours, new_window=True),
     Row("show_hidden", "files", "session.json window.show_hidden", (False,), True,
         _set_check("files", "show_hidden_check"), _page_attr("files", "show_hidden_check"),
         lambda c: _window_pref(c, "show_hidden"),
@@ -699,8 +836,16 @@ ROWS = [
                _page_attr("voice", "output_check"), ("yes", 1, None)),
     _voice_row("language", ("de", "en"), _set_combo("voice", "language_combo"),
                _combo_shown("voice", "language_combo"), ("fr", 5, None)),
-    _voice_row("gender", ("female",), _set_combo("voice", "gender_combo"),
-               _combo_shown("voice", "gender_combo"), ("robot", True)),
+    _voice_row("voice_de", ("piper-de-kerstin",), _set_voice_combo("de"),
+               _voice_combo_shown("de"), ("piper-en-ryan", "robot", 5)),
+    _voice_row("voice_en", ("piper-en-lessac",), _set_voice_combo("en"),
+               _voice_combo_shown("en"), ("piper-de-thorsten", None)),
+    _voice_row("tuning", ({"piper-de-thorsten": {**VS.default_tuning(), "speed": 1.5,
+                                                 "pitch": -2.0},
+                           "piper-en-lessac": {**VS.default_tuning(), "volume": 0.5,
+                                               "pause": 1.0}},),
+               _set_tuning, _tuning_shown,
+               ("x", [1], {"piper-en-ryan": {"speed": 9}}, {"nope": {"speed": 1.5}})),
     _voice_row("input_mode", ("toggle", "conversation"), _set_combo("voice", "mode_combo"),
                _combo_shown("voice", "mode_combo"), ("always", 2)),
     _voice_row("hotkey", ("Ctrl+Shift+V", "F7"), _set_hotkey, _shown_hotkey, ("A", "", 9)),
@@ -714,6 +859,18 @@ ROWS = [
                _page_attr("audio", "output_slider", "value"), (101, -1, "50", True, 50.5)),
     _audio_row("input_volume", (75,), _set_spin("audio", "input_slider"),
                _page_attr("audio", "input_slider", "value"), (200, "loud", False)),
+    _analysis_row("auto_analyse", (False,), _set_check("analysis", "auto_check"), ("no", 0)),
+    _analysis_row("llm_profile", ("sift-model",), _set_analysis_profile, (5, None)),
+    _analysis_row("max_bytes", (1_000_000, 2_000_000), _set_analysis_mb,
+                  (0, -5, "big", True)),
+    _analysis_row("time_budget", (5.0, 3600.0), _set_analysis_seconds, (0, 3601, "60", True)),
+    _analysis_row("vision", (False,), _set_check("analysis", "vision_check"), ("no", 1)),
+    _analysis_row("context_tokens", (8192, 256), _set_spin("analysis", "context_spin"),
+                  (100, -1, "8k")),
+    _analysis_row("tags", (5, 32), _set_spin("analysis", "tags_spin"), (33, -1, True)),
+    _analysis_row("categories", (["Invoices", "Contracts"],), _set_analysis_categories,
+                  ("Invoices", ["a", "A"], [3])),
+    _analysis_row("cache", (False,), _set_check("analysis", "cache_check"), ("off", 0)),
     Row("metadata_write_mode", "metadata", "settings.json metadata_write_mode", (MT.MODE_COPY,),
         MT.MODE_IN_PLACE,
         lambda c, d, v: (d.page("metadata").copy_radio if v == MT.MODE_COPY

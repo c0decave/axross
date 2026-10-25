@@ -3,9 +3,12 @@
 Two lanes, each its own background thread and worker process:
 
 * **auto** - sift without an LLM, for every selection while the dock is
-  open. The latest selection wins: a request that has not started is
+  open (unless *Automatic analysis* is off in Edit > Settings… > Analysis
+  (sift): then a selection only names the file, and *Analyse* runs it).
+  The latest selection wins: a request that has not started is
   replaced, a running one older than CANCEL_AFTER_SECONDS is cancelled.
-* **llm** - sift with the active LLM profile, on request: a FIFO queue. A
+* **llm** - sift with the LLM profile chosen for analysis (the active one
+  unless the Analysis settings name another), on request: a FIFO queue. A
   model can take minutes, so this lane is never cancelled by a new
   selection and never holds up the auto lane; its answers are kept for the
   session and shown when a file is selected again. A folder or several
@@ -19,6 +22,10 @@ own, so neither drops the other. A failed LLM answer leaves the automatic
 result on screen with the error above it. Live progress shows counts only:
 sift removes secrets from the model's answer once it is complete, and the
 raw stream would show what it is about to hide.
+
+Every request carries the Analysis settings (core.analysis_settings: read
+limit, time budget, vision, context, tags, categories, cache);
+:meth:`AnalysisDock.reload_settings` takes a saved change in at once.
 
 Everything sift returns is derived from the file's content - the file can
 be hostile - so every value is HTML-escaped before it reaches the
@@ -49,6 +56,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import analysis_settings as AS
 from core import llm_profiles as LP
 from core.file_analysis import AnalysisResult, FileAnalyzer, Target
 from core.i18n import tr
@@ -59,6 +67,15 @@ log = logging.getLogger(__name__)
 CANCEL_AFTER_SECONDS = 2.0
 #: Most files one batch may queue.
 MAX_BATCH = 500
+#: The dock's name everywhere a user sees it (title bar, Panels menu, toolbar
+#: tooltip): it is sift's dock. Translated where it is shown.
+DOCK_TITLE = "Analysis (sift)"
+#: What every entry point shows when sift cannot be imported (axross-slim, or
+#: a source install without the extra). The Features link follows it.
+NO_SIFT_MESSAGE = (
+    "File analysis needs sift, which is not installed in this build. sift comes with "
+    "axross-full, or as the axross[sift] extra: pip install \"axross[sift]\"."
+)
 
 
 def _esc(value) -> str:
@@ -197,10 +214,17 @@ class _Lane(QObject):
         self._thread: threading.Thread | None = None
 
     def request(
-        self, token: int, target: Target, force: bool, llm: dict | None, *, front: bool = False
+        self,
+        token: int,
+        target: Target,
+        force: bool,
+        llm: dict | None,
+        *,
+        front: bool = False,
+        options: dict | None = None,
     ) -> None:
         with self._cond:
-            item = (token, target, force, llm)
+            item = (token, target, force, llm, options)
             if not self._fifo:
                 self._waiting.clear()
             if front:
@@ -230,9 +254,17 @@ class _Lane(QObject):
             self._waiting = kept
         return removed
 
-    def cached(self, target: Target, llm: dict | None) -> AnalysisResult | None:
+    def cached(
+        self, target: Target, llm: dict | None, options: dict | None = None
+    ) -> AnalysisResult | None:
         analyzer = self.analyzer
-        return analyzer.cached(target, llm) if analyzer is not None else None
+        return analyzer.cached(target, llm, options) if analyzer is not None else None
+
+    def clear_session(self) -> None:
+        analyzer = self.analyzer
+        clear = getattr(analyzer, "clear_session", None)
+        if callable(clear):
+            clear()
 
     def _run(self) -> None:
         while True:
@@ -241,7 +273,7 @@ class _Lane(QObject):
                     self._cond.wait()
                 if self._stop:
                     return
-                token, target, force, llm = self._waiting.popleft()
+                token, target, force, llm, options = self._waiting.popleft()
                 self._busy_since = time.monotonic()
                 cancel = self._job_cancel = threading.Event()
             self.started.emit(token)
@@ -254,6 +286,7 @@ class _Lane(QObject):
                     llm=llm,
                     on_event=(lambda e, t=token: self.event.emit(t, e)) if llm else None,
                     cancel=cancel,
+                    options=options,
                 )
             except Exception as exc:  # never let the thread die
                 log.exception("analysis of %s failed", target.path)
@@ -279,6 +312,15 @@ class _Lane(QObject):
             self._cond.notify()
         if self.analyzer is not None:
             self.analyzer.close()
+
+
+def _default_analyzer() -> FileAnalyzer:
+    """sift in a worker child that keeps its results in axross's cache
+    folder (core.analysis_settings.cache_dir; the cache switch is per
+    request)."""
+    from core.analysis_worker import AnalysisWorker
+
+    return FileAnalyzer(AnalysisWorker(cache_dir=AS.cache_dir()))
 
 
 def _ask_remote(parent, profile: LP.LLMProfile, host: str) -> tuple[bool, bool]:
@@ -320,13 +362,19 @@ class AnalysisDock(QDockWidget):
         settings_saver: Callable[[LP.LLMSettings], None] | None = None,
         key_lookup: Callable[[str], str] | None = None,
         confirm_remote: Callable[[LP.LLMProfile, str], tuple[bool, bool]] | None = None,
+        analysis_settings_loader: Callable[[], AS.AnalysisSettings] | None = None,
     ) -> None:
-        super().__init__(tr("Analysis"), parent)
+        super().__init__(tr(DOCK_TITLE), parent)
         self.setObjectName("axAnalysisDock")
         from core.analysis_worker import sift_available
 
-        factory = analyzer_factory or FileAnalyzer
+        factory = analyzer_factory or _default_analyzer
         self._available = available or sift_available
+        self._load_analysis = analysis_settings_loader or AS.AnalysisSettings.load
+        self._analysis = self._read_analysis_settings()
+        #: The file on screen was selected while automatic analysis is off:
+        #: nothing ran for it yet (Analyse runs it).
+        self._held = False
         self._load_settings = settings_loader or LP.LLMSettings.load
         self._save_settings = settings_saver or (lambda s: s.save())
         self._key_lookup = key_lookup or LP.get_api_key
@@ -406,7 +454,8 @@ class AnalysisDock(QDockWidget):
         self.setWidget(body)
         self._set_mode_icon(False)
         self.refresh_profiles()  # again on Show and after the profile dialog, never per selection
-        self.show_message(tr("Select a file to see what it is."))
+        if self.ensure_available():
+            self.show_message(tr("Select a file to see what it is."))
 
     # -- state ---------------------------------------------------------------
     def _set_mode_icon(self, with_llm: bool) -> None:
@@ -422,9 +471,45 @@ class AnalysisDock(QDockWidget):
         except Exception:  # icon set unavailable: the tooltip says it anyway
             self.mode_icon.clear()
 
-    def refresh_profiles(self) -> None:
+    def _read_analysis_settings(self) -> AS.AnalysisSettings:
         try:
-            self._profile = self._load_settings().active_profile()
+            return self._load_analysis()
+        except Exception:  # a broken settings file must not break the dock
+            log.exception("Analysis settings could not be read")
+            return AS.AnalysisSettings()
+
+    def _options(self) -> dict:
+        return self._analysis.run_options()
+
+    def reload_settings(self) -> None:
+        """Take in the saved Analysis settings (after Settings > Apply): the
+        next request uses them, the LLM profile is chosen again, and the
+        file on screen is explained again when what shapes it changed - at
+        once while the dock is shown; a hidden dock runs nothing and
+        forgets the file, so showing it explains the selection anew."""
+        before = (self._analysis.run_options(), self._analysis.auto_analyse)
+        self._analysis = self._read_analysis_settings()
+        self.refresh_profiles()
+        changed = before != (self._analysis.run_options(), self._analysis.auto_analyse)
+        target = self._target
+        if target is None or not self._analysis.auto_analyse or not (self._held or changed):
+            return
+        if not self.isVisible():
+            self._target = None
+            self._held = False
+            return
+        self.analyse(target, force=True)
+
+    def clear_session_cache(self) -> None:
+        """Forget the results kept for this session (Clear Cache)."""
+        for lane in (self._auto, self._llm):
+            lane.clear_session()
+
+    def refresh_profiles(self) -> None:
+        name = self._analysis.llm_profile
+        try:
+            settings = self._load_settings()
+            self._profile = (settings.profile(name) if name else None) or settings.active_profile()
         except Exception:  # a broken settings file must not break the dock
             log.exception("LLM settings could not be read")
             self._profile = None
@@ -433,6 +518,7 @@ class AnalysisDock(QDockWidget):
     def _update_buttons(self) -> None:
         has_target = self._target is not None
         self.again.setEnabled(has_target)
+        self.again.setText(tr("Analyse") if self._held else tr("Analyse again"))
         self.llm_button.setEnabled(has_target and self._profile is not None)
         self.llm_button.setToolTip(
             tr("Explain this file with the LLM profile {name}").format(name=self._profile.name)
@@ -449,6 +535,7 @@ class AnalysisDock(QDockWidget):
         self._latest = self._latest_llm = -1  # no token is negative: a late result is dropped
         self._auto_result = self._llm_result = None
         self._target = None
+        self._held = False
         self._offer = None
         self.batch_button.hide()
         self.title.setText("")
@@ -456,11 +543,31 @@ class AnalysisDock(QDockWidget):
         self.body.setHtml(f"<p>{_esc(text)}</p>")
         self._update_buttons()
 
+    def ensure_available(self) -> bool:
+        """True when sift can run. Otherwise the dock says where sift comes
+        from (axross-full or the axross[sift] extra) with a link to Help >
+        Features…, and the caller does nothing more: no worker is started."""
+        if self._available():
+            return True
+        self.show_message(tr(NO_SIFT_MESSAGE))
+        self.body.append(
+            '<p><a href="axross:features/extra:sift">' + _esc(tr("Show in Features…")) + "</a></p>"
+        )
+        return False
+
+    def offers_folder(self, backend, path: str) -> bool:
+        """True while the folder *path* of *backend* is on offer (or listed,
+        or queued from that offer)."""
+        offer = self._offer
+        return isinstance(offer, tuple) and offer[0] is backend and offer[1] == path
+
     # -- batches ---------------------------------------------------------------
     # A reload of the pane (F5, an operation, the watcher) keeps the selection
     # and offers it again: the same offer on screen is kept as it is - its
     # listing in flight, its queued state - instead of being offered anew.
     def offer_batch(self, targets: list[Target], label: str) -> None:
+        if not self.ensure_available():
+            return
         if isinstance(self._offer, list) and self._offer == list(targets):
             return
         self.show_message(label)
@@ -469,8 +576,9 @@ class AnalysisDock(QDockWidget):
         self._show_offer()
 
     def offer_folder(self, backend, path: str, name: str) -> None:
-        offer = self._offer
-        if isinstance(offer, tuple) and offer[0] is backend and offer[1] == path:
+        if not self.ensure_available():
+            return
+        if self.offers_folder(backend, path):
             return
         label = tr("Folder {name}").format(name=name)
         self.show_message(label)
@@ -536,7 +644,7 @@ class AnalysisDock(QDockWidget):
             self.queue_list.addItem(row)
             self._rows[token] = row
             self._row_targets[token] = target
-            self._llm.request(token, target, False, request)
+            self._llm.request(token, target, False, request, options=self._options())
         self.queue_list.show()
         self.stop_button.show()
         self.batch_button.hide()
@@ -572,21 +680,18 @@ class AnalysisDock(QDockWidget):
         if url.scheme() == "axross" and url.path().startswith("features/"):
             self.features_requested.emit(url.path().split("/", 1)[1])
 
-    def analyse(self, target: Target, *, force: bool = False) -> None:
-        if not self._available():
-            self.show_message(
-                tr(
-                    "File analysis needs the sift package, which is not installed in this "
-                    "Python environment."
-                )
-            )
-            self.body.append(
-                '<p><a href="axross:features/extra:sift">' + _esc(tr("Show in Features…")) + "</a></p>"
-            )
+    def analyse(self, target: Target, *, force: bool = False, explicit: bool = False) -> None:
+        """Explain *target*. A selection (neither *force* nor *explicit*)
+        runs nothing while automatic analysis is off: the file is named and
+        Analyse runs it. *explicit* is a request for this file (Analyse with
+        sift), *force* one that skips the results kept for the session."""
+        if not self.ensure_available():
             return
-        if not force and target == self._target:
+        run = force or explicit or self._analysis.auto_analyse
+        if not force and target == self._target and not (run and self._held):
             return  # on screen or under way already: a running LLM request is kept
         self._target = target
+        self._held = not run
         self._offer = None  # a file replaces a folder or batch on offer
         self.batch_button.hide()
         self._latest_llm = -1
@@ -594,15 +699,28 @@ class AnalysisDock(QDockWidget):
         self.title.setText(target.name)
         self.progress_label.hide()
         self._update_buttons()
+        options = self._options()
         # The cache is keyed without the API key: look it up without the keyring.
         probe = LP.worker_request(self._profile, "") if self._profile else None
-        known = self._llm.cached(target, probe) if probe and not force else None
+        known = self._llm.cached(target, probe, options) if probe and not force else None
         token = self._next_token()
         if known is not None:  # the model already explained this file
             self._on_finished(token, known)
             return
+        if not run:
+            known = self._auto.cached(target, None, options)
+            if known is not None:  # explained before: shown, nothing runs
+                self._held = False
+                self._update_buttons()
+                self._on_finished(token, known)
+                return
+            self._latest = -1
+            off = tr("Automatic analysis is off (Settings → Analysis (sift)).")
+            how = tr("Analyse explains this file without an LLM; Analyse with LLM asks the model.")
+            self.body.setHtml(f"<p>{_esc(off)}</p><p>{_esc(how)}</p>")
+            return
         self.body.setHtml(f"<p><i>{_esc(tr('Analysing…'))}</i></p>")
-        self._auto.request(token, target, force, None)
+        self._auto.request(token, target, force, None, options=options)
 
     def analyse_with_llm(self) -> None:
         if self._target is None:
@@ -616,7 +734,9 @@ class AnalysisDock(QDockWidget):
             tr("Asking {model}…").format(model=request["model"] or self._profile.name)
         )
         self.progress_label.show()
-        self._llm.request(token, self._target, False, request, front=True)
+        self._llm.request(
+            token, self._target, False, request, front=True, options=self._options()
+        )
 
     def _llm_request(self, *, ask: bool) -> dict | None:
         """The worker request for the active profile, with its key from the keyring.

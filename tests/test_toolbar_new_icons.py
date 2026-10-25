@@ -44,9 +44,13 @@ def pump(seconds: float = 0.05) -> None:
 @pytest.fixture
 def window(tmp_path):
     from ui.main_window import MainWindow
+    from ui.toolbar_categories import ToolbarStyle
 
     win = MainWindow()
     win._reconnect_timer.stop()
+    # The order of the code: grouping by category off (the grouped bars:
+    # tests/test_toolbar_categories.py).
+    win.set_toolbar_style(ToolbarStyle(grouping=False), store=False)
     win.show()
     win._active_pane.navigate(str(tmp_path))
     pump()

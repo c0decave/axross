@@ -55,7 +55,13 @@ def stores(tmp_path, monkeypatch):
 
 
 def _open(stores, width: int = 2400):
+    """A window with grouping by category off: this file holds the drag
+    and the stored order of the plain bars (the order of the code);
+    tests/test_toolbar_categories.py holds the grouped bars."""
+    from ui.toolbar_categories import ToolbarStyle
+
     win = stores.make_window()
+    win.set_toolbar_style(ToolbarStyle(grouping=False), store=False)
     win.resize(width, 700)
     win.show()
     pump()

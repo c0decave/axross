@@ -90,6 +90,7 @@ from core import media_collect as MC
 from core import media_load as ML
 from core import multimedia_probe as MPROBE
 from core.i18n import tr
+from core.multimedia_env import prime_notify_lookups
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
@@ -860,8 +861,10 @@ class MediaViewer(QWidget):
             self._video_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.pages.addWidget(self._video_widget)
             self._player = QMediaPlayer(self)
+            prime_notify_lookups(self._player)
             try:
                 self._audio = QAudioOutput(self)
+                prime_notify_lookups(self._audio)
                 self._player.setAudioOutput(self._audio)
             except Exception:  # noqa: BLE001 - no audio device: play silently
                 log.debug("no audio output", exc_info=True)

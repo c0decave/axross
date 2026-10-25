@@ -1,7 +1,8 @@
 """Audio helpers of the Agent dock's microphone and speaker, without Qt:
 the level of a piece of PCM, the end of speech (toggle and conversation
-input end on silence) and conversion of what a sound card delivers into
-16 kHz mono int16 for recognition. Audio is only ever held in memory.
+input end on silence), conversion of what a sound card delivers into
+16 kHz mono int16 for recognition, and the pitch of a voice. Audio is only
+ever held in memory.
 """
 
 from __future__ import annotations
@@ -60,6 +61,43 @@ def resample(pcm: bytes, from_rate: int, to_rate: int) -> bytes:
     audio = np.frombuffer(pcm, dtype="<i2").astype(np.float64)
     n = int(len(audio) * to_rate / from_rate)
     out = np.interp(np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio)
+    return np.clip(np.round(out), -32768, 32767).astype("<i2").tobytes()
+
+
+#: Semitones :func:`pitch_shift` moves at most (two octaves).
+PITCH_LIMIT = 24.0
+
+
+def pitch_factor(semitones: float) -> float:
+    return 2.0 ** (semitones / 12.0)
+
+
+def pitch_shift(pcm: bytes, semitones: float) -> bytes:
+    """Mono int16 *pcm* *semitones* higher (lower when negative), and
+    shorter (longer) by the same factor: band-limited resampling at the
+    same rate (FFT; shifting up drops what would pass the Nyquist frequency
+    instead of folding it back). Piper has no pitch of its own: the voice
+    worker asks it for speech that much slower first (length_scale), so the
+    speech keeps its length. Raises ValueError beyond :data:`PITCH_LIMIT`."""
+    if (not isinstance(semitones, (int, float)) or isinstance(semitones, bool)
+            or not math.isfinite(semitones) or abs(semitones) > PITCH_LIMIT):
+        raise ValueError(f"no pitch shift of {semitones!r} semitones")
+    pcm = pcm[: len(pcm) // 2 * 2]
+    if not semitones or not pcm:
+        return pcm
+    n = len(pcm) // 2
+    m = max(1, int(round(n / pitch_factor(semitones))))
+    try:
+        import numpy as np
+    except ImportError:  # pragma: no cover - numpy comes with the voice packages
+        return resample(pcm, n, m)
+    spectrum = np.fft.rfft(np.frombuffer(pcm, dtype="<i2").astype(np.float64))
+    bins = m // 2 + 1
+    if bins <= len(spectrum):
+        spectrum = spectrum[:bins]
+    else:
+        spectrum = np.concatenate([spectrum, np.zeros(bins - len(spectrum), complex)])
+    out = np.fft.irfft(spectrum, m) * (m / n)
     return np.clip(np.round(out), -32768, 32767).astype("<i2").tobytes()
 
 

@@ -190,12 +190,57 @@ def test_happy_a_german_answer_is_spoken_with_english_terms(env):
 
 
 def test_happy_english_answer_female_voice(env):
-    env.settings.set("gender", "female")
+    env.settings.set("voice_en", "piper-en-lessac")
     env.ready = {"piper-en-lessac"}
     assert env.ctl.speak_answer("I have read the file and it is fine.")
     assert pump(lambda: env.tts.requests)
     assert env.tts.requests[0]["voice"].endswith("en_US-lessac-medium.onnx")
     assert env.tts.requests[0]["lang"] == "en"
+
+
+def test_happy_each_language_speaks_with_its_own_voice(env):
+    env.settings.set("voice_de", "piper-de-kerstin")
+    env.ready = {"piper-de-kerstin", "piper-en-ryan"}
+    assert env.ctl.speak_answer("Ich habe die Datei gelesen, sie ist in Ordnung.")
+    assert env.ctl.speak_answer("I have read the file and it is fine.")
+    assert pump(lambda: len(env.tts.requests) == 2)
+    voices = [r["voice"].rsplit("/", 1)[1] for r in env.tts.requests]
+    assert voices == ["de_DE-kerstin-low.onnx", "en_US-ryan-medium.onnx"]
+
+
+def test_happy_a_spoken_answer_carries_how_its_voice_speaks(env):
+    tuned = {**VS.default_tuning(), "speed": 1.4, "pitch": -2.0, "expressiveness": 0.5,
+             "rhythm": 1.5, "volume": 0.6, "pause": 0.8}
+    env.settings.set("tuning", {"piper-en-lessac": tuned,
+                                "piper-de-thorsten": {"speed": 0.7}})
+    env.settings.set("voice_en", "piper-en-lessac")
+    env.ready = {"piper-en-lessac", "piper-de-thorsten"}
+    assert env.ctl.speak_answer("I have read the file and it is fine.")
+    assert pump(lambda: env.tts.requests)
+    req = env.tts.requests[0]
+    assert {k: req[k] for k in VS.TUNING} == tuned
+
+
+def test_happy_phrases_speak_with_the_tuning_too(env):
+    env.settings.set("language", "de")
+    env.settings.set("tuning", {"piper-de-thorsten": {"pitch": 3.0}})
+    env.ready = {"piper-de-thorsten"}
+    assert env.ctl.say_refusal("read_only")
+    assert pump(lambda: env.tts.requests)
+    assert env.tts.requests[0]["pitch"] == 3.0 and env.tts.requests[0]["speed"] == 1.0
+
+
+def test_edge_saved_tuning_takes_effect_with_the_next_answer(env):
+    env.ready = {"piper-en-ryan"}
+    env.settings = VS.VoiceSettings(output_enabled=True, language="en")
+    env.ctl.reload()
+    newer = VS.VoiceSettings(output_enabled=True, language="en")
+    newer.set("tuning", {"piper-en-ryan": {"speed": 2.0}})
+    env.settings = newer  # the Voice page saved, the dock reloads
+    env.ctl.reload()
+    assert env.ctl.speak_answer("The file is there.")
+    assert pump(lambda: env.tts.requests)
+    assert env.tts.requests[0]["speed"] == 2.0
 
 
 def test_sad_output_off_says_nothing(env):
@@ -392,6 +437,7 @@ def test_happy_the_phrase_plays_the_line_and_is_not_passed_on(env, caplog):
     assert len(env.tts.requests) == 1  # no greeting before it
     req = env.tts.requests[-1]
     assert req["voice"].endswith("en_US-ryan-medium.onnx") and req["length_scale"] == 1.15
+    assert not set(VS.TUNING) & set(req)  # the fixed line speaks as it always did
     # Lower and slower: stretched as if played at 0.9 x 22050 Hz.
     assert env.player.chunks[-1][1] == 22050
     assert abs(len(env.player.chunks[-1][0]) // 2 - 50 / 0.9) <= 1

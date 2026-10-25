@@ -51,7 +51,7 @@ def _home(tmp_path) -> Path:
 def _env(home: Path, **extra) -> dict:
     env = {k: v for k, v in os.environ.items()
            if not k.startswith("AXROSS_") and k not in FFMPEG_VARS
-           and k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+           and k not in ("DISPLAY", "WAYLAND_DISPLAY", "QT_AUDIO_BACKEND")}
     env.update(
         HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
         XDG_DATA_HOME=str(home / ".local" / "share"), XDG_STATE_HOME=str(home / ".local" / "state"),

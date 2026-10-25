@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend_registry import all_backends, init_registry
+from core.desktop_open import open_in_browser
 from core.i18n import tr
 from core.profiles import SIMPLE_PASSWORD_PROTOCOLS, ConnectionProfile, ProfileManager
 from core.ssh_client import SSHSession, UnknownHostKeyError
@@ -296,6 +297,12 @@ class ConnectionDialog(QDialog):
         self._gdrive_client_secret.setPlaceholderText("Google OAuth Client Secret")
         conn_form.addRow("Client Secret:", self._gdrive_client_secret)
 
+        self._gdrive_import = QPushButton(tr("Import Client JSON…"))
+        self._gdrive_import.setToolTip(tr("The JSON file Google offers for download next to "
+                                          "the client (type Desktop app)"))
+        self._gdrive_import.clicked.connect(self._import_google_client)
+        conn_form.addRow("", self._gdrive_import)
+
         # --- Dropbox fields ---
         self._dropbox_app_key = QLineEdit()
         self._dropbox_app_key.setPlaceholderText("Dropbox App Key")
@@ -305,6 +312,14 @@ class ConnectionDialog(QDialog):
         self._dropbox_app_secret.setEchoMode(QLineEdit.EchoMode.Password)
         self._dropbox_app_secret.setPlaceholderText("Dropbox App Secret")
         conn_form.addRow("App Secret:", self._dropbox_app_secret)
+
+        # Where an OAuth service's values come from (core.oauth_help).
+        self._oauth_help = QLabel()
+        self._oauth_help.setWordWrap(True)
+        self._oauth_help.setTextFormat(Qt.TextFormat.RichText)
+        self._oauth_help.setOpenExternalLinks(False)
+        self._oauth_help.linkActivated.connect(open_in_browser)
+        conn_form.addRow(self._oauth_help)
 
         # --- iSCSI fields ---
         self._iscsi_target_iqn = QLineEdit()
@@ -590,6 +605,10 @@ class ConnectionDialog(QDialog):
         self._set_form_row_visible(self._dropbox_app_key, is_dropbox)
         self._set_form_row_visible(self._dropbox_app_secret, is_dropbox)
 
+        # OAuth: where the values come from, and the Google client file
+        self._set_form_row_visible(self._gdrive_import, is_gdrive)
+        self._show_oauth_help(proto)
+
         # iSCSI
         self._set_form_row_visible(self._iscsi_target_iqn, is_iscsi)
         self._set_form_row_visible(self._iscsi_mount_point, is_iscsi)
@@ -652,6 +671,42 @@ class ConnectionDialog(QDialog):
         info = get_backend(proto)
         if info:
             self._port.setValue(info.default_port)
+
+    def _show_oauth_help(self, proto: str) -> None:
+        from html import escape
+
+        from core.oauth_help import GUIDES
+
+        guide = GUIDES.get(proto)
+        self._oauth_help.setVisible(guide is not None)
+        if guide is None:
+            self._oauth_help.clear()
+            return
+        steps = "".join(f"<li>{escape(tr(step))}</li>" for step in guide.steps)
+        self._oauth_help.setText(
+            f"<p>{escape(tr('Where these values come from:'))} "
+            f'<a href="{escape(guide.console_url)}">{escape(guide.console_name)}</a> '
+            f"({escape(guide.console_url)})</p><ol>{steps}</ol>"
+            f"<p>{escape(tr(guide.sign_in))}</p>")
+
+    def _import_google_client(self) -> None:
+        """Fill Client ID and Secret from Google's downloaded client file."""
+        from core.oauth_help import MAX_CLIENT_FILE_BYTES, parse_google_client
+
+        path, _filter = QFileDialog.getOpenFileName(
+            self, tr("Import Google Client JSON"), "", tr("JSON files (*.json);;All files (*)"))
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read(MAX_CLIENT_FILE_BYTES + 1)
+            client_id, secret = parse_google_client(text)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            QMessageBox.warning(self, tr("Import Google Client JSON"),
+                                tr("The file cannot be used: {reason}").format(reason=exc))
+            return
+        self._gdrive_client_id.setText(client_id)
+        self._gdrive_client_secret.setText(secret)
 
     def _set_form_row_visible(self, widget: QWidget, visible: bool) -> None:
         """Show/hide a QFormLayout row (widget + its label)."""

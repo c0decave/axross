@@ -54,7 +54,7 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 ![Die Toolbar mit einem Icon je Werkzeug über zwei Panes und der Bookmark-Sidebar](docs/screenshots/toolbar.png)
 
-*Toolbar.* Ein Button je Werkzeug - Agent, Analysis, Terminal, Find Files, Scripts, Python-Console, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. In einem schmalen Fenster rücken die Werkzeuge in eine zweite Zeile, statt zu verschwinden. Ein Button lässt sich per Drag and Drop entlang seiner Leiste verschieben; die Reihenfolge bleibt erhalten, und das Kontextmenü der Toolbar hat Reset Toolbar Order.
+*Toolbar.* Ein Button je Werkzeug - Agent, Analysis (sift), Terminal, Find Files, Scripts, Python-Console, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. In einem schmalen Fenster rücken die Werkzeuge in eine zweite Zeile, statt zu verschwinden. Die Buttons sind nach Kategorie gruppiert - Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions -, mit einem Separator zwischen den Gruppen, und die Farbe jeder Kategorie liegt als dezenter Tint hinter ihren Buttons, ohne ein Icon schwer lesbar zu machen. Ein Button lässt sich per Drag and Drop innerhalb seiner Gruppe verschieben; die Reihenfolge bleibt erhalten, und das Kontextmenü der Toolbar hat Reset Toolbar Order. Edit → Settings… → Toolbar schaltet Gruppierung und Farben ab und setzt die Farbe jeder Kategorie.
 
 ![Das Fenster Tagged Files mit den Dateien eines Tags](docs/screenshots/tags.png)
 
@@ -78,7 +78,7 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 ![Settings, Seite Voice: gesprochene Antworten, Push-to-Talk und die Hold-Taste](docs/screenshots/voice.png)
 
-*Voice.* Gesprochene Antworten auf Deutsch oder Englisch, Push-to-Talk auf einer Hold-Taste, und wohin der erkannte Text geht.
+*Voice.* Gesprochene Antworten auf Deutsch oder Englisch, eine Stimme je Sprache mit Speed, Pitch, Expressiveness, Volume und Pause (Listen spielt eine Probe), Push-to-Talk auf einer Hold-Taste, und wohin der erkannte Text geht.
 
 ![Manage Bookmarks mit Gruppen, einem Terminal-Bookmark und Remote-Orten](docs/screenshots/bookmarks.png)
 
@@ -114,7 +114,7 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 ![Das Analysis-Dock erklärt eine CSV-Datei](docs/screenshots/analysis.png)
 
-*Analysis-Dock.* Das optionale Extra `sift` erklärt die gewählte Datei — hier eine CSV, ganz ohne LLM.
+*Analysis-Dock (sift).* Das optionale Extra `sift` erklärt die gewählte Datei — hier eine CSV, ganz ohne LLM. Start per Rechtsklick → **Analyse with sift** (ein Ordner: **Analyse Folder with sift**), **Tools → Analyse with sift** oder `Ctrl+Shift+I`; Toolbar-Button und Titelleiste zeigen sifts Sieb. Edit → Settings… → Analysis (sift) schaltet die automatische Analyse ab und setzt sifts Read-Limit, Time Budget, Vision, Context, Tags, Categories, den Cache (mit *Clear Cache*) und ein eigenes LLM-Profil.
 
 ![Zwei Panes in der Thumbnail-Ansicht, helles Theme](docs/screenshots/thumbnails.png)
 
@@ -401,7 +401,8 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 28. **Mit dem Agent sprechen.** Push-to-Talk (F9), Toggle oder
     Conversation Mode im Agent-Dock. Antworten kommen gesprochen auf
     Deutsch oder Englisch mit Piper-Voices, englische IT-Begriffe bleiben
-    englisch; Speech Recognition läuft lokal mit faster-whisper oder auf
+    englisch; jede Stimme hat eigene Speed, Pitch, Expressiveness, Volume
+    und Pause, mit Listen in Settings > Voice angehört; Speech Recognition läuft lokal mit faster-whisper oder auf
     dem LLM-Server, pro Profil gewählt. Die Modelle werden bei Bedarf
     geladen. In `axross-full` enthalten, sonst `pip install
     axross[voice]`.
@@ -433,10 +434,13 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 33. **Media Player.** Ein Extension-Panel für MP3, FLAC, Ogg, Opus, AAC
     und mehr: Playlist mit Drag & Drop und M3U, Seeking, Shuffle und
-    Repeat, ein einklappbarer 10-Band-Equalizer mit Presets, fünf
-    Visualisierungen (Spektrum, gespiegelt, radial, Oszilloskop,
-    VU-Meter), zwischen denen ein Klick darauf wechselt, Titel, Interpret
-    und Cover.
+    Repeat, ein einklappbarer 10-Band-Equalizer mit Presets, zehn
+    Visualisierungen (Spektrum, gespiegelt, radial, Linien- und
+    Polar-Spektrum, Waterfall, Oszilloskop, Stereo-Scope, VU-Meter,
+    Starfield), zwischen denen ein Klick darauf wechselt, in Farbschemata
+    oder eigenen Farben, im Fullscreen wie ein Screensaver oder in einem
+    eigenen Fenster, eine einklappbare Playlist, Titel, Interpret und
+    Cover.
 
 34. **Bookmarks für viele Orte.** Mehrfachauswahl, Gruppen sortiert nach
     Name, Pfad oder Alter, Terminal-Bookmarks (auf einem Profil, einem
@@ -451,12 +455,16 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
     **Help → Scripting Guide** öffnet den API-Guide.
 
 36. **Eine Toolbar für die Werkzeuge.** Buttons mit Icons für Agent,
-    Analysis, Terminal, Find Files, Scripts, die Python-Console, Tags,
+    Analysis (sift), Terminal, Find Files, Scripts, die Python-Console, Tags,
     Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings
-    und Features, in jedem Theme. Buttons lassen sich per Drag and Drop
+    und Features, in jedem Theme, nach Kategorie gruppiert (Connections,
+    Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System,
+    Extensions), jede Kategorie mit ihrer eigenen Farbe hinter ihren
+    Buttons. Buttons lassen sich per Drag and Drop innerhalb ihrer Gruppe
     verschieben; die Reihenfolge bleibt über den Neustart erhalten, und
     Reset Toolbar Order (Rechtsklick auf die Toolbar) stellt den Default
-    wieder her.
+    wieder her. **Edit → Settings… → Toolbar** schaltet Gruppierung und
+    Farben an oder ab und setzt die Farbe jeder Kategorie.
 
 37. **Archive wie Ordner.** ZIP-, TAR- und 7z-Archive öffnen sich in der
     Archiv-Ansicht; verschachtelte Archive lassen sich betreten, und

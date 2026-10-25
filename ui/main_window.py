@@ -40,6 +40,7 @@ from core.profiles import (
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
 from ui import themes, window_prefs
+from ui.analysis_dock import DOCK_TITLE as ANALYSIS_DOCK_TITLE
 from ui.bookmark_edit_dialog import BookmarkEditDialog
 from ui.close_corner import add_close_corner
 from ui.disconnected_pane import KIND_PANE, KIND_TERMINAL, DisconnectedPanePlaceholder
@@ -70,6 +71,8 @@ from ui.window_prefs import (
     RESTORE_ON_START_KEY,
     SHOW_HIDDEN_KEY,
 )
+from ui.extension_panels import PANEL_NODE, ExtensionDock, ExtensionPanelsMixin
+from ui.extension_panels import panel_node_problem as _panel_node_problem
 from ui.workspaces import Workspace, WorkspaceMixin
 from ui.workspaces import session_problem as _workspaces_problem
 
@@ -139,7 +142,7 @@ MAX_SESSION_NODES = 128
 MAX_RESTORED_WINDOW_PX = 100_000
 #: Base64 of QMainWindow.saveGeometry / saveState: a few hundred bytes.
 MAX_SAVED_WINDOW_STATE_CHARS = 64 * 1024
-_SESSION_NODE_TYPES = ("splitter", "pane", "terminal")
+_SESSION_NODE_TYPES = ("splitter", "pane", "terminal", PANEL_NODE)
 
 
 def _session_problem(data) -> str:
@@ -169,6 +172,11 @@ def _session_problem(data) -> str:
         kind = node.get("type", "splitter")
         if kind not in _SESSION_NODE_TYPES:
             return f"A layout entry has an unknown type: {str(kind)[:40]!r}."
+        if kind == PANEL_NODE:
+            problem = _panel_node_problem(node)
+            if problem:
+                return problem
+            continue
         if kind in ("pane", "terminal"):
             if not isinstance(node.get("path", "/"), str):
                 return "A pane path is not text."
@@ -330,7 +338,7 @@ def _desktop_font_size() -> int:
     return _DESKTOP_FONT_PT
 
 
-class MainWindow(WorkspaceMixin, QMainWindow):
+class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
     """Main application window with file panes."""
 
     #: (job_id, ok, detail) — emitted from a scheduler worker thread so
@@ -411,6 +419,10 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         self._setup_bookmark_sidebar()
         self._setup_analysis_dock()
         self._setup_agent_dock()
+        # A sign-in that shows a code in the browser asks for it here (Dropbox).
+        from ui import auth_prompt as _auth_prompt
+
+        _auth_prompt.install()
         self._setup_status_bar()
         # Arm the recurring-job tick. Failure here must never stop the
         # window from opening — a broken schedule file should cost the
@@ -786,13 +798,38 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         network_action.triggered.connect(lambda _checked=False: self._show_network_proxy())
         llm_action = tools_menu.addAction(tr("&LLM Profiles…"))
         llm_action.triggered.connect(lambda _checked=False: self._show_llm_profiles())
+        # sift's Analysis dock on the active pane's selection (else its folder).
+        from ui.icon_provider import icon as _menu_icon
+
+        sift_action = tools_menu.addAction(tr("Analyse with &sift"))
+        sift_action.setToolTip(
+            tr("Explain the selected file in the Analysis dock (sift); with nothing "
+               "selected, offer the folder shown")
+        )
+        sift_action.setProperty("axIcon", "analysis")
+        sift_action.setIcon(_menu_icon("analysis"))  # again on a theme change
+        sift_action.triggered.connect(lambda _checked=False: self.analyse_active_with_sift())
+        self._analyse_sift_action = sift_action
         start_agent_action = tools_menu.addAction(tr("Start &Agent"))
         start_agent_action.setToolTip(
             tr("Open the Agent with a new conversation for the active pane's folder")
         )
         start_agent_action.triggered.connect(lambda _checked=False: self._new_agent_tab())
+        self._new_agent_window_action = tools_menu.addAction(tr("New Agent W&indow"))
+        self._new_agent_window_action.setToolTip(
+            tr("A new Agent conversation in a panel of its own, for the active pane's folder")
+        )
+        self._new_agent_window_action.triggered.connect(
+            lambda _checked=False: self._new_agent_window()
+        )
         agent_settings_action = tools_menu.addAction(tr("A&gent Settings…"))
         agent_settings_action.triggered.connect(lambda _checked=False: self._show_agent_settings())
+        # Settings > Agent > MCP Servers: configure servers, Add from Catalog…
+        mcp_action = tools_menu.addAction(tr("M&CP Servers…"))
+        mcp_action.setToolTip(
+            tr("Configure the agent's MCP servers, or add one from a catalog (runs in podman)")
+        )
+        mcp_action.triggered.connect(lambda _checked=False: self._show_mcp_servers())
         # Opens Settings on the page titled "Audio" (playback, voice); the
         # toolbar shows it beside the Media Player.
         self._av_settings_action = tools_menu.addAction(tr("Audio && &Video Settings…"))
@@ -1022,7 +1059,8 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         buttons = [
             (self._agent_dock.toggleViewAction(), "agent", "Agent: tasks for the LLM agent"),
             (self._analysis_dock.toggleViewAction(), "analysis",
-             "Analysis of the selection (sift) (Ctrl+Shift+I)"),
+             tr("{title}: what the selected file is (Ctrl+Shift+I)").format(
+                 title=tr(ANALYSIS_DOCK_TITLE))),
             (self._terminal_dock.toggleViewAction(), "terminal", "Terminal panel"),
             (self._find_files_action, "find-files", "Find Files (Alt+F7)"),
             (self._scripts_dock.toggleViewAction(), "scripts",
@@ -1106,16 +1144,23 @@ class MainWindow(WorkspaceMixin, QMainWindow):
             for dock in host.docks(ext_id):
                 dock.show()
                 dock.raise_()
+                self.reveal_extension_panel(dock)
             return
         docks = host.docks(ext_id)
         if not docks:
             self.statusBar().showMessage(tr("{title} has no panel.").format(title=tr(title)), 5000)
             return
+        # A panel on a workspace not on screen counts as hidden: the button
+        # brings that workspace to the front (reveal_extension_panel).
         show = not any(d.isVisible() for d in docks)
         for dock in docks:
+            if not show and isinstance(dock, ExtensionDock) and dock.pane_mode:
+                dock.close()  # out of its workspace, as its [x] and the menu entry do
+                continue
             dock.setVisible(show)
             if show:
                 dock.raise_()
+                self.reveal_extension_panel(dock)
 
     def _pack_from_toolbar(self, _checked: bool = False) -> None:
         pane = self._active_pane
@@ -1474,7 +1519,8 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         from ui.analysis_dock import AnalysisDock
 
         self._analysis_dock = AnalysisDock(self)
-        self._install_dock_titlebar(self._analysis_dock, "Analysis", "bot")
+        # sift's own sieve and name: the robot is the Agent's.
+        self._install_dock_titlebar(self._analysis_dock, tr(ANALYSIS_DOCK_TITLE), "analysis")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._analysis_dock)
         self._analysis_dock.hide()
         # Debounced: arrowing through a listing analyses where it stops.
@@ -1503,6 +1549,13 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         self._agent_dock.show_lamp_in(self._agent_dock.titleBarWidget())
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._agent_dock)
         self._agent_dock.hide()
+        # Detached conversations are panels of this window (ui.agent_panels):
+        # the kept ones come back now, before a session layout is restored.
+        self._agent_dock.panel_host = self
+        self._agent_dock.restore_detached()
+        # restore_layout_on_start settles them (main.py calls it before the
+        # event loop runs); without one, the first event-loop pass does.
+        QTimer.singleShot(0, self._settle_agent_panels)
         self._agent_dock.settings_requested.connect(self._show_llm_profiles)
         self._agent_dock.visibilityChanged.connect(self._on_agent_visibility)
         self._focus_agent_action = QAction(tr("Ask the Agent"), self)
@@ -1604,6 +1657,45 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         dock.raise_()
         return dock.start_tab(folder or self._agent_root())  # focuses its input
 
+    def _new_agent_window(self, folder: str | None = None):
+        """Tools > New Agent Window: a new conversation in a panel of its
+        own, for *folder* (default as Start Agent). Returns the panel."""
+        dock = getattr(self, "_agent_dock", None)
+        if dock is None:
+            return None
+        return dock.new_window(folder or self._agent_root())
+
+    # -- detached Agent conversations: panels of this window (ui.agent_panels) --
+
+    def add_agent_panel(self, panel) -> None:
+        """A detached conversation goes on All Workspaces (the dock area);
+        from there it moves like an extension panel."""
+        panel.pane_drop_requested.connect(self._on_pane_drop)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, panel)
+        panel.show()
+        panel.raise_()
+
+    def remove_agent_panel(self, panel) -> None:
+        """A detached conversation was attached back or closed: out of its
+        workspace (which goes when nothing else is in it) or the dock area."""
+        self._panel_homes.pop(panel.objectName(), None)
+        if self._in_layout(panel):
+            self._take_out_of_layout(panel)
+            self._prune_empty_workspaces()
+        else:
+            self.removeDockWidget(panel)
+
+    def _own_panels(self) -> list:
+        dock = getattr(self, "_agent_dock", None)
+        return dock.panels() if dock is not None else []
+
+    def _settle_agent_panels(self) -> None:
+        from PyQt6 import sip
+
+        dock = getattr(self, "_agent_dock", None)
+        if dock is not None and not sip.isdeleted(dock):
+            dock.settle_detached()
+
     def _focus_agent(self) -> None:
         dock = getattr(self, "_agent_dock", None)
         if dock is None:
@@ -1651,6 +1743,18 @@ class MainWindow(WorkspaceMixin, QMainWindow):
             if dock is not None:
                 dock.refresh_profiles()
 
+    def refresh_analysis_settings(self) -> None:
+        """The Analysis dock takes the saved Analysis (sift) settings in."""
+        dock = getattr(self, "_analysis_dock", None)
+        if dock is not None:
+            dock.reload_settings()
+
+    def clear_analysis_session(self) -> None:
+        """Clear Cache: the Analysis dock forgets this session's results too."""
+        dock = getattr(self, "_analysis_dock", None)
+        if dock is not None:
+            dock.clear_session_cache()
+
     def refresh_agent_settings(self) -> None:
         """The open Agent tabs re-read the agent's settings."""
         dock = getattr(self, "_agent_dock", None)
@@ -1668,6 +1772,10 @@ class MainWindow(WorkspaceMixin, QMainWindow):
 
     def _show_agent_settings(self) -> None:
         self.open_settings("agent")
+
+    def _show_mcp_servers(self) -> None:
+        """Tools > MCP Servers…: Settings on Agent > MCP Servers."""
+        self.open_settings("agent", "mcp")
 
     #: The Settings page of playback and voice ("Audio & Video Settings").
     AUDIO_SETTINGS_TITLE = "Audio"
@@ -1699,9 +1807,22 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         pane = self._active_pane
         if dock is None or pane is None or not dock.isVisible():
             return
+        self._analyse_pane_selection(dock, pane)
+
+    def _analyse_pane_selection(
+        self, dock, pane: FilePaneWidget, explicit: bool = False
+    ) -> None:
+        """*explicit*: a request (Tools > Analyse with sift), which runs even
+        while automatic analysis is off; else a selection, which then does not."""
+        if not dock.ensure_available():
+            return  # the dock says where sift comes from
         items = pane.selected_file_items()
         paths = pane.selected_items()
         if not items:
+            # Analyse Folder with sift on empty space: the folder shown stays
+            # on offer while nothing is selected (a reload re-sends this).
+            if dock.offers_folder(pane.backend, pane.current_path):
+                return
             dock.show_message(tr("Select a file to see what it is."))
             return
         if len(items) != len(paths):
@@ -1722,7 +1843,65 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         if item.is_dir:
             dock.offer_folder(pane.backend, paths[0], item.name)
             return
-        dock.analyse(self._analysis_target(pane, item, paths[0]))
+        dock.analyse(self._analysis_target(pane, item, paths[0]), explicit=explicit)
+
+    def _show_analysis_dock(self):
+        """Show and raise the Analysis dock for an explicit request (a menu
+        entry); the dock, or None when sift is missing - the dock then says
+        where sift comes from."""
+        dock = self._analysis_dock
+        dock.show()
+        dock.raise_()
+        # The caller's request is the answer: the automatic run the dock's
+        # visibility just scheduled would only repeat it, or replace a folder
+        # offer with "select a file".
+        self._analysis_timer.stop()
+        return dock if dock.ensure_available() else None
+
+    def analyse_with_sift(self, pane: FilePaneWidget, entries: list) -> None:
+        """Analyse with sift: [(path, FileItem), ...] of *pane* in the Analysis
+        dock - one file explained, several offered as a batch for the LLM."""
+        dock = self._show_analysis_dock()
+        if dock is None:
+            return
+        if len(entries) == 1 and not entries[0][1].is_dir:
+            path, item = entries[0]
+            dock.analyse(self._analysis_target(pane, item, path), explicit=True)
+            return
+        targets = [self._analysis_target(pane, item, path) for path, item in entries
+                   if not item.is_dir and not item.is_link]
+        if targets:
+            dock.offer_batch(targets, tr("{n} files selected").format(n=len(targets)))
+        else:
+            dock.show_message(tr("Select a single file to see its analysis."))
+
+    def analyse_folder_with_sift(self, pane: FilePaneWidget, folder: str) -> None:
+        """Analyse Folder with sift: the files of *folder* on offer in the
+        Analysis dock, as a batch for the LLM."""
+        dock = self._show_analysis_dock()
+        if dock is None:
+            return
+        if not folder:
+            dock.show_message(tr("Select a file to see what it is."))
+            return
+        name = folder.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1] or folder
+        dock.offer_folder(pane.backend, folder, name)
+
+    def analyse_active_with_sift(self) -> None:
+        """Tools > Analyse with sift: the active pane's selection, or the
+        folder it shows when nothing is selected."""
+        pane = self._active_pane
+        if pane is None:
+            dock = self._show_analysis_dock()
+            if dock is not None:
+                dock.show_message(tr("No file pane is active."))
+            return
+        if not pane.selected_file_items():
+            self.analyse_folder_with_sift(pane, pane.current_path)
+            return
+        dock = self._show_analysis_dock()
+        if dock is not None:
+            self._analyse_pane_selection(dock, pane, explicit=True)
 
     @staticmethod
     def _analysis_target(pane: FilePaneWidget, item, path: str):
@@ -2362,7 +2541,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         analysis = getattr(self, "_analysis_dock", None)
         if analysis is not None:
             analysis_toggle = analysis.toggleViewAction()
-            analysis_toggle.setText("&Analysis")
+            analysis_toggle.setText(tr("&Analysis (sift)"))
             analysis_toggle.setShortcut(QKeySequence("Ctrl+Shift+I"))
             self._dock_view_menu.addAction(analysis_toggle)
         agent = getattr(self, "_agent_dock", None)
@@ -2411,6 +2590,10 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         )
         pane.send_to_agent_requested.connect(lambda paths, p=pane: self._send_to_agent(p, paths))
         pane.new_agent_tab_requested.connect(lambda folder: self._new_agent_tab(folder or None))
+        pane.analyse_requested.connect(lambda entries, p=pane: self.analyse_with_sift(p, entries))
+        pane.analyse_folder_requested.connect(
+            lambda folder, p=pane: self.analyse_folder_with_sift(p, folder)
+        )
         pane.cycle_pane_requested.connect(
             lambda forward: self._cycle_next_pane() if forward else self._cycle_prev_pane()
         )
@@ -3078,10 +3261,20 @@ class MainWindow(WorkspaceMixin, QMainWindow):
             parent.setOrientation(Qt.Orientation.Horizontal)
 
     def _equalize_pane_sizes(self) -> None:
-        """Make every pane of the active pane's layout (its workspace or
-        detached window) the same size. Splitting nests splitters of the
+        """Make every pane of the current workspace (the tab on screen, or
+        the detached window worked in) the same size - its file panes,
+        terminals and extension panels. Splitting nests splitters of the
         same orientation, so evening out only the active pane's own
-        splitter left e.g. 324 | 324 | 651 as it was."""
+        splitter left e.g. 324 | 324 | 651 as it was. The active file
+        pane's layout was evened out before, which in a workspace of
+        terminals or extension panels only is another workspace, not the
+        one on screen."""
+        from PyQt6 import sip
+
+        ws = getattr(self, "_current_ws", None)
+        if ws is not None and not sip.isdeleted(ws.root):
+            self._equalize_splitter(ws.root)
+            return
         if not self._active_pane:
             return
         root = self._active_pane.parent()
@@ -3132,9 +3325,12 @@ class MainWindow(WorkspaceMixin, QMainWindow):
 
     @staticmethod
     def _pane_name(pane) -> str:
-        """A file pane's backend name or a terminal pane's label, for the log."""
+        """A file pane's backend name, a terminal pane's label or an
+        extension panel's title, for the log."""
         if isinstance(pane, TerminalPaneWidget):
             return pane.session_label
+        if isinstance(pane, ExtensionDock):
+            return pane.windowTitle()
         return pane.backend.name
 
     def _on_pane_drop(self, source_pane_id: str, target_pane, zone: str) -> None:
@@ -3142,7 +3338,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         this workspace or another: split the target and put the dragged
         pane on the *zone* side. An unknown id, a target that is no pane
         of this window, or a pane dropped on itself changes nothing."""
-        movable = [*self._panes, *self._terminal_panes]
+        movable = [*self._panes, *self._terminal_panes, *self._layout_panels()]
         source_pane = next((p for p in movable if str(id(p)) == source_pane_id), None)
         if source_pane is None or not any(p is target_pane for p in movable):
             return
@@ -4810,8 +5006,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         File panes, terminal panes and disconnected placeholders are
         written; anything else is left out together with its size, so the
         sizes still match the children on restore."""
-        children = []
-        sizes = []
+        items = []
         all_sizes = splitter.sizes()
         for i in range(splitter.count()):
             child = splitter.widget(i)
@@ -4823,12 +5018,17 @@ class MainWindow(WorkspaceMixin, QMainWindow):
                 entry = self._serialize_terminal(child)
             elif isinstance(child, DisconnectedPanePlaceholder):
                 entry = child.serialize()
+            elif isinstance(child, ExtensionDock):
+                entry = self._serialize_extension_panel(child)
             else:
                 entry = None
             if entry is None:
                 continue
-            children.append(entry)
-            sizes.append(all_sizes[i] if i < len(all_sizes) else 0)
+            items.append((i, child, entry, all_sizes[i] if i < len(all_sizes) else 0))
+        # The places of switched-off extensions' panels go in between.
+        placed = self._place_kept_homes(splitter, items)
+        children = [entry for entry, _size in placed]
+        sizes = [size for _entry, size in placed]
         return {
             "type": "splitter",
             "orientation": "horizontal"
@@ -4918,6 +5118,14 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         were. Switched off (Edit > Settings > General), or with a
         missing, unreadable or invalid session.json, the default layout
         stays and the reason goes to the log only."""
+        try:
+            return self._restore_layout_on_start()
+        finally:
+            # Detached Agent conversations whose workspace did not come back
+            # become tabs again (ui.agent_dock.AgentDock.settle_detached).
+            self._settle_agent_panels()
+
+    def _restore_layout_on_start(self) -> bool:
         if not self._restore_on_start:
             log.info("Layout restore on start is switched off")
             return False
@@ -5115,8 +5323,18 @@ class MainWindow(WorkspaceMixin, QMainWindow):
         else:
             splitter.setOrientation(Qt.Orientation.Horizontal)
 
-        for child in data.get("children", []):
+        saved_sizes = data.get("sizes")
+        # Indexes of entries that added no widget (a switched-off
+        # extension's panel): their sizes go, so the rest still match.
+        skipped: set[int] = set()
+        for position, child in enumerate(data.get("children", [])):
             kind = child.get("type", "splitter")
+            if kind == PANEL_NODE:
+                size = (saved_sizes[position] if isinstance(saved_sizes, list)
+                        and position < len(saved_sizes) else None)
+                if not self._restore_extension_panel(splitter, child, size):
+                    skipped.add(position)
+                continue
             if kind == "splitter":
                 child_splitter = QSplitter()
                 splitter.addWidget(child_splitter)
@@ -5127,6 +5345,7 @@ class MainWindow(WorkspaceMixin, QMainWindow):
                     # Nothing restorable inside: no empty splitter on screen.
                     child_splitter.setParent(None)
                     child_splitter.deleteLater()
+                    skipped.add(position)
                     continue
                 if a:
                     active_pane = a
@@ -5142,8 +5361,11 @@ class MainWindow(WorkspaceMixin, QMainWindow):
             elif kind == "terminal":
                 self._restore_terminal(splitter, child, connect_remote=connect_remote)
 
+        self._settle_restored_homes(splitter)
+        if skipped and isinstance(saved_sizes, list):
+            saved_sizes = [s for i, s in enumerate(saved_sizes) if i not in skipped]
         # Restore splitter sizes, ensuring no pane gets 0 pixels
-        sizes = sanitize_splitter_sizes(data.get("sizes"), splitter.count())
+        sizes = sanitize_splitter_sizes(saved_sizes, splitter.count())
         if sizes:
             splitter.setSizes(sizes)
 
@@ -6919,7 +7141,7 @@ and an MCP server.</p>
 <li><b>Terminal</b> — shell on connected hosts</li>
 <li><b>Log</b> — live log of all operations</li>
 <li><b>Console / Scripts</b> — Python REPL and saved scripts</li>
-<li><b>Analysis</b> — what the selected file is</li>
+<li><b>Analysis (sift)</b> — what the selected file is; right-click › Analyse with sift</li>
 </ul>
 
 <p><small>axross {__version__} — Python + PyQt6 | github.com/c0decave/axross</small></p>
@@ -7101,7 +7323,7 @@ and an MCP server.</p>
             dock.show()
             dock.raise_()
             dock.analyse(Target(backend=session, path=hit.path, name=posixpath.basename(hit.path),
-                                size=hit.size, mtime=hit.mtime))
+                                size=hit.size, mtime=hit.mtime), explicit=True)
 
         self._sweep_backend(hit, login, ready)
 
@@ -7166,6 +7388,11 @@ and an MCP server.</p>
                 icon_name = action.property("axIcon")
                 if icon_name:
                     action.setIcon(_ico(str(icon_name)))
+        sift = getattr(self, "_analyse_sift_action", None)  # Tools menu only
+        if sift is not None:
+            sift.setIcon(_ico("analysis"))
+        # The tint follows the theme's background and the icons' colours.
+        self._apply_toolbar_tint()
         self._fit_toolbars()
 
     #: The overflow button's least width: Qt's own was a 12 px strip.
@@ -7208,73 +7435,208 @@ and an MCP server.</p>
                                 getattr(self, "_tools_toolbar", None)) if bar is not None]
 
     def _setup_toolbar_reorder(self) -> None:
-        """Remember each bar's default order, bring back the stored one and
-        let the buttons be dragged."""
-        from ui import toolbar_order
+        """Remember each bar's default order, read the toolbar style, let
+        the buttons be dragged and lay the bars out (grouped by category or
+        in the stored plain order, ui.toolbar_categories)."""
+        from ui import toolbar_categories, toolbar_order
 
         self._default_toolbar_orders = {
             bar.objectName(): toolbar_order.bar_order(bar) for bar in self._order_bars()
         }
+        self._toolbar_style = toolbar_categories.parse_style(self._session_window())
         self._toolbar_reorder: dict[str, toolbar_order.ToolbarReorder] = {}
-        stored = self._stored_toolbar_orders()
         for bar in self._order_bars():
-            name = bar.objectName()
-            if name in stored:
-                toolbar_order.apply_order(
-                    bar, toolbar_order.merge(stored[name], self._default_toolbar_orders[name])
-                )
             reorder = toolbar_order.ToolbarReorder(bar)
             reorder.reordered.connect(self._on_toolbar_reordered)
-            self._toolbar_reorder[name] = reorder
+            self._toolbar_reorder[bar.objectName()] = reorder
+        self._layout_toolbars()
 
-    def _stored_toolbar_orders(self) -> dict[str, list[str]]:
-        from ui import toolbar_order
-
+    def _session_window(self) -> dict:
+        """session.json's ``window`` object ({} when there is none)."""
         try:
             data = _read_json_file(self._SESSION_FILE)
         except FileNotFoundError:
             return {}
         except (OSError, ValueError) as exc:
-            log.debug("Toolbar order: could not read %s: %s", self._SESSION_FILE, exc)
+            log.debug("Toolbar: could not read %s: %s", self._SESSION_FILE, exc)
             return {}
         window = data.get("window") if isinstance(data, dict) else None
-        if not isinstance(window, dict):
-            return {}
-        return toolbar_order.parse(window.get(toolbar_order.ORDER_KEY))
+        return window if isinstance(window, dict) else {}
+
+    def _stored_toolbar_orders(self) -> dict[str, list[str]]:
+        from ui import toolbar_order
+
+        return toolbar_order.parse(self._session_window().get(toolbar_order.ORDER_KEY))
+
+    def _stored_group_orders(self) -> dict[str, list[str]]:
+        from ui import toolbar_categories
+
+        return toolbar_categories.parse_group_order(
+            self._session_window().get(toolbar_categories.GROUP_ORDER_KEY))
+
+    def _default_group_orders(self) -> dict[str, list[str]]:
+        from ui import toolbar_categories as TC
+
+        return TC.group_orders(TC.grouped_layout(self._default_toolbar_orders, {}))
+
+    def _layout_toolbars(self, stored: dict | None = None) -> None:
+        """Lay the bars out for the current style: grouped by category with
+        the stored order per category, or the plain bars with their stored
+        order. *stored* replaces what session.json holds for the mode."""
+        from ui import toolbar_categories as TC
+        from ui import toolbar_order as TO
+
+        grouping = self._toolbar_style.grouping
+        defaults = self._default_toolbar_orders
+        if grouping:
+            layout = TC.grouped_layout(
+                defaults, self._stored_group_orders() if stored is None else stored)
+        else:
+            orders = self._stored_toolbar_orders() if stored is None else stored
+            layout = {name: TO.merge(orders.get(name), order) for name, order in defaults.items()}
+        reorders = getattr(self, "_toolbar_reorder", {})
+        # Off the buttons while the bars rebuild them (a moved action gets a
+        # new button); back on the new ones afterwards.
+        for reorder in reorders.values():
+            reorder.disarm()
+        TO.apply_layout(self._order_bars(), layout)
+        for reorder in reorders.values():
+            reorder.set_bounded(grouping)
+            reorder.arm()
+        self._apply_toolbar_tint()
+        self._fit_toolbars()
 
     def _on_toolbar_reordered(self, _bar=None) -> None:
         self._store_toolbar_order()
+        self._apply_toolbar_tint()  # the moved button is a new one
         self._fit_toolbars()
 
     def _store_toolbar_order(self) -> None:
-        """Store the order of each bar that differs from its default (a bar
-        left as it was follows the default of a later version)."""
-        from ui import toolbar_order
+        """Store the order that differs from the default: per bar (grouping
+        off) or per category (grouping on). What is left as it was follows
+        the default of a later version."""
+        from ui import toolbar_categories as TC
+        from ui import toolbar_order as TO
 
-        orders = {}
-        for bar in self._order_bars():
-            order = toolbar_order.bar_order(bar)
-            if order != self._default_toolbar_orders.get(bar.objectName()):
-                orders[bar.objectName()] = order
+        current = {bar.objectName(): TO.bar_order(bar) for bar in self._order_bars()}
+        if self._toolbar_style.grouping:
+            default = self._default_group_orders()
+            key = TC.GROUP_ORDER_KEY
+            orders = {c: o for c, o in TC.group_orders(current).items() if o != default.get(c)}
+        else:
+            key = TO.ORDER_KEY
+            orders = {name: o for name, o in current.items()
+                      if o != self._default_toolbar_orders.get(name)}
         try:
-            self.store_window_prefs(**{toolbar_order.ORDER_KEY: orders})
+            self.store_window_prefs(**{key: orders})
         except OSError:
             self.statusBar().showMessage(tr("Could not store the toolbar order"), 5000)
 
     def reset_toolbar_order(self) -> None:
-        """The toolbar's right-click menu: every bar back to its default
-        order, and no stored order."""
-        from ui import toolbar_order
+        """The toolbar's right-click menu: the default order (inside the
+        groups while grouping is on), and no stored order for the mode."""
+        from ui import toolbar_categories as TC
+        from ui import toolbar_order as TO
 
+        key = TC.GROUP_ORDER_KEY if self._toolbar_style.grouping else TO.ORDER_KEY
+        try:
+            self.store_window_prefs(**{key: {}})
+        except OSError:
+            self.statusBar().showMessage(tr("Could not store the toolbar order"), 5000)
+        self._layout_toolbars(stored={})
+
+    # --- Toolbar categories and colours (ui.toolbar_categories) ---
+
+    def toolbar_style(self):
+        """The toolbar style in use (a ui.toolbar_categories.ToolbarStyle)."""
+        from ui import toolbar_categories
+
+        return getattr(self, "_toolbar_style", None) or toolbar_categories.ToolbarStyle()
+
+    def set_toolbar_style(self, style, *, store: bool = True) -> None:
+        """Group the buttons by category or not, colour them or not, the
+        colours (Settings > Toolbar): applied now, stored at once."""
+        from ui import toolbar_categories
+
+        previous = self.toolbar_style()
+        self._toolbar_style = style
+        if hasattr(self, "_toolbar_reorder"):
+            if previous.grouping != style.grouping:
+                self._layout_toolbars()
+            else:
+                self._apply_toolbar_tint()
+        if store:
+            self.store_window_prefs(**toolbar_categories.style_values(style))
+
+    def toolbar_background(self) -> str:
+        """The bars' background colour in the current theme."""
+        resolved = themes.resolve(self._current_theme, themes.system_scheme())
+        colour = themes.toolbar_background(resolved)
+        if colour is None:
+            app = QApplication.instance()
+            palette = app.palette() if app is not None else self.palette()
+            colour = palette.color(QPalette.ColorRole.Window).name()
+        return colour
+
+    def _toolbar_text_colour(self) -> str:
+        resolved = themes.resolve(self._current_theme, themes.system_scheme())
+        tokens = themes.palette_tokens_for(resolved)
+        if tokens is not None:
+            return tokens["text"]
+        app = QApplication.instance()
+        palette = app.palette() if app is not None else self.palette()
+        return palette.color(QPalette.ColorRole.WindowText).name()
+
+    def toolbar_button_colours(self) -> dict:
+        """Category id -> the colours of its buttons (ButtonColours) for
+        the current theme, icons and style."""
+        from ui import toolbar_categories as TC
+        from ui import toolbar_order as TO
+        from ui.icon_provider import stroke_colour
+
+        icons: dict[str, list[str]] = {c: [] for c in TC.CATEGORY_IDS}
         for bar in self._order_bars():
-            default = self._default_toolbar_orders.get(bar.objectName())
-            if default is not None:
-                toolbar_order.apply_order(bar, default)
-            reorder = self._toolbar_reorder.get(bar.objectName())
-            if reorder is not None:
-                reorder.arm()  # the bar rebuilt the buttons it moved
-        self._store_toolbar_order()
-        self._fit_toolbars()
+            for action in bar.actions():
+                tool = TO.tool_id(action)
+                if tool and not action.isSeparator():
+                    icon_name = str(action.property("axIcon") or tool)
+                    icons[TC.category_of(tool)].append(stroke_colour(icon_name))
+        background, text = self.toolbar_background(), self._toolbar_text_colour()
+        style = self.toolbar_style()
+        return {c: TC.button_colours(style.colour(c), background, text, icons[c])
+                for c in TC.CATEGORY_IDS}
+
+    def _apply_toolbar_tint(self) -> None:
+        """Mark each button with its category and give the bars the style
+        sheet of the category colours (none while colours are off). A
+        property and a style sheet: no Python object on the buttons."""
+        if not hasattr(self, "_toolbar_reorder"):
+            return  # the bars are still being built
+        from ui import toolbar_categories as TC
+        from ui import toolbar_order as TO
+
+        style = self.toolbar_style()
+        css = TC.stylesheet(self.toolbar_button_colours(), compact=self._compact_mode) \
+            if style.tint else ""
+        for bar in self._order_bars():
+            changed = []
+            for action in bar.actions():
+                tool = TO.tool_id(action)
+                button = bar.widgetForAction(action)
+                if not tool or action.isSeparator() or button is None:
+                    continue
+                category = TC.category_of(tool)
+                if button.property(TC.CATEGORY_PROPERTY) != category:
+                    button.setProperty(TC.CATEGORY_PROPERTY, category)
+                    changed.append(button)
+            if bar.styleSheet() != css:
+                with themes.collection_paused():
+                    bar.setStyleSheet(css)  # repolishes every button
+            elif css:
+                for button in changed:  # the selector reads the new property
+                    button.style().unpolish(button)
+                    button.style().polish(button)
+                    button.update()
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt
         super().showEvent(event)
@@ -7309,6 +7671,7 @@ and an MCP server.</p>
             (getattr(self, "_log_dock", None), "Log", "inbox"),
             (getattr(self, "_scripts_dock", None), tr("Scripts"), "edit"),
             (getattr(self, "_bookmark_sidebar", None), "Bookmarks", "bookmark"),
+            (getattr(self, "_analysis_dock", None), tr(ANALYSIS_DOCK_TITLE), "analysis"),
         ]
         for dock, title, icon_name in dock_specs:
             if dock is not None:

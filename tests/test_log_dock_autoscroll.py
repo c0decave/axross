@@ -59,14 +59,9 @@ def window(tmp_path, monkeypatch):
     pump()
 
 
-#: The number of the newest record emitted by _emit().
-_newest = [-1]
-
-
 def _emit(start: int, stop: int) -> None:
     for i in range(start, stop):
         LOG.info("record %d", i)
-    _newest[0] = stop - 1
     pump()
 
 
@@ -79,8 +74,19 @@ def _bottom_text(view) -> str:
     return block.text()
 
 
+def _newest_line(view) -> str:
+    """The last non-empty line of *view*'s log, whoever logged it."""
+    block = view.document().lastBlock()
+    while block.isValid() and not block.text():
+        block = block.previous()
+    return block.text()
+
+
 def _at_newest(dock) -> bool:
-    return _bottom_text(dock._log_view).endswith(f"record {_newest[0]}")
+    """The newest line is the one shown at the bottom. Not "our last
+    record": other parts of axross log from their threads meanwhile."""
+    view = dock._log_view
+    return bool(_newest_line(view)) and _bottom_text(view) == _newest_line(view)
 
 
 def test_happy_auto_scroll_shows_the_newest_line(window) -> None:
@@ -167,4 +173,17 @@ def test_edge_the_line_cap_keeps_following(window) -> None:
     dock._log_view.setMaximumBlockCount(100)
     _emit(0, 400)
     assert dock._log_view.document().blockCount() <= 100
+    assert _at_newest(dock), _bottom_text(dock._log_view)
+
+
+def test_edge_a_record_from_elsewhere_after_ours_is_the_newest_line(window) -> None:
+    """Another part of axross logs while the test does (measured: the
+    multimedia probe's "Qt Multimedia answered in 1.30 s" arrived after the
+    test's last record and was the newest line - auto-scroll showed it, the
+    test expected its own)."""
+    dock = window._log_dock
+    _emit(0, 200)
+    logging.getLogger("core.elsewhere").info("a record from another thread's work")
+    pump()
+    assert _bottom_text(dock._log_view).endswith("a record from another thread's work")
     assert _at_newest(dock), _bottom_text(dock._log_view)

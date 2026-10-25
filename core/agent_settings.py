@@ -19,8 +19,12 @@
       "mcp_servers": [            # further MCP servers (core.mcp_client)
         {"name": "git", "transport": "stdio", "command": ["mcp-git"], "env": {},
          "url": "", "bearer": false, "enabled": true, "confirm": "always",
-         "timeout": 120, "sandbox": ""}
+         "timeout": 120, "sandbox": "",
+         "container": false, "secret_env": [], "egress": [], "package": {}}
       ],
+      "mcp_sources": {            # where Add from Catalog searches (core.mcp_catalog)
+        "builtin": true, "dockerhub": true, "mcpregistry": true,
+        "extra": ["/home/me/security-catalog.json"]},
       "sandboxes": [              # the sandbox profiles (core.agent_sandbox)
         {"name": "Normal", "engine": "auto", "level": "normal",
          "hosts": ["db.example:5432"], "mounts": [{"path": "/srv/data", "mode": "ro"}],
@@ -51,6 +55,7 @@ from pathlib import Path
 from core.agent import DEFAULT_MAX_STEPS, DEFAULT_MAX_TOOL_CHARS
 from core.agent_prompts import PromptProfile, default_profile
 from core.agent_sandbox import SandboxProfile, default_profiles, sandbox_command
+from core.mcp_catalog import CatalogSources
 from core.mcp_client import McpServerConfig
 
 #: Protection modes, least to most trusting.
@@ -110,6 +115,8 @@ class AgentSettings:
     sandbox: str = ""
     sandboxes: list[SandboxProfile] = field(default_factory=default_profiles)
     mcp_servers: list[McpServerConfig] = field(default_factory=list)
+    #: Where Add from Catalog searches for MCP servers.
+    mcp_sources: CatalogSources = field(default_factory=CatalogSources)
     #: The prompt profile new requests use; "" is the built-in Default.
     prompt_profile: str = ""
     #: The user's prompt profiles (the built-in Default is not among them).
@@ -160,6 +167,7 @@ class AgentSettings:
                 if server is not None and server.name not in (s.name for s in servers):
                     servers.append(server)
             out.mcp_servers = servers
+        out.mcp_sources = CatalogSources.from_dict(data.get("mcp_sources"))
         if isinstance(data.get("prompt_profiles"), list):
             prompts: list[PromptProfile] = []
             for raw in data["prompt_profiles"]:
@@ -180,6 +188,7 @@ class AgentSettings:
         data["groups"] = list(self.groups)
         data["sandboxes"] = [p.to_dict() for p in self.sandboxes]
         data["mcp_servers"] = [s.to_dict() for s in self.mcp_servers]
+        data["mcp_sources"] = self.mcp_sources.to_dict()
         data["prompt_profiles"] = [p.to_dict() for p in self.prompt_profiles]
         return {"version": 1, **data}
 
@@ -214,8 +223,9 @@ class AgentSettings:
     def mcp_wrap(self, server):
         """What runs a stdio MCP server in its sandbox profile: argv -> argv,
         or None without one. A profile that no longer exists refuses the
-        start (core.mcp_client.McpClientError) - never a run without it."""
-        if not server.sandbox:
+        start (core.mcp_client.McpClientError) - never a run without it. A
+        container server is its own sandbox (podman)."""
+        if not server.sandbox or server.container:
             return None
         from core.mcp_client import McpClientError
 

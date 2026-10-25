@@ -4,18 +4,25 @@
   file only; a FIFO, a device, a directory or a dangling path is refused
   before the worker sees it.
 * A file on any other backend is copied to a private temporary directory,
-  at most ``max_remote_bytes`` (the size sift reads anyway), and the copy
-  is removed afterwards. A file the listing shows as larger is not
-  downloaded at all; one that turns out larger while copying is refused.
+  at most ``max_remote_bytes`` (the size sift reads anyway; the request's
+  ``max_bytes`` option when it has one), and the copy is removed
+  afterwards. A file the listing shows as larger is not downloaded at all;
+  one that turns out larger while copying is refused.
 * The copy runs on its own thread, bounded by ``copy_timeout`` and ended
   by the caller's cancel event: a read that hangs on a dead connection is
   left behind (it reads no further and removes its copy once it
   returns) and never holds the caller.
 * Results are kept for the session, keyed by backend (the object itself,
-  through a weak reference), path, size, modification time and mode, so
-  going back to a file costs nothing. An LLM request is kept only when the
-  model answered - sift's fallback to its own analysis is not the model's
-  answer. sift's own cache (by content hash) sits behind that in the worker.
+  through a weak reference), path, size, modification time, mode and the
+  Analysis settings that shape the answer, so going back to a file costs
+  nothing. An LLM request is kept only when the model answered - sift's
+  fallback to its own analysis is not the model's answer. sift's own cache
+  (by content hash, core.analysis_settings.cache_dir) sits behind that in
+  the worker, when the worker was given a cache folder.
+
+``options`` (core.analysis_settings.AnalysisSettings.run_options) carry the
+Analysis settings: the time budget (and the CPU bound derived from it), and
+the values the worker child sets in sift's Config.
 
 No Qt here: the dock calls :meth:`FileAnalyzer.analyse` from a background
 thread.
@@ -35,7 +42,12 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from core.analysis_worker import AnalysisWorker, WorkerResult
+from core.analysis_worker import (
+    DEFAULT_TIME_BUDGET,
+    AnalysisWorker,
+    WorkerResult,
+    cpu_seconds_for,
+)
 
 #: sift's default read limit (Config.max_bytes); a remote copy never exceeds it.
 MAX_REMOTE_BYTES = 25_000_000
@@ -51,6 +63,7 @@ class _Run:
     llm: dict | None
     on_event: Callable[[dict], None] | None
     cancel: threading.Event
+    options: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -108,11 +121,14 @@ class FileAnalyzer:
     #: Request fields that do not change the model's answer: the key (never
     #: kept in a cache key) and how long the parent waits.
     _NOT_THE_ANSWER = frozenset({"api_key", "timeout"})
+    #: Options that do not change the answer: whether sift keeps it on disk.
+    _OPTIONS_NOT_THE_ANSWER = frozenset({"cache"})
 
     @classmethod
-    def _key(cls, target: Target, llm: dict | None = None) -> tuple:
+    def _key(cls, target: Target, llm: dict | None = None, options: dict | None = None) -> tuple:
         """Every request field that shapes the answer - provider, endpoint,
-        model, temperature, output limit, model loading - is part of it."""
+        model, temperature, output limit, model loading, and the Analysis
+        settings but the cache switch - is part of it."""
         mode = (
             ("llm",)
             + tuple(
@@ -121,10 +137,19 @@ class FileAnalyzer:
             if llm
             else ("heuristic",)
         )
-        return (id(target.backend), target.path, target.size, target.mtime, mode)
+        shaped = tuple(
+            sorted(
+                (k, repr(v))
+                for k, v in (options or {}).items()
+                if k not in cls._OPTIONS_NOT_THE_ANSWER
+            )
+        )
+        return (id(target.backend), target.path, target.size, target.mtime, mode, shaped)
 
-    def cached(self, target: Target, llm: dict | None = None) -> AnalysisResult | None:
-        key = self._key(target, llm)
+    def cached(
+        self, target: Target, llm: dict | None = None, options: dict | None = None
+    ) -> AnalysisResult | None:
+        key = self._key(target, llm, options)
         with self._lock:
             entry = self._session.get(key)
             if entry is None:
@@ -144,16 +169,20 @@ class FileAnalyzer:
         llm: dict | None = None,
         on_event: Callable[[dict], None] | None = None,
         cancel: threading.Event | None = None,
+        options: dict | None = None,
     ) -> AnalysisResult:
         """``llm`` is a worker request (see core.llm_profiles.worker_request);
-        ``cancel`` set ends this request (copy or analysis) only."""
+        ``cancel`` set ends this request (copy or analysis) only; ``options``
+        are the Analysis settings (see the module docstring)."""
         if self._closed:
             return AnalysisResult(False, error="analysis closed")
         if not force:
-            hit = self.cached(target, llm)
+            hit = self.cached(target, llm, options)
             if hit is not None:
                 return AnalysisResult(**{**hit.__dict__, "from_session_cache": True})
-        run = _Run(llm, on_event, cancel if cancel is not None else threading.Event())
+        run = _Run(
+            llm, on_event, cancel if cancel is not None else threading.Event(), options
+        )
         self._active_cancel = run.cancel
         try:
             if is_local_backend(target.backend):
@@ -164,20 +193,31 @@ class FileAnalyzer:
             self._active_cancel = None
         model_answered = bool(isinstance(result.summary, dict) and result.summary.get("llm_used"))
         if result.ok and (llm is None or model_answered):
-            self._remember(target, llm, result)
+            self._remember(target, llm, result, options)
         return result
 
-    def _remember(self, target: Target, llm: dict | None, result: AnalysisResult) -> None:
+    def _remember(
+        self,
+        target: Target,
+        llm: dict | None,
+        result: AnalysisResult,
+        options: dict | None = None,
+    ) -> None:
         try:
             ref = weakref.ref(target.backend)
         except TypeError:  # a backend without weak references is not cached
             return
-        key = self._key(target, llm)
+        key = self._key(target, llm, options)
         with self._lock:
             self._session[key] = (ref, result)
             self._session.move_to_end(key)
             while len(self._session) > self._session_size:
                 self._session.popitem(last=False)
+
+    def clear_session(self) -> None:
+        """Forget the results kept for the session (Clear Cache)."""
+        with self._lock:
+            self._session.clear()
 
     def cancel(self) -> None:
         """End the request in flight - its copy or its analysis (thread-safe)."""
@@ -201,10 +241,18 @@ class FileAnalyzer:
         return self._run(target.path, target.name, run)
 
     # -- remote ------------------------------------------------------------
+    def _remote_limit(self, run: "_Run") -> int:
+        """The most bytes copied of a remote file: what sift reads of it."""
+        limit = (run.options or {}).get("max_bytes")
+        if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+            return limit
+        return self._max_remote
+
     def _analyse_remote(self, target: Target, run: "_Run") -> AnalysisResult:
-        if target.size > self._max_remote:
-            return AnalysisResult(False, error=self._too_large(target.size))
-        copy = copy_bounded(target, self._max_remote, run.cancel, self._copy_timeout)
+        limit = self._remote_limit(run)
+        if target.size > limit:
+            return AnalysisResult(False, error=self._too_large(target.size, limit))
+        copy = copy_bounded(target, limit, run.cancel, self._copy_timeout)
         try:
             if copy.status == "cancelled":
                 return AnalysisResult(False, error="analysis cancelled")
@@ -215,25 +263,34 @@ class FileAnalyzer:
             if copy.status == "error":
                 return AnalysisResult(False, error=f"cannot read {target.name}: {copy.error}")
             if copy.status == "too_large":
-                return AnalysisResult(False, error=self._too_large(copy.total))
+                return AnalysisResult(False, error=self._too_large(copy.total, limit))
             return self._run(copy.path, target.name, run)
         finally:
             copy.cleanup()
 
-    def _too_large(self, size: int) -> str:
+    @staticmethod
+    def _too_large(size: int, limit: int) -> str:
         return (
             f"too large for automatic analysis of a remote file "
-            f"({size / 1e6:.1f} MB, limit {self._max_remote / 1e6:.0f} MB)"
+            f"({size / 1e6:.1f} MB, limit {limit / 1e6:g} MB)"
         )
 
     def _run(self, path: str, name: str, run: "_Run") -> AnalysisResult:
         llm = run.llm
         kwargs: dict = {}
+        options = run.options
+        if options:
+            budget = float(options.get("time_budget") or DEFAULT_TIME_BUDGET)
+            kwargs.update(
+                time_budget=budget,
+                cpu_seconds=cpu_seconds_for(budget),
+                sift={k: v for k, v in options.items() if k != "time_budget"},
+            )
         if llm:
             # No total timeout: the worker bounds an LLM analysis by the
             # child's silence (analysis_worker.llm_silence_bound), since sift
             # gives a healthy streaming map-reduce no total bound.
-            kwargs = {"llm": llm, "on_event": run.on_event}
+            kwargs.update(llm=llm, on_event=run.on_event)
         res: WorkerResult = self._worker.analyse(path, name, cancel_event=run.cancel, **kwargs)
         return AnalysisResult(
             ok=res.ok,

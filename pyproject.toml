@@ -156,6 +156,7 @@ packages = [
     "resources.extensions",
     "resources.wordlists",
     "resources.voice",
+    "resources.mcp",
 ]
 
 [tool.setuptools.package-data]
@@ -164,6 +165,7 @@ packages = [
 "resources.scripts" = ["*.md"]
 "resources.wordlists" = ["*.txt"]
 "resources.voice" = ["*.txt"]
+"resources.mcp" = ["*.json"]
 "examples" = ["*.md"]
 "examples.scripting_api" = ["*.md"]
 

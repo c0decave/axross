@@ -17,6 +17,16 @@ replaced by a plain object schema, answers larger than
 :data:`MAX_MESSAGE_BYTES` refused, every request under the server's
 timeout. A server's schema is never validated here (that is the server's
 job, and validating a foreign schema could fetch remote references).
+
+A **container** server (``container``: installed from a catalog by
+core.mcp_install) is a ``podman run`` line axross made. Its environment and
+the secrets of ``secret_env`` (keyring: ``axross-mcp-server/<name>``, user
+``env:<NAME>``) reach the container through an environment file on a pipe
+(``--env-file=/dev/fd/N``): never on the command line, never on disk, never
+in podman's own environment. :data:`TOKEN_ENV_FD`, :data:`TOKEN_EGRESS`
+(the port of its allowlist proxy, core.mcp_egress, for ``egress``) and
+:data:`TOKEN_RUN` (unique per start, in the container's name) are filled in
+at each start; a container whose podman had to be killed is removed by name.
 """
 
 from __future__ import annotations
@@ -34,6 +44,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 from urllib.parse import urlsplit
 
+from core import process_launcher
+
 log = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -46,6 +58,19 @@ MAX_NAME = 64
 TRANSPORTS = ("stdio", "http")
 CONFIRMS = ("always", "writes")
 _NAME = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+#: Filled in at each start of a container server (core.mcp_install).
+TOKEN_ENV_FD = "AXROSS_ENV_FD"
+TOKEN_EGRESS = "AXROSS_EGRESS_PORT"
+TOKEN_RUN = "AXROSS_RUN_ID"
+#: Bytes of environment a container server may be given: the file is written
+#: into the pipe before podman starts, so it must fit a pipe's buffer (16 KiB
+#: is the smallest of Linux and macOS).
+MAX_ENV_FILE = 16000
+#: Keys of a container server's install record, and how long each may be.
+PACKAGE_KEYS = {"source": 300, "entry": 300, "kind": 20, "identifier": 300, "tag": 128,
+                "version": 64, "digest": 71, "image": 64, "base": 300, "network": 20,
+                "installed": 40, "preexisting": 5}
 _TOOL_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -72,6 +97,14 @@ class McpServerConfig:
     timeout: float = 120.0
     #: stdio: run the program in this sandbox profile ("" = not).
     sandbox: str = ""
+    #: A ``podman run`` line axross made (core.mcp_install): see the module.
+    container: bool = False
+    #: Environment variables whose values are in the keyring.
+    secret_env: tuple[str, ...] = ()
+    #: The allowed ``host:port`` of a container on the allowlist network.
+    egress: tuple[str, ...] = ()
+    #: A container's install record (core.mcp_install), PACKAGE_KEYS.
+    package: dict = field(default_factory=dict)
 
     def problems(self) -> list[str]:
         out = []
@@ -89,6 +122,10 @@ class McpServerConfig:
             out.append("confirm always or writes")
         if not (0 < self.timeout <= 3600):
             out.append("a timeout of 1-3600 seconds")
+        if self.container and self.transport != "stdio":
+            out.append("a container server runs as a program (stdio)")
+        if self.container and self.sandbox:
+            out.append("no sandbox profile for a container (it is its own sandbox)")
         return out
 
     def host_port(self) -> tuple[str, int] | None:
@@ -104,7 +141,8 @@ class McpServerConfig:
 
     def signature(self) -> tuple:
         return (self.transport, tuple(self.command), tuple(sorted(self.env.items())), self.url,
-                self.bearer, self.timeout, self.sandbox, self.confirm)
+                self.bearer, self.timeout, self.sandbox, self.confirm, self.container,
+                tuple(self.secret_env), tuple(self.egress))
 
     def to_dict(self) -> dict:
         return {
@@ -118,6 +156,10 @@ class McpServerConfig:
             "confirm": self.confirm,
             "timeout": self.timeout,
             "sandbox": self.sandbox,
+            "container": self.container,
+            "secret_env": list(self.secret_env),
+            "egress": list(self.egress),
+            "package": dict(self.package),
         }
 
     @classmethod
@@ -148,7 +190,37 @@ class McpServerConfig:
             and 0 < timeout <= 3600
         ):
             out.timeout = float(timeout)
+        if data.get("container") is True:
+            out.container = True
+            out.sandbox = ""  # a container is its own sandbox
+        secret_env = data.get("secret_env")
+        if isinstance(secret_env, list):
+            out.secret_env = tuple(dict.fromkeys(
+                v for v in secret_env if isinstance(v, str) and _ENV_NAME.match(v)))
+        egress = data.get("egress")
+        if isinstance(egress, list):
+            out.egress = _egress_entries(egress)
+        package = data.get("package")
+        if isinstance(package, dict):
+            out.package = {k: v[:PACKAGE_KEYS[k]] for k, v in package.items()
+                           if k in PACKAGE_KEYS and isinstance(v, str)}
         return out if not out.problems() else None
+
+
+def _egress_entries(entries) -> tuple[str, ...]:
+    """The valid ``host:port`` entries of *entries*, normalized."""
+    from core.agent_net import parse_host
+
+    out: list[str] = []
+    for item in entries:
+        try:
+            host, port = parse_host(item if isinstance(item, str) else "")
+        except ValueError:
+            continue
+        entry = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        if entry not in out:
+            out.append(entry)
+    return tuple(out)
 
 
 def keyring_service(name: str) -> str:
@@ -177,22 +249,72 @@ def set_token(name: str, token: str) -> None:
             pass
 
 
+def _secret_user(var: str) -> str:
+    return f"env:{var}"
+
+
+def get_secret(name: str, var: str) -> str:
+    """The keyring's value of the environment variable *var* of server *name*."""
+    try:
+        import keyring
+
+        return keyring.get_password(keyring_service(name), _secret_user(var)) or ""
+    except Exception as exc:  # noqa: BLE001 - no keyring: no secret
+        log.debug("mcp client: no secret %s for %s: %s", var, name, exc)
+        return ""
+
+
+def set_secret(name: str, var: str, value: str) -> None:
+    """Store (or with "" delete) a secret environment value in the keyring."""
+    import keyring
+
+    if value:
+        keyring.set_password(keyring_service(name), _secret_user(var), value)
+    else:
+        try:
+            keyring.delete_password(keyring_service(name), _secret_user(var))
+        except Exception:  # noqa: BLE001 - nothing stored
+            pass
+
+
+def secrets_of(config: McpServerConfig) -> dict:
+    """The stored values of *config*'s secret variables (missing ones left out)."""
+    out = {}
+    for var in config.secret_env:
+        value = get_secret(config.name, var)
+        if value:
+            out[var] = value
+    return out
+
+
 # -- transports ------------------------------------------------------------------
 
 
+#: What a program server gets of axross's environment (plus its own env).
+_BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT", "XDG_RUNTIME_DIR", "USER")
+#: What podman of a container server gets besides: where the user's podman
+#: keeps its configuration and images, and how it reaches the user's
+#: session (cgroups). The container itself gets none of it.
+_PODMAN_ENV = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "DBUS_SESSION_BUS_ADDRESS",
+               "CONTAINERS_CONF", "CONTAINERS_STORAGE_CONF", "CONTAINERS_REGISTRIES_CONF",
+               "CONTAINER_HOST", "CONTAINER_CONNECTION", "LOGNAME")
+
+
+def _named_env(names) -> dict:
+    return {k: v for k, v in os.environ.items() if k in names}
+
+
 class _Stdio:
-    def __init__(self, argv: list[str], env: dict, timeout: float) -> None:
+    def __init__(self, argv: list[str], env: dict, timeout: float, *, pass_fds=(),
+                 cleanup: Callable[[], None] | None = None, base=_BASE_ENV) -> None:
         self._timeout = timeout
-        base = {
-            k: v
-            for k, v in os.environ.items()
-            if k
-            in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT", "XDG_RUNTIME_DIR", "USER")
-        }
+        self._cleanup = cleanup
         try:
-            self._proc = subprocess.Popen(
+            # From the launcher thread: a sandboxed server's --die-with-parent
+            # watches the thread that forks it (core.process_launcher).
+            self._proc = process_launcher.popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                env={**base, **env}, start_new_session=True,
+                env={**_named_env(base), **env}, start_new_session=True, pass_fds=tuple(pass_fds),
             )
         except OSError as exc:
             raise McpClientError(f"cannot start {argv[0]}: {exc}") from None
@@ -286,6 +408,9 @@ class _Stdio:
         return "the server ended" + (f": {tail}" if tail else "")
 
     def close(self) -> None:
+        """End of input first; then SIGTERM (podman passes it on to the
+        container, whose --init hands it to the server); then SIGKILL - and
+        the cleanup (a container left behind by a killed podman)."""
         proc = self._proc
         try:
             proc.stdin.close()
@@ -293,9 +418,22 @@ class _Stdio:
             pass
         try:
             proc.wait(timeout=3)
+            return
         except subprocess.TimeoutExpired:
-            proc.kill()
+            pass
+        proc.terminate()
+        try:
             proc.wait(timeout=3)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        proc.kill()
+        proc.wait(timeout=3)
+        if self._cleanup is not None:
+            try:
+                self._cleanup()
+            except Exception:  # noqa: BLE001 - cleanup is best effort
+                log.warning("mcp client: cleanup after a killed server failed", exc_info=True)
 
 
 class _Http:
@@ -481,18 +619,86 @@ def _schema(raw) -> dict:
     return out
 
 
+def _env_file(config: McpServerConfig, secrets: dict, proxy_port: int | None) -> bytes:
+    """The ``NAME=value`` lines podman reads from the pipe."""
+    values = dict(config.env)
+    values.update(secrets)
+    if proxy_port is not None:
+        proxy = f"http://127.0.0.1:{proxy_port}"
+        for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            values[name] = proxy
+        values["NO_PROXY"] = values["no_proxy"] = ""
+    lines = []
+    for name, value in values.items():
+        if not _ENV_NAME.match(str(name)):
+            raise McpClientError(f"{name!r} is not an environment variable name")
+        if not isinstance(value, str) or any(c in value for c in "\n\r\x00"):
+            raise McpClientError(f"the value of {name} must be a single line")
+        lines.append(f"{name}={value}\n")
+    data = "".join(lines).encode("utf-8")
+    if len(data) > MAX_ENV_FILE:
+        raise McpClientError(f"the environment is larger than {MAX_ENV_FILE} bytes")
+    return data
+
+
+def _start_container(config: McpServerConfig, secrets: dict) -> _Stdio:
+    """Start a container server: fill in the tokens, hand the environment
+    over on a pipe, remember the container's name for a cleanup."""
+    if os.name != "posix":
+        raise McpClientError("container servers need Linux or macOS (an inherited pipe)")
+    argv = list(config.command)
+    needs_proxy = any(TOKEN_EGRESS in a for a in argv)
+    port = None
+    if needs_proxy:
+        if not config.egress:
+            raise McpClientError("its network is an allowlist, but no allowed host is set")
+        from core.mcp_egress import shared_proxy
+
+        port = shared_proxy(config.egress).port
+    data = _env_file(config, secrets, port)
+    run_id = os.urandom(6).hex()
+    read_end, write_end = os.pipe()
+    try:
+        os.write(write_end, data)
+    finally:
+        os.close(write_end)
+    try:
+        filled = [a.replace(TOKEN_ENV_FD, str(read_end)).replace(TOKEN_RUN, run_id)
+                  .replace(TOKEN_EGRESS, str(port or "")) for a in argv]
+        name = next((a.split("=", 1)[1] for a in filled if a.startswith("--name=")), "")
+        program = filled[0] if filled else "podman"
+
+        def cleanup() -> None:
+            if name:
+                subprocess.run([program, "rm", "-f", "-t", "0", name], capture_output=True,
+                               timeout=60, env=_named_env(_BASE_ENV + _PODMAN_ENV))
+
+        return _Stdio(filled, {}, config.timeout, pass_fds=(read_end,), cleanup=cleanup,
+                      base=_BASE_ENV + _PODMAN_ENV)
+    finally:
+        os.close(read_end)  # the child has its own copy
+
+
 class McpClient:
     """One connected server."""
 
     def __init__(self, config: McpServerConfig, *, token: str = "",
-                 wrap: Callable[[list[str]], list[str]] | None = None) -> None:
-        """*wrap* turns a stdio argv into the sandboxed one."""
+                 wrap: Callable[[list[str]], list[str]] | None = None,
+                 secrets: dict | None = None) -> None:
+        """*wrap* turns a stdio argv into the sandboxed one; *secrets* are the
+        values of ``secret_env`` (default: the keyring's)."""
         self.config = config
         self._lock = threading.Lock()
         self._next = 0
         if config.transport == "stdio":
-            argv = list(config.command)
-            self._transport = _Stdio(wrap(argv) if wrap else argv, dict(config.env), config.timeout)
+            values = secrets_of(config) if secrets is None else {
+                k: v for k, v in secrets.items() if k in config.secret_env and v}
+            if config.container:
+                self._transport = _start_container(config, values)
+            else:
+                argv = list(config.command)
+                self._transport = _Stdio(wrap(argv) if wrap else argv,
+                                         {**config.env, **values}, config.timeout)
         else:
             self._transport = _Http(config.url, token, config.timeout)
         try:

@@ -16,15 +16,18 @@ splits, restored sessions, layout presets) lands there unchanged.
   (Workspace > New Workspace); Add Terminal Pane puts another local shell
   into the workspace on screen, side by side - several shells in one
   workspace.
+* Extension panels are on all workspaces (the dock area) until one is
+  moved to a workspace - from its title bar or Add Extension Panel - where
+  it is laid out like a pane (:mod:`ui.extension_panels`).
 * The tab bar hides while there is only one workspace, so the default
   window looks as it always did.
 * All panes stay in ``MainWindow._panes`` whichever workspace holds them:
   transfers, the source/target pair and the shutdown work across workspaces.
 
 Session: ``workspaces`` holds every workspace (name, layout with its file
-panes and terminals, detached and its window geometry, current) in tab
-order; ``splitter`` still holds the first one, so an older axross restores
-at least that.
+panes, terminals and extension panels, detached and its window geometry,
+current) in tab order; ``splitter`` still holds the first one, so an older
+axross restores at least that.
 """
 
 from __future__ import annotations
@@ -337,7 +340,11 @@ class WorkspaceMixin:
         return ws
 
     def _drop_workspace(self, ws: Workspace) -> None:
-        """Take *ws* away - its panes are already torn down."""
+        """Take *ws* away - its panes are already torn down; its extension
+        panels are parked on All Workspaces with their state."""
+        if hasattr(self, "_park_extension_panels"):
+            self._park_extension_panels(ws.root)
+            self._forget_panel_homes(ws)
         if ws in self._workspaces:
             self._workspaces.remove(ws)
         if ws.window is not None:
@@ -374,6 +381,8 @@ class WorkspaceMixin:
         """A layout preset built a new root for the current workspace."""
         ws = self._current_ws
         old = ws.root
+        if old is not root and hasattr(self, "_park_extension_panels"):
+            self._park_extension_panels(old)
         ws.root = root
         if ws.window is not None:
             ws.window.takeCentralWidget()
@@ -595,13 +604,16 @@ class WorkspaceMixin:
     def _prune_empty_workspaces(self) -> None:
         """A workspace whose last pane left (closed, moved, dragged away)
         goes - as a tab closes with its last page. One always stays, and
-        the main window keeps one tab (empty) while others are detached."""
+        the main window keeps one tab (empty) while others are detached.
+        An extension panel counts as a pane, and so does the kept place of
+        one whose extension is switched off."""
         for ws in list(self._workspaces):
             if len(self._workspaces) <= 1:
                 break
             if ws.window is None and sum(w.window is None for w in self._workspaces) <= 1:
                 continue
-            if ws.root.count() == 0 and not any(self._widgets_of(ws)):
+            if ws.root.count() == 0 and not any(self._widgets_of(ws)) \
+                    and not getattr(self, "_keeps_panel_home", lambda _w: False)(ws):
                 self._drop_workspace(ws)
 
     # -- detach / attach -------------------------------------------------------------
@@ -696,9 +708,11 @@ class WorkspaceMixin:
             parent.deleteLater()
 
     def move_pane_to_workspace(self, pane, ws: Workspace) -> bool:
-        """Move *pane* - a file pane or a terminal pane - into *ws* (at the
-        end of its root); the source workspace closes if that was its last
-        pane."""
+        """Move *pane* - a file pane, a terminal pane or an extension panel
+        - into *ws* (at the end of its root); the source workspace closes
+        if that was its last pane."""
+        if self._is_extension_panel(pane):
+            return self.move_extension_panel(pane, ws)
         if ws not in self._workspaces or not (pane in self._panes or pane in self._terminal_panes):
             return False
         if self.workspace_of(pane) is ws:
@@ -712,14 +726,23 @@ class WorkspaceMixin:
             self._set_active_pane(pane)
         return True
 
+    @staticmethod
+    def _is_extension_panel(widget) -> bool:
+        from ui.extension_panels import ExtensionDock
+
+        return isinstance(widget, ExtensionDock)
+
     def _pane_to_move(self):
-        """What Move Pane to Workspace moves: the terminal pane that has the
-        keyboard focus, else the active file pane."""
+        """What Move Pane to Workspace moves: the terminal pane or the
+        extension panel on a workspace that has the keyboard focus, else
+        the active file pane."""
         from PyQt6.QtWidgets import QApplication
 
         widget = QApplication.focusWidget()
         while widget is not None:
             if widget in self._terminal_panes:
+                return widget
+            if self._is_extension_panel(widget) and isinstance(widget.parentWidget(), QSplitter):
                 return widget
             widget = widget.parentWidget()
         return self._active_pane
@@ -728,6 +751,8 @@ class WorkspaceMixin:
         pane = pane if pane is not None else self._pane_to_move()
         if pane is None:
             return None
+        if self._is_extension_panel(pane):
+            return self.move_extension_panel_to_new_workspace(pane)
         ws = self.new_workspace(with_pane=False, activate=False)
         if ws is not None:
             self.move_pane_to_workspace(pane, ws)
@@ -772,6 +797,7 @@ class WorkspaceMixin:
         menu.clear()
         menu.addMenu(self._new_workspace_menu)
         menu.addAction(self._add_terminal_pane_action)
+        menu.addMenu(self._workspace_panel_menu())
         menu.addAction(tr("Rename Workspace…")).triggered.connect(
             lambda _c=False: self._ask_rename_workspace())
         ws = self._current_ws
@@ -804,9 +830,13 @@ class WorkspaceMixin:
     def fill_move_menu_for(self, pane, menu: QMenu) -> None:
         """The other workspaces and New Workspace, each moving *pane* (a
         file or terminal pane) - for the Workspace menu and a terminal
-        pane's header button."""
+        pane's header button. For an extension panel: every workspace,
+        New Workspace and All Workspaces (ui.extension_panels)."""
         menu.clear()
         if pane is None:
+            return
+        if self._is_extension_panel(pane):
+            self._fill_panel_move_menu(pane, menu)
             return
         here = self.workspace_of(pane)
         for ws in self._workspaces:
@@ -841,6 +871,7 @@ class WorkspaceMixin:
         menu.addSeparator()
         menu.addAction(tr("Add Terminal Pane")).triggered.connect(
             lambda _c=False: self._add_terminal_pane_and_show(ws))
+        self._add_extension_panel_menu(menu, ws)
         menu.addMenu(self._new_workspace_menu)
         menu.exec(bar.mapToGlobal(pos))
         menu.deleteLater()

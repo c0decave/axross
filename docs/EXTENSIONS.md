@@ -95,7 +95,7 @@ resources (files, sockets).
 |---|---|
 | `api.add_menu_action(label, callback, shortcut=None)` | An entry in the Extensions menu. |
 | `api.add_context_action(label, callback, applies_to="any", extensions=())` | An entry in the file pane's right-click menu. `callback(ctx)`. `applies_to`: `any`, `folder` (nothing selected), `selection`, `files`, `folders`, `single_file`, `single_folder` (exactly one folder selected). `extensions=(".md",)` limits it by file name. |
-| `api.add_dock(title, widget)` | A panel on the right with the title bar of the built-in panels (float, [x], close all); its show/hide entry goes into the Extensions menu, which reopens it after [x]. |
+| `api.add_dock(title, widget)` | A panel on the right with the title bar of the built-in panels (float, [x], close all) and a Move to Workspace button (⇄); its show/hide entry goes into the Extensions menu, which reopens it after [x]. Returns the `QDockWidget`; see *Panels and workspaces* below. |
 | `api.on(event, callback)` | `callback(ctx)` on `selection_changed`, `path_changed` or `pane_activated` of the active pane. |
 | `api.run_in_background(work, on_done=None, on_error=None)` | `work()` on a worker thread, `on_done(result)` / `on_error(exc)` back on the GUI thread. Use it for anything that reads files or the network. |
 | `api.current()` | The active pane's context, or `None`. |
@@ -112,6 +112,47 @@ an extension works on SFTP, S3, SMB … as well as locally.
 Never block the GUI thread: a slow server would freeze the window. Do the
 work in `api.run_in_background` and touch widgets only in `on_done`.
 
+## Panels and workspaces
+
+A panel from `api.add_dock` is on **all workspaces** (the window's dock
+area on the right) until the user puts it on one - with the ⇄ button or a
+right click in its title bar (*Move to Workspace > <workspace> / New
+Workspace / All Workspaces*) or *Workspace > Add Extension Panel*. On a
+workspace the panel is laid out like a pane: it shows only while that
+workspace is on screen, goes along when the workspace is detached to a
+window, is dragged by its title bar and takes dragged panes, is resized by
+the splitter handles and evened out by *Equalize Pane Sizes*; it does not
+float there. Its [x] takes it out of the workspace, and showing it again
+from the Extensions menu (or its toolbar button) puts it back.
+
+What an extension can rely on wherever the panel is:
+
+- The dock and the `widget` passed in stay the **same objects**: a panel is
+  moved, never rebuilt, so its state (a playlist, a scroll position, a
+  running job) stays. `dock.titleBarWidget().set_title(...)` keeps working.
+- Closing a workspace **parks** its panels on all workspaces, hidden; the
+  widget is not destroyed and no extension call is made.
+- Switching the extension off (or *Reload Extensions*) takes its panels
+  out of their workspaces as before (`deactivate` runs, the widgets go);
+  the next `add_dock` calls - matched by order, the first panel of the
+  extension to the first place - put them back where they were. The
+  places are saved with the session, also while the extension is off,
+  and a workspace that held only such a panel stays until it comes back.
+- The session names a panel by the dock's object name,
+  `extension-dock-<extension id>-<n>` (n counts the extension's panels
+  in the order `add_dock` was called). An extension that wants its panels
+  to keep their workspaces adds them in the same order every time.
+
+The Agent's conversations detached into panels of their own (*Detach as
+Panel*, *New Agent Window*) are placed the same way and are listed in
+*Add Extension Panel* too; they are no extension's panels and never reach
+an extension through `add_dock`.
+
+An extension needs no change for any of this. A panel is hidden whenever
+its workspace is not on screen, as it is after [x]; an extension that
+stops work on a hidden panel (a visualization timer) checks
+`widget.isVisible()` as before.
+
 ## Bundled examples
 
 | Extension | What it does |
@@ -121,7 +162,7 @@ work in `api.run_in_background` and touch widgets only in `on_done`.
 | Folder Treemap | A panel: the current folder as a treemap, subfolders summed in the background (bounded); double-click a box to open it. |
 | Drives Overview | A panel: every local and mounted drive (Linux /proc/self/mounts, Windows drive letters, macOS psutil or `mount`) with size, used and free as a sortable table, a pie of the selected drive and bars of all drives; a drive that does not answer within 2 s shows as unknown; double-click opens a drive in the active local pane. |
 | Image Batch | Right-click images: scale down and/or convert to PNG, JPEG or WebP into a `resized` subfolder; originals and existing files stay. |
-| Media Player | A panel that plays MP3, WAV, Ogg Vorbis, FLAC, Opus, AAC and more (Qt's FFmpeg backend): playlist (right-click > *Play in Media Player*, *Add…*, or drag & drop of files and folders from a pane or the desktop; remote files copied first, at most 512 MB each), rows reorder by dragging, M3U/M3U8 load and save, the last playlist and position restored on the next start; seeking (position slider, Left/Right), shuffle, repeat off/all/one, perceptual volume with mute, on the output device and at the output volume of *Edit → Settings… → Audio*; when audio does not start the panel says why and offers *Try Again* and *Audio Settings…*; keys while the panel has the focus (see docs/USAGE.md); title/artist/album and cover, a 10-band equalizer with presets that folds away and animated visualizations a click switches between - spectrum, mirrored and radial spectrum, oscilloscope, VU meter; choice and fold state are kept (both need numpy: `pip install axross[media]`, bundled in axross-full). |
+| Media Player | A panel that plays MP3, WAV, Ogg Vorbis, FLAC, Opus, AAC and more (Qt's FFmpeg backend): playlist (right-click > *Play in Media Player*, *Add…*, or drag & drop of files and folders from a pane or the desktop; remote files copied first, at most 512 MB each), rows reorder by dragging, M3U/M3U8 load and save, the last playlist and position restored on the next start; seeking (position slider, Left/Right), shuffle, repeat off/all/one, perceptual volume with mute, on the output device and at the output volume of *Edit → Settings… → Audio*; when audio does not start the panel says why and offers *Try Again* and *Audio Settings…*; keys while the panel has the focus (see docs/USAGE.md); title/artist/album and cover, a 10-band equalizer with presets that folds away and animated visualizations a click switches between - spectrum, mirrored, radial, line and polar spectrum, waterfall, oscilloscope, stereo scope, VU meter, starfield - in colour schemes (Classic, Fire, Ice, Neon, Mono, the theme's, your own; peaks keep 3:1 contrast) with bar count, peak fall, smoothing and frame rate cap (right-click menu, *Extensions → Media Player Visualizer…*), fullscreen like a screensaver (double-click, F11) or detached into a window of any size; the playlist folds away; choices and fold states are kept (equalizer and visualizations need numpy: `pip install axross[media]`, bundled in axross-full). |
 | VirtualBox | Right-click a `.vbox`: register the machine in VirtualBox (`VBoxManage registervm`). Right-click a `.vdi` / `.vmdk` / `.vhd` / `.vhdx`: pick a VM (and a controller when it has several); the disk goes on the first free slot (`VBoxManage storageattach`). Local files only. |
 | Backup Repositories | Right-click one folder (or nothing, for the current one): what a restic, Borg or duplicity repository holds. Without a password from its layout (restic counts, Borg's config, duplicity's backup chains from the file names - on any backend); *Unlock…* lists the snapshots through the tool (`restic snapshots --no-lock`, `borg list --bypass-lock`, `duplicity collection-status`; for duplicity the password is first checked by decrypting the newest manifest with gpg, because collection-status reads only file names). The password goes to the tool's environment or gpg's stdin only and is not stored; nothing is written to the repository. |
 | Forensic Tools | Right-click a disk image: MD5 / SHA-1 / SHA-256 in one pass; `qemu-img info`; *Convert to Raw Image* (`qemu-img convert -O raw`, never over an existing file); *Browse File System* with The Sleuth Kit (`fls`, deleted files included) and *Extract* (`icat`) - no mount needed; on a qcow2 / VMDK / dynamic VDI / VHD(X) Browse says the partitions are inside a container and offers *Convert to Raw…*; TestDisk and PhotoRec in a terminal pane. Missing tools are named with their package. |

@@ -50,6 +50,8 @@ PHRASES: dict[str, dict[str, str]] = {
         "declined": "Das geht leider nicht: Du hast den Aufruf nicht erlaubt.",
         "permission": "Das geht leider nicht: Die {Permission} fehlt.",
         "greeting": "Hallo! Ich wünsche dir einen schönen Tag.",
+        "sample": "Hallo, so klinge ich mit diesen Einstellungen. Ich lese dir die Antworten "
+                  "des Agenten vor.",
     },
     "en": {
         "code_shown": "The code is shown on screen.",
@@ -61,6 +63,8 @@ PHRASES: dict[str, dict[str, str]] = {
         "declined": "That is not possible: you did not allow this call.",
         "permission": "That is not possible: permission denied.",
         "greeting": "Hello! I wish you a nice day.",
+        "sample": "Hello, this is how I sound with these settings. I read the agent's answers "
+                  "aloud to you.",
     },
 }
 REFUSAL_REASONS = ("read_only", "declined", "permission")
@@ -77,6 +81,12 @@ def refusal_phrase(reason: str, lang: str) -> str:
 
 def greeting_phrase(lang: str) -> str:
     return phrase("greeting", lang)
+
+
+def sample_phrase(lang: str) -> str:
+    """What Listen on the Voice settings page says: two sentences, so the
+    pause between them is heard too."""
+    return phrase("sample", lang)
 
 
 # -- the lexicon ---------------------------------------------------------------------------

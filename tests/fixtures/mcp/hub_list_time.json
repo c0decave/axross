@@ -1,0 +1,65 @@
+{
+ "count": 3,
+ "next": null,
+ "previous": null,
+ "results": [
+  {
+   "name": "time",
+   "namespace": "mcp",
+   "description": "Time and timezone conversion capabilities",
+   "pull_count": 1034876,
+   "last_updated": "2025-06-17T16:00:45.757862Z",
+   "categories": [
+    {
+     "name": "Machine learning & AI",
+     "slug": "machine-learning-and-ai"
+    }
+   ],
+   "status_description": "active",
+   "is_private": false,
+   "content_types": [
+    "image"
+   ],
+   "media_types": [
+    "application/vnd.oci.image.index.v1+json"
+   ]
+  },
+  {
+   "name": "timestream-for-influxdb-mcp-server",
+   "namespace": "mcp",
+   "description": "Time-series database operations.",
+   "pull_count": 18220,
+   "last_updated": "2026-07-08T07:07:14.374545Z",
+   "categories": [
+    {
+     "name": "Machine learning & AI",
+     "slug": "machine-learning-and-ai"
+    }
+   ],
+   "status_description": "active",
+   "is_private": false,
+   "content_types": [
+    "image"
+   ],
+   "media_types": [
+    "application/vnd.oci.image.index.v1+json"
+   ]
+  },
+  {
+   "name": "signatures",
+   "namespace": "mcp",
+   "description": "Repository containing cosign signatures for images in the mcp namespace",
+   "pull_count": 92957159,
+   "last_updated": "2026-07-21T07:00:37.28059Z",
+   "categories": [],
+   "status_description": "active",
+   "is_private": false,
+   "content_types": [
+    "image"
+   ],
+   "media_types": [
+    "application/vnd.oci.image.config.v1+json"
+   ]
+  }
+ ]
+}

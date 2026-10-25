@@ -54,7 +54,7 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 ![The toolbar with an icon per tool above two panes and the bookmark sidebar](docs/screenshots/toolbar.png)
 
-*Toolbar.* One button per tool - Agent, Analysis, Terminal, Find Files, Scripts, Python console, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. On a narrow window the tools move to a second row instead of disappearing. Drag a button along its bar to move it; the order is kept, and the toolbar's right-click menu has Reset Toolbar Order.
+*Toolbar.* One button per tool - Agent, Analysis (sift), Terminal, Find Files, Scripts, Python console, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. On a narrow window the tools move to a second row instead of disappearing. The buttons are grouped by category - Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions - with a separator between the groups, and each category's colour is a subtle tint behind its buttons that never makes an icon hard to read. Drag a button along its bar to move it inside its group; the order is kept, and the toolbar's right-click menu has Reset Toolbar Order. Edit → Settings… → Toolbar switches grouping and colours off and sets each category's colour.
 
 ![The Tagged Files window listing the files of one tag](docs/screenshots/tags.png)
 
@@ -78,7 +78,7 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 ![Settings, Voice page: spoken answers, push-to-talk and the hold key](docs/screenshots/voice.png)
 
-*Voice.* Spoken answers in German or English, push-to-talk on a hold key, and where the recognised text goes.
+*Voice.* Spoken answers in German or English, a voice per language with its speed, pitch, expressiveness, volume and pause (Listen plays a sample), push-to-talk on a hold key, and where the recognised text goes.
 
 ![Manage Bookmarks with groups, a terminal bookmark and remote locations](docs/screenshots/bookmarks.png)
 
@@ -114,7 +114,7 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 ![The Analysis dock explaining a CSV file](docs/screenshots/analysis.png)
 
-*Analysis dock.* The optional `sift` extra explains the selected file — here a CSV, without any LLM.
+*Analysis dock (sift).* The optional `sift` extra explains the selected file — here a CSV, without any LLM. Start it with right-click → **Analyse with sift** (a folder: **Analyse Folder with sift**), **Tools → Analyse with sift** or `Ctrl+Shift+I`; its toolbar button and title bar show sift's sieve. Edit → Settings… → Analysis (sift) switches the automatic analysis off and sets sift's read limit, time budget, vision, context, tags, categories, the cache (with *Clear Cache*) and an LLM profile of its own.
 
 ![Two panes in the thumbnail view, light theme](docs/screenshots/thumbnails.png)
 
@@ -383,7 +383,9 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 28. **Talk to the agent.** Push-to-talk (F9), toggle or conversation
     mode in the Agent dock. Answers are spoken in German or English with
-    Piper voices, English IT terms kept English; speech is recognised
+    Piper voices, English IT terms kept English; each voice has its own
+    speed, pitch, expressiveness, volume and pause, tried out with Listen
+    in Settings > Voice; speech is recognised
     locally with faster-whisper or on the LLM server, chosen per profile.
     The models are downloaded on demand. Bundled in `axross-full`,
     otherwise `pip install axross[voice]`.
@@ -412,9 +414,12 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 33. **Media Player.** An extension panel for MP3, FLAC, Ogg, Opus, AAC
     and more: playlist with drag & drop and M3U, seeking, shuffle and
-    repeat, a 10-band equalizer with presets that folds away, five
-    visualizations (spectrum, mirrored, radial, oscilloscope, VU meter) a
-    click on them switches between, title, artist and cover.
+    repeat, a 10-band equalizer with presets that folds away, ten
+    visualizations (spectrum, mirrored, radial, line and polar spectrum,
+    waterfall, oscilloscope, stereo scope, VU meter, starfield) a click on
+    them switches between, in colour schemes or your own colours,
+    fullscreen like a screensaver or in a window of their own, a playlist
+    that folds away, title, artist and cover.
 
 34. **Bookmarks for many places.** Multi-select, groups sorted by name,
     path or age, terminal bookmarks (on a profile, a bare host or
@@ -427,12 +432,16 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
     shows which optional parts are installed and which are missing;
     **Help → Scripting Guide** opens the API guide.
 
-36. **A toolbar for the tools.** Buttons with icons for Agent, Analysis,
+36. **A toolbar for the tools.** Buttons with icons for Agent, Analysis (sift),
     Terminal, Find Files, Scripts, the Python console, Tags, Trash, Media
     Player, Audio & Video Settings, Treemap, Drives, Settings and Features,
-    in every theme. Drag a button to move it; the order is kept across
-    starts, and Reset Toolbar Order (right-click the toolbar) brings back
-    the default.
+    in every theme, grouped by category (Connections, Windows & Panes,
+    Files & Search, Media, LLM & Agent, Tools & System, Extensions), each
+    category with its own colour behind its buttons. Drag a button to move
+    it inside its group; the order is kept across starts, and Reset Toolbar
+    Order (right-click the toolbar) brings back the default. **Edit →
+    Settings… → Toolbar** switches grouping and colours on or off and sets
+    each category's colour.
 
 37. **Archives as folders.** ZIP, TAR and 7z archives open in the
     archive view; step into nested archives and extract everything or

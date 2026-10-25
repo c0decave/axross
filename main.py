@@ -821,7 +821,14 @@ def _run(args) -> int:
         # else is a message on stderr and status 1).
         from core.script_runner import execute_source
 
-        return execute_source(source, filename)
+        status = execute_source(source, filename)
+        # A script that built Qt objects of its own and left them: they go
+        # before PyQt's exit walk, which crashes when one of their
+        # destructors calls into Python (core.qt_exit).
+        from core.qt_exit import install_orderly_qt_exit
+
+        install_orderly_qt_exit(only_if_loaded=True)
+        return status
 
     log.info("Starting Axross")
     _install_excepthook()

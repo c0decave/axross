@@ -96,5 +96,38 @@ def set_by_axross() -> frozenset[str]:
     return frozenset(_SET_BY_AXROSS)
 
 
+def _ignore(*_args) -> None:
+    pass
+
+
+def prime_notify_lookups(obj) -> None:
+    """Let Qt's own threads call *obj*'s connectNotify / disconnectNotify
+    without the GIL; call it on the GUI thread right after making a Qt
+    Multimedia object (QMediaPlayer, QAudioOutput, QAudioSink, ...).
+
+    A PyQt-made object is a sip subclass: each of those calls first asks
+    Python whether the method is reimplemented, and asking takes the GIL -
+    until the answer was "no" once, which sip then keeps for that object.
+    Qt FFmpeg's renderer threads destroy objects connected to it, and
+    QObject::~QObject() calls the sender's disconnectNotify() while it holds
+    its own signal-slot lock. Measured (core dump of a hung run): the
+    renderer waited for the GIL inside QAudioOutput.disconnectNotify(), the
+    main thread held the GIL in QMediaPlayer.stop() and waited for that
+    lock - for ever. One connect and disconnect here gives sip its answer
+    while this thread holds the GIL anyway."""
+    if obj is None:
+        return
+    try:
+        from PyQt6 import sip
+
+        if sip.isdeleted(obj):
+            return
+        obj.destroyed.connect(_ignore)
+        obj.destroyed.disconnect(_ignore)
+    except (RuntimeError, TypeError, ImportError):  # deleted meanwhile; not a QObject
+        pass
+
+
 __all__ = ["AUDIO_BACKENDS", "AUDIO_BACKEND_VAR", "GPU_PROBE_ENV", "HW_DEVICE_VARS",
-           "apply_audio_backend", "apply_no_gpu_probe", "set_by_axross", "users_audio_backend"]
+           "apply_audio_backend", "apply_no_gpu_probe", "prime_notify_lookups", "set_by_axross",
+           "users_audio_backend"]

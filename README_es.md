@@ -55,7 +55,7 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 ![La toolbar con un icono por herramienta sobre dos paneles y la barra de bookmarks](docs/screenshots/toolbar.png)
 
-*Toolbar.* Un botón por herramienta - Agent, Analysis, Terminal, Find Files, Scripts, consola Python, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. En una ventana estrecha las herramientas pasan a una segunda fila en lugar de desaparecer. Un botón se mueve arrastrándolo a lo largo de su barra; el orden se conserva, y el menú contextual de la toolbar tiene Reset Toolbar Order.
+*Toolbar.* Un botón por herramienta - Agent, Analysis (sift), Terminal, Find Files, Scripts, consola Python, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. En una ventana estrecha las herramientas pasan a una segunda fila en lugar de desaparecer. Los botones se agrupan por categoría - Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions - con un separador entre los grupos, y el color de cada categoría es un tinte sutil detrás de sus botones que nunca hace difícil leer un icono. Un botón se mueve arrastrándolo dentro de su grupo; el orden se conserva, y el menú contextual de la toolbar tiene Reset Toolbar Order. Edit → Settings… → Toolbar desactiva la agrupación y los colores y fija el color de cada categoría.
 
 ![La ventana Tagged Files con los archivos de un tag](docs/screenshots/tags.png)
 
@@ -79,7 +79,7 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 ![Settings, página Voice: respuestas habladas, push-to-talk y la tecla de mantener](docs/screenshots/voice.png)
 
-*Voice.* Respuestas habladas en alemán o inglés, push-to-talk con una tecla mantenida, y adónde va el texto reconocido.
+*Voice.* Respuestas habladas en alemán o inglés, una voz por idioma con su velocidad, tono, expresividad, volumen y pausa (Listen reproduce una muestra), push-to-talk con una tecla mantenida, y adónde va el texto reconocido.
 
 ![Manage Bookmarks con grupos, un bookmark de terminal y ubicaciones remotas](docs/screenshots/bookmarks.png)
 
@@ -115,7 +115,7 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 ![El dock Analysis explica un archivo CSV](docs/screenshots/analysis.png)
 
-*Dock Analysis.* El extra opcional `sift` explica el archivo seleccionado — aquí un CSV, sin ningún LLM.
+*Dock Analysis (sift).* El extra opcional `sift` explica el archivo seleccionado — aquí un CSV, sin ningún LLM. Se abre con clic derecho → **Analyse with sift** (una carpeta: **Analyse Folder with sift**), **Tools → Analyse with sift** o `Ctrl+Shift+I`; el botón de la toolbar y la barra de título muestran el tamiz de sift. Edit → Settings… → Analysis (sift) desactiva el análisis automático y fija el límite de lectura de sift, el time budget, vision, context, tags, categories, la cache (con *Clear Cache*) y un perfil LLM propio.
 
 ![Dos paneles en la vista de miniaturas, tema claro](docs/screenshots/thumbnails.png)
 
@@ -407,7 +407,8 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 28. **Habla con el agente.** Push-to-talk (F9), modo toggle o
     conversación en el Agent dock. Las respuestas se oyen en alemán o
     inglés con voces Piper, y los términos IT en inglés siguen en
-    inglés; el speech recognition corre en local con faster-whisper o en
+    inglés; cada voz tiene su velocidad, tono, expresividad, volumen y
+    pausa, que Listen deja oír en Settings > Voice; el speech recognition corre en local con faster-whisper o en
     el servidor LLM, elegido por perfil. Los modelos se descargan cuando
     hacen falta. Incluido en `axross-full`, si no `pip install
     axross[voice]`.
@@ -438,9 +439,12 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 33. **Media Player.** Un panel de extensión para MP3, FLAC, Ogg, Opus,
     AAC y más: playlist con drag & drop y M3U, seeking, shuffle y
-    repeat, un ecualizador de 10 bandas con presets que se pliega, cinco
-    visualizaciones (espectro, espejo, radial, osciloscopio, vúmetro)
-    entre las que cambia un clic sobre ellas, título, artista y portada.
+    repeat, un ecualizador de 10 bandas con presets que se pliega, diez
+    visualizaciones (espectro, espejo, radial, espectro en línea y polar,
+    waterfall, osciloscopio, stereo scope, vúmetro, starfield) entre las
+    que cambia un clic sobre ellas, en esquemas de colores o colores
+    propios, en fullscreen como un screensaver o en una ventana propia,
+    una playlist que se pliega, título, artista y portada.
 
 34. **Bookmarks para muchos sitios.** Selección múltiple, grupos
     ordenados por nombre, ruta o antigüedad, bookmarks de terminal (en
@@ -455,11 +459,16 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
     cuáles faltan; **Help → Scripting Guide** abre la guía de la API.
 
 36. **Una toolbar para las herramientas.** Botones con iconos para
-    Agent, Analysis, Terminal, Find Files, Scripts, la consola Python,
+    Agent, Analysis (sift), Terminal, Find Files, Scripts, la consola Python,
     Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives,
-    Settings y Features, en cada tema. Los botones se mueven con drag and
-    drop; el orden se conserva entre arranques, y Reset Toolbar Order (clic
-    derecho en la toolbar) restaura el orden por defecto.
+    Settings y Features, en cada tema, agrupados por categoría
+    (Connections, Windows & Panes, Files & Search, Media, LLM & Agent,
+    Tools & System, Extensions), cada categoría con su propio color detrás
+    de sus botones. Los botones se mueven con drag and drop dentro de su
+    grupo; el orden se conserva entre arranques, y Reset Toolbar Order
+    (clic derecho en la toolbar) restaura el orden por defecto. **Edit →
+    Settings… → Toolbar** activa o desactiva la agrupación y los colores y
+    fija el color de cada categoría.
 
 37. **Archivos comprimidos como carpetas.** Los archivos ZIP, TAR y 7z
     se abren en la vista de archivo; se puede entrar en archivos

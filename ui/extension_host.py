@@ -144,15 +144,26 @@ class ExtensionAPI:
 
     def add_dock(self, title: str, widget: QWidget) -> QDockWidget:
         """A panel docked on the right, with the title bar of the built-in
-        panels (float, [x], close all in this area); its show/hide entry
-        goes into the Extensions menu, which also reopens it after [x]."""
-        from ui.dock_titlebar import DockTitleBar
+        panels (float, [x], close all in this area) and a Move to Workspace
+        button; its show/hide entry goes into the Extensions menu, which
+        also reopens it after [x].
+
+        The panel is on all workspaces (the dock area) until the user
+        moves it to one, where it is laid out like a pane
+        (ui.extension_panels); a panel that was on a workspace when the
+        extension was switched off goes back there. The returned dock and
+        *widget* stay the same objects wherever the panel is."""
+        from ui.extension_panels import (
+            EXTENSION_DOCK_PREFIX,
+            ExtensionDock,
+            ExtensionPanelTitleBar,
+        )
 
         window = self._host.window
-        dock = QDockWidget(str(title), window)
-        dock.setObjectName(f"extension-dock-{self.info.ext_id}-{len(self._reg.docks)}")
-        bar = DockTitleBar(str(title), "extensions", dock, reopen_hint="the Extensions menu")
         ext_id = self.info.ext_id
+        dock = ExtensionDock(str(title), window, ext_id)
+        dock.setObjectName(f"{EXTENSION_DOCK_PREFIX}{ext_id}-{len(self._reg.docks)}")
+        bar = ExtensionPanelTitleBar(str(title), dock)
         bar.enable_pause(
             lambda paused: self._host.set_paused(ext_id, paused),
             paused=self._host.is_paused(ext_id),
@@ -164,6 +175,16 @@ class ExtensionAPI:
         self._host.menu_section().addAction(toggle)
         self._reg.actions.append(toggle)
         self._reg.docks.append(dock)
+        reveal = getattr(window, "reveal_extension_panel", None)
+        if callable(reveal):
+            # Shown from the menu: on a workspace, that one comes to the front.
+            toggle.triggered.connect(lambda checked, d=dock: reveal(d) if checked else None)
+        drop = getattr(window, "_on_pane_drop", None)
+        if callable(drop):
+            dock.pane_drop_requested.connect(drop)
+        added = getattr(window, "extension_panel_added", None)
+        if callable(added):
+            added(dock)
         return dock
 
     def on(self, event: str, callback: Callable[[ExtensionContext], Any]) -> None:
@@ -327,7 +348,10 @@ class ExtensionAPI:
             for widget in action.associatedObjects():
                 if isinstance(widget, QMenu):
                     widget.removeAction(action)
+        removed = getattr(self._host.window, "extension_panel_removed", None)
         for dock in self._reg.docks:
+            if callable(removed):
+                removed(dock)  # out of its workspace, its place kept
             self._host.window.removeDockWidget(dock)
             dock.deleteLater()
         self._reg = _Registered()

@@ -29,6 +29,7 @@ from core import voice_settings as VS
 from core import voice_text as VT
 from core import voice_worker as VW
 from core.i18n import tr
+from core.multimedia_env import prime_notify_lookups
 
 #: Longest recording; then it ends by itself.
 MAX_RECORD_SECONDS = 60.0
@@ -103,6 +104,7 @@ class QtRecorder(QObject):
         rate, channels = fmt.sampleRate(), fmt.channelCount()
         self._convert = lambda raw: VA.to_mono16k(raw, rate, channels, kind)
         self._source = QAudioSource(device, fmt, self)
+        prime_notify_lookups(self._source)
         self._source.setVolume(AR.input_gain() if self._volume is None else self._volume)
         self._io = self._source.start()
         if self._io is None:
@@ -142,6 +144,7 @@ def _qt_sink(rate: int, device_id: str | None = None, volume: float | None = Non
         if not device.isFormatSupported(fmt):
             raise OSError(tr("The audio output plays no 16-bit mono sound"))
     sink = QAudioSink(device, fmt)
+    prime_notify_lookups(sink)
     sink.setBufferSize(fmt.sampleRate() * 2 // 4)  # 250 ms
     sink.setVolume(AR.output_gain() if volume is None else volume)
     io = sink.start()
@@ -238,6 +241,36 @@ class QtPlayer(QObject):
         self._timer.stop()
         self._close()
         self.level.emit(0.0)
+
+
+# -- what is spoken ------------------------------------------------------------------------------
+
+
+def speech_sentences(text: str, lang: str, lexicon) -> list:
+    """*text* as the worker's sentences: [[(kind, text), ...], ...] - German
+    with its English terms marked (core.voice_text.segment)."""
+    sentences = []
+    for sentence in VT.split_sentences(text):
+        if lang == "de":
+            parts = VT.segment(sentence, lexicon)
+        else:
+            parts = [("en", VT.strip_term_braces(sentence).replace("{", "").replace("}", ""))]
+        if parts:
+            sentences.append(parts)
+    return sentences
+
+
+def speak_request(model: VM.VoiceModel, lang: str, sentences: list, tuning: dict,
+                  **extra) -> dict:
+    """The worker's "speak" request for the installed voice *model*;
+    *tuning* is how it speaks (core.voice_settings.TUNING values, checked:
+    ValueError for one outside its range - the worker checks again)."""
+    for name, value in tuning.items():
+        if not VS.tuning_value_ok(name, value):
+            raise ValueError(f"invalid {name} for speech: {value!r}")
+    voice, config = VM.voice_paths(model)
+    return {"op": "speak", "voice": str(voice), "config": str(config), "lang": lang,
+            "sentences": sentences, **tuning, **extra}
 
 
 # -- the controller ------------------------------------------------------------------------------
@@ -408,23 +441,17 @@ class VoiceController(QObject):
         return True
 
     def _speak(self, text: str, lang: str, *, voice_id: str = "", quiet: bool = False,
-               **tuning) -> bool:
-        sentences = []
-        for sentence in VT.split_sentences(text):
-            if lang == "de":
-                parts = VT.segment(sentence, self._lexicon)
-            else:
-                parts = [("en", VT.strip_term_braces(sentence).replace("{", "").replace("}", ""))]
-            if parts:
-                sentences.append(parts)
+               tuned: bool = True, **extra) -> bool:
+        """Queue *text*. *tuned*: as the saved settings say the voice speaks
+        (speed, pitch, ...); the fixed line brings its own *extra* instead."""
+        sentences = speech_sentences(text, lang, self._lexicon)
         if not sentences:
             return False
-        model = VM.model(voice_id or VS.voice_for(lang, self.settings.gender))
+        model = VM.model(voice_id or self.settings.voice(lang))
         if model is None or not self._voice_ready(model, quiet=quiet):
             return False
-        voice, config = VM.voice_paths(model)
-        self._queue.append({"op": "speak", "voice": str(voice), "config": str(config),
-                            "lang": lang, "sentences": sentences, **tuning})
+        tuning = self.settings.tuning_for(model.id) if tuned else {}
+        self._queue.append(speak_request(model, lang, sentences, tuning, **extra))
         self._pump()
         return True
 
@@ -521,7 +548,8 @@ class VoiceController(QObject):
         self.line_started.emit()
         model = VM.model(_LINE_VOICE)
         spoken = model is not None and self._voice_ready(model, quiet=True) and self._speak(
-            _LINE, "en", voice_id=_LINE_VOICE, quiet=True, length_scale=1.15, rate_factor=0.9)
+            _LINE, "en", voice_id=_LINE_VOICE, quiet=True, tuned=False, length_scale=1.15,
+            rate_factor=0.9)
         if not spoken:
             self._pulse_step = 0
             self._pulse.start()
@@ -687,3 +715,186 @@ class VoiceController(QObject):
         self.stop_speaking()
         self._tts.close()
         self._stt.close()
+
+
+# -- Listen on the Voice settings page -----------------------------------------------------------
+
+
+class VoicePreview(QObject):
+    """Listen on the Voice settings page: the sample sentences of one voice
+    (core.voice_text.sample_phrase), spoken with the page's tuning - saved
+    or not - by a voice worker of its own and played on the chosen output
+    (Edit > Settings… > Audio, through :class:`QtPlayer`). Nothing blocks
+    the GUI thread: the audio check (core.multimedia_probe) and the
+    synthesis answer through signals. :meth:`stop` ends it at once."""
+
+    #: The voice id being listened to, "" once idle again.
+    busy_changed = pyqtSignal(str)
+    #: A sentence for the page: what happened, or why nothing is heard.
+    message = pyqtSignal(str)
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        worker=None,
+        player=None,
+        packages: Callable[[], tuple[bool, bool]] | None = None,
+        model_ready: Callable[[VM.VoiceModel], bool] | None = None,
+        probe_cached: Callable[[], MPROBE.ProbeResult | None] | None = None,
+        probe_async=None,
+        lexicon=None,
+    ) -> None:
+        super().__init__(parent)
+        self._tts = worker or VW.VoiceWorker()  # its child starts with the first Listen
+        self._player = player if player is not None else QtPlayer()
+        self._player.drained.connect(self._on_drained)
+        if hasattr(self._player, "failed"):
+            self._player.failed.connect(self._on_failed)
+        self._packages = packages or (lambda: (VW.piper_available(), VW.whisper_available()))
+        self._model_ready = model_ready or VM.installed
+        self._probe_cached = probe_cached or MPROBE.cached
+        self._probe_async = probe_async or MPROBE.probe_async
+        self._lexicon = lexicon
+        self._bridge = _Bridge()
+        self._bridge.audio.connect(self._on_audio)
+        self._bridge.spoken.connect(self._on_spoken)
+        self._generation = 0
+        self._model: VM.VoiceModel | None = None
+        self._synth_running = False
+        self._cancel = threading.Event()
+
+    @property
+    def playing_voice(self) -> str:
+        return self._model.id if self._model is not None else ""
+
+    def play(self, voice_id: str, tuning: dict) -> bool:
+        """Speak the sample of *voice_id* with *tuning* (TUNING values).
+        False, with a message why, when nothing will be heard; True when it
+        speaks or waits for the audio check."""
+        self.stop(quiet=True)
+        model = VM.model(voice_id)
+        if model is None or model.kind != "voice":
+            self.message.emit(tr("No such voice: {voice}").format(voice=voice_id or "-"))
+            return False
+        if not self._packages()[0]:
+            self.message.emit(tr("Voice output needs the voice packages: pip install "
+                                 "axross[voice] (Help > Features…)."))
+            return False
+        if not self._model_ready(model):
+            self.message.emit(tr("The voice {name} is not downloaded yet - click "
+                                 "Download.").format(name=model.title))
+            return False
+        if self._lexicon is None:
+            self._lexicon = VT.load_lexicon()
+        lang = model.language
+        try:
+            request = speak_request(model, lang, speech_sentences(
+                VT.sample_phrase(lang), lang, self._lexicon), dict(tuning))
+        except ValueError as exc:
+            self.message.emit(tr("Listen failed: {error}").format(error=exc))
+            return False
+        result = self._probe_cached()
+        if result is not None and not result.ok:
+            self.message.emit(MPROBE.unavailable_text(result))
+            return False
+        self._generation += 1
+        generation = self._generation
+        self._model = model
+        self.busy_changed.emit(model.id)
+        if result is None:
+            self.message.emit(tr("Checking the audio…"))
+            self._probe_async(lambda answer: self._probe_answered(generation, request, answer),
+                              context=self)
+            return True
+        self._synthesize(generation, request)
+        return True
+
+    def _probe_answered(self, generation: int, request: dict, result) -> None:
+        if generation != self._generation:
+            return  # stopped (or another voice) while the audio was checked
+        if not result.ok:
+            self._finish(MPROBE.unavailable_text(result))
+            return
+        self._synthesize(generation, request)
+
+    def _synthesize(self, generation: int, request: dict) -> None:
+        name = self._model.title if self._model is not None else ""
+        self.message.emit(tr("Speaking the sample of {name}…").format(name=name))
+        self._synth_running = True
+        cancel, bridge, tts = self._cancel, self._bridge, self._tts
+
+        def on_event(event: dict) -> None:
+            try:
+                pcm = base64.b64decode(str(event.get("pcm") or ""))
+                rate = int(event.get("rate") or 22050)
+            except (ValueError, TypeError):
+                return
+            bridge.audio.emit(generation, pcm, rate)
+
+        def work() -> None:
+            error = ""
+            try:
+                reply = tts.call(request, timeout=_SPEAK_TIMEOUT, on_event=on_event,
+                                 cancel=cancel)
+                if not reply.get("ok"):
+                    error = str(reply.get("error") or "speech failed")
+            except VW.VoiceWorkerCancelled:
+                error = ""
+            except VW.VoiceWorkerError as exc:
+                error = str(exc)
+            bridge.spoken.emit(generation, error)
+
+        threading.Thread(target=work, name="axross-voice-listen-sample", daemon=True).start()
+
+    def _on_audio(self, generation: int, pcm: bytes, rate: int) -> None:
+        if generation == self._generation and pcm:
+            self._player.enqueue(pcm, rate)
+
+    def _on_spoken(self, generation: int, error: str) -> None:
+        if generation != self._generation:
+            return
+        self._synth_running = False
+        if error:
+            self._player.stop()
+            self._finish(tr("Listen failed: {error}").format(error=error))
+        elif not self._player.busy():
+            self._finish()
+
+    def _on_drained(self) -> None:
+        if self._model is not None and not self._synth_running:
+            self._finish()
+
+    def _on_failed(self, why: str) -> None:
+        """No sound device: the sample ends - its next pieces would only fail again."""
+        if self._model is not None:
+            self.stop(quiet=True)
+            self.message.emit(tr("No sound: {error}").format(error=why))
+
+    def _finish(self, text: str = "") -> None:
+        model, self._model = self._model, None
+        if model is None:
+            return
+        self.message.emit(text or tr("Played the sample of {name}.").format(name=model.title))
+        self.busy_changed.emit("")
+
+    def stop(self, *, quiet: bool = False) -> None:
+        """End the sample at once: the synthesis child is killed, nothing
+        queued plays."""
+        was = self._model is not None
+        self._generation += 1
+        self._cancel.set()
+        self._cancel = threading.Event()
+        if self._synth_running:
+            self._tts.kill()
+        self._synth_running = False
+        self._player.stop()
+        self._model = None
+        if was:
+            self.busy_changed.emit("")
+            if not quiet:
+                self.message.emit(tr("Stopped."))
+
+    def shutdown(self) -> None:
+        self.stop(quiet=True)
+        self._tts.close()

@@ -32,8 +32,9 @@ from tests.settings_testkit import app, isolate  # noqa: E402
 APP = app()
 
 CATEGORIES = [
-    "General", "Appearance", "Files & Panes", "Network & Proxy", "LLM Profiles", "Agent",
-    "Voice", "Audio", "Metadata", "Search", "Security", "Extensions",
+    "General", "Appearance", "Toolbar", "Files & Panes", "Network & Proxy", "LLM Profiles",
+    "Analysis (sift)", "Agent", "Voice", "Audio", "Metadata", "Search", "Security",
+    "Extensions",
 ]
 
 
@@ -99,7 +100,8 @@ def test_happy_the_categories_are_sorted_and_agent_has_its_pages(stores, win) ->
     assert _top_titles(dialog) == CATEGORIES
     agent = dialog.tree.topLevelItem(CATEGORIES.index("Agent"))
     assert [agent.child(i).text(0) for i in range(agent.childCount())] == [
-        "General", "Prompts", "Access", "Sandboxes", "MCP Servers", "Sessions"]
+        "General", "Prompts", "Access", "Sandboxes", "MCP Servers", "MCP Sources",
+        "Sessions"]
     assert dialog.current_page_id() == "general"
 
 

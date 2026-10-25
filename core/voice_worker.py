@@ -18,13 +18,25 @@ Requests and replies (``id`` ties them together)::
     {"id": n, "op": "speak", "voice": onnx, "config": json, "lang": "de"|"en",
      "sentences": [[[kind, text], ...], ...], "length_scale": float|null,
      "term_rule": "mixed"|"mapped"|null,
-     "noise_scale": float|null, "noise_w_scale": float|null}
+     "noise_scale": float|null, "noise_w_scale": float|null,
+     "speed": float|null, "pitch": float|null, "expressiveness": float|null,
+     "rhythm": float|null, "volume": float|null, "pause": float|null}
       -> {"id": n, "event": "audio", "rate": hz, "pcm": base64 int16 mono}  (one per sentence)
       -> {"id": n, "ok": true, "done": true}
     {"id": n, "op": "transcribe", "model": dir, "pcm": base64 int16 16 kHz mono,
      "language": "de"|"en"|null}
       -> {"id": n, "ok": true, "text": str, "language": str}
     any failure -> {"id": n, "ok": false, "error": str}
+
+How the voice speaks (the Voice settings, core.voice_settings.TUNING - a
+value outside its range is refused, null is the default): *speed* divides
+the length_scale (the caller's, else the German synthesis' or the voice's
+own); *pitch* (semitones) multiplies it by the pitch factor and the audio is
+then resampled that much higher (core.voice_audio.pitch_shift), so the
+speech keeps its length; *expressiveness* and *rhythm* multiply noise_scale
+and noise_w_scale; *volume* is the share of the full level (0.95 of int16)
+the loudest sample gets; *pause* is the silence before every sentence but
+the first, in seconds.
 
 A German voice speaks the English terms of a sentence (kind "en", found by
 core.voice_text.segment) with English phonemes (espeak-ng, ENGLISH_ESPEAK)
@@ -48,6 +60,8 @@ import unicodedata
 from pathlib import Path
 from typing import Callable
 
+from core import voice_audio as VA
+from core import voice_settings as VS
 from core.analysis_worker import WorkerProtocolError, _LineReader
 from core.subprocess_env import worker_env
 from core.voice_text import map_english_phonemes
@@ -76,7 +90,9 @@ _FLAG = re.compile(r"\([a-z-]+\)")
 #: Seconds a fresh child may take to import onnxruntime / CTranslate2 and
 #: load a model before its first answer.
 STARTUP_SECONDS = 60.0
-SENTENCE_PAUSE = 0.3
+SENTENCE_PAUSE = VS.TUNING["pause"].default
+#: The level the loudest sample of a sentence gets at volume 1.0.
+FULL_PEAK = 0.95
 
 
 class VoiceWorkerError(Exception):
@@ -295,7 +311,7 @@ def sentence_phonemes(segments, phonemize: Callable[[str, str], str],
     return " ".join(" ".join(p for p in parts if p).split())
 
 
-def float_to_pcm16(samples, peak: float | None = 0.95) -> bytes:
+def float_to_pcm16(samples, peak: float | None = FULL_PEAK) -> bytes:
     """Float samples (-1..1) as int16 bytes; *peak* scales the loudest
     sample to that level first (None: as they are, clipped)."""
     import array
@@ -317,6 +333,40 @@ def float_to_pcm16(samples, peak: float | None = 0.95) -> bytes:
         if top > 1e-4:
             values = [v * peak / top for v in values]
     return array.array("h", (int(max(-1.0, min(1.0, v)) * 32767) for v in values)).tobytes()
+
+
+def speak_settings(req: dict) -> dict[str, float]:
+    """The TUNING values of a speak request (null or missing: the default);
+    ValueError names the first one outside its range."""
+    out = VS.default_tuning()
+    for name in VS.TUNING:
+        value = req.get(name)
+        if value is None:
+            continue
+        if not VS.tuning_value_ok(name, value):
+            raise ValueError(f"invalid {name} for speech: {value!r}")
+        out[name] = float(value)
+    return out
+
+
+def synthesis_scales(req: dict, config, german: bool, settings: dict) -> dict[str, float]:
+    """Piper's length_scale, noise_scale and noise_w_scale for *req*: the
+    caller's raw value (0..3), else the German synthesis' (German speech),
+    else the voice's own (*config*) - then speed, pitch, expressiveness
+    and rhythm applied."""
+    base = {key: float(getattr(config, key)) for key in GERMAN_SYNTHESIS}
+    if german:
+        base.update(GERMAN_SYNTHESIS)
+    for key in GERMAN_SYNTHESIS:
+        value = req.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 3:
+            base[key] = float(value)
+    return {
+        "length_scale": base["length_scale"] / settings["speed"]
+        * VA.pitch_factor(settings["pitch"]),
+        "noise_scale": base["noise_scale"] * settings["expressiveness"],
+        "noise_w_scale": base["noise_w_scale"] * settings["rhythm"],
+    }
 
 
 class _Child:
@@ -358,17 +408,14 @@ class _Child:
             raise RuntimeError("piper-tts is not installed (pip install axross[voice])")
         from piper import SynthesisConfig
 
+        settings = speak_settings(req)
         voice = self._voice(str(req["voice"]), str(req["config"]))
         rate = int(voice.config.sample_rate)
         german = req.get("lang") == "de"
-        tuning = dict(GERMAN_SYNTHESIS) if german else {}
-        for key in ("length_scale", "noise_scale", "noise_w_scale"):
-            value = req.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 3:
-                tuning[key] = float(value)
-        syn = SynthesisConfig(**tuning)
+        syn = SynthesisConfig(**synthesis_scales(req, voice.config, german, settings))
         id_map = voice.config.phoneme_id_map
-        pause = b"\0\0" * int(rate * SENTENCE_PAUSE)
+        pause = b"\0\0" * int(rate * settings["pause"])
+        peak = FULL_PEAK * settings["volume"]
         for index, segments in enumerate(req.get("sentences") or []):
             if german:
                 ph = sentence_phonemes(segments, self._phonemize,
@@ -380,7 +427,7 @@ class _Child:
             if not phonemes:
                 continue
             audio = voice.phoneme_ids_to_audio(voice.phonemes_to_ids(phonemes), syn)
-            pcm = float_to_pcm16(audio)
+            pcm = VA.pitch_shift(float_to_pcm16(audio, peak=peak), settings["pitch"])
             self._send({"id": rid, "event": "audio", "rate": rate,
                         "pcm": base64.b64encode((pause if index else b"") + pcm).decode()})
         self._send({"id": rid, "ok": True, "done": True})

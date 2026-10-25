@@ -101,7 +101,7 @@ class _SlowAnalyzer:
         self.gate = threading.Event()
         self.cancels = 0
 
-    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None):
+    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None, options=None):
         self.started.append(target.name)
         if target.name == "slow.txt":
             self.gate.wait(5)
@@ -109,7 +109,7 @@ class _SlowAnalyzer:
             True, summary={"filename": target.name, "summary": f"about {target.name}"}
         )
 
-    def cached(self, target, llm=None):
+    def cached(self, target, llm=None, options=None):
         return None
 
     def cancel(self):
@@ -178,7 +178,7 @@ class _LLMAnalyzer:
         self.requests: list[dict | None] = []
         self._results = {}
 
-    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None):
+    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None, options=None):
         self.requests.append(llm)
         if llm and on_event:
             on_event({"event": "progress", "answer": 120, "reasoning": 800})
@@ -207,7 +207,7 @@ class _LLMAnalyzer:
         self._results[(target.path, bool(llm))] = res
         return res
 
-    def cached(self, target, llm=None):
+    def cached(self, target, llm=None, options=None):
         return self._results.get((target.path, bool(llm)))
 
     def cancel(self):
@@ -396,7 +396,7 @@ class DockLLMTest(_DockLLMBase):
         gate = threading.Event()
 
         class Slow(_LLMAnalyzer):
-            def analyse(self, target, force=False, llm=None, on_event=None, cancel=None):
+            def analyse(self, target, force=False, llm=None, on_event=None, cancel=None, options=None):
                 if llm:
                     gate.wait(10)
                 return super().analyse(target, force=force, llm=llm, on_event=on_event)
@@ -430,7 +430,7 @@ class _GatedAnalyzer(_LLMAnalyzer):
         self.llm_gate = threading.Event()
         self.llm_error = llm_error
 
-    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None):
+    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None, options=None):
         (self.llm_gate if llm else self.auto_gate).wait(5)
         if llm and self.llm_error:
             self.requests.append(llm)
@@ -680,7 +680,7 @@ class _QueueAnalyzer(_LLMAnalyzer):
         self.order: list[str] = []
         self.gate = threading.Event()
 
-    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None):
+    def analyse(self, target, force=False, llm=None, on_event=None, cancel=None, options=None):
         if llm:
             self.order.append(target.name)
             if target.name.startswith("hold"):

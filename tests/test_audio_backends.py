@@ -43,6 +43,10 @@ def _fresh(monkeypatch):
     MP.reset()
     monkeypatch.setattr(MP, "_active_backend", None)
     yield
+    # probe() sets the variable itself; monkeypatch.delenv only restores a
+    # value that was there before, so a set one leaked into later tests (an
+    # app started from them took it as the user's own choice).
+    os.environ.pop(VAR, None)
     ME._SET_BY_AXROSS.discard(VAR)
     MP.reset()
 
@@ -126,12 +130,48 @@ def test_edge_what_axross_set_may_be_replaced_but_never_reaches_host_programs():
 
 # -- which backends the probe tries ------------------------------------------------
 
-def test_happy_auto_tries_pipewire_then_pulseaudio_where_pipewire_runs():
-    assert MP.backend_order("auto", {}, platform="linux", pipewire=True) == ["pipewire", "pulseaudio"]
+def test_happy_auto_prefers_pulseaudio_where_a_pulse_server_answers():
+    """Measured: PulseAudio (also through pipewire-pulse) played on every
+    sink tried; Qt's PipeWire backend left mono sinks silent."""
+    assert MP.backend_order("auto", {}, platform="linux", pipewire=True,
+                            pulse=True) == ["pulseaudio", "pipewire"]
+
+
+def test_happy_auto_takes_pipewire_first_without_a_pulse_server():
+    assert MP.backend_order("auto", {}, platform="linux", pipewire=True,
+                            pulse=False) == ["pipewire", "pulseaudio"]
 
 
 def test_happy_auto_tries_pulseaudio_only_without_pipewire():
-    assert MP.backend_order("auto", {}, platform="linux", pipewire=False) == ["pulseaudio"]
+    assert MP.backend_order("auto", {}, platform="linux", pipewire=False,
+                            pulse=True) == ["pulseaudio"]
+    assert MP.backend_order("auto", {}, platform="linux", pipewire=False,
+                            pulse=False) == ["pulseaudio"]
+
+
+def test_edge_a_pulse_server_is_found_by_its_socket_or_variable(tmp_path):
+    assert not MP.pulse_running({"XDG_RUNTIME_DIR": str(tmp_path)})
+    (tmp_path / "pulse").mkdir()
+    (tmp_path / "pulse" / "native").write_text("")
+    assert MP.pulse_running({"XDG_RUNTIME_DIR": str(tmp_path)})
+    assert MP.pulse_running({"PULSE_SERVER": "unix:/x", "XDG_RUNTIME_DIR": "/nowhere"})
+
+
+def test_sad_a_backend_that_lists_no_output_falls_back_to_the_next(monkeypatch):
+    dev = MP.AudioDeviceInfo("alsa_output.x", "Speakers", True)
+    calls = _fake_runs(monkeypatch, {
+        "pulseaudio": MP.ProbeResult(True, "", 0.1, 0, 0, backend="pulseaudio"),
+        "pipewire": MP.ProbeResult(True, "", 0.1, 1, 0, backend="pipewire", output_devices=(dev,)),
+    })
+    result = MP.probe()
+    assert calls == ["pulseaudio", "pipewire"]
+    assert result.backend == "pipewire"
+
+
+def test_edge_the_last_backend_with_no_output_is_still_the_answer(monkeypatch):
+    _fake_runs(monkeypatch, {"pulseaudio": MP.ProbeResult(True, "", 0.1, 0, 0, backend="pulseaudio")})
+    result = MP.probe()
+    assert result.ok and result.backend == "pulseaudio" and result.outputs == 0
 
 
 def test_sad_an_explicit_choice_is_the_only_one_tried():

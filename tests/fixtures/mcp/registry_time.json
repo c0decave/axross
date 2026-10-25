@@ -1,0 +1,235 @@
+{
+ "servers": [
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "ai.b77/time",
+    "description": "A live clock for your assistant.",
+    "title": "Time",
+    "version": "1.0.0",
+    "websiteUrl": "https://b77.ai/apps/time",
+    "remotes": [
+     {
+      "type": "streamable-http",
+      "url": "https://time.b77.ai/mcp"
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2026-08-14T20:37:57.849395Z",
+     "publishedAt": "2026-08-14T20:37:57.849395Z",
+     "updatedAt": "2026-08-14T20:37:57.849395Z",
+     "isLatest": true
+    }
+   }
+  },
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-16/server.schema.json",
+    "name": "ai.smithery/arjunkmrm-time",
+    "description": "Get the current time anywhere and access concise timezone information. Set your preferred timezone\u2026",
+    "repository": {
+     "url": "https://github.com/arjunkmrm/time",
+     "source": "github"
+    },
+    "version": "1.15.0",
+    "remotes": [
+     {
+      "type": "streamable-http",
+      "url": "https://server.smithery.ai/@arjunkmrm/time/mcp",
+      "headers": [
+       {
+        "description": "Bearer token for Smithery authentication",
+        "value": "Bearer {smithery_api_key}",
+        "name": "Authorization"
+       }
+      ]
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2025-10-02T08:35:12.663422Z",
+     "publishedAt": "2025-10-02T08:35:12.663422Z",
+     "updatedAt": "2025-10-02T08:35:12.663422Z",
+     "isLatest": true
+    }
+   }
+  },
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "com.formatho/runtime",
+    "description": "Self-hosted MCP server: 26 deterministic dev, security, and EVM tools.",
+    "version": "0.3.0",
+    "packages": [
+     {
+      "registryType": "oci",
+      "identifier": "docker.io/formatho/formatho-runtime:0.3.0",
+      "transport": {
+       "type": "stdio"
+      },
+      "packageArguments": [
+       {
+        "value": "run",
+        "type": "positional"
+       },
+       {
+        "value": "-i",
+        "type": "positional"
+       },
+       {
+        "value": "--rm",
+        "type": "positional"
+       },
+       {
+        "value": "-v",
+        "type": "positional"
+       },
+       {
+        "value": "formatho-audit:/data",
+        "type": "positional"
+       },
+       {
+        "value": "docker.io/formatho/formatho-runtime:0.3.0",
+        "type": "positional"
+       }
+      ]
+     }
+    ],
+    "remotes": [
+     {
+      "type": "streamable-http",
+      "url": "https://mcp.formatho.com/mcp"
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2026-09-12T08:38:43.030721Z",
+     "publishedAt": "2026-09-12T08:38:43.030721Z",
+     "updatedAt": "2026-09-12T08:38:43.030721Z",
+     "isLatest": true
+    }
+   }
+  },
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.KatoMato65/time-mcp",
+    "description": "Simple MCP server that tells the time",
+    "repository": {
+     "url": "https://github.com/KatoMato65/time-mcp",
+     "source": "github"
+    },
+    "version": "1.0.3",
+    "packages": [
+     {
+      "registryType": "npm",
+      "identifier": "@katomato65/time-mcp",
+      "version": "1.0.2",
+      "transport": {
+       "type": "stdio"
+      }
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2026-01-08T13:28:59.883398Z",
+     "publishedAt": "2026-01-08T13:28:59.883398Z",
+     "updatedAt": "2026-01-08T13:28:59.883398Z",
+     "isLatest": true
+    }
+   }
+  },
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.Shakargy/devtime",
+    "description": "Local-first, read-only MCP server for evidence-backed repository memory.",
+    "title": "DevTime",
+    "repository": {
+     "url": "https://github.com/Shakargy/devtime",
+     "source": "github"
+    },
+    "version": "0.7.0",
+    "websiteUrl": "https://github.com/Shakargy/devtime",
+    "packages": [
+     {
+      "registryType": "pypi",
+      "identifier": "devtime-ei",
+      "version": "0.7.0",
+      "transport": {
+       "type": "stdio"
+      }
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2026-09-24T21:06:24.217585Z",
+     "publishedAt": "2026-09-24T21:06:24.217585Z",
+     "updatedAt": "2026-09-24T21:06:24.217585Z",
+     "isLatest": true
+    }
+   }
+  },
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.aliasmode/anyfetch",
+    "description": "Web search and web fetch with no API keys. Reads the sites that refuse AI agents.",
+    "title": "Anyfetch",
+    "repository": {
+     "url": "https://github.com/aliasmode/anyfetch",
+     "source": "github"
+    },
+    "version": "0.8.3",
+    "packages": [
+     {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/aliasmode/anyfetch/releases/download/v0.8.3/anyfetch.mcpb",
+      "fileSha256": "ffb7d510ada1566be65c32c4fa45fd8f910dd7ab5acce5a35ce6d6f4fe3b7cd1",
+      "transport": {
+       "type": "stdio"
+      }
+     },
+     {
+      "registryType": "npm",
+      "identifier": "@aliasmode/anyfetch",
+      "version": "0.8.3",
+      "transport": {
+       "type": "stdio"
+      },
+      "packageArguments": [
+       {
+        "value": "mcp",
+        "type": "positional"
+       }
+      ]
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2026-10-21T07:57:48.687203Z",
+     "publishedAt": "2026-10-21T07:57:48.687203Z",
+     "updatedAt": "2026-10-21T07:57:48.687203Z",
+     "isLatest": true
+    }
+   }
+  }
+ ],
+ "metadata": {
+  "count": 6,
+  "nextCursor": "ai.zz/next:1.0.0"
+ }
+}
