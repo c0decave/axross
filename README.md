@@ -44,145 +44,15 @@ Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
 
 *One window, four file systems.* A local folder and an SFTP share side by side in the thumbnail view, an FTP web root and a WebDAV folder below. Every pane names its connection; the blue **SOURCE** and the green **TARGET** set the direction for copy (F5) and move (F6).
 
-![Upload from a local pane to SFTP with the Transfers dock](docs/screenshots/remote-transfer.png)
-
-*Upload to SFTP.* Four photos copied from the local pane to the NAS; the Transfers dock lists each file with its direction, size and status.
-
-![Workspaces as tabs, a file pane and a local shell side by side](docs/screenshots/workspaces.png)
-
-*Workspaces.* Named pane layouts as tabs - here **Website** with its file pane and a local shell next to it. A workspace detaches into a window of its own and comes back as a tab.
-
-![The toolbar with an icon per tool above two panes and the bookmark sidebar](docs/screenshots/toolbar.png)
-
-*Toolbar.* One button per tool - Agent, Analysis (sift), Terminal, Find Files, Scripts, Python console, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. On a narrow window the tools move to a second row instead of disappearing. The buttons are grouped by category - Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions - with a separator between the groups, and each category's colour is a subtle tint behind its buttons that never makes an icon hard to read. Drag a button along its bar to move it inside its group; the order is kept, and the toolbar's right-click menu has Reset Toolbar Order. Edit → Settings… → Toolbar switches grouping and colours off and sets each category's colour.
-
-![The Tagged Files window listing the files of one tag](docs/screenshots/tags.png)
-
-*Tags.* Coloured dots in the Name column; **Tagged Files** lists every tag and its files on any backend, **Go to File** opens the folder in a pane.
-
-![The tabbed text editor with Python highlighting and the find bar](docs/screenshots/editor.png)
-
-*Text editor.* Tabs for local and remote files, Pygments highlighting, find and replace with regex, encoding and line endings in the status bar.
-
-![Find Files with type presets and results from several folders](docs/screenshots/find-files.png)
-
-*Find Files.* Name, content, size, date, tag and type presets, inside archives too; the search is kept as a **Smart Folder** with one click.
-
-![The Media Player panel with cover, spectrum, equalizer and playlist](docs/screenshots/media-player.png)
-
-*Media Player.* An extension panel: cover and title, an animated spectrum, a 10-band equalizer with presets, and a playlist filled by drag & drop.
-
-![The partitions of a disk image, ready for a read-only mount](docs/screenshots/disk-image.png)
-
-*Disk images.* The partitions and file systems of an image, read without writing anything; **Mount Read-Only** puts one into a pane.
-
-![Settings, Voice page: spoken answers, push-to-talk and the hold key](docs/screenshots/voice.png)
-
-*Voice.* Spoken answers in German or English, a voice per language with its speed, pitch, expressiveness, volume and pause (Listen plays a sample), push-to-talk on a hold key, and where the recognised text goes.
-
-![Manage Bookmarks with groups, a terminal bookmark and remote locations](docs/screenshots/bookmarks.png)
-
-*Bookmarks.* Groups, local and remote locations and a terminal bookmark in one manager; sort, move and edit several at once.
-
-![Edit, Settings: every setting in one dialog with a search field](docs/screenshots/settings.png)
-
-*Settings.* Every setting in one dialog, with a search field.
-
-![Help, Features: what is installed, what is missing and how to get it](docs/screenshots/features.png)
-
-*Features.* What is installed and what is missing, with the command or the download that adds it.
-
 ![Four file panes and two local terminals in Hacker Mode](docs/screenshots/quad-files-shells.png)
 
 *Hacker Mode.* Four file panes and two local terminals in one layout. Terminals sit in the splitter next to file panes; the presets `dev-shells`, `triage` and `shells-quad` place them for you.
-
-![The quad-files layout preset in Amber Mode](docs/screenshots/quad-files.png)
-
-*Amber Mode.* The `quad-files` layout preset: four panes, each with its own path bar, filter, permissions and owner columns. `Ctrl+Alt+L` cycles through the presets.
-
-![The Scripts dock with a user script](docs/screenshots/scripts-panel.png)
-
-*Scripts dock.* Your own scripts next to the read-only examples, written against the `axross.*` API; run them in the dock or in the Console.
-
-![The Duplicate Finder with two groups](docs/screenshots/duplicate-finder.png)
-
-*Duplicate Finder.* Identical files by content hash, grouped; the oldest copy of each group is shown in bold.
-
-![Metadata of a photo with EXIF and GPS data](docs/screenshots/metadata.png)
-
-*Metadata.* EXIF fields and the GPS position of a photo; **Remove Metadata** strips them before you share it — in place, or as a cleaned copy (**Tools → Metadata Settings…**).
-
-![The Analysis dock explaining a CSV file](docs/screenshots/analysis.png)
-
-*Analysis dock (sift).* The optional `sift` extra explains the selected file — here a CSV, without any LLM. Start it with right-click → **Analyse with sift** (a folder: **Analyse Folder with sift**), **Tools → Analyse with sift** or `Ctrl+Shift+I`; its toolbar button and title bar show sift's sieve. Edit → Settings… → Analysis (sift) switches the automatic analysis off and sets sift's read limit, time budget, vision, context, tags, categories, the cache (with *Clear Cache*) and an LLM profile of its own.
-
-![Two panes in the thumbnail view, light theme](docs/screenshots/thumbnails.png)
-
-*Modern light theme.* Two panes in the thumbnail view.
-
-![The Log dock after a copy and a move](docs/screenshots/log-dock.png)
-
-*Log dock.* Every copy and move is logged with its integrity check (sha256) and an entry in the operation journal.
 
 ![The Agent dock: a local model reads a file from inside a bubblewrap sandbox](docs/screenshots/agent-dock.png)
 
 *Agent dock.* A local model (here Qwen 2.5 on llama.cpp) reads a file for you. The tab runs in the `Normal` sandbox (bubblewrap), the mode is `Ask`, and every tool call shows in the transcript.
 
-![The Topics menu of an Agent tab](docs/screenshots/agent-topics.png)
-
-*Topics.* Ready-made tasks — inventory, services, logs, disk usage, a folder summary — fill the request for you; each tab is its own session.
-
-![The agent reads a file of a remote pane](docs/screenshots/agent-remote-pane.png)
-
-*A pane's connection, lent to the agent.* The left pane is connected to a remote store; the agent reads `/reports/q3.txt` through it, without its own login.
-
-![Agent Settings, Sandboxes page](docs/screenshots/agent-sandboxes.png)
-
-*Sandbox profiles.* Engine (bubblewrap, podman, docker), level from `lax` to `paranoid`, allowed hosts and extra folders — applied before every task.
-
-![The Access dialog of one Agent tab](docs/screenshots/agent-access.png)
-
-*Access per tab.* Which axross functions the agent may use, which hosts it may reach and which folders it sees, read-only or writable.
-
-![Agent Settings, MCP Servers page](docs/screenshots/agent-mcp-servers.png)
-
-*MCP servers.* Further MCP servers for the agent — here axross itself over stdio, tested: 11 tools.
-
-![The Agent Stats window over the main window](docs/screenshots/agent-stats.png)
-
-*Agent Stats.* The bundled extension counts tasks, tool calls, errors and tokens, for all tabs and the last one.
-
-![The Agent dock's + menu with New Tab from Profile and the seven presets](docs/screenshots/agent-profiles.png)
-
-*Agent profiles.* The arrow next to **+** opens a new Agent tab from a profile - seven presets (Files Assistant, Reverse Engineering, Forensics read-only, Network & Web Recon, Code & Secrets, Remote Ops, Research) or your own. The tab names its profile and what is still missing, with **Install from Catalog…**.
-
-![Settings, Agent, Profiles: the Reverse Engineering preset and what a tab gets](docs/screenshots/agent-profile-settings.png)
-
-*Profiles page.* A profile bundles LLM, prompt profile, protection mode, sandbox, tool groups, axross functions and MCP servers by category or name. Presets are read-only, **Copy** makes an editable one, and the preview shows what a tab gets within the Access page.
-
-![Add MCP Server from Catalog with the servers of the c0decave MCP Hub](docs/screenshots/mcp-catalog.png)
-
-*MCP catalog.* The c0decave MCP Hub adds 17 security tools - binwalk, capa, Nmap, YARA, The Sleuth Kit and more - as images pinned by digest; each runs in podman without capabilities, with a read-only root and no network unless you allow it. A third-party entry such as REA says who maintains it.
-
-![Two files cut in one pane, Paste at the top of the other pane's right-click menu](docs/screenshots/cut-paste.png)
-
-*Cut and Paste.* Ctrl+X or right-click **Cut** only marks the files (dimmed); **Paste** in any pane moves them through the transfer queue, and each source is removed only after its copy completed and was checked. Esc clears the filter.
-
-![Amber Mode with every icon in its own colour and Settings, Appearance](docs/screenshots/icon-colours.png)
-
-*Icon colours.* **Settings → Appearance → Icon colours**: the theme default, own colours in every theme - here in Amber Mode, whose default draws every icon in amber - or one colour of your own.
-
-![Software Update: a newer axross is available, with Download and Install](docs/screenshots/update.png)
-
-*Self-update.* `axross-full` and `axross-slim` look for a new release once per start, show **Update to …** in the status bar and replace themselves after the SHA-256 check; the old binary is kept.
-
-![The Scripts dock runs the bundled du example with a call to adjust](docs/screenshots/scripts-example.png)
-
-*Examples run directly.* **Run** on a bundled example shows its Usage call to adjust - paths, hosts, profiles - and runs it; the output appears below.
-
-![Help, Third-Party Software: the projects axross uses or ships, with licences](docs/screenshots/third-party.png)
-
-*Third-party software.* **Help → Third-Party Software…** lists the 222 projects axross uses or ships, with purpose, licence, how each reaches you and a link.
+More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
 
 ---
 

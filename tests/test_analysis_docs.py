@@ -53,7 +53,9 @@ def test_happy_each_guide_names_the_store_the_cache_and_the_button(name):
 
 @pytest.mark.parametrize("name", READMES)
 def test_happy_each_readme_names_the_page(name):
-    assert "Edit → Settings… → Analysis (sift)" in _text(name)
+    # The README and its slideshow (where the Analysis screenshot moved) are one text.
+    slideshow = name.replace("README", "slideshow")
+    assert "Edit → Settings… → Analysis (sift)" in _text(name) + _text(slideshow)
 
 
 def test_sad_the_button_the_docs_name_exists():

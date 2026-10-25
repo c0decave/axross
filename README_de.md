@@ -44,145 +44,15 @@ Sprachen: [English](README.md) · **Deutsch** · [Español](README_es.md)
 
 *Ein Fenster, vier Dateisysteme.* Ein lokaler Ordner und ein SFTP-Share nebeneinander in der Thumbnail-Ansicht, darunter ein FTP-Webroot und ein WebDAV-Ordner. Jedes Pane nennt seine Verbindung; das blaue **SOURCE** und das grüne **TARGET** legen die Richtung für Copy (F5) und Move (F6) fest.
 
-![Upload von einem lokalen Pane nach SFTP mit dem Transfers-Dock](docs/screenshots/remote-transfer.png)
-
-*Upload nach SFTP.* Vier Fotos vom lokalen Pane auf das NAS kopiert; das Transfers-Dock zeigt jede Datei mit Richtung, Größe und Status.
-
-![Workspaces als Tabs, ein File-Pane und eine lokale Shell nebeneinander](docs/screenshots/workspaces.png)
-
-*Workspaces.* Benannte Pane-Layouts als Tabs - hier **Website** mit seinem File-Pane und einer lokalen Shell daneben. Ein Workspace lässt sich in ein eigenes Fenster abtrennen und kommt als Tab zurück.
-
-![Die Toolbar mit einem Icon je Werkzeug über zwei Panes und der Bookmark-Sidebar](docs/screenshots/toolbar.png)
-
-*Toolbar.* Ein Button je Werkzeug - Agent, Analysis (sift), Terminal, Find Files, Scripts, Python-Console, Tags, Trash, Media Player, Audio & Video Settings, Treemap, Drives, Settings, Features. In einem schmalen Fenster rücken die Werkzeuge in eine zweite Zeile, statt zu verschwinden. Die Buttons sind nach Kategorie gruppiert - Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions -, mit einem Separator zwischen den Gruppen, und die Farbe jeder Kategorie liegt als dezenter Tint hinter ihren Buttons, ohne ein Icon schwer lesbar zu machen. Ein Button lässt sich per Drag and Drop innerhalb seiner Gruppe verschieben; die Reihenfolge bleibt erhalten, und das Kontextmenü der Toolbar hat Reset Toolbar Order. Edit → Settings… → Toolbar schaltet Gruppierung und Farben ab und setzt die Farbe jeder Kategorie.
-
-![Das Fenster Tagged Files mit den Dateien eines Tags](docs/screenshots/tags.png)
-
-*Tags.* Farbige Punkte in der Name-Spalte; **Tagged Files** listet jeden Tag und seine Dateien auf jedem Backend, **Go to File** öffnet den Ordner in einem Pane.
-
-![Der Text-Editor mit Tabs, Python-Highlighting und Find-Leiste](docs/screenshots/editor.png)
-
-*Text-Editor.* Tabs für lokale und Remote-Dateien, Pygments-Highlighting, Find und Replace mit Regex, Encoding und Line Endings in der Statusleiste.
-
-![Find Files mit Typ-Presets und Treffern aus mehreren Ordnern](docs/screenshots/find-files.png)
-
-*Find Files.* Name, Inhalt, Größe, Datum, Tag und Typ-Presets, auch in Archiven; mit einem Klick wird die Suche zum **Smart Folder**.
-
-![Das Media-Player-Panel mit Cover, Spektrum, Equalizer und Playlist](docs/screenshots/media-player.png)
-
-*Media Player.* Ein Extension-Panel: Cover und Titel, ein animiertes Spektrum, ein 10-Band-Equalizer mit Presets und eine Playlist, gefüllt per Drag & Drop.
-
-![Die Partitionen eines Disk-Images, bereit für einen read-only Mount](docs/screenshots/disk-image.png)
-
-*Disk-Images.* Die Partitionen und Dateisysteme eines Images, gelesen, ohne etwas zu schreiben; **Mount Read-Only** bringt eine davon in ein Pane.
-
-![Settings, Seite Voice: gesprochene Antworten, Push-to-Talk und die Hold-Taste](docs/screenshots/voice.png)
-
-*Voice.* Gesprochene Antworten auf Deutsch oder Englisch, eine Stimme je Sprache mit Speed, Pitch, Expressiveness, Volume und Pause (Listen spielt eine Probe), Push-to-Talk auf einer Hold-Taste, und wohin der erkannte Text geht.
-
-![Manage Bookmarks mit Gruppen, einem Terminal-Bookmark und Remote-Orten](docs/screenshots/bookmarks.png)
-
-*Bookmarks.* Gruppen, lokale und Remote-Orte und ein Terminal-Bookmark in einem Manager; sortieren, verschieben und mehrere auf einmal bearbeiten.
-
-![Edit, Settings: alle Settings in einem Dialog mit Suchfeld](docs/screenshots/settings.png)
-
-*Settings.* Jede Einstellung in einem Dialog, mit Suchfeld.
-
-![Help, Features: was installiert ist, was fehlt und wie man es bekommt](docs/screenshots/features.png)
-
-*Features.* Was installiert ist und was fehlt, mit dem Befehl oder dem Download, der es nachrüstet.
-
 ![Vier File-Panes und zwei lokale Terminals im Hacker Mode](docs/screenshots/quad-files-shells.png)
 
 *Hacker Mode.* Vier File-Panes und zwei lokale Terminals in einem Layout. Terminals sitzen im Splitter neben den File-Panes; die Presets `dev-shells`, `triage` und `shells-quad` ordnen sie an.
-
-![Das Layout-Preset quad-files im Amber Mode](docs/screenshots/quad-files.png)
-
-*Amber Mode.* Das Layout-Preset `quad-files`: vier Panes, jedes mit eigener Pfadleiste, Filter, Spalten für Permissions und Owner. `Ctrl+Alt+L` wechselt durch die Presets.
-
-![Das Scripts-Dock mit einem eigenen Script](docs/screenshots/scripts-panel.png)
-
-*Scripts-Dock.* Eigene Scripts neben den read-only Beispielen, geschrieben gegen die `axross.*`-API; sie laufen im Dock oder in der Console.
-
-![Der Duplicate Finder mit zwei Gruppen](docs/screenshots/duplicate-finder.png)
-
-*Duplicate Finder.* Identische Dateien per Content-Hash, gruppiert; die älteste Kopie jeder Gruppe steht fett.
-
-![Metadaten eines Fotos mit EXIF- und GPS-Daten](docs/screenshots/metadata.png)
-
-*Metadaten.* EXIF-Felder und GPS-Position eines Fotos; **Remove Metadata** entfernt sie vor dem Teilen — in place oder als bereinigte Kopie (**Tools → Metadata Settings…**).
-
-![Das Analysis-Dock erklärt eine CSV-Datei](docs/screenshots/analysis.png)
-
-*Analysis-Dock (sift).* Das optionale Extra `sift` erklärt die gewählte Datei — hier eine CSV, ganz ohne LLM. Start per Rechtsklick → **Analyse with sift** (ein Ordner: **Analyse Folder with sift**), **Tools → Analyse with sift** oder `Ctrl+Shift+I`; Toolbar-Button und Titelleiste zeigen sifts Sieb. Edit → Settings… → Analysis (sift) schaltet die automatische Analyse ab und setzt sifts Read-Limit, Time Budget, Vision, Context, Tags, Categories, den Cache (mit *Clear Cache*) und ein eigenes LLM-Profil.
-
-![Zwei Panes in der Thumbnail-Ansicht, helles Theme](docs/screenshots/thumbnails.png)
-
-*Modern-Light-Theme.* Zwei Panes in der Thumbnail-Ansicht.
-
-![Das Log-Dock nach Copy und Move](docs/screenshots/log-dock.png)
-
-*Log-Dock.* Jedes Copy und Move wird mit seinem Integrity-Check (sha256) und einem Eintrag im Operation-Journal protokolliert.
 
 ![Das Agent-Dock: ein lokales Modell liest eine Datei aus einer bubblewrap-Sandbox heraus](docs/screenshots/agent-dock.png)
 
 *Agent-Dock.* Ein lokales Modell (hier Qwen 2.5 auf llama.cpp) liest eine Datei für dich. Der Tab läuft in der Sandbox `Normal` (bubblewrap), der Mode ist `Ask`, und jeder Tool Call steht im Transcript.
 
-![Das Topics-Menü eines Agent-Tabs](docs/screenshots/agent-topics.png)
-
-*Topics.* Fertige Aufgaben — Inventar, Services, Logs, Disk Usage, Zusammenfassung eines Ordners — füllen die Anfrage aus; jeder Tab ist eine eigene Session.
-
-![Der Agent liest eine Datei eines Remote-Panes](docs/screenshots/agent-remote-pane.png)
-
-*Die Verbindung eines Panes, dem Agent geliehen.* Das linke Pane ist mit einem Remote-Speicher verbunden; der Agent liest `/reports/q3.txt` darüber, ohne eigenen Login.
-
-![Agent Settings, Seite Sandboxes](docs/screenshots/agent-sandboxes.png)
-
-*Sandbox-Profile.* Engine (bubblewrap, podman, docker), Level von `lax` bis `paranoid`, erlaubte Hosts und zusätzliche Ordner — vor jeder Aufgabe angewandt.
-
-![Der Access-Dialog eines Agent-Tabs](docs/screenshots/agent-access.png)
-
-*Access pro Tab.* Welche axross-Funktionen der Agent nutzen darf, welche Hosts er erreicht und welche Ordner er sieht, read-only oder schreibbar.
-
-![Agent Settings, Seite MCP Servers](docs/screenshots/agent-mcp-servers.png)
-
-*MCP-Server.* Weitere MCP-Server für den Agent — hier axross selbst über stdio, getestet: 11 Tools.
-
-![Das Agent-Stats-Fenster über dem Hauptfenster](docs/screenshots/agent-stats.png)
-
-*Agent Stats.* Die mitgelieferte Extension zählt Tasks, Tool Calls, Fehler und Tokens, für alle Tabs und den letzten.
-
-![Das +-Menü des Agent-Docks mit New Tab from Profile und den sieben Presets](docs/screenshots/agent-profiles.png)
-
-*Agent-Profile.* Der Pfeil neben **+** öffnet einen neuen Agent-Tab aus einem Profil - sieben Presets (Files Assistant, Reverse Engineering, Forensics read-only, Network & Web Recon, Code & Secrets, Remote Ops, Research) oder ein eigenes. Der Tab nennt sein Profil und was noch fehlt, mit **Install from Catalog…**.
-
-![Settings, Agent, Profiles: das Preset Reverse Engineering und was ein Tab bekommt](docs/screenshots/agent-profile-settings.png)
-
-*Profiles-Seite.* Ein Profil bündelt LLM, Prompt-Profil, Protection Mode, Sandbox, Tool-Gruppen, axross-Funktionen und MCP-Server nach Kategorie oder Name. Presets sind read-only, **Copy** macht ein editierbares daraus, und die Preview zeigt, was ein Tab innerhalb der Access-Seite bekommt.
-
-![Add MCP Server from Catalog mit den Servern des c0decave MCP Hub](docs/screenshots/mcp-catalog.png)
-
-*MCP-Katalog.* Der c0decave MCP Hub bringt 17 Security-Tools - binwalk, capa, Nmap, YARA, The Sleuth Kit und mehr - als per Digest gepinnte Images; jedes läuft in podman ohne Capabilities, mit read-only Root und ohne Netzwerk, solange du es nicht freigibst. Ein Third-Party-Eintrag wie REA sagt, wer ihn pflegt.
-
-![Zwei Dateien in einem Pane ausgeschnitten, Paste oben im Kontextmenü des anderen](docs/screenshots/cut-paste.png)
-
-*Cut und Paste.* Ctrl+X oder Rechtsklick **Cut** merkt die Dateien nur vor (gedimmt); **Paste** in einem beliebigen Pane verschiebt sie über die Transfer-Queue, und jede Quelle wird erst entfernt, wenn ihre Kopie fertig und geprüft ist. Esc leert den Filter.
-
-![Amber Mode mit jedem Icon in seiner eigenen Farbe und Settings, Appearance](docs/screenshots/icon-colours.png)
-
-*Icon-Farben.* **Settings → Appearance → Icon colours**: der Theme-Default, eigene Farben in jedem Theme - hier im Amber Mode, dessen Default jedes Icon in Amber zeichnet - oder eine eigene Farbe.
-
-![Software Update: ein neueres axross ist da, mit Download and Install](docs/screenshots/update.png)
-
-*Self-Update.* `axross-full` und `axross-slim` suchen einmal pro Start nach einem neuen Release, zeigen **Update to …** in der Statusleiste und ersetzen sich nach dem SHA-256-Check selbst; das alte Binary bleibt erhalten.
-
-![Das Scripts-Dock führt das mitgelieferte Beispiel du mit einem anpassbaren Aufruf aus](docs/screenshots/scripts-example.png)
-
-*Beispiele laufen direkt.* **Run** auf einem mitgelieferten Beispiel zeigt seinen Usage-Aufruf zum Anpassen - Pfade, Hosts, Profile - und führt es aus; der Output steht darunter.
-
-![Help, Third-Party Software: die Projekte, die axross nutzt oder mitliefert, mit Lizenzen](docs/screenshots/third-party.png)
-
-*Third-Party-Software.* **Help → Third-Party Software…** listet die 222 Projekte, die axross nutzt oder mitliefert, mit Zweck, Lizenz, wie es zu dir kommt, und Link.
+Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](slideshow_de.md)**.
 
 ---
 

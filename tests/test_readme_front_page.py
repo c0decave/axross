@@ -28,6 +28,13 @@ ROOT = Path(__file__).resolve().parents[1]
 LANGUAGE_READMES = ("README.md", "README_de.md", "README_es.md")
 ALL_READMES = (*LANGUAGE_READMES, "README_PYPI.md")
 SHOTS = ROOT / "docs" / "screenshots"
+#: The README shows these three - the two with four panes and one with the
+#: LLM agent; every other screenshot is in the slideshow of the same
+#: language, which the README links to.
+README_SHOTS = ["docs/screenshots/remote-panes.png", "docs/screenshots/quad-files-shells.png",
+                "docs/screenshots/agent-dock.png"]
+SLIDESHOWS = {"README.md": "slideshow.md", "README_de.md": "slideshow_de.md",
+              "README_es.md": "slideshow_es.md"}
 BENEFITS = 20
 _IMAGE = re.compile(r"!\[[^\]]*\]\((docs/screenshots/[^)\s]+)\)")
 _PNG_CHUNKS_ALLOWED = {b"IHDR", b"IDAT", b"IEND", b"pHYs"}
@@ -100,6 +107,29 @@ def test_happy_the_language_readmes_show_the_same_existing_screenshots():
         assert (ROOT / rel).is_file(), rel
 
 
+def test_happy_the_readmes_show_three_shots_and_link_their_slideshow():
+    for name, slideshow in SLIDESHOWS.items():
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert _IMAGE.findall(text) == README_SHOTS, name
+        assert f"]({slideshow})" in text, name
+
+
+def test_happy_the_slideshows_show_the_same_screenshots_with_a_text_each():
+    shown = {}
+    for slideshow in SLIDESHOWS.values():
+        text = (ROOT / slideshow).read_text(encoding="utf-8")
+        shown[slideshow] = _IMAGE.findall(text)
+        for block in text.split("\n## ")[1:]:  # one slide: heading, picture, explanation
+            assert len(_IMAGE.findall(block)) == 1, (slideshow, block[:60])
+            explanation = _IMAGE.sub("", block.split("\n", 1)[1]).strip()
+            assert len(explanation) >= 40, (slideshow, block[:60])
+    assert shown["slideshow.md"]
+    assert shown["slideshow_de.md"] == shown["slideshow.md"] == shown["slideshow_es.md"]
+    assert not set(shown["slideshow.md"]) & set(README_SHOTS)
+    for rel in shown["slideshow.md"]:
+        assert (ROOT / rel).is_file(), rel
+
+
 def test_happy_every_screenshot_is_metadata_free():
     pngs = sorted(SHOTS.glob("*.png"))
     assert pngs
@@ -132,6 +162,7 @@ def test_happy_the_binaries_item_names_every_release_os(name):
 
 def test_sad_no_screenshot_lies_unused():
     shown = set(_IMAGE.findall((ROOT / "README.md").read_text(encoding="utf-8")))
+    shown |= set(_IMAGE.findall((ROOT / "slideshow.md").read_text(encoding="utf-8")))
     on_disk = {f"docs/screenshots/{p.name}" for p in SHOTS.iterdir()}
     assert on_disk == shown
 
