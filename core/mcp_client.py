@@ -74,6 +74,18 @@ PACKAGE_KEYS = {"source": 300, "entry": 300, "kind": 20, "identifier": 300, "tag
 _TOOL_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 
 
+#: Longest catalog category kept (core.mcp_catalog keeps as many).
+MAX_CATEGORY = 60
+
+
+def clean_category(value) -> str:
+    """*value* as a server's category: one line of text without control or
+    bidi characters, at most MAX_CATEGORY long; anything else is ""."""
+    from core.mcp_catalog import exact_text
+
+    return exact_text(value, MAX_CATEGORY)
+
+
 class McpClientError(RuntimeError):
     """The server could not be started, reached or understood."""
 
@@ -105,6 +117,9 @@ class McpServerConfig:
     egress: tuple[str, ...] = ()
     #: A container's install record (core.mcp_install), PACKAGE_KEYS.
     package: dict = field(default_factory=dict)
+    #: The catalog category it was installed from, or one set by hand
+    #: (Agent profiles choose servers by it: core.agent_profiles).
+    category: str = ""
 
     def problems(self) -> list[str]:
         out = []
@@ -126,7 +141,42 @@ class McpServerConfig:
             out.append("a container server runs as a program (stdio)")
         if self.container and self.sandbox:
             out.append("no sandbox profile for a container (it is its own sandbox)")
+        out.extend(self.containment_problems())
         return out
+
+    def containment_problems(self) -> list[str]:
+        """Operator rule: what is downloaded runs in a container, never on
+        the host - a command that downloads code at start (core.mcp_runner)
+        is refused, and so is a container line with widening flags; also
+        when a settings file was edited by hand."""
+        if self.transport != "stdio" or not self.command:
+            return []
+        from core.mcp_runner import container_flag_problems, downloading_runner
+
+        if self.container:
+            return container_flag_problems(self.command)
+        plan = downloading_runner(self.command)
+        if plan is None:
+            return []
+        return [f"{plan.runner} downloads code when it starts: it runs only in a container "
+                f"(Install in a Container)"]
+
+    def files_risk(self) -> str:
+        """Why the server may change the user's files ("" = it cannot): only
+        a container server on axross's own podman line with no network and
+        read-only folders cannot (core.mcp_install.contained_files_problem).
+        Files read-only keeps such a server's tools; its confirm mode still
+        asks at every call."""
+        if self.transport != "stdio":
+            return "it is an HTTP server"
+        if not self.container:
+            return "it runs outside a container"
+        from core.mcp_install import contained_files_problem
+
+        return contained_files_problem(self.command)
+
+    def files_safe(self) -> bool:
+        return not self.files_risk()
 
     def host_port(self) -> tuple[str, int] | None:
         """Where an http server is reached; None for stdio."""
@@ -160,6 +210,7 @@ class McpServerConfig:
             "secret_env": list(self.secret_env),
             "egress": list(self.egress),
             "package": dict(self.package),
+            "category": self.category,
         }
 
     @classmethod
@@ -204,7 +255,13 @@ class McpServerConfig:
         if isinstance(package, dict):
             out.package = {k: v[:PACKAGE_KEYS[k]] for k, v in package.items()
                            if k in PACKAGE_KEYS and isinstance(v, str)}
-        return out if not out.problems() else None
+        out.category = clean_category(data.get("category"))
+        problems = out.problems()
+        if problems:
+            log.warning("mcp client: the server %r of the settings is left out: %s",
+                        out.name[:40], "; ".join(problems))
+            return None
+        return out
 
 
 def _egress_entries(entries) -> tuple[str, ...]:
@@ -563,6 +620,9 @@ class ExternalTool:
     group: str = "mcp"
     accepts_backend: bool = False
     external: bool = True
+    #: Its server cannot change the user's files (McpServerConfig.files_safe):
+    #: Files read-only keeps the tool; *write* still makes each call ask.
+    files_safe: bool = False
 
     def call(self, args: dict) -> tuple[str, str]:
         """``(outcome, text)``: "ok" or "error"."""
@@ -691,6 +751,9 @@ class McpClient:
         self._lock = threading.Lock()
         self._next = 0
         if config.transport == "stdio":
+            refused = config.containment_problems()
+            if refused:
+                raise McpClientError("; ".join(refused))
             values = secrets_of(config) if secrets is None else {
                 k: v for k, v in secrets.items() if k in config.secret_env and v}
             if config.container:
@@ -741,6 +804,7 @@ class McpClient:
 
     def tools(self) -> list[ExternalTool]:
         out: list[ExternalTool] = []
+        safe = self.config.files_safe()
         cursor = None
         seen: set = set()
         for _page in range(20):
@@ -772,6 +836,7 @@ class McpClient:
                     client=self,
                     remote_name=raw["name"],
                     always_ask=always,
+                    files_safe=safe,
                 ))
             cursor = result.get("nextCursor")
             if not isinstance(cursor, str) or not cursor or len(out) >= MAX_TOOLS:

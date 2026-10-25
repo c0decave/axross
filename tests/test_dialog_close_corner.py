@@ -31,6 +31,7 @@ MODULES = (
     "media_viewer",
     "dir_size_dialog",
     "archive_pane",
+    "third_party_dialog",
 )
 
 

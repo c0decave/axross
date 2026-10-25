@@ -419,3 +419,69 @@ def test_sad_a_stored_language_that_is_no_text_is_ignored_not_a_crash(tmp_path):
         path.write_text(json.dumps({"window": {"language": bad}}))
         assert stored_language(path) is None, bad
         assert normalise_language(bad) is None, bad
+
+
+# --------------------------------------------------------------------------
+# IT terms stay English in every catalogue
+# --------------------------------------------------------------------------
+
+#: Terms of the trade a translation keeps as they are: the label on screen
+#: must name the thing the way the tool, the docs and every conversation
+#: about it name it ("Close Pane" is not "Fenster schließen" - a pane is
+#: not a window). Matched case-insensitively, mnemonic "&" removed.
+KEEP_ENGLISH = (
+    "Bookmark", "Connection Manager", "Config", "Disk Usage", "Duplicate Finder",
+    "Extension", "FUSE", "Hardlink", "Hex", "Jobs", "Keyring", "Layout", "Mount",
+    "Pane", "Panel", "Preset", "Preview", "Profile", "Recovery", "Session",
+    "Shell", "Shortcuts", "Symlink", "Theme", "Tools", "Trash", "Workspace",
+    "XLink", "Zoom",
+)
+
+
+def _bare(text: str) -> str:
+    return text.replace("&&", "\0").replace("&", "").replace("\0", "&").casefold()
+
+
+def kept_terms_missing(source: str, translation: str) -> list[str]:
+    """The KEEP_ENGLISH terms in *source* that *translation* lost."""
+    import re
+
+    src, dst = _bare(source), _bare(translation)
+    return [term for term in KEEP_ENGLISH
+            if re.search(rf"\b{re.escape(term.casefold())}", src)
+            and term.casefold() not in dst]
+
+
+def test_happy_a_kept_term_survives_translation():
+    assert kept_terms_missing("&Close Pane", "Pane &schließen") == []
+    assert kept_terms_missing("Unmount FUSE", "FUSE unmounten") == []
+
+
+def test_sad_a_translated_term_is_reported():
+    assert kept_terms_missing("&Close Pane", "Fenster &schließen") == ["Pane"]
+    assert kept_terms_missing("Th&eme", "&Farbschema") == ["Theme"]
+
+
+def test_edge_mnemonics_and_case_do_not_count():
+    assert kept_terms_missing("&Bookmark This Directory", "Verzeichnis als B&ookmark") == []
+    assert kept_terms_missing("Save && Quit", "Speichern && beenden") == []
+    # a term only matches at a word start: "Spanel" names no panel
+    assert kept_terms_missing("Spanel", "Etwas") == []
+
+
+def test_sad_no_shipped_catalogue_translates_an_it_term():
+    """Every catalogue that ships, not only German."""
+    import json
+
+    base = Path(__file__).resolve().parent.parent / "resources/i18n"
+    if not base.exists():
+        import pytest
+
+        pytest.skip("no catalogue directory in this checkout")
+    lost = {}
+    for path in sorted(base.glob("*.json")):
+        for source, translation in json.loads(path.read_text(encoding="utf-8")).items():
+            missing = kept_terms_missing(source, translation)
+            if missing:
+                lost[f"{path.stem}: {source!r} -> {translation!r}"] = missing
+    assert lost == {}, "\n".join(f"{k} lost {v}" for k, v in lost.items())

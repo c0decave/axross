@@ -72,6 +72,28 @@ def test_happy_the_run_command_is_hardened():
     assert not any(a.startswith("--user") or a.startswith("--volume") for a in argv)
 
 
+def test_happy_the_runtime_tmp_starts_empty():
+    """Found with rea-agents: its install left 115 MB of npm cache in the
+    image's /tmp; podman copied it into the 64 MB tmpfs and the server
+    never started. The tmpfs copies nothing up now."""
+    argv = I.run_command("time", "docker.io/mcp/time@" + DIGEST)
+    tmpfs = next(a for a in argv if a.startswith("--tmpfs=/tmp:"))
+    assert "notmpcopyup" in tmpfs.split(":", 1)[1].split(",")
+
+
+@pytest.mark.parametrize("script", [I._NPM_SCRIPT, I._PYPI_SCRIPT])
+def test_happy_a_build_leaves_nothing_in_tmp(script):
+    """Second layer: the image itself carries no cache in /tmp."""
+    last = [line for line in script.strip().splitlines() if line.strip()][-1]
+    assert last.startswith(I.TMP_CLEANUP.split()[0]) and "/tmp" in last
+    assert script.rstrip().endswith(I.TMP_CLEANUP)
+
+
+def test_edge_the_cleanup_runs_after_the_entry_point_is_printed():
+    for script in (I._NPM_SCRIPT, I._PYPI_SCRIPT):
+        assert script.index("AXROSS_ENTRY=") < script.rindex(I.TMP_CLEANUP)
+
+
 def test_happy_network_modes_and_mounts(tmp_path):
     full = I.run_command("f", "img@" + DIGEST, network="full")
     assert not any(a.startswith("--network") for a in full)
@@ -505,6 +527,58 @@ def test_edge_a_digest_is_resolved_and_pinned_at_install(tmp_path, monkeypatch):
 
 # -- live ------------------------------------------------------------------------------
 
+# The live tests share the user's podman store with everything else on the
+# machine. Found: the clean-up removed every image that appeared while a
+# live test ran - images another program built in those seconds too.
+# Only what these tests pull or commit is theirs to remove.
+
+#: Prefix of the images an npm/pypi install commits (core.mcp_install).
+LIVE_COMMIT_PREFIX = "localhost/axross-mcp:live-"
+
+
+def _live_refs() -> set:
+    """The references the live tests pull: their catalog images and the
+    base images of an npm/pypi build."""
+    return {_builtin("time").image_ref, _builtin("fetch").image_ref,
+            I.NODE_IMAGE, I.PYTHON_IMAGE}
+
+
+def _made_by_live_tests(image: dict, refs: set) -> bool:
+    names = [*(image.get("Names") or ()), *(image.get("RepoDigests") or ())]
+    return any(n in refs or n.startswith(LIVE_COMMIT_PREFIX) for n in names)
+
+
+def test_happy_the_live_clean_up_takes_what_the_tests_pulled_or_committed():
+    refs = _live_refs()
+    time_ref = _builtin("time").image_ref
+    assert _made_by_live_tests({"Names": [], "RepoDigests": [time_ref]}, refs)
+    assert _made_by_live_tests({"Names": ["localhost/axross-mcp:live-tz-0.1.0"]}, refs)
+    assert _made_by_live_tests({"RepoDigests": [I.NODE_IMAGE]}, refs)
+
+
+def test_sad_an_image_another_program_built_meanwhile_stays():
+    refs = _live_refs()
+    assert not _made_by_live_tests({"Names": ["localhost/axross-mcp-hub/radare2:local"]}, refs)
+    assert not _made_by_live_tests({"Names": ["localhost/axross-mcp:tz-0.1.0"]}, refs)  # a user's
+    assert not _made_by_live_tests({"Names": [], "RepoDigests": []}, refs)  # dangling: not ours
+
+
+def test_edge_another_digest_of_the_same_repository_is_not_ours():
+    refs = _live_refs()
+    repo = _builtin("time").image_ref.split("@")[0]
+    assert not _made_by_live_tests({"RepoDigests": [f"{repo}@sha256:{'0' * 64}"]}, refs)
+    assert not _made_by_live_tests({"Names": [f"{repo}:latest"]}, refs)
+
+
+def _clean_live_images(podman, before: set) -> None:
+    """Remove, by ID, the images the live tests pulled or committed that
+    were not there *before*; whatever else appeared meanwhile stays."""
+    refs = _live_refs()
+    after = {img.get("Id") for img in podman.images() if _made_by_live_tests(img, refs)}
+    for ident in after - before:
+        subprocess.run(["podman", "rmi", ident], capture_output=True, timeout=120,
+                       env=dict(os.environ))
+
 
 @pytest.fixture
 def real_podman(monkeypatch):
@@ -524,14 +598,19 @@ def real_podman(monkeypatch):
         pytest.skip("no rootless podman")
     before = {img.get("Id") for img in podman.images()}
     yield podman
-    after = {img.get("Id") for img in podman.images()}
-    for ident in after - before:  # what the test pulled or built, by ID
-        subprocess.run(["podman", "rmi", ident], capture_output=True, timeout=120,
-                       env=dict(os.environ))
-    left = subprocess.run(["podman", "ps", "-a", "--filter", "label=io.axross.mcp",
-                           "--format", "{{.Names}}"], capture_output=True, text=True,
-                          timeout=60, env=dict(os.environ)).stdout.split()
-    assert not [n for n in left if n.startswith("axross-mcp-live")], left
+    _clean_live_images(podman, before)
+    # --rm removes a server's container after its process ended, a moment
+    # after the client closed (longer under load): wait for it, then judge.
+    deadline = time.monotonic() + 30
+    while True:
+        left = subprocess.run(["podman", "ps", "-a", "--filter", "label=io.axross.mcp",
+                               "--format", "{{.Names}}"], capture_output=True, text=True,
+                              timeout=60, env=dict(os.environ)).stdout.split()
+        left = [n for n in left if n.startswith("axross-mcp-live")]
+        if not left or time.monotonic() > deadline:
+            break
+        time.sleep(0.5)
+    assert not left, left
 
 
 def _no_containers_of(name: str) -> bool:
@@ -539,6 +618,23 @@ def _no_containers_of(name: str) -> bool:
                           "--format", "{{.Names}}"], capture_output=True, text=True,
                          timeout=60, env=dict(os.environ)).stdout.strip()
     return out == ""
+
+
+def test_live_an_image_built_meanwhile_survives_the_clean_up(real_podman, tmp_path):
+    before = {img.get("Id") for img in real_podman.images()}
+    (tmp_path / "Containerfile").write_text(f"FROM scratch\nLABEL axross.test={tmp_path.name}\n")
+    tag = f"localhost/axross-live-bystander:{os.getpid()}"
+    built = subprocess.run(["podman", "build", "-q", "-t", tag, str(tmp_path)],
+                           capture_output=True, text=True, timeout=120, env=dict(os.environ))
+    assert built.returncode == 0, built.stderr
+    try:
+        _clean_live_images(real_podman, before)
+        exists = subprocess.run(["podman", "image", "exists", tag], timeout=60,
+                                env=dict(os.environ))
+        assert exists.returncode == 0, "the clean-up removed an image that was not the tests'"
+    finally:
+        subprocess.run(["podman", "rmi", tag], capture_output=True, timeout=60,
+                       env=dict(os.environ))
 
 
 def test_live_the_time_image_runs_in_podman(real_podman):
@@ -614,3 +710,27 @@ def test_live_search_the_registries_and_install_an_npm_server(real_podman):
     left = subprocess.run(["podman", "ps", "-a", "--format", "{{.Names}}"], capture_output=True,
                           text=True, timeout=60, env=dict(os.environ)).stdout.split()
     assert not [n for n in left if n.startswith("axross-mcp-install-")]
+
+
+def test_live_rea_from_the_shipped_catalog_runs_and_answers(real_podman, tmp_path):
+    """A third-party npm server with a big install (rea-agents): its build
+    left 115 MB in /tmp, the server did not start before notmpcopyup."""
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "app.js").write_text("function add(a, b) { return a + b }\nmodule.exports = {add}\n")
+    entry = next(e for e in M.load_builtin()[0] if e.name == "rea")
+    config = I.install(entry, I.InstallChoice(name="live-rea", mounts=(
+        I.Mount(host=str(work), target="/work"),)), podman=real_podman)
+    config.timeout = 300
+    client = C.McpClient(config)
+    try:
+        tools = {t.remote_name: t for t in client.tools()}
+        assert {"inspect_byte_entropy", "inspect_native_exports"} <= set(tools)
+        outcome, text = tools["inspect_byte_entropy"].call({"path": "/work/app.js"})
+        assert outcome == "ok" and "entropy" in text.lower(), text[:500]
+        outcome, text = tools["inspect_byte_entropy"].call({"path": "/work/missing.bin"})
+        assert outcome == "error" or "not" in text.lower(), text[:500]
+    finally:
+        client.close()
+    ok, message = I.uninstall(config, podman=real_podman)
+    assert ok, message

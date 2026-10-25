@@ -21,6 +21,10 @@ Guards on top of the MCP ones:
   over all of that: no write tool, no remote command (a command can change
   files), no writable extra folder, no write tool of another MCP server or
   an extension - neither offered nor run, whatever else the config says.
+  One exception, precise: a server that cannot change the user's files - a
+  container on axross's own podman line with no network and only read-only
+  folders (``files_safe``, :func:`may_change_files`) - keeps its tools; its
+  confirm mode still asks at every call.
 * A remote endpoint (or one reached through a proxy) needs the
   profile's consent first: tool results carry file content to it.
 * Bounded: ``max_steps`` model requests per task, tool results cut to
@@ -761,6 +765,20 @@ def changes_files(write: bool, group: str) -> bool:
     return bool(write) or group == "exec"
 
 
+def may_change_files(tool) -> bool:
+    """Whether Files read-only keeps *tool* (a tool, or a :func:`tool_spec`
+    dict) out: :func:`changes_files`, except a tool of an MCP server that
+    cannot change the user's files (``files_safe``: a container on axross's
+    podman line without network and with read-only folders,
+    core.mcp_client.McpServerConfig.files_risk). Its *write* still asks."""
+    def get(key, default=None):
+        return tool.get(key, default) if isinstance(tool, dict) else getattr(tool, key, default)
+
+    if get("files_safe", False) is True and get("group", "") == "mcp":
+        return False
+    return changes_files(bool(get("write", False)), str(get("group", "") or ""))
+
+
 def read_only(config: AgentConfig) -> AgentConfig:
     """*config* with nothing that can change a file: no write tools, no
     remote commands, every extra folder read-only, external tools without
@@ -771,7 +789,7 @@ def read_only(config: AgentConfig) -> AgentConfig:
     if external is not None:
         def external_tools(_source=external):
             tools, errors = _source()
-            return [t for t in tools if not getattr(t, "write", False)], errors
+            return [t for t in tools if not may_change_files(t)], errors
     else:
         external_tools = None
     return dataclasses.replace(
@@ -889,7 +907,8 @@ def external_refusal(tool, firewall) -> str | None:
 def tool_spec(tool) -> dict:
     """What the worker's agent needs to offer a host tool."""
     return {"name": tool.name, "description": tool.description, "schema": tool.schema,
-            "write": bool(tool.write), "group": tool.group}
+            "write": bool(tool.write), "group": tool.group,
+            "files_safe": getattr(tool, "files_safe", False) is True}
 
 
 def _with_valid_arguments(call: dict) -> dict:
@@ -996,8 +1015,11 @@ class Agent:
         self.cancel = cancel or threading.Event()
         config = self.config = restrict(config)
         self._registry = remote_registry(config, gate=firewall_gate(config.firewall))
-        self._tool_list = build_tools(config, self._registry)
-        self._tools = {t.name: t for t in self._tool_list}
+        # Built at the first use (_built): the first task's thread, not the
+        # caller's - the first build imports core.archive and core.mcp_server
+        # (88-108 ms that blocked the GUI thread at a session's first Send).
+        self._built: tuple[list, dict] | None = None
+        self._build_lock = threading.Lock()
         self._host_call = host_call
         self._external: dict | None = None
         self._host = {
@@ -1008,6 +1030,34 @@ class Agent:
         self.messages: list[dict] = [{"role": "system", "content": system_prompt_for(config)}]
         self._request_id = 0
         self._context_watch = OllamaContextWatch(config.profile, config.api_key)
+
+    def _ensure_built(self) -> tuple[list, dict]:
+        built = self._built
+        if built is None:
+            with self._build_lock:
+                built = self._built
+                if built is None:
+                    tools = build_tools(self.config, self._registry)
+                    built = self._built = (tools, {t.name: t for t in tools})
+        return built
+
+    @property
+    def _tool_list(self) -> list:
+        """The MCP tools this agent offers (built at the first use)."""
+        return self._ensure_built()[0]
+
+    @_tool_list.setter
+    def _tool_list(self, tools: list) -> None:
+        self._built = (tools, self._ensure_built()[1])
+
+    @property
+    def _tools(self) -> dict:
+        """The MCP tools by name (built at the first use)."""
+        return self._ensure_built()[1]
+
+    @_tools.setter
+    def _tools(self, tools: dict) -> None:
+        self._built = (self._ensure_built()[0], tools)
 
     # -- the model ------------------------------------------------------------
 
@@ -1134,9 +1184,7 @@ class Agent:
             for candidate in (external, tool, spec):
                 if candidate is None:
                     continue
-                write = candidate.get("write") if isinstance(candidate, dict) else candidate.write
-                group = candidate.get("group") if isinstance(candidate, dict) else candidate.group
-                if changes_files(bool(write), str(group or "")):
+                if may_change_files(candidate):
                     audit.info("%s outcome=declined read_only=1", fields)
                     return name, "declined", READ_ONLY_REFUSAL
         if external is not None:

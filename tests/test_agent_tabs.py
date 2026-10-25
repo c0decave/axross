@@ -61,6 +61,11 @@ class Env:
         self.pane = {"selection": None, "folder": None}
         self.remote = []
         self.docks = []
+        #: What the dock's agent_settings_saver was handed.
+        self.saved = []
+        #: No MCP servers found on this machine (tests/test_mcp_detect_ui.py sets one).
+        self.mcp_detector = lambda **kw: __import__(
+            "core.mcp_detect", fromlist=["DetectResult"]).DetectResult()
 
     def fake(self, *replies):
         server = _Fake(replies)
@@ -89,6 +94,8 @@ class Env:
             ),
             remote_backends=lambda: list(self.remote),
             mcp_pool=getattr(self, "mcp_pool", None),
+            agent_settings_saver=self.saved.append,
+            mcp_detector=self.mcp_detector,
         )
         self.docks.append(dock)
         return dock

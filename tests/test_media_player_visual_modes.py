@@ -938,6 +938,17 @@ def test_happy_the_extension_menu_opens_the_visualizer_settings(tmp_path, monkey
 # -- what a frame costs ------------------------------------------------------------------------
 
 
+def _measure_face(vis, image, frames: int = 15) -> list[float]:
+    """CPU milliseconds of tick + render per frame."""
+    times = []
+    for _ in range(frames):
+        start = time.thread_time()
+        vis.tick()
+        vis.render(image)
+        times.append((time.thread_time() - start) * 1000)
+    return times
+
+
 def test_perf_every_face_paints_within_its_budget():
     """Painting runs on the GUI thread: at the highest fps cap a frame lasts
     1000 / 60 ms and a face may take half of it (PAINT_BUDGET_MS) - median of
@@ -945,7 +956,12 @@ def test_perf_every_face_paints_within_its_budget():
     white noise, which crosses the scopes' traces over themselves (an
     antialiased polyline cost 79 ms there before it was drawn as segments).
     A face over budget is measured once more: other test runs share this
-    host, and a slow face is slow both times."""
+    host, and a slow face is slow both times. Measured as this thread's CPU
+    time, and the cheapest of the 15 frames counts: wall time and the median
+    both grew with other processes' load (the test failed on an unchanged
+    tree, 1 of 3 runs alone, 2 of 6 runs in parallel), while load only ever
+    makes a frame dearer - a face that is really slow (the polyline above:
+    79 ms) is slow in its cheapest frame too (negative control below)."""
     assert MP.PAINT_BUDGET_MS == pytest.approx(1000 / MP.VISUAL_OPTIONS["fps"][1] / 2)
     vis = MP.Visualizer(SampleEngine(noise()))
     vis.resize(1920, 1080)
@@ -957,16 +973,32 @@ def test_perf_every_face_paints_within_its_budget():
             vis.set_mode(mode, announce=False)
             settle(vis, 3)
             for _attempt in range(2):  # a second look before a load spike counts as slow
-                times = []
-                for _ in range(15):
-                    start = time.perf_counter()
-                    vis.tick()
-                    vis.render(image)
-                    times.append((time.perf_counter() - start) * 1000)
-                costs[mode] = round(statistics.median(times), 2)
+                costs[mode] = round(min(_measure_face(vis, image)), 2)
                 if costs[mode] <= MP.PAINT_BUDGET_MS:
                     break
     finally:
         vis.close()
     slow = {mode: cost for mode, cost in costs.items() if cost > MP.PAINT_BUDGET_MS}
     assert slow == {}, costs
+
+
+def test_perf_sad_a_face_that_burns_cpu_is_still_caught(monkeypatch):
+    """Negative control for the measurement above: a face that really costs
+    20 ms of CPU per frame is over budget in its cheapest frame too."""
+    vis = MP.Visualizer(SampleEngine(noise()))
+    vis.resize(320, 200)
+    image = QImage(320, 200, QImage.Format.Format_ARGB32_Premultiplied)
+    real = vis.render
+
+    def slow_render(target):
+        end = time.thread_time() + 0.020
+        while time.thread_time() < end:
+            pass
+        return real(target)
+
+    monkeypatch.setattr(vis, "render", slow_render)
+    try:
+        cheapest = min(_measure_face(vis, image, frames=5))
+    finally:
+        vis.close()
+    assert cheapest > MP.PAINT_BUDGET_MS

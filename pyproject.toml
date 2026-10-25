@@ -55,6 +55,12 @@ dependencies = [
     # >=12.3.0 clears 35 advisories that Pillow 10.x/11.x are subject
     # to (PYSEC-2023-175 through PYSEC-2026-3496).
     "Pillow>=12.3.0",
+    # Syntax highlighting in the text editor (ui/code_editor.py imports it
+    # unguarded). 2.20.0 is the lowest release free of known advisories.
+    "Pygments>=2.20.0",
+    # The encrypted overlay and certificate inspection import it directly;
+    # paramiko only asks for >=3.3. 49.0.0 clears the known advisories.
+    "cryptography>=49.0.0",
     # The local terminal on Windows (ConPTY); POSIX uses the pty module.
     # 3.1 is the version whose PtyProcess API ui/terminal_widget.py follows.
     'pywinpty>=3.1; sys_platform == "win32"',
@@ -84,7 +90,8 @@ tftp = ["tftpy>=0.8"]
 postgres = ["psycopg[binary]>=3.1"]
 redis = ["redis>=5.0"]
 mongo = ["pymongo>=4.6.3"]
-git = ["dulwich>=1.2.5"]
+# urllib3: core/proxy.py builds the proxied pool manager dulwich talks through.
+git = ["dulwich>=1.2.5", "urllib3>=2.8.0"]
 dns = ["dnspython>=2.6.1"]
 magic = ["puremagic>=1.20"]
 encoding = ["chardet>=5.2"]
@@ -124,6 +131,7 @@ all = [
     "redis>=5.0",
     "pymongo>=4.6.3",
     "dulwich>=1.2.5",
+    "urllib3>=2.8.0",
     "dnspython>=2.6.1",
     "puremagic>=1.20",
     "chardet>=5.2",
@@ -157,6 +165,7 @@ packages = [
     "resources.wordlists",
     "resources.voice",
     "resources.mcp",
+    "resources.credits",
 ]
 
 [tool.setuptools.package-data]
@@ -166,6 +175,7 @@ packages = [
 "resources.wordlists" = ["*.txt"]
 "resources.voice" = ["*.txt"]
 "resources.mcp" = ["*.json"]
+"resources.credits" = ["*.json"]
 "examples" = ["*.md"]
 "examples.scripting_api" = ["*.md"]
 

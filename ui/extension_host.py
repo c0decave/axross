@@ -497,7 +497,7 @@ class ExtensionHost(QObject):
         suspended = EX.suspended_ids() | self._unsaved_suspended
         skipped: list[EX.ExtensionInfo] = []
         safe = EX.safe_mode() and not user_request
-        for info in EX.discover():
+        for info in EX.discover(ids=enabled):  # the others are not parsed
             if info.ext_id not in enabled or info.ext_id in self._loaded:
                 continue
             if safe:

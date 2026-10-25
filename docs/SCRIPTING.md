@@ -67,7 +67,8 @@ dedents, both on a whole selection). Bottom: the output of the last run.
 | **Run** (Ctrl+Return) | Saves unsaved edits, then runs the script **in its own Python process** |
 | **Stop** | Terminates the run; kills it if it has not ended after 3 s |
 | **Run in Console** | Runs the saved script in the Console's live namespace (like `.run`) |
-| **Copy to My Scripts** | Makes an editable copy of a bundled example (examples are read-only) |
+| **Copy to My Scripts** | Makes an editable copy of a bundled example (examples are read-only); its end carries the example's call as a commented "Try it" section |
+| **Run** / **Run in Console** on an example | Shows the example's Usage call to adjust (paths, hosts, profiles), then runs the example with it |
 
 How a run behaves:
 
@@ -261,11 +262,13 @@ interpreter namespace.
 
 ## Bundled example scripts
 
-32 ready-to-use scripts under `resources/scripts/`. Run any of them
-via `axross --script resources/scripts/<name>.py` or copy into
-`~/.config/axross/scripts/` and call from the REPL with
-`.run <name>`. In the GUI they are listed under **Examples** in the
-Scripts dock; **Copy to My Scripts** makes an editable copy.
+32 example scripts under `resources/scripts/`. Each defines functions;
+the `Usage::` block of its docstring shows the call, so a file run as it
+is prints nothing. In the GUI they are listed under **Examples** in the
+Scripts dock: **Run** or **Run in Console** shows that call to adjust and
+runs the example with it, **Copy to My Scripts** makes an editable copy
+with the call as a commented "Try it" section. A run that only defined
+functions says so in the status line.
 
 Public `axross.*` API examples live under
 [`examples/scripting_api/`](../examples/scripting_api/). They are

@@ -9,6 +9,8 @@
       "created": "2026-10-17T14:02:11.204518",
       "updated": "2026-10-17T14:09:40.731002",
       "profile": "local",               # LLM profile, "" = the default
+      "prompt_profile": "Terse",        # optional: prompt profile, "" = Agent Settings'
+      "agent_profile": "Research",      # optional: the agent profile it was set up from
       "mode": "ask",                    # ask, plan, auto, bypass
       "sandbox": "Normal",              # sandbox profile, "" = none
       "folder": "~/Documents",
@@ -92,6 +94,10 @@ class AgentSession:
     messages: list = field(default_factory=list)
     #: "" a tab of the Agent dock, else a panel of its own (DETACHED_PLACES).
     detached: str = ""
+    #: The prompt profile of this tab; "" is Agent Settings > Prompts' choice.
+    prompt_profile: str = ""
+    #: The agent profile (core.agent_profiles) the tab was set up from last.
+    agent_profile: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -101,6 +107,8 @@ class AgentSession:
             "created": self.created,
             "updated": self.updated,
             "profile": self.profile,
+            **({"prompt_profile": self.prompt_profile} if self.prompt_profile else {}),
+            **({"agent_profile": self.agent_profile} if self.agent_profile else {}),
             "mode": self.mode,
             "sandbox": self.sandbox,
             "folder": self.folder,
@@ -128,6 +136,9 @@ class AgentSession:
         out = cls(id=data["id"])
         for name in ("title", "created", "updated", "profile", "sandbox", "folder"):
             if isinstance(data.get(name), str):
+                setattr(out, name, data[name])
+        for name in ("prompt_profile", "agent_profile"):
+            if isinstance(data.get(name), str) and len(data[name]) <= 80:
                 setattr(out, name, data[name])
         if data.get("mode") in MODES:
             out.mode = data["mode"]
@@ -181,6 +192,10 @@ class SessionStore:
 
     def save(self, session: AgentSession) -> None:
         session.updated = _now()
+        # Encoded in one go: json.dumps takes the C encoder (json.dump streams
+        # through the Python one, 29 instead of 24 ms for 3.8 MB on the GUI
+        # thread), and a session that cannot be encoded writes nothing.
+        data = json.dumps(session.to_dict(), ensure_ascii=False, indent=1).encode("utf-8")
         self.folder.mkdir(parents=True, exist_ok=True)
         try:
             os.chmod(self.folder, 0o700)
@@ -189,8 +204,8 @@ class SessionStore:
         target = self.path(session.id)
         tmp = target.with_name(target.name + ".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(session.to_dict(), handle, ensure_ascii=False, indent=1)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
         os.replace(tmp, target)
 
     def load(self, session_id: str) -> AgentSession | None:

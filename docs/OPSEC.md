@@ -68,6 +68,19 @@ atomic temp files (already unavoidable — you need per-write
 uniqueness) and TLS session keys (protocol-mandated). Everything
 else aims for boring and uniform.
 
+## The update check at start
+
+The one-file binaries ask `api.github.com` for the latest axross release
+once per start (*Settings → Updates*, on by default), with the
+User-Agent `axross/<version> (update check)`. GitHub - and anyone who
+sees the DNS lookup or the TLS SNI - learns that an axross of that
+version starts at this address. Switch it off on a sensitive box:
+uncheck *Check for updates at start*, set `AXROSS_NO_UPDATE_CHECK=1`, or
+run in the paranoid security mode (`AXROSS_SECURITY_MODE=paranoid`),
+which never makes this request on its own. The request goes through the
+default proxy when one is set. A Python install checks too, but never
+replaces itself.
+
 ## Credential testing
 
 The `core.cred_attack` module (exposed as `axross.bruteforce`,

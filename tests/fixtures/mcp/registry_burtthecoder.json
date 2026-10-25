@@ -1,0 +1,87 @@
+{
+ "servers": [
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.BurtTheCoder/shodan",
+    "description": "MCP server for Shodan API \u2014 device search, IP lookup, DNS, and CVE/CPE queries.",
+    "repository": {
+     "url": "https://github.com/BurtTheCoder/mcp-shodan",
+     "source": "github"
+    },
+    "version": "1.0.22",
+    "packages": [
+     {
+      "registryType": "npm",
+      "identifier": "@burtthecoder/mcp-shodan",
+      "version": "1.0.22",
+      "transport": {
+       "type": "stdio"
+      },
+      "environmentVariables": [
+       {
+        "description": "Your Shodan API key",
+        "isRequired": true,
+        "format": "string",
+        "isSecret": true,
+        "name": "SHODAN_API_KEY"
+       }
+      ]
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2026-03-03T03:19:52.188452Z",
+     "publishedAt": "2026-03-03T03:19:52.188452Z",
+     "updatedAt": "2026-03-03T03:19:52.188452Z",
+     "isLatest": true
+    }
+   }
+  },
+  {
+   "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.BurtTheCoder/virustotal",
+    "description": "MCP server for querying VirusTotal API with comprehensive security analysis tools.",
+    "repository": {
+     "url": "https://github.com/BurtTheCoder/mcp-virustotal",
+     "source": "github"
+    },
+    "version": "1.0.17",
+    "packages": [
+     {
+      "registryType": "npm",
+      "identifier": "@burtthecoder/mcp-virustotal",
+      "version": "1.0.17",
+      "transport": {
+       "type": "stdio"
+      },
+      "environmentVariables": [
+       {
+        "description": "Your VirusTotal API key",
+        "isRequired": true,
+        "format": "string",
+        "isSecret": true,
+        "name": "VIRUSTOTAL_API_KEY"
+       }
+      ]
+     }
+    ]
+   },
+   "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+     "status": "active",
+     "statusChangedAt": "2026-03-03T03:33:58.562062Z",
+     "publishedAt": "2026-03-03T03:33:58.562062Z",
+     "updatedAt": "2026-03-03T03:33:58.562062Z",
+     "isLatest": true
+    }
+   }
+  }
+ ],
+ "metadata": {
+  "count": 2
+ }
+}

@@ -1,0 +1,4435 @@
+{
+ "schema": 1,
+ "entries": [
+  {
+   "id": "adb-shell",
+   "name": "adb_shell",
+   "kind": "python",
+   "purpose": "Android devices over ADB",
+   "license": "Apache-2.0",
+   "url": "https://github.com/JeffLIrion/adb_shell",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "adb_shell"
+   ],
+   "extras": [
+    "adb"
+   ],
+   "match": {
+    "modules": [
+     "adb_shell"
+    ]
+   }
+  },
+  {
+   "id": "alsa-lib",
+   "name": "alsa-lib",
+   "kind": "library",
+   "purpose": "ALSA device support of PyAV's FFmpeg",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/alsa-project/alsa-lib",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libasound"
+    ]
+   }
+  },
+  {
+   "id": "anyio",
+   "name": "anyio",
+   "kind": "python",
+   "purpose": "Used by httpx2: High-level concurrency and networking framework on top of asyncio or Trio",
+   "license": "MIT",
+   "url": "https://github.com/agronholm/anyio",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "anyio"
+   ],
+   "via": "httpx2",
+   "match": {
+    "modules": [
+     "anyio"
+    ]
+   }
+  },
+  {
+   "id": "attrs",
+   "name": "attrs",
+   "kind": "python",
+   "purpose": "Used by jsonschema: Classes Without Boilerplate",
+   "license": "MIT",
+   "url": "https://github.com/python-attrs/attrs",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "pypi": [
+    "attrs"
+   ],
+   "via": "jsonschema",
+   "match": {
+    "modules": [
+     "attr",
+     "attrs"
+    ]
+   }
+  },
+  {
+   "id": "av",
+   "name": "PyAV",
+   "kind": "python",
+   "purpose": "Audio decoding for local speech recognition (PyAV, FFmpeg)",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/PyAV-Org/PyAV",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "av"
+   ],
+   "via": "faster-whisper",
+   "group": "voice",
+   "match": {
+    "modules": [
+     "av"
+    ]
+   }
+  },
+  {
+   "id": "azure-core",
+   "name": "azure-core",
+   "kind": "python",
+   "purpose": "Used by azure-storage-blob: Microsoft Azure Core Library for Python",
+   "license": "MIT",
+   "url": "https://github.com/Azure/azure-sdk-for-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "azure-core"
+   ],
+   "via": "azure-storage-blob",
+   "match": {
+    "modules": [
+     "azure"
+    ]
+   }
+  },
+  {
+   "id": "azure-storage-blob",
+   "name": "azure-storage-blob",
+   "kind": "python",
+   "purpose": "Azure Blob Storage backend",
+   "license": "MIT",
+   "url": "https://github.com/Azure/azure-sdk-for-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "azure-storage-blob"
+   ],
+   "extras": [
+    "azure"
+   ],
+   "match": {
+    "modules": [
+     "azure"
+    ]
+   }
+  },
+  {
+   "id": "azure-storage-file-share",
+   "name": "azure-storage-file-share",
+   "kind": "python",
+   "purpose": "Azure Files backend",
+   "license": "MIT",
+   "url": "https://github.com/Azure/azure-sdk-for-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "azure-storage-file-share"
+   ],
+   "extras": [
+    "azure"
+   ],
+   "match": {
+    "modules": [
+     "azure"
+    ]
+   }
+  },
+  {
+   "id": "backports-zstd",
+   "name": "backports.zstd",
+   "kind": "python",
+   "purpose": "Zstandard compression on Python versions before 3.14",
+   "license": "PSF-2.0",
+   "url": "https://github.com/rogdham/backports.zstd",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "backports.zstd"
+   ],
+   "extras": [
+    "archive"
+   ],
+   "match": {
+    "modules": [
+     "backports"
+    ]
+   }
+  },
+  {
+   "id": "bcrypt",
+   "name": "bcrypt",
+   "kind": "python",
+   "purpose": "Used by paramiko: Modern password hashing for your software and your servers",
+   "license": "Apache-2.0",
+   "url": "https://github.com/pyca/bcrypt",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "bcrypt"
+   ],
+   "via": "paramiko",
+   "match": {
+    "modules": [
+     "bcrypt"
+    ]
+   }
+  },
+  {
+   "id": "blinker",
+   "name": "blinker",
+   "kind": "python",
+   "purpose": "Used by Flask: Fast, simple object-to-object and broadcast signaling",
+   "license": "MIT",
+   "url": "https://github.com/pallets-eco/blinker",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "blinker"
+   ],
+   "via": "Flask",
+   "match": {
+    "modules": [
+     "blinker"
+    ]
+   }
+  },
+  {
+   "id": "boto3",
+   "name": "boto3",
+   "kind": "python",
+   "purpose": "Amazon S3 and S3-compatible storage",
+   "license": "Apache-2.0",
+   "url": "https://github.com/boto/boto3",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "boto3"
+   ],
+   "extras": [
+    "s3"
+   ],
+   "match": {
+    "modules": [
+     "boto3"
+    ]
+   }
+  },
+  {
+   "id": "botocore",
+   "name": "botocore",
+   "kind": "python",
+   "purpose": "Used by boto3: Low-level, data-driven core of boto 3",
+   "license": "Apache-2.0",
+   "url": "https://github.com/boto/botocore",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "botocore"
+   ],
+   "via": "boto3",
+   "match": {
+    "modules": [
+     "botocore"
+    ]
+   }
+  },
+  {
+   "id": "brotli",
+   "name": "brotli",
+   "kind": "python",
+   "purpose": "Used by py7zr: Python bindings for the Brotli compression library",
+   "license": "MIT",
+   "url": "https://github.com/google/brotli",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "brotli"
+   ],
+   "via": "py7zr",
+   "match": {
+    "modules": [
+     "_brotli",
+     "brotli"
+    ]
+   }
+  },
+  {
+   "id": "brotli-c",
+   "name": "Brotli (C library)",
+   "kind": "library",
+   "purpose": "Brotli decompression (Pillow, FreeType)",
+   "license": "MIT",
+   "url": "https://github.com/google/brotli",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow",
+   "match": {
+    "libraries": [
+     "libbrotlicommon",
+     "libbrotlidec"
+    ]
+   }
+  },
+  {
+   "id": "bubblewrap",
+   "name": "Bubblewrap (bwrap)",
+   "kind": "program",
+   "purpose": "Agent sandbox",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/containers/bubblewrap",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "bzip2",
+   "name": "bzip2",
+   "kind": "library",
+   "purpose": "bzip2 compression (Python's bz2 module)",
+   "license": "bzip2-1.0.6",
+   "url": "https://sourceware.org/bzip2/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libbz2"
+    ]
+   }
+  },
+  {
+   "id": "cached-property",
+   "name": "cached-property",
+   "kind": "python",
+   "purpose": "Used by exchangelib: A decorator for caching properties in classes",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pydanny/cached-property",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "cached-property"
+   ],
+   "via": "exchangelib",
+   "match": {
+    "modules": [
+     "cached_property"
+    ]
+   }
+  },
+  {
+   "id": "certifi",
+   "name": "certifi",
+   "kind": "python",
+   "purpose": "Mozilla's CA certificate bundle for TLS verification",
+   "license": "MPL-2.0",
+   "url": "https://github.com/certifi/python-certifi",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "certifi"
+   ],
+   "via": "requests",
+   "match": {
+    "modules": [
+     "certifi"
+    ]
+   }
+  },
+  {
+   "id": "cffi",
+   "name": "cffi",
+   "kind": "python",
+   "purpose": "Used by cryptography: Foreign Function Interface for Python calling C code",
+   "license": "MIT-0",
+   "url": "https://github.com/python-cffi/cffi",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "cffi"
+   ],
+   "via": "cryptography",
+   "match": {
+    "modules": [
+     "_cffi_backend",
+     "cffi"
+    ]
+   }
+  },
+  {
+   "id": "chardet",
+   "name": "chardet",
+   "kind": "python",
+   "purpose": "Text encoding detection",
+   "license": "0BSD",
+   "url": "https://github.com/chardet/chardet",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "chardet"
+   ],
+   "extras": [
+    "encoding"
+   ],
+   "match": {
+    "modules": [
+     "650fdafa2468af73c11f__mypyc",
+     "chardet"
+    ]
+   }
+  },
+  {
+   "id": "charset-normalizer",
+   "name": "charset-normalizer",
+   "kind": "python",
+   "purpose": "Used by impacket: The Real First Universal Charset Detector. Open, modern and actively maintained alternativ",
+   "license": "MIT",
+   "url": "https://github.com/jawah/charset_normalizer",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "charset-normalizer"
+   ],
+   "via": "impacket",
+   "match": {
+    "modules": [
+     "charset_normalizer"
+    ]
+   }
+  },
+  {
+   "id": "click",
+   "name": "click",
+   "kind": "python",
+   "purpose": "Used by Flask: Composable command line interface toolkit",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pallets/click",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "click"
+   ],
+   "via": "Flask",
+   "match": {
+    "modules": [
+     "click"
+    ]
+   }
+  },
+  {
+   "id": "cpython",
+   "name": "Python",
+   "kind": "library",
+   "purpose": "The Python interpreter and standard library inside the binaries",
+   "license": "PSF-2.0",
+   "url": "https://www.python.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "version": "3.12",
+   "match": {
+    "libraries": [
+     "libpython3*"
+    ]
+   }
+  },
+  {
+   "id": "cryptography",
+   "name": "cryptography",
+   "kind": "python",
+   "purpose": "Encrypted overlay, certificate inspection; cryptography for SSH and TLS",
+   "license": "Apache-2.0 OR BSD-3-Clause",
+   "url": "https://github.com/pyca/cryptography",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "cryptography"
+   ],
+   "match": {
+    "modules": [
+     "cryptography"
+    ]
+   }
+  },
+  {
+   "id": "ctranslate2",
+   "name": "ctranslate2",
+   "kind": "python",
+   "purpose": "Runs the Whisper speech recognition models",
+   "license": "MIT",
+   "url": "https://github.com/OpenNMT/CTranslate2",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "ctranslate2"
+   ],
+   "extras": [
+    "voice"
+   ],
+   "version": "4.8.3",
+   "group": "voice",
+   "match": {
+    "modules": [
+     "ctranslate2"
+    ],
+    "libraries": [
+     "libctranslate2"
+    ]
+   }
+  },
+  {
+   "id": "cyrus-sasl",
+   "name": "Cyrus SASL",
+   "kind": "library",
+   "purpose": "SASL authentication of the OpenLDAP client",
+   "license": "BSD-Attribution-HPND-disclaimer",
+   "url": "https://www.cyrusimap.org/sasl/",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "via": "libpq",
+   "match": {
+    "libraries": [
+     "libsasl2"
+    ]
+   }
+  },
+  {
+   "id": "dav1d",
+   "name": "dav1d",
+   "kind": "library",
+   "purpose": "AV1 decoder library of PyAV's FFmpeg",
+   "license": "BSD-2-Clause",
+   "url": "https://code.videolan.org/videolan/dav1d",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libdav1d"
+    ]
+   }
+  },
+  {
+   "id": "dbus",
+   "name": "D-Bus",
+   "kind": "library",
+   "purpose": "Desktop bus access of Qt (notifications, portals, keyring)",
+   "license": "AFL-2.1 OR GPL-2.0-or-later",
+   "url": "https://www.freedesktop.org/wiki/Software/dbus/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libdbus-1"
+    ]
+   }
+  },
+  {
+   "id": "defusedxml",
+   "name": "defusedxml",
+   "kind": "python",
+   "purpose": "Safe XML parsing (WebDAV responses and other XML input)",
+   "license": "PSF-2.0",
+   "url": "https://github.com/tiran/defusedxml",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "defusedxml"
+   ],
+   "extras": [
+    "webdav"
+   ],
+   "match": {
+    "modules": [
+     "defusedxml"
+    ]
+   }
+  },
+  {
+   "id": "dnspython",
+   "name": "dnspython",
+   "kind": "python",
+   "purpose": "DNS lookups (scripting helpers and SRV discovery)",
+   "license": "ISC",
+   "url": "https://github.com/rthalley/dnspython",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "dnspython"
+   ],
+   "extras": [
+    "dns"
+   ],
+   "match": {
+    "modules": [
+     "dns"
+    ]
+   }
+  },
+  {
+   "id": "docker",
+   "name": "Docker",
+   "kind": "program",
+   "purpose": "Agent sandbox and MCP server containers",
+   "license": "Apache-2.0",
+   "url": "https://www.docker.com",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "dropbox",
+   "name": "dropbox",
+   "kind": "python",
+   "purpose": "Dropbox backend",
+   "license": "MIT",
+   "url": "https://github.com/dropbox/dropbox-sdk-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "dropbox"
+   ],
+   "extras": [
+    "dropbox"
+   ],
+   "match": {
+    "modules": [
+     "dropbox"
+    ]
+   }
+  },
+  {
+   "id": "dulwich",
+   "name": "dulwich",
+   "kind": "python",
+   "purpose": "Git repositories as a file system",
+   "license": "Apache-2.0 OR GPL-2.0-or-later",
+   "url": "https://github.com/dulwich/dulwich",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "dulwich"
+   ],
+   "extras": [
+    "git"
+   ],
+   "match": {
+    "modules": [
+     "dulwich"
+    ]
+   }
+  },
+  {
+   "id": "espeak-ng",
+   "name": "espeak-ng",
+   "kind": "library",
+   "purpose": "Phonemes for the Piper voices (statically linked into piper's espeakbridge, with its data)",
+   "license": "GPL-3.0-or-later",
+   "url": "https://github.com/espeak-ng/espeak-ng",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "version": "1.52.0.1 (commit 724808c5a83f9ef95fdd0db886ba7ba537ff224a)",
+   "group": "voice",
+   "match": {
+    "paths": [
+     "piper/espeakbridge*",
+     "piper/espeak-ng-data/*"
+    ]
+   }
+  },
+  {
+   "id": "exchangelib",
+   "name": "exchangelib",
+   "kind": "python",
+   "purpose": "Microsoft Exchange backend (EWS)",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/ecederstrand/exchangelib",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "exchangelib"
+   ],
+   "extras": [
+    "exchange"
+   ],
+   "match": {
+    "modules": [
+     "exchangelib"
+    ]
+   }
+  },
+  {
+   "id": "expat",
+   "name": "Expat",
+   "kind": "library",
+   "purpose": "XML parsing (Python's xml modules)",
+   "license": "MIT",
+   "url": "https://libexpat.github.io",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libexpat"
+    ]
+   }
+  },
+  {
+   "id": "faster-whisper",
+   "name": "faster-whisper",
+   "kind": "python",
+   "purpose": "Local speech recognition of the Agent dock",
+   "license": "MIT",
+   "url": "https://github.com/SYSTRAN/faster-whisper",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "faster-whisper"
+   ],
+   "extras": [
+    "voice"
+   ],
+   "version": "1.2.1",
+   "group": "voice",
+   "match": {
+    "modules": [
+     "faster_whisper"
+    ]
+   }
+  },
+  {
+   "id": "faster-whisper-models",
+   "name": "faster-whisper models (Whisper base, small)",
+   "kind": "data",
+   "purpose": "Local speech recognition models, downloaded in Help > Features…",
+   "license": "MIT",
+   "url": "https://huggingface.co/Systran",
+   "ships": [
+    "download"
+   ],
+   "note": "Systran's CTranslate2 conversions of OpenAI Whisper (MIT)"
+  },
+  {
+   "id": "fd",
+   "name": "fd",
+   "kind": "program",
+   "purpose": "Find Files: name search",
+   "license": "MIT OR Apache-2.0",
+   "url": "https://github.com/sharkdp/fd",
+   "ships": [
+    "axross-full"
+   ],
+   "version": "10.5.0",
+   "binary": "fd",
+   "match": {
+    "paths": [
+     "bin/fd"
+    ]
+   }
+  },
+  {
+   "id": "feather",
+   "name": "Feather icons",
+   "kind": "data",
+   "purpose": "Style model of axross's own SVG icons (re-drawn, no files copied)",
+   "license": "MIT",
+   "url": "https://github.com/feathericons/feather",
+   "ships": [
+    "source"
+   ]
+  },
+  {
+   "id": "ffmpeg-cli",
+   "name": "FFmpeg (ffmpeg, ffprobe)",
+   "kind": "program",
+   "purpose": "Video thumbnails, media details, removing audio/video metadata",
+   "license": "LGPL-2.1-or-later OR GPL-2.0-or-later OR GPL-3.0-only",
+   "url": "https://ffmpeg.org",
+   "ships": [
+    "host"
+   ],
+   "note": "distribution builds differ (Arch: GPL-3.0-only)"
+  },
+  {
+   "id": "ffmpeg-pyav",
+   "name": "FFmpeg (PyAV build)",
+   "kind": "library",
+   "purpose": "Audio decoding for local speech recognition",
+   "license": "LGPL-3.0-or-later",
+   "url": "https://ffmpeg.org",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "note": "the build reports \"libavcodec license: LGPL version 3 or later\"; it loads the x264 and x265 libraries below",
+   "match": {
+    "paths": [
+     "av.libs/libav*",
+     "av.libs/libsw*"
+    ]
+   }
+  },
+  {
+   "id": "ffmpeg-qt",
+   "name": "FFmpeg (Qt Multimedia build)",
+   "kind": "library",
+   "purpose": "Audio and video decoding of the media viewer and the Media Player (Qt Multimedia)",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://ffmpeg.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Qt 6",
+   "version": "7.1.2",
+   "note": "the build reports \"libavcodec license: LGPL version 2.1 or later\"",
+   "match": {
+    "paths": [
+     "PyQt6/Qt6/lib/libav*",
+     "PyQt6/Qt6/lib/libsw*"
+    ]
+   }
+  },
+  {
+   "id": "filelock",
+   "name": "filelock",
+   "kind": "python",
+   "purpose": "Used by huggingface_hub: A platform independent file lock",
+   "license": "MIT",
+   "url": "https://github.com/tox-dev/py-filelock",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "filelock"
+   ],
+   "via": "huggingface_hub",
+   "match": {
+    "modules": [
+     "filelock"
+    ]
+   }
+  },
+  {
+   "id": "flask",
+   "name": "Flask",
+   "kind": "python",
+   "purpose": "Used by impacket: A simple framework for building complex web applications",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pallets/flask",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "Flask"
+   ],
+   "via": "impacket",
+   "match": {
+    "modules": [
+     "flask"
+    ]
+   }
+  },
+  {
+   "id": "freetype",
+   "name": "FreeType",
+   "kind": "library",
+   "purpose": "Font rendering of Pillow",
+   "license": "FTL OR GPL-2.0-or-later",
+   "url": "https://freetype.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow",
+   "match": {
+    "libraries": [
+     "libfreetype"
+    ]
+   }
+  },
+  {
+   "id": "fsspec",
+   "name": "fsspec",
+   "kind": "python",
+   "purpose": "Used by huggingface_hub: File-system specification",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/fsspec/filesystem_spec",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "fsspec"
+   ],
+   "via": "huggingface_hub",
+   "match": {
+    "modules": [
+     "fsspec"
+    ]
+   }
+  },
+  {
+   "id": "fuse2",
+   "name": "libfuse 2",
+   "kind": "library",
+   "purpose": "Kernel FUSE interface of the FUSE mounts (fusepy)",
+   "license": "LGPL-2.1-only",
+   "url": "https://github.com/libfuse/libfuse",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libfuse"
+    ]
+   }
+  },
+  {
+   "id": "fusepy",
+   "name": "fusepy",
+   "kind": "python",
+   "purpose": "Mounting an axross connection as a local folder (FUSE)",
+   "license": "ISC",
+   "url": "https://github.com/fusepy/fusepy",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "fusepy"
+   ],
+   "extras": [
+    "fuse"
+   ],
+   "match": {
+    "modules": [
+     "fuse"
+    ]
+   }
+  },
+  {
+   "id": "gcc-runtime",
+   "name": "GCC runtime libraries",
+   "kind": "library",
+   "purpose": "Fortran, OpenMP and atomic runtimes (numpy, CTranslate2, QtPdf)",
+   "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+   "url": "https://gcc.gnu.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "note": "libquadmath is LGPL-2.1-or-later",
+   "match": {
+    "libraries": [
+     "libgfortran",
+     "libquadmath",
+     "libgomp",
+     "libatomic"
+    ]
+   }
+  },
+  {
+   "id": "gdbm",
+   "name": "GNU dbm",
+   "kind": "library",
+   "purpose": "Key-value files of Python's dbm module",
+   "license": "GPL-3.0-or-later",
+   "url": "https://www.gnu.org.ua/software/gdbm/",
+   "ships": [
+    "axross-full"
+   ],
+   "match": {
+    "libraries": [
+     "libgdbm",
+     "libgdbm_compat"
+    ]
+   }
+  },
+  {
+   "id": "glib",
+   "name": "GLib",
+   "kind": "library",
+   "purpose": "Main loop and D-Bus integration of Qt's platform plugins",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://gitlab.gnome.org/GNOME/glib",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libglib-2.0",
+     "libgobject-2.0",
+     "libgthread-2.0"
+    ]
+   }
+  },
+  {
+   "id": "gmp",
+   "name": "GMP",
+   "kind": "library",
+   "purpose": "Arbitrary-precision arithmetic used by Nettle",
+   "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+   "url": "https://gmplib.org",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libgmp"
+    ]
+   }
+  },
+  {
+   "id": "gnutls",
+   "name": "GnuTLS",
+   "kind": "library",
+   "purpose": "TLS for network streams of PyAV's FFmpeg",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://www.gnutls.org",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libgnutls"
+    ]
+   }
+  },
+  {
+   "id": "google-api-core",
+   "name": "google-api-core",
+   "kind": "python",
+   "purpose": "Used by google-api-python-client: Google API client core library",
+   "license": "Apache-2.0",
+   "url": "https://github.com/googleapis/google-cloud-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "google-api-core"
+   ],
+   "via": "google-api-python-client",
+   "match": {
+    "modules": [
+     "google"
+    ]
+   }
+  },
+  {
+   "id": "google-api-python-client",
+   "name": "google-api-python-client",
+   "kind": "python",
+   "purpose": "Google Drive backend",
+   "license": "Apache-2.0",
+   "url": "https://github.com/googleapis/google-api-python-client",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "google-api-python-client"
+   ],
+   "extras": [
+    "gdrive"
+   ],
+   "match": {
+    "modules": [
+     "googleapiclient"
+    ]
+   }
+  },
+  {
+   "id": "google-auth",
+   "name": "google-auth",
+   "kind": "python",
+   "purpose": "Used by google-api-python-client: Google Authentication Library",
+   "license": "Apache-2.0",
+   "url": "https://github.com/googleapis/google-cloud-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "google-auth"
+   ],
+   "via": "google-api-python-client",
+   "match": {
+    "modules": [
+     "google"
+    ]
+   }
+  },
+  {
+   "id": "google-auth-httplib2",
+   "name": "google-auth-httplib2",
+   "kind": "python",
+   "purpose": "HTTP transport of the Google Drive client",
+   "license": "Apache-2.0",
+   "url": "https://github.com/googleapis/google-cloud-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "google-auth-httplib2"
+   ],
+   "extras": [
+    "gdrive"
+   ],
+   "match": {
+    "modules": [
+     "google_auth_httplib2"
+    ]
+   }
+  },
+  {
+   "id": "google-auth-oauthlib",
+   "name": "google-auth-oauthlib",
+   "kind": "python",
+   "purpose": "Google sign-in (OAuth) for Google Drive",
+   "license": "Apache-2.0",
+   "url": "https://github.com/googleapis/google-cloud-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "google-auth-oauthlib"
+   ],
+   "extras": [
+    "gdrive"
+   ],
+   "match": {
+    "modules": [
+     "google_auth_oauthlib"
+    ]
+   }
+  },
+  {
+   "id": "googleapis-common-protos",
+   "name": "googleapis-common-protos",
+   "kind": "python",
+   "purpose": "Used by google-api-core: Common protobufs used in Google APIs",
+   "license": "Apache-2.0",
+   "url": "https://github.com/googleapis/google-cloud-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "googleapis-common-protos"
+   ],
+   "via": "google-api-core",
+   "match": {
+    "modules": [
+     "google"
+    ]
+   }
+  },
+  {
+   "id": "graphite2",
+   "name": "Graphite",
+   "kind": "library",
+   "purpose": "Smart-font rendering used by HarfBuzz",
+   "license": "LGPL-2.1-or-later OR MPL-1.1 OR GPL-2.0-or-later",
+   "url": "https://github.com/silnrsi/graphite",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "via": "HarfBuzz",
+   "match": {
+    "libraries": [
+     "libgraphite2"
+    ]
+   }
+  },
+  {
+   "id": "h11",
+   "name": "h11",
+   "kind": "python",
+   "purpose": "Used by httpcore2: A pure-Python, bring-your-own-I/O implementation of HTTP/1.1",
+   "license": "MIT",
+   "url": "https://github.com/python-hyper/h11",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "h11"
+   ],
+   "via": "httpcore2",
+   "match": {
+    "modules": [
+     "h11"
+    ]
+   }
+  },
+  {
+   "id": "harfbuzz",
+   "name": "HarfBuzz",
+   "kind": "library",
+   "purpose": "Text shaping (Qt, Pillow)",
+   "license": "MIT",
+   "url": "https://github.com/harfbuzz/harfbuzz",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Qt 6, Pillow",
+   "match": {
+    "libraries": [
+     "libharfbuzz"
+    ]
+   }
+  },
+  {
+   "id": "hf-xet",
+   "name": "hf-xet",
+   "kind": "python",
+   "purpose": "Used by huggingface_hub: Fast transfer of large files with the Hugging Face Hub",
+   "license": "Apache-2.0",
+   "url": "https://github.com/huggingface/xet-core",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "hf-xet"
+   ],
+   "via": "huggingface_hub",
+   "match": {
+    "modules": [
+     "hf_xet"
+    ]
+   }
+  },
+  {
+   "id": "httpcore2",
+   "name": "httpcore2",
+   "kind": "python",
+   "purpose": "Used by httpx2: A minimal low-level HTTP client",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pydantic/httpx2",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "httpcore2"
+   ],
+   "via": "httpx2",
+   "match": {
+    "modules": [
+     "httpcore2"
+    ]
+   }
+  },
+  {
+   "id": "httplib2",
+   "name": "httplib2",
+   "kind": "python",
+   "purpose": "Used by google-api-python-client: A comprehensive HTTP client library",
+   "license": "MIT",
+   "url": "https://github.com/httplib2/httplib2",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "httplib2"
+   ],
+   "via": "google-api-python-client",
+   "match": {
+    "modules": [
+     "httplib2"
+    ]
+   }
+  },
+  {
+   "id": "httpx2",
+   "name": "httpx2",
+   "kind": "python",
+   "purpose": "Used by huggingface_hub: The next generation HTTP client",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pydantic/httpx2",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "httpx2"
+   ],
+   "via": "huggingface_hub",
+   "match": {
+    "modules": [
+     "httpx2"
+    ]
+   }
+  },
+  {
+   "id": "huggingface-hub",
+   "name": "huggingface_hub",
+   "kind": "python",
+   "purpose": "Used by faster-whisper: Client library to download and publish models, datasets and other repos on the huggingface",
+   "license": "Apache-2.0",
+   "url": "https://github.com/huggingface/huggingface_hub",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "huggingface_hub"
+   ],
+   "via": "faster-whisper",
+   "match": {
+    "modules": [
+     "huggingface_hub"
+    ]
+   }
+  },
+  {
+   "id": "icu",
+   "name": "ICU",
+   "kind": "library",
+   "purpose": "Unicode support of Qt (collation, conversion, text boundaries)",
+   "license": "Unicode-DFS-2016",
+   "url": "https://icu.unicode.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Qt 6",
+   "version": "73.2",
+   "match": {
+    "libraries": [
+     "libicudata",
+     "libicui18n",
+     "libicuuc"
+    ]
+   }
+  },
+  {
+   "id": "idna",
+   "name": "idna",
+   "kind": "python",
+   "purpose": "Used by requests: Internationalized Domain Names in Applications (IDNA)",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/kjd/idna",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "idna"
+   ],
+   "via": "requests",
+   "match": {
+    "modules": [
+     "idna"
+    ]
+   }
+  },
+  {
+   "id": "impacket",
+   "name": "impacket",
+   "kind": "python",
+   "purpose": "WMI / DCOM and SMB tooling for Windows hosts",
+   "license": "LicenseRef-Impacket-Apache-1.1-modified",
+   "url": "https://github.com/fortra/impacket",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "impacket"
+   ],
+   "extras": [
+    "wmi"
+   ],
+   "match": {
+    "modules": [
+     "impacket"
+    ]
+   }
+  },
+  {
+   "id": "inflate64",
+   "name": "inflate64",
+   "kind": "python",
+   "purpose": "Used by py7zr: deflate64 compression/decompression library",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/miurahr/inflate64",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "inflate64"
+   ],
+   "via": "py7zr",
+   "match": {
+    "modules": [
+     "inflate64"
+    ]
+   }
+  },
+  {
+   "id": "invoke",
+   "name": "invoke",
+   "kind": "python",
+   "purpose": "Used by paramiko: Pythonic task execution",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/pyinvoke/invoke",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "invoke"
+   ],
+   "via": "paramiko",
+   "match": {
+    "modules": [
+     "invoke"
+    ]
+   }
+  },
+  {
+   "id": "ipwhois",
+   "name": "ipwhois",
+   "kind": "python",
+   "purpose": "WHOIS / RDAP lookups",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/secynic/ipwhois",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "ipwhois"
+   ],
+   "extras": [
+    "whois"
+   ],
+   "match": {
+    "modules": [
+     "ipwhois"
+    ]
+   }
+  },
+  {
+   "id": "isodate",
+   "name": "isodate",
+   "kind": "python",
+   "purpose": "Used by azure-storage-blob: An ISO 8601 date/time/duration parser and formatter",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/gweis/isodate",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "isodate"
+   ],
+   "via": "azure-storage-blob",
+   "match": {
+    "modules": [
+     "isodate"
+    ]
+   }
+  },
+  {
+   "id": "itsdangerous",
+   "name": "itsdangerous",
+   "kind": "python",
+   "purpose": "Used by Flask: Safely pass data to untrusted environments and back",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pallets/itsdangerous",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "itsdangerous"
+   ],
+   "via": "Flask",
+   "match": {
+    "modules": [
+     "itsdangerous"
+    ]
+   }
+  },
+  {
+   "id": "jaraco-classes",
+   "name": "jaraco.classes",
+   "kind": "python",
+   "purpose": "Used by keyring: Utility functions for Python class constructs",
+   "license": "MIT",
+   "url": "https://github.com/jaraco/jaraco.classes",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "jaraco.classes"
+   ],
+   "via": "keyring",
+   "match": {
+    "modules": [
+     "jaraco"
+    ]
+   }
+  },
+  {
+   "id": "jaraco-context",
+   "name": "jaraco.context",
+   "kind": "python",
+   "purpose": "Used by keyring: Useful decorators and context managers",
+   "license": "MIT",
+   "url": "https://github.com/jaraco/jaraco.context",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "jaraco.context"
+   ],
+   "via": "keyring",
+   "match": {
+    "modules": [
+     "jaraco"
+    ]
+   }
+  },
+  {
+   "id": "jaraco-functools",
+   "name": "jaraco.functools",
+   "kind": "python",
+   "purpose": "Used by keyring: Functools like those found in stdlib",
+   "license": "MIT",
+   "url": "https://github.com/jaraco/jaraco.functools",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "jaraco.functools"
+   ],
+   "via": "keyring",
+   "match": {
+    "modules": [
+     "jaraco"
+    ]
+   }
+  },
+  {
+   "id": "jbigkit",
+   "name": "JBIG-KIT",
+   "kind": "library",
+   "purpose": "JBIG compression used by the system LibTIFF",
+   "license": "GPL-2.0-or-later",
+   "url": "https://www.cl.cam.ac.uk/~mgk25/jbigkit/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "via": "LibTIFF",
+   "match": {
+    "libraries": [
+     "libjbig"
+    ]
+   }
+  },
+  {
+   "id": "jeepney",
+   "name": "jeepney",
+   "kind": "python",
+   "purpose": "Used by keyring: Low-level, pure Python DBus protocol wrapper",
+   "license": "MIT",
+   "url": "https://gitlab.com/takluyver/jeepney",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "jeepney"
+   ],
+   "via": "keyring",
+   "match": {
+    "modules": [
+     "jeepney"
+    ]
+   }
+  },
+  {
+   "id": "jinja2",
+   "name": "Jinja2",
+   "kind": "python",
+   "purpose": "Used by Flask: A very fast and expressive template engine",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pallets/jinja",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "Jinja2"
+   ],
+   "via": "Flask",
+   "match": {
+    "modules": [
+     "jinja2"
+    ]
+   }
+  },
+  {
+   "id": "jmespath",
+   "name": "jmespath",
+   "kind": "python",
+   "purpose": "Used by boto3: JSON Matching Expressions",
+   "license": "MIT",
+   "url": "https://github.com/jmespath/jmespath.py",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "jmespath"
+   ],
+   "via": "boto3",
+   "match": {
+    "modules": [
+     "jmespath"
+    ]
+   }
+  },
+  {
+   "id": "jsonschema",
+   "name": "jsonschema",
+   "kind": "python",
+   "purpose": "Validates MCP tool arguments against their schemas",
+   "license": "MIT",
+   "url": "https://github.com/python-jsonschema/jsonschema",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "pypi": [
+    "jsonschema"
+   ],
+   "match": {
+    "modules": [
+     "jsonschema"
+    ]
+   }
+  },
+  {
+   "id": "jsonschema-specifications",
+   "name": "jsonschema-specifications",
+   "kind": "python",
+   "purpose": "Used by jsonschema: The JSON Schema meta-schemas and vocabularies, exposed as a Registry",
+   "license": "MIT",
+   "url": "https://github.com/python-jsonschema/jsonschema-specifications",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "pypi": [
+    "jsonschema-specifications"
+   ],
+   "via": "jsonschema",
+   "match": {
+    "modules": [
+     "jsonschema_specifications"
+    ]
+   }
+  },
+  {
+   "id": "keyring",
+   "name": "keyring",
+   "kind": "python",
+   "purpose": "Stores profile passwords in the operating system's keyring",
+   "license": "MIT",
+   "url": "https://github.com/jaraco/keyring",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "keyring"
+   ],
+   "match": {
+    "modules": [
+     "keyring"
+    ]
+   }
+  },
+  {
+   "id": "keyutils",
+   "name": "keyutils",
+   "kind": "library",
+   "purpose": "Kernel key retention used by MIT Kerberos",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://git.kernel.org/pub/scm/linux/kernel/git/dhowells/keyutils.git",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libkeyutils"
+    ]
+   }
+  },
+  {
+   "id": "krb5",
+   "name": "MIT Kerberos",
+   "kind": "library",
+   "purpose": "Kerberos / GSSAPI (libpq, system libraries)",
+   "license": "MIT",
+   "url": "https://web.mit.edu/kerberos/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "note": "libcom_err comes from e2fsprogs (MIT)",
+   "match": {
+    "libraries": [
+     "libkrb5",
+     "libgssapi_krb5",
+     "libk5crypto",
+     "libkrb5support",
+     "libcom_err"
+    ]
+   }
+  },
+  {
+   "id": "lcms2",
+   "name": "Little CMS",
+   "kind": "library",
+   "purpose": "Colour management in Pillow",
+   "license": "MIT",
+   "url": "https://www.littlecms.com",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow",
+   "match": {
+    "libraries": [
+     "liblcms2"
+    ]
+   }
+  },
+  {
+   "id": "ldap3",
+   "name": "ldap3",
+   "kind": "python",
+   "purpose": "LDAP backend and helpers",
+   "license": "LGPL-3.0-or-later",
+   "url": "https://github.com/cannatag/ldap3",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "ldap3"
+   ],
+   "extras": [
+    "ldap"
+   ],
+   "match": {
+    "modules": [
+     "ldap3"
+    ]
+   }
+  },
+  {
+   "id": "libavif",
+   "name": "libavif",
+   "kind": "library",
+   "purpose": "AVIF images in Pillow",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/AOMediaCodec/libavif",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow",
+   "match": {
+    "libraries": [
+     "libavif"
+    ]
+   }
+  },
+  {
+   "id": "libcap",
+   "name": "libcap",
+   "kind": "library",
+   "purpose": "POSIX capabilities used by libsystemd",
+   "license": "BSD-3-Clause OR GPL-2.0-only",
+   "url": "https://sites.google.com/site/fullycapable/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libcap"
+    ]
+   }
+  },
+  {
+   "id": "libdrm",
+   "name": "libdrm",
+   "kind": "library",
+   "purpose": "Direct Rendering Manager access of PyAV's FFmpeg",
+   "license": "MIT",
+   "url": "https://gitlab.freedesktop.org/mesa/drm",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libdrm"
+    ]
+   }
+  },
+  {
+   "id": "libffi",
+   "name": "libffi",
+   "kind": "library",
+   "purpose": "Foreign function calls (Python's ctypes, cffi)",
+   "license": "MIT",
+   "url": "https://sourceware.org/libffi/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libffi"
+    ]
+   }
+  },
+  {
+   "id": "libgcrypt",
+   "name": "Libgcrypt and libgpg-error",
+   "kind": "library",
+   "purpose": "Cryptography used by libsystemd",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://www.gnupg.org/software/libgcrypt/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libgcrypt",
+     "libgpg-error"
+    ]
+   }
+  },
+  {
+   "id": "libjpeg-turbo",
+   "name": "libjpeg-turbo",
+   "kind": "library",
+   "purpose": "JPEG images (Pillow, Qt image plugins)",
+   "license": "IJG AND BSD-3-Clause",
+   "url": "https://libjpeg-turbo.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow, Qt 6",
+   "match": {
+    "libraries": [
+     "libjpeg"
+    ]
+   }
+  },
+  {
+   "id": "libpng",
+   "name": "libpng",
+   "kind": "library",
+   "purpose": "PNG images (Pillow, Qt)",
+   "license": "libpng-2.0",
+   "url": "https://www.libpng.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow, Qt 6",
+   "match": {
+    "libraries": [
+     "libpng16"
+    ]
+   }
+  },
+  {
+   "id": "libpq",
+   "name": "libpq",
+   "kind": "library",
+   "purpose": "PostgreSQL client library of psycopg",
+   "license": "PostgreSQL",
+   "url": "https://www.postgresql.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "via": "psycopg-binary",
+   "match": {
+    "libraries": [
+     "libpq"
+    ]
+   }
+  },
+  {
+   "id": "libselinux",
+   "name": "libselinux",
+   "kind": "library",
+   "purpose": "SELinux library used by GLib and libpq",
+   "license": "LicenseRef-PublicDomain",
+   "url": "https://github.com/SELinuxProject/selinux",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libselinux"
+    ]
+   }
+  },
+  {
+   "id": "libtiff",
+   "name": "LibTIFF",
+   "kind": "library",
+   "purpose": "TIFF images (Pillow, Qt image plugin)",
+   "license": "libtiff",
+   "url": "https://libtiff.gitlab.io/libtiff/",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow, Qt 6",
+   "match": {
+    "libraries": [
+     "libtiff"
+    ]
+   }
+  },
+  {
+   "id": "libunistring",
+   "name": "libunistring",
+   "kind": "library",
+   "purpose": "Unicode string functions used by GnuTLS",
+   "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+   "url": "https://www.gnu.org/software/libunistring/",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libunistring"
+    ]
+   }
+  },
+  {
+   "id": "libvpl",
+   "name": "Intel VPL dispatcher",
+   "kind": "library",
+   "purpose": "Hardware video acceleration dispatcher of PyAV's FFmpeg",
+   "license": "MIT",
+   "url": "https://github.com/intel/libvpl",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libvpl"
+    ]
+   }
+  },
+  {
+   "id": "libvpx",
+   "name": "libvpx",
+   "kind": "library",
+   "purpose": "VP8/VP9 codec library of PyAV's FFmpeg",
+   "license": "BSD-3-Clause",
+   "url": "https://chromium.googlesource.com/webm/libvpx",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libvpx"
+    ]
+   }
+  },
+  {
+   "id": "libwebp",
+   "name": "libwebp",
+   "kind": "library",
+   "purpose": "WebP images (Pillow, Qt image plugin)",
+   "license": "BSD-3-Clause",
+   "url": "https://chromium.googlesource.com/webm/libwebp",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow, Qt 6",
+   "match": {
+    "libraries": [
+     "libwebp",
+     "libwebpdemux",
+     "libwebpmux",
+     "libsharpyuv"
+    ]
+   }
+  },
+  {
+   "id": "libxcb",
+   "name": "libxcb and xcb-util",
+   "kind": "library",
+   "purpose": "X protocol bindings of Qt's xcb platform plugin",
+   "license": "MIT",
+   "url": "https://xcb.freedesktop.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libxcb",
+     "libxcb-*"
+    ]
+   }
+  },
+  {
+   "id": "libxcrypt",
+   "name": "libxcrypt",
+   "kind": "library",
+   "purpose": "Password hashing library used by libpq",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/besser82/libxcrypt",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "via": "libpq",
+   "match": {
+    "libraries": [
+     "libcrypt"
+    ]
+   }
+  },
+  {
+   "id": "libxkbcommon",
+   "name": "libxkbcommon",
+   "kind": "library",
+   "purpose": "Keyboard handling of Qt (X11 and Wayland)",
+   "license": "MIT",
+   "url": "https://xkbcommon.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libxkbcommon",
+     "libxkbcommon-x11"
+    ]
+   }
+  },
+  {
+   "id": "libxml2",
+   "name": "libxml2",
+   "kind": "library",
+   "purpose": "XML library used by system libraries",
+   "license": "MIT",
+   "url": "https://gitlab.gnome.org/GNOME/libxml2",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libxml2"
+    ]
+   }
+  },
+  {
+   "id": "lxml",
+   "name": "lxml",
+   "kind": "python",
+   "purpose": "Used by exchangelib: Powerful and Pythonic XML processing library combining libxml2/libxslt with the ElementTre",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/lxml/lxml",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "lxml"
+   ],
+   "via": "exchangelib",
+   "match": {
+    "modules": [
+     "lxml"
+    ]
+   }
+  },
+  {
+   "id": "lz4",
+   "name": "LZ4",
+   "kind": "library",
+   "purpose": "LZ4 compression used by system libraries",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/lz4/lz4",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "liblz4"
+    ]
+   }
+  },
+  {
+   "id": "manuf",
+   "name": "manuf",
+   "kind": "python",
+   "purpose": "MAC address vendor lookup (Wireshark OUI database)",
+   "license": "Apache-2.0 OR GPL-3.0-or-later",
+   "url": "https://github.com/coolbho3k/manuf",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "manuf"
+   ],
+   "extras": [
+    "mac"
+   ],
+   "match": {
+    "modules": [
+     "manuf"
+    ]
+   }
+  },
+  {
+   "id": "markupsafe",
+   "name": "MarkupSafe",
+   "kind": "python",
+   "purpose": "Used by Flask: Safely add untrusted strings to HTML/XML markup",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pallets/markupsafe",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "MarkupSafe"
+   ],
+   "via": "Flask",
+   "match": {
+    "modules": [
+     "markupsafe"
+    ]
+   }
+  },
+  {
+   "id": "mcp-hub",
+   "name": "axross MCP hub",
+   "kind": "project",
+   "purpose": "Catalogue of container-packaged MCP servers that the MCP catalog installs on request",
+   "license": "MIT",
+   "url": "https://github.com/c0decave/axross-mcp-hub",
+   "ships": [
+    "container"
+   ],
+   "note": "each server's tool, wrapper, licence and base image are listed in servers/<name>/PROVENANCE.md of the hub"
+  },
+  {
+   "id": "more-itertools",
+   "name": "more-itertools",
+   "kind": "python",
+   "purpose": "Used by jaraco.classes: More routines for operating on iterables, beyond itertools",
+   "license": "MIT",
+   "url": "https://github.com/more-itertools/more-itertools",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "more-itertools"
+   ],
+   "via": "jaraco.classes",
+   "match": {
+    "modules": [
+     "more_itertools"
+    ]
+   }
+  },
+  {
+   "id": "mpdecimal",
+   "name": "mpdecimal",
+   "kind": "library",
+   "purpose": "Decimal arithmetic of Python's decimal module",
+   "license": "BSD-2-Clause",
+   "url": "https://www.bytereef.org/mpdecimal/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libmpdec"
+    ]
+   }
+  },
+  {
+   "id": "msal",
+   "name": "msal",
+   "kind": "python",
+   "purpose": "Microsoft sign-in for OneDrive and SharePoint",
+   "license": "MIT",
+   "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "msal"
+   ],
+   "extras": [
+    "onedrive"
+   ],
+   "match": {
+    "modules": [
+     "msal"
+    ]
+   }
+  },
+  {
+   "id": "mtp-mounters",
+   "name": "jmtpfs / simple-mtpfs / go-mtpfs",
+   "kind": "program",
+   "purpose": "MTP backend (the first one found on PATH)",
+   "license": "GPL-3.0-only OR GPL-2.0-or-later OR BSD-3-Clause",
+   "url": "https://github.com/JasonFerrara/jmtpfs",
+   "ships": [
+    "host"
+   ],
+   "note": "jmtpfs GPL-3.0, simple-mtpfs GPL-2.0, go-mtpfs BSD"
+  },
+  {
+   "id": "multivolumefile",
+   "name": "multivolumefile",
+   "kind": "python",
+   "purpose": "Used by py7zr: multi volume file wrapper library",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/miurahr/multivolume",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "multivolumefile"
+   ],
+   "via": "py7zr",
+   "match": {
+    "modules": [
+     "multivolumefile"
+    ]
+   }
+  },
+  {
+   "id": "ncurses",
+   "name": "ncurses (libtinfo)",
+   "kind": "library",
+   "purpose": "Terminal capabilities used by Readline",
+   "license": "X11",
+   "url": "https://invisible-island.net/ncurses/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libtinfo"
+    ]
+   }
+  },
+  {
+   "id": "nettle",
+   "name": "Nettle",
+   "kind": "library",
+   "purpose": "Cryptographic library used by GnuTLS",
+   "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+   "url": "https://www.lysator.liu.se/~nisse/nettle/",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libnettle",
+     "libhogweed"
+    ]
+   }
+  },
+  {
+   "id": "nfs-utils",
+   "name": "nfs-utils (mount.nfs)",
+   "kind": "program",
+   "purpose": "NFS backend",
+   "license": "GPL-2.0-or-later",
+   "url": "https://linux-nfs.org",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "ntplib",
+   "name": "ntplib",
+   "kind": "python",
+   "purpose": "NTP time queries",
+   "license": "MIT",
+   "url": "https://github.com/cf-natali/ntplib",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "ntplib"
+   ],
+   "extras": [
+    "ntp"
+   ],
+   "match": {
+    "modules": [
+     "ntplib"
+    ]
+   }
+  },
+  {
+   "id": "numpy",
+   "name": "numpy",
+   "kind": "python",
+   "purpose": "Equalizer and spectrum of the Media Player extension",
+   "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+   "url": "https://github.com/numpy/numpy",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "numpy"
+   ],
+   "extras": [
+    "media"
+   ],
+   "match": {
+    "modules": [
+     "numpy"
+    ]
+   }
+  },
+  {
+   "id": "oauthlib",
+   "name": "oauthlib",
+   "kind": "python",
+   "purpose": "Used by exchangelib: A generic, spec-compliant, thorough implementation of the OAuth request-signing logic",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/oauthlib/oauthlib",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "oauthlib"
+   ],
+   "via": "exchangelib",
+   "match": {
+    "modules": [
+     "oauthlib"
+    ]
+   }
+  },
+  {
+   "id": "onnxruntime",
+   "name": "onnxruntime",
+   "kind": "python",
+   "purpose": "Runs the Piper voice models",
+   "license": "MIT",
+   "url": "https://github.com/microsoft/onnxruntime",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "onnxruntime"
+   ],
+   "extras": [
+    "voice"
+   ],
+   "version": "1.31.0",
+   "group": "voice",
+   "match": {
+    "modules": [
+     "onnxruntime"
+    ],
+    "libraries": [
+     "libonnxruntime_providers_shared"
+    ]
+   }
+  },
+  {
+   "id": "open-iscsi",
+   "name": "open-iscsi (iscsiadm)",
+   "kind": "program",
+   "purpose": "iSCSI backend",
+   "license": "GPL-2.0-or-later",
+   "url": "https://github.com/open-iscsi/open-iscsi",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "openblas",
+   "name": "OpenBLAS",
+   "kind": "library",
+   "purpose": "Linear algebra of numpy",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/OpenMathLib/OpenBLAS",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "numpy",
+   "match": {
+    "libraries": [
+     "libscipy_openblas64_"
+    ]
+   }
+  },
+  {
+   "id": "openjpeg",
+   "name": "OpenJPEG",
+   "kind": "library",
+   "purpose": "JPEG 2000 images in Pillow",
+   "license": "BSD-2-Clause",
+   "url": "https://www.openjpeg.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "via": "Pillow",
+   "match": {
+    "libraries": [
+     "libopenjp2"
+    ]
+   }
+  },
+  {
+   "id": "openldap",
+   "name": "OpenLDAP client libraries",
+   "kind": "library",
+   "purpose": "LDAP support of libpq",
+   "license": "OLDAP-2.8",
+   "url": "https://www.openldap.org",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "via": "libpq",
+   "match": {
+    "libraries": [
+     "libldap",
+     "liblber"
+    ]
+   }
+  },
+  {
+   "id": "openssl",
+   "name": "OpenSSL",
+   "kind": "library",
+   "purpose": "TLS and cryptography (Python's ssl module, Qt, libpq)",
+   "license": "Apache-2.0",
+   "url": "https://www.openssl.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libssl",
+     "libcrypto"
+    ]
+   }
+  },
+  {
+   "id": "opentelemetry-api",
+   "name": "opentelemetry-api",
+   "kind": "python",
+   "purpose": "Used by google-api-core: OpenTelemetry Python API",
+   "license": "Apache-2.0",
+   "url": "https://github.com/open-telemetry/opentelemetry-python",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "opentelemetry-api"
+   ],
+   "via": "google-api-core",
+   "match": {
+    "modules": [
+     "opentelemetry"
+    ]
+   }
+  },
+  {
+   "id": "opus",
+   "name": "Opus",
+   "kind": "library",
+   "purpose": "Opus audio codec library of PyAV's FFmpeg",
+   "license": "BSD-3-Clause",
+   "url": "https://opus-codec.org",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libopus"
+    ]
+   }
+  },
+  {
+   "id": "packaging",
+   "name": "packaging",
+   "kind": "python",
+   "purpose": "Used by onnxruntime: Core utilities for Python packages",
+   "license": "Apache-2.0 OR BSD-2-Clause",
+   "url": "https://github.com/pypa/packaging",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "packaging"
+   ],
+   "via": "onnxruntime",
+   "match": {
+    "modules": [
+     "packaging"
+    ]
+   }
+  },
+  {
+   "id": "paramiko",
+   "name": "paramiko",
+   "kind": "python",
+   "purpose": "SSH, SFTP and SCP connections",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/paramiko/paramiko",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "paramiko"
+   ],
+   "match": {
+    "modules": [
+     "paramiko"
+    ]
+   }
+  },
+  {
+   "id": "pathvalidate",
+   "name": "pathvalidate",
+   "kind": "python",
+   "purpose": "Used by piper-tts: pathvalidate is a Python library to sanitize/validate a string such as filenames/file-path",
+   "license": "MIT",
+   "url": "https://github.com/thombashi/pathvalidate",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pathvalidate"
+   ],
+   "via": "piper-tts",
+   "match": {
+    "modules": [
+     "pathvalidate"
+    ]
+   }
+  },
+  {
+   "id": "pcre",
+   "name": "PCRE and PCRE2",
+   "kind": "library",
+   "purpose": "Regular expressions used by GLib and libselinux",
+   "license": "BSD-3-Clause",
+   "url": "https://www.pcre.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libpcre",
+     "libpcre2-8"
+    ]
+   }
+  },
+  {
+   "id": "pillow",
+   "name": "Pillow",
+   "kind": "python",
+   "purpose": "Image thumbnails, image metadata and the image viewer",
+   "license": "MIT-CMU",
+   "url": "https://github.com/python-pillow/Pillow",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "pillow"
+   ],
+   "match": {
+    "modules": [
+     "PIL"
+    ]
+   }
+  },
+  {
+   "id": "piper-tts",
+   "name": "piper-tts",
+   "kind": "python",
+   "purpose": "Speech output of the Agent dock (Piper)",
+   "license": "GPL-3.0-or-later",
+   "url": "https://github.com/OHF-voice/piper1-gpl",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "piper-tts"
+   ],
+   "extras": [
+    "voice"
+   ],
+   "version": "1.8.0",
+   "group": "voice",
+   "match": {
+    "modules": [
+     "piper"
+    ]
+   }
+  },
+  {
+   "id": "piper-voices",
+   "name": "Piper voices",
+   "kind": "data",
+   "purpose": "The Agent dock's voices, downloaded in Help > Features…",
+   "license": "MIT",
+   "url": "https://huggingface.co/rhasspy/piper-voices",
+   "ships": [
+    "download"
+   ],
+   "version": "1.0.0",
+   "note": "each voice's dataset terms are in its MODEL_CARD (Thorsten CC0; Kerstin, Ryan and Lessac as stated there)"
+  },
+  {
+   "id": "podman",
+   "name": "Podman",
+   "kind": "program",
+   "purpose": "Agent sandbox and MCP server containers",
+   "license": "Apache-2.0",
+   "url": "https://podman.io",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "polkit",
+   "name": "polkit (pkexec)",
+   "kind": "program",
+   "purpose": "\"Open as root…\" and privileged mounts",
+   "license": "LGPL-2.0-or-later",
+   "url": "https://github.com/polkit-org/polkit",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "protobuf",
+   "name": "protobuf",
+   "kind": "python",
+   "purpose": "Used by onnxruntime",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/protocolbuffers/protobuf",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "protobuf"
+   ],
+   "via": "onnxruntime",
+   "match": {
+    "modules": [
+     "google"
+    ]
+   }
+  },
+  {
+   "id": "psutil",
+   "name": "psutil",
+   "kind": "python",
+   "purpose": "Drive overview extension; process information",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/giampaolo/psutil",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "psutil"
+   ],
+   "via": "py7zr",
+   "match": {
+    "modules": [
+     "psutil"
+    ]
+   }
+  },
+  {
+   "id": "psycopg",
+   "name": "psycopg",
+   "kind": "python",
+   "purpose": "PostgreSQL backend",
+   "license": "LGPL-3.0-only",
+   "url": "https://github.com/psycopg/psycopg",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "psycopg"
+   ],
+   "extras": [
+    "postgres"
+   ],
+   "match": {
+    "modules": [
+     "psycopg"
+    ]
+   }
+  },
+  {
+   "id": "psycopg-binary",
+   "name": "psycopg-binary",
+   "kind": "python",
+   "purpose": "Compiled PostgreSQL driver with libpq",
+   "license": "LGPL-3.0-only",
+   "url": "https://github.com/psycopg/psycopg",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "pypi": [
+    "psycopg-binary"
+   ],
+   "match": {
+    "modules": [
+     "psycopg_binary"
+    ]
+   }
+  },
+  {
+   "id": "puremagic",
+   "name": "puremagic",
+   "kind": "python",
+   "purpose": "File type detection from file content",
+   "license": "MIT",
+   "url": "https://github.com/cdgriffith/puremagic",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "puremagic"
+   ],
+   "extras": [
+    "magic"
+   ],
+   "match": {
+    "modules": [
+     "puremagic"
+    ]
+   }
+  },
+  {
+   "id": "py7zr",
+   "name": "py7zr",
+   "kind": "python",
+   "purpose": "7z archives (browse, extract, pack)",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/miurahr/py7zr",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "py7zr"
+   ],
+   "extras": [
+    "archive"
+   ],
+   "match": {
+    "modules": [
+     "py7zr"
+    ]
+   }
+  },
+  {
+   "id": "pyasn1",
+   "name": "pyasn1",
+   "kind": "python",
+   "purpose": "ASN.1 decoding (LDAP, SNMP)",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/pyasn1/pyasn1",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyasn1"
+   ],
+   "via": "adb_shell",
+   "match": {
+    "modules": [
+     "pyasn1"
+    ]
+   }
+  },
+  {
+   "id": "pyasn1-modules",
+   "name": "pyasn1_modules",
+   "kind": "python",
+   "purpose": "Used by impacket: A collection of ASN.1-based protocols modules",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/pyasn1/pyasn1-modules",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyasn1_modules"
+   ],
+   "via": "impacket",
+   "match": {
+    "modules": [
+     "pyasn1_modules"
+    ]
+   }
+  },
+  {
+   "id": "pybcj",
+   "name": "pybcj",
+   "kind": "python",
+   "purpose": "Used by py7zr: bcj filter library",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/miurahr/pybcj",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pybcj"
+   ],
+   "via": "py7zr",
+   "match": {
+    "modules": [
+     "bcj"
+    ]
+   }
+  },
+  {
+   "id": "pycparser",
+   "name": "pycparser",
+   "kind": "python",
+   "purpose": "Used by cffi: C parser in Python",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/eliben/pycparser",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "pycparser"
+   ],
+   "via": "cffi",
+   "match": {
+    "modules": [
+     "pycparser"
+    ]
+   }
+  },
+  {
+   "id": "pycryptodomex",
+   "name": "pycryptodomex",
+   "kind": "python",
+   "purpose": "Used by impacket: Cryptographic library for Python",
+   "license": "BSD-2-Clause AND LicenseRef-PublicDomain",
+   "url": "https://github.com/Legrandin/pycryptodome",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pycryptodomex"
+   ],
+   "via": "impacket",
+   "match": {
+    "modules": [
+     "Cryptodome"
+    ]
+   }
+  },
+  {
+   "id": "pygments",
+   "name": "Pygments",
+   "kind": "python",
+   "purpose": "Syntax highlighting in the text editor",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/pygments/pygments",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "Pygments"
+   ],
+   "match": {
+    "modules": [
+     "pygments"
+    ]
+   }
+  },
+  {
+   "id": "pyjwt",
+   "name": "PyJWT",
+   "kind": "python",
+   "purpose": "Used by msal: JSON Web Token implementation in Python",
+   "license": "MIT",
+   "url": "https://github.com/jpadilla/pyjwt",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "PyJWT"
+   ],
+   "via": "msal",
+   "match": {
+    "modules": [
+     "jwt"
+    ]
+   }
+  },
+  {
+   "id": "pymongo",
+   "name": "pymongo",
+   "kind": "python",
+   "purpose": "MongoDB / GridFS backend",
+   "license": "Apache-2.0",
+   "url": "https://github.com/mongodb/mongo-python-driver",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pymongo"
+   ],
+   "extras": [
+    "mongo"
+   ],
+   "match": {
+    "modules": [
+     "bson",
+     "gridfs",
+     "pymongo"
+    ]
+   }
+  },
+  {
+   "id": "pynacl",
+   "name": "PyNaCl",
+   "kind": "python",
+   "purpose": "Used by paramiko: Python binding to the Networking and Cryptography (NaCl) library",
+   "license": "Apache-2.0",
+   "url": "https://github.com/pyca/pynacl",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "PyNaCl"
+   ],
+   "via": "paramiko",
+   "match": {
+    "modules": [
+     "nacl"
+    ]
+   }
+  },
+  {
+   "id": "pyopenssl",
+   "name": "pyOpenSSL",
+   "kind": "python",
+   "purpose": "Used by impacket: Python wrapper module around the OpenSSL library",
+   "license": "Apache-2.0",
+   "url": "https://github.com/pyca/pyopenssl",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyOpenSSL"
+   ],
+   "via": "impacket",
+   "match": {
+    "modules": [
+     "OpenSSL"
+    ]
+   }
+  },
+  {
+   "id": "pyparsing",
+   "name": "pyparsing",
+   "kind": "python",
+   "purpose": "Used by httplib2: pyparsing - Classes and methods to define and execute parsing grammars",
+   "license": "MIT",
+   "url": "https://github.com/pyparsing/pyparsing",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyparsing"
+   ],
+   "via": "httplib2",
+   "match": {
+    "modules": [
+     "pyparsing"
+    ]
+   }
+  },
+  {
+   "id": "pypdf",
+   "name": "pypdf",
+   "kind": "python",
+   "purpose": "Removing PDF metadata",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/py-pdf/pypdf",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pypdf"
+   ],
+   "extras": [
+    "metadata"
+   ],
+   "match": {
+    "modules": [
+     "pypdf"
+    ]
+   }
+  },
+  {
+   "id": "pyppmd",
+   "name": "pyppmd",
+   "kind": "python",
+   "purpose": "Used by py7zr: PPMd compression/decompression library",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/miurahr/pyppmd",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyppmd"
+   ],
+   "via": "py7zr",
+   "match": {
+    "modules": [
+     "pyppmd"
+    ]
+   }
+  },
+  {
+   "id": "pyqt6",
+   "name": "PyQt6",
+   "kind": "python",
+   "purpose": "Python bindings for Qt: the whole user interface",
+   "license": "GPL-3.0-only OR LicenseRef-Riverbank-Commercial",
+   "url": "https://www.riverbankcomputing.com/software/pyqt/",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "PyQt6"
+   ],
+   "note": "PyQt6 is GPL-3.0: a binary that contains it is distributed under GPL-3.0",
+   "match": {
+    "modules": [
+     "PyQt6"
+    ]
+   }
+  },
+  {
+   "id": "pyqt6-sip",
+   "name": "PyQt6_sip",
+   "kind": "python",
+   "purpose": "Runtime support module of the PyQt6 bindings",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/Python-SIP/sip",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "PyQt6_sip"
+   ],
+   "via": "PyQt6",
+   "match": {
+    "modules": [
+     "PyQt6"
+    ]
+   }
+  },
+  {
+   "id": "pysnmp",
+   "name": "pysnmp",
+   "kind": "python",
+   "purpose": "SNMP helpers",
+   "license": "BSD-2-Clause",
+   "url": "https://github.com/lextudio/pysnmp",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pysnmp"
+   ],
+   "extras": [
+    "snmp"
+   ],
+   "match": {
+    "modules": [
+     "pysnmp"
+    ]
+   }
+  },
+  {
+   "id": "pysocks",
+   "name": "PySocks",
+   "kind": "python",
+   "purpose": "SOCKS4/5 proxies for every connection",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/Anorov/PySocks",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "PySocks"
+   ],
+   "match": {
+    "modules": [
+     "socks"
+    ]
+   }
+  },
+  {
+   "id": "pyspnego",
+   "name": "pyspnego",
+   "kind": "python",
+   "purpose": "NTLM / Kerberos (Negotiate) authentication for proxies and SMB",
+   "license": "MIT",
+   "url": "https://github.com/jborean93/pyspnego",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyspnego"
+   ],
+   "via": "smbprotocol",
+   "match": {
+    "modules": [
+     "spnego"
+    ]
+   }
+  },
+  {
+   "id": "python-dateutil",
+   "name": "python-dateutil",
+   "kind": "python",
+   "purpose": "Used by botocore: Extensions to the standard Python datetime module",
+   "license": "Apache-2.0 AND BSD-3-Clause",
+   "url": "https://github.com/dateutil/dateutil",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "python-dateutil"
+   ],
+   "via": "botocore",
+   "match": {
+    "modules": [
+     "dateutil"
+    ]
+   }
+  },
+  {
+   "id": "python-image",
+   "name": "Python container image (python:3.12-slim)",
+   "kind": "container",
+   "purpose": "Base image of Dockerfile.mcp, Dockerfile.agent and Dockerfile.gui",
+   "license": "PSF-2.0 AND LicenseRef-Debian-Packages",
+   "url": "https://hub.docker.com/_/python",
+   "ships": [
+    "container"
+   ],
+   "note": "built on Debian; each Debian package's licence is in /usr/share/doc/<package>/copyright inside the image"
+  },
+  {
+   "id": "pywinpty",
+   "name": "pywinpty",
+   "kind": "python",
+   "purpose": "The local terminal on Windows (ConPTY)",
+   "license": "MIT",
+   "url": "https://github.com/andfoy/pywinpty",
+   "ships": [
+    "pip"
+   ],
+   "pypi": [
+    "pywinpty"
+   ],
+   "note": "Windows only"
+  },
+  {
+   "id": "pywinrm",
+   "name": "pywinrm",
+   "kind": "python",
+   "purpose": "WinRM backend (Windows Remote Management)",
+   "license": "MIT",
+   "url": "https://github.com/diyan/pywinrm",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pywinrm"
+   ],
+   "extras": [
+    "winrm"
+   ],
+   "match": {
+    "modules": [
+     "winrm"
+    ]
+   }
+  },
+  {
+   "id": "pyyaml",
+   "name": "PyYAML",
+   "kind": "python",
+   "purpose": "Used by ctranslate2: YAML parser and emitter for Python",
+   "license": "MIT",
+   "url": "https://github.com/yaml/pyyaml",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "PyYAML"
+   ],
+   "via": "ctranslate2",
+   "match": {
+    "modules": [
+     "yaml"
+    ]
+   }
+  },
+  {
+   "id": "qemu-img",
+   "name": "qemu-img",
+   "kind": "program",
+   "purpose": "Opening virtual disk images",
+   "license": "GPL-2.0-only",
+   "url": "https://www.qemu.org",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "qt6",
+   "name": "Qt 6",
+   "kind": "library",
+   "purpose": "The GUI toolkit: widgets, graphics, PDF, SVG, multimedia, networking",
+   "license": "LGPL-3.0-only",
+   "url": "https://www.qt.io",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "PyQt6-Qt6"
+   ],
+   "via": "PyQt6",
+   "note": "Qt libraries and plugins as packaged in the PyQt6-Qt6 wheel",
+   "match": {
+    "libraries": [
+     "libQt6*"
+    ],
+    "paths": [
+     "PyQt6/Qt6/plugins/*",
+     "PyQt6/Qt6/translations/*",
+     "PyQt6/Qt6/qml/*",
+     "PyQt6/Qt6/resources/*",
+     "PyQt6/Qt6/libexec/*"
+    ]
+   }
+  },
+  {
+   "id": "rarfile",
+   "name": "rarfile",
+   "kind": "python",
+   "purpose": "RAR archives (browse, extract)",
+   "license": "ISC",
+   "url": "https://github.com/markokr/rarfile",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "rarfile"
+   ],
+   "extras": [
+    "archive"
+   ],
+   "match": {
+    "modules": [
+     "rarfile"
+    ]
+   }
+  },
+  {
+   "id": "readline",
+   "name": "GNU Readline",
+   "kind": "library",
+   "purpose": "Line editing of Python's readline module",
+   "license": "GPL-3.0-or-later",
+   "url": "https://tiswww.case.edu/php/chet/readline/rltop.html",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libreadline"
+    ]
+   }
+  },
+  {
+   "id": "redis",
+   "name": "redis",
+   "kind": "python",
+   "purpose": "Redis backend",
+   "license": "MIT",
+   "url": "https://github.com/redis/redis-py",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "redis"
+   ],
+   "extras": [
+    "redis"
+   ],
+   "match": {
+    "modules": [
+     "redis"
+    ]
+   }
+  },
+  {
+   "id": "referencing",
+   "name": "referencing",
+   "kind": "python",
+   "purpose": "Used by jsonschema: JSON Referencing + Python",
+   "license": "MIT",
+   "url": "https://github.com/python-jsonschema/referencing",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "pypi": [
+    "referencing"
+   ],
+   "via": "jsonschema",
+   "match": {
+    "modules": [
+     "referencing"
+    ]
+   }
+  },
+  {
+   "id": "requests",
+   "name": "requests",
+   "kind": "python",
+   "purpose": "HTTP client of the WebDAV, OneDrive and other HTTP backends",
+   "license": "Apache-2.0",
+   "url": "https://github.com/psf/requests",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "requests"
+   ],
+   "extras": [
+    "webdav",
+    "onedrive"
+   ],
+   "match": {
+    "modules": [
+     "requests"
+    ]
+   }
+  },
+  {
+   "id": "requests-ntlm",
+   "name": "requests_ntlm",
+   "kind": "python",
+   "purpose": "Used by exchangelib: This package allows for HTTP NTLM authentication using the requests library",
+   "license": "ISC",
+   "url": "https://github.com/requests/requests-ntlm",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "requests_ntlm"
+   ],
+   "via": "exchangelib",
+   "match": {
+    "modules": [
+     "requests_ntlm"
+    ]
+   }
+  },
+  {
+   "id": "requests-oauthlib",
+   "name": "requests-oauthlib",
+   "kind": "python",
+   "purpose": "Used by exchangelib: OAuthlib authentication support for Requests",
+   "license": "ISC",
+   "url": "https://github.com/requests/requests-oauthlib",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "requests-oauthlib"
+   ],
+   "via": "exchangelib",
+   "match": {
+    "modules": [
+     "requests_oauthlib"
+    ]
+   }
+  },
+  {
+   "id": "ripgrep",
+   "name": "ripgrep",
+   "kind": "program",
+   "purpose": "Find Files: content search",
+   "license": "MIT OR Unlicense",
+   "url": "https://github.com/BurntSushi/ripgrep",
+   "ships": [
+    "axross-full"
+   ],
+   "version": "15.2.0",
+   "binary": "rg",
+   "match": {
+    "paths": [
+     "bin/rg"
+    ]
+   }
+  },
+  {
+   "id": "rpds-py",
+   "name": "rpds-py",
+   "kind": "python",
+   "purpose": "Used by jsonschema: Python bindings to Rust's persistent data structures (rpds)",
+   "license": "MIT",
+   "url": "https://github.com/crate-py/rpds",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "pypi": [
+    "rpds-py"
+   ],
+   "via": "jsonschema",
+   "match": {
+    "modules": [
+     "rpds"
+    ]
+   }
+  },
+  {
+   "id": "rsa",
+   "name": "rsa",
+   "kind": "python",
+   "purpose": "Used by adb_shell: Pure-Python RSA implementation",
+   "license": "Apache-2.0",
+   "url": "https://github.com/sybrenstuvel/python-rsa",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "rsa"
+   ],
+   "via": "adb_shell",
+   "match": {
+    "modules": [
+     "rsa"
+    ]
+   }
+  },
+  {
+   "id": "rsh",
+   "name": "rsh client (netkit-rsh or GNU Inetutils)",
+   "kind": "program",
+   "purpose": "rsh backend",
+   "license": "BSD-4-Clause-UC OR GPL-3.0-or-later",
+   "url": "https://www.gnu.org/software/inetutils/",
+   "ships": [
+    "host"
+   ],
+   "note": "any rsh implementation on PATH"
+  },
+  {
+   "id": "rsync",
+   "name": "rsync",
+   "kind": "program",
+   "purpose": "rsync backend and fast copies",
+   "license": "GPL-3.0-or-later",
+   "url": "https://rsync.samba.org",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "s3transfer",
+   "name": "s3transfer",
+   "kind": "python",
+   "purpose": "Used by boto3: An Amazon S3 Transfer Manager",
+   "license": "Apache-2.0",
+   "url": "https://github.com/boto/s3transfer",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "s3transfer"
+   ],
+   "via": "boto3",
+   "match": {
+    "modules": [
+     "s3transfer"
+    ]
+   }
+  },
+  {
+   "id": "seclists",
+   "name": "SecLists",
+   "kind": "data",
+   "purpose": "Public source of the TFTP common-filename wordlist",
+   "license": "MIT",
+   "url": "https://github.com/danielmiessler/SecLists",
+   "ships": [
+    "source"
+   ]
+  },
+  {
+   "id": "secretstorage",
+   "name": "SecretStorage",
+   "kind": "python",
+   "purpose": "Used by keyring: Python bindings to FreeDesktop.org Secret Service API",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/mitya57/secretstorage",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "SecretStorage"
+   ],
+   "via": "keyring",
+   "match": {
+    "modules": [
+     "secretstorage"
+    ]
+   }
+  },
+  {
+   "id": "sift",
+   "name": "sift",
+   "kind": "project",
+   "purpose": "The Analysis dock's file explanations (sift-summarizer); a sister project of axross",
+   "license": "MIT",
+   "url": "https://github.com/c0decave/sift",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "match": {
+    "modules": [
+     "sift"
+    ]
+   }
+  },
+  {
+   "id": "sift-summarizer",
+   "name": "sift-summarizer",
+   "kind": "python",
+   "purpose": "sift: the Analysis dock's explanation of the selected file",
+   "license": "MIT",
+   "url": "https://github.com/c0decave/sift",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "sift-summarizer"
+   ],
+   "extras": [
+    "sift"
+   ],
+   "match": {
+    "modules": [
+     "sift"
+    ]
+   }
+  },
+  {
+   "id": "silero-vad",
+   "name": "Silero VAD",
+   "kind": "data",
+   "purpose": "Voice activity detection model that faster-whisper ships",
+   "license": "MIT",
+   "url": "https://github.com/snakers4/silero-vad",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "group": "voice",
+   "match": {
+    "paths": [
+     "faster_whisper/assets/silero_vad*"
+    ]
+   }
+  },
+  {
+   "id": "six",
+   "name": "six",
+   "kind": "python",
+   "purpose": "Used by impacket: Python 2 and 3 compatibility utilities",
+   "license": "MIT",
+   "url": "https://github.com/benjaminp/six",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "six"
+   ],
+   "via": "impacket",
+   "match": {
+    "modules": [
+     "six"
+    ]
+   }
+  },
+  {
+   "id": "sleuthkit",
+   "name": "The Sleuth Kit",
+   "kind": "program",
+   "purpose": "Forensic file system access (fls, icat)",
+   "license": "IPL-1.0 AND CPL-1.0 AND GPL-2.0-or-later",
+   "url": "https://www.sleuthkit.org",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "smbprotocol",
+   "name": "smbprotocol",
+   "kind": "python",
+   "purpose": "SMB / CIFS file shares",
+   "license": "MIT",
+   "url": "https://github.com/jborean93/smbprotocol",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "smbprotocol"
+   ],
+   "extras": [
+    "smb"
+   ],
+   "match": {
+    "modules": [
+     "smbclient",
+     "smbprotocol"
+    ]
+   }
+  },
+  {
+   "id": "sqlite",
+   "name": "SQLite",
+   "kind": "library",
+   "purpose": "Embedded database (Python's sqlite3 module)",
+   "license": "blessing",
+   "url": "https://www.sqlite.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libsqlite3"
+    ]
+   }
+  },
+  {
+   "id": "stone",
+   "name": "stone",
+   "kind": "python",
+   "purpose": "Used by dropbox: Stone is an interface description language (IDL) for APIs",
+   "license": "MIT",
+   "url": "https://github.com/dropbox/stone",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "stone"
+   ],
+   "via": "dropbox",
+   "match": {
+    "modules": [
+     "stone"
+    ]
+   }
+  },
+  {
+   "id": "subversion",
+   "name": "Subversion",
+   "kind": "program",
+   "purpose": "Subversion backend",
+   "license": "Apache-2.0",
+   "url": "https://subversion.apache.org",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "svt-av1",
+   "name": "SVT-AV1",
+   "kind": "library",
+   "purpose": "AV1 encoder library of PyAV's FFmpeg",
+   "license": "BSD-3-Clause-Clear",
+   "url": "https://gitlab.com/AOMediaCodec/SVT-AV1",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libSvtAv1Enc"
+    ]
+   }
+  },
+  {
+   "id": "systemd-libs",
+   "name": "libsystemd",
+   "kind": "library",
+   "purpose": "Journal and D-Bus helpers used by system libraries",
+   "license": "LGPL-2.1-or-later AND MIT",
+   "url": "https://systemd.io",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libsystemd"
+    ]
+   }
+  },
+  {
+   "id": "testdisk",
+   "name": "TestDisk / PhotoRec",
+   "kind": "program",
+   "purpose": "Recovering partitions and files",
+   "license": "GPL-2.0-or-later",
+   "url": "https://www.cgsecurity.org",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "tftpy",
+   "name": "tftpy",
+   "kind": "python",
+   "purpose": "TFTP backend",
+   "license": "MIT",
+   "url": "https://github.com/msoulier/tftpy",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "tftpy"
+   ],
+   "extras": [
+    "tftp"
+   ],
+   "match": {
+    "modules": [
+     "tftpy"
+    ]
+   }
+  },
+  {
+   "id": "tokenizers",
+   "name": "tokenizers",
+   "kind": "python",
+   "purpose": "Used by faster-whisper",
+   "license": "Apache-2.0",
+   "url": "https://github.com/huggingface/tokenizers",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "tokenizers"
+   ],
+   "via": "faster-whisper",
+   "match": {
+    "modules": [
+     "tokenizers"
+    ]
+   }
+  },
+  {
+   "id": "tqdm",
+   "name": "tqdm",
+   "kind": "python",
+   "purpose": "Used by faster-whisper: Fast, Extensible Progress Meter",
+   "license": "MPL-2.0 AND MIT",
+   "url": "https://github.com/tqdm/tqdm",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "tqdm"
+   ],
+   "via": "faster-whisper",
+   "match": {
+    "modules": [
+     "tqdm"
+    ]
+   }
+  },
+  {
+   "id": "truststore",
+   "name": "truststore",
+   "kind": "python",
+   "purpose": "Used by httpcore2: Verify certificates using native system trust stores",
+   "license": "MIT",
+   "url": "https://github.com/sethmlarson/truststore",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "truststore"
+   ],
+   "via": "httpcore2",
+   "match": {
+    "modules": [
+     "truststore"
+    ]
+   }
+  },
+  {
+   "id": "typing-extensions",
+   "name": "typing_extensions",
+   "kind": "python",
+   "purpose": "Used by azure-storage-blob: Backported and Experimental Type Hints for Python 3.9+",
+   "license": "PSF-2.0",
+   "url": "https://github.com/python/typing_extensions",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "typing_extensions"
+   ],
+   "via": "azure-storage-blob",
+   "match": {
+    "modules": [
+     "typing_extensions"
+    ]
+   }
+  },
+  {
+   "id": "tzdata",
+   "name": "tzdata",
+   "kind": "python",
+   "purpose": "Used by exchangelib: Provider of IANA time zone data",
+   "license": "Apache-2.0",
+   "url": "https://github.com/python/tzdata",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "tzdata"
+   ],
+   "via": "exchangelib",
+   "match": {
+    "modules": [
+     "tzdata"
+    ]
+   }
+  },
+  {
+   "id": "tzlocal",
+   "name": "tzlocal",
+   "kind": "python",
+   "purpose": "Used by exchangelib: tzinfo object for the local timezone",
+   "license": "MIT",
+   "url": "https://github.com/regebro/tzlocal",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "tzlocal"
+   ],
+   "via": "exchangelib",
+   "match": {
+    "modules": [
+     "tzlocal"
+    ]
+   }
+  },
+  {
+   "id": "udisks",
+   "name": "UDisks (udisksctl)",
+   "kind": "program",
+   "purpose": "Loop-mounting disk images",
+   "license": "GPL-2.0-or-later",
+   "url": "https://github.com/storaged-project/udisks",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "uritemplate",
+   "name": "uritemplate",
+   "kind": "python",
+   "purpose": "Used by google-api-python-client: Implementation of RFC 6570 URI Templates",
+   "license": "BSD-3-Clause OR Apache-2.0",
+   "url": "https://github.com/python-hyper/uritemplate",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "uritemplate"
+   ],
+   "via": "google-api-python-client",
+   "match": {
+    "modules": [
+     "uritemplate"
+    ]
+   }
+  },
+  {
+   "id": "urllib3",
+   "name": "urllib3",
+   "kind": "python",
+   "purpose": "HTTP connection pool (proxies, S3, WebDAV)",
+   "license": "MIT",
+   "url": "https://github.com/urllib3/urllib3",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip-extra"
+   ],
+   "pypi": [
+    "urllib3"
+   ],
+   "extras": [
+    "git"
+   ],
+   "match": {
+    "modules": [
+     "urllib3"
+    ]
+   }
+  },
+  {
+   "id": "util-linux-libs",
+   "name": "util-linux libraries",
+   "kind": "library",
+   "purpose": "UUIDs, block device and mount information (GLib, Python's uuid module)",
+   "license": "LGPL-2.1-or-later AND BSD-3-Clause",
+   "url": "https://github.com/util-linux/util-linux",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "note": "libuuid is BSD-3-Clause",
+   "match": {
+    "libraries": [
+     "libblkid",
+     "libmount",
+     "libuuid"
+    ]
+   }
+  },
+  {
+   "id": "virtualbox",
+   "name": "VirtualBox (VBoxManage)",
+   "kind": "program",
+   "purpose": "VirtualBox disk images",
+   "license": "GPL-3.0-only",
+   "url": "https://www.virtualbox.org",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "vmaf",
+   "name": "VMAF",
+   "kind": "library",
+   "purpose": "Video quality metric library of PyAV's FFmpeg",
+   "license": "BSD-2-Clause-Patent",
+   "url": "https://github.com/Netflix/vmaf",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libvmaf"
+    ]
+   }
+  },
+  {
+   "id": "werkzeug",
+   "name": "Werkzeug",
+   "kind": "python",
+   "purpose": "Used by Flask: The comprehensive WSGI web application library",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pallets/werkzeug",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "Werkzeug"
+   ],
+   "via": "Flask",
+   "match": {
+    "modules": [
+     "werkzeug"
+    ]
+   }
+  },
+  {
+   "id": "x264",
+   "name": "x264",
+   "kind": "library",
+   "purpose": "H.264 encoder library linked by PyAV's FFmpeg",
+   "license": "GPL-2.0-or-later",
+   "url": "https://www.videolan.org/developers/x264.html",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libx264"
+    ]
+   }
+  },
+  {
+   "id": "x265",
+   "name": "x265",
+   "kind": "library",
+   "purpose": "HEVC encoder library linked by PyAV's FFmpeg",
+   "license": "GPL-2.0-or-later",
+   "url": "https://bitbucket.org/multicoreware/x265_git",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "PyAV",
+   "match": {
+    "libraries": [
+     "libx265"
+    ]
+   }
+  },
+  {
+   "id": "xdg-utils",
+   "name": "xdg-utils (xdg-open)",
+   "kind": "program",
+   "purpose": "Opening files and links with the desktop's programs",
+   "license": "MIT",
+   "url": "https://gitlab.freedesktop.org/xdg/xdg-utils",
+   "ships": [
+    "host"
+   ]
+  },
+  {
+   "id": "xmltodict",
+   "name": "xmltodict",
+   "kind": "python",
+   "purpose": "Used by pywinrm: Makes working with XML feel like you are working with JSON",
+   "license": "MIT",
+   "url": "https://github.com/martinblech/xmltodict",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "xmltodict"
+   ],
+   "via": "pywinrm",
+   "match": {
+    "modules": [
+     "xmltodict"
+    ]
+   }
+  },
+  {
+   "id": "xorg-libs",
+   "name": "X.Org client libraries",
+   "kind": "library",
+   "purpose": "X11 display connection of Qt's xcb platform plugin",
+   "license": "MIT AND X11",
+   "url": "https://www.x.org",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libX11",
+     "libX11-xcb",
+     "libXau",
+     "libXext",
+     "libXrandr",
+     "libXrender"
+    ]
+   }
+  },
+  {
+   "id": "xz",
+   "name": "XZ Utils (liblzma)",
+   "kind": "library",
+   "purpose": "LZMA/XZ compression (Python's lzma module, Pillow)",
+   "license": "0BSD AND LicenseRef-PublicDomain",
+   "url": "https://tukaani.org/xz/",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "note": "the system copy (xz 5.2) is public domain, Pillow's copy (5.8) 0BSD",
+   "match": {
+    "libraries": [
+     "liblzma"
+    ]
+   }
+  },
+  {
+   "id": "zlib",
+   "name": "zlib",
+   "kind": "library",
+   "purpose": "Deflate compression (Python, Qt and many libraries)",
+   "license": "Zlib",
+   "url": "https://zlib.net",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libz"
+    ]
+   }
+  },
+  {
+   "id": "zstd",
+   "name": "Zstandard",
+   "kind": "library",
+   "purpose": "Zstandard compression (Pillow, system libraries)",
+   "license": "BSD-3-Clause OR GPL-2.0-only",
+   "url": "https://github.com/facebook/zstd",
+   "ships": [
+    "axross-full",
+    "axross-slim"
+   ],
+   "match": {
+    "libraries": [
+     "libzstd"
+    ]
+   }
+  }
+ ]
+}

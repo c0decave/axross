@@ -85,7 +85,8 @@ profile goes, with its stored password.
 - **Alt+Left / Alt+Right** walk through pane history; **Tab** /
   **Shift+Tab** in a file list cycle the panes.
 - Drag-and-drop between panes initiates a transfer (works for
-  local↔remote, remote↔remote, cross-protocol).
+  local↔remote, remote↔remote, cross-protocol). **Ctrl+X** / **Ctrl+V**
+  cut and paste entries between any two folders (see Transfers).
 
 ### Workspaces — several layouts, on several screens
 
@@ -177,6 +178,19 @@ overwritten. A move removes its source only when the source still has
 the size it had before it was copied; one that changed meanwhile (a log
 still being written) fails its job and is kept.
 
+**Cut and Paste.** *Cut* (Ctrl+X, or right-click > Cut) only remembers
+the selected entries - nothing is removed, they are drawn dimmed while
+the cut waits. *Paste* (Ctrl+V, or right-click > Paste, also on empty
+space) in any pane - another folder, another connection - moves them
+into that pane's folder as a move through the transfer queue: the same
+name check as above, and each source is removed only after its own copy
+completed and was checked, so a failed, cancelled or partial transfer
+leaves it where it was. A cut that is never pasted removes nothing: a
+new Cut replaces it, Esc in its pane drops it, closing the pane or
+changing its connection drops it. Pasting into the folder the entries
+came from does nothing; a folder pasted into itself is refused. The
+cut is cleared once its move is queued.
+
 Every cross-pane copy or move enters the transfer queue. The dock
 at the bottom shows progress, throughput, and ETA. Transfers run on
 worker threads and survive a refused dialog or a closed pane.
@@ -244,6 +258,7 @@ native protocol doesn't support them.
 | Identify File Type… | Right-click (selection) | One row per entry: the real type from the content (magic bytes via Qt's MIME database, puremagic, a built-in signature table), the MIME type, what the extension claims and a highlighted *mismatch* when they disagree, size, and for text the encoding and line endings. Reads at most 64 KiB per file through the backend, off the GUI thread, with a 15 s timeout per file — a dead remote gives a "timed out" row. Local files also show `file(1)`'s description when it is installed. Scripting: `axross.file_type(b, path)`. |
 | Open Terminal Here | Right-click (also on empty space) | Opens a shell in the terminal dock in the folder: a selected folder, otherwise the folder shown. Local panes get a local shell started in that folder; SFTP / SCP panes get a shell on the same SSH connection followed by `cd -- '<folder>'` (quoted with `shlex.quote`). Disabled, with the reason as tooltip, on protocols without a shell. |
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
+| Cut / Paste | Right-click (Paste also on empty space), `Ctrl+X` / `Ctrl+V` | Cut remembers the selection and removes nothing (the entries are dimmed); Paste in any pane moves them into its folder through the transfer queue - see *Transfers*. A cut never pasted leaves everything in place. |
 | Move to Trash | Right-click | Universal recycle bin. Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
 | Delete Permanently | Right-click, `Del` | First counts what will go (folders, files, bytes, hidden entries) off the GUI thread, then asks. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP, and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
@@ -368,7 +383,10 @@ archives, is axross' own Find Files (`core.file_search`,
   or a cheap local poll); off for remote ones, where it would list the
   folder again every 2 seconds - one click turns it on for that pane.
 - **Live filter** types into the path bar to filter the listing in
-  real time.
+  real time. **Ctrl+F** jumps to the filter field; **Esc** there clears
+  the filter and goes back to the list. Esc in the list stops a running
+  load first, then clears an active filter, then the selection, then
+  drops a pending Cut of that pane.
 - **Bookmarks** (left dock, or the toolbar's bookmark button) for
   one-click navigation; F8 bookmarks the current path (name, icon,
   colour and group are chosen in the dialog), F12 toggles the dock.
@@ -933,7 +951,14 @@ writing, deleting or moving, no remote commands (a command can change
 files), extra folders read-only, no writing tools of MCP servers or
 extensions, and a sandbox mounts nothing writable. It is enforced where
 the agent's tools are built and again at every call, not only in the
-dialog.
+dialog. One exact exception: an MCP server that cannot change your
+files keeps its tools — a container server on axross's own podman line
+(installed from a catalog) with `--network=none` and only read-only
+folders (`:ro`). Its *Asks* still applies: with "Every call asks" each
+call waits for your Yes. Any other server (network, a writable folder, a
+program on this machine, an HTTP server, a hand-written podman line)
+offers only the tools it marks read-only, and none when it asks before
+every call.
 
 **Topics ▸** fills the task field with a prepared task — System
 inventory, Install or update software (in Plan mode), Service status,
@@ -995,6 +1020,54 @@ http MCP servers alike, and is checked at every connection. A tab's
 level lets extra folders be (lax, normal) and with *Allow changes to
 files*. The tab's *Access…* tooltip sums it up.
 
+**Agent profiles** set up a tab in one go: the LLM profile, the prompt
+profile, the protection mode, the sandbox, the tool groups, the axross
+functions (master switch, functions, network), *Files read-only*,
+*Allow changes to files* / *Allow remote commands* and the MCP servers
+it offers — chosen **by category** (the catalog category a server was
+installed from, e.g. *Security: Reverse Engineering*; *Category* in
+Agent Settings > MCP Servers sets one by hand) and/or **by name** (or by
+the catalog entry it came from, so a renamed server still matches).
+The arrow beside "+" in the Agent dock offers **New Tab from Profile**,
+**Apply Profile…** (also in a tab's right-click menu) and **Edit Agent
+Profiles…**; Tools > New Agent Tab from Profile opens one for the active
+pane's folder. *Apply Profile…* shows first what the tab would get; it
+changes the tab's settings, the folder and the conversation stay, and a
+tab with a running task refuses it (stop the task first — the running
+task keeps the settings it started with). The tab names its profile
+(*Profile: …*) and lists what the ceiling cut or what is missing, with
+**Install from Catalog…** (the catalog opens on that category, or
+searches the server's name).
+
+A profile **never widens Agent Settings > Access**: with axross
+functions off there, a profile's MCP servers are not offered and the tab
+says so; Bypass only where it may be chosen; a sandbox profile that does
+not exist is kept and refused, never quietly "no sandbox". Under *Files
+read-only* a server whose *Asks* is "Every call asks" offers no tool at
+all unless it is a container without network and with read-only folders
+(see *Files read-only* above) — the tab names each such server and why.
+
+Built-in **presets** (read-only, marked *(preset)*; *Copy* makes an
+editable profile of one):
+
+| Preset | What it sets up |
+|---|---|
+| Files Assistant | axross's file tools, the open remote connections; changes ask; no MCP servers |
+| Reverse Engineering | categories *Security: Reverse Engineering* and *Security: Firmware & Forensics*; sandbox *High* |
+| Forensics read-only | category *Security: Firmware & Forensics*; files read-only |
+| Network & Web Recon | categories *Security: Network Recon*, *Security: Web*, *Security: OSINT*; mode Ask |
+| Code & Secrets | servers *git* and *filesystem*, category *Security: Code & Secrets* |
+| Remote Ops | remote files, saved connections, remote commands (each one asks); mode Ask |
+| Research | servers *fetch*, *memory*, *sequentialthinking*; not files read-only (fetch needs network), *Allow changes to files* off |
+
+A preset whose servers are not installed still sets up the rest of the
+tab. Agent Settings > **Profiles** edits your own profiles (New, Copy,
+Delete), previews what a tab gets within the Access page and picks the
+**profile of new tabs**. Stored in `~/.config/axross/agent/settings.json`
+(`agent_profiles`, `agent_profile`); a hand-edited entry is checked like
+the rest of the file (unknown keys dropped, wrong types take their
+default, a taken name — also a preset's — drops the entry).
+
 **Sandboxes** (Agent Settings > Sandboxes): a tab can run its agent in
 bubblewrap, podman or docker. A sandbox profile has a level:
 
@@ -1021,8 +1094,15 @@ the memory, through `prlimit`). podman and docker need the image:
 a program (stdio) or an http endpoint — whose tools a tab may offer as
 `<server>__<tool>`. *Test* lists their tools. A server set to "always"
 asks for every call; "writes" lets tools the server marks read-only run
-without asking. A program can run in a sandbox profile; an http
-server's token is kept in the keyring.
+without asking. A program can run in a sandbox profile; one without
+says *runs on this machine, not in a container*. An http server's token
+is kept in the keyring. A typed command that downloads code (`npx …`,
+`uvx …`, `docker run …`) is never saved as a program on this machine:
+*Install in a Container* builds it in rootless podman (no network), or
+the reason it cannot be is shown. A hand-edited settings file with such
+a command does not start it either (the server is left out, with a log
+line), and a container line with widening flags (`--privileged`,
+`--cap-add`, host namespaces, other mounts) is refused.
 
 *Tools → MCP Servers…* opens this page (Edit → Settings… → Agent → MCP
 Servers). **Add from Catalog…** searches the *MCP sources* and installs a
@@ -1036,6 +1116,25 @@ server into **rootless podman**; nothing of it runs on the host:
   URLs of your own. *Check* reads one and names what it holds or why it
   is refused (wrong schema, larger than 1 MiB, not JSON, an entry
   without a pinned digest …). What a source says is shown as plain text.
+- **c0decave MCP Hub** (on by default): a catalog of the same schema at
+  `https://raw.githubusercontent.com/c0decave/axross-mcp-hub/main/catalog.json`.
+  Only images under `ghcr.io/c0decave/` pinned by a real `sha256` digest
+  are taken from it; any other entry (another registry, npm, pypi,
+  remote, no digest) is refused with its reason. While the hub does not
+  answer, the status line says *not reachable or not published yet* and
+  the other sources work as before.
+- **Discover** (on by default): curated awesome-lists to browse -
+  [R00T-Kim/awesome-offensive-mcp](https://github.com/R00T-Kim/awesome-offensive-mcp)
+  (CC0; a snapshot ships with axross, so Discover works offline) and
+  [wong2/awesome-mcp-servers](https://github.com/wong2/awesome-mcp-servers)
+  (MIT; read live only). Their README is read as untrusted text: category,
+  name, description and the GitHub repository link, nothing else - no
+  markup, no other link. An entry is **installable via MCP Registry** or
+  **installable via Docker Hub** only when that source names the same
+  repository (checked in the background, at most 300 requests a run,
+  cached for 24 h); otherwise it is **link only**: *Open Repository*, no
+  install - axross never builds from a bare GitHub repository.
+  *Refresh* reads the lists and checks again.
 - **Install**: an image is pulled by digest (Docker Hub's tag digest is
   looked up first; others are pinned to the digest podman reports). An
   npm or pypi package is installed in a container of a pinned
@@ -1059,6 +1158,42 @@ server into **rootless podman**; nothing of it runs on the host:
   (`podman rmi`, never forced: an image in use, tagged otherwise or there
   before the install stays). **Check for Update** shows a newer digest
   or version; nothing is updated by itself.
+
+**Detected on this machine** (Agent Settings → MCP Servers, and the
+Tools list of every Agent tab): MCP servers that are already set up here
+are offered with one checkbox, no command to type - the servers of
+Claude Desktop (`claude_desktop_config.json`), Claude Code
+(`~/.claude.json`, also per project, and `.mcp.json` of the tab's
+folder), VS Code (`settings.json` →
+`mcp.servers`, `mcp.json`, `.vscode/mcp.json`) and Cursor
+(`~/.cursor/mcp.json`, `.cursor/mcp.json`), plus podman images axross
+installed (also when the settings lost the server). A tick in Agent
+Settings adds the server switched on (Save keeps it), an untick removes
+it; a tick on a `detected:<name>` line of a tab adds it, saves the
+settings and ticks `mcp:<name>` in that tab, so the model gets its tools
+right away. It is then a server like any other (the same confirm modes,
+"always" by default). **What is downloaded runs in a container, never on
+this machine:** a command that fetches code at start (`npx`, `bunx`,
+`pnpm dlx`, `yarn dlx`, `npm exec`, `uvx`, `uv tool run`, `pipx run`,
+`docker`/`podman run` …) is installed the contained way on the tick - the
+npm or pypi package built in the pinned `node`/`python` container (the
+latest exact version when the command names none), an image pulled and
+run with axross's hardened podman line, no network; the flags of a
+`docker run` line (`--privileged`, `--network=host`, volumes,
+`--cap-add`, `--device`, host namespaces, `--security-opt` …) are not
+taken over, and the details name what was dropped. What cannot be
+converted (a git URL, `--package`, `uv run`, an unknown option …) is
+shown but cannot be ticked, with the reason. A program already on disk
+runs as it is, in the sandbox profile of new tabs (Agent Settings) or of
+the tab where it was ticked, and says so: *runs on this machine, not in
+a container*; one that is not on this machine cannot be ticked. The
+files are read only, as untrusted data (regular files up to 8 MiB, JSON
+or TOML, nothing run). Environment values that look like secrets (by
+name - TOKEN, PASSWORD, API_KEY … - or shape) and Bearer tokens are
+never written to a log or `agent.json`: switching the server on asks
+first and stores them in the keyring. Programs on PATH are not detected:
+nothing identifies an MCP server there without running it or guessing
+from its name.
 
 A catalog file of your own (schema `axross-mcp-catalog`, version 1):
 
@@ -1155,7 +1290,7 @@ finds a setting by its name (type *sudo*, *proxy* or *zoom*).
 | Category | Settings |
 |---|---|
 | General | Language (applies at the next start), restore the layout of the last session on start, when a pane becomes the active one (on click, or after resting the mouse 0.5–3 s in it) |
-| Appearance | Theme, compact mode, monochrome icons, font size (zoom), highlight hidden files and their colour (a colour that is hard to read on the theme is used only after a question) |
+| Appearance | Theme, compact mode, monochrome icons, icon colours (Theme default; Own colours in every theme - also in Hacker and Amber, which draw every icon in one colour; One colour of your choice), font size (zoom), highlight hidden files and their colour (a colour that is hard to read on the theme is used only after a question) |
 | Toolbar | Group the buttons by category, show each category's colour behind its buttons, the colour of each category (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
 | Files & Panes | Show hidden files, open size limit, RAM workspaces (on / off, size limit, memory kept free) and temporary files in RAM (applies at the next start) |
 | Network & Proxy | The default proxy, bypass list, PAC script, a test |
@@ -1168,6 +1303,7 @@ finds a setting by its name (type *sudo*, *proxy* or *zoom*).
 | Search | Hosts searched at once by *Find on Network Hosts*; where the offline and duplicate indexes are |
 | Security | Paranoid security mode (kept for the next start; `AXROSS_SECURITY_MODE` in the environment wins), remember the sudo password |
 | Extensions | Which extensions are switched on |
+| Updates | Check for updates at start, download updates automatically, *Check Now*, the last check (see [Updates](#updates)) |
 
 The **Analysis (sift)** page writes `~/.config/axross/analysis.json`; the
 open Analysis dock uses a saved change at once and explains the file on
@@ -1197,6 +1333,55 @@ Metadata Settings…* and *Extensions → Manage Extensions…* open the Setting
 on their page. *View → Show Hidden Files* (**Ctrl+H**), *View → Theme* and
 *View → Zoom* stay quick switches; they are stored at once, like the page.
 
+## Updates
+
+The one-file binaries (`axross-full`, `axross-slim`, the macOS and Windows
+`axross-slim`) update themselves from the GitHub releases of
+`c0decave/axross`:
+
+- **Check at start.** Once per start, about two seconds after the window
+  is shown, axross asks GitHub's API for the latest release - one https
+  request, in the background; the start never waits for it. A newer
+  version appears as **Update to X.Y.Z…** at the right of the status bar
+  and in the *Help* menu. A failed check (no network, GitHub's rate limit)
+  is a line in the log and the status on *Settings → Updates*, never a
+  dialog. Releases marked draft or prerelease are ignored.
+- **Help → Check for Updates…** checks now and shows the answer, also
+  when axross is up to date.
+- **The update window** shows this and the new version, the release notes
+  and a link to the release page, and offers **Download and Install**,
+  **Skip This Version** (no notice for that version again; asked by hand,
+  it is still offered) and **Remind Me Later** (no notice until the next
+  start).
+- **Download and Install** fetches the binary of this build (axross-full
+  gets axross-full, a slim build gets its slim one), checks its SHA-256
+  against the `SHA256SUMS` of the same release (and against GitHub's own
+  digest of the file) and refuses anything that does not match - nothing
+  is replaced then, and the partial file is removed. A verified file
+  replaces the running binary in one atomic rename, with the old file's
+  permissions; the old one stays next to it as `<name>.previous`. It takes
+  effect at the next start; **Restart Now** closes axross (it asks about
+  unsaved work as on any close) and starts the new version.
+- **A folder you cannot write to** (a binary installed by root) is not
+  touched: the verified file goes to `~/.cache/axross/update/` and **Save
+  to…** puts a copy where you choose.
+- **Windows** cannot replace a running program: the new version is saved
+  next to the old one as `axross-slim-windows-x64-X.Y.Z.exe`; close axross
+  and replace the old file with it (or start the new one).
+- **A Python install** (pip or a source checkout) is never replaced; the
+  window says `pip install -U axross`.
+
+*Settings → Updates*: **Check for updates at start** (on), **Download
+updates automatically** (off: the notice offers the download; on: a new
+version found at start is downloaded, verified and installed in the
+background and waits for the next start), **Check Now** and the time and
+result of the last check. Only `github.com`, `api.github.com` and
+`release-assets.githubusercontent.com` are contacted, over https; every
+redirect is checked against that list. The default proxy (*Network &
+Proxy*) is used; without one, `https_proxy` from the environment. The
+check at start does not run with `AXROSS_NO_UPDATE_CHECK=1` in the
+environment or in the paranoid security mode; *Check Now* still works.
+
 ## Configuration files
 
 - `~/.config/axross/profiles.json` — connection profiles (`0o600`).
@@ -1210,7 +1395,9 @@ on their page. *View → Show Hidden Files* (**Ctrl+H**), *View → Theme* and
   columns, one file shared by all panes.
 - `~/.config/axross/settings.json` — small preferences: open size limit,
   pane activation, metadata write mode and confirmation, remember the sudo
-  password, hosts searched at once, the security mode.
+  password, hosts searched at once, the security mode, the update settings
+  (`update_check_at_start`, `update_auto_download`, a skipped version, the
+  last check).
 - `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — the
   default proxy, the LLM profiles, the switched-on extensions (secrets in
   the keyring).

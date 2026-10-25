@@ -976,11 +976,16 @@ class MediaViewer(QWidget):
         if entry is None:
             self.mode = "loading"
             self.pages.setCurrentWidget(self.loading_label)
+            # The runner serves the newest request first (tiles in view
+            # first): the prefetch goes in before the shown item, or the
+            # shown item waited for the next one's decode too (2.9 s instead
+            # of 1.5 s for an 8000x8000 PNG).
+            self._prefetch()
             self._request(index)
         else:
             self._prepared.move_to_end(index)
             self._display(entry)
-        self._prefetch()
+            self._prefetch()
         self._update_status()
         self.index_changed.emit(index)
         self.setFocus()

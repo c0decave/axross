@@ -68,6 +68,11 @@ TRACEBACK_CUT_MARKER = "…[traceback cut]\n"
 RESULT_FD_ENV = "AXROSS_SCRIPT_RESULT_FD"
 #: Most bytes the parent reads of that outcome record.
 MAX_RESULT_RECORD_BYTES = 256 * 1024
+#: Bytes of an example's call the child reads from stdin.
+MAX_EXAMPLE_CALL_BYTES = 64 * 1024
+#: First line of the section "Copy to My Scripts" appends: the example's
+#: Usage block, commented out (some name hosts to scan or profiles to open).
+TRY_IT_HEADER = "# --- Try it: remove the # in front of the lines below, adjust them, then Run ---"
 
 _BOOTSTRAP = (
     "import json, sys\n"
@@ -106,6 +111,81 @@ def _child_sys_path(script_dir: str) -> list[str]:
             continue
         out.append(entry)
     return out
+
+
+def usage_block(source: str) -> str:
+    """The code of the ``Usage::`` block in *source*'s module docstring,
+    dedented (empty when there is none or *source* is not Python). The
+    bundled examples only define functions; this block is how they are
+    called."""
+    import ast
+    import textwrap
+
+    try:
+        doc = ast.get_docstring(ast.parse(source), clean=False) or ""
+    except (SyntaxError, ValueError):
+        return ""
+    lines = doc.splitlines()
+    start = next((i for i, line in enumerate(lines)
+                  if "Usage" in line and line.rstrip().endswith("::")), None)
+    if start is None:
+        return ""
+    block: list[str] = []
+    for line in lines[start + 1:]:
+        if line.strip() and not line[:1].isspace():
+            break  # the first unindented line ends the block
+        block.append(line)
+    return textwrap.dedent("\n".join(block)).strip("\n")
+
+
+def only_defines(source: str) -> list[str]:
+    """The names *source* defines when all it does is define them -
+    functions, classes, constants and imports, no call and no
+    ``if __name__ == "__main__"`` block; else (or not Python) ``[]``."""
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return []
+    names: list[str] = []
+    for index, node in enumerate(tree.body):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.append(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and not any(
+                isinstance(n, ast.Call) for n in ast.walk(node)):
+            continue
+        elif (index == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+              and isinstance(node.value.value, str)):
+            continue  # the docstring
+        else:
+            return []
+    return names
+
+
+def build_example_command(name: str, call: str) -> ChildCommand:
+    """The command that runs bundled example ``name`` followed by *call*
+    (its adjusted Usage block) in a child process. The call goes in on
+    stdin, never on the command line - it may name hosts or credentials.
+
+    Raises ``ValueError`` for a name that is no bundled example and
+    ``OSError`` when it cannot be read, before anything is built."""
+    from core import scripting
+
+    safe = scripting._validate_script_name(name)
+    scripting._load_bundled_script(safe)  # exists and is readable
+    directory = scripting.script_dir()
+    if getattr(sys, "frozen", False):
+        bootstrap = (
+            "from core.script_runner import child_main\n"
+            f"raise SystemExit(child_main(['--example', {safe!r}], call={call!r}))\n"
+        )
+        return ChildCommand([sys.executable, "--script", "-"], directory, bootstrap)
+    argv = [sys.executable, "-I", "-u", "-c", _BOOTSTRAP,
+            json.dumps(_child_sys_path(directory)), "--example", safe]
+    return ChildCommand(argv, directory, call)
 
 
 def build_command(name: str, args: Sequence[str] = ()) -> ChildCommand:
@@ -253,9 +333,11 @@ def _report(fd: int | None, record: dict) -> None:
             pass
 
 
-def child_main(argv: list[str]) -> int:
+def child_main(argv: list[str], *, call: str | None = None) -> int:
     """Entry point inside the child: run saved script ``argv[0]`` with
-    ``argv[1:]`` as its ``sys.argv[1:]``.
+    ``argv[1:]`` as its ``sys.argv[1:]``. ``["--example", name]`` runs
+    bundled example *name* followed by *call* (read from stdin when not
+    given: :func:`build_example_command`).
 
     When the parent passed a descriptor in ``RESULT_FD_ENV`` the child
     writes one JSON object to it before it ends: ``exit`` (the exact
@@ -284,8 +366,17 @@ def child_main(argv: list[str]) -> int:
 
     name = argv[0]
     try:
-        source = scripting.load_script(name)
-        path = os.path.join(scripting.script_dir(), f"{name}.py")
+        if name == "--example" and len(argv) >= 2:
+            name, argv = argv[1], argv[1:2]
+            if call is None:
+                call = sys.stdin.read(MAX_EXAMPLE_CALL_BYTES + 1)
+                if len(call) > MAX_EXAMPLE_CALL_BYTES:
+                    raise ValueError("the example's call is too long")
+            source = scripting._load_bundled_script(name) + "\n\n" + call + "\n"
+            path = os.path.join(scripting._bundled_scripts_dir(), f"{name}.py")
+        else:
+            source = scripting.load_script(name)
+            path = os.path.join(scripting.script_dir(), f"{name}.py")
     except (OSError, ValueError, UnicodeDecodeError) as exc:
         print(f"cannot load script {name!r}: {exc}", file=sys.stderr)
         error = _safe_str(exc)[:MAX_ERROR_CHARS]

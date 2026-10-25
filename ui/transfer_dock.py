@@ -78,7 +78,7 @@ class TransferDock(QDockWidget):
         # content; every divider stays draggable (ui.column_fit).
         from ui.column_fit import ColumnFitter
 
-        self._columns = ColumnFitter(self._table, fill=0)
+        self._columns = ColumnFitter(self._table, fill=0, cache_widths=True, data_delay_ms=100)
 
         layout.addWidget(self._table, stretch=1)
 

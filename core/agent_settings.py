@@ -24,6 +24,7 @@
       ],
       "mcp_sources": {            # where Add from Catalog searches (core.mcp_catalog)
         "builtin": true, "dockerhub": true, "mcpregistry": true,
+        "c0decave": true, "discover": true,
         "extra": ["/home/me/security-catalog.json"]},
       "sandboxes": [              # the sandbox profiles (core.agent_sandbox)
         {"name": "Normal", "engine": "auto", "level": "normal",
@@ -34,6 +35,15 @@
       "prompt_profiles": [        # system / user prompt profiles (core.agent_prompts)
         {"name": "Terse", "system_prompt": "You operate axross ...",
          "user_prompt": "Answer in one line: {task}"}
+      ],
+      "agent_profile": "",        # agent profile new tabs start from; "" = none
+      "agent_profiles": [         # the user's agent profiles (core.agent_profiles)
+        {"name": "Triage", "llm_profile": "", "prompt_profile": "", "mode": "plan",
+         "sandbox": "High", "groups": ["metadata"], "axross": true,
+         "functions": ["mcp_servers"], "network": "profile", "hosts": [],
+         "files_read_only": true, "allow_write": false, "allow_exec": false,
+         "mcp_categories": ["Security: Reverse Engineering"], "mcp_servers": ["git"],
+         "description": ""}
       ]
     }
 
@@ -52,19 +62,17 @@ import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from core import agent_profiles as AGP
 from core.agent import DEFAULT_MAX_STEPS, DEFAULT_MAX_TOOL_CHARS
-from core.agent_prompts import PromptProfile, default_profile
+from core.agent_prompts import DEFAULT_NAME, PromptProfile, default_profile
 from core.agent_sandbox import SandboxProfile, default_profiles, sandbox_command
 from core.mcp_catalog import CatalogSources
 from core.mcp_client import McpServerConfig
 
-#: Protection modes, least to most trusting.
-MODES: tuple[str, ...] = ("ask", "plan", "auto", "bypass")
-#: The tool groups a tab can offer (core.mcp_groups); exec and remote
-#: follow the access switches instead.
-OFFERED_GROUPS: tuple[str, ...] = ("metadata", "filetype", "archive", "duplicates", "index",
-                                   "packer", "crypto", "transfer")
-DEFAULT_GROUPS: tuple[str, ...] = ("metadata", "filetype", "archive")
+#: Protection modes, least to most trusting; the tool groups a tab can
+#: offer (core.mcp_groups) - exec and remote follow the access switches.
+MODES, OFFERED_GROUPS, DEFAULT_GROUPS = AGP.MODES, AGP.OFFERED_GROUPS, AGP.DEFAULT_GROUPS
+
 MAX_STEPS_LIMIT = 200
 MAX_TOOL_CHARS_LIMIT = 1_000_000
 
@@ -121,6 +129,12 @@ class AgentSettings:
     prompt_profile: str = ""
     #: The user's prompt profiles (the built-in Default is not among them).
     prompt_profiles: list[PromptProfile] = field(default_factory=list)
+    #: The agent profile new tabs start from (a preset's or the user's
+    #: name); "" starts them as the General page says.
+    agent_profile: str = ""
+    #: The user's agent profiles (core.agent_profiles; the presets are not
+    #: among them).
+    agent_profiles: list[AGP.AgentProfile] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data) -> AgentSettings:
@@ -179,6 +193,10 @@ class AgentSettings:
             data["prompt_profile"] in (p.name for p in out.prompt_profiles)
         ):
             out.prompt_profile = data["prompt_profile"]
+        out.agent_profiles = AGP.profiles_from(data.get("agent_profiles"))
+        if isinstance(data.get("agent_profile"), str) and AGP.find_profile(
+                out, data["agent_profile"]) is not None:
+            out.agent_profile = data["agent_profile"]
         if out.mode == "bypass" and not out.allow_bypass:
             out.mode = "ask"
         return out
@@ -190,6 +208,7 @@ class AgentSettings:
         data["mcp_servers"] = [s.to_dict() for s in self.mcp_servers]
         data["mcp_sources"] = self.mcp_sources.to_dict()
         data["prompt_profiles"] = [p.to_dict() for p in self.prompt_profiles]
+        data["agent_profiles"] = [p.to_dict() for p in self.agent_profiles]
         return {"version": 1, **data}
 
     def active_prompts(self) -> PromptProfile:
@@ -197,6 +216,14 @@ class AgentSettings:
         built-in Default when none (or a gone one) is chosen."""
         chosen = next((p for p in self.prompt_profiles if p.name == self.prompt_profile), None)
         return chosen if self.prompt_profile and chosen is not None else default_profile()
+
+    def prompts_for(self, name: str) -> PromptProfile:
+        """A tab's prompt profile: *name* ("Default" the built-in one), or
+        - "" or a gone name - the one new requests use (:meth:`active_prompts`)."""
+        if name == DEFAULT_NAME:
+            return default_profile()
+        chosen = next((p for p in self.prompt_profiles if p.name == name), None) if name else None
+        return chosen if chosen is not None else self.active_prompts()
 
     def sandbox_profile(self, name: str | None = None) -> SandboxProfile | None:
         """The sandbox profile *name* (default: new tabs'), None for none."""

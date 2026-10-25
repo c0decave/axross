@@ -260,3 +260,58 @@ def test_sad_a_bad_host_is_not_added(tmp_path):
     assert "port" in editor.host_note.text()
     editor.deleteLater()
     APP.processEvents()
+
+
+# -- why a function box of the tab cannot be ticked --------------------------------
+
+
+def _editor(ceiling, master):
+    from ui.agent_access_dialog import AccessEditor
+
+    editor = AccessEditor()
+    editor.load(X.SessionAccess(axross=master), [], ceiling=ceiling, sandbox=None)
+    return editor
+
+
+def _open_ceiling(**off):
+    from core import agent_settings as S
+
+    access = S.Access(axross_functions=True)
+    for name in X.FUNCTIONS:
+        setattr(access, name, name not in off)
+    return access
+
+
+def test_happy_the_tabs_master_switch_off_is_named_on_each_box():
+    editor = _editor(_open_ceiling(), master=False)
+    assert not editor.functions_note.isHidden()
+    assert "Let the agent use axross functions" in editor.functions_note.text()
+    for check in editor.function_checks.values():
+        assert not check.isEnabled()
+        assert "Let the agent use axross functions" in check.toolTip()
+    editor.axross_check.setChecked(True)
+    assert editor.functions_note.isHidden()
+    assert all(c.isEnabled() and not c.toolTip() for c in editor.function_checks.values())
+    editor.deleteLater()
+    APP.processEvents()
+
+
+def test_sad_off_in_agent_settings_points_there_not_to_the_tab():
+    from core import agent_settings as S
+
+    editor = _editor(S.Access(axross_functions=False), master=True)
+    assert not editor.axross_check.isEnabled()
+    assert "Agent Settings > Access" in editor.functions_note.text()
+    assert all("Agent Settings > Access" in c.toolTip() for c in editor.function_checks.values())
+    editor.deleteLater()
+    APP.processEvents()
+
+
+def test_edge_one_function_off_in_the_settings_keeps_its_own_reason():
+    editor = _editor(_open_ceiling(remote_commands=True), master=True)
+    assert editor.functions_note.isHidden()
+    assert not editor.function_checks["remote_commands"].isEnabled()
+    assert "Agent Settings > Access" in editor.function_checks["remote_commands"].toolTip()
+    assert editor.function_checks["mcp_servers"].isEnabled()
+    editor.deleteLater()
+    APP.processEvents()

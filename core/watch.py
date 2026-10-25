@@ -27,10 +27,14 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
+import stat as stat_module
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Callable
 
+from core.local_fs import LocalFS
 from models.watch_tick_state import WatchTickState
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -110,14 +114,17 @@ class PollingWatcher(Watcher):
         self, backend, path, callback, interval: float = 2.0, initial_entries=None
     ) -> None:
         """*initial_entries*: a ``list_dir`` result the caller already holds
-        for *path*; it becomes the first snapshot, sparing a second listing
-        (on the GUI thread, after every navigation). A change made after
-        that listing is reported on the first tick."""
+        for *path*; it becomes the first snapshot (made on the watcher's
+        thread), sparing a second listing (on the GUI thread, after every
+        navigation). A change made after that listing is reported on the
+        first tick."""
         super().__init__(backend, path, callback)
         self._interval = max(0.2, interval)
-        self._initial: _Snapshot | None = (
-            None if initial_entries is None else self._snapshot_of(initial_entries)
-        )
+        self._initial: _Snapshot | None = None
+        # Made into the first snapshot on the watcher's thread: on the
+        # caller's (the GUI thread after every navigation) 20,000 entries
+        # took 15 ms. A copy, so a caller changing its list changes nothing.
+        self._initial_entries = None if initial_entries is None else tuple(initial_entries)
         self._tick_cond = threading.Condition()
         self._tick_state = WatchTickState()
 
@@ -126,7 +133,7 @@ class PollingWatcher(Watcher):
         # "any change made after start() returns is observable by the next
         # poll tick." Without this, the worker thread races with the caller
         # under load and changes made just after start() can be missed.
-        if self._initial is None:
+        if self._initial is None and self._initial_entries is None:
             self._initial = self._snapshot()
         super().start()
 
@@ -173,6 +180,8 @@ class PollingWatcher(Watcher):
         on the next good poll). Backends raise more than ``OSError``
         (``EOFError``, ``paramiko.SSHException``); none of them may end
         the watcher."""
+        if _plain_local(self._backend):
+            return _local_snapshot(self._path)
         try:
             items = self._backend.list_dir(self._path)
         except Exception as exc:  # noqa: BLE001 - any backend failure is "no news"
@@ -198,6 +207,9 @@ class PollingWatcher(Watcher):
         return _Snapshot(entries=entries)
 
     def _run(self) -> None:
+        if self._initial is None and self._initial_entries is not None:
+            self._initial = self._snapshot_of(self._initial_entries)
+            self._initial_entries = None
         prev = self._initial if self._initial is not None else self._snapshot()
         while not self._stop_event.wait(self._interval):
             with self._tick_cond:
@@ -229,6 +241,51 @@ class PollingWatcher(Watcher):
             with self._tick_cond:
                 self._tick_state.mark_completed()
                 self._tick_cond.notify_all()
+
+
+_local_log = logging.getLogger("core.local_fs")
+
+#: LocalFS's own listing functions, taken at import: a backend that lists
+#: through exactly these can be polled by _local_snapshot. A subclass or a
+#: test that replaces one of them is listed through it as before.
+_LOCAL_LISTING = (LocalFS.list_dir, LocalFS._entry_to_item, LocalFS._stat_to_item)
+
+
+def _plain_local(backend) -> bool:
+    if not isinstance(backend, LocalFS):
+        return False
+    bound = (backend.list_dir, backend._entry_to_item, backend._stat_to_item)
+    return all(getattr(b, "__func__", None) is f for b, f in zip(bound, _LOCAL_LISTING))
+
+
+def _local_snapshot(path: str) -> _Snapshot | None:
+    """``_snapshot_of(LocalFS().list_dir(path))`` without the FileItems:
+    the same scandir and lstat per entry, the same (size, modification time
+    as LocalFS turns it into a datetime, folder bit), the same entries left
+    out. A full listing per poll kept a pane on a 20,000-entry folder at
+    ~8 % of a core (128 ms per poll, 54 ms this way)."""
+    entries: dict[str, tuple[int, str, bool]] = {}
+    try:
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError as exc:
+                    _local_log.warning("Cannot stat %s: %s", entry.path, exc)  # as list_dir
+                    continue
+                if not entry.name:
+                    continue
+                entries[entry.name] = (
+                    int(st.st_size or 0),
+                    datetime.fromtimestamp(st.st_mtime).isoformat(),
+                    stat_module.S_ISDIR(st.st_mode),
+                )
+    except Exception as exc:  # noqa: BLE001 - as list_dir: any failure is "no news"
+        if isinstance(exc, OSError):
+            _local_log.error("Cannot list %s: %s", path, exc)  # as list_dir
+        log.debug("PollingWatcher: list_dir(%s) failed: %s", path, exc)
+        return None
+    return _Snapshot(entries=entries)
 
 
 def _join(parent: str, child: str) -> str:

@@ -364,6 +364,14 @@ Rechtsklick → Kontextmenü:
 **Move** statt Copy: Rechtsklick → "Move to Target Pane". Nach
 erfolgreichem Transfer wird die Quell-Datei gelöscht.
 
+**Cut / Paste**: `Ctrl+X` (oder Rechtsklick → "Cut") merkt sich die
+Auswahl, entfernt aber nichts; die Einträge erscheinen abgeblendet.
+`Ctrl+V` (oder Rechtsklick → "Paste", auch auf freier Fläche) in
+irgendeinem Pane verschiebt sie per Move in dessen Ordner — auch auf
+eine andere Verbindung. Die Quelle wird erst nach der geprüften Kopie
+gelöscht; ohne Paste bleibt alles, wo es ist (neuer Cut, `Esc` im
+Quell-Pane, Pane schließen oder Verbindung wechseln verwirft den Cut).
+
 **Namenskonflikte**: Vor dem ersten Job prüft axross im Hintergrund,
 welche Namen im Ziel schon existieren, und fragt pro Name: Overwrite,
 Overwrite if Newer, Skip, Rename (`name (1).ext`) — optional für alle
@@ -849,6 +857,11 @@ gehen.
 | `Alt+F7`, `Ctrl+Alt+F` | Find Files (Name, Typ, Inhalt, Archive) |
 | `F3` / Doppelklick | Viewer (Bild / Text / Hex)            |
 | `F5`               | Dateien zum Ziel-Pane kopieren        |
+| `Ctrl+X`           | Cut: Auswahl merken (nichts wird entfernt) |
+| `Ctrl+V`           | Paste: die per Cut gemerkten Einträge in diesen Ordner verschieben |
+| `Ctrl+F`           | Ins Filterfeld springen               |
+| `Esc` (Filterfeld) | Filter löschen, zurück zur Liste      |
+| `Esc` (Liste)      | Load stoppen, sonst Filter löschen, sonst Auswahl aufheben, sonst Cut verwerfen |
 | `F2`               | Umbenennen                            |
 | `Ctrl+R`           | Aktives Pane aktualisieren            |
 | `Ctrl+S`           | Datei im Editor speichern             |

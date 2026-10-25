@@ -39,6 +39,7 @@ import io
 import logging
 import lzma
 import os
+import re
 import shutil
 import stat as stat_module
 import subprocess
@@ -444,6 +445,16 @@ _ARCHIVE_ERRORS = (
 # ---------------------------------------------------------------------------
 
 
+def _compile_ignore(patterns) -> re.Pattern[str] | bool:
+    """One expression that matches what fnmatch.fnmatch matches for any of
+    *patterns* (both sides through os.path.normcase, as fnmatch does);
+    False when there are none."""
+    if not patterns:
+        return False
+    return re.compile(
+        "|".join(f"(?:{fnmatch.translate(os.path.normcase(p))})" for p in patterns))
+
+
 class _Run:
     def __init__(self, query: SearchQuery, limits: SearchLimits, on_hit: HitCallback,
                  cancel: Callable[[], bool], progress, use_tools: bool, use_sift: bool,
@@ -462,6 +473,9 @@ class _Run:
         self.rg = find_tool("rg") if use_tools and query.contains else None
         self._visited = 0
         self._index_scopes: dict[str, SearchScope] = {}
+        #: ignored(): the compiled ignore_dirs (False: none) and the tuple it is of.
+        self._ignore_rx = None
+        self._ignore_for = None
 
     # -- bookkeeping ------------------------------------------------------
     def check(self) -> None:
@@ -518,7 +532,15 @@ class _Run:
         return primary_category(cats)
 
     def ignored(self, name: str) -> bool:
-        return any(fnmatch.fnmatch(name, pattern) for pattern in self.q.ignore_dirs)
+        """``any(fnmatch.fnmatch(name, p) for p in ignore_dirs)``, as one
+        compiled expression: it runs for every entry or path part, and ten
+        fnmatch calls each cost ~3 us (258 ms per 80,000 names)."""
+        patterns = self.q.ignore_dirs
+        if self._ignore_rx is None or self._ignore_for is not patterns:
+            self._ignore_rx = _compile_ignore(patterns)
+            self._ignore_for = patterns
+        return self._ignore_rx is not False and (
+            self._ignore_rx.match(os.path.normcase(name)) is not None)
 
     # -- local folders ----------------------------------------------------
     def run_local(self, scope: SearchScope) -> None:

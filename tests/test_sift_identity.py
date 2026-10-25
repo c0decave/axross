@@ -496,3 +496,86 @@ def test_edge_no_thread_is_left_running_by_a_slim_entry(slim, stores, folder) ->
     pump(PAST_DEBOUNCE)
     started = {t.name for t in threading.enumerate()} - before
     assert "axross-analysis" not in started
+
+
+# --- right-click on a remote pane --------------------------------------------------
+# Asked for: a file, a folder or a remote path straight to sift from the
+# right-click menu. A RamFS pane stands for a remote one: not a LocalFS, so
+# the Analysis dock must take the bytes through the backend (bounded copy).
+
+
+@pytest.fixture
+def remote(win):
+    from core.ram_fs import RamFsSession
+
+    ram = RamFsSession(label="remote-test")
+    ram.mkdir("/data/sub", parents=True, exist_ok=True)
+    with ram.open_write("/data/report.csv") as fh:
+        fh.write(b"name,size\nalpha,1\nbeta,2\n")
+    with ram.open_write("/data/sub/inner.txt") as fh:
+        fh.write(b"inner on the remote side\n")
+    pane = win._active_pane
+    pane.set_backend(ram, "/data")
+    pump()
+    wait_for(lambda: pane._table.model().rowCount() >= 2)
+    return pane
+
+
+def test_happy_e2e_a_remote_file_goes_to_sift_from_the_right_click(win, fake, remote) -> None:
+    from core.previews import _is_local_backend
+
+    assert not _is_local_backend(remote.backend)
+    _select(remote, ["report.csv"])
+    entry = _commands(remote)["analyse-sift"]
+    entry.trigger()
+    wait_for(lambda: "about report.csv" in win._analysis_dock.body.toPlainText())
+    assert fake.asked == ["/data/report.csv"]
+
+
+@pytest.mark.skipif(
+    not __import__("core.analysis_worker", fromlist=["x"]).sift_available(),
+    reason="sift is not installed")
+def test_happy_e2e_real_sift_explains_a_remote_file(win, remote) -> None:
+    dock = win._analysis_dock
+    _select(remote, ["report.csv"])
+    _commands(remote)["analyse-sift"].trigger()
+    wait_for(lambda: "Explained by sift" in dock.body.toPlainText()
+             or "Analysis failed" in dock.body.toPlainText(), 60)
+    text = dock.body.toPlainText()
+    assert "Explained by sift" in text, text
+    assert "report.csv" in dock.title.text()
+
+
+def test_happy_e2e_a_remote_folder_is_offered_from_the_right_click(win, fake, remote) -> None:
+    dock = win._analysis_dock
+    _select(remote, ["sub"])
+    _commands(remote)["analyse-folder-sift"].trigger()
+    pump(PAST_DEBOUNCE)
+    assert dock.isVisible() and dock.batch_button.isVisible()
+    assert dock.batch_button.text() == "Analyse the files in sub with LLM"
+
+
+def test_edge_e2e_the_remote_folder_shown_is_offered_on_empty_space(win, fake, remote) -> None:
+    dock = win._analysis_dock
+    remote._table.clearSelection()
+    pump()
+    _commands(remote)["analyse-folder-sift"].trigger()
+    pump(PAST_DEBOUNCE)
+    assert dock.batch_button.isVisible(), dock.body.toPlainText()
+    assert dock.batch_button.text() == "Analyse the files in data with LLM"
+
+
+@pytest.mark.skipif(
+    not __import__("core.analysis_worker", fromlist=["x"]).sift_available(),
+    reason="sift is not installed")
+def test_sad_e2e_a_remote_read_that_fails_is_reported_not_hung(win, remote) -> None:
+    """The connection breaks while the bytes are fetched: the dock says why."""
+    def broken(path, *a, **k):
+        raise OSError("connection lost while reading")
+
+    remote.backend.open_read = broken
+    _select(remote, ["report.csv"])
+    _commands(remote)["analyse-sift"].trigger()
+    dock = win._analysis_dock
+    wait_for(lambda: "connection lost" in dock.body.toPlainText(), 60)
+    assert "Explained by sift" not in dock.body.toPlainText()

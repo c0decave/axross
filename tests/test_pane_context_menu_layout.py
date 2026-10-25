@@ -53,6 +53,8 @@ WINDOW_ONLY = {
 EXPECTED_KEYS = {
     "rename": "F2",
     "copy-path": "Ctrl+C",
+    "cut": "Ctrl+X",
+    "paste": "Ctrl+V",
     "copy-to-target": "F5",
     "move-to-target": "F6",
     "new-folder": "F7",
@@ -90,6 +92,9 @@ def window(tmp_path):
     win._active_pane.navigate(str(folder))
     pump()
     yield win
+    from ui.cut_clipboard import cut_clipboard
+
+    cut_clipboard().clear()
     win.close()
     win.deleteLater()
     # processEvents() never runs DeferredDelete: without this every window
@@ -120,6 +125,14 @@ def _mnemonic(text: str) -> str | None:
     i = text.replace("&&", "").find("&")
     stripped = text.replace("&&", "")
     return stripped[i + 1].lower() if 0 <= i < len(stripped) - 1 else None
+
+
+def _cut_pending(pane) -> None:
+    """A Cut waits for a Paste: the menus then offer Paste too."""
+    from ui.cut_clipboard import cut_clipboard
+
+    folder = pane.current_path
+    cut_clipboard().cut(pane, pane.backend, folder, [os.path.join(folder, "notes.txt")])
 
 
 def _menu(pane, state) -> QMenu:
@@ -180,6 +193,7 @@ def test_happy_keys_are_shown_and_are_the_ones_the_help_lists(window) -> None:
 
     listed = {k for _s, keys, _d in SHORTCUTS for k in keys}
     pane = window._active_pane
+    _cut_pending(pane)  # Paste (Ctrl+V) is offered only then
     seen: dict[str, str] = {}
     for state in STATES:
         for command, action in _by_command(_menu(pane, state)).items():
@@ -204,13 +218,16 @@ def test_happy_entries_are_grouped_in_a_fixed_order(window) -> None:
     ]
     positions = [group_of(c) for c in order]
     assert positions == sorted(positions) and len(set(positions)) == len(positions), groups
-    assert group_of("copy-path") == group_of("rename")
+    assert group_of("copy-path") == group_of("rename") == group_of("cut")
     assert group_of("move-to-target") == group_of("copy-to-target") == group_of("pack")
     assert group_of("delete") == group_of("trash")
 
 
-def test_happy_mnemonics_are_unique_within_each_menu(window) -> None:
+@pytest.mark.parametrize("cut", [False, True])
+def test_happy_mnemonics_are_unique_within_each_menu(window, cut) -> None:
     pane = window._active_pane
+    if cut:
+        _cut_pending(pane)
     for state in STATES:
         letters = [
             _mnemonic(a.text()) for a in _menu(pane, state).actions() if not a.isSeparator()
@@ -258,6 +275,8 @@ def _all_with_key(window, key: str) -> list[QAction]:
     [
         ("F2", "_rename_selected"),
         ("Ctrl+C", "_copy_paths_to_clipboard"),
+        ("Ctrl+X", "cut_selected"),
+        ("Ctrl+V", "paste_cut"),
         ("F7", "_create_folder"),
         ("Del", "_delete_selected"),
         ("Ctrl+D", "_add_bookmark"),
@@ -273,6 +292,7 @@ def test_happy_e2e_each_key_still_fires_exactly_once(window, key, pane_method) -
     """The right-click entries carry the keys too, so Qt must not see two
     owners (it would fire neither and log "Ambiguous shortcut")."""
     pane = window._active_pane
+    _cut_pending(pane)  # so the menus carry Paste (Ctrl+V) as well
     _select(pane, "notes.txt")
     keep = pane._build_context_menu()  # a live right-click menu with the keys
     actions_menu = next(
@@ -328,7 +348,7 @@ def test_sad_a_hostile_single_name_offers_no_file_actions(window) -> None:
     _select(pane, "notes.txt")
     pane._safe_item_path = lambda item, warn=True: None
     commands = _by_command(pane._build_context_menu())
-    for command in ("open-text", "open-hex", "rename", "trash", "delete", "checksum"):
+    for command in ("open-text", "open-hex", "rename", "cut", "trash", "delete", "checksum"):
         assert command not in commands, command
     assert "refresh" in commands and "new-folder" in commands  # the folder entries stay
 
@@ -434,6 +454,7 @@ def test_edge_german_mnemonics_are_unique_within_each_menu(window, monkeypatch) 
     german = i18n.Translator("de")
     assert german.tr("R&efresh") != "R&efresh"  # the catalogue is really read
     monkeypatch.setattr(i18n, "_ACTIVE", german)  # the previous one comes back after
+    _cut_pending(pane)  # Cut and Paste are in the menu too
     for state in (*STATES, "disk.img"):
         texts = [a.text() for a in _menu(pane, state).actions() if not a.isSeparator()]
         used = [m for m in map(_mnemonic, texts) if m]

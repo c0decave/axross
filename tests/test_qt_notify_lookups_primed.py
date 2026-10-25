@@ -132,6 +132,40 @@ def test_e2e_the_equalizer_engine_primes_its_decoder_and_sink():
         engine.deleteLater()
 
 
+def test_e2e_the_equalizer_engine_primes_what_its_threads_make(tmp_path):
+    """The decoder, the timers, the sound card's QAudioSink and the
+    objects that run work in the Media Player's own threads are made there,
+    not on the GUI thread - and primed there."""
+    np = pytest.importorskip("numpy")
+    import wave
+
+    MP = _media_player_module()
+    track = tmp_path / "t.wav"
+    with wave.open(str(track), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(MP.RATE)
+        w.writeframes(np.zeros(MP.RATE, "<i2").tobytes())
+    made = []
+
+    def sink_factory(fmt):
+        made.append(MP.QtSink(fmt))
+        return made[-1]
+
+    engine = MP.EqEngine(sink_factory=sink_factory, negotiate=lambda fmt: fmt)
+    try:
+        engine.load(str(track))
+        engine.play()
+        assert made, "no sink was made"
+        objects = [engine._decoder, engine._timer, engine._eq_timer, engine._feed, engine._decode,
+                   engine._eq, made[0]._sink]
+        for obj in objects:
+            assert obj.thread() is not app.thread(), type(obj).__name__
+            assert _looked_up(obj) == [], type(obj).__name__
+    finally:
+        engine.close()
+
+
 def test_e2e_the_media_preview_primes_its_player_and_output():
     from core.local_fs import LocalFS
     from ui import media_viewer as MV

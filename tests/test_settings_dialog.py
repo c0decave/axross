@@ -34,7 +34,7 @@ APP = app()
 CATEGORIES = [
     "General", "Appearance", "Toolbar", "Files & Panes", "Network & Proxy", "LLM Profiles",
     "Analysis (sift)", "Agent", "Voice", "Audio", "Metadata", "Search", "Security",
-    "Extensions",
+    "Extensions", "Updates",
 ]
 
 
@@ -100,8 +100,8 @@ def test_happy_the_categories_are_sorted_and_agent_has_its_pages(stores, win) ->
     assert _top_titles(dialog) == CATEGORIES
     agent = dialog.tree.topLevelItem(CATEGORIES.index("Agent"))
     assert [agent.child(i).text(0) for i in range(agent.childCount())] == [
-        "General", "Prompts", "Access", "Sandboxes", "MCP Servers", "MCP Sources",
-        "Sessions"]
+        "General", "Profiles", "Prompts", "Access", "Sandboxes", "MCP Servers",
+        "MCP Sources", "Sessions"]
     assert dialog.current_page_id() == "general"
 
 
@@ -295,7 +295,7 @@ def test_edge_agent_sub_pages_and_tabs_stay_in_step(stores, win) -> None:
     agent = dialog.page("agent")
     assert dialog.current_page_id() == "agent"
     assert agent.tabs.tabText(agent.tabs.currentIndex()) == "MCP Servers"
-    agent.tabs.setCurrentIndex(2)
+    agent.tabs.setCurrentIndex(3)  # General, Profiles, Prompts, Access, ...
     assert dialog.tree.currentItem().text(0) == "Access"
 
 

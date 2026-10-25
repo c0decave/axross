@@ -1097,9 +1097,7 @@ class SandboxedAgent:
         fields = (
             f"tool={name} args_sha256={A._digest(args_text)} args_len={len(args_text)} where=host"
         )
-        if self.config.files_read_only and A.changes_files(
-            getattr(tool, "write", False), getattr(tool, "group", "")
-        ):
+        if self.config.files_read_only and A.may_change_files(tool):
             A.audit.info("%s outcome=declined read_only=1", fields)
             return {"outcome": "declined", "text": A.READ_ONLY_REFUSAL}
         if external:

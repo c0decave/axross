@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QTabBar,
     QToolBar,
@@ -385,6 +386,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._restore_on_start = True
         self._highlight_hidden = True
         self._hidden_color: str | None = None
+        # Icon colours (ui.window_prefs.ICON_COLOUR_MODES) and the colour of "one".
+        self._icon_colours = "theme"
+        self._icon_colour: str | None = None
         self._font_size: int | None = None
         self._recent_profiles: list[str] = (
             self._load_recents()
@@ -822,6 +826,11 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._new_agent_window_action.triggered.connect(
             lambda _checked=False: self._new_agent_window()
         )
+        # One entry per agent profile (core.agent_profiles), presets first.
+        self._agent_profile_menu = tools_menu.addMenu(tr("New Agent Tab from &Profile"))
+        self._agent_profile_menu.setToolTip(
+            tr("A new Agent tab set up from an agent profile, for the active pane's folder"))
+        self._agent_profile_menu.aboutToShow.connect(self._fill_agent_profile_menu)
         agent_settings_action = tools_menu.addAction(tr("A&gent Settings…"))
         agent_settings_action.triggered.connect(lambda _checked=False: self._show_agent_settings())
         # Settings > Agent > MCP Servers: configure servers, Add from Catalog…
@@ -867,6 +876,17 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         features_action.triggered.connect(self._show_features)
         guide_action = help_menu.addAction(tr("&Scripting Guide"))
         guide_action.triggered.connect(self._show_scripting_guide)
+        third_party_action = help_menu.addAction(tr("&Third-Party Software…"))
+        third_party_action.setToolTip("The projects axross uses and ships, with their licences")
+        third_party_action.triggered.connect(self._show_third_party)
+        help_menu.addSeparator()
+        # Shown only while a newer version is there (ui.update_ui).
+        self._update_menu_action = help_menu.addAction(tr("Update to…"))
+        self._update_menu_action.setVisible(False)
+        self._update_menu_action.triggered.connect(lambda _checked=False: self.show_update_dialog())
+        check_updates_action = help_menu.addAction(tr("Check for &Updates…"))
+        check_updates_action.setToolTip("Ask GitHub for a newer axross release")
+        check_updates_action.triggered.connect(lambda _checked=False: self.check_for_updates())
         about_action = help_menu.addAction(tr("&About axross"))
         about_action.triggered.connect(self._show_about)
 
@@ -1266,7 +1286,12 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         a consistent size using our SVG icon set."""
         from ui.dock_titlebar import DockTitleBar
 
+        old = dock.titleBarWidget()
         dock.setTitleBarWidget(DockTitleBar(title, icon_name, dock))
+        if old is not None:
+            # QDockWidget hides a replaced title bar but keeps it as a child:
+            # every theme switch left six behind, each repolished ever after.
+            old.deleteLater()
 
     def _setup_bookmark_sidebar(self) -> None:
         """Build + install the left-side bookmark panel. Rebuilds
@@ -1369,6 +1394,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self.tabifyDockWidget(self._console_dock, self._scripts_dock)
         self._transfer_dock.raise_()
         self._scripts_dock.run_in_console_requested.connect(self._run_script_in_console)
+        self._scripts_dock.run_example_in_console_requested.connect(self._run_example_in_console)
         self._watch_dock_activity(self._scripts_dock)
         self._populate_dock_view_menu()
 
@@ -1385,6 +1411,12 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._console_dock.show()
         self._console_dock.raise_()
         self._console_dock.repl.run_saved_script(name)
+
+    def _run_example_in_console(self, name: str, call: str) -> None:
+        """Scripts dock > Run in Console on a bundled example, with its call."""
+        self._console_dock.show()
+        self._console_dock.raise_()
+        self._console_dock.repl.run_example(name, call)
 
     def _show_features(self, key: str = "") -> None:
         """Help > Features…: one non-modal window, raised when open;
@@ -1513,6 +1545,20 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
+    def _show_third_party(self) -> None:
+        """Help > Third-Party Software…: one non-modal window, raised when open."""
+        from ui.third_party_dialog import ThirdPartyDialog
+
+        dialog = getattr(self, "_third_party_dialog", None)
+        if dialog is None:
+            dialog = ThirdPartyDialog(self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_third_party_dialog", None))
+            self._third_party_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     # ------------------------------------------------------------------
     # Analysis dock: sift's explanation of the selected file
     def _setup_analysis_dock(self) -> None:
@@ -1557,6 +1603,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # event loop runs); without one, the first event-loop pass does.
         QTimer.singleShot(0, self._settle_agent_panels)
         self._agent_dock.settings_requested.connect(self._show_llm_profiles)
+        self._agent_dock.profiles_requested.connect(
+            lambda: self.open_settings("agent", "profiles"))
         self._agent_dock.visibilityChanged.connect(self._on_agent_visibility)
         self._focus_agent_action = QAction(tr("Ask the Agent"), self)
         self._focus_agent_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
@@ -1656,6 +1704,23 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         dock.show()
         dock.raise_()
         return dock.start_tab(folder or self._agent_root())  # focuses its input
+
+    def _fill_agent_profile_menu(self) -> None:
+        """Tools > New Agent Tab from Profile: the dock's profiles; a click
+        opens a tab for the active pane's folder, the dock in front."""
+        dock = getattr(self, "_agent_dock", None)
+        menu = self._agent_profile_menu
+        if dock is None:
+            menu.clear()
+            menu.addAction(tr("The Agent is not available")).setEnabled(False)
+            return
+
+        def folder() -> str:
+            dock.show()
+            dock.raise_()
+            return self._agent_root()
+
+        dock.fill_new_from_profile_menu(menu, folder_provider=folder)
 
     def _new_agent_window(self, folder: str | None = None):
         """Tools > New Agent Window: a new conversation in a panel of its
@@ -2575,6 +2640,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         pane.path_changed.connect(lambda _path, p=pane: self._agent_follow_pane(p))
         pane.transfer_requested.connect(lambda paths, p=pane: self._transfer_from_pane(p, paths))
         pane.move_requested.connect(lambda paths, p=pane: self._move_from_pane(p, paths))
+        pane.paste_requested.connect(lambda p=pane: self._paste_cut_into(p))
         pane.drop_transfer_requested.connect(self._on_drop_transfer)
         pane.bookmark_requested.connect(self._on_bookmark_request)
         pane.close_requested.connect(lambda p=pane: self._close_pane(p))
@@ -4885,6 +4951,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if theme != self._current_theme or prefs.compact != self._compact_mode:
             self._compact_mode = prefs.compact
             self._apply_theme(theme)
+        self.set_icon_colours(prefs.icon_colours, prefs.icon_colour, store=False)
         self.set_monochrome_icons(prefs.monochrome_icons, store=False)
         self.set_show_hidden(prefs.show_hidden, store=False)
         self._hidden_color = prefs.hidden_color
@@ -4927,6 +4994,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             hidden_color=self._hidden_color,
             restore_layout_on_start=self._restore_on_start,
             font_size=self._font_size,
+            icon_colours=self._icon_colours,
+            icon_colour=self._icon_colour,
         )
 
     def set_theme(self, theme: str, *, store: bool = True) -> None:
@@ -4947,6 +5016,24 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             self._toggle_monochrome_icons(bool(on))
         if store:
             self.store_window_prefs(**{window_prefs.MONOCHROME_KEY: bool(on)})
+
+    def set_icon_colours(self, mode: str, colour: str | None = None, *,
+                         store: bool = True) -> None:
+        """How icons are coloured (ui.window_prefs.ICON_COLOUR_MODES); *colour*
+        is the ``#rrggbb`` of "one". A mode that is not one of them, or "one"
+        without a valid colour, raises ValueError and changes nothing."""
+        if mode not in window_prefs.ICON_COLOUR_MODES:
+            raise ValueError(f"unknown icon colour mode: {mode!r}")
+        if mode == "one" and not themes.is_hex_colour(colour):
+            raise ValueError(f"not a #rrggbb colour: {colour!r}")
+        colour = colour.lower() if mode == "one" else None
+        if (mode, colour) != (self._icon_colours, self._icon_colour):
+            self._icon_colours, self._icon_colour = mode, colour
+            self._refresh_icons()
+            log.info("Icon colours: %s", colour or mode)
+        if store:
+            self.store_window_prefs(**{window_prefs.ICON_COLOURS_KEY: mode,
+                                       window_prefs.ICON_COLOUR_KEY: colour})
 
     def set_restore_on_start(self, on: bool, *, store: bool = True) -> None:
         self._restore_on_start = bool(on)
@@ -6018,6 +6105,53 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if paths:
             self._request_transfer(pane, self._target_pane, paths, move=True)
 
+    def _paste_cut_into(self, target: FilePaneWidget) -> None:
+        """Paste (Ctrl+V / right-click in *target*): move the pending Cut
+        (ui.cut_clipboard) into *target*'s current folder.
+
+        The move is the one F6 and drag & drop use (``_request_transfer``):
+        names already in the folder are asked about, and the transfer queue
+        removes each source only after its own copy completed and was
+        checked, so a failed, cancelled or partial transfer leaves it in
+        place. Entries pasted into the folder they came from are left alone
+        (no copy, no delete); a folder pasted into itself refuses the paste;
+        a production source asks first. The cut is cleared once its move is
+        queued; until then (a refusal, a Cancel at the conflict prompt) it
+        stays pending and nothing is removed."""
+        from core.cut_paste import plan_paste
+        from ui.cut_clipboard import cut_clipboard
+
+        board = cut_clipboard()
+        cut = board.pending
+        if cut is None:
+            return
+        self._set_active_pane(target)
+        source = cut.source
+        if source not in self._panes or source.backend is not cut.backend:
+            # Closing or reconnecting the pane drops its cut; this is the guard.
+            board.clear(cut)
+            self.statusBar().showMessage(
+                tr("Nothing pasted: the pane the entries were cut in closed or changed "
+                   "connection"), 8000)
+            return
+        dest_dir = target.current_path
+        plan = plan_paste(cut.backend, cut.paths, target.backend, dest_dir)
+        if plan.refusal:
+            QMessageBox.warning(self, tr("Paste"), tr("Nothing was moved: {reason}").format(
+                reason=plan.refusal))
+            return
+        if not plan.paths:
+            self.statusBar().showMessage(
+                tr("Nothing to move: the cut entries already are in {folder}").format(
+                    folder=dest_dir), 8000)
+            return
+        if not source._production_ok(f"move {len(plan.paths)} item(s) away"):
+            return
+        self._request_transfer(
+            source, target, list(plan.paths), move=True, dest_dir=dest_dir,
+            on_queued=lambda: board.clear(cut),
+        )
+
     def _on_drop_transfer(
         self,
         paths: list[str],
@@ -6083,15 +6217,17 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         move: bool = False,
         *,
         dest_dir: str | None = None,
+        on_queued=None,
     ) -> None:
-        """F5 / F6 / drag & drop: check the destination, ask, then queue.
+        """F5 / F6 / drag & drop / Paste: check the destination, ask, then queue.
 
         The destination is listed on a background thread (a slow remote
         must not freeze the window); every name the transfer would replace
         is put to the user before a single job is queued. The jobs then
         refuse to replace anything the answers did not allow, so a file
         that appears in the meantime is not overwritten silently. Cancel
-        All while the check runs queues nothing.
+        All while the check runs queues nothing. *on_queued* is called once
+        the jobs are being queued (not after a refusal, error or Cancel).
         """
         if not selected:
             return
@@ -6145,6 +6281,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             self._start_transfer_between(
                 source, target, paths, move=move, dest_dir=dest_dir, conflict_plan=plan
             )
+            if on_queued is not None:
+                on_queued()
 
         check.finished.connect(finished)
         self.statusBar().showMessage(tr("Checking the destination for existing names…"))
@@ -7098,7 +7236,59 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._version_label = QLabel(f"axross {__version__}")
         self._version_label.setProperty("role", "muted")
         self._version_label.setToolTip(tr("Version of this axross"))
+        # The update notice, left of the version, hidden until a newer
+        # version is found (ui.update_ui).
+        from ui.update_ui import UpdateController
+
+        self._update_controller = UpdateController(self)
+        self._update_dialog = None
+        self._update_button = QPushButton()
+        self._update_button.setObjectName("axUpdateNotice")
+        self._update_button.setFlat(True)
+        self._update_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_button.setToolTip(tr("A newer axross is available"))
+        self._update_button.clicked.connect(lambda _checked=False: self.show_update_dialog())
+        self._update_button.setVisible(False)
+        self.statusBar().addPermanentWidget(self._update_button)
         self.statusBar().addPermanentWidget(self._version_label)
+        self._update_controller.changed.connect(self._refresh_update_notice)
+
+    # --- self-update (ui.update_ui, core.self_update) ---
+    def update_controller(self):
+        return self._update_controller
+
+    def start_update_check(self) -> bool:
+        """The check at start (main.py, once the window is shown)."""
+        return self._update_controller.start_check()
+
+    def check_for_updates(self) -> None:
+        """Help > Check for Updates…: check now and show the answer."""
+        self._update_controller.check_now()
+        self.show_update_dialog()
+
+    def show_update_dialog(self) -> None:
+        """One non-modal update window, raised when open."""
+        from ui.update_ui import UpdateDialog
+
+        dialog = self._update_dialog
+        if dialog is None:
+            dialog = UpdateDialog(self._update_controller, self, self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_update_dialog", None))
+            self._update_dialog = dialog
+        dialog.refresh()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _refresh_update_notice(self) -> None:
+        controller = self._update_controller
+        visible = controller.notice_visible()
+        text = controller.notice_text() if visible else ""
+        self._update_button.setText(text.replace("&", "&&"))
+        self._update_button.setVisible(visible)
+        self._update_menu_action.setText(text.replace("&", "&&"))
+        self._update_menu_action.setVisible(visible)
 
     def _show_about(self) -> None:
         from axross._version import __version__
@@ -7146,6 +7336,7 @@ and an MCP server.</p>
 
 <p><small>axross {__version__} — Python + PyQt6 | github.com/c0decave/axross</small></p>
 <p><small>F1 = keyboard shortcuts · Help &gt; Scripting Guide</small></p>
+<p><small>Thanks to the projects behind axross: Help &gt; Third-Party Software…</small></p>
 """
         QMessageBox.about(self, f"About axross {__version__}", about_text)
 
@@ -7348,14 +7539,18 @@ and an MCP server.</p>
         log.info("Monochrome icons: %s", "on" if checked else "off")
 
     def _icon_tint(self) -> str | None:
-        """Colour for every icon under the current theme: the Hacker /
-        Amber accent, or in monochrome mode the palette's text colour
-        (``currentColor`` would rasterise black), else ``None`` for the
-        regular per-icon palette."""
+        """Colour for every icon under the current theme and the icon colour
+        choice: the Hacker / Amber accent ("theme"), the chosen colour
+        ("one"), none ("coloured": each icon its own colour); in monochrome
+        mode the theme's accent or else the palette's text colour
+        (``currentColor`` would rasterise black)."""
         from ui.icon_provider import is_monochrome as _is_mono
 
         resolved = themes.resolve(self._current_theme, themes.system_scheme())
-        tint = themes.icon_tint_for(resolved)
+        mode = self._icon_colours
+        if mode == "one" and not _is_mono():
+            return self._icon_colour
+        tint = themes.icon_tint_for(resolved) if mode == "theme" or _is_mono() else None
         if tint is None and _is_mono():
             app = QApplication.instance()
             if app is not None:
@@ -7688,6 +7883,9 @@ and an MCP server.</p>
         """
         from core.thread_lifetime import detach_running_thread
 
+        controller = getattr(self, "_update_controller", None)
+        if controller is not None:
+            controller.shutdown()  # a running download stops and removes its file
         for task in self._connect_tasks:
             try:
                 task.abandon()

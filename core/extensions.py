@@ -152,12 +152,34 @@ def _candidates(folder: Path) -> list[tuple[str, Path]]:
     return out
 
 
+#: _manifest results by path, with the file state they were read from.
+_MANIFESTS: dict[str, tuple[tuple, tuple[dict, str]]] = {}
+
+
+def clear_manifest_cache() -> None:
+    _MANIFESTS.clear()
+
+
 def _manifest(path: Path) -> tuple[dict, str]:
-    """The EXTENSION literal of *path* and an error text ("" when fine)."""
+    """The EXTENSION literal of *path* and an error text ("" when fine).
+    Parsed once per file state (size, change and modification time, inode):
+    Settings asks again each time it opens, the file rarely changes."""
     try:
-        size = path.stat().st_size
+        st = path.stat()
     except OSError as exc:
         return {}, f"cannot read: {exc.strerror or exc}"
+    state = (st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino, st.st_dev)
+    cached = _MANIFESTS.get(str(path))
+    if cached is not None and cached[0] == state:
+        fields, error = cached[1]
+        return dict(fields), error
+    result = _read_manifest(path, st.st_size)
+    if not result[1].startswith("cannot read"):  # a passing read error is tried again
+        _MANIFESTS[str(path)] = (state, (dict(result[0]), result[1]))
+    return result
+
+
+def _read_manifest(path: Path, size: int) -> tuple[dict, str]:
     if size > MAX_SOURCE_BYTES:
         return {}, f"too large ({size} bytes, at most {MAX_SOURCE_BYTES})"
     try:
@@ -191,14 +213,17 @@ def _manifest(path: Path) -> tuple[dict, str]:
     return fields, ""
 
 
-def discover(*, include_bundled: bool = True) -> list[ExtensionInfo]:
-    """Every extension found, user ones first; never runs their code."""
+def discover(*, include_bundled: bool = True, ids: set[str] | None = None) -> list[ExtensionInfo]:
+    """Every extension found, user ones first; never runs their code.
+    *ids*: only these (the others are not even parsed)."""
     sources = [("user", extensions_dir())]
     if include_bundled:
         sources.append(("bundled", bundled_dir()))
     found: list[ExtensionInfo] = []
     for source, folder in sources:
         for module_name, path in _candidates(folder):
+            if ids is not None and f"{source}:{module_name}" not in ids:
+                continue
             fields, error = _manifest(path)
             found.append(
                 ExtensionInfo(

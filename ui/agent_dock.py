@@ -41,7 +41,7 @@ import time
 from typing import Callable
 
 from PyQt6.QtCore import QObject, QStringListModel, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtGui import QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -66,6 +66,7 @@ from PyQt6.QtWidgets import (
 
 from core import agent as A
 from core import agent_access as X
+from core import agent_profiles as AP
 from core import agent_link as AL
 from core import agent_settings as AGS
 from core import llm_profiles as LP
@@ -82,10 +83,14 @@ OFFERED_GROUPS = ("metadata", "filetype", "archive", "duplicates", "index", "pac
                   "transfer", "remote")
 #: A task that starts like a work prompt's command: "/name", then the rest.
 _SLASH = re.compile(r"/([A-Za-z0-9-]*)(?:\s+(.*))?\Z", re.DOTALL)
-#: The Tools-list lines of further MCP servers: "mcp:<name>".
-MCP_PREFIX = "mcp:"
+#: The Tools-list lines of further MCP servers: "mcp:<name>" (agent profiles
+#: write them into a session's groups too).
+MCP_PREFIX = AP.MCP_PREFIX
 #: The Tools-list lines of extensions with agent tools: "ext:<extension id>".
 EXT_PREFIX = "ext:"
+#: The Tools-list lines of MCP servers found on this machine (core.mcp_detect)
+#: that are not in the settings yet: a tick adds one and uses it here.
+DETECTED_PREFIX = "detected:"
 #: Ticked in a fresh tab: read-only use of these is harmless.
 DEFAULT_GROUPS = AGS.DEFAULT_GROUPS
 #: Tools that run something on a remote host: Auto still asks for them.
@@ -206,6 +211,10 @@ class _LinkBridge(QObject):
     ``(tab, token, reachable, detail)``."""
 
     checked = pyqtSignal(object, int, bool, str)
+    #: core.mcp_detect.DetectResult of a scan.
+    detected = pyqtSignal(object)
+    #: (on_done, detected server, config or None, error): a contained install ended.
+    installed = pyqtSignal(object, object, object, str)
 
 
 class _Bridge(QObject):
@@ -371,6 +380,15 @@ class AgentTab(QWidget):
         self.profile_label = QLabel()
         self.profile_label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.profile_label)
+        # What applying the tab's agent profile cut or missed (core.agent_profiles),
+        # with Install from Catalog… links; hidden while there is nothing to say.
+        self.profile_notes = QLabel()
+        self.profile_notes.setTextFormat(Qt.TextFormat.RichText)
+        self.profile_notes.setWordWrap(True)
+        self.profile_notes.setStyleSheet("color: #b9770e;")
+        self.profile_notes.linkActivated.connect(self.profile_notes_link)
+        self.profile_notes.hide()
+        layout.addWidget(self.profile_notes)
         self.bypass_label = QLabel(tr("Bypass: changes and commands run without asking."))
         self.bypass_label.setStyleSheet("color: #c0392b; font-weight: bold;")
         self.bypass_label.hide()
@@ -398,7 +416,7 @@ class AgentTab(QWidget):
             item = QListWidgetItem(group)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             self.groups.addItem(item)
-        self.groups.itemChanged.connect(lambda _item: self._store())
+        self.groups.itemChanged.connect(self._on_group_changed)
         tools.addWidget(self.groups)
         self.allow_write = QCheckBox(tr("Allow changes to files"))
         self.allow_exec = QCheckBox(tr("Allow remote commands"))
@@ -661,26 +679,101 @@ class AgentTab(QWidget):
         s = self.session
         self._loading = True
         try:
-            self.refresh_choices()
             if not s.folder:
                 s.folder = self.dock.root_provider()
             self.root_edit.setText(s.folder)
-            groups = set(s.groups) if s.groups else set(self.dock.agent_settings.groups)
+            self._load_settings()
+            self._entries = [{"who": e["who"], "text": e["text"], "muted": e.get("muted", False),
+                              "kind": e.get("kind", "")} for e in s.transcript]
+            self._render_all()
+            # The latest lines in view, as appending them showed them.
+            self.transcript.moveCursor(QTextCursor.MoveOperation.End)
+        finally:
+            self._loading = False
+        self._store(save=False)
+        self._update_buttons()
+
+    def _load_settings(self) -> None:
+        """The session's model, mode, sandbox, tools and switches into the
+        widgets (its conversation and folder are not touched)."""
+        s = self.session
+        was = getattr(self, "_loading", False)
+        self._loading = True
+        try:
+            self.refresh_choices()
+            # A tab set up from an agent profile takes its groups as they are,
+            # also none; otherwise none means the General page's.
+            groups = (set(s.groups) if s.groups or s.agent_profile
+                      else set(self.dock.agent_settings.groups))
             for i in range(self.groups.count()):
                 item = self.groups.item(i)
+                if item.text().startswith(DETECTED_PREFIX):
+                    continue
                 item.setCheckState(
                     Qt.CheckState.Checked if item.text() in groups else Qt.CheckState.Unchecked
                 )
             self.allow_write.setChecked(s.allow_write)
             self.allow_exec.setChecked(s.allow_exec)
             self.read_only_check.setChecked(s.files_read_only or self._read_only_forced())
-            for entry in s.transcript:
-                self._show(entry["who"], entry["text"], entry.get("muted", False),
-                           kind=entry.get("kind", ""))
         finally:
-            self._loading = False
+            self._loading = was
+
+    def apply_resolution(self, profile: AP.AgentProfile, res: AP.Resolution) -> None:
+        """Set the tab up as *res* (core.agent_profiles.resolve of *profile*)
+        says, show what was cut or is missing, and save it."""
+        res.apply_to(self.session, profile.name)
+        self._load_settings()
         self._store(save=False)
-        self._update_buttons()
+        self._update_access_tip()
+        self.show_profile_report(res)
+        self.changed.emit()
+
+    def show_profile_report(self, res: AP.Resolution | None) -> None:
+        """The notes and missing servers of the profile applied last, with
+        Install from Catalog… links (None: nothing to show)."""
+        import html
+
+        self._profile_report = res
+        if res is None or not (res.notes or res.missing):
+            self.profile_notes.clear()
+            self.profile_notes.hide()
+            return
+        lines = [html.escape(n) for n in res.notes]
+        if res.notes:
+            # The notes are what Agent Settings said then: after changing them,
+            # applying again takes what they allow now.
+            lines.append('<a href="apply:again">' + html.escape(tr("Apply Profile again"))
+                         + "</a>")
+        for missing in res.missing:
+            target = html.escape(f"{missing.kind}:{missing.name}", quote=True)
+            line = html.escape(AP.missing_text(missing))
+            if missing.why == "not installed":
+                line += f' <a href="{target}">' + html.escape(tr("Install from Catalog…")) + "</a>"
+            lines.append(line)
+        self.profile_notes.setText("<br>".join(lines))
+        self.profile_notes.show()
+
+    def profile_link_targets(self) -> list[str]:
+        """The Install from Catalog… links the notes show now."""
+        res = getattr(self, "_profile_report", None)
+        return [f"{m.kind}:{m.name}" for m in (res.missing if res else ())
+                if m.why == "not installed"]
+
+    def profile_notes_link(self, target: str):
+        """An Install from Catalog… link: the catalog, on the category (or
+        searching the server's name). Returns the dialog."""
+        kind, _sep, name = str(target).partition(":")
+        if kind == "category":
+            return self.dock.install_from_catalog(self, category=name)
+        if kind == "server":
+            return self.dock.install_from_catalog(self, query=name)
+        if kind == "apply" and self.session.agent_profile:
+            self.dock.apply_profile(self, self.session.agent_profile)
+        return None
+
+    def prompts(self):
+        """The prompt profile of this tab (core.agent_prompts)."""
+        return self.dock.agent_settings.prompts_for(self.session.prompt_profile)
 
     def refresh_choices(self) -> None:
         """Fill the model, mode and sandbox lists from the settings now."""
@@ -727,7 +820,7 @@ class AgentTab(QWidget):
         """One "mcp:<name>" line per enabled MCP server and one "ext:<id>"
         line per extension with agent tools, ticked as the session says."""
         for i in reversed(range(self.groups.count())):
-            if self.groups.item(i).text().startswith((MCP_PREFIX, EXT_PREFIX)):
+            if self.groups.item(i).text().startswith((MCP_PREFIX, EXT_PREFIX, DETECTED_PREFIX)):
                 self.groups.takeItem(i)
         chosen = set(self.session.groups)
         lines = [(MCP_PREFIX + s.name, " ".join(s.command) if s.transport == "stdio" else s.url)
@@ -740,6 +833,51 @@ class AgentTab(QWidget):
             item.setCheckState(Qt.CheckState.Checked if text in chosen else Qt.CheckState.Unchecked)
             item.setToolTip(tip)
             self.groups.addItem(item)
+        from ui.agent_settings_dialog import free_name
+        from ui.mcp_catalog_dialog import plain_tooltip
+
+        names = {s.name for s in settings.mcp_servers}
+        for detected in self.dock.detected_servers():
+            # The name it gets when it is added (core.mcp_detect names may repeat).
+            name = free_name(detected.name, names)
+            names.add(name)
+            item = QListWidgetItem(DETECTED_PREFIX + name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, detected.key)
+            item.setToolTip(plain_tooltip(
+                detected.describe() + "\n\n" + tr(
+                    "Tick to add it to Agent Settings, switched on, and use it in this tab"
+                    "{sandbox}.").format(sandbox=tr(" (in its sandbox profile)")
+                                         if self.session.sandbox else "")))
+            self.groups.addItem(item)
+
+    def _on_group_changed(self, item) -> None:
+        if item.text().startswith(DETECTED_PREFIX):
+            if item.checkState() == Qt.CheckState.Checked and not getattr(self, "_loading", False):
+                key = item.data(Qt.ItemDataRole.UserRole)
+                # Not inside itemChanged: using it rebuilds this very list.
+                use = weak_call(self, "_use_detected")
+                QTimer.singleShot(0, lambda: use(key))
+            return
+        self._store()
+
+    def _use_detected(self, key: str) -> None:
+        """Add the detected server *key* (switched on; a program in this
+        tab's sandbox profile, one that downloads code installed into a
+        container first) and tick it here; untick it when it was not added."""
+        started = self.dock.add_detected(key, sandbox=self.session.sandbox or "", parent=self,
+                                         on_done=weak_call(self, "_detected_added"))
+        if not started:
+            self.refresh_choices()
+
+    def _detected_added(self, config) -> None:
+        if config is None:
+            self.refresh_choices()
+            return
+        self.session.groups = sorted(set(self.session.groups) | {MCP_PREFIX + config.name})
+        self.changed.emit()
+        self.dock.reload_settings()
 
     def _read_only_forced(self) -> bool:
         """Agent Settings > Access makes files read-only in every tab."""
@@ -777,10 +915,15 @@ class AgentTab(QWidget):
 
     def _update_profile_label(self) -> None:
         profile = self.profile()
-        self.profile_label.setText(
+        parts = [
             tr("Model: {name}").format(name=profile.name) if profile
             else tr("No LLM profile is active: set one up with LLM…")
-        )
+        ]
+        if self.session.agent_profile:
+            parts.append(tr("Profile: {name}").format(name=self.session.agent_profile))
+        if self.session.prompt_profile:
+            parts.append(tr("Prompt: {name}").format(name=self.session.prompt_profile))
+        self.profile_label.setText(" · ".join(parts))
         self._update_buttons()
 
     def _update_mode_look(self) -> None:
@@ -800,7 +943,9 @@ class AgentTab(QWidget):
             if forced
             else tr(
                 "The agent reads files but changes none: no writing, deleting or moving, "
-                "no remote commands, no writing tools of MCP servers or extensions"
+                "no remote commands, no writing tools of MCP servers or extensions - except "
+                "a container server axross installed with no network and only read-only "
+                "folders (its calls still ask as its Asks says)"
             )
         )
         can_write = mode != "plan" and writes_allowed(sandbox) and not read_only
@@ -919,6 +1064,7 @@ class AgentTab(QWidget):
             for i in range(self.groups.count())
             if self.groups.item(i).checkState() == Qt.CheckState.Checked
             and not self.groups.item(i).isHidden()
+            and not self.groups.item(i).text().startswith(DETECTED_PREFIX)
         )
 
     def _on_root_edited(self, text: str) -> None:
@@ -969,8 +1115,9 @@ class AgentTab(QWidget):
         except Exception:
             log.exception("API key lookup failed for %s", profile.name)
             key = ""
-        # The active prompt profile (Agent Settings > Prompts); Default is A.SYSTEM_PROMPT.
-        prompt = settings.active_prompts().system_prompt + (
+        # The tab's prompt profile (its agent profile's, else Agent Settings >
+        # Prompts'); Default is A.SYSTEM_PROMPT.
+        prompt = self.prompts().system_prompt + (
             PLAN_PROMPT if mode == "plan" else "") + (
             VOICE_PROMPT if self.voice.settings.output_enabled else "")
         return A.AgentConfig(
@@ -1083,7 +1230,9 @@ class AgentTab(QWidget):
 
     def _entry_html(self, index: int) -> str:
         entry = self._entries[index]
-        text = entry["text"]
+        # A paragraph separator would start a block of its own inside this
+        # line: the transcript keeps one block per line (toggle_reasoning).
+        text = entry["text"].replace("\u2029", "\n")
         if entry["kind"] == "reasoning":
             # The model's thinking: grey and italic, closed to one line; the
             # label opens and closes it. The text is escaped like any line,
@@ -1126,14 +1275,23 @@ class AgentTab(QWidget):
         self._open ^= {index}
         bar = self.transcript.verticalScrollBar()
         at_end, value = bar.value() >= bar.maximum(), bar.value()
-        self.transcript.setUpdatesEnabled(False)
-        try:
-            self.transcript.clear()
-            for i in range(len(self._entries)):
-                self.transcript.append(self._entry_html(i))
-        finally:
-            self.transcript.setUpdatesEnabled(True)
+        document = self.transcript.document()
+        if document.blockCount() == len(self._entries):
+            # One block per line: only this one is drawn again, not the
+            # whole transcript (130 ms for 850 lines).
+            cursor = QTextCursor(document.findBlockByNumber(index))
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                                QTextCursor.MoveMode.KeepAnchor)
+            cursor.insertHtml(self._entry_html(index))
+        if document.blockCount() != len(self._entries):
+            self._render_all()  # out of step: drawn again whole
         bar.setValue(bar.maximum() if at_end else min(value, bar.maximum()))
+
+    def _render_all(self) -> None:
+        """Draw the whole transcript at once: one setHtml gives the same
+        document as appending line by line, which took twice as long in a
+        hidden tab and almost five times as long in a shown one."""
+        self.transcript.setHtml("".join(self._entry_html(i) for i in range(len(self._entries))))
 
     # -- attachments ------------------------------------------------------------------------
 
@@ -1556,13 +1714,13 @@ class AgentTab(QWidget):
         self._recall_index = len(self._history)
         self._plan_ready = False
         agent = self._agent
-        # The active prompt profile's user prompt wraps what was typed; the
+        # The tab's prompt profile's user prompt wraps what was typed; the
         # transcript keeps the typed task. "Run the plan" is axross's own.
         sent = task
         if task != RUN_PLAN_TASK:
             from core.agent_prompts import render_task
 
-            sent = render_task(self.dock.agent_settings.active_prompts().user_prompt, task)
+            sent = render_task(self.prompts().user_prompt, task)
         self._started = time.monotonic()
         self._tool_calls = 0
         self._steps = 0
@@ -1771,6 +1929,8 @@ class AgentDock(QDockWidget):
     """The Agent panel: a tab per session, kept across starts."""
 
     settings_requested = pyqtSignal()
+    #: "+" ▸ Edit Agent Profiles…: Agent Settings on its Profiles page.
+    profiles_requested = pyqtSignal()
     #: ``(tab session id, event dict)`` for every agent event of every tab:
     #: tool calls, answers, confirmations, run started/finished. Extensions
     #: read it (ui.extension_host: api.on_agent_event).
@@ -1794,6 +1954,9 @@ class AgentDock(QDockWidget):
         mcp_pool: McpClientPool | None = None,
         extensions: Callable[[], object] | None = None,
         voice_factory: Callable[[AgentDock], object] | None = None,
+        agent_settings_saver: Callable[[AGS.AgentSettings], None] | None = None,
+        mcp_detector: Callable[..., object] | None = None,
+        mcp_opener=None,
     ) -> None:
         super().__init__(tr("Agent"), parent)
         self.setObjectName("axAgentDock")
@@ -1821,7 +1984,17 @@ class AgentDock(QDockWidget):
         self.ask_user = lambda question: _ask_user(self, question)
         self.root_provider = root_provider or (lambda: os.path.expanduser("~"))
         self._load_agent_settings = agent_settings_loader or AGS.AgentSettings.load
+        self._save_agent_settings = agent_settings_saver or (lambda s: s.save())
         self.agent_settings = self._load_agent_settings()
+        #: Finds the MCP servers on this machine (core.mcp_detect); what it
+        #: found last.
+        self._mcp_detector = mcp_detector
+        #: urllib's opener for the package registries of a contained install (tests).
+        self._mcp_opener = mcp_opener
+        self._detected: list = []
+        self._detect_started = False
+        #: What applying an agent profile to a new session said, until its tab shows it.
+        self._pending_reports: dict = {}
         self.store = session_store if session_store is not None else SessionStore()
         self.pane_items = pane_items or (lambda kind: None)
         self.pane_backend = pane_backend or (lambda pane_id: (None, True))
@@ -1840,6 +2013,8 @@ class AgentDock(QDockWidget):
         self.lamp.clicked.connect(lambda: self.check_link(when="always"))
         self._link_bridge = _LinkBridge(self)
         self._link_bridge.checked.connect(self._on_link_checked)
+        self._link_bridge.detected.connect(self._on_detected)
+        self._link_bridge.installed.connect(self._on_installed)
 
         self.tabs = QTabWidget()
         bar = DetachTabBar()
@@ -1856,6 +2031,7 @@ class AgentDock(QDockWidget):
         self.tabs.currentChanged.connect(lambda _i: self.check_link(when="stale"))
         self.tabs.currentChanged.connect(lambda _i: self._follow_current())
         self.visibilityChanged.connect(lambda shown: shown and self.check_link(when="stale"))
+        self.visibilityChanged.connect(lambda shown: shown and self._detect_once())
         self.tabs.tabBarDoubleClicked.connect(self.rename_tab)
         corner = QWidget()
         corner_row = QHBoxLayout(corner)
@@ -1863,8 +2039,14 @@ class AgentDock(QDockWidget):
         corner_row.setSpacing(0)
         new_tab = QToolButton()
         new_tab.setText("+")
-        new_tab.setToolTip(tr("New tab (Ctrl+T)"))
+        new_tab.setToolTip(tr("New tab (Ctrl+T); the arrow: agent profiles"))
         new_tab.clicked.connect(lambda: self.new_tab())
+        # The arrow: New Tab from Profile ▸, Apply Profile…, Edit Agent Profiles….
+        new_tab.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.profiles_menu = QMenu(new_tab)
+        self.profiles_menu.aboutToShow.connect(self._fill_profiles_menu)
+        new_tab.setMenu(self.profiles_menu)
+        self.new_tab_button = new_tab
         corner_row.addWidget(new_tab)
         self.new_window_button = QToolButton()
         self.new_window_button.setText("⧉")  # ⧉: a window of its own
@@ -1908,6 +2090,7 @@ class AgentDock(QDockWidget):
 
     def _make_tab(self, session: AgentSession) -> AgentTab:
         tab = AgentTab(self, session)
+        tab.show_profile_report(self._pending_reports.pop(session.id, None))
         tab.changed.connect(lambda t=tab: self._save(t))
         tab.title_changed.connect(lambda title, t=tab: self._retitle(t, title))
         return tab
@@ -1932,9 +2115,11 @@ class AgentDock(QDockWidget):
                 return
         self.store.save(session)
 
-    def _new_session(self, folder: str | None) -> AgentSession:
+    def _new_session(self, folder: str | None, profile: str | None = None) -> AgentSession:
+        """A new tab's session: as Agent Settings say, set up from the agent
+        profile *profile* (None: the default profile of new tabs, if any)."""
         s = self.agent_settings
-        return AgentSession(
+        session = AgentSession(
             profile=s.profile,
             mode=s.mode if s.mode != "bypass" or bypass_allowed(s) else "ask",
             sandbox=s.sandbox,
@@ -1942,6 +2127,146 @@ class AgentDock(QDockWidget):
             folder=folder or "",
             access=X.SessionAccess.from_settings(s.access),
         )
+        chosen = AP.find_profile(s, s.agent_profile if profile is None else profile)
+        if chosen is not None:
+            res = self.resolve_profile(chosen)
+            res.apply_to(session, chosen.name)
+            self._pending_reports[session.id] = res
+        return session
+
+    # -- agent profiles (core.agent_profiles) ---------------------------------------------
+
+    def profiles(self) -> list:
+        """The presets, then the user's agent profiles."""
+        return AP.all_profiles(self.agent_settings)
+
+    def tab_modes(self) -> tuple:
+        """The modes a tab may choose now."""
+        s = self.agent_settings
+        return tuple(m for m in s.modes() if m != "bypass" or bypass_allowed(s))
+
+    def resolve_profile(self, profile) -> AP.Resolution:
+        """What *profile* gives a tab under Agent Settings now (never wider
+        than its Access page)."""
+        try:
+            names = [p.name for p in self.llm_settings().profiles]
+        except Exception:  # noqa: BLE001 - a broken LLM file: names are not checked
+            log.exception("LLM settings could not be read")
+            names = None
+        return AP.resolve(profile, self.agent_settings, llm_names=names, modes=self.tab_modes())
+
+    def new_tab_from_profile(self, name: str, *, folder: str | None = None) -> AgentTab | None:
+        """A new tab set up from the agent profile *name* (None: no such one)."""
+        if AP.find_profile(self.agent_settings, name) is None:
+            return None
+        tab = self._add_tab(self._new_session(folder, profile=name))
+        self._save(tab)
+        tab.input.setFocus()
+        return tab
+
+    def apply_profile(self, tab: AgentTab, name: str) -> bool:
+        """Set *tab* up from the agent profile *name*. Refused while a task
+        runs in it (the running task keeps the settings it started with;
+        changing them under it would only mislead)."""
+        profile = AP.find_profile(self.agent_settings, name)
+        if profile is None or tab is None:
+            return False
+        if tab.busy():
+            QMessageBox.information(
+                self, tr("Apply Profile"),
+                tr("A task is running in {title}: stop it first, then apply the profile.").format(
+                    title=tab.session.title))
+            return False
+        tab.apply_resolution(profile, self.resolve_profile(profile))
+        return True
+
+    def pick_profile(self, tab: AgentTab | None = None):
+        """Apply Profile…: the dialog for *tab* (default: the current one),
+        opened window-modal; OK applies. Returns the dialog."""
+        from ui.agent_profile_dialog import ProfilePickerDialog
+
+        tab = tab or self.current_tab()
+        if tab is None:
+            return None
+        dialog = ProfilePickerDialog(self, tab.session.title, self.profiles(),
+                                     self.resolve_profile,
+                                     conversation=bool(tab.session.transcript))
+        if tab.session.agent_profile:
+            dialog.select(tab.session.agent_profile)
+
+        def accepted() -> None:
+            chosen = dialog.chosen()
+            if chosen is not None and alive(tab):
+                self.apply_profile(tab, chosen.name)
+
+        dialog.accepted.connect(accepted)
+        dialog.finished.connect(lambda _r: dialog.deleteLater())
+        dialog.open()
+        return dialog
+
+    def _fill_profiles_menu(self) -> None:
+        menu = self.profiles_menu
+        menu.clear()
+        new_menu = menu.addMenu(tr("New Tab from Profile"))
+        new_menu.aboutToShow.connect(lambda m=new_menu: self.fill_new_from_profile_menu(m))
+        self.fill_new_from_profile_menu(new_menu)
+        apply = menu.addAction(tr("Apply Profile…"))
+        apply.setEnabled(self.current_tab() is not None)
+        apply.triggered.connect(lambda _checked=False: self.pick_profile())
+        menu.addSeparator()
+        menu.addAction(tr("Edit Agent Profiles…")).triggered.connect(
+            lambda _checked=False: self.profiles_requested.emit())
+
+    def fill_new_from_profile_menu(self, menu: QMenu, folder_provider=None) -> None:
+        """One entry per profile, presets first ("(preset)"), then the
+        user's; a click opens a new tab from it (in *folder_provider()*)."""
+        from ui.agent_profile_dialog import profile_label
+
+        menu.clear()
+        presets_done = False
+        for profile in self.profiles():
+            if not profile.preset and not presets_done:
+                menu.addSeparator()
+                presets_done = True
+            # "&" in a name is no mnemonic ("Network & Web Recon").
+            action = menu.addAction(profile_label(profile).replace("&", "&&"))
+            action.setToolTip(profile.description)
+            action.triggered.connect(
+                lambda _checked=False, n=profile.name: self.new_tab_from_profile(
+                    n, folder=folder_provider() if folder_provider else None))
+
+    def install_from_catalog(self, tab: AgentTab | None = None, *, category: str = "",
+                             query: str = ""):
+        """Add from Catalog on *category* (or searching *query*); what it
+        installs is added to Agent Settings and ticked in *tab* when its
+        profile wants it. Returns the dialog (window-modal, not blocking)."""
+        from ui.mcp_catalog_dialog import McpCatalogDialog
+
+        dialog = McpCatalogDialog(self, sources=self.agent_settings.mcp_sources,
+                                  taken={s.name for s in self.agent_settings.mcp_servers},
+                                  opener=self._mcp_opener, category=category, query=query)
+        dialog.installed.connect(
+            lambda config, secrets, token: self._catalog_installed(tab, config, secrets, token))
+        dialog.finished.connect(lambda _r: dialog.deleteLater())
+        dialog.open()
+        return dialog
+
+    def _catalog_installed(self, tab, config, secrets, token: str) -> None:
+        stored = self.store_server(config, secrets or {}, token, parent=self)
+        if stored is None:
+            return
+        self.reload_settings()
+        if tab is None or not alive(tab):
+            return
+        profile = AP.find_profile(self.agent_settings, tab.session.agent_profile)
+        if profile is None:
+            return
+        res = self.resolve_profile(profile)
+        if MCP_PREFIX + stored.name in res.groups:
+            tab.session.groups = sorted(set(tab.session.groups) | {MCP_PREFIX + stored.name})
+            tab._load_settings()
+            tab.changed.emit()
+        tab.show_profile_report(res)
 
     def new_tab(
         self, *, save: bool = True, task: str | None = None, folder: str | None = None
@@ -2052,6 +2377,8 @@ class AgentDock(QDockWidget):
             lambda _checked=False, t=tab: self.detach_tab(t))
         menu.addAction(tr("Rename…")).triggered.connect(
             lambda _checked=False, t=tab: self.rename_tab(self.tabs.indexOf(t)))
+        menu.addAction(tr("Apply Profile…")).triggered.connect(
+            lambda _checked=False, t=tab: self.pick_profile(t))
         menu.addSeparator()
         menu.addAction(tr("Close")).triggered.connect(
             lambda _checked=False, t=tab: self.close_tab(self.tabs.indexOf(t)))
@@ -2378,6 +2705,155 @@ class AgentDock(QDockWidget):
     def _mcp_wrap(self, server):
         """A stdio server's argv in its sandbox profile, if it names one."""
         return self.agent_settings.mcp_wrap(server)
+
+    # -- MCP servers found on this machine ------------------------------------------------------
+
+    def _detect_once(self) -> None:
+        if not self._detect_started:
+            self.detect_servers()
+
+    def detect_servers(self) -> None:
+        """Look for MCP servers on this machine in the background
+        (core.mcp_detect: other clients' files, the tabs' folders, podman
+        images axross installed); the tabs' Tools lists follow."""
+        self._detect_started = True
+        detector = self._mcp_detector
+        if detector is None:
+            from ui.agent_settings_dialog import default_detector as detector
+        configured = list(self.agent_settings.mcp_servers)
+        folders = [t.root_edit.text().strip() for t in self.all_tabs()
+                   if t.root_edit.text().strip()]
+        bridge = self._link_bridge
+
+        def work() -> None:
+            try:
+                result = detector(configured=configured,
+                                  folders=[os.path.expanduser(f) for f in folders])
+            except Exception:  # noqa: BLE001 - a scan must end, whatever it meets
+                log.exception("detecting MCP servers failed")
+                return
+            try:
+                bridge.detected.emit(result)
+            except RuntimeError:
+                pass  # the dock is gone
+
+        threading.Thread(target=work, name="axross-mcp-detect", daemon=True).start()
+
+    def _on_detected(self, result) -> None:
+        self._detected = list(result.servers)
+        for tab in self.all_tabs():
+            tab.refresh_choices()
+
+    def detected_servers(self) -> list:
+        """The usable servers found on this machine that the settings do not
+        have yet."""
+        from core.mcp_detect import configured_as
+
+        return [d for d in self._detected
+                if d.usable and configured_as(d, self.agent_settings.mcp_servers) is None]
+
+    def add_detected(self, key: str, *, sandbox: str = "", parent=None, on_done=None) -> bool:
+        """Add the detected server *key* to the settings, switched on, and save
+        them (its secret values to the keyring, after asking): a program runs
+        in *sandbox*; one that downloads code is installed into a container
+        first, in the background. *on_done* hears the new config (None: not
+        added). False when nothing was started."""
+        from ui.agent_settings_dialog import (
+            confirm_detected_install,
+            confirm_detected_secrets,
+            free_name,
+        )
+
+        detected = next((d for d in self.detected_servers() if d.key == key), None)
+        if detected is None:
+            return False
+        parent = parent or self
+        on_done = on_done or (lambda _config: None)
+        name = free_name(detected.name, {s.name for s in self.agent_settings.mcp_servers})
+        if detected.needs_install:
+            if not confirm_detected_install(parent, detected):
+                return False
+            self._install_detected(detected, name, on_done)
+            return True
+        if not confirm_detected_secrets(parent, detected):
+            return False
+        config = self._store_detected(detected, detected.config(name=name, sandbox=sandbox),
+                                      parent)
+        on_done(config)
+        return config is not None
+
+    def _install_detected(self, detected, name: str, on_done) -> None:
+        taken = {s.name for s in self.agent_settings.mcp_servers}
+        opener, bridge = self._mcp_opener, self._link_bridge
+        tab = self.current_tab()
+        if tab is not None:
+            tab._show(tr("axross:"), tr("Installing {name} in a container ({spec})…").format(
+                name=name, spec=detected.plan.spec), muted=True)
+
+        def work() -> None:
+            from core import mcp_install as I
+
+            try:
+                config, error = detected.install(name=name, podman=I.Podman(), opener=opener,
+                                                 taken=taken), ""
+            except I.InstallError as exc:
+                config, error = None, str(exc)
+            except Exception as exc:  # noqa: BLE001 - reported, never a crash
+                log.exception("installing the detected %s failed", name)
+                config, error = None, type(exc).__name__
+            try:
+                bridge.installed.emit(on_done, detected, config, error)
+            except RuntimeError:
+                pass  # the dock is gone
+
+        threading.Thread(target=work, name="axross-mcp-contain", daemon=True).start()
+
+    def _on_installed(self, on_done, detected, config, error: str) -> None:
+        if config is not None:
+            config = self._store_detected(detected, config, self)
+        else:
+            QMessageBox.warning(self, tr("Detected MCP server"),
+                                tr("It was not installed: {why}").format(why=error))
+        on_done(config)
+
+    def _store_detected(self, detected, config, parent):
+        """Keep *config* (and *detected*'s secrets in the keyring); the
+        config, or None when that failed."""
+        return self.store_server(config, detected.secrets, detected.token, parent=parent,
+                                 heading=tr("Detected MCP server"))
+
+    def store_server(self, config, secrets: dict, token: str, *, parent=None,
+                     heading: str | None = None):
+        """Add *config* to Agent Settings and save them, its *secrets* and
+        *token* to the keyring first; the config, or None when a server of
+        that name exists or storing failed (said in a message)."""
+        from core import mcp_client as MC
+
+        heading = heading or tr("MCP server")
+        parent = parent or self
+        settings = self.agent_settings
+        if config.name in {s.name for s in settings.mcp_servers}:
+            return None
+        try:
+            for var, value in secrets.items():
+                if var in config.secret_env:
+                    MC.set_secret(config.name, var, value)
+            if token:
+                MC.set_token(config.name, token)
+        except Exception as exc:  # noqa: BLE001 - no keyring: say so, add nothing
+            QMessageBox.warning(parent, heading, tr(
+                "The secrets of {name} could not be stored in the keyring - it is not "
+                "added:").format(name=config.name) + f"\n{type(exc).__name__}")
+            return None
+        settings.mcp_servers.append(config)
+        try:
+            self._save_agent_settings(settings)
+        except OSError as exc:
+            settings.mcp_servers.remove(config)
+            QMessageBox.warning(parent, heading,
+                                tr("The settings could not be saved:") + f"\n{exc}")
+            return None
+        return config
 
     def emit_event(self, tab: AgentTab, event: dict) -> None:
         self.agent_event.emit(tab.session.id, event)

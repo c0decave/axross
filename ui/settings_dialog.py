@@ -8,7 +8,7 @@ Category    Settings                                         Store
 ==========  ===============================================  ==============================
 General     language, restore the layout on start, when a    session.json (window), settings.json
             pane becomes the active one
-Appearance  theme, compact mode, monochrome icons, font      session.json (window)
+Appearance  theme, compact mode, icon colours, font         session.json (window)
             size (zoom), highlight hidden files and their
             colour
 Toolbar     group the buttons by category, the category      session.json (window)
@@ -34,6 +34,9 @@ Search      hosts searched at once by Find on Network        settings.json
 Security    paranoid security mode, remember the sudo        settings.json
             password
 Extensions  which extensions are switched on                 extensions.json
+Updates     check for updates at start, download them        settings.json
+            automatically, Check Now, the last check
+            (ui.update_ui)
 ==========  ===============================================  ==============================
 
 **OK, Apply, Cancel - one rule for every page.** Only pages whose values
@@ -116,6 +119,7 @@ CATEGORY_ORDER: tuple[str, ...] = (
     "search",
     "security",
     "extensions",
+    "updates",
 )
 
 
@@ -263,6 +267,14 @@ class GeneralPage(_FormPage):
             PA.set_activation(changed["activation"])
 
 
+#: Settings > Appearance > Icon colours (ui.window_prefs.ICON_COLOUR_MODES).
+ICON_COLOUR_LABELS = {
+    "theme": "Theme default",
+    "coloured": "Own colours in every theme",
+    "one": "One colour",
+}
+
+
 class AppearancePage(_FormPage):
     """Theme, compact mode, monochrome icons, font size, hidden files' look."""
 
@@ -282,6 +294,25 @@ class AppearancePage(_FormPage):
         self.monochrome_check = QCheckBox(tr("Monochrome icons"))
         self.monochrome_check.setChecked(prefs.monochrome_icons)
         form.addRow("", self.monochrome_check)
+        self.icon_colours_combo = QComboBox()
+        for mode, label in ICON_COLOUR_LABELS.items():
+            self.icon_colours_combo.addItem(tr(label), mode)
+        self.icon_colours_combo.setCurrentIndex(
+            self.icon_colours_combo.findData(prefs.icon_colours))
+        self._icon_colour: str | None = prefs.icon_colour
+        self._icon_mode_before = prefs.icon_colours if prefs.icon_colours != "one" else "theme"
+        self.icon_colour_label = QLabel()
+        self.icon_colour_button = QPushButton(tr("Choose Colour…"))
+        self.icon_colour_button.clicked.connect(self.choose_icon_colour)
+        self.icon_colours_combo.currentIndexChanged.connect(self._sync_icon_colours)
+        self.monochrome_check.toggled.connect(self._sync_icon_colours)
+        icon_row = QHBoxLayout()
+        icon_row.addWidget(self.icon_colours_combo)
+        icon_row.addWidget(self.icon_colour_label)
+        icon_row.addWidget(self.icon_colour_button)
+        icon_row.addStretch(1)
+        form.addRow(tr("Icon colours"), icon_row)
+        self._sync_icon_colours()
 
         self.font_spin = QSpinBox()
         # The minimum stands for "the desktop's size".
@@ -319,6 +350,40 @@ class AppearancePage(_FormPage):
         self.layout_.addLayout(form)
         self.layout_.addWidget(hidden)
         self._finish()
+
+    def _sync_icon_colours(self, *_args) -> None:
+        mono = self.monochrome_check.isChecked()
+        mode = self.icon_colours_combo.currentData()
+        if mode != "one":
+            self._icon_mode_before = mode
+        self.icon_colours_combo.setEnabled(not mono)
+        self.icon_colours_combo.setToolTip(
+            tr("Monochrome icons is on: every icon takes the theme's colour.") if mono else "")
+        self.icon_colour_button.setEnabled(not mono and mode == "one")
+        shown = self._icon_colour if mode == "one" else None
+        self.icon_colour_label.setText(shown or "")
+        self.icon_colour_label.setStyleSheet(f"color: {shown};" if shown else "")
+
+    def choose_icon_colour(self) -> None:
+        """The colour of "One colour". Cancel keeps the colour there was;
+        with none chosen yet, the previous choice comes back."""
+        start = QColor(self._icon_colour or "#888888")
+        chosen = QColorDialog.getColor(start, self, tr("Icon Colour"))
+        if chosen.isValid():
+            self._icon_colour = chosen.name()
+        elif self._icon_colour is None:
+            self.icon_colours_combo.setCurrentIndex(
+                self.icon_colours_combo.findData(self._icon_mode_before))
+        self._sync_icon_colours()
+
+    def icon_colours(self) -> tuple[str, str | None]:
+        """(mode, colour) as chosen here; "One colour" without a colour is
+        the previous choice."""
+        mode = self.icon_colours_combo.currentData()
+        if mode == "one":
+            return ("one", self._icon_colour) if self._icon_colour else (
+                self._icon_mode_before, None)
+        return mode, None
 
     def _show_colour(self, *_args) -> None:
         colour = self.colour()
@@ -364,6 +429,7 @@ class AppearancePage(_FormPage):
             "theme": self.theme_combo.currentData(),
             "compact": self.compact_check.isChecked(),
             "monochrome": self.monochrome_check.isChecked(),
+            "icon_colours": self.icon_colours(),
             "font_size": self.font_size(),
             "highlight": self.highlight_check.isChecked(),
             "colour": self.colour(),
@@ -380,6 +446,8 @@ class AppearancePage(_FormPage):
                 win.store_window_prefs(**{window_prefs.COMPACT_KEY: changed["compact"]})
         elif "compact" in changed:
             win.set_compact_mode(changed["compact"])
+        if "icon_colours" in changed:
+            win.set_icon_colours(*changed["icon_colours"])
         if "monochrome" in changed:
             win.set_monochrome_icons(changed["monochrome"])
         if "font_size" in changed:
@@ -745,6 +813,12 @@ def _extensions_page(parent, window):
     return ExtensionsPage(window.extension_host, parent)
 
 
+def _updates_page(parent, window):
+    from ui.update_ui import updates_page
+
+    return updates_page(parent, window)
+
+
 def _agent_sub_pages() -> tuple[tuple[str, str], ...]:
     from ui.agent_settings_dialog import AGENT_TABS
 
@@ -756,7 +830,7 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "general": ("General", lambda p, w: GeneralPage(w, p),
                 ("language", "restore", "layout", "start", "activate", "hover", "click"), None),
     "appearance": ("Appearance", lambda p, w: AppearancePage(w, p),
-                   ("theme", "compact", "monochrome", "icons", "font", "zoom", "hidden", "colour",
+                   ("theme", "compact", "monochrome", "icons", "icon colours", "font", "zoom", "hidden", "colour",
                     "color", "dark", "light"), None),
     "toolbar": ("Toolbar", lambda p, w: ToolbarPage(w, p),
                 ("toolbar", "icon bar", "buttons", "category", "categories", "group",
@@ -771,7 +845,8 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "agent": ("Agent", _agent_page,
               ("agent", "sandbox", "mcp", "mcp servers", "mcp sources", "catalog", "podman",
                "docker", "registry", "access", "sessions", "bypass", "prompt",
-               "system prompt", "user prompt"), _agent_sub_pages),
+               "system prompt", "user prompt", "agent profile", "profiles", "preset"),
+              _agent_sub_pages),
     "audio": ("Audio", _audio_page, _audio_keywords(), None),
     "metadata": ("Metadata", _metadata_page, ("metadata", "exif", "remove", "clean"), None),
     "search": ("Search", lambda p, w: SearchPage(w, p),
@@ -779,6 +854,9 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "security": ("Security", lambda p, w: SecurityPage(w, p),
                  ("paranoid", "security", "sudo", "password"), None),
     "extensions": ("Extensions", _extensions_page, ("extensions", "plugins"), None),
+    "updates": ("Updates", _updates_page,
+                ("update", "updates", "version", "github", "download", "release", "upgrade"),
+                None),
 }
 
 #: Called after a page saved: id -> window method name.

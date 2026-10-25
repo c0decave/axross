@@ -55,6 +55,7 @@ from typing import Callable
 
 from core import mcp_catalog as M
 from core import mcp_client as C
+from core.mcp_runner import RunnerPlan, downloading_runner  # noqa: F401 - one classifier
 from core.subprocess_env import clean_child_env
 
 log = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ REGISTRY_HOSTS = {
 RUN_FLAGS = (
     "--rm", "-i", "--init", "--pull=never", "--log-driver=none",
     "--cap-drop=ALL", "--security-opt=no-new-privileges", "--read-only",
-    "--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=64m", "--pids-limit=128", "--memory=512m",
+    "--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=64m,notmpcopyup", "--pids-limit=128", "--memory=512m",
 )
 #: The network of the allowlist: the container's only way out is the
 #: proxy's port on the host's loopback (core.mcp_egress).
@@ -84,6 +85,12 @@ ALLOWLIST_NETWORK = ("--network=pasta:--no-map-gw,--no-udp,--no-icmp,--ipv4-only
 PULL_TIMEOUT = 1800.0
 BUILD_TIMEOUT = 900.0
 _ENTRY = re.compile(r"^/opt/mcp/[A-Za-z0-9@._/+-]+$")
+
+#: The last line of a build: what the install left in /tmp (npm's cache,
+#: node's compile cache, HOME=/tmp) stays out of the image. The run line's
+#: tmpfs copies nothing up either (notmpcopyup): rea-agents left 115 MB
+#: there, more than the 64 MB tmpfs, and its server never started.
+TMP_CLEANUP = "find /tmp -mindepth 1 -delete"
 
 _NPM_SCRIPT = r"""set -eu
 mkdir -p /opt/mcp
@@ -103,7 +110,7 @@ const pick = keys.length === 1 ? keys[0] : (keys.includes(short) ? short : keys[
 const file = pick ? bin[pick] : (p.main || "index.js");
 console.log("AXROSS_ENTRY=" + path.resolve(dir, file));
 ' "$2"
-"""
+""" + TMP_CLEANUP + "\n"
 
 _PYPI_SCRIPT = r"""set -eu
 python -m pip install --no-cache-dir --disable-pip-version-check --no-input \
@@ -119,7 +126,7 @@ if not pick:
 if pick:
     print("AXROSS_ENTRY=/opt/mcp/bin/" + pick)
 PY
-"""
+""" + TMP_CLEANUP + "\n"
 
 
 class InstallError(RuntimeError):
@@ -250,6 +257,44 @@ def run_command(name: str, image: str, *, network: str = "none", mounts=(), args
         for host, target, writable in mounts:
             argv.append(f"--volume={host}:{target}:{'rw' if writable else 'ro'}")
     return [*argv, image, *args]
+
+
+#: A read-only folder of run_command's line: ``--volume=HOST:TARGET:ro``.
+_RO_VOLUME = re.compile(r"^--volume=/[^:,]*:/[^:,]*:ro$")
+
+
+def contained_files_problem(argv) -> str:
+    """Why the line *argv* may change the user's files ("" = it cannot):
+    only axross's own podman line (:func:`run_command`) qualifies - podman
+    ``run`` with every one of RUN_FLAGS (read-only root, no capabilities,
+    no new privileges), ``--network=none`` and nothing else but its name,
+    label, environment pipe and read-only folders. Files read-only keeps
+    such a server's tools (core.agent.may_change_files)."""
+    argv = [str(a) for a in argv or ()]
+    if len(argv) < 3 or os.path.basename(argv[0]) != "podman" or argv[1] != "run":
+        return "its podman line is not the one axross writes"
+    options = []
+    for arg in argv[2:]:
+        if not arg.startswith("-"):
+            break  # the image; what follows are the server's own arguments
+        options.append(arg)
+    else:
+        return "its podman line is not the one axross writes"
+    if not set(RUN_FLAGS) <= set(options):
+        return "its podman line is not the one axross writes"
+    networks = [a for a in options if a.startswith(("--network", "--net="))]
+    if networks != ["--network=none"]:
+        return "it has network"
+    for arg in options:
+        if arg in RUN_FLAGS or arg in ("--network=none", "--user=0:0") \
+                or arg == f"--env-file=/dev/fd/{C.TOKEN_ENV_FD}" \
+                or arg.startswith(("--name=axross-mcp-", "--label=io.axross.mcp=")) \
+                or _RO_VOLUME.match(arg):
+            continue
+        if arg.startswith("--volume="):
+            return "it has a writable folder"
+        return "its podman line is not the one axross writes"
+    return ""
 
 
 # -- podman --------------------------------------------------------------------------------
@@ -509,10 +554,12 @@ def install(entry: M.CatalogEntry, choice: InstallChoice, *, podman: Podman | No
         raise InstallError("; ".join(problems))
     record = {"source": entry.source, "entry": entry.id, "kind": entry.kind,
               "installed": _now()}
+    # Agent profiles choose servers by it (core.agent_profiles).
+    category = C.clean_category(entry.category)
     if entry.kind == "remote":
         return C.McpServerConfig(name=choice.name, transport="http", url=entry.url,
                                  bearer=entry.bearer, enabled=False, confirm=choice.confirm,
-                                 timeout=choice.timeout, package=record)
+                                 timeout=choice.timeout, package=record, category=category)
     podman = podman or Podman()
     if not podman.available:
         raise InstallError("podman is not installed - container MCP servers need rootless "
@@ -565,8 +612,69 @@ def install(entry: M.CatalogEntry, choice: InstallChoice, *, podman: Podman | No
         env=env, secret_env=secret_env, enabled=False, confirm=choice.confirm,
         timeout=choice.timeout, container=True,
         egress=C._egress_entries(choice.hosts) if choice.network == "allowlist" else (),
-        package=record,
+        package=record, category=category,
     )
+
+
+def latest_version(kind: str, package: str, *, opener=None) -> str:
+    """The latest exact version of an npm or pypi package (its registry);
+    InstallError when there is none."""
+    try:
+        if kind == "npm":
+            name = urllib.parse.quote(package, safe="@")
+            data = M.http_get_json(f"{M.NPM_REGISTRY}/{name}/latest", opener=opener)
+            version = data.get("version") if isinstance(data, dict) else None
+            pattern = M._SEMVER
+        else:
+            data = M.http_get_json(f"{M.PYPI}/pypi/{urllib.parse.quote(package)}/json",
+                                   opener=opener)
+            meta = data.get("info") if isinstance(data, dict) else None
+            version = meta.get("version") if isinstance(meta, dict) else None
+            pattern = M._PEP440
+    except M.CatalogError as exc:
+        raise InstallError(f"the latest version of {package} is not known: {exc}") from None
+    if not isinstance(version, str) or len(version) > 64 or not pattern.match(version):
+        raise InstallError(f"the latest version of {package} is not an exact version")
+    return version
+
+
+def install_plan(plan: RunnerPlan, *, name: str, env: dict | None = None,
+                 secrets: dict | None = None, missing=(), podman: Podman | None = None,
+                 opener=None, on_line=None, cancel=None, taken=(), source: str = "detected",
+                 entry_key: str = "") -> C.McpServerConfig:
+    """A command that downloads code (core.mcp_runner) installed the
+    contained way instead: an npm or pypi package built in its runtime
+    container (the latest version when the command named none), an image
+    pulled and run with :func:`run_command` - its own ``docker run`` flags
+    are not taken over. No network; *env* and *secrets* reach the container
+    through the pipe, *missing* names secrets without a value yet. The
+    config is switched on."""
+    if not plan.convertible:
+        raise InstallError(plan.why_not or f"{plan.runner} cannot be installed in a container")
+    version = plan.version
+    if plan.kind in ("npm", "pypi") and not version:
+        version = latest_version(plan.kind, plan.package, opener=opener)
+        if on_line is not None:
+            on_line(f"{plan.package}: the latest version is {version}")
+    env = dict(env or {})
+    secrets = dict(secrets or {})
+    specs = [M.EnvSpec(var) for var in env]
+    specs += [M.EnvSpec(var, secret=True) for var in [*secrets, *missing]
+              if var not in env]
+    entry = M.CatalogEntry(
+        id=entry_key or f"{source}:{plan.package}", name=name, title=name, source=source,
+        kind=plan.kind, identifier=plan.package, version=version if plan.kind != "oci" else "",
+        tag=plan.tag if plan.kind == "oci" else "", digest=plan.digest, args=plan.args,
+        env=tuple(dict.fromkeys(specs)), network="none")
+    choice = InstallChoice(name=name, network="none", env=env, secrets=secrets,
+                           args=plan.args)
+    config = install(entry, choice, podman=podman, on_line=on_line, cancel=cancel, taken=taken)
+    config.enabled = True
+    config.secret_env = tuple(dict.fromkeys([*config.secret_env, *missing]))
+    config.package["source"] = source
+    if entry_key:
+        config.package["entry"] = entry_key[:300]
+    return config
 
 
 def uninstall(config: C.McpServerConfig, *, podman: Podman | None = None,

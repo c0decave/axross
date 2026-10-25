@@ -90,12 +90,16 @@ def test_happy_the_shipped_catalog_is_valid_and_pinned():
     assert {"Files & Dev", "Web & Data", "Knowledge & Reasoning", "Testing",
             "Security"} <= categories
     for e in entries:
-        assert e.kind == "oci" and e.installable, e.name
-        assert e.identifier.startswith("docker.io/mcp/"), e.identifier
-        assert len(e.digest) == 71 and e.digest.startswith("sha256:"), e.name
-        assert e.image_ref == f"{e.identifier}@{e.digest}"
-        assert e.repository.startswith("https://") and e.license, e.name
+        assert e.installable and e.repository.startswith("https://") and e.license, e.name
         assert e.source == "builtin"
+        if e.kind == "oci":  # an image: pinned by digest
+            assert e.identifier.startswith("docker.io/mcp/"), e.identifier
+            assert len(e.digest) == 71 and e.digest.startswith("sha256:"), e.name
+            assert e.image_ref == f"{e.identifier}@{e.digest}"
+        else:  # a package: an exact version (registries never change a published one)
+            assert e.kind in ("npm", "pypi") and e.version, e.name
+            assert all(c.isdigit() or c == "." for c in e.version), (e.name, e.version)
+            assert e.maintainer, f"{e.name}: a package from elsewhere names its maintainer"
     assert next(e for e in entries if e.name == "fetch").network == "full"
     fs = next(e for e in entries if e.name == "filesystem")
     assert fs.mounts[0].target == "/projects/{name}" and fs.mounts[0].repeat
@@ -180,9 +184,12 @@ def test_happy_sources_from_settings_and_their_switches(tmp_path):
     path = tmp_path / "c.json"
     path.write_text(json.dumps(_catalog(_oci())))
     sources = M.CatalogSources.from_dict(
-        {"builtin": True, "dockerhub": False, "mcpregistry": True, "extra": [str(path)]})
+        {"builtin": True, "dockerhub": False, "mcpregistry": True, "c0decave": False,
+         "discover": False, "extra": [str(path)]})
     ids = [s.id for s in sources.sources()]
     assert ids == ["builtin", "mcpregistry", f"file:{path}"]
+    assert [s.id for s in M.CatalogSources().sources()] == [
+        "builtin", "c0decave", "dockerhub", "mcpregistry", "discover"]
     assert M.CatalogSources.from_dict(sources.to_dict()) == sources
 
 
@@ -191,7 +198,8 @@ def test_happy_search_all_collects_every_source(tmp_path):
     path.write_text(json.dumps(_catalog(_oci(name="mine", id="mine"))))
     opener = FakeOpener({"hub.docker.com": _fixture("hub_list_time.json"),
                          "registry.modelcontextprotocol.io": _fixture("registry_time.json")})
-    sources = M.CatalogSources(extra=(str(path),)).sources(opener=opener)
+    sources = M.CatalogSources(extra=(str(path),), c0decave=False,
+                               discover=False).sources(opener=opener)
     results = M.search_all(sources, "")
     assert [r.source for r in results] == ["builtin", "dockerhub", "mcpregistry", f"file:{path}"]
     assert all(r.error == "" for r in results)
@@ -259,8 +267,9 @@ def test_sad_an_oversized_or_broken_file_is_refused(tmp_path):
 def test_sad_a_source_that_fails_reports_and_the_rest_go_on(tmp_path):
     opener = FakeOpener({"hub.docker.com": urllib.error.URLError("no route"),
                          "registry.modelcontextprotocol.io": b"<html>not json</html>"})
-    results = M.search_all(M.CatalogSources().sources(opener=opener), "time")
+    results = M.search_all(M.CatalogSources(discover=False).sources(opener=opener), "time")
     by = {r.source: r for r in results}
+    assert "not published yet" in by["c0decave"].error  # the fake answers 404
     assert by["builtin"].error == "" and by["builtin"].entries
     assert "no route" in by["dockerhub"].error
     assert "JSON" in by["mcpregistry"].error
@@ -426,3 +435,102 @@ def test_edge_a_cancelled_search_stops_between_pages():
 
     result = M.McpRegistrySource(opener=Cancelling({}), max_pages=5).search("t", cancel=cancel)
     assert result.error == "cancelled"
+
+
+# -- the c0decave MCP Hub -------------------------------------------------------------
+
+
+def _hub(**kw) -> dict:
+    return _oci(**{"image": "ghcr.io/c0decave/nmap-mcp", "id": "nmap", "name": "nmap", **kw})
+
+
+def test_happy_the_c0decave_hub_gives_its_pinned_ghcr_images():
+    opener = FakeOpener({M.HUB_URL: json.dumps(_catalog(_hub())).encode()})
+    source = M.HubSource(opener=opener)
+    assert (source.id, source.title) == ("c0decave", "c0decave MCP Hub")
+    result = source.search("")
+    assert result.error == "" and result.warnings == []
+    (entry,) = result.entries
+    assert entry.identifier == "ghcr.io/c0decave/nmap-mcp" and entry.installable
+    assert entry.image_ref == "ghcr.io/c0decave/nmap-mcp@sha256:" + "a" * 64
+    assert entry.source == "c0decave"
+    assert opener.urls == [M.HUB_URL]
+    assert M.HUB_URL == ("https://raw.githubusercontent.com/c0decave/axross-mcp-hub/main/"
+                         "catalog.json")
+
+
+def test_happy_the_hub_is_on_by_default_and_can_be_switched_off():
+    assert M.CatalogSources().c0decave is True
+    assert M.CatalogSources.from_dict({}).c0decave is True
+    off = M.CatalogSources.from_dict({"c0decave": False})
+    assert not off.c0decave and "c0decave" not in [s.id for s in off.sources()]
+    assert M.CatalogSources.from_dict(off.to_dict()) == off
+
+
+def test_sad_an_unreachable_hub_says_so_and_breaks_nothing():
+    for answer in (urllib.error.HTTPError(M.HUB_URL, 404, "Not Found", {}, None),
+                   urllib.error.URLError("Name or service not known")):
+        result = M.HubSource(opener=FakeOpener({"raw.githubusercontent.com": answer})).search("")
+        assert result.entries == []
+        assert "not reachable" in result.error and "not published yet" in result.error
+    results = M.search_all(
+        M.CatalogSources(dockerhub=False, mcpregistry=False, discover=False).sources(
+            opener=FakeOpener({})), "")
+    by = {r.source: r for r in results}
+    assert by["builtin"].entries and by["builtin"].error == ""
+    assert "not published yet" in by["c0decave"].error
+
+
+@pytest.mark.parametrize("entry, why", [
+    (_hub(digest=""), "digest"),
+    (_hub(digest="sha256:" + "0" * 63), "digest"),
+    (_oci(id="f", name="f", image="docker.io/mcp/time"), "ghcr.io/c0decave/"),
+    (_oci(id="f", name="f", image="ghcr.io/c0decaveevil/x"), "ghcr.io/c0decave/"),
+    (_oci(id="f", name="f", image="ghcr.io:443/c0decave/x"), "ghcr.io/c0decave/"),
+    (_oci(id="f", name="f", image="ghcr.io/other/c0decave"), "ghcr.io/c0decave/"),
+    ({"id": "n", "name": "n", "kind": "npm", "package": "ok", "version": "1.0.0"},
+     "ghcr.io/c0decave/"),
+    ({"id": "r", "name": "r", "kind": "remote", "url": "https://mcp.example/mcp"},
+     "ghcr.io/c0decave/"),
+])
+def test_sad_the_hub_refuses_entries_without_digest_or_from_elsewhere(entry, why):
+    catalog = _catalog(entry, _hub(id="ok", name="ok"))
+    opener = FakeOpener({M.HUB_URL: json.dumps(catalog).encode()})
+    result = M.HubSource(opener=opener).search("")
+    assert [e.name for e in result.entries] == ["ok"]
+    assert len(result.warnings) == 1 and why in result.warnings[0], result.warnings
+
+
+def test_sad_an_oversized_or_broken_hub_catalog_is_refused():
+    big = FakeOpener({M.HUB_URL: b" " * (M.MAX_CATALOG_BYTES + 1)})
+    assert "larger than" in M.HubSource(opener=big).search("").error
+    broken = FakeOpener({M.HUB_URL: b"<html>moved</html>"})
+    assert "JSON" in M.HubSource(opener=broken).search("").error
+
+
+
+# -- a server axross does not maintain ------------------------------------------------
+
+
+def test_happy_a_third_party_server_names_its_maintainer():
+    entries, warnings = M.load_builtin()
+    assert warnings == []
+    rea = next(e for e in entries if e.name == "rea")
+    assert rea.maintainer == "morluto" and rea.repository == "https://github.com/morluto/rea"
+    assert rea.kind == "npm" and rea.identifier == "rea-agents" and rea.version == "6.8.0"
+    assert rea.args == ("mcp",) and rea.network == "none" and rea.installable
+    assert "third-party" in rea.tags
+    assert all(e.maintainer == "" for e in entries if e.name != "rea")
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("someone", "someone"),
+    (42, ""),
+    ("x" * 500, "x" * M.MAX_SHORT),
+    ("two\nlines", "two lines"),
+])
+def test_sad_and_edge_a_maintainer_is_bounded_text(value, expected):
+    raw = {"id": "a", "name": "a", "kind": "npm", "package": "a-pkg", "version": "1.0.0",
+           "maintainer": value}
+    got = M.parse_entry(raw, source="test").maintainer
+    assert got == expected or (expected == "two lines" and "\n" not in got)

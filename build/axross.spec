@@ -34,6 +34,7 @@ from PyInstaller.utils.hooks import (
 PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+from bundle_licenses import licence_datas  # noqa: E402
 from bundle_options import dropped, dropped_data, exe_options, host_owned  # noqa: E402
 
 FLAVOR = os.environ.get("AXROSS_BUNDLE_FLAVOR", "full")
@@ -234,10 +235,21 @@ _RESOURCES = os.path.join(PROJECT_ROOT, "resources")
 # silently returns nothing in the shipped binary. That has now happened
 # three times; tests/test_packaging.py::BundledResourcesTests asserts the
 # relationship rather than trusting this list.
-for sub in ("scripts", "wordlists", "logo", "icons", "i18n", "extensions", "voice", "mcp"):
+for sub in ("scripts", "wordlists", "logo", "icons", "i18n", "extensions", "voice", "mcp",
+            "credits"):
     src = os.path.join(_RESOURCES, sub)
     if os.path.isdir(src):
         datas.append((src, f"resources/{sub}"))
+
+# The flavour, for the self-update (core.self_update.FLAVOR_PATH): which
+# release asset replaces this binary does not depend on its file name.
+_flavor_file = os.path.join(workpath, "axross-bundle-flavor.txt")
+os.makedirs(workpath, exist_ok=True)
+with open(_flavor_file, "w", encoding="ascii") as _fh:
+    _fh.write(FLAVOR + "\n")
+# In the first-party folder "axross": core.third_party claims the bundle
+# root for nobody, so a file there fails the release's bundle gate.
+datas.append((_flavor_file, "axross"))
 
 # Some pure-Python deps ship a runtime data file alongside their .py
 # code. PyInstaller's static analyser only follows ``import`` so any
@@ -360,6 +372,14 @@ a.binaries = TOC(
 # Data the bundle never reads - unpacked at every start of the one-file
 # binary all the same (scripts/bundle_options.dropped_data).
 a.datas = TOC(entry for entry in a.datas if not dropped_data(entry[0]))
+
+# Licence texts of everything kept above (scripts/bundle_licenses.py): every
+# bundled Python distribution's own licence files under licenses/python/, and
+# for every library the builder system contributes the licence files of its
+# rpm package under licenses/system/, with licenses/system/LIBRARIES.txt
+# naming the package of each library. tests/test_third_party_bundle.py checks
+# a built binary for them.
+a.datas = TOC(list(a.datas) + licence_datas(a, os.path.join(workpath, "licenses")))
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 

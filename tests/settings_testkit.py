@@ -87,8 +87,9 @@ def isolate(tmp_path: Path, monkeypatch) -> Stores:
     home.mkdir()
     stores = Stores(home)
     monkeypatch.setenv("HOME", str(home))
-    patcher = mock.patch("pathlib.Path.home", return_value=home)
-    patcher.start()
+    # Through monkeypatch, not a started mock.patch: undone with the test even
+    # when the test never calls restore().
+    monkeypatch.setattr("pathlib.Path.home", mock.MagicMock(return_value=home))
     monkeypatch.setenv("AXROSS_OPERATION_JOURNAL", str(tmp_path / "ops.jsonl"))
     monkeypatch.delenv(SM.ENV, raising=False)
     for target, name, value in (
@@ -150,7 +151,6 @@ def isolate(tmp_path: Path, monkeypatch) -> Stores:
         app.setFont(font)
         app.setStyleSheet(stylesheet_before)
         PS.set_session_password("")
-        patcher.stop()
 
     stores.restore = restore
     return stores

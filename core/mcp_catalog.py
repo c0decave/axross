@@ -12,6 +12,12 @@ switched on in Agent Settings > MCP Sources (core.agent_settings
                 (``hub.docker.com/v2/repositories/mcp/?name=``)
 ``mcpregistry`` the official MCP Registry
                 (``registry.modelcontextprotocol.io/v0.1/servers``)
+``c0decave``    the c0decave MCP Hub (:data:`HUB_URL`), a catalog of the
+                shipped schema that may only name images under
+                ``ghcr.io/c0decave/`` pinned by digest
+``discover``    curated awesome-lists for browsing (core.mcp_discover):
+                installable only where the MCP Registry or Docker Hub
+                names the same repository, else "link only"
 ``file:PATH``   a catalog file of the user's (same schema as the shipped
 ``url:URL``     one), local or over https
 ==============  ==========================================================
@@ -92,6 +98,10 @@ NETWORKS = ("none", "allowlist", "full")
 DOCKER_HUB = "https://hub.docker.com"
 DOCKER_HUB_NAMESPACE = "mcp"
 MCP_REGISTRY = "https://registry.modelcontextprotocol.io"
+#: The c0decave MCP Hub: a catalog of this module's schema.
+HUB_URL = "https://raw.githubusercontent.com/c0decave/axross-mcp-hub/main/catalog.json"
+#: The only images the hub may name (normalized, with the trailing "/").
+HUB_IMAGE_PREFIX = "ghcr.io/c0decave/"
 NPM_REGISTRY = "https://registry.npmjs.org"
 PYPI = "https://pypi.org"
 
@@ -160,6 +170,16 @@ def clean_text(value, limit: int = MAX_SHORT, *, lines: bool = False) -> str:
     else:
         text = re.sub(r" {2,}", " ", text).strip()
     return text[:limit]
+
+
+def exact_text(value, limit: int = MAX_SHORT) -> str:
+    """*value* (stripped) when it is one line of text that :func:`clean_text`
+    leaves as it is and at most *limit* long, else "" - for names read from
+    a file that must not be changed silently (a category, a profile name)."""
+    if not isinstance(value, str) or len(value.strip()) > limit:
+        return ""
+    text = clean_text(value, limit)
+    return text if text == value.strip() else ""
 
 
 def clean_url(value, *, limit: int = 500) -> str:
@@ -273,6 +293,15 @@ class CatalogEntry:
     why_not: str = ""
     #: What the user should know (arguments that need a value, ...).
     notes: str = ""
+    #: Who maintains the server when it is not axross's own (a third party):
+    #: the catalog dialog says so, and that problems go upstream.
+    maintainer: str = ""
+    #: Discover (core.mcp_discover): the source that makes the entry
+    #: installable ("" = none), the lists that name it, and the state of the
+    #: cross-reference: "unchecked", "link", "mcpregistry" or "dockerhub".
+    via: str = ""
+    listed_in: str = ""
+    xref: str = ""
 
     @property
     def installable(self) -> bool:
@@ -442,6 +471,7 @@ def parse_entry(raw, *, source: str, require_digest: bool = True) -> CatalogEntr
         kind=kind, args=_args(raw.get("args")), env=_env_specs(raw.get("env")),
         mounts=_mount_specs(raw.get("mounts")), network=network, hosts=hosts,
         notes=_str(raw, "notes", MAX_DESCRIPTION, lines=True),
+        maintainer=_str(raw, "maintainer"),
     )
     if kind == "oci":
         image = raw.get("image")
@@ -606,6 +636,8 @@ class SearchResult:
     warnings: list[str] = field(default_factory=list)
     #: Why the source gave nothing ("" = it answered).
     error: str = ""
+    #: What the user should know of the answer (an offline copy is shown, ...).
+    notes: list[str] = field(default_factory=list)
 
 
 class Source:
@@ -674,6 +706,56 @@ class UrlSource(Source):
                        max_bytes=MAX_CATALOG_BYTES)
         entries, warnings = parse_catalog(load_json(raw, self.title), source=self.id)
         return [e for e in entries if e.matches(query)], warnings
+
+
+class HubSource(Source):
+    """The c0decave MCP Hub: a catalog of the shipped schema at
+    :data:`HUB_URL`, read like a user's catalog URL, of which only oci
+    entries pinned by digest under :data:`HUB_IMAGE_PREFIX` are kept."""
+
+    id = "c0decave"
+    title = "c0decave MCP Hub"
+
+    def __init__(self, url: str = HUB_URL, *, opener=None, allow_http: bool = False) -> None:
+        super().__init__(opener=opener)
+        self.url = url
+        self._allow_http = allow_http
+
+    def _search(self, query, cancel):
+        try:
+            raw = http_get(self.url, opener=self._opener, cancel=cancel,
+                           max_bytes=MAX_CATALOG_BYTES, allow_http=self._allow_http)
+        except CatalogError as exc:
+            if str(exc) == "cancelled":
+                raise
+            raise CatalogError(f"not reachable or not published yet ({exc})") from None
+        data = load_json(raw, self.title)
+        if (isinstance(data, dict) and isinstance(data.get("entries"), list)
+                and len(data["entries"]) <= MAX_ENTRIES):
+            # What is not a pinned image of ours is refused before the
+            # entry is read at all (an npm or remote entry is not "fixed" by
+            # require_digest, so it is named here).
+            kept, refused = [], []
+            for index, raw_entry in enumerate(data["entries"], 1):
+                image = raw_entry.get("image") if isinstance(raw_entry, dict) else None
+                try:
+                    identifier = split_image(image)[0] if isinstance(image, str) else ""
+                except ValueError:
+                    identifier = ""
+                if (isinstance(raw_entry, dict) and raw_entry.get("kind") == "oci"
+                        and identifier.startswith(HUB_IMAGE_PREFIX)):
+                    kept.append(raw_entry)
+                else:
+                    label = clean_text(raw_entry.get("id") or raw_entry.get("name"), 40) \
+                        if isinstance(raw_entry, dict) else ""
+                    refused.append(f"entry {index} ({label or '?'}): only images under "
+                                   f"{HUB_IMAGE_PREFIX} pinned by digest are taken from "
+                                   f"this source")
+            data = dict(data, entries=kept)
+        else:
+            refused = []
+        entries, warnings = parse_catalog(data, source=self.id, require_digest=True)
+        return [e for e in entries if e.matches(query)], refused + warnings
 
 
 class DockerHubSource(Source):
@@ -971,6 +1053,10 @@ class CatalogSources:
     builtin: bool = True
     dockerhub: bool = True
     mcpregistry: bool = True
+    #: The c0decave MCP Hub (HubSource).
+    c0decave: bool = True
+    #: The curated lists of core.mcp_discover.
+    discover: bool = True
     #: The user's catalogs: absolute file paths or https:// URLs.
     extra: tuple[str, ...] = ()
 
@@ -992,7 +1078,8 @@ class CatalogSources:
     def from_dict(cls, data) -> CatalogSources:
         if not isinstance(data, dict):
             return cls()
-        flags = {k: data[k] for k in ("builtin", "dockerhub", "mcpregistry")
+        flags = {k: data[k] for k in ("builtin", "dockerhub", "mcpregistry", "c0decave",
+                                      "discover")
                  if isinstance(data.get(k), bool)}
         extra: list[str] = []
         for item in data.get("extra") or () if isinstance(data.get("extra"), list) else ():
@@ -1002,16 +1089,23 @@ class CatalogSources:
 
     def to_dict(self) -> dict:
         return {"builtin": self.builtin, "dockerhub": self.dockerhub,
-                "mcpregistry": self.mcpregistry, "extra": list(self.extra)}
+                "mcpregistry": self.mcpregistry, "c0decave": self.c0decave,
+                "discover": self.discover, "extra": list(self.extra)}
 
     def sources(self, *, opener=None) -> list[Source]:
         out: list[Source] = []
         if self.builtin:
             out.append(BuiltinSource(opener=opener))
+        if self.c0decave:
+            out.append(HubSource(opener=opener))
         if self.dockerhub:
             out.append(DockerHubSource(opener=opener))
         if self.mcpregistry:
             out.append(McpRegistrySource(opener=opener))
+        if self.discover:
+            from core.mcp_discover import DiscoverSource
+
+            out.append(DiscoverSource(opener=opener))
         for location in self.extra:
             if location.startswith("https://"):
                 out.append(UrlSource(location, opener=opener))

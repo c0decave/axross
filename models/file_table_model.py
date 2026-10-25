@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from itertools import compress, islice
 
 from PyQt6.QtCore import (
     QAbstractItemModel,
@@ -10,7 +11,7 @@ from PyQt6.QtCore import (
     Qt,
 )
 
-from PyQt6.QtGui import QBrush, QColor, QFont
+from PyQt6.QtGui import QBrush, QColor, QFont, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from models.file_item import FileItem
@@ -81,6 +82,10 @@ class FileTableModel(QAbstractTableModel):
         #: Folder name -> (bytes, incomplete) measured by Calculate Size for
         #: THIS listing; a new listing (set_items) drops it.
         self._computed: dict[str, tuple[int, bool]] = {}
+        #: Names of the entries a pending Cut holds (ui.cut_clipboard): drawn
+        #: dimmed until they are pasted or the cut is dropped. Kept across
+        #: listings of the folder; the pane sets it.
+        self._cut_names: frozenset[str] = frozenset()
 
     @property
     def highlight_hidden(self) -> bool:
@@ -131,6 +136,29 @@ class FileTableModel(QAbstractTableModel):
             colour = hidden_entry_color(palette)
             self._hidden_brush = (key, QBrush(colour) if colour is not None else None)
         return self._hidden_brush[1]
+
+    @property
+    def cut_names(self) -> frozenset[str]:
+        return self._cut_names
+
+    def set_cut_names(self, names) -> None:
+        """Draw the entries named *names* dimmed (a pending Cut holds them)."""
+        names = frozenset(names)
+        if names == self._cut_names:
+            return
+        self._cut_names = names
+        if self._items:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(len(self._items) - 1, len(COLUMNS) - 1),
+                [Qt.ItemDataRole.ForegroundRole],
+            )
+
+    @staticmethod
+    def _cut_foreground() -> QBrush:
+        """The palette's disabled text colour: a cut entry looks unavailable."""
+        palette = QApplication.palette()
+        return QBrush(palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text))
 
     def set_items(self, items: list[FileItem]) -> None:
         self.beginResetModel()
@@ -196,6 +224,25 @@ class FileTableModel(QAbstractTableModel):
         )
         self.layoutChanged.emit([], hint)
 
+    def display_text(self, item: FileItem, col: int) -> str | None:
+        """What column *col* shows for *item* (its DisplayRole)."""
+        if col == COL_NAME:
+            return item.name
+        if col == COL_SIZE:
+            if item.is_dir and item.name in self._computed:
+                return measured_bytes(*self._computed[item.name])
+            return item.size_human
+        if col == COL_MODIFIED:
+            return item.modified.strftime("%Y-%m-%d %H:%M")
+        if col == COL_PERMS:
+            return item.mode_str
+        if col == COL_OWNER:
+            owner = item.owner
+            if item.group:
+                owner += f":{item.group}"
+            return owner
+        return None
+
     def get_item(self, row: int) -> FileItem | None:
         if 0 <= row < len(self._items):
             return self._items[row]
@@ -215,21 +262,7 @@ class FileTableModel(QAbstractTableModel):
         col = index.column()
 
         if role == Qt.ItemDataRole.DisplayRole:
-            if col == COL_NAME:
-                return item.name
-            if col == COL_SIZE:
-                if item.is_dir and item.name in self._computed:
-                    return measured_bytes(*self._computed[item.name])
-                return item.size_human
-            if col == COL_MODIFIED:
-                return item.modified.strftime("%Y-%m-%d %H:%M")
-            if col == COL_PERMS:
-                return item.mode_str
-            if col == COL_OWNER:
-                owner = item.owner
-                if item.group:
-                    owner += f":{item.group}"
-                return owner
+            return self.display_text(item, col)
 
         if role == Qt.ItemDataRole.ToolTipRole and col == COL_NAME and item.name != "..":
             # Tooltips are always rendered as rich text: escape the name so
@@ -241,6 +274,14 @@ class FileTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DecorationRole and col == COL_NAME:
             return entry_icon(item.is_dir)
+
+        if (
+            role == Qt.ItemDataRole.ForegroundRole
+            and self._cut_names
+            and item.name in self._cut_names
+            and item.name != ".."
+        ):
+            return self._cut_foreground()
 
         if (
             role in (Qt.ItemDataRole.FontRole, Qt.ItemDataRole.ForegroundRole)
@@ -285,13 +326,72 @@ class FileTableModel(QAbstractTableModel):
 
 
 class FileSortProxyModel(QSortFilterProxyModel):
-    """Proxy model that sorts directories before files."""
+    """Proxy model that sorts directories before files.
+
+    Which rows it shows is worked out for the whole listing at once and
+    kept until the listing (the model's item list: a new listing or a
+    sort), the filter text or case, the hidden switch or the tag filter
+    changes; ``filterAcceptsRow`` then only looks the row up. Asking per
+    row (the source model, the item, the hidden rule, a QRegularExpression
+    wrapper each time) cost ~70 ms of every 20,000-entry listing, sort and
+    filter keystroke. A tag filter asks its predicate per row as before:
+    tags change without the listing changing.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._show_hidden = False
         #: FileItem -> bool, or None: "tag:<name>" in the pane's filter.
         self._tag_filter = None
+        #: The FileTableModel filtered, or None for another source model.
+        self._file_model: FileTableModel | None = None
+        #: accepted[row] for the item list _accepted_for; None: work it out.
+        self._accepted: list[bool] | None = None
+        self._accepted_for: list[FileItem] | None = None
+
+    def _forget_accepted(self, *_args) -> None:
+        self._accepted = None
+        self._accepted_for = None
+
+    def setSourceModel(self, model) -> None:  # noqa: N802 - Qt override
+        self._forget_accepted()
+        if self._file_model is not None:
+            try:
+                self._file_model.dataChanged.disconnect(self._forget_accepted)
+            except (TypeError, RuntimeError):
+                pass
+        self._file_model = model if isinstance(model, FileTableModel) else None
+        if self._file_model is not None:
+            # Before Qt's own connection: changed rows are filtered again
+            # by Qt, from the items as they are now.
+            self._file_model.dataChanged.connect(self._forget_accepted)
+        super().setSourceModel(model)
+
+    # Every way the pane changes what is shown forgets the worked-out rows
+    # first: Qt filters again inside these calls.
+    def setFilterFixedString(self, *args) -> None:  # noqa: N802 - Qt override
+        self._forget_accepted()
+        super().setFilterFixedString(*args)
+
+    def setFilterRegularExpression(self, *args) -> None:  # noqa: N802 - Qt override
+        self._forget_accepted()
+        super().setFilterRegularExpression(*args)
+
+    def setFilterWildcard(self, *args) -> None:  # noqa: N802 - Qt override
+        self._forget_accepted()
+        super().setFilterWildcard(*args)
+
+    def setFilterCaseSensitivity(self, *args) -> None:  # noqa: N802 - Qt override
+        self._forget_accepted()
+        super().setFilterCaseSensitivity(*args)
+
+    def invalidateFilter(self) -> None:  # noqa: N802 - Qt override
+        self._forget_accepted()
+        super().invalidateFilter()
+
+    def invalidate(self) -> None:
+        self._forget_accepted()
+        super().invalidate()
 
     def set_tag_filter(self, predicate) -> None:
         self._tag_filter = predicate
@@ -306,11 +406,8 @@ class FileSortProxyModel(QSortFilterProxyModel):
         self._show_hidden = value
         self.invalidateFilter()
 
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        model = self.sourceModel()
-        if not isinstance(model, FileTableModel):
-            return True
-        item = model.get_item(source_row)
+    def _accepts(self, item: FileItem | None) -> bool:
+        """Whether *item* is shown: the rule, asked for one row."""
         if item is None:
             return False
         # ".." is always visible
@@ -326,6 +423,52 @@ class FileSortProxyModel(QSortFilterProxyModel):
         if regex.pattern():
             return regex.match(item.name).hasMatch()
         return True
+
+    def _work_out_accepted(self, items: list[FileItem]) -> list[bool]:
+        """:meth:`_accepts` for every item at once (no tag filter)."""
+        show_hidden = self._show_hidden
+        regex = self.filterRegularExpression()
+        if regex.pattern():
+            match = regex.match
+            return [
+                item.name == ".."
+                or ((show_hidden or not item.is_hidden) and match(item.name).hasMatch())
+                for item in items
+            ]
+        if show_hidden:
+            return [True] * len(items)
+        return [item.name == ".." or not item.is_hidden for item in items]
+
+    def source_rows(self, count: int) -> list[int]:
+        """The source rows of the first *count* rows shown, in order. The
+        proxy never sorts (the model does), so they are the accepted rows
+        in listing order - read from the worked-out rows when they are
+        current, else mapped row by row."""
+        model = self._file_model
+        accepted = self._accepted
+        if (
+            model is not None
+            and accepted is not None
+            and self._accepted_for is model._items
+            and len(accepted) == len(model._items)
+            and self.sortColumn() < 0
+        ):
+            return list(islice(compress(range(len(accepted)), accepted), max(0, count)))
+        return [self.mapToSource(self.index(row, 0)).row() for row in range(count)]
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
+        model = self._file_model
+        if model is None:
+            return not isinstance(self.sourceModel(), FileTableModel) or self._accepts(
+                self.sourceModel().get_item(source_row))
+        items = model._items
+        accepted = self._accepted
+        if accepted is None or self._accepted_for is not items or len(accepted) != len(items):
+            if self._tag_filter is not None:
+                return self._accepts(model.get_item(source_row))
+            accepted = self._accepted = self._work_out_accepted(items)
+            self._accepted_for = items
+        return 0 <= source_row < len(accepted) and accepted[source_row]
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
         """The source model sorts (see FileTableModel.sort); the proxy keeps

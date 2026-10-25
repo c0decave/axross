@@ -104,13 +104,30 @@ _STALE_CHECK_TOKENS = 2048
 _ASTRAL = re.compile("[\U00010000-\U0010ffff]")
 
 
+def _paints(style):
+    """Token type -> whether *style* gives it a colour, bold or italic: a
+    token without any of them would get an empty format, which paints
+    nothing (PygmentsHighlighter._format). Pure; one per lexing."""
+    known: dict = {}
+
+    def paints(ttype) -> bool:
+        hit = known.get(ttype)
+        if hit is None:
+            entry = style.style_for_token(ttype)
+            hit = known[ttype] = bool(entry.get("color") or entry.get("bold") or entry.get("italic"))
+        return hit
+
+    return paints
+
+
 def _token_ranges(
-    lexer, text: str, starts: list[int], stale=None
+    lexer, text: str, starts: list[int], stale=None, paints=None
 ) -> dict[int, list[tuple[int, int, object]]]:
     """Per block number: (start in block, length, token type) of every token
     piece, in QTextCursor positions like *starts*. Pure - runs on a worker
     thread for a large text. *stale* (no arguments) is asked now and then;
-    True stops the work with _Stale."""
+    True stops the work with _Stale. *paints* (a token type) leaves out the
+    tokens it says False for."""
     import bisect
 
     # The lexer counts Python characters, Qt UTF-16 code units: every emoji
@@ -121,6 +138,8 @@ def _token_ranges(
     for count, (index, ttype, value) in enumerate(lexer.get_tokens_unprocessed(text)):
         if stale is not None and count % _STALE_CHECK_TOKENS == 0 and stale():
             raise _Stale
+        if paints is not None and not paints(ttype):
+            continue
         end = index + len(value)
         if astral:
             index += bisect.bisect_left(astral, index)
@@ -137,13 +156,25 @@ def _token_ranges(
     return ranges
 
 
+def _changed_blocks(old: dict, new: dict, origin: list[int]) -> list[int]:
+    """Numbers of the blocks whose paint under *new* differs from the paint
+    they show. ``origin[n]`` is the number block n had when *old* was
+    painted onto every block, -1 for a block Qt has painted since (an edited
+    one: what it shows is unknown, so it is always repainted)."""
+    return [n for n, was in enumerate(origin) if was < 0 or old.get(was) != new.get(n)]
+
+
 class PygmentsHighlighter(QSyntaxHighlighter):
     """Lexes the whole document (after a pause in typing, at once for a
     new text) and paints each block from the token ranges that fall in it,
     so strings and comments that span lines come out right.
 
     A text above SYNC_LEX_CHARS is lexed on a worker thread; its result is
-    applied only if no newer lexing started meanwhile (``generation``)."""
+    applied only if no newer lexing started meanwhile (``generation``).
+    Only the blocks whose paint changed are repainted: ``_origin`` follows
+    every edit since the last paint, so a block that moved down a line is
+    compared with the ranges it was painted with, not with its new
+    neighbour's."""
 
     _lexed = pyqtSignal(int, object)
 
@@ -152,6 +183,10 @@ class PygmentsHighlighter(QSyntaxHighlighter):
         self._lexer = None
         self._ranges: dict[int, list[tuple[int, int, object]]] = {}
         self._formats: dict = {}
+        #: Per block: its number when _ranges were painted, -1 = edited since.
+        self._origin: list[int] = [-1] * document.blockCount()
+        #: Edits so far; a result lexed from an older text is painted whole.
+        self._edits = 0
         self.generation = 0
         self.applied_generation = 0
         self.set_dark(dark)
@@ -172,9 +207,13 @@ class PygmentsHighlighter(QSyntaxHighlighter):
 
         self._style = get_style_by_name("monokai" if dark else "default")
         self._formats.clear()
+        self._origin = [-1] * len(self._origin)  # every block's colours change
+        if self._lexer is not None:  # None while __init__ runs
+            self.relex()
 
     def set_language(self, language: str) -> None:
         self._lexer = _lexer(language)
+        self._origin = [-1] * len(self._origin)
         self.relex()
 
     def _format(self, ttype) -> QTextCharFormat:
@@ -191,16 +230,35 @@ class PygmentsHighlighter(QSyntaxHighlighter):
             self._formats[ttype] = fmt
         return fmt
 
-    def _changed(self, _position: int, removed: int, added: int) -> None:
+    def _changed(self, position: int, removed: int, added: int) -> None:
+        self._edits += 1
+        self._follow_edit(position, added)
         # A new text (load, paste of a page) is lexed at once; typing waits.
         if removed + added > 1000 or self.document().characterCount() <= added + 1:
             self.relex()
         else:
             self._timer.start()
 
+    def _follow_edit(self, position: int, added: int) -> None:
+        """Mark the blocks the edit touched as -1 in _origin and shift the
+        ones below with it: the edited region spans blocks first..last now
+        and spanned that many minus the change of the block count before."""
+        document = self.document()
+        count = document.blockCount()
+        first = document.findBlock(position)
+        last = document.findBlock(position + added)
+        last_number = last.blockNumber() if last.isValid() else count - 1
+        span = last_number - first.blockNumber() + 1
+        was = span - (count - len(self._origin))
+        if not first.isValid() or span < 1 or was < 1:
+            self._origin = [-1] * count
+            return
+        start = first.blockNumber()
+        self._origin[start:start + was] = [-1] * span
+
     def relex(self) -> None:
-        """Lex the whole text again and repaint every block - at once for a
-        small text, on a worker thread for a large one."""
+        """Lex the whole text again and repaint the blocks whose colours
+        changed - at once for a small text, on a worker thread for a large one."""
         import threading
 
         self._timer.stop()
@@ -209,16 +267,24 @@ class PygmentsHighlighter(QSyntaxHighlighter):
         document = self.document()
         text = document.toPlainText()
         lexer = self._lexer
+        old, origin, edits = self._ranges, list(self._origin), self._edits
+        if len(origin) != document.blockCount():  # an edit went unseen: paint all
+            origin = [-1] * document.blockCount()
         if lexer is None or len(text) > MAX_HIGHLIGHT_CHARS:
-            self._apply(generation, {})
+            self._apply(generation, ({}, _changed_blocks(old, {}, origin), edits))
             return
         starts = []
         block = document.begin()
         while block.isValid():
             starts.append(block.position())
             block = block.next()
+        paints = _paints(self._style)
+
+        def result(ranges):
+            return ranges, _changed_blocks(old, ranges, origin), edits
+
         if len(text) <= SYNC_LEX_CHARS:
-            self._apply(generation, _token_ranges(lexer, text, starts))
+            self._apply(generation, result(_token_ranges(lexer, text, starts, paints=paints)))
             return
 
         def stale() -> bool:
@@ -229,32 +295,40 @@ class PygmentsHighlighter(QSyntaxHighlighter):
 
         def work() -> None:
             try:
-                ranges = _token_ranges(lexer, text, starts, stale)
+                ranges = _token_ranges(lexer, text, starts, stale, paints)
             except _Stale:
                 return
             except Exception:  # noqa: BLE001 - a lexer bug leaves the text plain
                 ranges = {}
             try:
-                self._lexed.emit(generation, ranges)
+                self._lexed.emit(generation, result(ranges))
             except RuntimeError:  # the editor is gone
                 pass
 
         threading.Thread(target=work, name="axross-lex", daemon=True).start()
 
-    def _apply(self, generation: int, ranges) -> None:
+    def _apply(self, generation: int, result) -> None:
+        """Paint *result* (ranges, changed block numbers, edits when lexed):
+        only the changed blocks, or every block when the text was edited
+        after it was taken - its block numbers may be off by now."""
         if generation != self.generation:
             return  # a newer text is being lexed
         self.applied_generation = generation
-        self._ranges = {
-            number: [(start, length, fmt) for start, length, ttype in pieces
-                     if not (fmt := self._format(ttype)).isEmpty()]
-            for number, pieces in ranges.items()
-        }
-        self.rehighlight()
+        ranges, changed, edits = result
+        self._ranges = ranges
+        document = self.document()
+        if edits != self._edits or len(changed) > document.blockCount() // 2:
+            self.rehighlight()
+        else:
+            for number in changed:
+                block = document.findBlockByNumber(number)
+                if block.isValid():
+                    self.rehighlightBlock(block)
+        self._origin = list(range(document.blockCount()))
 
     def highlightBlock(self, _text: str) -> None:  # noqa: N802 - Qt
-        for start, length, fmt in self._ranges.get(self.currentBlock().blockNumber(), ()):
-            self.setFormat(start, length, fmt)
+        for start, length, ttype in self._ranges.get(self.currentBlock().blockNumber(), ()):
+            self.setFormat(start, length, self._format(ttype))
 
 
 class _LineNumbers(QWidget):

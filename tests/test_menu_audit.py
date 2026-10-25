@@ -213,8 +213,9 @@ def _mnemonic(text: str) -> str:
     return ""
 
 
+@pytest.mark.parametrize("cut", [False, True])
 @pytest.mark.parametrize("language", ["en", "de"])
-def test_sad_no_mnemonic_is_used_twice_in_one_menu(language, monkeypatch) -> None:
+def test_sad_no_mnemonic_is_used_twice_in_one_menu(language, cut, monkeypatch) -> None:
     # Alt+letter with two owners in one menu only cycles between them instead
     # of triggering: every letter belongs to one entry per menu. German is
     # the one catalogue that translates the menus, so it is checked too.
@@ -222,8 +223,15 @@ def test_sad_no_mnemonic_is_used_twice_in_one_menu(language, monkeypatch) -> Non
     from ui.main_window import MainWindow
 
     monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator(language))
+    from ui.cut_clipboard import cut_clipboard
+
     win = MainWindow()
     win._reconnect_timer.stop()
+    if cut:  # a pending Cut puts Paste into the Actions menu
+        pane = win._active_pane
+        cut_clipboard().cut(pane, pane.backend, pane.current_path,
+                            [pane.backend.join(pane.current_path, "x")])
+        win._active_pane._table.clearSelection()
     doubles = []
 
     def check(title: str, actions) -> None:
@@ -250,6 +258,9 @@ def test_sad_no_mnemonic_is_used_twice_in_one_menu(language, monkeypatch) -> Non
         if language == "de":  # the catalogue really is in use
             assert any(a.text() == "&Datei" for a in win.menuBar().actions())
     finally:
+        if cut:
+            assert any(a.property("axCommand") == "paste" for a in win.actions_menu.actions())
+        cut_clipboard().clear()
         win.close()
         win.deleteLater()
         APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)

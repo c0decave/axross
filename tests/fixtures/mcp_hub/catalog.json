@@ -1,0 +1,505 @@
+{
+  "schema": "axross-mcp-catalog",
+  "version": 1,
+  "title": "axross-mcp-hub",
+  "description": "Curated, audited, container-packaged MCP servers for authorized security work (reverse engineering, firmware and forensics, network recon, web, OSINT, secrets, password cracking), built by https://github.com/c0decave/axross-mcp-hub and pinned by digest.",
+  "state": "pinned",
+  "entries": [
+    {
+      "id": "hub:binwalk",
+      "name": "binwalk",
+      "title": "binwalk",
+      "description": "Firmware analysis with binwalk: signature scan, extraction of embedded archives and file systems (SquashFS, CPIO, 7z, zip, gzip, xz, bzip2, LZO), entropy analysis and hex dumps. Files are read from the folder mounted at /work. Extraction writes to a writable folder mounted at /out, else to the container's /tmp (64 MiB, gone when the server stops). No network.",
+      "category": "Security: Firmware & Forensics",
+      "tags": [
+        "security",
+        "firmware",
+        "binwalk",
+        "forensics",
+        "extraction"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/binwalk",
+      "page": "https://github.com/OSPG/binwalk",
+      "license": "MIT (MCP server, FuzzingLabs; binwalk)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-binwalk",
+      "tag": "latest",
+      "digest": "sha256:e31cd7d3cb5d3e19e32a3bc9445edfbace35f84291ee348cc0f00e74356ca9f5",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the firmware images (read-only is enough)",
+          "required": true
+        },
+        {
+          "target": "/out",
+          "description": "A folder for extracted files (tick writable)"
+        }
+      ],
+      "network": "none",
+      "notes": "Extraction runs third-party extractors on untrusted input inside the container (no capabilities, no network). Mount /out writable only when you want the extracted files kept."
+    },
+    {
+      "id": "hub:capa",
+      "name": "capa",
+      "title": "capa (Mandiant)",
+      "description": "Finds the capabilities of a PE, ELF or .NET binary or shellcode with Mandiant capa and the capa-rules set, mapped to MITRE ATT&CK and MBC. Files are read from the folder mounted at /work (capa_analyze takes /work/<file>). No network.",
+      "category": "Security: Reverse Engineering",
+      "tags": [
+        "security",
+        "malware-analysis",
+        "capa",
+        "att&ck",
+        "reverse-engineering"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/capa",
+      "page": "https://github.com/mandiant/capa",
+      "license": "MIT (MCP server, FuzzingLabs) AND Apache-2.0 (capa, capa-rules)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-capa",
+      "tag": "latest",
+      "digest": "sha256:08024a9bd1deb92ffb1ef486e09425e6f6273a6ce3fc9581d0f6cc507afced7e",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the samples to analyze (read-only is enough)",
+          "required": true
+        }
+      ],
+      "network": "none",
+      "notes": "Large binaries can exceed axross's 512 MiB container memory limit or the 300 s default timeout; capa_analyze takes a timeout of up to 3600 s."
+    },
+    {
+      "id": "hub:crtsh",
+      "name": "crtsh",
+      "title": "crt.sh (Certificate Transparency)",
+      "description": "Subdomains and certificates of a domain from the Certificate Transparency logs through crt.sh: every logged certificate for a domain and its subdomains with the unique host names they name, and a single certificate as PEM. Needs network: Allowlist with crt.sh:443 (axross's proxy; nothing else is reachable).",
+      "category": "Security: OSINT",
+      "tags": [
+        "security",
+        "osint",
+        "certificate-transparency",
+        "subdomains",
+        "crt.sh",
+        "recon"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/crtsh",
+      "page": "https://crt.sh/",
+      "license": "MIT (MCP server, axross-mcp-hub)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-crtsh",
+      "tag": "latest",
+      "digest": "sha256:1dc2db8d56b1c61cb35ae14714ec3733907bb557464f5f27763dd0375d57389a",
+      "network": "allowlist",
+      "hosts": [
+        "crt.sh:443"
+      ],
+      "notes": "Passive: only crt.sh is asked, the domain itself is never contacted. crt.sh is a free service that is sometimes slow or overloaded; the tool then says so."
+    },
+    {
+      "id": "hub:dnstwist",
+      "name": "dnstwist",
+      "title": "dnstwist",
+      "description": "Finds look-alike domains of a domain (typosquatting, homographs, bitsquatting, TLD swaps, ...) with dnstwist: dnstwist_permutations works offline; dnstwist_scan resolves them (A, AAAA, NS, MX) and needs network: Full (DNS). No web fetching, WHOIS or GeoIP.",
+      "category": "Security: OSINT",
+      "tags": [
+        "security",
+        "osint",
+        "dnstwist",
+        "phishing",
+        "dns"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/dnstwist",
+      "page": "https://github.com/elceef/dnstwist",
+      "license": "MIT (MCP server, axross-mcp-hub) AND Apache-2.0 (dnstwist)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-dnstwist",
+      "tag": "latest",
+      "digest": "sha256:5e3ab2ce5945457d1cae5c9991ec2d5714b91b420173401a874c42de164c7f31",
+      "network": "full",
+      "notes": "Without network dnstwist_permutations still works; dnstwist_scan then reports every domain as unresolved."
+    },
+    {
+      "id": "hub:exiftool",
+      "name": "exiftool",
+      "title": "ExifTool",
+      "description": "Reads the metadata of images, videos, audio, PDFs, Office documents and many other formats with ExifTool 13.25 (EXIF, IPTC, XMP, GPS, maker notes, ...), all tags or a chosen subset with wildcards. Files are read from the folder mounted at /work. Read-only: this build offers no writing or removing of metadata. No network.",
+      "category": "Security: Firmware & Forensics",
+      "tags": [
+        "security",
+        "forensics",
+        "osint",
+        "exiftool",
+        "metadata",
+        "exif"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/exiftool",
+      "page": "https://exiftool.org/",
+      "license": "MIT (MCP server, joshmsimpson/exiftool_mcp, patched) AND Artistic-1.0 OR GPL-1.0-or-later (ExifTool, Debian package)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-exiftool",
+      "tag": "latest",
+      "digest": "sha256:a37f9e87c9f98f17a9d36bb69397b58238233ffce5c1119afb841798b0115959",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the files to inspect (read-only is enough)",
+          "required": true
+        }
+      ],
+      "network": "none",
+      "notes": "Patched: requested tag names filter ExifTool's JSON in Python instead of becoming ExifTool options (upstream let a tag such as \"if\" run Perl code); the write and remove tools are removed."
+    },
+    {
+      "id": "hub:ffuf",
+      "name": "ffuf",
+      "title": "ffuf",
+      "description": "Web fuzzing with ffuf 2.1: directory and file discovery, virtual hosts, parameters and custom FUZZ positions, with status, size, word and line filters and bundled SecLists wordlists (common, raft-small-dirs, raft-small-files, subdomains-top1mil, params-top) or your own wordlists from /work. Needs network: Full (requests go to the target you name).",
+      "category": "Security: Web",
+      "tags": [
+        "security",
+        "web",
+        "ffuf",
+        "fuzzing",
+        "content-discovery",
+        "pentest"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/ffuf",
+      "page": "https://github.com/ffuf/ffuf",
+      "license": "MIT (MCP server, FuzzingLabs, patched; ffuf; SecLists)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-ffuf",
+      "tag": "latest",
+      "digest": "sha256:ad322c98ce3b825902c4f044f666cfedb8e951c8cde6d09a9965253e5c4b008f",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "Optional: a folder with your own wordlists (read-only is enough)"
+        }
+      ],
+      "network": "full",
+      "notes": "Fuzz only systems you are authorized to test. Every argument is validated; a wordlist is a bundled name or a file under /work, never another container path."
+    },
+    {
+      "id": "hub:floss",
+      "name": "floss",
+      "title": "FLOSS",
+      "description": "Mandiant FLOSS 3.2: extracts obfuscated strings from malware - static strings plus stack strings, tight strings and strings decoded by emulating the sample's decoding routines (vivisect; the sample is never executed) - from PE files and shellcode, language-aware for Go and Rust. Samples are read from the folder mounted at /work. No network.",
+      "category": "Security: Reverse Engineering",
+      "tags": [
+        "security",
+        "reverse-engineering",
+        "malware-analysis",
+        "floss",
+        "strings",
+        "mandiant"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/floss",
+      "page": "https://github.com/mandiant/flare-floss",
+      "license": "MIT (MCP server, axross-mcp-hub) AND Apache-2.0 (FLOSS, vivisect)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-floss",
+      "tag": "latest",
+      "digest": "sha256:53d4388fe61a26240a05df3884509555c8f483f47c54f0d42eac04ce38427c46",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the samples (read-only is enough)",
+          "required": true
+        }
+      ],
+      "network": "none",
+      "notes": "Emulation of large samples is slow and memory-hungry; axross's 512 MiB limit applies - use only=[\"static\"] or a smaller timeout for big files."
+    },
+    {
+      "id": "hub:gitleaks",
+      "name": "gitleaks",
+      "title": "gitleaks",
+      "description": "Finds secrets - API keys, tokens, passwords, private keys - in files and in the whole history of git repositories with gitleaks 8.30 and its built-in rules (or your .toml rules). Findings name rule, file, line, commit, author and date; secrets are redacted in the answer unless asked otherwise. Paths are read from the folder mounted at /work. No network.",
+      "category": "Security: Code & Secrets",
+      "tags": [
+        "security",
+        "secrets",
+        "gitleaks",
+        "git",
+        "credentials",
+        "code-audit"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/gitleaks",
+      "page": "https://github.com/gitleaks/gitleaks",
+      "license": "MIT (MCP server, axross-mcp-hub; gitleaks) AND GPL-2.0 (git, Debian package)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-gitleaks",
+      "tag": "latest",
+      "digest": "sha256:1e911eb737c36a82bdb3827612155ab0665e4e93766903e3ff0a61d800b10a54",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder or repository to scan (read-only is enough)",
+          "required": true
+        }
+      ],
+      "network": "none",
+      "notes": "A scanned repository's own git configuration cannot make git run programs: textconv and external diff drivers, fsmonitor and hooks are switched off for every git call."
+    },
+    {
+      "id": "hub:john",
+      "name": "john",
+      "title": "John the Ripper",
+      "description": "Password hash cracking with John the Ripper (bleeding-jumbo, CPU only): wordlist mode with rules (the bundled password.lst or your wordlist from /work), single crack and incremental mode, for a bounded time, with autodetected or chosen hash format; extract_hash turns protected zip, rar, PDF, Office, SSH key and KeePass files from /work into crackable hashes. No network.",
+      "category": "Security: Passwords & Crypto",
+      "tags": [
+        "security",
+        "passwords",
+        "john",
+        "hash-cracking",
+        "crypto",
+        "pentest"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/john",
+      "page": "https://www.openwall.com/john/",
+      "license": "MIT (MCP server, axross-mcp-hub) AND GPL-2.0-or-later with relaxed terms for components (John the Ripper jumbo; unRAR code under its own licence)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-john",
+      "tag": "latest",
+      "digest": "sha256:9299473b2c58dcab14fffed9fcd12f799d7bd7aec2d5760615ecaae150afbe40",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "Optional: wordlists and protected files (read-only is enough)"
+        }
+      ],
+      "network": "none",
+      "notes": "Crack only hashes you are authorized to crack. Hashes go to a private temporary file, never onto a command line; each run ends after max_seconds (at most 30 minutes), and the pot file is discarded with the run."
+    },
+    {
+      "id": "hub:mcpcap",
+      "name": "mcpcap",
+      "title": "mcpcap (PCAP analysis)",
+      "description": "Analyzes packet captures (.pcap, .pcapng, .cap) with scapy: DNS, DHCP, ICMP, SIP, TCP connections, anomalies, retransmissions, traffic flows and capinfos-style statistics. Files are read from the folder mounted at /work (tools take /work/<file>). No network.",
+      "category": "Security: Firmware & Forensics",
+      "tags": [
+        "security",
+        "pcap",
+        "network-forensics",
+        "dns",
+        "tcp"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/mcpcap",
+      "page": "https://github.com/mcpcap/mcpcap",
+      "license": "MIT (mcpcap) AND GPL-2.0-only (scapy)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-mcpcap",
+      "tag": "latest",
+      "digest": "sha256:370c6b6ad965da321fea0ecc5953261648061d709fee90a8eeca4234fdc89127",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the capture files (read-only is enough)",
+          "required": true
+        }
+      ],
+      "network": "none",
+      "notes": "mcpcap can also download a capture from an http(s) URL; with no network (the default) that fails, which is intended."
+    },
+    {
+      "id": "hub:nmap",
+      "name": "nmap",
+      "title": "Nmap",
+      "description": "Network reconnaissance with Nmap: TCP connect port scans, service and version detection, NSE scripts and a quick top-100 scan, with parsed results. Needs network: Full (scans go to arbitrary hosts and ports, which an HTTP allowlist cannot carry).",
+      "category": "Security: Network Recon",
+      "tags": [
+        "security",
+        "nmap",
+        "port-scan",
+        "recon",
+        "network"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/nmap",
+      "page": "https://nmap.org/",
+      "license": "MIT (MCP server, FuzzingLabs) AND Nmap licence (GPL-2.0 with clarifications, Debian package)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-nmap",
+      "tag": "latest",
+      "digest": "sha256:bcdddace714f116aa88601a83a075791843117073f7eb7a5bb079111f96b7d47",
+      "network": "full",
+      "notes": "TCP connect scans only: axross grants the container no NET_RAW, so SYN, UDP and OS-detection scans are not offered. Scan only systems you are authorized to test."
+    },
+    {
+      "id": "hub:nuclei",
+      "name": "nuclei",
+      "title": "Nuclei (ProjectDiscovery)",
+      "description": "Template-based vulnerability scanning with ProjectDiscovery nuclei and a pinned nuclei-templates release: full scans with severity and tag filters, a quick high/critical scan, and scans by category (cves, exposures, misconfiguration, technologies, default-logins, takeovers, network, ssl, dns, ...). Needs network: Full.",
+      "category": "Security: Web",
+      "tags": [
+        "security",
+        "nuclei",
+        "vulnerability-scan",
+        "web",
+        "cve"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/nuclei",
+      "page": "https://github.com/projectdiscovery/nuclei",
+      "license": "MIT (MCP server, FuzzingLabs; nuclei; nuclei-templates)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-nuclei",
+      "tag": "latest",
+      "digest": "sha256:33a7eec075b8da465494115b377714e1c226fe37ea4ece3d56efe1aee2062016",
+      "network": "full",
+      "notes": "Interactsh (out-of-band callbacks through a third-party server) and template updates are off. A scan with every template can exceed axross's 512 MiB memory limit: prefer categories, tags or severities. Scan only systems you are authorized to test."
+    },
+    {
+      "id": "hub:radare2",
+      "name": "radare2",
+      "title": "radare2 (r2mcp)",
+      "description": "Reverse engineering with radare2 through its official MCP server r2mcp: open a binary, analyze, list functions, imports, strings and sections, disassemble, decompile (r2's pdc), cross references. Binaries are read from the folder mounted at /work (open_file takes /work/<file>); r2mcp refuses paths outside /work. No network.",
+      "category": "Security: Reverse Engineering",
+      "tags": [
+        "security",
+        "reverse-engineering",
+        "radare2",
+        "disassembler",
+        "decompiler"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/radare2",
+      "page": "https://github.com/radareorg/radare2-mcp",
+      "license": "MIT (r2mcp) AND LGPL-3.0-only (radare2; some plugins GPL-3.0, Apache-2.0, BSD)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-radare2",
+      "tag": "latest",
+      "digest": "sha256:0da8157a518f32fb4b28e7c32af1bda7358c434e875b05a17a44793716697a43",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the binaries to analyze (read-only is enough)",
+          "required": true
+        }
+      ],
+      "network": "none",
+      "notes": "radare2's own sandbox is on (no shell, no sockets, no file writes) and the raw run_command / run_javascript tools are off. The sql tool needs the r2xsql plugin, which is not included."
+    },
+    {
+      "id": "hub:sleuthkit",
+      "name": "sleuthkit",
+      "title": "The Sleuth Kit",
+      "description": "Disk image forensics with The Sleuth Kit 4.12: partition tables (mmls), file system details (fsstat), file listings including deleted entries (fls), inode metadata (istat), reading a file's content by inode (icat, also deleted files), extracting it to /out, and a MAC timeline (fls + mactime). Images (raw/dd, E01 where supported) are read from the folder mounted at /work. No network.",
+      "category": "Security: Firmware & Forensics",
+      "tags": [
+        "security",
+        "forensics",
+        "sleuthkit",
+        "disk-image",
+        "dfir",
+        "timeline"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/sleuthkit",
+      "page": "https://sleuthkit.org/",
+      "license": "MIT (MCP server, axross-mcp-hub) AND CPL-1.0, IPL-1.0 and others (The Sleuth Kit, Debian package; see its copyright file)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-sleuthkit",
+      "tag": "latest",
+      "digest": "sha256:af88a4326563eb37ee32516a6c76c18ec058a12a16d350c46a5bb310bf9c2d47",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the disk images (read-only is enough)",
+          "required": true
+        },
+        {
+          "target": "/out",
+          "description": "A folder for extracted files (tick writable)"
+        }
+      ],
+      "network": "none",
+      "notes": "read_file returns at most 1 MiB of a file (text or hex); extract_file writes the whole file into /out and never overwrites. The image is only read."
+    },
+    {
+      "id": "hub:sqlmap",
+      "name": "sqlmap",
+      "title": "sqlmap",
+      "description": "SQL injection detection and exploitation with sqlmap: scan a URL, test a parameter, enumerate databases, tables and columns, dump table data. Needs network: Full.",
+      "category": "Security: Web",
+      "tags": [
+        "security",
+        "sqlmap",
+        "sql-injection",
+        "web",
+        "exploitation"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/sqlmap",
+      "page": "https://sqlmap.org/",
+      "license": "MIT (MCP server, FuzzingLabs) AND GPL-2.0-or-later (sqlmap, with its clarifications)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-sqlmap",
+      "tag": "latest",
+      "digest": "sha256:38cb2d0bf81801444b18812286a31935fad92fc208629de38fb232677d22fd48",
+      "network": "full",
+      "notes": "sqlmap changes data on the target only through what you ask for (dump reads). Test only systems you are authorized to test."
+    },
+    {
+      "id": "hub:tshark",
+      "name": "tshark",
+      "title": "TShark (Wireshark)",
+      "description": "Packet capture analysis with Wireshark's TShark 4.4: capture summary (capinfos), protocol hierarchy, conversations, endpoints, packets with display filters and chosen fields, TCP/UDP/HTTP stream contents, HTTP requests, DNS queries and clear-text credentials. Captures (.pcap, .pcapng) are read from the folder mounted at /work. No network: TShark only reads files, never captures and never resolves names.",
+      "category": "Security: Firmware & Forensics",
+      "tags": [
+        "security",
+        "forensics",
+        "pcap",
+        "wireshark",
+        "tshark",
+        "network-analysis"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/tshark",
+      "page": "https://www.wireshark.org/",
+      "license": "MIT (MCP server, axross-mcp-hub) AND GPL-2.0-or-later (Wireshark/TShark, Debian package)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-tshark",
+      "tag": "latest",
+      "digest": "sha256:bcdc508f69ed5ac060e4564405735b9e943dba374b5770f161c12e92579500f3",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder with the capture files (read-only is enough)",
+          "required": true
+        }
+      ],
+      "network": "none",
+      "notes": "Display filters and field names are validated and passed as single arguments; a capture is parsed by Wireshark's dissectors inside the container (no capabilities, no network)."
+    },
+    {
+      "id": "hub:yara",
+      "name": "yara",
+      "title": "YARA",
+      "description": "Scans files and folders with YARA: the bundled Yara-Rules subset (crypto constants, packers, anti-debug/anti-VM, capabilities), your own rule files, or inline rules. Targets are read from the folder mounted at /work; extra rule files can be mounted at /rules. No network.",
+      "category": "Security: Firmware & Forensics",
+      "tags": [
+        "security",
+        "yara",
+        "malware-analysis",
+        "forensics",
+        "detection"
+      ],
+      "repository": "https://github.com/c0decave/axross-mcp-hub/tree/main/servers/yara",
+      "page": "https://github.com/VirusTotal/yara",
+      "license": "MIT (MCP server, FuzzingLabs) AND BSD-3-Clause (YARA) AND GPL-2.0-only (bundled Yara-Rules)",
+      "kind": "oci",
+      "image": "ghcr.io/c0decave/axross-mcp-yara",
+      "tag": "latest",
+      "digest": "sha256:4b9e36a21d05922fc52260688601232248e60ecaa1007126329c4623c4b3262f",
+      "mounts": [
+        {
+          "target": "/work",
+          "description": "The folder to scan (read-only is enough)",
+          "required": true
+        },
+        {
+          "target": "/rules",
+          "description": "A folder with your own .yar rule files"
+        }
+      ],
+      "network": "none",
+      "notes": "Inline rules may not use include. Directory scans do not follow symbolic links."
+    }
+  ]
+}

@@ -134,3 +134,37 @@ def test_edge_a_startup_script_of_several_statements_runs_whole(monkeypatch, tmp
         assert widget._globals.get("second") == 2
     finally:
         widget.deleteLater()
+
+
+# -- Run in Console on a bundled example (Scripts dock) ----------------------------------
+
+
+def test_happy_an_example_runs_with_its_call_in_the_live_namespace(repl, tmp_path) -> None:
+    (tmp_path / "f.bin").write_bytes(b"y" * 777)
+    call = f"sizes = du(axross.localfs(), {str(tmp_path)!r})\nprint('example says', sizes[0][1])\n"
+    assert repl.run_example("du", call) is True
+    assert callable(repl._globals["du"]) and repl._globals["sizes"][0][1] == 777
+    text = repl.toPlainText()
+    assert "# example du" in text and "example says 777" in text
+    assert text.endswith(">>> ")
+
+
+def test_sad_paranoid_mode_refuses_an_example_too(repl, tmp_path) -> None:
+    marker = tmp_path / "ran"
+    with mock.patch.object(security_mode, "current_policy", return_value=security_mode.PARANOID):
+        assert repl.run_example("du", f"open({str(marker)!r}, 'w').write('x')") is False
+    assert not marker.exists()
+    assert "paranoid" in repl.toPlainText()
+
+
+def test_sad_an_unknown_example_is_reported(repl) -> None:
+    assert repl.run_example("no_such_example_xyz", "x = 1") is False
+    assert "run failed" in repl.toPlainText()
+
+
+def test_edge_an_open_block_is_not_interrupted_by_an_example(repl) -> None:
+    repl._replace_input("for i in range(2):")
+    repl._submit_current()
+    assert repl.run_example("du", "print('never')") is False
+    assert "never" not in repl.toPlainText().split("did not run")[-1]
+    assert "finish" in repl.toPlainText()

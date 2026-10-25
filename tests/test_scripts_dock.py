@@ -143,12 +143,14 @@ def test_happy_saved_scripts_and_bundled_examples_are_listed(dock, names) -> Non
     assert "du" in texts  # a bundled example
 
 
-def test_happy_an_example_opens_read_only_and_can_only_be_copied(dock) -> None:
+def test_happy_an_example_opens_read_only_runs_and_can_only_be_copied(dock) -> None:
     assert dock.open_example("du")
     assert dock.editor.isReadOnly()
     assert "def du(" in dock.editor.toPlainText()
-    for action in (dock.save_action, dock.rename_action, dock.delete_action, dock.run_action):
+    for action in (dock.save_action, dock.rename_action, dock.delete_action):
         assert not action.isEnabled()
+    # Run asks for the example's call first (tests/test_scripts_examples_usable.py)
+    assert dock.run_action.isEnabled() and dock.console_action.isEnabled()
     assert dock.copy_example_action.isEnabled()
 
 

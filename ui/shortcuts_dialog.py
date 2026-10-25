@@ -33,6 +33,8 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("File operations", ("F4",), "Edit file (text / hex)"),
     ("File operations", ("F5",), "Copy to the target pane"),
     ("File operations", ("F6",), "Move to the target pane"),
+    ("File operations", ("Ctrl+X",), "Cut: remember the selection for Paste (nothing is removed)"),
+    ("File operations", ("Ctrl+V",), "Paste: move the cut entries into this folder"),
     ("File operations", ("F7",), "New folder"),
     ("File operations", ("Del",), "Delete"),
     ("File operations", ("Return",), "Open file / enter folder"),
@@ -44,7 +46,7 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Navigation", ("Alt+Left",), "History back"),
     ("Navigation", ("Alt+Right",), "History forward"),
     ("Navigation", ("Ctrl+L",), "Focus the path bar"),
-    ("Navigation", ("Ctrl+F",), "Focus the filter"),
+    ("Navigation", ("Ctrl+F",), "Focus the filter (Esc there clears it)"),
     ("Navigation", ("Ctrl+Shift+F",), "Find in index"),
     (
         "Navigation",
@@ -59,7 +61,9 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
     ("Selection", ("Ctrl+Shift+A",), "Invert selection"),
     ("Selection", ("Shift+Click",), "Select a range"),
     ("Selection", ("Ctrl+Click",), "Add to / remove from the selection"),
-    ("Selection", ("Esc",), "Clear the selection, or stop a running load"),
+    ("Selection", ("Esc",),
+     "Stop a running load, else clear the filter, else the selection, else drop the "
+     "pending Cut"),
     ("Bookmarks", ("F8", "Ctrl+Shift+B"), "Bookmark the current folder"),
     ("Bookmarks", ("Ctrl+D",), "Bookmark the current folder (in the file list)"),
     ("Bookmarks", ("Ctrl+B",), "Open the bookmarks menu"),

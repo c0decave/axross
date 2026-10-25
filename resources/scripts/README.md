@@ -1,8 +1,10 @@
 # Bundled axross scripts
 
-32 ready-to-run Python scripts that exercise the `axross.*` scripting
-surface against the registered backends. Each is a single self-contained
-`.py` file under this directory.
+32 example scripts that exercise the `axross.*` scripting surface against
+the registered backends. Each is a single self-contained `.py` file under
+this directory that defines functions; the `Usage::` block of its
+docstring shows the call. Running a file as it is defines the functions
+and prints nothing - add the call (adjusted) after it.
 
 ## Ways to run
 
@@ -19,9 +21,11 @@ cp resources/scripts/du.py ~/.config/axross/scripts/
 #   .run du
 ```
 
-4. In the GUI: *View > Panels > Scripts* lists these under **Examples**;
-   **Copy to My Scripts** makes an editable copy you can **Run** (in its
-   own process) or **Run in Console**.
+4. In the GUI: *View > Panels > Scripts* lists these under **Examples**.
+   **Run** (in its own process) or **Run in Console** on an example shows
+   its Usage call to adjust and runs the example with it; **Copy to My
+   Scripts** makes an editable copy whose end carries that call as a
+   commented "Try it" section.
 
 `--script` takes no further arguments (argparse refuses them). Every
 script here defines functions and runs nothing on its own; call them

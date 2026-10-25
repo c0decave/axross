@@ -140,6 +140,12 @@ class _SortItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
+#: The Name cell. A name has no sort value, so a _SortItem only fell back to
+#: Qt's comparison - through a Python call per comparison (~66,000 per
+#: batch of rows at 5000 results); a plain item compares the same in Qt.
+_NameItem = QTableWidgetItem
+
+
 class FindFilesDialog(QDialog):
     """Search criteria, folders, results; see the module docstring."""
 
@@ -583,7 +589,7 @@ class FindFilesDialog(QDialog):
         name, folder = _split_display(scope, hit)
         row = self.table.rowCount()
         self.table.insertRow(row)
-        name_item = _SortItem(name)
+        name_item = _NameItem(name)
         name_item.setData(_ROW_ROLE, index)
         name_item.setToolTip(hit.path)
         size_item = _SortItem(_format_size(hit.size) if not hit.is_dir else "")

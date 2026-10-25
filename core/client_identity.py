@@ -78,3 +78,68 @@ def apply_paramiko_banner_override() -> None:
         # Older paramiko layouts: best-effort fall-through. Individual
         # backends still set ``transport.local_version`` per-instance.
         log.debug("paramiko.Transport._CLIENT_ID attribute missing")
+
+
+#: The module whose import defines paramiko.Transport.
+_TRANSPORT_MODULE = "paramiko.transport"
+
+
+class _BannerLoader:
+    """Runs the real loader, then gives the new module's Transport the
+    banner. A wrapper, never a change to the real loader: a frozen build's
+    importer is one object that loads every module."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def create_module(self, spec):
+        create = getattr(self._inner, "create_module", None)
+        return create(spec) if create is not None else None  # None: the default module
+
+    def exec_module(self, module) -> None:
+        self._inner.exec_module(module)
+        # Not through ``import paramiko``: the package is still running its
+        # own import of this module and has no Transport name yet.
+        module.Transport._CLIENT_ID = SSH_LOCAL_VERSION.removeprefix("SSH-2.0-")
+
+    def __getattr__(self, name):  # get_code, get_source, is_package ...
+        return getattr(self._inner, name)
+
+
+class _BannerOnImport:
+    """A ``sys.meta_path`` finder for paramiko.transport only: it asks the
+    finders after it for the module and hands back their spec with the
+    loader wrapped in :class:`_BannerLoader` - so Transport has the banner
+    before any code can make one."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != _TRANSPORT_MODULE:
+            return None
+        import sys  # noqa: PLC0415
+
+        for finder in sys.meta_path:
+            find = getattr(finder, "find_spec", None)
+            if finder is self or find is None:
+                continue
+            spec = find(fullname, path, target)
+            if spec is None:
+                continue
+            if spec.loader is not None and hasattr(spec.loader, "exec_module"):
+                spec.loader = _BannerLoader(spec.loader)
+            return spec
+        return None
+
+
+def banner_override_on_import() -> None:
+    """The banner of :func:`apply_paramiko_banner_override` without
+    importing paramiko now: applied at once when paramiko.transport is
+    loaded already, else the moment something imports it. For the GUI
+    start, which needs no SSH until a connection is opened (paramiko with
+    invoke and yaml costs ~0.14 s). Idempotent."""
+    import sys  # noqa: PLC0415
+
+    if _TRANSPORT_MODULE in sys.modules:
+        apply_paramiko_banner_override()
+        return
+    if not any(isinstance(finder, _BannerOnImport) for finder in sys.meta_path):
+        sys.meta_path.insert(0, _BannerOnImport())

@@ -16,6 +16,7 @@ machine and one service.
 from __future__ import annotations
 
 import base64
+import http.client
 import ipaddress
 import logging
 import socket
@@ -303,11 +304,49 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
         )
 
 
+class _LazyHTTPSHandler(urllib.request.HTTPSHandler):
+    """urllib's HTTPSHandler, but its SSL context is made at the first https
+    request instead of in the constructor. urllib makes it at once
+    (``set_default_verify_paths``: 3.3 ms holding the GIL) for every opener -
+    every model request, model check and http MCP request - also for an
+    http:// endpoint, which never uses it. Made the way urllib makes it."""
+
+    def __init__(self, debuglevel=None, context=None, check_hostname=None):
+        urllib.request.AbstractHTTPHandler.__init__(
+            self, debuglevel if debuglevel is not None
+            else http.client.HTTPSConnection.debuglevel)
+        if context is not None and check_hostname is not None:
+            context.check_hostname = check_hostname
+        self._given_context = context
+        self._check_hostname = check_hostname
+        self._context_lock = threading.Lock()
+
+    @property
+    def _context(self):
+        """The SSL context of this handler's https requests (urllib reads it)."""
+        with self._context_lock:
+            if self._given_context is None:
+                make = getattr(http.client, "_create_https_context", None)
+                if make is None:
+                    # Python < 3.12: urllib left it to HTTPSConnection, too.
+                    return None
+                context = make(http.client.HTTPSConnection._http_vsn)
+                if self._check_hostname is not None:
+                    context.check_hostname = self._check_hostname
+                self._given_context = context
+            return self._given_context
+
+
 def opener_without_redirects(*handlers) -> urllib.request.OpenerDirector:
     """urllib's opener (environment proxies included) that never follows a
     redirect: urllib would send the Authorization header on to the host the
     redirect names - an API key or token past the allowed hosts. *handlers*
-    are added (an :class:`AbortableConnections`' ones)."""
+    are added (an :class:`AbortableConnections`' ones). The https handler
+    makes its SSL context only when an https request needs it."""
+    if not any(isinstance(h, urllib.request.HTTPSHandler)
+               or (isinstance(h, type) and issubclass(h, urllib.request.HTTPSHandler))
+               for h in handlers):
+        handlers = (*handlers, _LazyHTTPSHandler())
     return urllib.request.build_opener(_RefuseRedirects, *handlers)
 
 
@@ -373,7 +412,7 @@ class _TrackingHTTPHandler(urllib.request.HTTPHandler):
         return super().do_open(self._tracker._factory(http_class), req, **kwargs)
 
 
-class _TrackingHTTPSHandler(urllib.request.HTTPSHandler):
+class _TrackingHTTPSHandler(_LazyHTTPSHandler):
     def __init__(self, tracker: AbortableConnections) -> None:
         super().__init__()
         self._tracker = tracker

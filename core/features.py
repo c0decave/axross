@@ -49,7 +49,7 @@ EXTRAS: dict[str, tuple[str, ...]] = {
     "postgres": ("psycopg[binary]>=3.1",),
     "redis": ("redis>=5.0",),
     "mongo": ("pymongo>=4.6.3",),
-    "git": ("dulwich>=1.2.5",),
+    "git": ("dulwich>=1.2.5", "urllib3>=2.8.0"),
     "dns": ("dnspython>=2.6.1",),
     "magic": ("puremagic>=1.20",),
     "encoding": ("chardet>=5.2",),

@@ -314,6 +314,9 @@ def ssh_hostkey(host: str, port: int = 22, *, timeout: float = 5.0) -> SshHostKe
 
     import paramiko
 
+    from core.client_identity import apply_paramiko_banner_override
+
+    apply_paramiko_banner_override()  # also set on import (main.py); a probe never says paramiko
     sock = socket.create_connection((host, int(port)), timeout=timeout)
     try:
         t = paramiko.Transport(sock)

@@ -112,6 +112,14 @@ PILLOW_FALLBACK_FORMATS = (
 # Default thumbnail edge length.
 DEFAULT_THUMBNAIL_EDGE = 256
 
+# The quality Qt writes a thumbnail's PNG with. Qt turns it into zlib's
+# level as (100 - quality) * 9 // 91: 50 -> 4. Measured on photo tiles: the
+# default (level 6) took 5.9 ms at 128 px and 28 ms at 256 px, level 4 takes
+# 1.7 and 8 ms for files of the same size (lossless either way).
+THUMBNAIL_PNG_QUALITY = 50
+# The same level for a thumbnail the Pillow fallback writes.
+THUMBNAIL_PNG_LEVEL = (100 - THUMBNAIL_PNG_QUALITY) * 9 // 91
+
 # Longest edge :func:`decode_image` produces by default (the media viewer's
 # full-window view). Larger pictures are scaled down while decoding.
 VIEWER_MAX_EDGE = 4096
@@ -302,8 +310,11 @@ def _store_cached(cache_file: Path, data: bytes) -> None:
             pass
 
 
-def _decode_with_pillow(abs_path: str, edge: int | None) -> bytes:
-    """Decode *abs_path* with Pillow and return PNG-encoded bytes.
+def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True):
+    """Decode *abs_path* with Pillow and return PNG-encoded bytes - or,
+    with ``encode=False``, the decoded image itself (mode RGB, RGBA, L, LA
+    or P) for :func:`_qimage_from_pillow`: the viewer does not pay for a PNG
+    encode and decode of a picture it shows at once.
 
     This is the fallback for formats Qt's ``QImageReader`` can't read
     in this build (e.g. TIFF when the Qt tiff plugin is absent). The
@@ -378,13 +389,52 @@ def _decode_with_pillow(abs_path: str, edge: int | None) -> bytes:
     # The viewer passes a large edge meaning "full res" — never upscale.
     if edge is not None and max(w, h) > edge:
         img.thumbnail((edge, edge))
+    if not encode:
+        return img
+    return _pillow_png(img, abs_path)
 
+
+def _pillow_png(img, abs_path: str) -> bytes:
+    """*img* (a Pillow image) as PNG bytes at THUMBNAIL_PNG_LEVEL."""
     buf = io.BytesIO()
     try:
-        img.save(buf, format="PNG")
+        img.save(buf, format="PNG", compress_level=THUMBNAIL_PNG_LEVEL)
     except Exception as exc:
         raise PreviewDecodeFailed(f"{abs_path}: Pillow PNG encode failed: {exc}") from exc
     return buf.getvalue()
+
+
+def _qimage_from_pillow(img):
+    """A QImage of the Pillow image *img* (from :func:`_decode_with_pillow`
+    with ``encode=False``) in the format Qt's PNG reader gives the same
+    picture: RGB32 for colour, ARGB32 with an alpha channel, Grayscale8 for
+    grey - the same pixels the PNG round trip produced."""
+    from PyQt6.QtGui import QImage
+
+    if img.mode == "P":
+        img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+    elif img.mode == "LA":
+        img = img.convert("RGBA")
+    if img.mode == "RGB":
+        source, target = QImage.Format.Format_RGB888, QImage.Format.Format_RGB32
+        depth = 3
+    elif img.mode == "RGBA":
+        source, target = QImage.Format.Format_RGBA8888, QImage.Format.Format_ARGB32
+        depth = 4
+    elif img.mode == "L":
+        source = target = QImage.Format.Format_Grayscale8
+        depth = 1
+    else:  # pragma: no cover - _decode_with_pillow converts every other mode
+        raise PreviewDecodeFailed(f"no QImage for Pillow mode {img.mode!r}")
+    width, height = img.size
+    data = img.tobytes()
+    image = QImage(data, width, height, width * depth, source)
+    # convertToFormat / copy make an image that owns its pixels: *data*
+    # goes when this returns.
+    out = image.convertToFormat(target) if target != source else image.copy()
+    if out.isNull():
+        raise PreviewDecodeFailed(f"{width}x{height} picture could not be converted")
+    return out
 
 
 def _checked_source(backend, path: str, *, allow_svg: bool) -> tuple[str, os.stat_result, str]:
@@ -425,14 +475,14 @@ def _png_bytes(image) -> bytes:
 
     buf = QBuffer()
     buf.open(QIODevice.OpenModeFlag.WriteOnly)
-    if not image.save(buf, "PNG"):
+    if not image.save(buf, "PNG", THUMBNAIL_PNG_QUALITY):
         raise PreviewDecodeFailed("PNG encode of decoded image failed")
     return bytes(buf.data())
 
 
 def _read_raster(abs_path: str, edge: int):
     """Decode *abs_path* scaled to fit *edge*: ``(QImage, None)`` from Qt, or
-    ``(None, png_bytes)`` from the Pillow fallback."""
+    ``(None, pillow_image)`` from the Pillow fallback (not yet encoded)."""
     try:
         from PyQt6.QtCore import QSize
         from PyQt6.QtGui import QImage, QImageReader
@@ -482,7 +532,7 @@ def _read_raster(abs_path: str, edge: int):
         # Pillow fallback. The MAX_INPUT_SIZE gate already ran above;
         # _decode_with_pillow re-checks the dimension cap from the
         # header before fully decoding.
-        return None, _decode_with_pillow(abs_path, edge)
+        return None, _decode_with_pillow(abs_path, edge, encode=False)
     return image, None
 
 
@@ -640,17 +690,12 @@ def thumbnail(
             )
 
     if mime == SVG_MIME:
-        image, data = _render_svg(abs_path, edge), None
+        image, pillow = _render_svg(abs_path, edge), None
     else:
-        image, data = _read_raster(abs_path, edge)
-    if data is not None:
-        from PyQt6.QtGui import QImage
-
-        # Parse dimensions back from the PNG the Pillow fallback produced
-        # so the ThumbnailResult contract (width/height) matches the Qt path.
-        decoded = QImage.fromData(data, "PNG")
-        out_w = decoded.width() if not decoded.isNull() else edge
-        out_h = decoded.height() if not decoded.isNull() else edge
+        image, pillow = _read_raster(abs_path, edge)
+    if pillow is not None:
+        data = _pillow_png(pillow, abs_path)
+        out_w, out_h = pillow.size
     else:
         data = _png_bytes(image)
         out_w, out_h = image.width(), image.height()
@@ -683,15 +728,10 @@ def decode_image(
     edge = max(16, min(int(max_edge), MAX_DIMENSION))
     if mime == SVG_MIME:
         return _render_svg(abs_path, edge)
-    image, data = _read_raster(abs_path, edge)
+    image, pillow = _read_raster(abs_path, edge)
     if image is not None:
         return image
-    from PyQt6.QtGui import QImage
-
-    image = QImage.fromData(data, "PNG")
-    if image.isNull():
-        raise PreviewDecodeFailed(f"{abs_path}: decoded image could not be read back")
-    return image
+    return _qimage_from_pillow(pillow)
 
 
 # ---------------------------------------------------------------------------

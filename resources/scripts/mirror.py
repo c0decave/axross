@@ -5,16 +5,11 @@ changed (sha256 mismatch) to DST_PATH on the destination backend.
 Skips files whose hashes already match — so re-running a mirror is
 cheap.
 
-Usage from the REPL or via ``axross --script``::
+Usage::
 
     src = axross.open("backup-source")
     dst = axross.open("backup-target")
-    main(src, "/var/log", dst, "/mirror/var/log")
-
-Or invoke from CLI::
-
-    axross --script resources/scripts/mirror.py
-    # then in the script's __main__ block edit the SRC_/DST_ vars.
+    print(main(src, "/var/log", dst, "/mirror/var/log"))
 """
 
 from __future__ import annotations

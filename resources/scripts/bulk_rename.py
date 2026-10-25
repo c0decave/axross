@@ -5,6 +5,12 @@ the regex PATTERN to the same path with the basename rewritten via
 ``re.sub(PATTERN, REPLACEMENT, basename)``.
 
 Use ``dry_run=True`` to preview without touching anything (default).
+
+Usage::
+
+    plan = bulk_rename(axross.localfs(), "/tmp/photos", r"^IMG_", "holiday_")
+    for old, new in plan:
+        print(old, "->", new)
 """
 
 from __future__ import annotations

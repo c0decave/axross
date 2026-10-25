@@ -153,9 +153,41 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
 
 *Agent Stats.* La extensión incluida cuenta tareas, tool calls, errores y tokens, de todos los tabs y del último.
 
+![El menú + del dock Agent con New Tab from Profile y los siete presets](docs/screenshots/agent-profiles.png)
+
+*Perfiles de agente.* La flecha junto a **+** abre un nuevo tab de Agent desde un perfil - siete presets (Files Assistant, Reverse Engineering, Forensics read-only, Network & Web Recon, Code & Secrets, Remote Ops, Research) o uno propio. El tab nombra su perfil y lo que aún falta, con **Install from Catalog…**.
+
+![Settings, Agent, Profiles: el preset Reverse Engineering y lo que recibe un tab](docs/screenshots/agent-profile-settings.png)
+
+*Página Profiles.* Un perfil agrupa LLM, perfil de prompt, protection mode, sandbox, grupos de tools, funciones de axross y servidores MCP por categoría o nombre. Los presets son read-only, **Copy** crea uno editable y la vista previa muestra lo que recibe un tab dentro de la página Access.
+
+![Add MCP Server from Catalog con los servidores del c0decave MCP Hub](docs/screenshots/mcp-catalog.png)
+
+*Catálogo MCP.* El c0decave MCP Hub añade 17 herramientas de seguridad - binwalk, capa, Nmap, YARA, The Sleuth Kit y más - como imágenes fijadas por digest; cada una corre en podman sin capabilities, con la raíz read-only y sin red salvo que la permitas. Una entrada de terceros como REA dice quién la mantiene.
+
+![Dos archivos cortados en un panel, Paste arriba del menú contextual del otro](docs/screenshots/cut-paste.png)
+
+*Cut y Paste.* Ctrl+X o clic derecho **Cut** solo marca los archivos (atenuados); **Paste** en cualquier panel los mueve por la cola de transferencias, y cada origen se elimina solo cuando su copia terminó y fue verificada. Esc vacía el filtro.
+
+![Amber Mode con cada icono en su propio color y Settings, Appearance](docs/screenshots/icon-colours.png)
+
+*Colores de iconos.* **Settings → Appearance → Icon colours**: el default del tema, colores propios en cada tema - aquí en Amber Mode, cuyo default dibuja cada icono en ámbar - o un color propio.
+
+![Software Update: hay un axross más nuevo, con Download and Install](docs/screenshots/update.png)
+
+*Self-update.* `axross-full` y `axross-slim` buscan una release nueva una vez por arranque, muestran **Update to …** en la barra de estado y se reemplazan tras la comprobación SHA-256; el binario anterior se conserva.
+
+![El dock Scripts ejecuta el ejemplo incluido du con una llamada a ajustar](docs/screenshots/scripts-example.png)
+
+*Los ejemplos corren directamente.* **Run** en un ejemplo incluido muestra su llamada Usage para ajustarla - rutas, hosts, perfiles - y lo ejecuta; el output aparece debajo.
+
+![Help, Third-Party Software: los proyectos que axross usa o incluye, con licencias](docs/screenshots/third-party.png)
+
+*Software de terceros.* **Help → Third-Party Software…** lista los 222 proyectos que axross usa o incluye, con propósito, licencia, cómo te llega y enlace.
+
 ---
 
-## 37 puntos fuertes
+## 44 puntos fuertes
 
 1. **Más de 30 protocolos, una UI consistente.** SFTP/SCP, FTP/FTPS,
    SMB/CIFS, WebDAV, S3-compatible, Rsync, NFS, Azure Blob/Files,
@@ -475,6 +507,60 @@ Idiomas: [English](README.md) · [Deutsch](README_de.md) · **Español**
     anidados y extraer todo o solo la selección, con protección contra
     zip bombs y zip slip.
 
+38. **Perfiles de agente.** Conjuntos con nombre de lo que recibe un tab
+    de Agent: perfil de LLM, perfil de prompt, protection mode, sandbox,
+    grupos de tools, funciones de axross, files read-only y servidores MCP
+    por categoría o nombre. Siete presets - Files Assistant, Reverse
+    Engineering, Forensics read-only, Network & Web Recon, Code & Secrets,
+    Remote Ops, Research - y los tuyos en **Settings → Agent → Profiles**,
+    con una vista previa de lo que recibe un tab. La flecha **+** del dock
+    Agent y **Tools → New Agent Tab from Profile** abren un tab desde un
+    perfil, **Apply Profile…** configura un tab abierto, y un servidor MCP
+    que falta está a un clic (**Install from Catalog…**).
+
+39. **Servidores MCP de un catálogo, contenidos.** **Add from Catalog…**
+    busca en el catálogo incluido, el c0decave MCP Hub (17 herramientas de
+    seguridad como binwalk, capa, Nmap, YARA y The Sleuth Kit; solo
+    imágenes `ghcr.io/c0decave` fijadas por digest), el namespace `mcp` de
+    Docker Hub, el MCP Registry y listas curadas. Lo que se descarga corre
+    solo en podman: sin capabilities, sin nuevos privilegios, raíz
+    read-only y sin red salvo que la permitas. **Detected on this
+    machine** recoge los servidores MCP que tus otras herramientas ya
+    configuraron e instala los que descargan de forma contenida. Una
+    entrada de terceros como REA dice quién la mantiene.
+
+40. **Cut y Paste de archivos.** Ctrl+X / clic derecho **Cut** marca las
+    entradas (atenuadas, en cada panel); Ctrl+V / **Paste** las mueve a la
+    carpeta de cualquier panel por la cola de transferencias, y un origen
+    se elimina solo cuando su copia terminó y fue verificada - un cut que
+    nunca se pega no elimina nada. Esc en la línea de filtro vacía el
+    filtro.
+
+41. **Colores de iconos.** **Settings → Appearance → Icon colours**: el
+    default del tema, colores propios en cada tema (también Hacker y
+    Amber, que si no dibujan cada icono en su color) o un color propio -
+    en vivo, y conservado entre cambios de tema y arranques.
+
+42. **Self-update.** `axross-full` y `axross-slim` consultan las releases
+    de GitHub una vez por arranque, en segundo plano (**Settings →
+    Updates**; desactivado con `AXROSS_NO_UPDATE_CHECK=1` y en modo
+    `paranoid`), y muestran **Update to X.Y.Z…** en la barra de estado y
+    el menú Help; **Help → Check for Updates…** consulta al instante.
+    **Download and Install** comprueba el SHA-256 contra el SHA256SUMS de
+    la release y el digest de GitHub, reemplaza el binario de forma
+    atómica y conserva el anterior; **Restart Now** lo comprueba de nuevo
+    antes de arrancar la versión nueva.
+
+43. **Los ejemplos incluidos corren directamente.** **Run** o **Run in
+    Console** en un ejemplo incluido del dock Scripts muestra su llamada
+    Usage para ajustarla y ejecuta el ejemplo con ella; **Copy to My
+    Scripts** guarda la llamada como una sección comentada "Try it".
+
+44. **Software de terceros, con su crédito.** **Help → Third-Party
+    Software…** lista los 222 proyectos que axross usa o incluye -
+    propósito, licencia, cómo te llega, enlace - desde el mismo archivo de
+    datos que los agradecimientos al final de este README.
+
 ---
 
 ## Inicio rápido
@@ -568,3 +654,248 @@ Tres capas de distribución a tener en cuenta:
    resultante es Apache-2.0 únicamente, sin herencia copyleft.
 
 Copyright © 2026 Marco Lux.
+
+---
+
+<!-- third-party:readme -->
+<!-- Generated from resources/credits/third_party.json by `python -m core.third_party --write`; edit the data file, not this block. -->
+
+## Software de terceros y agradecimientos
+
+axross se apoya en el trabajo de muchas personas. Gracias a todos los que crean y mantienen los proyectos de abajo: sin ellos axross no existiría.
+
+La lista se genera a partir de [`resources/credits/third_party.json`](resources/credits/third_party.json), los mismos datos que la aplicación muestra en **Help > Third-Party Software…**. Los textos de las licencias y las notas para quien redistribuye están en [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+| Proyecto | Para qué | Licencia | Viene con |
+|---|---|---|---|
+| [adb_shell](https://github.com/JeffLIrion/adb_shell) | Android devices over ADB | Apache-2.0 | axross-full, axross-slim, pip [adb] |
+| [axross MCP hub](https://github.com/c0decave/axross-mcp-hub) | Catalogue of container-packaged MCP servers that the MCP catalog installs on request | MIT | imagen de contenedor |
+| [azure-storage-blob](https://github.com/Azure/azure-sdk-for-python) | Azure Blob Storage backend | MIT | axross-full, pip [azure] |
+| [azure-storage-file-share](https://github.com/Azure/azure-sdk-for-python) | Azure Files backend | MIT | axross-full, pip [azure] |
+| [backports.zstd](https://github.com/rogdham/backports.zstd) | Zstandard compression on Python versions before 3.14 | PSF-2.0 | axross-full, axross-slim, pip [archive] |
+| [boto3](https://github.com/boto/boto3) | Amazon S3 and S3-compatible storage | Apache-2.0 | axross-full, axross-slim, pip [s3] |
+| [Bubblewrap (bwrap)](https://github.com/containers/bubblewrap) | Agent sandbox | LGPL-2.1-or-later | en tu sistema |
+| [bzip2](https://sourceware.org/bzip2/) | bzip2 compression (Python's bz2 module) | bzip2-1.0.6 | axross-full, axross-slim |
+| [chardet](https://github.com/chardet/chardet) | Text encoding detection | 0BSD | axross-full, axross-slim, pip [encoding] |
+| [cryptography](https://github.com/pyca/cryptography) | Encrypted overlay, certificate inspection; cryptography for SSH and TLS | Apache-2.0 OR BSD-3-Clause | axross-full, axross-slim, pip |
+| [ctranslate2](https://github.com/OpenNMT/CTranslate2) | Runs the Whisper speech recognition models | MIT | axross-full, pip [voice] |
+| [D-Bus](https://www.freedesktop.org/wiki/Software/dbus/) | Desktop bus access of Qt (notifications, portals, keyring) | AFL-2.1 OR GPL-2.0-or-later | axross-full, axross-slim |
+| [defusedxml](https://github.com/tiran/defusedxml) | Safe XML parsing (WebDAV responses and other XML input) | PSF-2.0 | axross-full, axross-slim, pip [webdav] |
+| [dnspython](https://github.com/rthalley/dnspython) | DNS lookups (scripting helpers and SRV discovery) | ISC | axross-full, axross-slim, pip [dns] |
+| [Docker](https://www.docker.com) | Agent sandbox and MCP server containers | Apache-2.0 | en tu sistema |
+| [dropbox](https://github.com/dropbox/dropbox-sdk-python) | Dropbox backend | MIT | axross-full, pip [dropbox] |
+| [dulwich](https://github.com/dulwich/dulwich) | Git repositories as a file system | Apache-2.0 OR GPL-2.0-or-later | axross-full, axross-slim, pip [git] |
+| [espeak-ng](https://github.com/espeak-ng/espeak-ng) | Phonemes for the Piper voices (statically linked into piper's espeakbridge, with its data) | GPL-3.0-or-later | axross-full, pip (con un extra) |
+| [exchangelib](https://github.com/ecederstrand/exchangelib) | Microsoft Exchange backend (EWS) | BSD-2-Clause | axross-full, pip [exchange] |
+| [Expat](https://libexpat.github.io) | XML parsing (Python's xml modules) | MIT | axross-full, axross-slim |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Local speech recognition of the Agent dock | MIT | axross-full, pip [voice] |
+| [faster-whisper models (Whisper base, small)](https://huggingface.co/Systran) | Local speech recognition models, downloaded in Help > Features… | MIT | descarga bajo demanda |
+| [fd](https://github.com/sharkdp/fd) | Find Files: name search | MIT OR Apache-2.0 | axross-full |
+| [Feather icons](https://github.com/feathericons/feather) | Style model of axross's own SVG icons (re-drawn, no files copied) | MIT | código de axross |
+| [FFmpeg (ffmpeg, ffprobe)](https://ffmpeg.org) | Video thumbnails, media details, removing audio/video metadata | LGPL-2.1-or-later OR GPL-2.0-or-later OR GPL-3.0-only | en tu sistema |
+| [fusepy](https://github.com/fusepy/fusepy) | Mounting an axross connection as a local folder (FUSE) | ISC | axross-full, axross-slim, pip [fuse] |
+| [GCC runtime libraries](https://gcc.gnu.org) | Fortran, OpenMP and atomic runtimes (numpy, CTranslate2, QtPdf) | GPL-3.0-or-later WITH GCC-exception-3.1 | axross-full, axross-slim |
+| [GLib](https://gitlab.gnome.org/GNOME/glib) | Main loop and D-Bus integration of Qt's platform plugins | LGPL-2.1-or-later | axross-full, axross-slim |
+| [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | Key-value files of Python's dbm module | GPL-3.0-or-later | axross-full |
+| [GNU Readline](https://tiswww.case.edu/php/chet/readline/rltop.html) | Line editing of Python's readline module | GPL-3.0-or-later | axross-full, axross-slim |
+| [google-api-python-client](https://github.com/googleapis/google-api-python-client) | Google Drive backend | Apache-2.0 | axross-full, pip [gdrive] |
+| [google-auth-httplib2](https://github.com/googleapis/google-cloud-python) | HTTP transport of the Google Drive client | Apache-2.0 | axross-full, pip [gdrive] |
+| [google-auth-oauthlib](https://github.com/googleapis/google-cloud-python) | Google sign-in (OAuth) for Google Drive | Apache-2.0 | axross-full, pip [gdrive] |
+| [impacket](https://github.com/fortra/impacket) | WMI / DCOM and SMB tooling for Windows hosts | LicenseRef-Impacket-Apache-1.1-modified | axross-full, pip [wmi] |
+| [ipwhois](https://github.com/secynic/ipwhois) | WHOIS / RDAP lookups | BSD-2-Clause | axross-full, axross-slim, pip [whois] |
+| [jmtpfs / simple-mtpfs / go-mtpfs](https://github.com/JasonFerrara/jmtpfs) | MTP backend (the first one found on PATH) | GPL-3.0-only OR GPL-2.0-or-later OR BSD-3-Clause | en tu sistema |
+| [jsonschema](https://github.com/python-jsonschema/jsonschema) | Validates MCP tool arguments against their schemas | MIT | axross-full, axross-slim |
+| [keyring](https://github.com/jaraco/keyring) | Stores profile passwords in the operating system's keyring | MIT | axross-full, axross-slim, pip |
+| [keyutils](https://git.kernel.org/pub/scm/linux/kernel/git/dhowells/keyutils.git) | Kernel key retention used by MIT Kerberos | LGPL-2.1-or-later | axross-full, axross-slim |
+| [ldap3](https://github.com/cannatag/ldap3) | LDAP backend and helpers | LGPL-3.0-or-later | axross-full, axross-slim, pip [ldap] |
+| [libcap](https://sites.google.com/site/fullycapable/) | POSIX capabilities used by libsystemd | BSD-3-Clause OR GPL-2.0-only | axross-full, axross-slim |
+| [libffi](https://sourceware.org/libffi/) | Foreign function calls (Python's ctypes, cffi) | MIT | axross-full, axross-slim |
+| [libfuse 2](https://github.com/libfuse/libfuse) | Kernel FUSE interface of the FUSE mounts (fusepy) | LGPL-2.1-only | axross-full, axross-slim |
+| [Libgcrypt and libgpg-error](https://www.gnupg.org/software/libgcrypt/) | Cryptography used by libsystemd | LGPL-2.1-or-later | axross-full, axross-slim |
+| [libselinux](https://github.com/SELinuxProject/selinux) | SELinux library used by GLib and libpq | LicenseRef-PublicDomain | axross-full, axross-slim |
+| [libsystemd](https://systemd.io) | Journal and D-Bus helpers used by system libraries | LGPL-2.1-or-later AND MIT | axross-full, axross-slim |
+| [libxcb and xcb-util](https://xcb.freedesktop.org) | X protocol bindings of Qt's xcb platform plugin | MIT | axross-full, axross-slim |
+| [libxkbcommon](https://xkbcommon.org) | Keyboard handling of Qt (X11 and Wayland) | MIT | axross-full, axross-slim |
+| [libxml2](https://gitlab.gnome.org/GNOME/libxml2) | XML library used by system libraries | MIT | axross-full, axross-slim |
+| [LZ4](https://github.com/lz4/lz4) | LZ4 compression used by system libraries | BSD-2-Clause | axross-full, axross-slim |
+| [manuf](https://github.com/coolbho3k/manuf) | MAC address vendor lookup (Wireshark OUI database) | Apache-2.0 OR GPL-3.0-or-later | axross-full, axross-slim, pip [mac] |
+| [MIT Kerberos](https://web.mit.edu/kerberos/) | Kerberos / GSSAPI (libpq, system libraries) | MIT | axross-full, axross-slim |
+| [mpdecimal](https://www.bytereef.org/mpdecimal/) | Decimal arithmetic of Python's decimal module | BSD-2-Clause | axross-full, axross-slim |
+| [msal](https://github.com/AzureAD/microsoft-authentication-library-for-python) | Microsoft sign-in for OneDrive and SharePoint | MIT | axross-full, pip [onedrive] |
+| [ncurses (libtinfo)](https://invisible-island.net/ncurses/) | Terminal capabilities used by Readline | X11 | axross-full, axross-slim |
+| [nfs-utils (mount.nfs)](https://linux-nfs.org) | NFS backend | GPL-2.0-or-later | en tu sistema |
+| [ntplib](https://github.com/cf-natali/ntplib) | NTP time queries | MIT | axross-full, axross-slim, pip [ntp] |
+| [numpy](https://github.com/numpy/numpy) | Equalizer and spectrum of the Media Player extension | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | axross-full, pip [media] |
+| [onnxruntime](https://github.com/microsoft/onnxruntime) | Runs the Piper voice models | MIT | axross-full, pip [voice] |
+| [open-iscsi (iscsiadm)](https://github.com/open-iscsi/open-iscsi) | iSCSI backend | GPL-2.0-or-later | en tu sistema |
+| [OpenSSL](https://www.openssl.org) | TLS and cryptography (Python's ssl module, Qt, libpq) | Apache-2.0 | axross-full, axross-slim |
+| [paramiko](https://github.com/paramiko/paramiko) | SSH, SFTP and SCP connections | LGPL-2.1-or-later | axross-full, axross-slim, pip |
+| [PCRE and PCRE2](https://www.pcre.org) | Regular expressions used by GLib and libselinux | BSD-3-Clause | axross-full, axross-slim |
+| [Pillow](https://github.com/python-pillow/Pillow) | Image thumbnails, image metadata and the image viewer | MIT-CMU | axross-full, axross-slim, pip |
+| [Piper voices](https://huggingface.co/rhasspy/piper-voices) | The Agent dock's voices, downloaded in Help > Features… | MIT | descarga bajo demanda |
+| [piper-tts](https://github.com/OHF-voice/piper1-gpl) | Speech output of the Agent dock (Piper) | GPL-3.0-or-later | axross-full, pip [voice] |
+| [Podman](https://podman.io) | Agent sandbox and MCP server containers | Apache-2.0 | en tu sistema |
+| [polkit (pkexec)](https://github.com/polkit-org/polkit) | "Open as root…" and privileged mounts | LGPL-2.0-or-later | en tu sistema |
+| [psycopg](https://github.com/psycopg/psycopg) | PostgreSQL backend | LGPL-3.0-only | axross-full, axross-slim, pip [postgres] |
+| [psycopg-binary](https://github.com/psycopg/psycopg) | Compiled PostgreSQL driver with libpq | LGPL-3.0-only | axross-full, axross-slim |
+| [puremagic](https://github.com/cdgriffith/puremagic) | File type detection from file content | MIT | axross-full, axross-slim, pip [magic] |
+| [py7zr](https://github.com/miurahr/py7zr) | 7z archives (browse, extract, pack) | LGPL-2.1-or-later | axross-full, axross-slim, pip [archive] |
+| [Pygments](https://github.com/pygments/pygments) | Syntax highlighting in the text editor | BSD-2-Clause | axross-full, axross-slim, pip |
+| [pymongo](https://github.com/mongodb/mongo-python-driver) | MongoDB / GridFS backend | Apache-2.0 | axross-full, axross-slim, pip [mongo] |
+| [pypdf](https://github.com/py-pdf/pypdf) | Removing PDF metadata | BSD-3-Clause | axross-full, axross-slim, pip [metadata] |
+| [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | Python bindings for Qt: the whole user interface | GPL-3.0-only OR LicenseRef-Riverbank-Commercial | axross-full, axross-slim, pip |
+| [pysnmp](https://github.com/lextudio/pysnmp) | SNMP helpers | BSD-2-Clause | axross-full, axross-slim, pip [snmp] |
+| [PySocks](https://github.com/Anorov/PySocks) | SOCKS4/5 proxies for every connection | BSD-3-Clause | axross-full, axross-slim, pip |
+| [Python](https://www.python.org) | The Python interpreter and standard library inside the binaries | PSF-2.0 | axross-full, axross-slim |
+| [Python container image (python:3.12-slim)](https://hub.docker.com/_/python) | Base image of Dockerfile.mcp, Dockerfile.agent and Dockerfile.gui | PSF-2.0 AND LicenseRef-Debian-Packages | imagen de contenedor |
+| [pywinpty](https://github.com/andfoy/pywinpty) | The local terminal on Windows (ConPTY) | MIT | pip |
+| [pywinrm](https://github.com/diyan/pywinrm) | WinRM backend (Windows Remote Management) | MIT | axross-full, pip [winrm] |
+| [qemu-img](https://www.qemu.org) | Opening virtual disk images | GPL-2.0-only | en tu sistema |
+| [rarfile](https://github.com/markokr/rarfile) | RAR archives (browse, extract) | ISC | axross-full, axross-slim, pip [archive] |
+| [redis](https://github.com/redis/redis-py) | Redis backend | MIT | axross-full, axross-slim, pip [redis] |
+| [requests](https://github.com/psf/requests) | HTTP client of the WebDAV, OneDrive and other HTTP backends | Apache-2.0 | axross-full, axross-slim, pip [webdav, onedrive] |
+| [ripgrep](https://github.com/BurntSushi/ripgrep) | Find Files: content search | MIT OR Unlicense | axross-full |
+| [rsh client (netkit-rsh or GNU Inetutils)](https://www.gnu.org/software/inetutils/) | rsh backend | BSD-4-Clause-UC OR GPL-3.0-or-later | en tu sistema |
+| [rsync](https://rsync.samba.org) | rsync backend and fast copies | GPL-3.0-or-later | en tu sistema |
+| [SecLists](https://github.com/danielmiessler/SecLists) | Public source of the TFTP common-filename wordlist | MIT | código de axross |
+| [sift](https://github.com/c0decave/sift) | The Analysis dock's file explanations (sift-summarizer); a sister project of axross | MIT | axross-full, pip (con un extra) |
+| [sift-summarizer](https://github.com/c0decave/sift) | sift: the Analysis dock's explanation of the selected file | MIT | axross-full, pip [sift] |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Voice activity detection model that faster-whisper ships | MIT | axross-full, pip (con un extra) |
+| [smbprotocol](https://github.com/jborean93/smbprotocol) | SMB / CIFS file shares | MIT | axross-full, axross-slim, pip [smb] |
+| [SQLite](https://www.sqlite.org) | Embedded database (Python's sqlite3 module) | blessing | axross-full, axross-slim |
+| [Subversion](https://subversion.apache.org) | Subversion backend | Apache-2.0 | en tu sistema |
+| [TestDisk / PhotoRec](https://www.cgsecurity.org) | Recovering partitions and files | GPL-2.0-or-later | en tu sistema |
+| [tftpy](https://github.com/msoulier/tftpy) | TFTP backend | MIT | axross-full, axross-slim, pip [tftp] |
+| [The Sleuth Kit](https://www.sleuthkit.org) | Forensic file system access (fls, icat) | IPL-1.0 AND CPL-1.0 AND GPL-2.0-or-later | en tu sistema |
+| [UDisks (udisksctl)](https://github.com/storaged-project/udisks) | Loop-mounting disk images | GPL-2.0-or-later | en tu sistema |
+| [urllib3](https://github.com/urllib3/urllib3) | HTTP connection pool (proxies, S3, WebDAV) | MIT | axross-full, axross-slim, pip [git] |
+| [util-linux libraries](https://github.com/util-linux/util-linux) | UUIDs, block device and mount information (GLib, Python's uuid module) | LGPL-2.1-or-later AND BSD-3-Clause | axross-full, axross-slim |
+| [VirtualBox (VBoxManage)](https://www.virtualbox.org) | VirtualBox disk images | GPL-3.0-only | en tu sistema |
+| [X.Org client libraries](https://www.x.org) | X11 display connection of Qt's xcb platform plugin | MIT AND X11 | axross-full, axross-slim |
+| [xdg-utils (xdg-open)](https://gitlab.freedesktop.org/xdg/xdg-utils) | Opening files and links with the desktop's programs | MIT | en tu sistema |
+| [XZ Utils (liblzma)](https://tukaani.org/xz/) | LZMA/XZ compression (Python's lzma module, Pillow) | 0BSD AND LicenseRef-PublicDomain | axross-full, axross-slim |
+| [zlib](https://zlib.net) | Deflate compression (Python, Qt and many libraries) | Zlib | axross-full, axross-slim |
+| [Zstandard](https://github.com/facebook/zstd) | Zstandard compression (Pillow, system libraries) | BSD-3-Clause OR GPL-2.0-only | axross-full, axross-slim |
+
+<details>
+<summary>114 bibliotecas más que llegan con los proyectos de arriba</summary>
+
+| Proyecto | Usado por | Licencia | Viene con |
+|---|---|---|---|
+| [alsa-lib](https://github.com/alsa-project/alsa-lib) | PyAV | LGPL-2.1-or-later | axross-full, pip (con un extra) |
+| [anyio](https://github.com/agronholm/anyio) | httpx2 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [attrs](https://github.com/python-attrs/attrs) | jsonschema | MIT | axross-full, axross-slim |
+| [azure-core](https://github.com/Azure/azure-sdk-for-python) | azure-storage-blob | MIT | axross-full, pip (con un extra) |
+| [bcrypt](https://github.com/pyca/bcrypt) | paramiko | Apache-2.0 | axross-full, axross-slim, pip |
+| [blinker](https://github.com/pallets-eco/blinker) | Flask | MIT | axross-full, pip (con un extra) |
+| [botocore](https://github.com/boto/botocore) | boto3 | Apache-2.0 | axross-full, axross-slim, pip (con un extra) |
+| [brotli](https://github.com/google/brotli) | py7zr | MIT | axross-full, axross-slim, pip (con un extra) |
+| [Brotli (C library)](https://github.com/google/brotli) | Pillow | MIT | axross-full, axross-slim, pip |
+| [cached-property](https://github.com/pydanny/cached-property) | exchangelib | BSD-3-Clause | axross-full, pip (con un extra) |
+| [certifi](https://github.com/certifi/python-certifi) | requests | MPL-2.0 | axross-full, axross-slim, pip (con un extra) |
+| [cffi](https://github.com/python-cffi/cffi) | cryptography | MIT-0 | axross-full, axross-slim, pip |
+| [charset-normalizer](https://github.com/jawah/charset_normalizer) | impacket | MIT | axross-full, axross-slim, pip (con un extra) |
+| [click](https://github.com/pallets/click) | Flask | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
+| [Cyrus SASL](https://www.cyrusimap.org/sasl/) | libpq | BSD-Attribution-HPND-disclaimer | axross-full, axross-slim, pip (con un extra) |
+| [dav1d](https://code.videolan.org/videolan/dav1d) | PyAV | BSD-2-Clause | axross-full, pip (con un extra) |
+| [FFmpeg (PyAV build)](https://ffmpeg.org) | PyAV | LGPL-3.0-or-later | axross-full, pip (con un extra) |
+| [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) | Qt 6 | LGPL-2.1-or-later | axross-full, axross-slim, pip |
+| [filelock](https://github.com/tox-dev/py-filelock) | huggingface_hub | MIT | axross-full, pip (con un extra) |
+| [Flask](https://github.com/pallets/flask) | impacket | BSD-3-Clause | axross-full, pip (con un extra) |
+| [FreeType](https://freetype.org) | Pillow | FTL OR GPL-2.0-or-later | axross-full, axross-slim, pip |
+| [fsspec](https://github.com/fsspec/filesystem_spec) | huggingface_hub | BSD-3-Clause | axross-full, pip (con un extra) |
+| [GMP](https://gmplib.org) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (con un extra) |
+| [GnuTLS](https://www.gnutls.org) | PyAV | LGPL-2.1-or-later | axross-full, pip (con un extra) |
+| [google-api-core](https://github.com/googleapis/google-cloud-python) | google-api-python-client | Apache-2.0 | axross-full, pip (con un extra) |
+| [google-auth](https://github.com/googleapis/google-cloud-python) | google-api-python-client | Apache-2.0 | axross-full, pip (con un extra) |
+| [googleapis-common-protos](https://github.com/googleapis/google-cloud-python) | google-api-core | Apache-2.0 | axross-full, pip (con un extra) |
+| [Graphite](https://github.com/silnrsi/graphite) | HarfBuzz | LGPL-2.1-or-later OR MPL-1.1 OR GPL-2.0-or-later | axross-full, axross-slim |
+| [h11](https://github.com/python-hyper/h11) | httpcore2 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | Qt 6, Pillow | MIT | axross-full, axross-slim, pip |
+| [hf-xet](https://github.com/huggingface/xet-core) | huggingface_hub | Apache-2.0 | axross-full, pip (con un extra) |
+| [httpcore2](https://github.com/pydantic/httpx2) | httpx2 | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
+| [httplib2](https://github.com/httplib2/httplib2) | google-api-python-client | MIT | axross-full, pip (con un extra) |
+| [httpx2](https://github.com/pydantic/httpx2) | huggingface_hub | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
+| [huggingface_hub](https://github.com/huggingface/huggingface_hub) | faster-whisper | Apache-2.0 | axross-full, pip (con un extra) |
+| [ICU](https://icu.unicode.org) | Qt 6 | Unicode-DFS-2016 | axross-full, axross-slim, pip |
+| [idna](https://github.com/kjd/idna) | requests | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
+| [inflate64](https://github.com/miurahr/inflate64) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (con un extra) |
+| [Intel VPL dispatcher](https://github.com/intel/libvpl) | PyAV | MIT | axross-full, pip (con un extra) |
+| [invoke](https://github.com/pyinvoke/invoke) | paramiko | BSD-2-Clause | axross-full, axross-slim, pip |
+| [isodate](https://github.com/gweis/isodate) | azure-storage-blob | BSD-3-Clause | axross-full, pip (con un extra) |
+| [itsdangerous](https://github.com/pallets/itsdangerous) | Flask | BSD-3-Clause | axross-full, pip (con un extra) |
+| [jaraco.classes](https://github.com/jaraco/jaraco.classes) | keyring | MIT | axross-full, axross-slim, pip |
+| [jaraco.context](https://github.com/jaraco/jaraco.context) | keyring | MIT | axross-full, axross-slim, pip |
+| [jaraco.functools](https://github.com/jaraco/jaraco.functools) | keyring | MIT | axross-full, axross-slim, pip |
+| [JBIG-KIT](https://www.cl.cam.ac.uk/~mgk25/jbigkit/) | LibTIFF | GPL-2.0-or-later | axross-full, axross-slim |
+| [jeepney](https://gitlab.com/takluyver/jeepney) | keyring | MIT | axross-full, axross-slim, pip |
+| [Jinja2](https://github.com/pallets/jinja) | Flask | BSD-3-Clause | axross-full, pip (con un extra) |
+| [jmespath](https://github.com/jmespath/jmespath.py) | boto3 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [jsonschema-specifications](https://github.com/python-jsonschema/jsonschema-specifications) | jsonschema | MIT | axross-full, axross-slim |
+| [libavif](https://github.com/AOMediaCodec/libavif) | Pillow | BSD-2-Clause | axross-full, axross-slim, pip |
+| [libdrm](https://gitlab.freedesktop.org/mesa/drm) | PyAV | MIT | axross-full, pip (con un extra) |
+| [libjpeg-turbo](https://libjpeg-turbo.org) | Pillow, Qt 6 | IJG AND BSD-3-Clause | axross-full, axross-slim, pip |
+| [libpng](https://www.libpng.org) | Pillow, Qt 6 | libpng-2.0 | axross-full, axross-slim, pip |
+| [libpq](https://www.postgresql.org) | psycopg-binary | PostgreSQL | axross-full, axross-slim, pip (con un extra) |
+| [LibTIFF](https://libtiff.gitlab.io/libtiff/) | Pillow, Qt 6 | libtiff | axross-full, axross-slim, pip |
+| [libunistring](https://www.gnu.org/software/libunistring/) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (con un extra) |
+| [libvpx](https://chromium.googlesource.com/webm/libvpx) | PyAV | BSD-3-Clause | axross-full, pip (con un extra) |
+| [libwebp](https://chromium.googlesource.com/webm/libwebp) | Pillow, Qt 6 | BSD-3-Clause | axross-full, axross-slim, pip |
+| [libxcrypt](https://github.com/besser82/libxcrypt) | libpq | LGPL-2.1-or-later | axross-full, axross-slim, pip (con un extra) |
+| [Little CMS](https://www.littlecms.com) | Pillow | MIT | axross-full, axross-slim, pip |
+| [lxml](https://github.com/lxml/lxml) | exchangelib | BSD-3-Clause | axross-full, pip (con un extra) |
+| [MarkupSafe](https://github.com/pallets/markupsafe) | Flask | BSD-3-Clause | axross-full, pip (con un extra) |
+| [more-itertools](https://github.com/more-itertools/more-itertools) | jaraco.classes | MIT | axross-full, axross-slim, pip |
+| [multivolumefile](https://github.com/miurahr/multivolume) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (con un extra) |
+| [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (con un extra) |
+| [oauthlib](https://github.com/oauthlib/oauthlib) | exchangelib | BSD-3-Clause | axross-full, pip (con un extra) |
+| [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS) | numpy | BSD-3-Clause | axross-full, pip (con un extra) |
+| [OpenJPEG](https://www.openjpeg.org) | Pillow | BSD-2-Clause | axross-full, axross-slim, pip |
+| [OpenLDAP client libraries](https://www.openldap.org) | libpq | OLDAP-2.8 | axross-full, axross-slim, pip (con un extra) |
+| [opentelemetry-api](https://github.com/open-telemetry/opentelemetry-python) | google-api-core | Apache-2.0 | axross-full, axross-slim, pip (con un extra) |
+| [Opus](https://opus-codec.org) | PyAV | BSD-3-Clause | axross-full, pip (con un extra) |
+| [packaging](https://github.com/pypa/packaging) | onnxruntime | Apache-2.0 OR BSD-2-Clause | axross-full, pip (con un extra) |
+| [pathvalidate](https://github.com/thombashi/pathvalidate) | piper-tts | MIT | axross-full, pip (con un extra) |
+| [protobuf](https://github.com/protocolbuffers/protobuf) | onnxruntime | BSD-3-Clause | axross-full, pip (con un extra) |
+| [psutil](https://github.com/giampaolo/psutil) | py7zr | BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
+| [pyasn1](https://github.com/pyasn1/pyasn1) | adb_shell | BSD-2-Clause | axross-full, axross-slim, pip (con un extra) |
+| [pyasn1_modules](https://github.com/pyasn1/pyasn1-modules) | impacket | BSD-2-Clause | axross-full, pip (con un extra) |
+| [PyAV](https://github.com/PyAV-Org/PyAV) | faster-whisper | BSD-3-Clause | axross-full, pip (con un extra) |
+| [pybcj](https://github.com/miurahr/pybcj) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (con un extra) |
+| [pycparser](https://github.com/eliben/pycparser) | cffi | BSD-3-Clause | axross-full, axross-slim, pip |
+| [pycryptodomex](https://github.com/Legrandin/pycryptodome) | impacket | BSD-2-Clause AND LicenseRef-PublicDomain | axross-full, axross-slim, pip (con un extra) |
+| [PyJWT](https://github.com/jpadilla/pyjwt) | msal | MIT | axross-full, axross-slim, pip (con un extra) |
+| [PyNaCl](https://github.com/pyca/pynacl) | paramiko | Apache-2.0 | axross-full, axross-slim, pip |
+| [pyOpenSSL](https://github.com/pyca/pyopenssl) | impacket | Apache-2.0 | axross-full, axross-slim, pip (con un extra) |
+| [pyparsing](https://github.com/pyparsing/pyparsing) | httplib2 | MIT | axross-full, pip (con un extra) |
+| [pyppmd](https://github.com/miurahr/pyppmd) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (con un extra) |
+| [PyQt6_sip](https://github.com/Python-SIP/sip) | PyQt6 | BSD-2-Clause | axross-full, axross-slim, pip |
+| [pyspnego](https://github.com/jborean93/pyspnego) | smbprotocol | MIT | axross-full, axross-slim, pip (con un extra) |
+| [python-dateutil](https://github.com/dateutil/dateutil) | botocore | Apache-2.0 AND BSD-3-Clause | axross-full, axross-slim, pip (con un extra) |
+| [PyYAML](https://github.com/yaml/pyyaml) | ctranslate2 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [Qt 6](https://www.qt.io) | PyQt6 | LGPL-3.0-only | axross-full, axross-slim, pip |
+| [referencing](https://github.com/python-jsonschema/referencing) | jsonschema | MIT | axross-full, axross-slim |
+| [requests-oauthlib](https://github.com/requests/requests-oauthlib) | exchangelib | ISC | axross-full, pip (con un extra) |
+| [requests_ntlm](https://github.com/requests/requests-ntlm) | exchangelib | ISC | axross-full, pip (con un extra) |
+| [rpds-py](https://github.com/crate-py/rpds) | jsonschema | MIT | axross-full, axross-slim |
+| [rsa](https://github.com/sybrenstuvel/python-rsa) | adb_shell | Apache-2.0 | axross-full, axross-slim, pip (con un extra) |
+| [s3transfer](https://github.com/boto/s3transfer) | boto3 | Apache-2.0 | axross-full, axross-slim, pip (con un extra) |
+| [SecretStorage](https://github.com/mitya57/secretstorage) | keyring | BSD-3-Clause | axross-full, axross-slim, pip |
+| [six](https://github.com/benjaminp/six) | impacket | MIT | axross-full, axross-slim, pip (con un extra) |
+| [stone](https://github.com/dropbox/stone) | dropbox | MIT | axross-full, pip (con un extra) |
+| [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1) | PyAV | BSD-3-Clause-Clear | axross-full, pip (con un extra) |
+| [tokenizers](https://github.com/huggingface/tokenizers) | faster-whisper | Apache-2.0 | axross-full, pip (con un extra) |
+| [tqdm](https://github.com/tqdm/tqdm) | faster-whisper | MPL-2.0 AND MIT | axross-full, pip (con un extra) |
+| [truststore](https://github.com/sethmlarson/truststore) | httpcore2 | MIT | axross-full, axross-slim, pip (con un extra) |
+| [typing_extensions](https://github.com/python/typing_extensions) | azure-storage-blob | PSF-2.0 | axross-full, axross-slim, pip |
+| [tzdata](https://github.com/python/tzdata) | exchangelib | Apache-2.0 | axross-full, pip (con un extra) |
+| [tzlocal](https://github.com/regebro/tzlocal) | exchangelib | MIT | axross-full, pip (con un extra) |
+| [uritemplate](https://github.com/python-hyper/uritemplate) | google-api-python-client | BSD-3-Clause OR Apache-2.0 | axross-full, pip (con un extra) |
+| [VMAF](https://github.com/Netflix/vmaf) | PyAV | BSD-2-Clause-Patent | axross-full, pip (con un extra) |
+| [Werkzeug](https://github.com/pallets/werkzeug) | Flask | BSD-3-Clause | axross-full, pip (con un extra) |
+| [x264](https://www.videolan.org/developers/x264.html) | PyAV | GPL-2.0-or-later | axross-full, pip (con un extra) |
+| [x265](https://bitbucket.org/multicoreware/x265_git) | PyAV | GPL-2.0-or-later | axross-full, pip (con un extra) |
+| [xmltodict](https://github.com/martinblech/xmltodict) | pywinrm | MIT | axross-full, pip (con un extra) |
+
+</details>
+<!-- /third-party:readme -->

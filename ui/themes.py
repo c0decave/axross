@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import gc
+import os
 import re
 from collections.abc import Iterator
 
@@ -794,6 +795,89 @@ QHeaderView::section:horizontal {
 """
 
 
+# Check boxes and radio buttons: Fusion drew an unchecked indicator at
+# 1.0-1.6:1 against the background in every theme - in Hacker and Amber
+# Mode not at all (WCAG 1.4.11 asks 3:1 for a control's edge). Values per
+# theme: (edge, background, checked fill, check mark).
+_INDICATOR_COLOURS: dict[str, tuple[str, str, str, str]] = {
+    "modern-dark": (MODERN_DARK["text_muted"], MODERN_DARK["surface"],
+                    MODERN_DARK["accent"], MODERN_DARK["accent_fg"]),
+    "modern-light": (MODERN_LIGHT["text_muted"], MODERN_LIGHT["surface"],
+                     MODERN_LIGHT["accent"], MODERN_LIGHT["accent_fg"]),
+    "classic": ("#a6adc8", "#1e1e2e", "#89b4fa", "#1e1e2e"),
+    "hacker": ("#00b33c", "#0a0a0a", "#00ff41", "#0a0a0a"),
+    "amber": ("#cc7000", "#0a0a0a", "#ff8c00", "#0a0a0a"),
+    # The native theme keeps the desktop palette; the mark is drawn white
+    # on the highlight colour (an image cannot follow the palette).
+    "native": ("palette(text)", "palette(base)", "palette(highlight)", "#ffffff"),
+}
+
+_CHECK_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">'
+    '<path d="M3 7.2 L5.8 10 L11 4" fill="none" stroke="{colour}" stroke-width="2"'
+    ' stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+_DASH_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">'
+    '<path d="M3.5 7 H10.5" stroke="{colour}" stroke-width="2" stroke-linecap="round"/></svg>'
+)
+
+
+def _indicator_dir():
+    from pathlib import Path
+
+    base = os.environ.get("XDG_CACHE_HOME", "").strip()
+    root = Path(base) if base and os.path.isabs(base) else Path.home() / ".cache"
+    return root / "axross" / "qss"
+
+
+def _mark_file(template: str, kind: str, colour: str) -> str | None:
+    """A check mark image in *colour* for a stylesheet ``url()``; None when
+    it cannot be written (the box is then filled without a mark)."""
+    folder = _indicator_dir()
+    path = folder / f"{kind}-{colour.lstrip('#').lower()}.svg"
+    text = template.format(colour=colour)
+    try:
+        if not path.is_file() or path.read_text(encoding="utf-8") != text:
+            folder.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+    except OSError:
+        return None
+    return path.as_posix()
+
+
+def _indicator_css(key: str) -> str:
+    edge, base, fill, mark = _INDICATOR_COLOURS[key]
+    check = _mark_file(_CHECK_SVG, "check", mark)
+    dash = _mark_file(_DASH_SVG, "dash", mark)
+    check_image = f'    image: url("{check}");\n' if check else ""
+    dash_image = f'    image: url("{dash}");\n' if dash else ""
+    return (
+        "\nQCheckBox::indicator, QRadioButton::indicator, QGroupBox::indicator {\n"
+        "    width: 14px;\n    height: 14px;\n"
+        f"    border: 1px solid {edge};\n"
+        f"    background-color: {base};\n"
+        "}\n"
+        "QCheckBox::indicator, QGroupBox::indicator {\n    border-radius: 3px;\n}\n"
+        "QRadioButton::indicator {\n    border-radius: 8px;\n}\n"
+        "QCheckBox::indicator:checked, QGroupBox::indicator:checked {\n"
+        f"    background-color: {fill};\n    border-color: {fill};\n{check_image}"
+        "}\n"
+        "QCheckBox::indicator:indeterminate {\n"
+        f"    background-color: {fill};\n    border-color: {fill};\n{dash_image}"
+        "}\n"
+        "QRadioButton::indicator:checked {\n"
+        f"    border-color: {fill};\n"
+        "    background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,"
+        f" stop:0 {fill}, stop:0.45 {fill}, stop:0.55 {base}, stop:1 {base});\n"
+        "}\n"
+        "QCheckBox::indicator:disabled, QRadioButton::indicator:disabled,"
+        " QGroupBox::indicator:disabled {\n    border-style: dotted;\n}\n"
+    )
+
+
 def normalize(theme: object) -> str:
     """Return a valid theme id; anything unknown becomes the default."""
     if isinstance(theme, str) and (theme in _VALID or theme == DEFAULT_THEME):
@@ -824,15 +908,18 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
     """Complete application stylesheet for *theme*."""
     resolved = resolve(theme, system_scheme)
     if resolved in _MODERN_VARIANTS:
-        css = build_modern_qss(_MODERN_VARIANTS[resolved])
+        css = build_modern_qss(_MODERN_VARIANTS[resolved]) + _indicator_css(resolved)
     elif resolved in ("classic", "dark"):
         css = DARK_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("classic")
+        css += _indicator_css("classic")
     elif resolved == "hacker":
         css = HACKER_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("hacker")
+        css += _indicator_css("hacker")
     elif resolved == "amber":
         css = AMBER_THEME + _CLASSIC_MUTED_DARK + _classic_extra_css("amber")
+        css += _indicator_css("amber")
     else:
-        css = _CLASSIC_MUTED_LIGHT + _NATIVE_HEADER_CSS
+        css = _CLASSIC_MUTED_LIGHT + _NATIVE_HEADER_CSS + _indicator_css("native")
     if compact:
         css += COMPACT_CSS
     return css

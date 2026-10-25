@@ -541,3 +541,43 @@ Checksums go into the release notes. Linux AppImage signing
 (`gpg --detach-sign dist/axross-full-x86_64.AppImage`) is a
 nice-to-have; for internal lab distribution SHA256 alone is
 usually enough.
+
+## Self-update: what a release must carry
+
+The one-file binaries update themselves (`core/self_update.py`,
+*Help → Check for Updates…*, *Settings → Updates*; user side in
+[USAGE.md](USAGE.md#updates)). They find the release through
+`https://api.github.com/repos/c0decave/axross/releases/latest` (drafts and
+prereleases are ignored) and rely on this contract - a release that breaks
+it is refused by every installed binary, nothing is replaced:
+
+* **Tag** `vX.Y.Z` (numeric, no suffix). Only a higher `X.Y.Z` than the
+  running one is offered.
+* **Asset names**, exactly: `axross-full`, `axross-slim` (Linux x86-64),
+  `axross-slim-macos-arm64`, `axross-slim-windows-x64.exe`. A binary picks
+  its own: `build/axross.spec` writes the flavour into the bundle as
+  `axross/axross-bundle-flavor.txt` (`full` / `slim`; in the first-party
+  folder, so the bundle gate claims it); a bundle without it is
+  recognised by a file name starting with `axross-full` / `axross-slim`.
+  Platforms without an asset (Linux aarch64, an axross-full on macOS) only
+  get the notice with the release page.
+* **`SHA256SUMS`** among the assets of the same release, in `sha256sum`
+  format, with one line per binary (step 6 above). No line for the
+  binary, or a different hash: refused. GitHub's own `digest` of an asset,
+  where the API gives one, must agree with it as well.
+* **Hosts**: the API on `api.github.com`; the download URL
+  `https://github.com/c0decave/axross/releases/download/vX.Y.Z/<name>`
+  answers 302 to `release-assets.githubusercontent.com` (measured
+  2026-10-25; `objects.githubusercontent.com` before). Only these four
+  hosts, only https, at most five redirects; bounds: 1 MiB for the API
+  answer, 64 KiB for `SHA256SUMS`, 1 GiB for a binary, which must have
+  exactly the size the API states.
+
+A distribution package (deb, rpm, a container image) must not replace
+itself: start it with `AXROSS_NO_UPDATE_CHECK=1` in the environment (no
+check at start; *Check Now* still asks), and install the binary in a
+folder the user cannot write to - the update then saves the verified file
+in `~/.cache/axross/update/` and leaves the installed one alone. A Python
+install (wheel, sdist, source tree) is never replaced; it is told
+`pip install -U axross`. The smoke start (`AXROSS_SMOKE_GUI_MS`) never
+checks.

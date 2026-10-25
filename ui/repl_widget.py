@@ -436,6 +436,42 @@ class ReplWidget(QPlainTextEdit):
         self.statement_executed.emit(f".run {name}")
         return ran
 
+    def run_example(self, name: str, call: str) -> bool:
+        """Run bundled example ``name`` followed by *call* (its adjusted
+        Usage block) in the live namespace, like :meth:`run_saved_script`
+        (the Scripts dock's "Run in Console" on an example)."""
+        from core import scripting as _s
+        from core import security_mode
+
+        if self._buffer:
+            self._append(
+                f"\n[Run in Console: finish or clear (Ctrl-D) the open statement first; "
+                f"{name} did not run]\n"
+            )
+            self._write_prompt(PROMPT_CONT)
+            return False
+        pending = self._current_input()
+        self._replace_input(f"# example {name}")
+        self._append("\n")
+        policy = security_mode.current_policy()
+        ran = False
+        if not policy.allow_scripts:
+            self._append(
+                f"run refused: security mode '{policy.name}' blocks saved script execution\n"
+            )
+        else:
+            try:
+                src = _s._load_bundled_script(name)
+            except (OSError, ValueError, UnicodeDecodeError) as exc:
+                self._append(f"run failed: {exc}\n")
+            else:
+                path = os.path.join(_s._bundled_scripts_dir(), f"{name}.py")
+                self._run_source(f"{src}\n\n{call}\n", filename=path)
+                ran = True
+        self._write_prompt(PROMPT)
+        self._replace_input(pending)
+        return ran
+
     def _run_saved(self, name: str) -> bool:
         """``.run <name>``: the saved script in the LIVE namespace, so the
         variables it sets stay visible to later prompts."""

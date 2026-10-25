@@ -6,13 +6,18 @@ their own."""
 
 from __future__ import annotations
 
+import atexit
+import collections
+import functools
 import logging
 import math
 import os
 import posixpath
 import random
 import shutil
+import threading
 import time
+import weakref
 from typing import NamedTuple
 
 from PyQt6 import sip
@@ -20,6 +25,7 @@ from PyQt6.QtCore import (
     QByteArray,
     QEvent,
     QLineF,
+    QMetaObject,
     QObject,
     QPointF,
     QRectF,
@@ -28,6 +34,7 @@ from PyQt6.QtCore import (
     QTimer,
     QUrl,
     pyqtSignal,
+    pyqtSlot,
 )
 from PyQt6.QtGui import (
     QActionGroup,
@@ -64,6 +71,7 @@ from PyQt6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStyle,
+    QStyledItemDelegate,
     QStyleOptionSlider,
     QToolButton,
     QVBoxLayout,
@@ -118,6 +126,12 @@ RATE = 44100
 #: waits until its buffer is read, so not reading bounds the memory: read
 #: at once, a one-hour track ended up in memory as float samples (~1 GB).
 MAX_AHEAD_SECONDS = 2.0
+#: Seconds of equalized audio the equalizer thread keeps ready for the
+#: audio thread, which writes it to the sound card without waiting for the
+#: equalizer. A slider change is heard that much later (plus what the card
+#: holds). When equalizing slows down (a GIL shared with a busy thread), a
+#: block is at least twice what the last one took, so more is kept ready.
+EQ_AHEAD_SECONDS = 0.1
 FRAME = 2048
 HOP = FRAME // 2
 #: Bytes per sample of the sample formats a sound card may take.
@@ -126,6 +140,13 @@ SAMPLE_BYTES = {"Float": 4, "Int16": 2, "Int32": 4, "UInt8": 1}
 #: how far from real time counts as wrong (0.2: below 0.8x or above 1.2x).
 MONITOR_WINDOW_SECONDS = 3.0
 MONITOR_TOLERANCE = 0.2
+#: The share of the monitor's window in which the sound card's room stayed
+#: unfilled, above which a wrong speed is the feed's (the decoder or the
+#: equalizer fell behind), not the sound card's.
+MONITOR_STARVED_SHARE = 0.5
+#: The audio backends Edit > Settings… > Audio offers (QT_AUDIO_BACKEND
+#: values, core.multimedia_env.AUDIO_BACKENDS), as messages name them.
+BACKEND_LABELS = {"pulseaudio": "PulseAudio", "pipewire": "PipeWire"}
 #: Bytes copied from a remote backend at most (the file is played locally).
 MAX_REMOTE_BYTES = 512 * 1024 * 1024
 #: The arrow keys seek by this much, with Shift by the big step (ms).
@@ -667,15 +688,26 @@ class Equalizer:
         complete, so the output lags by :attr:`latency` overall."""
         block = np.asarray(block, np.float32).reshape(-1, self.channels)
         self._in = np.concatenate([self._in, block])
-        out = []
-        while len(self._in) >= FRAME:
-            frame = self._in[:FRAME] * self._window
-            spectrum = np.fft.rfft(frame, axis=0) * self._curve
-            self._acc += np.fft.irfft(spectrum, n=FRAME, axis=0).astype(np.float32) * self._window
-            out.append(self._acc[:HOP].copy())
-            self._acc = np.concatenate([self._acc[HOP:], np.zeros((HOP, self.channels), np.float32)])
-            self._in = self._in[HOP:]
-        return np.concatenate(out) if out else np.zeros((0, self.channels), np.float32)
+        count = (len(self._in) - FRAME) // HOP + 1 if len(self._in) >= FRAME else 0
+        if count <= 0:
+            return np.zeros((0, self.channels), np.float32)
+        # All complete frames at once: a fixed number of numpy calls per
+        # block, not per frame. Each call lets go of the GIL, and getting it
+        # back from a busy thread costs up to sys.getswitchinterval() (5 ms):
+        # next to a GUI thread busy in Python, playback in one feed thread
+        # ran at x0.70 frame by frame and at x0.87 batched (measured).
+        starts = np.arange(count) * HOP
+        frames = self._in[starts[:, None] + np.arange(FRAME)] * self._window
+        spectra = np.fft.rfft(frames, axis=1) * self._curve
+        shaped = np.fft.irfft(spectra, n=FRAME, axis=1).astype(np.float32) * self._window
+        # 50 % overlap-add: each hop out is a frame's first half plus the
+        # previous frame's second half (the first one's is kept in _acc).
+        previous = np.concatenate([self._acc[None, :HOP], shaped[:-1, HOP:]])
+        out = (shaped[:, :HOP] + previous).reshape(-1, self.channels)
+        self._acc = np.zeros((FRAME, self.channels), np.float32)
+        self._acc[:HOP] = shaped[-1, HOP:]
+        self._in = self._in[count * HOP:]
+        return out
 
     def flush(self):
         """The rest, as if silence followed."""
@@ -877,10 +909,28 @@ def convert_frames(frames, channels: int, sample_format: str) -> bytes:
     return (128 + clipped * 127).astype(np.uint8).tobytes()
 
 
+def output_hint(backend: str) -> str:
+    """What to change in Edit > Settings… > Audio when the sound card plays
+    wrong through *backend* ("" when unknown): another backend - never the
+    one in use - or another output device."""
+    others = [label for label in BACKEND_LABELS.values() if label != backend]
+    if len(others) == 1:
+        return tr("Choose the {backend} backend or another output device in "
+                  "Edit > Settings… > Audio.").format(backend=others[0])
+    return tr("Choose a backend (PulseAudio or PipeWire) or another output device in "
+              "Edit > Settings… > Audio.")
+
+
 class PlaybackMonitor:
-    """Judges the sound card's speed: frames it took over the last
-    :data:`MONITOR_WINDOW_SECONDS`, against real time. Reports once per
-    track (:meth:`reset`); a pause or seek starts the window anew
+    """Judges the playback speed: frames handed to the sound card over the
+    last :data:`MONITOR_WINDOW_SECONDS`, against real time, and whose fault
+    a wrong speed is. When the sound card's buffer stayed full it takes
+    audio too slow (or too fast): another backend or output may help. When
+    its buffer stayed half empty or more for most of the window (the
+    updates flagged *starved*: nothing was ready, or making it took longer
+    than playing it), the Media Player did not deliver fast enough - the
+    sound card is not the cause, and no other output is suggested. Reports
+    once per track (:meth:`reset`); a pause or seek starts the window anew
     (:meth:`pause`)."""
 
     def __init__(self, rate: int) -> None:
@@ -888,38 +938,50 @@ class PlaybackMonitor:
         self.reset()
 
     def reset(self) -> None:
-        from collections import deque
-
-        self._samples = deque()
+        self._samples = collections.deque()
         self._reported = False
 
     def pause(self) -> None:
         self._samples.clear()
 
-    def update(self, now: float, frames: int, backend: str = "") -> str | None:
-        """Feed the frames taken so far at *now*; a sentence for the user
-        when the speed is wrong, once."""
+    def update(self, now: float, frames: int, backend: str = "",
+               starved: bool = False) -> str | None:
+        """Feed the frames handed over so far at *now* and whether the sound
+        card's room stayed unfilled this time (*starved*); a sentence for the
+        user when the speed is wrong, once."""
         if self._reported:
             return None
-        self._samples.append((now, frames))
+        self._samples.append((now, frames, bool(starved)))
         while len(self._samples) > 1 and now - self._samples[1][0] >= MONITOR_WINDOW_SECONDS:
             self._samples.popleft()
-        first_time, first_frames = self._samples[0]
+        first_time, first_frames, _ = self._samples[0]
         span = now - first_time
         if span < MONITOR_WINDOW_SECONDS:
             return None
         speed = (frames - first_frames) / span / self.rate
-        via = f" through {backend}" if backend else ""
-        hint = tr("Choose PulseAudio (or another output) in Edit > Settings… > Audio.")
-        if speed < 0.05:
-            text = tr("The sound card takes no audio{via} - playback stands. {hint}").format(
-                via=via, hint=hint)
-        elif abs(speed - 1.0) > MONITOR_TOLERANCE:
-            text = tr("The sound card plays at x{speed:.2f} speed{via} (measured over {seconds:g} s)"
-                      " instead of x1.00. {hint}").format(speed=speed, via=via, hint=hint,
-                                                          seconds=MONITOR_WINDOW_SECONDS)
-        else:
+        if abs(speed - 1.0) <= MONITOR_TOLERANCE:
             return None
+        via = f" through {backend}" if backend else ""
+        starved_share = sum(sample[2] for sample in self._samples) / len(self._samples)
+        if speed < 1.0 and starved_share > MONITOR_STARVED_SHARE:
+            # The sound card waited for audio: the feed is behind.
+            if speed < 0.05:
+                text = tr("The Media Player delivered no audio (measured over {seconds:g} s) "
+                          "while the sound card{via} waited for it - playback stands. The sound "
+                          "card is not the cause.").format(seconds=MONITOR_WINDOW_SECONDS, via=via)
+            else:
+                text = tr("The Media Player could not deliver audio fast enough: it played at "
+                          "x{speed:.2f} speed (measured over {seconds:g} s) while the sound "
+                          "card{via} waited for more. The sound card is not the cause.").format(
+                              speed=speed, seconds=MONITOR_WINDOW_SECONDS, via=via)
+        elif speed < 0.05:
+            text = tr("The sound card takes no audio{via} - playback stands. {hint}").format(
+                via=via, hint=output_hint(backend))
+        else:
+            text = tr("The sound card plays at x{speed:.2f} speed{via} (measured over {seconds:g} s)"
+                      " instead of x1.00. {hint}").format(speed=speed, via=via,
+                                                          hint=output_hint(backend),
+                                                          seconds=MONITOR_WINDOW_SECONDS)
         self._reported = True
         return text
 
@@ -968,9 +1030,285 @@ def _audio_format(rate: int = RATE):
     return qt_format(rate, 2, "Float")
 
 
+# -- the audio threads ------------------------------------------------------------------
+#
+# The equalizer engine's feed (decoder -> equalizer -> sound card) runs in two
+# threads of its own. On the GUI thread it starved whenever the GUI was busy:
+# Qt's FFmpeg decoder hands out its next buffer only after the last one was
+# read - read() asks its renderer thread for one more frame, which comes back
+# as a queued signal to the thread that started the decoder (qtmultimedia 6.11
+# qffmpegaudiodecoder.cpp read() -> nextBuffer() -> Renderer::doForceStep()).
+# That is one buffer, ~22 ms of a 48 kHz MP3, per event-loop iteration of
+# that thread: measured on a null sink, a GUI loop busy 130 ms per iteration
+# played at x0.18, busy 40 ms at x0.52.
+#
+# Three threads, so that nothing stretches the iterations that matter: the
+# decoder thread reads buffers, the equalizer thread runs the equalizer, the
+# audio thread writes to the sound card. Each numpy call of the equalizer
+# lets go of the GIL, and getting it back next to a thread busy in Python
+# costs up to sys.getswitchinterval() (5 ms): with the decoder in the same
+# thread as the equalizer, decoding fell to x0.87 next to a GUI thread
+# busy in Python; with the equalizer in the audio thread, writes to the
+# card came up to 244 ms apart - its buffer holds 250 ms - and it ran dry
+# in 1 of 8 runs (measured).
+
+#: The threads' names.
+AUDIO_THREAD = "Media Player audio"
+DECODER_THREAD = "Media Player decoder"
+EQUALIZER_THREAD = "Media Player equalizer"
+#: The engines whose feed runs in those threads; closed at the exit.
+_ENGINES: weakref.WeakSet = weakref.WeakSet()
+_THREADS: dict = {}
+_exit_handler_registered = False
+_multimedia_started = False
+#: In the queue of decoded audio: the decoder delivered its last buffer.
+_END = object()
+
+
+def media_thread(name: str):
+    """The thread *name* (:data:`AUDIO_THREAD`, :data:`DECODER_THREAD`)
+    every equalizer engine uses: made and started on first use, ended at
+    the exit of the process after the engines still open were closed (a
+    QThread destroyed while it runs aborts the process)."""
+    global _exit_handler_registered
+    thread = _THREADS.get(name)
+    if thread is None:
+        from PyQt6.QtCore import QThread
+
+        thread = QThread()
+        thread.setObjectName(name)
+        thread.start()
+        _THREADS[name] = thread
+        if not _exit_handler_registered:
+            # Registered after PyQt6.QtCore's own exit handler: runs before it.
+            atexit.register(end_media_threads)
+            # And when the main loop ends: axross's main() drops the
+            # application object before the exit handlers run.
+            from PyQt6.QtCore import QCoreApplication
+
+            app = QCoreApplication.instance()
+            if app is not None:
+                app.aboutToQuit.connect(end_media_threads)
+            _exit_handler_registered = True
+    return thread
+
+
+def end_media_threads(timeout_ms: int = 5000) -> bool:
+    """Close every open engine and end the threads; True when they ended
+    (or never ran). The exit handler; a later engine starts them anew."""
+    for engine in list(_ENGINES):
+        try:
+            engine.close()
+        except Exception:  # noqa: BLE001 - the others still close, the threads still end
+            log.debug("Media Player: an engine did not close", exc_info=True)
+    ended = True
+    for name, thread in list(_THREADS.items()):
+        thread.quit()
+        if thread.wait(timeout_ms):
+            del _THREADS[name]
+        else:
+            ended = False
+            log.warning("Media Player: the thread %r did not end within %d ms", name, timeout_ms)
+    return ended
+
+
+def _start_multimedia_here() -> None:
+    """Set Qt Multimedia's backend up on this (the GUI) thread: it belongs
+    to the thread that makes the first multimedia object, and that must
+    not be the decoder thread, which ends before the process does
+    (qtmultimedia qplatformmediaintegration.cpp: made on first use)."""
+    global _multimedia_started
+    if _multimedia_started:
+        return
+    from PyQt6.QtMultimedia import QAudioDecoder
+
+    first = QAudioDecoder()
+    prime_notify_lookups(first)
+    sip.delete(first)
+    _multimedia_started = True
+
+
+#: Marks a queued C++ slot in a _ThreadHost's calls (see post_slot).
+_SLOT = object()
+
+
+class _ThreadHost(QObject):
+    """Lives in one of the media threads and runs work there: what
+    :meth:`call` is handed from another thread runs there, in order, while
+    the caller waits; :meth:`post` does not wait, nor does
+    :meth:`post_slot`. Signals of the objects made there arrive at a
+    subclass's slots and go to the engine (held weakly)."""
+
+    _wake = pyqtSignal()
+
+    def __init__(self, engine, thread) -> None:
+        super().__init__()
+        self._engine = weakref.ref(engine)
+        self._calls = collections.deque()
+        #: A slot from post_slot is queued and has not run: the calls after
+        #: it wait (a wake-up queued before the slot would run them first).
+        self._held = False
+        #: threading.get_ident() of the thread, known from its first call.
+        self.ident: int | None = None
+        prime_notify_lookups(self)
+        # A real slot of this object: it runs in the thread the object lives
+        # in. A plain Python method gets a PyQt proxy that stays in the
+        # thread connect() ran in (measured: it ran on the GUI thread).
+        self._wake.connect(self._serve)
+        self.moveToThread(thread)
+
+    def call(self, fn, *args):
+        """*fn(*args)* in this host's thread; its result, or its exception
+        raised here."""
+        if threading.get_ident() == self.ident:
+            return fn(*args)
+        thread = self.thread()
+        if thread is None or not thread.isRunning():
+            raise RuntimeError("the Media Player's thread has ended")
+        done = threading.Event()
+        outcome: list = []
+        self._calls.append((fn, args, done, outcome))
+        self._wake.emit()
+        while not done.wait(0.5):
+            if not thread.isRunning():
+                raise RuntimeError("the Media Player's thread has ended")
+        kind, value = outcome
+        if kind == "error":
+            raise value
+        return value
+
+    def post(self, fn, *args) -> None:
+        """*fn(*args)* in this host's thread, later; an exception is logged."""
+        self._calls.append((fn, args, None, None))
+        self._wake.emit()
+
+    def post_slot(self, obj: QObject, slot: str, before=None) -> None:
+        """*before()*, then the C++ slot *slot* of *obj*, in this host's
+        thread, later - in order with the other calls. The slot is run by
+        Qt's event loop, not called from Python, so it holds no GIL: a
+        PyQt call holds it throughout, and QAudioDecoder.start() (it opens
+        and probes the file: 20 ms for a local WAV) stalled the GUI thread
+        that long although it ran in the decoder thread."""
+        self._calls.append((before, (obj, slot), _SLOT, None))
+        self._wake.emit()
+
+    @pyqtSlot()
+    def _resume(self) -> None:
+        """The slot post_slot queued has run: on with the calls after it."""
+        self._held = False
+        self._serve()
+
+    @pyqtSlot()
+    def _serve(self) -> None:
+        self.ident = threading.get_ident()
+        while self._calls and not self._held:
+            fn, args, done, outcome = self._calls.popleft()
+            if done is _SLOT:
+                obj, slot = args
+                try:
+                    if fn is not None:
+                        fn()
+                except Exception:  # noqa: BLE001 - raised into Qt, PyQt aborts
+                    log.exception("Media Player: %s failed", getattr(fn, "__name__", fn))
+                    continue
+                if not sip.isdeleted(obj):
+                    QMetaObject.invokeMethod(obj, slot, Qt.ConnectionType.QueuedConnection)
+                # The rest after the slot: its event is queued before _resume.
+                self._held = True
+                QMetaObject.invokeMethod(self, "_resume", Qt.ConnectionType.QueuedConnection)
+                return
+            if done is None:
+                try:
+                    fn(*args)
+                except Exception:  # noqa: BLE001 - raised into Qt, PyQt aborts
+                    log.exception("Media Player: %s failed", getattr(fn, "__name__", fn))
+                continue
+            try:
+                outcome[:] = ["ok", fn(*args)]
+            except BaseException as exc:  # noqa: BLE001 - handed to the waiting caller
+                outcome[:] = ["error", exc]
+            finally:
+                done.set()
+
+
+class _FeedHost(_ThreadHost):
+    """In the audio thread: the pump timer's ticks."""
+
+    @pyqtSlot()
+    def tick(self) -> None:
+        engine = self._engine()
+        if engine is not None:
+            engine._signal("_pump")
+
+
+class _EqHost(_ThreadHost):
+    """In the equalizer thread: its timer's ticks."""
+
+    @pyqtSlot()
+    def tick(self) -> None:
+        engine = self._engine()
+        if engine is not None:
+            engine._eq_signal("_eq_step")
+
+
+class _DecodeHost(_ThreadHost):
+    """In the decoder thread: the decoder's signals."""
+
+    def _forward(self, name: str, *args) -> None:
+        engine = self._engine()
+        if engine is not None:
+            engine._decoder_signal(name, *args)
+
+    @pyqtSlot()
+    def buffer_ready(self) -> None:
+        self._forward("_dec_buffer_ready")
+
+    @pyqtSlot()
+    def decoder_finished(self) -> None:
+        self._forward("_dec_finished")
+
+    def decoder_error(self, *args) -> None:  # connected in the decoder thread
+        self._forward("_dec_error", *args)
+
+    @pyqtSlot("qint64")
+    def duration_changed(self, ms) -> None:
+        self._forward("_dec_duration", ms)
+
+
+def _in_audio_thread(method):
+    """Run the engine method in the audio thread, under the engine's lock; a
+    caller on another thread waits for it and gets its exception. A closed
+    engine does nothing (None)."""
+
+    @functools.wraps(method)
+    def run(self, *args):
+        if self._closed:
+            return None
+        return self._feed.call(self._locked, method, args)
+
+    return run
+
+
 class EqEngine(QObject):
     """Qt's FFmpeg decoder -> the equalizer -> an audio sink, pushed by a
     timer; keeps the last samples played for the spectrum.
+
+    The feed runs in two threads of its own (:func:`media_thread`), so a
+    busy GUI thread does not slow it down. The decoder thread owns the
+    QAudioDecoder and reads each buffer as it comes into a queue (up to
+    MAX_AHEAD_SECONDS ahead of the sound card, counting what waits for the
+    equalizer). The equalizer thread keeps EQ_AHEAD_SECONDS of equalized
+    audio ready. The audio thread owns the pump timer and the sink: each
+    tick takes decoded audio from the queue and hands the sink the ready
+    audio it takes - nothing heavy runs there. The controls (load, play, pause, stop, seek, volume,
+    gains, reroute, close) run in the audio thread under the engine's lock
+    while the calling thread waits - they take effect before they return,
+    as on one thread; what they do to the decoder runs in the decoder
+    thread, the audio thread waiting (the decoder thread never waits for
+    another, nor takes the lock). The equalizer thread takes the lock only
+    to take a block and to hand back the result - the numpy work runs
+    outside it - and the audio thread never waits for it. The signals are this object's, which lives on the thread that
+    made it: their slots there run queued.
 
     Seeking: QAudioDecoder has no seek, so :meth:`seek` takes the target
     from the audio already decoded ahead when it lies there (the equalizer
@@ -992,8 +1330,7 @@ class EqEngine(QObject):
 
     def __init__(self, sink_factory=None, negotiate=None) -> None:
         super().__init__()
-        from PyQt6.QtMultimedia import QAudioDecoder
-
+        _start_multimedia_here()
         self.sink_factory = sink_factory or QtSink
         #: desired QAudioFormat -> the one to open the sink with. The real
         #: sound card is asked (routed_sink_format); a test sink takes all.
@@ -1018,13 +1355,6 @@ class EqEngine(QObject):
         self.loaded = False
         self.path = ""
         self.volume = 1.0
-        self._decoder = QAudioDecoder(self)
-        prime_notify_lookups(self._decoder)
-        self._decoder.setAudioFormat(_audio_format(self.rate))
-        self._decoder.bufferReady.connect(self._decoded)
-        self._decoder.finished.connect(self._decoder_done)
-        self._decoder.error.connect(self._decoder_error)
-        self._decoder.durationChanged.connect(self._duration_known)
         #: Decoded float stereo frames not through the equalizer yet (up to
         #: MAX_AHEAD_SECONDS), and equalized ones the sink has not taken. The
         #: equalizer runs when the sink takes audio, not when it is decoded:
@@ -1038,10 +1368,6 @@ class EqEngine(QObject):
         self._produced = 0
         self._flushed = False
         self._decoding_done = False
-        self._finish_waiting = False
-        #: True while this engine stops the decoder itself: QAudioDecoder
-        #: emits finished() from stop(), which is no end of the track.
-        self._stopping_decoder = False
         self._decoder_starts = 0
         self._skip = 0
         self._sink = None
@@ -1057,27 +1383,188 @@ class EqEngine(QObject):
         self._duration = 0
         self._decoded_frames = 0
         self._recent = np.zeros((FRAME, 2), np.float32)
-        self._timer = QTimer(self)
+        #: Held by the audio thread while the feed changes (the decoder
+        #: thread never takes it); the position (ms) after each change, for
+        #: other threads - read without waiting for a step to end.
+        self._lock = threading.RLock()
+        self._position = 0
+        self._closed = False
+        #: Decoded float stereo chunks (bytes) and finally _END, from the
+        #: decoder thread to the audio thread; their bytes; errors the
+        #: decoder reported as (run, text).
+        self._queue = collections.deque()
+        self._queue_lock = threading.Lock()
+        self._queued_bytes = 0
+        self._decoder_errors = collections.deque()
+        #: The decoder thread's own: the decoder's start count, a buffer it
+        #: left unread (no room), its finished() while that buffer waits,
+        #: and True while it stops the decoder itself - QAudioDecoder emits
+        #: finished() from stop(), which is no end of the track.
+        self._decoder_run = 0
+        self._decoder_holding = False
+        self._decoder_finish_waiting = False
+        self._stopping_decoder = False
+        #: Set by the audio thread when it asked the decoder thread to read
+        #: the buffer it held, cleared there.
+        self._resume_posted = False
+        #: The equalizer thread's: a reset asked for by raising the
+        #: generation (the audio thread never touches the equalizer's
+        #: state), the generation it last reset at, a block being equalized,
+        #: and how long the last block took (s).
+        self._eq_generation = 0
+        self._eq_seen = 0
+        self._eq_busy = False
+        self._eq_last_batch = 0.0
+        self._decoder = None
+        self._timer = None
+        self._eq_timer = None
+        self._feed = _FeedHost(self, media_thread(AUDIO_THREAD))
+        self._decode = _DecodeHost(self, media_thread(DECODER_THREAD))
+        self._eq = _EqHost(self, media_thread(EQUALIZER_THREAD))
+        self._decode.call(self._build_decoder)
+        self._feed.call(self._build_timer)
+        self._eq.call(self._build_eq_timer)
+        _ENGINES.add(self)
+
+    def _build_decoder(self) -> None:
+        """In the decoder thread: the decoder, made there so its work and
+        signals stay there. A decoder made elsewhere and moved over still
+        decodes at the pace of the thread that made it: its FFmpeg backend
+        object does not move with it (measured: 15 buffers in 2 s with that
+        thread busy 130 ms per iteration)."""
+        from PyQt6.QtMultimedia import QAudioDecoder
+
+        host = self._decode
+        self._decoder = QAudioDecoder(host)
+        prime_notify_lookups(self._decoder)
+        self._decoder.setAudioFormat(_audio_format(self.rate))
+        self._decoder.bufferReady.connect(host.buffer_ready)
+        self._decoder.finished.connect(host.decoder_finished)
+        self._decoder.error.connect(host.decoder_error)
+        self._decoder.durationChanged.connect(host.duration_changed)
+
+    def _build_timer(self) -> None:
+        """In the audio thread: the pump timer."""
+        self._timer = QTimer(self._feed)
+        prime_notify_lookups(self._timer)
         self._timer.setInterval(10)
-        self._timer.timeout.connect(self._pump)
+        self._timer.timeout.connect(self._feed.tick)
+
+    def _build_eq_timer(self) -> None:
+        """In the equalizer thread: its timer."""
+        self._eq_timer = QTimer(self._eq)
+        prime_notify_lookups(self._eq_timer)
+        self._eq_timer.setInterval(10)
+        self._eq_timer.timeout.connect(self._eq.tick)
+
+    def _set_running(self, on: bool) -> None:
+        """Start or stop the pump and the equalizer's timer (audio thread;
+        the equalizer thread is told, not waited for)."""
+        if on:
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self._eq.post(self._eq_signal, "_eq_run", on)
+
+    def _locked(self, method, args):
+        """*method(self, *args)* under the lock, in the audio thread."""
+        with self._lock:
+            if self._closed:
+                return None
+            if sip.isdeleted(self):
+                self._teardown()
+                return None
+            try:
+                return method(self, *args)
+            finally:
+                self._position = self._current_position()
+
+    def _signal(self, name: str, *args) -> None:
+        """The timer's tick or a decoder report, in the audio thread: the
+        step *name* under the lock. An exception is logged - raised into
+        Qt, PyQt would abort the process."""
+        try:
+            with self._lock:
+                if self._closed:
+                    return
+                if sip.isdeleted(self):  # its panel went without closing it
+                    self._teardown()
+                    return
+                try:
+                    getattr(self, name)(*args)
+                finally:
+                    self._position = self._current_position()
+        except Exception:  # noqa: BLE001 - see above
+            log.exception("Media Player: the audio feed failed in %s", name)
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        """Stop for good and free the decoder, the timer and the sink (in
+        the audio thread); later calls do nothing. The panel's shutdown and
+        the exit call it."""
+        if self._closed:
+            return
+        self._feed.call(self._close_in_thread)
+
+    def _close_in_thread(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self._teardown()
+        # Outside the lock: the equalizer thread may wait for it.
+        try:
+            self._eq.call(self._eq_close)
+        except RuntimeError:  # its thread ended already (the exit)
+            log.debug("Media Player: the equalizer timer was not closed", exc_info=True)
+
+    def _teardown(self) -> None:
+        """In the audio thread, under the lock: everything stops and goes."""
+        self._closed = True
+        _ENGINES.discard(self)
+        if self._timer is not None and not sip.isdeleted(self._timer):
+            self._timer.stop()
+        if self._decoder is not None and not sip.isdeleted(self._decoder):
+            try:
+                self._decode.call(self._dec_close)
+            except RuntimeError:  # the decoder thread ended already (the exit)
+                log.debug("Media Player: the decoder was not closed", exc_info=True)
+        if self._sink is not None:
+            self._sink.stop()
+            self._sink = None
+        self._pending.clear()
+        self._ready.clear()
+        self._carry = b""
+        self._written_frames = self._base_frames = self._start_frames = 0
+        self.state = "stopped"
+        self._position = 0
+        self._eq.post(self._eq_close)  # close() waits for it, outside the lock
+        if self._timer is not None and not sip.isdeleted(self._timer):
+            sip.delete(self._timer)  # in its own thread: at once
+        if not sip.isdeleted(self):
+            self.changed.emit()
 
     @property
     def gains_db(self) -> list[float]:
         """The user's band gains (kept while the equalizer is off)."""
         return list(self._user_gains)
 
+    @_in_audio_thread
     def set_gains(self, gains) -> None:
         self.equalizer.set_gains(gains)  # validates and clamps
         self._user_gains = list(self.equalizer.gains_db)
         if not self.eq_enabled:
             self.equalizer.set_gains([0.0] * len(BANDS))
 
+    @_in_audio_thread
     def set_eq_enabled(self, on: bool) -> None:
         """Off is flat: the equalizer stays in the chain (taking it out
         mid-track would jump by its latency)."""
         self.eq_enabled = bool(on)
         self.equalizer.set_gains(self._user_gains if on else [0.0] * len(BANDS))
 
+    @_in_audio_thread
     def load(self, path: str) -> None:
         self.stop()
         self.path = path
@@ -1086,9 +1573,10 @@ class EqEngine(QObject):
         self.loaded = True
         self._duration = 0
         self.monitor.reset()
-        self._decoder.setSource(QUrl.fromLocalFile(path))
+        self._decode.call(self._dec_set_source, path)
         self.changed.emit()
 
+    @_in_audio_thread
     def play(self) -> None:
         if not self.loaded:
             return
@@ -1096,7 +1584,7 @@ class EqEngine(QObject):
             self.state = "playing"
             if self._sink is not None:
                 self._sink.resume()
-            self._timer.start()
+            self._set_running(True)
             self.changed.emit()
             return
         if self.state == "playing":
@@ -1113,24 +1601,25 @@ class EqEngine(QObject):
         self.monitor.pause()
         self._sink = self._new_sink()
         self.state = "playing"
-        # An unreadable file fails inside start() already (_fail stops all).
+        # The decoder starts in its thread, not waited for; a file it cannot
+        # read is reported from there (_dec_error -> _fail stops all).
         self._start_decoder(self._base_frames)
-        if self.state != "playing":
-            return
-        self._timer.start()
+        self._set_running(True)
         self.changed.emit()
 
+    @_in_audio_thread
     def pause(self) -> None:
         if self.state == "playing":
             self.state = "paused"
-            self._timer.stop()
+            self._set_running(False)
             self.monitor.pause()
             if self._sink is not None:
                 self._sink.suspend()
             self.changed.emit()
 
+    @_in_audio_thread
     def stop(self) -> None:
-        self._timer.stop()
+        self._set_running(False)
         self._stop_decoder()
         if self._sink is not None:
             self._sink.stop()
@@ -1144,6 +1633,7 @@ class EqEngine(QObject):
         self.state = "stopped"
         self.changed.emit()
 
+    @_in_audio_thread
     def seek(self, ms) -> None:
         """Play on from *ms* (clamped to the start); past the end the
         track ends as if played. Paused stays paused, stopped starts there
@@ -1186,11 +1676,13 @@ class EqEngine(QObject):
             self._sink.suspend()
         self.changed.emit()
 
+    @_in_audio_thread
     def set_volume(self, volume: float) -> None:
         self.volume = max(0.0, min(1.0, volume))
         if self._sink is not None:
             self._sink.set_volume(self.volume)
 
+    @_in_audio_thread
     def reroute(self) -> None:
         """The output device was changed (Edit > Settings… > Audio): a
         playing or paused track goes on through a new sink, which the sink
@@ -1216,6 +1708,13 @@ class EqEngine(QObject):
             self._sink.suspend()
 
     def position_ms(self) -> int:
+        """Where playback is; another thread gets the position after the
+        audio thread's last step (it does not wait for a running one)."""
+        if threading.get_ident() == self._feed.ident:
+            return self._current_position()
+        return self._position
+
+    def _current_position(self) -> int:
         if self.state == "stopped":
             return int(self._start_frames * 1000 // self.rate)
         return int((self._base_frames + self._written_frames) * 1000 // self.rate)
@@ -1249,9 +1748,10 @@ class EqEngine(QObject):
         if rate != self.rate:
             self._stop_decoder()
             self.rate = rate
-            self._decoder.setAudioFormat(_audio_format(rate))
+            self._decode.call(self._dec_set_rate, rate)
             self.equalizer = Equalizer(rate, 2)
             self.equalizer.set_gains(self._user_gains if self.eq_enabled else [0.0] * len(BANDS))
+            self._eq_generation += 1  # a block of the old one is discarded
             self.monitor = PlaybackMonitor(rate)
             self._recent = np.zeros((FRAME, 2), np.float32)
 
@@ -1263,28 +1763,15 @@ class EqEngine(QObject):
         sink.start()
         return sink
 
-    def _duration_known(self, ms) -> None:
-        if int(ms) > 0:  # stop() reports -1
-            self._duration = int(ms)
-
     def _stop_decoder(self) -> None:
-        self._stopping_decoder = True
-        try:
-            self._decoder.stop()
-            # A buffer not read yet stays available after stop() and would
-            # be the first one read after the next start() - audio from the
-            # old position counted as the new run's first frames.
-            for _ in range(64):
-                if not self._decoder.bufferAvailable():
-                    break
-                self._decoder.read()
-        finally:
-            self._stopping_decoder = False
+        """Stop the decoder; what it decoded and nobody took is gone."""
+        self._decode.call(self._dec_stop)
 
     def _reset_equalizer(self) -> None:
         """A fresh equalizer for audio that does not follow on what went
-        through it: what it holds is dropped."""
-        self.equalizer.reset()
+        through it: what it holds is dropped (the equalizer thread resets
+        it before its next block; a block it works on now is discarded)."""
+        self._eq_generation += 1
         self._ready.clear()
         self._fed = self._produced = 0
         self._flushed = False
@@ -1302,17 +1789,22 @@ class EqEngine(QObject):
         self._decoding_done = False
 
     def _start_decoder(self, drop_to: int) -> None:
-        """Decode from the top, dropping the frames before *drop_to*."""
+        """Decode from the top, dropping the frames before *drop_to*. The
+        decoder thread starts the decoder later, nobody waits for it:
+        QAudioDecoder.start() opens and probes the file (20 ms for a local
+        WAV, as long as a slow mount takes), and play() and seek() held the
+        GUI thread for that. An error start() reports comes like any later
+        decoder error (_dec_error); a stop sent meanwhile runs after it."""
         self._stop_decoder()
         self._raw_frames = 0
-        self._finish_waiting = False
         self._restart_chain(drop_to)
         self._decoder_starts += 1
-        self._decoder.start()
+        self._decode.post_slot(self._decoder, "start",
+                               functools.partial(self._decoder_signal, "_dec_start"))
 
     def _end_track(self) -> None:
         """The end of the track, reached by a seek past it."""
-        self._timer.stop()
+        self._set_running(False)
         self._stop_decoder()
         if self._sink is not None:
             self._sink.stop()
@@ -1328,25 +1820,42 @@ class EqEngine(QObject):
         self.finished_playing.emit()
 
     def _room(self) -> bool:
-        """Whether one more decoded buffer may be taken now."""
+        """Whether one more decoded chunk may be taken from the queue now."""
         return len(self._pending) + len(self._ready) < MAX_AHEAD_SECONDS * self.rate * 8
 
-    def _write_to(self, sink) -> None:
+    def _drain(self) -> None:
+        """Take decoded audio from the queue while there is room; ask the
+        decoder thread for the buffer it held back once there is."""
+        while self._queue and self._room():
+            with self._queue_lock:
+                item = self._queue.popleft()
+                if item is not _END:
+                    self._queued_bytes -= len(item)
+            if item is _END:
+                self._decoder_done()
+            else:
+                self._take_decoded(item)
+        if (self._decoder_holding and not self._resume_posted and not self._closed
+                and self._decoder_room()):
+            self._resume_posted = True
+            self._decode.post(self._decoder_signal, "_dec_resume")
+
+    def _write_to(self, sink) -> int:
         """Hand the sink what it takes now, in its format: converted bytes
-        it did not take last time first, then whole frames of the queue."""
+        it did not take last time first, then whole frames of the queue.
+        The bytes it had room for (0: it took nothing more)."""
         if self._carry:
             taken = sink.write(self._carry)
             self._carry = self._carry[taken:]
             if self._carry:
-                return
+                return 0
         free = sink.bytes_free()
         frames_free = free // self._out_bpf
         if not frames_free:
-            return
-        self._equalize(frames_free)
+            return 0
         count = min(frames_free, len(self._ready) // 8)
         if not count:
-            return
+            return free
         frames = np.frombuffer(bytes(self._ready[:count * 8]), np.float32).reshape(-1, 2)
         del self._ready[:count * 8]
         _rate, channels, sample_format = self._out_format
@@ -1357,46 +1866,103 @@ class EqEngine(QObject):
             self._carry = data[taken:]
         # The frames count as played once handed over (the rest follows).
         self._written_frames += count
-        self._recent = np.concatenate([self._recent, frames])[-FRAME:]
+        self._recent = (frames[-FRAME:].copy() if len(frames) >= FRAME
+                        else np.concatenate([self._recent, frames])[-FRAME:])
+        return free
 
-    def _decoded(self) -> None:
-        # A full queue leaves the buffer with the decoder, which then waits;
-        # _pump takes it once the sound card has played some.
-        if not self._room():
-            return
-        buffer = self._decoder.read()
-        if not buffer.isValid() or buffer.byteCount() == 0:
-            return
-        size = buffer.byteCount() // 8 * 8
+    def _take_decoded(self, raw: bytes) -> None:
+        """A decoded chunk (float stereo) for the equalizer's queue; what
+        lies before a seek target is dropped."""
+        frames = len(raw) // 8
         start = self._raw_frames
-        self._raw_frames += size // 8
+        self._raw_frames += frames
         offset = 0
         if self._drop_to is not None:
             if self._raw_frames <= self._drop_to:
-                return  # before the seek target: not even converted
+                return  # before the seek target
             offset = self._drop_to - start
             self._drop_to = None
-        raw = buffer.constData().asstring(size)
-        self._decoded_frames += size // 8 - offset
+        self._decoded_frames += frames - offset
         self._pending += raw[offset * 8:]
 
-    def _equalize(self, wanted: int) -> None:
-        """Run frames of the queue through the equalizer until *wanted*
-        equalized frames wait for the sink (or the queue is empty; then,
-        once decoding is done, the equalizer's tail)."""
-        while len(self._ready) // 8 < wanted and self._pending:
-            count = min(len(self._pending) // 8, max(HOP, wanted - len(self._ready) // 8))
-            block = np.frombuffer(bytes(self._pending[:count * 8]), np.float32).reshape(-1, 2)
-            del self._pending[:count * 8]
-            self._fed += count
-            self._take(self.equalizer.process(block))
-        if self._decoding_done and not self._pending and not self._flushed:
-            self._flushed = True
-            tail = self.equalizer.flush()
-            if self._skip:
-                tail = tail[self._skip:]
-                self._skip = 0
-            self._take(tail[: max(0, self._fed - self._produced)])
+    # -- the equalizer thread (takes the lock only around its numpy work) ---------------------
+
+    def _eq_signal(self, name: str, *args) -> None:
+        """The equalizer timer's tick, or work posted to that thread. An
+        exception is logged - raised into Qt, PyQt would abort."""
+        try:
+            if self._closed:
+                return
+            if sip.isdeleted(self):  # the audio thread's next step tears all down
+                self._feed.post(self._signal, "_pump")
+                return
+            getattr(self, name)(*args)
+        except Exception:  # noqa: BLE001 - see above
+            log.exception("Media Player: the equalizer failed in %s", name)
+
+    def _eq_run(self, on: bool) -> None:
+        if self._eq_timer is None or sip.isdeleted(self._eq_timer):
+            return
+        if on:
+            self._eq_timer.start()
+            self._eq_step()  # at once: a start or a seek has nothing ready
+        else:
+            self._eq_timer.stop()
+
+    def _eq_close(self) -> None:
+        if self._eq_timer is not None and not sip.isdeleted(self._eq_timer):
+            self._eq_timer.stop()
+            sip.delete(self._eq_timer)  # in its own thread: at once
+
+    def _eq_step(self) -> None:
+        """Keep EQ_AHEAD_SECONDS of equalized audio ready (and, once the
+        decoder is done and the queue empty, the equalizer's tail). A block
+        is at least twice what the last one took to equalize, so a slow
+        equalizer (a GIL shared with a busy thread) still keeps up."""
+        with self._lock:
+            if self._closed or self._eq_busy:
+                return
+            if self._eq_seen != self._eq_generation:
+                self.equalizer.reset()
+                self._eq_seen = self._eq_generation
+            ready = len(self._ready) // 8
+            tail_due = self._decoding_done and not self._pending and not self._flushed
+            if not tail_due and (ready >= EQ_AHEAD_SECONDS * self.rate or not self._pending):
+                return
+            block = None
+            if self._pending:
+                want = max(HOP, int(EQ_AHEAD_SECONDS * self.rate) - ready,
+                           int(2 * self._eq_last_batch * self.rate))
+                count = min(len(self._pending) // 8, want)
+                block = np.frombuffer(bytes(self._pending[:count * 8]), np.float32).reshape(-1, 2)
+                del self._pending[:count * 8]
+                self._fed += count
+                tail_due = self._decoding_done and not self._pending
+            generation, equalizer = self._eq_generation, self.equalizer
+            self._eq_busy = True
+        try:
+            started = time.perf_counter()
+            out = equalizer.process(block) if block is not None else None
+            tail = equalizer.flush() if tail_due else None
+            self._eq_last_batch = time.perf_counter() - started
+        except BaseException:
+            with self._lock:
+                self._eq_busy = False
+            raise
+        with self._lock:
+            # Busy until the result is in: the audio thread must not take
+            # the track for played while its last block is on the way.
+            self._eq_busy = False
+            if self._closed or generation != self._eq_generation:
+                return  # reset (a seek) meanwhile: this block is gone
+            if out is not None:
+                self._take(out)
+            if tail is not None:
+                self._flushed = True
+                if self._skip:
+                    tail = tail[self._skip:]
+                    self._skip = 0
+                self._take(tail[: max(0, self._fed - self._produced)])
 
     def _take(self, frames) -> None:
         """Equalized *frames* for the sink, after the latency is dropped."""
@@ -1409,19 +1975,124 @@ class EqEngine(QObject):
             self._ready += np.ascontiguousarray(frames, np.float32).tobytes()
 
     def _decoder_done(self) -> None:
-        if self._stopping_decoder:
-            return  # stop() emits finished(): not the end of the track
-        if self._decoder.bufferAvailable():
-            self._finish_waiting = True  # the last buffer is not taken yet
-            return
-        self._finish_waiting = False
+        """The decoder's last buffer was taken from the queue."""
         self._drop_to = None  # a seek past the real end: nothing follows
         self._decoding_done = True  # the equalizer's tail follows the queue
         if self._raw_frames == 0 and not self.error:
             self._fail(f"{os.path.basename(self.path)}: no audio could be decoded")
 
-    def _decoder_error(self, _error) -> None:
-        self._fail(self._decoder.errorString() or "the file could not be decoded")
+    def _take_decoder_errors(self) -> None:
+        """Fail on an error the decoder reported for its current run."""
+        while self._decoder_errors:
+            run, text = self._decoder_errors.popleft()
+            if run == self._decoder_run and not self.error and self.loaded:
+                self._fail(text)
+
+    # -- the decoder thread (never takes the lock, never waits for another thread) ----------
+
+    def _decoder_signal(self, name: str, *args) -> None:
+        """A decoder signal, or work the audio thread posted, in the decoder
+        thread. An exception is logged - raised into Qt, PyQt would abort."""
+        try:
+            if self._closed:
+                return
+            if sip.isdeleted(self):  # the audio thread's next step tears all down
+                self._feed.post(self._signal, "_pump")
+                return
+            getattr(self, name)(*args)
+        except Exception:  # noqa: BLE001 - see above
+            log.exception("Media Player: the decoder failed in %s", name)
+
+    def _decoder_room(self) -> bool:
+        """Whether the decoder may hand out one more buffer: what waits in
+        the queue, for the equalizer and for the sink stays below
+        MAX_AHEAD_SECONDS (the decoder waits until its buffer is read)."""
+        with self._queue_lock:
+            queued = self._queued_bytes
+        return (queued + len(self._pending) + len(self._ready)
+                < MAX_AHEAD_SECONDS * self.rate * 8)
+
+    def _dec_set_source(self, path: str) -> None:
+        self._decoder.setSource(QUrl.fromLocalFile(path))
+
+    def _dec_set_rate(self, rate: int) -> None:
+        self._decoder.setAudioFormat(_audio_format(rate))
+
+    def _dec_start(self) -> None:
+        """A new run of the decoder; its start() follows from Qt's event
+        loop (_ThreadHost.post_slot)."""
+        self._decoder_run += 1
+        self._decoder_holding = self._decoder_finish_waiting = False
+
+    def _dec_stop(self) -> None:
+        self._stopping_decoder = True
+        try:
+            self._decoder.stop()
+            # A buffer not read yet stays available after stop() and would
+            # be the first one read after the next start() - audio from the
+            # old position counted as the new run's first frames.
+            for _ in range(64):
+                if not self._decoder.bufferAvailable():
+                    break
+                self._decoder.read()
+        finally:
+            self._stopping_decoder = False
+        self._decoder_holding = self._decoder_finish_waiting = False
+        with self._queue_lock:
+            self._queue.clear()
+            self._queued_bytes = 0
+
+    def _dec_close(self) -> None:
+        self._dec_stop()
+        sip.delete(self._decoder)  # in its own thread: at once
+
+    def _dec_buffer_ready(self) -> None:
+        if not self._decoder_room():
+            # A full queue leaves the buffer with the decoder, which then
+            # waits; the audio thread asks for it once the sound card played
+            # some (_drain -> _dec_resume).
+            self._decoder_holding = True
+            return
+        self._dec_read()
+
+    def _dec_resume(self) -> None:
+        self._resume_posted = False
+        if self._decoder.bufferAvailable() and self._decoder_room():
+            self._dec_read()
+
+    def _dec_read(self) -> None:
+        self._decoder_holding = False
+        buffer = self._decoder.read()
+        if buffer.isValid() and buffer.byteCount() > 0:
+            size = buffer.byteCount() // 8 * 8
+            raw = buffer.constData().asstring(size)
+            with self._queue_lock:
+                self._queue.append(raw)
+                self._queued_bytes += len(raw)
+        if self._decoder_finish_waiting and not self._decoder.bufferAvailable():
+            self._dec_end()
+
+    def _dec_finished(self) -> None:
+        if self._stopping_decoder:
+            return  # stop() emits finished(): not the end of the track
+        if self._decoder.bufferAvailable():
+            self._decoder_finish_waiting = True  # the last buffer is not read yet
+            return
+        self._dec_end()
+
+    def _dec_end(self) -> None:
+        self._decoder_finish_waiting = False
+        with self._queue_lock:
+            self._queue.append(_END)
+
+    def _dec_error(self, *_args) -> None:
+        self._decoder_errors.append(
+            (self._decoder_run, self._decoder.errorString() or "the file could not be decoded"))
+        self._feed.post(self._signal, "_take_decoder_errors")
+
+    def _dec_duration(self, ms) -> None:
+        if int(ms) > 0:  # stop() reports -1
+            self._duration = int(ms)
 
     def _fail(self, text: str) -> None:
         self.error = text
@@ -1429,31 +2100,33 @@ class EqEngine(QObject):
         self.changed.emit()
         self.failed.emit(text)
 
+    @_in_audio_thread
     def _pump(self) -> None:
         sink = self._sink
         if sink is None:
             return
-        while self._room() and self._decoder.bufferAvailable():
-            before = self._raw_frames
-            self._decoded()
-            if self._raw_frames == before:
-                break  # an empty buffer: never spin on it
-        if self._finish_waiting and not self._decoder.bufferAvailable():
-            self._decoder_done()
-        self._write_to(sink)
-        if self._decoding_done and not self._pending and not self._flushed:
-            self._equalize(0)  # the equalizer's tail, also when the sink is full
+        self._drain()
+        if self._sink is not sink:
+            return  # the end of the decoded audio failed the track
+        room = self._write_to(sink)
         if self._pending or self._ready or self._carry or not self._decoding_done:
+            # Starved: the sound card had room, and after this tick at least
+            # half of it is still empty - nothing was ready, or making it
+            # (decoding, equalizing) took longer than the card took to play.
+            # A sink kept full has (almost) no room left after the write.
+            left = sink.bytes_free() if room else 0
+            starved = (not self._decoding_done and left >= self._out_bpf
+                       and 2 * left >= room)
             problem = self.monitor.update(time.monotonic(), self._written_frames,
-                                          _backend_name())
+                                          _backend_name(), starved=starved)
             if problem:
                 log.warning("Media Player: %s", problem)
                 self.playback_problem.emit(problem)
         else:
             self.monitor.pause()  # the end drains the sound card: not a speed
         if (self._decoding_done and self._flushed and not self._pending and not self._ready
-                and not self._carry):
-            self._timer.stop()
+                and not self._carry and not self._eq_busy):
+            self._set_running(False)
             self.state = "stopped"
             self.finished = True
             self.changed.emit()
@@ -1590,7 +2263,7 @@ def _backend_name() -> str:
         backend = multimedia_probe.active_backend()
     except Exception:  # noqa: BLE001 - a message must not fail
         return ""
-    return {"pipewire": "PipeWire", "pulseaudio": "PulseAudio"}.get(backend or "", "")
+    return BACKEND_LABELS.get(backend or "", "")
 
 
 def default_engine():
@@ -1866,6 +2539,12 @@ class Visualizer(QWidget):
     LABEL_SECONDS = 1.5
     #: In fullscreen the mouse pointer hides after this long without a move.
     CURSOR_HIDE_MS = 2500
+    #: A tick repaints only when a value it shows moved by more than this
+    #: (0..1 scale: a tenth of a pixel at 1080 px). Paused or stopped the
+    #: engine hands out the same samples and the smoothing creeps towards
+    #: them for ever in floating point - the same picture 31 times a second
+    #: took 4 % of a core on the GUI thread.
+    STILL = 1e-4
     #: The face now shown (one of MODES).
     mode_changed = pyqtSignal(str)
     #: The colour scheme, its custom colours, an option or hide_cursor changed.
@@ -1901,6 +2580,8 @@ class Visualizer(QWidget):
         self._clicks_from = self.mode
         self._last_press = -(10 ** 9)
         self._autohide = False
+        #: (mode, values) of the last picture a tick asked to paint.
+        self._shown = None
         self._resize_bars(self.options["bars"])
         self._apply_scheme()
         self.setMinimumHeight(90)
@@ -1908,7 +2589,7 @@ class Visualizer(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.timer = QTimer(self)
         self.timer.setInterval(round(1000 / self.options["fps"]))
-        self.timer.timeout.connect(self.tick)
+        self.timer.timeout.connect(self._timer_tick)
         self._label_timer = QTimer(self)  # repaints once the name is due to go
         self._label_timer.setSingleShot(True)
         self._label_timer.timeout.connect(self.update)
@@ -2199,6 +2880,23 @@ class Visualizer(QWidget):
             stars[gone, 1] = self._rng.uniform(-1, 1, count)
             stars[gone, 2] = 1.0
 
+    def _timer_tick(self) -> None:
+        """The timer's tick: nothing while nobody can see the face (a closed
+        dock, another tab) - its FFT took 2-3 % of a core for nothing."""
+        if self.isVisible():
+            self.tick()
+
+    def _paint_if_moved(self, values) -> None:
+        """Repaint unless *values* - what the face shows - are those of the
+        last picture, within STILL."""
+        values = np.asarray(values, np.float32)
+        shown = self._shown
+        if (shown is not None and shown[0] == self.mode and shown[1].shape == values.shape
+                and (values.size == 0 or float(np.max(np.abs(values - shown[1]))) <= self.STILL)):
+            return
+        self._shown = (self.mode, values)
+        self.update()
+
     def tick(self) -> None:
         if self.mode in _SAMPLE_MODES:
             samples = self._samples()
@@ -2206,15 +2904,17 @@ class Visualizer(QWidget):
                 return
             if self.mode == "scope":
                 self.trace = waveform(samples, max(2, min(self.SCOPE_POINTS, self.width())))
+                self._paint_if_moved(self.trace)
             elif self.mode == "lissajous":
                 self.lissajous = stereo_points(samples, self.LISSAJOUS_POINTS)
+                self._paint_if_moved(np.concatenate(self.lissajous))
             else:
                 levels = vu_levels(samples)
                 for i in (0, 1):
                     value = levels[i]
                     self.vu[i] = value if value > self.vu[i] else self.vu[i] * 0.85 + value * 0.15
                     self.vu_peaks[i] = max(levels[2 + i], self.vu_peaks[i] - 0.01)
-            self.update()
+                self._paint_if_moved([*self.vu, *self.vu_peaks])
             return
         n = self.options["bars"]
         bars = self.engine.current_bars(n)
@@ -2232,11 +2932,15 @@ class Visualizer(QWidget):
             levels[i] = value if value > levels[i] else levels[i] * keep + value * (1.0 - keep)
             peaks[i] = max(levels[i], peaks[i] - fall)
         self.levels, self.peaks = levels, peaks
-        if self.mode == "waterfall":
+        if self.mode == "waterfall":  # scrolls on: it always moves
             self.waterfall[:-1] = self.waterfall[1:]
             self.waterfall[-1] = np.round(np.clip(values, 0.0, 1.0) * 255).astype(np.uint8)
-        elif self.mode == "starfield":
+        elif self.mode == "starfield":  # the stars drift on in silence too
             self._move_stars(values)
+        else:
+            self._paint_if_moved([*levels, *peaks])
+            return
+        self._shown = None
         self.update()
 
     # -- painting ---------------------------------------------------------------------
@@ -2667,6 +3371,14 @@ class SeekSlider(QSlider):
         event.accept()
 
 
+class PlaylistDelegate(QStyledItemDelegate):
+    """A playlist row is as wide as the list, whatever its title: the view
+    stretches a row to its width, so the text is cut with "…" there."""
+
+    def sizeHint(self, option, index) -> QSize:  # noqa: N802 - Qt
+        return QSize(0, super().sizeHint(option, index).height())
+
+
 class PlaylistWidget(QListWidget):
     """The playlist: rows reorder by dragging (InternalMove); files dropped
     from a file pane or the desktop go to :attr:`dropped`."""
@@ -2680,6 +3392,27 @@ class PlaylistWidget(QListWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setAcceptDrops(True)
+        # Every row the same size: without it any change to one row (the
+        # playing row's bold font and icon, its length once read) made the
+        # view lay out every row again - 16 ms per track change with 2000
+        # tracks, twice. A title wider than the list is cut with "…" (the
+        # tooltip holds the path) instead of widening all rows sideways.
+        self.setUniformItemSizes(True)
+        self.setItemDelegate(PlaylistDelegate(self))
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self._fit_icon_size()
+
+    def _fit_icon_size(self) -> None:
+        """The playing row's icon as high as a line of text: that row is as
+        high as the others (it was 26 px against 15)."""
+        edge = self.fontMetrics().height()
+        self.setIconSize(QSize(edge, edge))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt
+        if event.type() == QEvent.Type.FontChange:
+            self._fit_icon_size()
+        super().changeEvent(event)
 
     @staticmethod
     def accepts(mime) -> bool:
@@ -4128,6 +4861,9 @@ class PlayerPanel(QWidget):
         self._state_path = None  # nothing after this writes
         self._clock.stop()
         self.engine.stop()
+        close = getattr(self.engine, "close", None)
+        if callable(close):
+            close()  # the equalizer engine frees its decoder and sound card
         self.visualizer.timer.stop()
 
     # -- control icons ----------------------------------------------------------------------

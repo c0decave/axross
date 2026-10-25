@@ -85,9 +85,10 @@ def ramp_seconds(sample: float, seconds: float) -> float:
 
 def wait(cond, timeout: float = 15.0) -> bool:
     """Run a real event loop until *cond()* holds. Not processEvents() and
-    sleep: the decoder hands out its next buffer only once the last one was
-    read, so every sleep stalls decoding (a seek measured that way took
-    25 s instead of a quarter of one)."""
+    sleep: while the decoder ran on the GUI thread, it handed out its next
+    buffer only once the last one was read, so every sleep stalled decoding
+    (a seek measured that way took 25 s instead of a quarter of one); the
+    engine's signals still arrive through this loop."""
     if cond():
         return True
     end = time.time() + timeout
@@ -133,6 +134,18 @@ def written_frames(sink) -> int:
     return len(sink.data) // 8
 
 
+def hold(engine, sink) -> int:
+    """Stop *sink* taking audio and wait out the audio thread's step in
+    progress; the frames it took per tick (give them back with
+    ``sink.frames = ...``). The engine feeds the sink from a thread of its
+    own: a write between reading the sink's length and a seek counted
+    pre-seek audio as the seek's (measured: the track's first 441 frames,
+    22 of 40 runs)."""
+    frames, sink.frames = sink.frames, 0
+    engine.set_volume(engine.volume)  # runs in the audio thread after that step
+    return frames
+
+
 # -- 1. seeking: the numpy engine ---------------------------------------------------------
 
 
@@ -151,8 +164,10 @@ def test_sad_format_time_of_nonsense_is_zero():
 def _seek_and_measure(engine, sink, target_ms, seconds):
     """Seek, play to the end; the first post-seek sample's place (s) and
     the post-seek samples."""
+    frames = hold(engine, sink)
     before = written_frames(sink)
     engine.seek(target_ms)
+    sink.frames = frames
     assert engine.position_ms() == target_ms
     assert wait(lambda: engine.finished, 30), engine.error
     after = sink.samples()[before:]
@@ -189,6 +204,7 @@ def test_happy_eq_engine_seeks_inside_what_is_already_decoded(tmp_path):
     assert wait(lambda: len(engine._pending) > RATE * 8 * 1.5)
     current = engine.position_ms()
     target = current + 1000
+    hold(engine, sink)
     before = written_frames(sink)
     starts = engine._decoder_starts
     engine.seek(target)
@@ -210,6 +226,7 @@ def test_edge_eq_engine_seek_back_while_the_decoder_holds_a_buffer(tmp_path):
     engine.play()
     assert wait(lambda: not engine._room() and engine._decoder.bufferAvailable()
                 and engine.position_ms() > 600)
+    hold(engine, sink)
     before = written_frames(sink)
     engine.seek(300)
     engine._pump()  # the timer fires before the decoder's first new buffer
@@ -230,8 +247,10 @@ def test_happy_eq_engine_seek_keeps_the_equalizer_consistent(tmp_path):
     engine.load(str(path))
     engine.play()
     assert wait(lambda: written_frames(sink) > RATE * 3)
+    frames = hold(engine, sink)
     before = written_frames(sink)
     engine.seek(1000)
+    sink.frames = frames
     assert wait(lambda: engine.finished, 30)
     after = sink.samples()[before:]
     with wave.open(str(path)) as w:
@@ -352,9 +371,11 @@ def test_edge_seek_latency_far_into_a_long_track(tmp_path):
     assert wait(lambda: engine.finished, 30)
     engine.play()
     assert wait(lambda: written_frames(sink) > 0 and engine.position_ms() > 100)
+    frames = hold(engine, sink)
     before = written_frames(sink)
     start = time.perf_counter()
     engine.seek(50_000)  # backward: decodes from the top
+    sink.frames = frames
     assert wait(lambda: written_frames(sink) > before, 10)
     latency = time.perf_counter() - start
     first = float(sink.samples()[before, 0])
@@ -588,11 +609,13 @@ def test_e2e_panel_seeks_a_real_track_with_the_slider(tmp_path):
         assert wait(lambda: panel.engine.duration_ms() > 0 and written_frames(sink) > RATE)
         panel._refresh_time()
         assert panel.time_label.text().endswith("/ 0:08")
+        frames = hold(panel.engine, sink)
         before = written_frames(sink)
         slider = panel.seek_slider
         slider.setSliderDown(True)
         slider.setSliderPosition(6000)
         slider.setSliderDown(False)
+        sink.frames = frames
         assert wait(lambda: written_frames(sink) > before)
         first = float(sink.samples()[before, 0])
         assert abs(ramp_seconds(first, seconds) - 6.0) < 0.01

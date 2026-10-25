@@ -85,7 +85,8 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
 - **Alt+Links / Alt+Rechts** durchschreiten Pane-Historie;
   **Tab** / **Shift+Tab** in einer Dateiliste wechseln das Pane.
 - Drag-and-Drop zwischen Panes startet einen Transfer (lokal↔remote,
-  remote↔remote, cross-Protokoll).
+  remote↔remote, cross-Protokoll). **Ctrl+X** / **Ctrl+V** sind Cut und
+  Paste zwischen zwei beliebigen Ordnern (siehe Transfers).
 
 ### Workspaces — mehrere Layouts, auf mehreren Bildschirmen
 
@@ -172,6 +173,20 @@ Remote-Panes.
 
 ## Transfers
 
+**Cut und Paste.** *Cut* (Ctrl+X oder Rechtsklick > Cut) merkt sich
+nur die ausgewählten Einträge - nichts wird entfernt; solange der Cut
+wartet, sind sie abgeblendet. *Paste* (Ctrl+V oder Rechtsklick > Paste,
+auch auf freier Fläche) in einem beliebigen Pane - anderer Ordner,
+andere Verbindung - verschiebt sie als Move über die Transfer-Queue in
+dessen Ordner: mit derselben Prüfung auf vorhandene Namen wie F5 / F6,
+und jede Quelle wird erst entfernt, wenn ihre eigene Kopie fertig und
+geprüft ist; ein fehlgeschlagener, abgebrochener oder unvollständiger
+Transfer lässt sie stehen. Ein Cut ohne Paste entfernt nichts: ein
+neuer Cut ersetzt ihn, Esc in seinem Pane verwirft ihn, Schließen des
+Panes oder ein Verbindungswechsel ebenso. Paste in den Ordner, aus dem
+die Einträge stammen, tut nichts; ein Ordner in sich selbst wird
+abgelehnt. Sobald der Move in der Queue ist, ist der Cut erledigt.
+
 Jeder pane-übergreifende Copy/Move geht in die Transfer-Queue. Das
 untere Dock zeigt Fortschritt, Throughput und ETA. Transfers laufen in
 Worker-Threads und überleben einen abgewiesenen Dialog oder ein
@@ -232,6 +247,7 @@ native Protokoll sie nicht kennt.
 | Duplicate Finder | View-Menü | Gruppieren nach Content-Hash, `ax-cas://…`-URLs kopieren; markierte Kopien in den axross-Trash verschieben, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. |
 | View Media… / View Selected Media… | Rechtsklick, View-Menü | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
 | Show / Remove / Export Metadata… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
+| Cut / Paste | Rechtsklick (Paste auch auf freier Fläche), `Ctrl+X` / `Ctrl+V` | Cut merkt sich die Auswahl und entfernt nichts (die Einträge sind abgeblendet); Paste in einem beliebigen Pane verschiebt sie über die Transfer-Queue in dessen Ordner - siehe *Transfers*. Ein Cut ohne Paste lässt alles, wo es ist. |
 | Move to Trash | Rechtsklick | Universaler Papierkorb. Läuft wie Delete Permanently: im Hintergrund, mit derselben zweiten Rückfrage für Hidden Entries. |
 | Delete Permanently | Rechtsklick, `Del` | Zählt zuerst abseits des GUI-Threads, was wegfällt (Ordner, Dateien, Bytes, Hidden Entries), dann die Rückfrage. Ein ausgewählter Ordner mit Hidden Entries (Dotfiles oder Hidden-Flag des Backends) - oder einer, den die Prüfung nicht vollständig lesen konnte - braucht ein zweites OK mit No als Default. Das Löschen läuft im Hintergrund: die Statuszeile zeigt den Fortschritt, Cancel hält beim nächsten Eintrag an - auch innerhalb eines Ordners, der lokal, per SMB, SFTP oder FTP gelöscht wird; die Statuszeile sagt dann, wie viel von diesem Ordner schon weg ist (Gelöschtes bleibt gelöscht; ein Server, der einen ganzen Ordner mit einem Request löscht, etwa WebDAV oder S3, löscht diesen Ordner zu Ende) - Fehler werden je Eintrag gemeldet, danach wird der Ordner neu geladen. Ein Pfad, der gerade gelöscht wird, wird abgewiesen, auch aus dem anderen Pane. |
 | Show Trash… | Rechtsklick | Wiederherstellen / Permanent-Löschen-Dialog. |
@@ -250,6 +266,10 @@ native Protokoll sie nicht kennt.
 - **Auto-Refresh ◉** abonniert das Pane auf `core.watch`; debounced
   Refresh bei Backend-Änderungen.
 - **Live-Filter** in der Pfadleiste filtert die Liste in Echtzeit.
+  **Ctrl+F** springt ins Filterfeld; **Esc** dort löscht den Filter und
+  kehrt zur Liste zurück. Esc in der Liste stoppt zuerst einen laufenden
+  Load, löscht dann einen aktiven Filter, dann die Auswahl, dann einen
+  wartenden Cut dieses Panes.
 - **Bookmarks** als linkes Dock; F8 setzt Bookmark, F12 toggelt das
   Dock. Ordner, die aus einem Pane ins Dock gezogen werden (freie
   Fläche, Gruppe oder zwischen zwei Einträge), werden dort zu Bookmarks,
@@ -711,6 +731,22 @@ remote commands*, eine Zeile `mcp:<name>` je MCP-Server und `ext:<id>`
 je Extension mit Agent-Tools. Immer dabei: `ask_user` (der Agent fragt
 dich etwas) und `update_plan` (eine Checkliste über dem Eingabefeld).
 
+**Files read-only** (in der oberen Zeile des Tabs, und für jeden Tab in
+Agent Settings > Access): der Agent liest Dateien, ändert aber keine —
+kein Schreiben, Löschen oder Verschieben, keine Remote Commands (ein
+Command kann Dateien ändern), Extra-Ordner read-only, keine schreibenden
+Tools von MCP-Servern oder Extensions, und eine Sandbox mountet nichts
+schreibbar. Das gilt dort, wo die Tools des Agents gebaut werden, und
+noch einmal bei jedem Aufruf, nicht nur im Dialog. Eine genaue
+Ausnahme: ein MCP-Server, der deine Dateien nicht ändern kann, behält
+seine Tools — ein Container-Server auf axross' eigener podman-Zeile (aus
+einem Catalog installiert) mit `--network=none` und nur read-only
+Ordnern (`:ro`). Sein *Asks* gilt weiter: mit "Every call asks" wartet
+jeder Aufruf auf dein Yes. Jeder andere Server (Netzwerk, ein
+schreibbarer Ordner, ein Programm auf diesem Rechner, ein HTTP-Server,
+eine von Hand geschriebene podman-Zeile) bietet nur die Tools an, die er
+als read-only markiert, und gar keins, wenn er vor jedem Aufruf fragt.
+
 **Topics ▸** füllt das Eingabefeld mit einer vorbereiteten Aufgabe —
 System inventory, Install or update software (im Plan-Mode), Service
 status, Collect logs, Disk usage, Summarise a folder, Read data out,
@@ -775,6 +811,57 @@ oder read-write; read-write nur, wo der Level Extra-Ordner zulässt (lax,
 normal), und mit *Allow changes to files*. Der Tooltip von *Access…*
 fasst alles zusammen.
 
+**Agent-Profile** richten einen Tab in einem Schritt ein: LLM-Profil,
+Prompt-Profil, Protection Mode, Sandbox, Tool-Gruppen, axross-Funktionen
+(Hauptschalter, Funktionen, Netzwerk), *Files read-only*, *Allow changes
+to files* / *Allow remote commands* und die MCP-Server, die er anbietet —
+gewählt **nach Kategorie** (die Catalog-Kategorie, aus der ein Server
+installiert wurde, z. B. *Security: Reverse Engineering*; *Category* in
+Agent Settings > MCP Servers setzt eine von Hand) und/oder **nach Name**
+(oder nach dem Catalog-Eintrag, aus dem er stammt — ein umbenannter
+Server passt weiter). Der Pfeil neben "+" im Agent-Dock bietet **New Tab
+from Profile**, **Apply Profile…** (auch im Rechtsklick-Menü eines Tabs)
+und **Edit Agent Profiles…**; Tools > New Agent Tab from Profile öffnet
+einen Tab für den Ordner des aktiven Panes. *Apply Profile…* zeigt
+vorher, was der Tab bekäme; es ändert die Settings des Tabs, Ordner und
+Konversation bleiben, und ein Tab mit laufendem Task lehnt ab (erst
+stoppen — der laufende Task behält die Settings, mit denen er startete).
+Der Tab nennt sein Profil (*Profile: …*) und listet, was die Obergrenze
+gekappt hat oder fehlt, mit **Install from Catalog…** (der Catalog öffnet
+auf dieser Kategorie oder sucht den Server-Namen).
+
+Ein Profil **erweitert Agent Settings > Access nie**: sind axross-Funktionen
+dort aus, werden die MCP-Server des Profils nicht angeboten, und der Tab
+sagt es; Bypass nur, wo er wählbar ist; ein Sandbox-Profil, das es nicht
+gibt, bleibt stehen und wird verweigert, nie still "No sandbox". Unter
+*Files read-only* bietet ein Server mit *Asks* "Every call asks" gar kein
+Tool an, außer er ist ein Container ohne Netzwerk mit read-only Ordnern
+(siehe *Files read-only* oben) — der Tab nennt jeden solchen Server und
+warum.
+
+Eingebaute **Presets** (read-only, markiert *(preset)*; *Copy* macht ein
+änderbares Profil daraus):
+
+| Preset | Was es einrichtet |
+|---|---|
+| Files Assistant | die File-Tools von axross, die offenen Remote-Verbindungen; Änderungen fragen; keine MCP-Server |
+| Reverse Engineering | Kategorien *Security: Reverse Engineering* und *Security: Firmware & Forensics*; Sandbox *High* |
+| Forensics read-only | Kategorie *Security: Firmware & Forensics*; Files read-only |
+| Network & Web Recon | Kategorien *Security: Network Recon*, *Security: Web*, *Security: OSINT*; Mode Ask |
+| Code & Secrets | Server *git* und *filesystem*, Kategorie *Security: Code & Secrets* |
+| Remote Ops | Remote Files, Saved Connections, Remote Commands (jedes fragt); Mode Ask |
+| Research | Server *fetch*, *memory*, *sequentialthinking*; nicht Files read-only (fetch braucht Netzwerk), *Allow changes to files* aus |
+
+Ein Preset, dessen Server nicht installiert sind, richtet den Rest des
+Tabs trotzdem ein. Agent Settings > **Profiles** bearbeitet die eigenen
+Profile (New, Copy, Delete), zeigt in einer Preview, was ein Tab innerhalb
+der Access-Seite bekommt, und wählt das **Profil neuer Tabs**. Gespeichert
+in `~/.config/axross/agent/settings.json` (`agent_profiles`,
+`agent_profile`); ein von Hand geänderter Eintrag wird geprüft wie der
+Rest der Datei (unbekannte Keys fallen weg, falsche Typen nehmen ihren
+Default, ein vergebener Name — auch der eines Presets — verwirft den
+Eintrag).
+
 **Sandboxes** (Agent Settings > Sandboxes): ein Tab kann seinen Agent
 in bubblewrap, podman oder docker laufen lassen. Ein Sandbox-Profil hat
 einen Level:
@@ -804,8 +891,16 @@ Programm (stdio) oder ein HTTP-Endpunkt —, deren Tools ein Tab als
 `<server>__<tool>` anbieten kann. *Test* listet ihre Tools. Ein Server
 auf „always" fragt bei jedem Aufruf; „writes" lässt Tools, die der
 Server als read-only markiert, ohne Frage laufen. Ein Programm kann in
-einem Sandbox-Profil laufen; der Token eines HTTP-Servers liegt im
-Keyring.
+einem Sandbox-Profil laufen; eines ohne sagt *runs on this machine, not
+in a container*. Der Token eines HTTP-Servers liegt im Keyring. Ein
+getippter Befehl, der Code herunterlädt (`npx …`, `uvx …`, `docker run
+…`), wird nie als Programm auf diesem Rechner gespeichert: *Install in a
+Container* baut ihn in rootless podman (ohne Netz), oder der Grund, warum
+das nicht geht, wird gezeigt. Eine von Hand bearbeitete Settings-Datei mit
+so einem Befehl startet ihn ebenso wenig (der Server wird ausgelassen, mit
+Log-Zeile), und eine Container-Zeile mit erweiternden Flags
+(`--privileged`, `--cap-add`, Host-Namespaces, andere Mounts) wird
+abgelehnt.
 
 *Tools → MCP Servers…* öffnet diese Seite (Edit → Settings… → Agent →
 MCP Servers). **Add from Catalog…** durchsucht die *MCP-Quellen* und
@@ -821,6 +916,25 @@ dem Host:
   sie enthält oder warum sie abgelehnt wird (falsches Schema, größer als
   1 MiB, kein JSON, ein Eintrag ohne gepinnten Digest …). Was eine Quelle
   sagt, wird als reiner Text gezeigt.
+- **c0decave MCP Hub** (standardmäßig an): ein Katalog desselben Schemas
+  unter `https://raw.githubusercontent.com/c0decave/axross-mcp-hub/main/catalog.json`.
+  Nur Images unter `ghcr.io/c0decave/`, gepinnt per echtem
+  `sha256`-Digest, werden übernommen; jeder andere Eintrag (andere
+  Registry, npm, pypi, Remote, kein Digest) wird mit Grund abgelehnt.
+  Solange der Hub nicht antwortet, sagt die Statuszeile *not reachable or
+  not published yet*, und die anderen Quellen arbeiten wie gewohnt.
+- **Discover** (standardmäßig an): kuratierte Awesome-Listen zum Stöbern -
+  [R00T-Kim/awesome-offensive-mcp](https://github.com/R00T-Kim/awesome-offensive-mcp)
+  (CC0; ein Snapshot liegt axross bei, Discover geht also offline) und
+  [wong2/awesome-mcp-servers](https://github.com/wong2/awesome-mcp-servers)
+  (MIT; nur live gelesen). Ihr README wird als nicht vertrauenswürdiger
+  Text gelesen: Kategorie, Name, Beschreibung und der GitHub-Repository-Link,
+  sonst nichts - kein Markup, kein anderer Link. Ein Eintrag ist nur dann
+  **installable via MCP Registry** oder **installable via Docker Hub**,
+  wenn diese Quelle dasselbe Repository nennt (im Hintergrund geprüft,
+  höchstens 300 Requests je Lauf, 24 h im Cache); sonst ist er **link
+  only**: *Open Repository*, keine Installation - axross baut nie aus einem
+  bloßen GitHub-Repository. *Refresh* liest die Listen und prüft neu.
 - **Install**: ein Image wird per Digest gepullt (bei Docker Hub wird der
   Digest des Tags vorher erfragt; andere werden auf den Digest gepinnt,
   den podman meldet). Ein npm- oder pypi-Paket wird in einem Container
@@ -846,6 +960,43 @@ dem Host:
   oder schon vor der Installation vorhanden bleibt). **Check for Update**
   zeigt einen neueren Digest oder eine neuere Version; aktualisiert wird
   nichts von selbst.
+
+**Detected on this machine** (Agent Settings → MCP Servers und die
+Tools-Liste jedes Agent-Tabs): MCP-Server, die hier schon eingerichtet
+sind, werden mit einer Checkbox angeboten, ohne einen Befehl zu tippen -
+die Server von Claude Desktop (`claude_desktop_config.json`), Claude Code
+(`~/.claude.json`, auch je Projekt, und `.mcp.json` im Ordner des Tabs),
+VS Code (`settings.json` → `mcp.servers`,
+`mcp.json`, `.vscode/mcp.json`) und Cursor (`~/.cursor/mcp.json`,
+`.cursor/mcp.json`), dazu podman-Images, die axross installiert hat (auch
+wenn die Settings den Server verloren haben). Ein Haken in Agent Settings
+fügt den Server eingeschaltet hinzu (Save behält ihn), Haken weg entfernt
+ihn; ein Haken an einer `detected:<name>`-Zeile eines Tabs fügt ihn hinzu,
+speichert die Settings und hakt `mcp:<name>` in diesem Tab an - das Modell
+bekommt seine Tools sofort. Danach ist er ein Server wie jeder andere
+(dieselben Confirm-Modes, standardmäßig „always"). **Was heruntergeladen
+wird, läuft im Container, nie auf diesem Rechner:** ein Befehl, der beim
+Start Code holt (`npx`, `bunx`, `pnpm dlx`, `yarn dlx`, `npm exec`, `uvx`,
+`uv tool run`, `pipx run`, `docker`/`podman run` …), wird beim Haken
+gekapselt installiert - das npm- oder pypi-Paket im gepinnten
+`node`/`python`-Container gebaut (die neueste exakte Version, wenn der
+Befehl keine nennt), ein Image gepullt und mit axross' gehärteter
+podman-Zeile gestartet, ohne Netz; die Flags einer `docker run`-Zeile
+(`--privileged`, `--network=host`, Volumes, `--cap-add`, `--device`,
+Host-Namespaces, `--security-opt` …) werden nicht übernommen, und die
+Details nennen, was wegfiel. Was sich nicht umsetzen lässt (eine Git-URL,
+`--package`, `uv run`, eine unbekannte Option …), wird gezeigt, ist aber
+nicht anhakbar, mit Grund. Ein Programm, das schon auf der Platte liegt,
+läuft wie es ist, im Sandbox-Profil neuer Tabs (Agent Settings) bzw. des
+Tabs, in dem es angehakt wurde, und sagt das: *runs on this machine, not
+in a container*; eines, das es hier nicht gibt, ist nicht anhakbar. Die
+Dateien werden nur gelesen, als nicht vertrauenswürdige Daten (reguläre Dateien bis 8 MiB,
+JSON oder TOML, nichts wird ausgeführt). Umgebungswerte, die nach Secrets
+aussehen (am Namen - TOKEN, PASSWORD, API_KEY … - oder an der Form), und
+Bearer-Tokens landen nie in einem Log oder in `agent.json`: das
+Einschalten fragt vorher und legt sie im Keyring ab. Programme im PATH
+werden nicht erkannt: dort identifiziert nichts einen MCP-Server, ohne
+ihn auszuführen oder am Namen zu raten.
 
 Eine eigene Katalogdatei hat das Schema `axross-mcp-catalog`, Version 1
 (Beispiel in [USAGE.md](USAGE.md)); `kind` ist `oci` (gepinnt per
@@ -932,7 +1083,7 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 | Kategorie | Einstellungen |
 |---|---|
 | General | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane) |
-| Appearance | Theme, Compact Mode, Monochrome Icons, Schriftgröße (Zoom), Hidden Files hervorheben und ihre Farbe (eine auf dem Theme schwer lesbare Farbe erst nach Rückfrage) |
+| Appearance | Theme, Compact Mode, Monochrome Icons, Icon Colours (Theme default; Own colours in every theme - auch in Hacker und Amber, die jedes Icon in einer Farbe zeichnen; One colour nach Wahl), Schriftgröße (Zoom), Hidden Files hervorheben und ihre Farbe (eine auf dem Theme schwer lesbare Farbe erst nach Rückfrage) |
 | Toolbar | Buttons nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Buttons zeigen, die Farbe jeder Kategorie (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
 | Files & Panes | Hidden Files zeigen, Open Size Limit, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und Temp-Dateien im RAM (gilt ab dem nächsten Start) |
 | Network & Proxy | Default-Proxy, Bypass-Liste, PAC-Script, ein Test |
@@ -945,6 +1096,7 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 | Search | Gleichzeitig durchsuchte Hosts von *Find on Network Hosts*; wo Offline- und Duplicate-Index liegen |
 | Security | Paranoid Security Mode (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` im Environment gewinnt), sudo-Passwort merken |
 | Extensions | Welche Extensions eingeschaltet sind |
+| Updates | Check for updates at start, Updates automatisch laden, *Check Now*, der letzte Check (siehe [Updates](#updates)) |
 
 Die Seite **Analysis (sift)** schreibt `~/.config/axross/analysis.json`;
 das offene Analysis-Dock nutzt eine gespeicherte Änderung sofort und
@@ -979,6 +1131,60 @@ Fenster auf ihrer Seite. *View → Show Hidden Files* (**Strg+H**), *View →
 Theme* und *View → Zoom* bleiben schnelle Schalter; sie werden sofort
 gespeichert, wie die Seite.
 
+## Updates
+
+Die One-File-Binaries (`axross-full`, `axross-slim`, das macOS- und das
+Windows-`axross-slim`) aktualisieren sich aus den GitHub-Releases von
+`c0decave/axross`:
+
+- **Check beim Start.** Einmal pro Start, etwa zwei Sekunden nachdem das
+  Fenster erscheint, fragt axross die GitHub-API nach dem neuesten
+  Release: ein https-Request, im Hintergrund; der Start wartet nie darauf. Eine
+  neuere Version erscheint als **Update to X.Y.Z…** rechts in der
+  Statusleiste und im *Help*-Menü. Ein gescheiterter Check (kein Netz,
+  GitHubs Rate Limit) ist eine Zeile im Log und der Status auf *Settings →
+  Updates*, nie ein Dialog. Releases mit Draft- oder Prerelease-Markierung
+  werden ignoriert.
+- **Help → Check for Updates…** prüft sofort und zeigt die Antwort, auch
+  wenn axross aktuell ist.
+- **Das Update-Fenster** zeigt diese und die neue Version, die Release
+  Notes und einen Link zur Release-Seite und bietet **Download and
+  Install**, **Skip This Version** (für diese Version kein Hinweis mehr;
+  von Hand gefragt, wird sie trotzdem angeboten) und **Remind Me Later**
+  (kein Hinweis bis zum nächsten Start).
+- **Download and Install** lädt das Binary dieses Builds (axross-full
+  bekommt axross-full, ein Slim-Build sein Slim-Binary), prüft dessen
+  SHA-256 gegen die `SHA256SUMS` desselben Release (und gegen GitHubs
+  eigenen Digest der Datei) und lehnt alles ab, was nicht passt - dann
+  wird nichts ersetzt, und die Teildatei wird gelöscht. Eine geprüfte
+  Datei ersetzt das laufende Binary mit einem atomaren Rename, mit den
+  Permissions der alten Datei; die alte bleibt daneben als
+  `<name>.previous`. Sie wirkt ab dem nächsten Start; **Restart Now**
+  schließt axross (es fragt nach ungespeicherter Arbeit wie bei jedem
+  Schließen) und startet die neue Version.
+- **Ein Ordner ohne Schreibrecht** (ein von root installiertes Binary)
+  wird nicht angefasst: die geprüfte Datei landet in
+  `~/.cache/axross/update/`, und **Save to…** legt eine Kopie ab, wo du
+  willst.
+- **Windows** kann ein laufendes Programm nicht ersetzen: die neue Version
+  wird neben der alten als `axross-slim-windows-x64-X.Y.Z.exe` gespeichert;
+  axross schließen und die alte Datei durch sie ersetzen (oder die neue
+  starten).
+- **Eine Python-Installation** (pip oder ein Source-Checkout) wird nie
+  ersetzt; das Fenster nennt `pip install -U axross`.
+
+*Settings → Updates*: **Check for updates at start** (an), **Download
+updates automatically** (aus: der Hinweis bietet den Download an; an:
+eine beim Start gefundene Version wird im Hintergrund geladen, geprüft und
+installiert und wartet auf den nächsten Start), **Check Now** und Zeit und
+Ergebnis des letzten Checks. Kontaktiert werden nur `github.com`,
+`api.github.com` und `release-assets.githubusercontent.com`, über https;
+jeder Redirect wird gegen diese Liste geprüft. Der Default-Proxy
+(*Network & Proxy*) wird benutzt; ohne ihn `https_proxy` aus dem
+Environment. Der Check beim Start läuft nicht mit
+`AXROSS_NO_UPDATE_CHECK=1` im Environment oder im Paranoid Security Mode;
+*Check Now* funktioniert trotzdem.
+
 ## Konfigurationsdateien
 
 - `~/.config/axross/profiles.json` — Verbindungsprofile (`0o600`).
@@ -990,7 +1196,9 @@ gespeichert, wie die Seite.
   Compact, Monochrome Icons, Schriftgröße, Hidden Files) und die Sprache.
 - `~/.config/axross/settings.json` — kleine Einstellungen: Open Size
   Limit, Pane-Aktivierung, Metadata-Schreibweise und -Nachfrage, sudo-
-  Passwort merken, gleichzeitig durchsuchte Hosts, der Security Mode.
+  Passwort merken, gleichzeitig durchsuchte Hosts, der Security Mode, die
+  Update-Einstellungen (`update_check_at_start`, `update_auto_download`,
+  eine übersprungene Version, der letzte Check).
 - `~/.config/axross/proxy.json`, `llm.json`, `extensions.json` — Default-
   Proxy, LLM-Profile, eingeschaltete Extensions (Secrets im Keyring).
 - `~/.config/axross/agent/voice.json` — die Voice-Einstellungen (`0o600`).

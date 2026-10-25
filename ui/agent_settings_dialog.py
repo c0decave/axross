@@ -3,11 +3,18 @@ sandboxes it runs in (core.agent_settings). :class:`AgentSettingsPage` is
 the Agent page of Edit > Settings… (Tools > Agent Settings… opens it);
 :class:`AgentSettingsDialog` is the same form as a dialog of its own.
 
-Seven pages:
+Eight pages:
 
 * **General** - the LLM profile and protection mode of new tabs, whether
   bypass may be chosen at all, step and output limits, whether tabs are
   kept, the tool groups new tabs offer.
+* **Profiles** - agent profiles (core.agent_profiles): named bundles of a
+  tab's settings - LLM and prompt profile, mode, sandbox, tool groups,
+  axross functions, files read-only, MCP servers by category or name. The
+  presets are read-only (Copy makes an editable one); a preview shows what
+  a tab gets within the Access page, and Install from Catalog… opens the
+  catalog on a category the profile misses. One may be the profile of new
+  tabs.
 * **Prompts** - the prompt profiles (core.agent_prompts): a system prompt
   and a user prompt (a template for the typed task) each, the built-in
   Default read-only, and the profile new requests use.
@@ -24,9 +31,15 @@ Seven pages:
   keyring. *Add from Catalog…* (ui.mcp_catalog_dialog) searches the MCP
   sources and installs a server into rootless podman (core.mcp_install);
   *Uninstall* removes such a server and, on Save, its image; *Check for
-  Update* looks up its package upstream.
+  Update* looks up its package upstream. *Detected on this machine*
+  (core.mcp_detect) lists the servers of other clients (Claude Desktop,
+  Claude Code, VS Code, Cursor) and podman images
+  axross installed:
+  a tick adds one switched on (secret values to the keyring on Save), an
+  untick removes it again.
 * **MCP Sources** - where Add from Catalog searches (core.mcp_catalog):
-  the built-in catalog, Docker Hub's mcp namespace, the MCP Registry, and
+  the built-in catalog, the c0decave MCP Hub, Docker Hub's mcp namespace,
+  the MCP Registry, Discover (curated lists, core.mcp_discover), and
   catalog files or https URLs of the user's, each checked on demand.
 * **Sessions** - every tab's own access: its axross functions, network
   and folders, within the ceiling.
@@ -36,6 +49,8 @@ Save writes the file; the open Agent tabs read it before their next task.
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 import queue
 import shlex
 import threading
@@ -57,6 +72,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -65,6 +81,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import agent_profiles as AGP
 from core import agent_prompts as AP
 from core import agent_settings as S
 from core import llm_profiles as LP
@@ -74,6 +91,9 @@ from core.agent_net import parse_host
 from core.agent_sandbox import ENGINES, LEVELS, RULES, SandboxProfile, available
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+
+#: Why the function boxes of the Access page cannot be ticked.
+SWITCH_ON_FIRST = 'Switch on "Let agents use axross functions" first to choose these.'
 
 MODE_LABELS = {
     "ask": "Ask - every change asks first",
@@ -93,6 +113,8 @@ ENGINE_LABELS = {
     "podman": "podman",
     "docker": "docker",
 }
+log = logging.getLogger(__name__)
+
 CONFIRM_LABELS = {
     "always": "Every call asks (also in Auto)",
     "writes": "Tools the server marks read-only run without asking",
@@ -102,6 +124,7 @@ CONFIRM_LABELS = {
 #: The tabs of the agent's settings, in order: (id, title).
 AGENT_TABS: tuple[tuple[str, str], ...] = (
     ("general", "General"),
+    ("profiles", "Profiles"),
     ("prompts", "Prompts"),
     ("access", "Access"),
     ("sandboxes", "Sandboxes"),
@@ -109,6 +132,55 @@ AGENT_TABS: tuple[tuple[str, str], ...] = (
     ("mcp_sources", "MCP Sources"),
     ("sessions", "Sessions"),
 )
+
+
+def default_detector(**kwargs):
+    """MCP servers on this machine: the other clients' files and podman
+    images axross installed (core.mcp_detect)."""
+    from core.mcp_detect import detect
+    from core.mcp_install import Podman
+
+    return detect(podman=Podman(), **kwargs)
+
+
+def free_name(name: str, taken) -> str:
+    """*name*, or with a number when *taken* has it (at most 32 characters)."""
+    candidate, n = name, 1
+    while candidate in taken:
+        n += 1
+        suffix = str(n)
+        candidate = f"{name[:32 - len(suffix)]}{suffix}"
+    return candidate
+
+
+def confirm_detected_install(parent, detected) -> bool:
+    """Ask before a detected server that downloads code is installed into a
+    container (it is never run on this machine)."""
+    names = sorted(detected.secrets)
+    text = tr("{name} downloads {spec} when it starts ({runner}). axross never runs that on this "
+              "machine: it installs it into a container instead (rootless podman, no "
+              "network).").format(name=detected.name, spec=detected.plan.spec,
+                                  runner=detected.plan.runner)
+    if names:
+        text += " " + tr("Its values that look like secrets ({names}) go to the keyring, not to "
+                         "agent.json.").format(names=", ".join(names))
+    answer = QMessageBox.question(parent, tr("Detected MCP server"),
+                                  text + "\n\n" + tr("Install it now?"))
+    return answer == QMessageBox.StandardButton.Yes
+
+
+def confirm_detected_secrets(parent, detected) -> bool:
+    """Ask before a detected server with secret values is switched on - they
+    go to the keyring (the question names them, never their values)."""
+    names = sorted(detected.secrets) + (["the token"] if detected.token else [])
+    if not names:
+        return True
+    answer = QMessageBox.question(
+        parent, tr("Detected MCP server"),
+        tr("{name} has values that look like secrets: {names}. Switching it on stores them in "
+           "the keyring, not in agent.json. Switch it on?").format(
+            name=detected.name, names=", ".join(names)))
+    return answer == QMessageBox.StandardButton.Yes
 
 
 class _AgentSettingsForm:
@@ -123,9 +195,18 @@ class _AgentSettingsForm:
         llm_settings: LP.LLMSettings | None = None,
         sessions=None,
         store_session=None,
+        mcp_detector=None,
+        mcp_opener=None,
     ) -> QTabWidget:
-        """Build the tabs; returns the tab widget for the widget to place."""
+        """Build the tabs; returns the tab widget for the widget to place.
+        *mcp_detector* (``**kw -> core.mcp_detect.DetectResult``) finds the
+        MCP servers on this machine (default: core.mcp_detect.detect);
+        *mcp_opener* is urllib's for the package registries (tests)."""
         self._path = settings_path
+        self._mcp_detector = mcp_detector or default_detector
+        self._mcp_opener = mcp_opener
+        #: What the last scan found (core.mcp_detect.DetectedServer).
+        self._detected: list = []
         self.settings = S.AgentSettings.load(settings_path)
         self._llm = llm_settings if llm_settings is not None else LP.LLMSettings.load()
         self._current: SandboxProfile | None = None
@@ -159,10 +240,15 @@ class _AgentSettingsForm:
         #: user's profile shown in the form (None: the built-in one).
         self._prompt_default = AP.default_profile()
         self._prompt_current: AP.PromptProfile | None = None
+        #: The presets (row 0.. of the Profiles list, never stored) and the
+        #: user's agent profile shown in the form (None: a preset or none).
+        self._agent_presets = AGP.presets()
+        self._agent_profile_current: AGP.AgentProfile | None = None
 
         self.tabs = QTabWidget()
         builders = {
             "general": self._general_page,
+            "profiles": self._agent_profiles_page,
             "prompts": self._prompts_page,
             "access": self._access_page,
             "sandboxes": self._sandbox_page,
@@ -172,8 +258,25 @@ class _AgentSettingsForm:
         }
         for tab_id, title in AGENT_TABS:
             self.tabs.addTab(builders[tab_id](), tr(title))
+        self._detect_started = False
+        # The machine is scanned when the MCP Servers tab is first shown,
+        # not for every settings window that never shows it.
+        self.tabs.currentChanged.connect(self._maybe_detect)
+        # Servers, sandboxes and prompt profiles may have changed on their pages.
+        self.tabs.currentChanged.connect(self._refresh_agent_profile_page)
         self._load_general()
+        self._rebuild_agent_profile_list(select=self.settings.agent_profile or None)
+        self.files_read_only_check.toggled.connect(self._update_agent_profile_preview)
+        self.bypass_check.toggled.connect(self._refresh_agent_profile_modes)
         return self.tabs
+
+    def _refresh_agent_profile_modes(self, *_args) -> None:
+        """Bypass may (no longer) be chosen: the profile's mode list follows."""
+        self._show_agent_profile(self.agent_profile_list.currentRow())
+
+    def _maybe_detect(self, _index=None) -> None:
+        if not self._detect_started and self.tabs.currentWidget() is self._mcp_page_widget:
+            self.detect_servers()
 
     def show_tab(self, tab_id: str) -> None:
         """Bring the tab *tab_id* (an id of AGENT_TABS) to the front."""
@@ -261,6 +364,379 @@ class _AgentSettingsForm:
         for name, box in self._function_checks().items():
             box.setChecked(getattr(s.access, name))
         self._update_access_page()
+
+    # -- Profiles (agent profiles) ------------------------------------------------------
+
+    def _agent_profiles_page(self) -> QWidget:
+        from ui.agent_access_dialog import AccessEditor
+
+        page = QWidget()
+        top = QHBoxLayout(page)
+        left = QVBoxLayout()
+        self.agent_profile_list = QListWidget()
+        self.agent_profile_list.currentRowChanged.connect(self._show_agent_profile)
+        left.addWidget(self.agent_profile_list, 1)
+        row = QHBoxLayout()
+        self.agent_profile_new_button = QPushButton(tr("New"))
+        self.agent_profile_new_button.clicked.connect(lambda _c=False: self.add_agent_profile())
+        self.agent_profile_copy_button = QPushButton(tr("Copy"))
+        self.agent_profile_copy_button.setToolTip(tr("An editable copy of this profile"))
+        self.agent_profile_copy_button.clicked.connect(
+            lambda _c=False: self.copy_agent_profile())
+        self.agent_profile_delete_button = QPushButton(tr("Delete"))
+        self.agent_profile_delete_button.clicked.connect(
+            lambda _c=False: self.delete_agent_profile())
+        for button in (self.agent_profile_new_button, self.agent_profile_copy_button,
+                       self.agent_profile_delete_button):
+            row.addWidget(button)
+        left.addLayout(row)
+        left.addWidget(QLabel(tr("Agent profile of new tabs")))
+        self.agent_profile_default_combo = QComboBox()
+        left.addWidget(self.agent_profile_default_combo)
+        top.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        self.agent_profile_form = QWidget()
+        form = QFormLayout(self.agent_profile_form)
+        self.agent_profile_name_edit = QLineEdit()
+        self.agent_profile_name_edit.setMaxLength(AGP.MAX_NAME)
+        form.addRow(tr("Name"), self.agent_profile_name_edit)
+        self.agent_profile_description_edit = QLineEdit()
+        self.agent_profile_description_edit.setMaxLength(AGP.MAX_DESCRIPTION)
+        form.addRow(tr("Description"), self.agent_profile_description_edit)
+        self.agent_profile_llm_combo = QComboBox()
+        form.addRow(tr("LLM profile"), self.agent_profile_llm_combo)
+        self.agent_profile_prompt_combo = QComboBox()
+        form.addRow(tr("Prompt profile"), self.agent_profile_prompt_combo)
+        self.agent_profile_mode_combo = QComboBox()
+        form.addRow(tr("Protection mode"), self.agent_profile_mode_combo)
+        self.agent_profile_sandbox_combo = QComboBox()
+        form.addRow(tr("Sandbox"), self.agent_profile_sandbox_combo)
+        self.agent_profile_groups = QListWidget()
+        self.agent_profile_groups.setMaximumHeight(110)
+        for group in S.OFFERED_GROUPS:
+            item = QListWidgetItem(group)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.agent_profile_groups.addItem(item)
+        form.addRow(tr("Tool groups"), self.agent_profile_groups)
+        self.agent_profile_read_only_check = QCheckBox(tr("Files read-only"))
+        self.agent_profile_write_check = QCheckBox(tr("Allow changes to files"))
+        self.agent_profile_exec_check = QCheckBox(tr("Allow remote commands"))
+        for box in (self.agent_profile_read_only_check, self.agent_profile_write_check,
+                    self.agent_profile_exec_check):
+            form.addRow("", box)
+            box.toggled.connect(self._store_agent_profile)
+        self.agent_profile_access = AccessEditor(folders=False)
+        self.agent_profile_access.changed.connect(self._store_agent_profile)
+        form.addRow(self.agent_profile_access)
+        self.agent_profile_categories = QListWidget()
+        self.agent_profile_categories.setMaximumHeight(150)
+        self.agent_profile_categories.setToolTip(tr(
+            "MCP servers installed from a catalog entry of a ticked category (or given that "
+            "category in MCP Servers)"))
+        form.addRow(tr("MCP server categories"), self.agent_profile_categories)
+        self.agent_profile_servers = QListWidget()
+        self.agent_profile_servers.setMaximumHeight(110)
+        self.agent_profile_servers.setToolTip(tr(
+            "MCP servers by name (or by the catalog entry they were installed from)"))
+        form.addRow(tr("MCP servers"), self.agent_profile_servers)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.agent_profile_form)
+        right.addWidget(scroll, 3)
+        right.addWidget(QLabel(tr("A tab gets (within the Access page):")))
+        self.agent_profile_preview = QPlainTextEdit()
+        self.agent_profile_preview.setReadOnly(True)
+        self.agent_profile_preview.setMaximumHeight(150)
+        right.addWidget(self.agent_profile_preview, 1)
+        missing_row = QHBoxLayout()
+        self.agent_profile_missing = QListWidget()
+        self.agent_profile_missing.setMaximumHeight(70)
+        missing_row.addWidget(self.agent_profile_missing, 1)
+        self.agent_profile_install_button = QPushButton(tr("Install from Catalog…"))
+        self.agent_profile_install_button.setToolTip(tr(
+            "Open Add from Catalog on the chosen missing category (or searching the server)"))
+        self.agent_profile_install_button.clicked.connect(lambda _c=False: self.install_missing())
+        missing_row.addWidget(self.agent_profile_install_button, 0, Qt.AlignmentFlag.AlignTop)
+        right.addLayout(missing_row)
+        top.addLayout(right, 2)
+
+        for edit in (self.agent_profile_name_edit, self.agent_profile_description_edit):
+            edit.textChanged.connect(self._store_agent_profile)
+        for combo in (self.agent_profile_llm_combo, self.agent_profile_prompt_combo,
+                      self.agent_profile_mode_combo):
+            combo.currentIndexChanged.connect(self._store_agent_profile)
+        self.agent_profile_sandbox_combo.currentIndexChanged.connect(self._agent_sandbox_changed)
+        for widget in (self.agent_profile_groups, self.agent_profile_categories,
+                       self.agent_profile_servers):
+            widget.itemChanged.connect(self._store_agent_profile)
+        self.agent_profiles_page = page
+        return page
+
+    def _agent_profile_rows(self) -> list[AGP.AgentProfile]:
+        """The Profiles list in order: the presets, then the user's."""
+        return [*self._agent_presets, *self.settings.agent_profiles]
+
+    def _rebuild_agent_profile_list(self, *, select: str | None = None,
+                                    default: str | None = None) -> None:
+        """Fill the list and the "new tabs" combo; select the profile named
+        *select* (else the current row); the combo keeps *default* (else
+        what it has)."""
+        from ui.agent_profile_dialog import profile_label
+
+        rows = self._agent_profile_rows()
+        row = self.agent_profile_list.currentRow()
+        if select is not None:
+            row = next((i for i, p in enumerate(rows) if p.name == select), row)
+        default = self.agent_profile_default_combo.currentData() if default is None else default
+        if default is None:
+            default = self.settings.agent_profile
+        self.agent_profile_list.blockSignals(True)
+        self.agent_profile_default_combo.blockSignals(True)
+        try:
+            self.agent_profile_list.clear()
+            self.agent_profile_default_combo.clear()
+            self.agent_profile_default_combo.addItem(tr("None - as the General page says"), "")
+            for profile in rows:
+                item = QListWidgetItem(profile_label(profile))
+                item.setData(Qt.ItemDataRole.UserRole, profile.name)
+                item.setToolTip(profile.description)
+                self.agent_profile_list.addItem(item)
+                self.agent_profile_default_combo.addItem(profile_label(profile), profile.name)
+            self.agent_profile_default_combo.setCurrentIndex(
+                max(0, self.agent_profile_default_combo.findData(default)))
+        finally:
+            self.agent_profile_list.blockSignals(False)
+            self.agent_profile_default_combo.blockSignals(False)
+        self.agent_profile_list.setCurrentRow(row if 0 <= row < len(rows) else 0)
+        self._show_agent_profile(self.agent_profile_list.currentRow())
+
+    def _refresh_agent_profile_page(self, _index=None) -> None:
+        if self.tabs.currentWidget() is getattr(self, "agent_profiles_page", None):
+            self._show_agent_profile(self.agent_profile_list.currentRow())
+
+    def _fill_combo(self, combo: QComboBox, entries, current: str) -> None:
+        """*entries* ``(label, data)``; *current* is chosen, added as
+        "(missing)" when it is none of them."""
+        combo.clear()
+        for label, data in entries:
+            combo.addItem(label, data)
+        if current and combo.findData(current) < 0:
+            combo.addItem(tr("{name} (missing)").format(name=current), current)
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+
+    def _fill_checks(self, widget: QListWidget, names, ticked) -> None:
+        ticked_keys = {t.strip().casefold() for t in ticked}
+        widget.clear()
+        shown = []
+        for name in [*names, *ticked]:
+            if name.strip().casefold() in (n.casefold() for n in shown):
+                continue
+            shown.append(name.strip())
+            item = QListWidgetItem(name.strip())
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if name.strip().casefold() in ticked_keys
+                               else Qt.CheckState.Unchecked)
+            widget.addItem(item)
+
+    @staticmethod
+    def _ticked(widget: QListWidget) -> tuple[str, ...]:
+        return tuple(widget.item(i).text() for i in range(widget.count())
+                     if widget.item(i).checkState() == Qt.CheckState.Checked)
+
+    def _show_agent_profile(self, row: int) -> None:
+        rows = self._agent_profile_rows()
+        if not 0 <= row < len(rows):
+            self._agent_profile_current = None
+            self.agent_profile_form.setEnabled(False)
+            self.agent_profile_copy_button.setEnabled(False)
+            self.agent_profile_delete_button.setEnabled(False)
+            self._update_agent_profile_preview()
+            return
+        profile = rows[row]
+        self._loading = True
+        try:
+            self._agent_profile_current = None if profile.preset else profile
+            self.agent_profile_name_edit.setText(profile.name)
+            self.agent_profile_description_edit.setText(profile.description)
+            # The beginning, not the end setText leaves the cursor at.
+            self.agent_profile_name_edit.setCursorPosition(0)
+            self.agent_profile_description_edit.setCursorPosition(0)
+            self._fill_combo(self.agent_profile_llm_combo,
+                             [(tr("Default model"), "")]
+                             + [(p.name, p.name) for p in self._llm.profiles],
+                             profile.llm_profile)
+            self._fill_combo(self.agent_profile_prompt_combo,
+                             [(tr("As Agent Settings > Prompts"), ""),
+                              (tr("{name} (built-in)").format(name=AP.DEFAULT_NAME),
+                               AP.DEFAULT_NAME)]
+                             + [(p.name, p.name) for p in self.settings.prompt_profiles],
+                             profile.prompt_profile)
+            modes = [m for m in S.MODES if m != "bypass" or self.bypass_check.isChecked()
+                     or profile.mode == "bypass"]
+            self._fill_combo(self.agent_profile_mode_combo,
+                             [(tr(MODE_LABELS[m]), m) for m in modes], profile.mode)
+            self._fill_combo(self.agent_profile_sandbox_combo,
+                             [(tr("No sandbox"), "")]
+                             + [(p.name, p.name) for p in self.settings.sandboxes],
+                             profile.sandbox)
+            for i in range(self.agent_profile_groups.count()):
+                item = self.agent_profile_groups.item(i)
+                item.setCheckState(Qt.CheckState.Checked if item.text() in profile.groups
+                                   else Qt.CheckState.Unchecked)
+            self.agent_profile_read_only_check.setChecked(profile.files_read_only)
+            self.agent_profile_write_check.setChecked(profile.allow_write)
+            self.agent_profile_exec_check.setChecked(profile.allow_exec)
+            self._load_agent_access(profile)
+            self._fill_checks(self.agent_profile_categories,
+                              AGP.known_categories(self.settings.mcp_servers),
+                              profile.mcp_categories)
+            self._fill_checks(self.agent_profile_servers,
+                              [s.name for s in self.settings.mcp_servers], profile.mcp_servers)
+            self.agent_profile_form.setEnabled(not profile.preset)
+            self.agent_profile_copy_button.setEnabled(True)
+            self.agent_profile_delete_button.setEnabled(not profile.preset)
+        finally:
+            self._loading = False
+        self._update_agent_profile_preview()
+
+    def _load_agent_access(self, profile: AGP.AgentProfile) -> None:
+        from core.agent_access import SessionAccess
+
+        sandbox = self.settings.sandbox_profile(profile.sandbox) if profile.sandbox else None
+        # No ceiling here: a profile may name any function; the Access page
+        # cuts it when the profile is applied (the preview says so).
+        self.agent_profile_access.load(
+            SessionAccess(axross=profile.axross, functions=profile.functions,
+                          network=profile.network, hosts=profile.hosts),
+            [], ceiling=None, sandbox=sandbox)
+
+    def _agent_sandbox_changed(self, *_args) -> None:
+        self._store_agent_profile()
+        p = self._agent_profile_current
+        if p is not None and not self._loading:
+            self._loading = True
+            try:
+                self._load_agent_access(p)  # the network choices of the new level
+            finally:
+                self._loading = False
+            self._store_agent_profile()
+
+    def _store_agent_profile(self, *_args) -> None:
+        if self._loading or self._agent_profile_current is None:
+            return
+        p = self._agent_profile_current
+        old_name = p.name
+        p.name = self.agent_profile_name_edit.text().strip()
+        p.description = self.agent_profile_description_edit.text().strip()
+        p.llm_profile = self.agent_profile_llm_combo.currentData() or ""
+        p.prompt_profile = self.agent_profile_prompt_combo.currentData() or ""
+        p.mode = self.agent_profile_mode_combo.currentData() or "ask"
+        p.sandbox = self.agent_profile_sandbox_combo.currentData() or ""
+        ticked = self._ticked(self.agent_profile_groups)
+        p.groups = tuple(g for g in S.OFFERED_GROUPS if g in ticked)
+        p.files_read_only = self.agent_profile_read_only_check.isChecked()
+        p.allow_write = self.agent_profile_write_check.isChecked()
+        p.allow_exec = self.agent_profile_exec_check.isChecked()
+        access = self.agent_profile_access.access()
+        p.axross, p.functions = access.axross, access.functions
+        p.network, p.hosts = access.network, access.hosts
+        p.mcp_categories = self._ticked(self.agent_profile_categories)
+        p.mcp_servers = self._ticked(self.agent_profile_servers)
+        if old_name != p.name:
+            from ui.agent_profile_dialog import profile_label
+
+            index = len(self._agent_presets) + next(
+                i for i, q in enumerate(self.settings.agent_profiles) if q is p)
+            item = self.agent_profile_list.item(index)
+            if item is not None:
+                item.setText(profile_label(p))
+                item.setData(Qt.ItemDataRole.UserRole, p.name)
+            # The "new tabs" entry of this row follows the rename.
+            self.agent_profile_default_combo.setItemText(index + 1, profile_label(p))
+            self.agent_profile_default_combo.setItemData(index + 1, p.name)
+        self._update_agent_profile_preview()
+
+    def _profile_settings_view(self) -> S.AgentSettings:
+        """The settings as the pages show them now (the Access page's
+        ceiling, whether bypass may be chosen)."""
+        return dataclasses.replace(self.settings, access=self._ceiling(),
+                                   allow_bypass=self.bypass_check.isChecked())
+
+    def _shown_agent_profile(self) -> AGP.AgentProfile | None:
+        rows = self._agent_profile_rows()
+        row = self.agent_profile_list.currentRow()
+        return rows[row] if 0 <= row < len(rows) else None
+
+    def _update_agent_profile_preview(self, *_args) -> None:
+        profile = self._shown_agent_profile()
+        self.agent_profile_missing.clear()
+        if profile is None or not hasattr(self, "axross_check"):
+            self.agent_profile_preview.clear()
+            self.agent_profile_install_button.setEnabled(False)
+            return
+        res = AGP.resolve(profile, self._profile_settings_view(),
+                          llm_names=[p.name for p in self._llm.profiles])
+        self.agent_profile_preview.setPlainText("\n".join(AGP.summary_lines(profile, res)))
+        for missing in res.missing:
+            item = QListWidgetItem(AGP.missing_text(missing))
+            item.setData(Qt.ItemDataRole.UserRole, (missing.kind, missing.name))
+            self.agent_profile_missing.addItem(item)
+        if self.agent_profile_missing.count():
+            self.agent_profile_missing.setCurrentRow(0)
+        self.agent_profile_install_button.setEnabled(bool(res.missing))
+
+    def _unique_agent_profile_name(self, base: str) -> str:
+        names = {p.name.casefold() for p in self._agent_profile_rows()}
+        name, n = base, 1
+        while name.casefold() in names:
+            n += 1
+            name = f"{base} {n}"
+        return name
+
+    def _append_agent_profile(self, profile: AGP.AgentProfile) -> None:
+        self._store_agent_profile()
+        self.settings.agent_profiles.append(profile)
+        self._rebuild_agent_profile_list(select=profile.name)
+        self.agent_profile_name_edit.setFocus()
+
+    def add_agent_profile(self) -> None:
+        """A new profile: as a new tab starts (the General page's groups)."""
+        self._append_agent_profile(AGP.AgentProfile(
+            name=self._unique_agent_profile_name(tr("Agent profile")),
+            groups=tuple(g for g in S.OFFERED_GROUPS if g in self._general_values()["groups"])))
+
+    def copy_agent_profile(self) -> None:
+        source = self._shown_agent_profile()
+        if source is None:
+            return
+        self._store_agent_profile()
+        self._append_agent_profile(source.copy(AGP.free_profile_name(
+            source.name, [p.name for p in self.settings.agent_profiles])))
+
+    def delete_agent_profile(self) -> None:
+        profile = self._shown_agent_profile()
+        if profile is None or profile.preset:
+            return  # the presets stay
+        row = self.agent_profile_list.currentRow()
+        default = self.agent_profile_default_combo.currentData()
+        self.settings.agent_profiles = [p for p in self.settings.agent_profiles
+                                        if p is not profile]
+        self._agent_profile_current = None
+        self._rebuild_agent_profile_list(default="" if default == profile.name else default)
+        self.agent_profile_list.setCurrentRow(min(row, len(self._agent_profile_rows()) - 1))
+
+    def install_missing(self):
+        """Install from Catalog… for the chosen missing entry: the catalog
+        on its category, or searching the server's name. Returns the dialog."""
+        item = self.agent_profile_missing.currentItem() or self.agent_profile_missing.item(0)
+        if item is None:
+            return None
+        kind, name = item.data(Qt.ItemDataRole.UserRole)
+        if kind == "category":
+            return self.add_from_catalog(category=name)
+        return self.add_from_catalog(query=name)
 
     # -- Prompts ---------------------------------------------------------------------
 
@@ -456,7 +932,9 @@ class _AgentSettingsForm:
         self.files_read_only_check.setToolTip(tr(
             "Agents read files but change none: no writing, deleting or moving, no remote "
             "commands, no writing tools of MCP servers or extensions. Enforced whatever a tab "
-            "chooses."))
+            "chooses. Only an MCP server that cannot change files keeps its tools: a container "
+            "installed by axross with no network and only read-only folders (its calls still "
+            "ask as its Asks says)."))
         layout.addWidget(self.files_read_only_check)
         self.axross_check = QCheckBox(tr("Let agents use axross functions"))
         self.axross_check.setToolTip(tr(
@@ -464,6 +942,12 @@ class _AgentSettingsForm:
             "Off: no tab reaches any of them, whatever it chose."))
         self.axross_check.toggled.connect(self._update_access_page)
         layout.addWidget(self.axross_check)
+        # Without it the locked boxes below look broken.
+        self.axross_off_hint = QLabel(tr(SWITCH_ON_FIRST))
+        self.axross_off_hint.setWordWrap(True)
+        self.axross_off_hint.setContentsMargins(18, 0, 0, 0)
+        self.axross_off_hint.setEnabled(False)
+        layout.addWidget(self.axross_off_hint)
         self.remote_files_check = QCheckBox(tr("Files of the remote connections open in the panes"))
         self.saved_profiles_check = QCheckBox(tr("Saved connections the agent opens itself"))
         self.remote_commands_check = QCheckBox(tr("Commands on remote hosts (SSH, WinRM, ...)"))
@@ -479,10 +963,13 @@ class _AgentSettingsForm:
                 "or the Sessions page), and a new tab starts with the master switch as set here. "
                 "axross functions are a way out of a sandbox: remote work runs in axross, outside "
                 "it, with the confirmations of the tab's protection mode. A tab's network "
-                "(Access…) limits the connections too. Production connections refuse every change."
+                "(Access…) limits the connections too. Production connections refuse every change. "
+                "Files read-only drops every MCP tool that may write, except those of a container "
+                "server axross installed with no network and only read-only folders."
             )
         )
         note.setWordWrap(True)
+        self.access_note = note
         layout.addWidget(note)
         layout.addStretch(1)
         return page
@@ -497,10 +984,15 @@ class _AgentSettingsForm:
         }
 
     def _update_access_page(self, *_args) -> None:
+        master = self.axross_check.isChecked()
+        self.axross_off_hint.setHidden(master)
         for box in self._function_checks().values():
-            box.setEnabled(self.axross_check.isChecked())
+            box.setEnabled(master)
+            box.setToolTip("" if master else tr(SWITCH_ON_FIRST))
         if getattr(self, "session_editor", None) is not None and self._session_row >= 0:
             self._show_session(self._session_row)  # the new ceiling
+        if getattr(self, "agent_profile_preview", None) is not None:
+            self._update_agent_profile_preview()
 
     def _ceiling(self) -> S.Access:
         """Access as the page shows it now (the Sessions page's ceiling)."""
@@ -854,10 +1346,12 @@ class _AgentSettingsForm:
         self.server_list.currentRowChanged.connect(self._show_server)
         left.addWidget(self.server_list, 1)
         row = QHBoxLayout()
-        for label, slot in ((tr("Add"), self.add_server), (tr("Delete"), self.delete_server),
-                            (tr("Test"), self.test_server)):
+        for label, slot, attr in ((tr("Add"), self.add_server, "server_add_button"),
+                                  (tr("Delete"), self.delete_server, "server_delete_button"),
+                                  (tr("Test"), self.test_server, "server_test_button")):
             button = QPushButton(label)
             button.clicked.connect(slot)
+            setattr(self, attr, button)
             row.addWidget(button)
         left.addLayout(row)
         self.catalog_button = QPushButton(tr("Add from Catalog…"))
@@ -876,6 +1370,25 @@ class _AgentSettingsForm:
         row.addWidget(self.uninstall_button)
         row.addWidget(self.update_button)
         left.addLayout(row)
+        detected_row = QHBoxLayout()
+        detected_row.addWidget(QLabel(tr("Detected on this machine:")), 1)
+        self.detected_rescan_button = QPushButton(tr("Rescan"))
+        self.detected_rescan_button.setToolTip(tr(
+            "Look again for MCP servers of Claude Desktop, Claude Code, VS Code, Cursor "
+            "and podman images axross installed"))
+        self.detected_rescan_button.clicked.connect(lambda _c=False: self.detect_servers())
+        detected_row.addWidget(self.detected_rescan_button)
+        left.addLayout(detected_row)
+        self.detected_list = QListWidget()
+        self.detected_list.setToolTip(tr("Tick a server to add it switched on"))
+        self.detected_list.itemChanged.connect(self._on_detected_changed)
+        self.detected_list.currentItemChanged.connect(self._show_detected)
+        left.addWidget(self.detected_list, 1)
+        self.detected_details = QPlainTextEdit()
+        self.detected_details.setReadOnly(True)
+        self.detected_details.setMaximumHeight(120)
+        self.detected_details.setPlaceholderText(tr("Choose a detected server to see it."))
+        left.addWidget(self.detected_details)
         top.addLayout(left, 1)
 
         self.server_form = QWidget()
@@ -884,13 +1397,34 @@ class _AgentSettingsForm:
         form.addRow(tr("Name"), self.server_name_edit)
         self.server_enabled_check = QCheckBox(tr("Tabs may offer this server's tools"))
         form.addRow("", self.server_enabled_check)
+        self.server_category_combo = QComboBox()
+        self.server_category_combo.setEditable(True)
+        self.server_category_combo.setToolTip(tr(
+            "The catalog category it was installed from, or one of your own: agent profiles "
+            "choose servers by it"))
+        form.addRow(tr("Category"), self.server_category_combo)
         self.server_transport_combo = QComboBox()
         self.server_transport_combo.addItem(tr("Program (stdio)"), "stdio")
         self.server_transport_combo.addItem(tr("HTTP endpoint"), "http")
         form.addRow(tr("Connection"), self.server_transport_combo)
         self.server_command_edit = QLineEdit()
-        self.server_command_edit.setPlaceholderText("uvx mcp-server-git --repository /srv/repo")
+        self.server_command_edit.setPlaceholderText(
+            "/usr/local/bin/mcp-server-git --repository /srv/repo")
         form.addRow(tr("Program"), self.server_command_edit)
+        self.server_runner_label = QLabel()
+        self.server_runner_label.setWordWrap(True)
+        self.server_runner_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.server_contain_button = QPushButton(tr("Install in a Container"))
+        self.server_contain_button.setToolTip(tr(
+            "A command that downloads code (npx, uvx, docker run …) never runs on this machine: "
+            "install its package or image into rootless podman instead (no network)"))
+        self.server_contain_button.clicked.connect(lambda _c=False: self.install_in_container())
+        self.server_runner_label.hide()
+        self.server_contain_button.hide()
+        runner_row = QVBoxLayout()
+        runner_row.addWidget(self.server_runner_label)
+        runner_row.addWidget(self.server_contain_button, 0, Qt.AlignmentFlag.AlignLeft)
+        form.addRow("", runner_row)
         self.server_env_edit = QLineEdit()
         self.server_env_edit.setPlaceholderText("LANG=C.UTF-8 LOG_LEVEL=warning")
         form.addRow(tr("Environment"), self.server_env_edit)
@@ -959,13 +1493,174 @@ class _AgentSettingsForm:
         ):
             combo.currentIndexChanged.connect(self._store_server)
         self.server_enabled_check.toggled.connect(self._store_server)
+        self.server_category_combo.editTextChanged.connect(self._store_server)
         self.server_bearer_check.toggled.connect(self._store_server)
         self.server_timeout_spin.valueChanged.connect(self._store_server)
         self.server_token_edit.textChanged.connect(self._store_token)
         self._rebuild_server_list()
         self.server_list.setCurrentRow(0 if self.settings.mcp_servers else -1)
         self._show_server(self.server_list.currentRow())
+        self._mcp_page_widget = page
         return page
+
+    # -- detected on this machine ---------------------------------------------------------
+
+    def _install_detected(self, detected) -> None:
+        """Install a detected server that downloads code into a container
+        (in the background); it is added switched on when that is done."""
+        name = free_name(detected.name, {s.name for s in self.settings.mcp_servers})
+        taken = {s.name for s in self.settings.mcp_servers}
+        opener, inbox = self._mcp_opener, self._inbox
+        self.server_test_label.setText(tr("Installing {name} in a container…").format(name=name))
+
+        def run() -> None:
+            from core import mcp_install as I
+
+            try:
+                config = detected.install(
+                    name=name, podman=I.Podman(), opener=opener, taken=taken,
+                    on_line=lambda line: inbox.put(("_show_install_line", line)))
+            except I.InstallError as exc:
+                inbox.put(("_detected_installed", detected, None, str(exc)))
+                return
+            except Exception as exc:  # noqa: BLE001 - shown, never a crash of the page
+                log.exception("installing the detected %s failed", name)
+                inbox.put(("_detected_installed", detected, None, type(exc).__name__))
+                return
+            inbox.put(("_detected_installed", detected, config, ""))
+
+        threading.Thread(target=run, name="mcp-detected-install", daemon=True).start()
+
+    def _detected_installed(self, detected, config, error: str) -> None:
+        if config is None or config.name in {s.name for s in self.settings.mcp_servers}:
+            self.server_test_label.setText(tr("Install failed: {why}").format(
+                why=error or tr("the name is taken now")))
+            self._fill_detected()
+            return
+        self._store_server()
+        self.settings.mcp_servers.append(config)
+        for var in config.secret_env:
+            if detected.secrets.get(var):
+                self._secrets[(config.name, var)] = detected.secrets[var]
+        self._rebuild_server_list()
+        self.server_list.setCurrentRow(len(self.settings.mcp_servers) - 1)
+        self.server_test_label.setText(tr(
+            "Installed in a container and switched on - Save keeps it"))
+        self._fill_detected()
+
+    def detect_servers(self) -> None:
+        """Look for MCP servers on this machine (in the background)."""
+        self._detect_started = True
+        detector = self._mcp_detector
+        configured = list(self.settings.mcp_servers)
+        inbox = self._inbox
+
+        def run() -> None:
+            try:
+                result = detector(configured=configured)
+            except Exception:  # noqa: BLE001 - a scan must end, whatever it meets
+                log.exception("detecting MCP servers failed")
+                return
+            inbox.put(("_take_detected", result))
+
+        threading.Thread(target=run, name="mcp-detect", daemon=True).start()
+
+    def _take_detected(self, result) -> None:
+        self._detected = list(result.servers)
+        self._fill_detected()
+
+    def _configured_as(self, detected) -> MC.McpServerConfig | None:
+        from core.mcp_detect import configured_as
+
+        return configured_as(detected, self.settings.mcp_servers)
+
+    def _fill_detected(self) -> None:
+        from ui.mcp_catalog_dialog import plain_tooltip
+
+        current = self.detected_list.currentItem()
+        chosen = current.data(Qt.ItemDataRole.UserRole) if current is not None else None
+        self.detected_list.blockSignals(True)
+        try:
+            self.detected_list.clear()
+            for detected in self._detected:
+                text = f"{detected.name}  ({', '.join(detected.clients)})"
+                if not detected.usable:
+                    text += tr(" - cannot be used")
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, detected.key)
+                item.setToolTip(plain_tooltip(detected.describe()))
+                if detected.usable:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Checked if self._configured_as(detected)
+                                       else Qt.CheckState.Unchecked)
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                self.detected_list.addItem(item)
+                if detected.key == chosen:
+                    self.detected_list.setCurrentItem(item)
+        finally:
+            self.detected_list.blockSignals(False)
+        self._show_detected(self.detected_list.currentItem())
+
+    def _detected_of(self, item):
+        key = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        return next((d for d in self._detected if d.key == key), None)
+
+    def _show_detected(self, item, _previous=None) -> None:
+        detected = self._detected_of(item)
+        self.detected_details.setPlainText(detected.describe() if detected is not None else "")
+
+    def _on_detected_changed(self, item) -> None:
+        detected = self._detected_of(item)
+        if detected is None:
+            return
+        if item.checkState() == Qt.CheckState.Checked:
+            if self._configured_as(detected) is None and not self.add_detected(detected):
+                self.detected_list.blockSignals(True)
+                item.setCheckState(Qt.CheckState.Unchecked)
+                self.detected_list.blockSignals(False)
+            return
+        server = self._configured_as(detected)
+        if server is None:
+            return
+        if server.package.get("source") != "detected":
+            # Set up by hand (or installed from a catalog): not removed by an untick.
+            self.detected_list.blockSignals(True)
+            item.setCheckState(Qt.CheckState.Checked)
+            self.detected_list.blockSignals(False)
+            self.server_test_label.setText(tr(
+                "{name} was not added from this list - delete it in the list above").format(
+                name=server.name))
+            return
+        self._store_server()
+        self.server_list.setCurrentRow(self.settings.mcp_servers.index(server))
+        self.delete_server()
+
+    def add_detected(self, detected) -> bool:
+        """Add *detected* switched on (its secrets to the keyring on Save);
+        False when it cannot be used or the user says no."""
+        if not detected.usable:
+            return False
+        if detected.needs_install:
+            if not confirm_detected_install(self, detected):
+                return False
+            self._install_detected(detected)
+            return True
+        if not confirm_detected_secrets(self, detected):
+            return False
+        self._store_server()
+        names = {s.name for s in self.settings.mcp_servers}
+        config = detected.config(name=free_name(detected.name, names),
+                                 sandbox=self.default_sandbox_combo.currentData() or "")
+        self.settings.mcp_servers.append(config)
+        for var, value in detected.secrets.items():
+            self._secrets[(config.name, var)] = value
+        if detected.token:
+            self._tokens[config.name] = detected.token
+        self._rebuild_server_list()
+        self.server_list.setCurrentRow(len(self.settings.mcp_servers) - 1)
+        self.server_test_label.setText(tr("Detected server added and switched on - Save keeps it"))
+        return True
 
     def _rebuild_server_list(self) -> None:
         row = self.server_list.currentRow()
@@ -980,7 +1675,15 @@ class _AgentSettingsForm:
     @staticmethod
     def _server_label(server: MC.McpServerConfig) -> str:
         state = "" if server.enabled else ", off"
-        return f"{server.name or tr('(unnamed)')}  ({server.transport}{state})"
+        label = f"{server.name or tr('(unnamed)')}  ({server.transport}{state})"
+        if server.transport == "stdio" and server.command and not server.container:
+            from core.mcp_runner import downloading_runner
+
+            if downloading_runner(server.command) is not None:
+                label += tr(" - downloads code: install it in a container")
+            elif not server.sandbox:
+                label += tr(" - runs on this machine, not in a container")
+        return label
 
     def _show_server(self, row: int) -> None:
         self._loading = True
@@ -995,6 +1698,10 @@ class _AgentSettingsForm:
             self.server_form.setEnabled(True)
             self.server_name_edit.setText(server.name)
             self.server_enabled_check.setChecked(server.enabled)
+            self.server_category_combo.clear()
+            self.server_category_combo.addItems(
+                ["", *AGP.known_categories(self.settings.mcp_servers)])
+            self.server_category_combo.setEditText(server.category)
             self.server_transport_combo.setCurrentIndex(
                 max(0, self.server_transport_combo.findData(server.transport)))
             self.server_command_edit.setText(shlex.join(server.command))
@@ -1044,6 +1751,103 @@ class _AgentSettingsForm:
         for widget in (self.server_url_edit, self.server_bearer_check):
             widget.setEnabled(not stdio)
         self.server_token_edit.setEnabled(not stdio and self.server_bearer_check.isChecked())
+        self._update_runner()
+
+    def _runner_plan(self):
+        """The shown server's command as a downloading runner (or None)."""
+        from core.mcp_runner import downloading_runner
+
+        server = self._server
+        if server is None or server.container or server.transport != "stdio":
+            return None
+        return downloading_runner(server.command)
+
+    def _update_runner(self) -> None:
+        plan = self._runner_plan()
+        self.server_runner_label.setVisible(plan is not None)
+        self.server_contain_button.setVisible(plan is not None)
+        self.server_contain_button.setEnabled(bool(plan and plan.convertible)
+                                              and not getattr(self, "_containing", False))
+        if plan is None:
+            self.server_runner_label.clear()
+        elif plan.convertible:
+            text = tr("{runner} downloads {spec} when it starts: such a command is never run on "
+                      "this machine and is not saved as a program here. Install in a Container "
+                      "builds it in rootless podman (no network).").format(
+                runner=plan.runner, spec=plan.spec)
+            if plan.dropped:
+                text += " " + tr("Not taken over from its line: {flags}").format(
+                    flags=", ".join(plan.dropped))
+            self.server_runner_label.setText(text)
+        else:
+            self.server_runner_label.setText(tr(
+                "{runner} downloads code when it starts and cannot be put into a container: "
+                "{why}. It is not saved.").format(runner=plan.runner, why=plan.why_not))
+
+    def install_in_container(self) -> None:
+        """Install the shown server's downloading command the contained way
+        (core.mcp_install.install_plan) in the background; the server is
+        replaced by the container server when it is done."""
+        self._store_server()
+        plan = self._runner_plan()
+        server = self._server
+        if plan is None or not plan.convertible or server is None or getattr(
+                self, "_containing", False):
+            return
+        name = server.name
+        env = dict(server.env)
+        secrets = {var: self._secrets.get((name, var)) or MC.get_secret(name, var)
+                   for var in server.secret_env}
+        secrets = {k: v for k, v in secrets.items() if v}
+        missing = tuple(v for v in server.secret_env if v not in secrets)
+        taken = {s.name for s in self.settings.mcp_servers if s is not server}
+        opener, inbox = self._mcp_opener, self._inbox
+        self._containing = True
+        self.server_contain_button.setEnabled(False)
+        self.server_test_label.setText(tr("Installing {spec} in a container…").format(
+            spec=plan.spec))
+
+        def run() -> None:
+            from core import mcp_install as I
+
+            try:
+                config = I.install_plan(
+                    plan, name=name, env=env, secrets=secrets, missing=missing,
+                    podman=I.Podman(), opener=opener, taken=taken, source="manual",
+                    on_line=lambda line: inbox.put(("_show_install_line", line)))
+            except I.InstallError as exc:
+                inbox.put(("_contained", server, None, str(exc)))
+                return
+            except Exception as exc:  # noqa: BLE001 - shown, never a crash of the page
+                log.exception("installing %s in a container failed", name)
+                inbox.put(("_contained", server, None, type(exc).__name__))
+                return
+            inbox.put(("_contained", server, config, ""))
+
+        threading.Thread(target=run, name="mcp-contain", daemon=True).start()
+
+    def _show_install_line(self, line: str) -> None:
+        self.server_test_label.setText(M.clean_text(line, 300))
+
+    def _contained(self, server, config, error: str) -> None:
+        if config is None:
+            self._containing = False
+            self.server_test_label.setText(tr("Install failed: {why}").format(why=error))
+            self._update_runner()
+            return
+        self._containing = False
+        row = next((i for i, s in enumerate(self.settings.mcp_servers) if s is server), -1)
+        if row < 0:
+            self.server_test_label.setText(tr(
+                "Installed, but its server was deleted meanwhile - not added"))
+            return
+        self.settings.mcp_servers[row] = config
+        self._server = None
+        self._rebuild_server_list()
+        self.server_list.setCurrentRow(row)
+        self._show_server(row)
+        self.server_test_label.setText(tr(
+            "Installed in a container and switched on - Save keeps it"))
 
     @staticmethod
     def _split(text: str) -> list[str]:
@@ -1080,6 +1884,7 @@ class _AgentSettingsForm:
                 if not held:
                     self._secrets[(old_name, var)] = ""
         server.enabled = self.server_enabled_check.isChecked()
+        server.category = self.server_category_combo.currentText().strip()
         server.transport = self.server_transport_combo.currentData() or "stdio"
         server.command = tuple(self._split(self.server_command_edit.text()))
         server.env = dict(
@@ -1212,15 +2017,18 @@ class _AgentSettingsForm:
 
     # -- catalog, uninstall, update ----------------------------------------------------
 
-    def add_from_catalog(self, *, podman=None, opener=None):
-        """Open Add from Catalog (window-modal, not blocking); servers it
-        installs are added here. Returns the dialog."""
+    def add_from_catalog(self, *, podman=None, opener=None, category: str = "",
+                         query: str = ""):
+        """Open Add from Catalog (window-modal, not blocking), on *category*
+        or searching *query* when given; servers it installs are added here.
+        Returns the dialog."""
         from ui.mcp_catalog_dialog import McpCatalogDialog
 
         self._store_server()
         dlg = McpCatalogDialog(self, sources=self.settings.mcp_sources,
                                taken={s.name for s in self.settings.mcp_servers},
-                               podman=podman, opener=opener)
+                               podman=podman, opener=opener or self._mcp_opener,
+                               category=category, query=query)
         dlg.installed.connect(self._take_installed)
         self._catalog_dialog = dlg
         dlg.open()
@@ -1308,11 +2116,17 @@ class _AgentSettingsForm:
         note.setWordWrap(True)
         layout.addWidget(note)
         self.source_builtin_check = QCheckBox(tr("Built-in catalog (official images, pinned)"))
+        self.source_hub_check = QCheckBox(
+            tr("c0decave MCP Hub (ghcr.io/c0decave images, pinned by digest)"))
         self.source_dockerhub_check = QCheckBox(tr("Docker Hub - Docker's mcp namespace"))
         self.source_registry_check = QCheckBox(
             tr("MCP Registry (registry.modelcontextprotocol.io)"))
-        for box in (self.source_builtin_check, self.source_dockerhub_check,
-                    self.source_registry_check):
+        self.source_discover_check = QCheckBox(tr(
+            "Discover - curated awesome-lists to browse (install only where the MCP Registry "
+            "or Docker Hub names the repository)"))
+        for box in (self.source_builtin_check, self.source_hub_check,
+                    self.source_dockerhub_check, self.source_registry_check,
+                    self.source_discover_check):
             box.toggled.connect(self._store_sources)
             layout.addWidget(box)
         layout.addWidget(QLabel(tr("Your catalogs (a JSON file or an https:// URL):")))
@@ -1352,8 +2166,10 @@ class _AgentSettingsForm:
         self._loading = True
         try:
             self.source_builtin_check.setChecked(sources.builtin)
+            self.source_hub_check.setChecked(sources.c0decave)
             self.source_dockerhub_check.setChecked(sources.dockerhub)
             self.source_registry_check.setChecked(sources.mcpregistry)
+            self.source_discover_check.setChecked(sources.discover)
             self.source_list.clear()
             for location in sources.extra:
                 self.source_list.addItem(location)
@@ -1368,8 +2184,10 @@ class _AgentSettingsForm:
         self.settings.mcp_sources = replace(
             self.settings.mcp_sources,
             builtin=self.source_builtin_check.isChecked(),
+            c0decave=self.source_hub_check.isChecked(),
             dockerhub=self.source_dockerhub_check.isChecked(),
             mcpregistry=self.source_registry_check.isChecked(),
+            discover=self.source_discover_check.isChecked(),
             extra=tuple(self.source_list.item(i).text() for i in range(self.source_list.count())),
         )
 
@@ -1421,6 +2239,7 @@ class _AgentSettingsForm:
         location = item.text()
         self.source_check_label.setText(tr("Reading {where}…").format(where=location))
         source = M.CatalogSources(builtin=False, dockerhub=False, mcpregistry=False,
+                                  c0decave=False, discover=False,
                                   extra=(location,)).sources(opener=opener)[0]
         inbox = self._inbox
 
@@ -1447,6 +2266,12 @@ class _AgentSettingsForm:
     def problems(self) -> list[str]:
         out = []
         self._store_prompt_profile()
+        self._store_agent_profile()
+        profile_names = [p.name.casefold() for p in self.settings.agent_profiles]
+        for p in self.settings.agent_profiles:
+            out.extend(p.problems())
+            if p.name and profile_names.count(p.name.casefold()) > 1:
+                out.append(tr("Two agent profiles are named {name}.").format(name=p.name))
         prompt_names = [p.name for p in self.settings.prompt_profiles]
         for p in self.settings.prompt_profiles:
             out.extend(p.problems())
@@ -1469,6 +2294,10 @@ class _AgentSettingsForm:
                 )
             if servers.count(server.name) > 1:
                 out.append(tr("Two MCP servers are named {name}.").format(name=server.name))
+            if server.category and MC.clean_category(server.category) != server.category:
+                out.append(tr("The MCP server {name}: the category must be one line of plain "
+                              "text of at most {n} characters.").format(
+                                  name=server.name, n=MC.MAX_CATEGORY))
         for server in self.settings.mcp_servers:
             for host in server.egress:
                 try:
@@ -1524,6 +2353,7 @@ class _AgentSettingsForm:
             "access": self._ceiling(),
             "sandbox": self.default_sandbox_combo.currentData() or "",
             "prompt_profile": self.prompt_active_combo.currentData() or "",
+            "agent_profile": self.agent_profile_default_combo.currentData() or "",
         }
 
     def save(self) -> bool:
@@ -1586,12 +2416,15 @@ class AgentSettingsPage(_AgentSettingsForm, QWidget):
         llm_settings: LP.LLMSettings | None = None,
         sessions=None,
         store_session=None,
+        mcp_detector=None,
+        mcp_opener=None,
     ) -> None:
         QWidget.__init__(self, parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(
-            self._build_form(settings_path, llm_settings, sessions, store_session), 1
+            self._build_form(settings_path, llm_settings, sessions, store_session,
+                             mcp_detector, mcp_opener), 1
         )
         self._baseline = self._snapshot()
 
@@ -1601,6 +2434,7 @@ class AgentSettingsPage(_AgentSettingsForm, QWidget):
             repr([p.to_dict() for p in self.settings.sandboxes]),
             repr([server.to_dict() for server in self.settings.mcp_servers]),
             repr([p.to_dict() for p in self.settings.prompt_profiles]),
+            repr([p.to_dict() for p in self.settings.agent_profiles]),
             tuple(sorted(self._tokens.items())),
             tuple(sorted(self._secrets.items())),
             tuple(s.name for s in self._uninstalls),
@@ -1634,11 +2468,14 @@ class AgentSettingsDialog(_AgentSettingsForm, QDialog):
         llm_settings: LP.LLMSettings | None = None,
         sessions=None,
         store_session=None,
+        mcp_detector=None,
+        mcp_opener=None,
     ) -> None:
         QDialog.__init__(self, parent)
         self.setWindowTitle(tr("Agent Settings"))
         self.resize(820, 560)
-        tabs = self._build_form(settings_path, llm_settings, sessions, store_session)
+        tabs = self._build_form(settings_path, llm_settings, sessions, store_session,
+                                mcp_detector, mcp_opener)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )

@@ -73,11 +73,12 @@ def summary(access: X.SessionAccess, folders) -> str:
 
 class AccessEditor(QWidget):
     """The three parts of a tab's access; :meth:`access` and :meth:`folders`
-    read them back."""
+    read them back. Without *folders* the folder part is left out (an agent
+    profile has no folders of its own)."""
 
     changed = pyqtSignal()
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, folders: bool = True) -> None:
         super().__init__(parent)
         self._ceiling = None
         self._loading = False
@@ -98,6 +99,12 @@ class AccessEditor(QWidget):
             check.toggled.connect(self._emit)
             self.function_checks[name] = check
             box.addWidget(check)
+        # Says why the boxes above are locked; hidden while they are not.
+        self.functions_note = QLabel()
+        self.functions_note.setWordWrap(True)
+        self.functions_note.setContentsMargins(18, 0, 0, 0)
+        self.functions_note.setEnabled(False)
+        box.addWidget(self.functions_note)
         self.axross_check.toggled.connect(self._update)
         self.axross_check.toggled.connect(self._emit)
         layout.addWidget(functions)
@@ -128,8 +135,10 @@ class AccessEditor(QWidget):
         box.addWidget(self.host_note)
         layout.addWidget(network)
 
-        folders = QGroupBox(tr("Folders"))
-        box = QVBoxLayout(folders)
+        folders_box = QGroupBox(tr("Folders"))
+        if not folders:
+            folders_box.hide()  # stays hidden once the layout takes it
+        box = QVBoxLayout(folders_box)
         self.folders_table = QTableWidget(0, 2)
         self.folders_table.setHorizontalHeaderLabels([tr("Folder"), tr("Access")])
         self.folders_table.setColumnWidth(0, 330)
@@ -147,7 +156,7 @@ class AccessEditor(QWidget):
         self.folder_note = QLabel()
         self.folder_note.setWordWrap(True)
         box.addWidget(self.folder_note)
-        layout.addWidget(folders)
+        layout.addWidget(folders_box)
 
     # -- in and out ----------------------------------------------------------------
 
@@ -215,12 +224,17 @@ class AccessEditor(QWidget):
         if ceiling is not None and not getattr(ceiling, "axross_functions", False):
             self.axross_check.setEnabled(False)
             self.axross_check.setToolTip(tr("axross functions are off in Agent Settings > Access"))
+            locked = tr("axross functions are off in Agent Settings > Access: switch them on there first.")
         else:
             self.axross_check.setEnabled(True)
+            locked = "" if master else tr(
+                'Switch on "Let the agent use axross functions" first to choose these.')
+        self.functions_note.setText(locked)
+        self.functions_note.setHidden(not locked)
         for name, check in self.function_checks.items():
             allowed = ceiling is None or bool(getattr(ceiling, name, False))
-            check.setEnabled(master and allowed and self.axross_check.isEnabled())
-            check.setToolTip("" if allowed else tr("Off in Agent Settings > Access"))
+            check.setEnabled(not locked and allowed)
+            check.setToolTip(locked or ("" if allowed else tr("Off in Agent Settings > Access")))
         hosts = self.network_combo.currentData() == "hosts"
         for widget in (self.hosts_list, self.host_edit, self.host_add, self.host_remove):
             widget.setEnabled(hosts)

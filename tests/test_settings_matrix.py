@@ -54,6 +54,7 @@ from core import pane_activation as PA  # noqa: E402
 from core import proxy_settings as PS  # noqa: E402
 from core import ramfs_settings as RS  # noqa: E402
 from core import remote_sweep as RW  # noqa: E402
+from core import self_update as SU  # noqa: E402
 from core import security_mode as SM  # noqa: E402
 from core import sudo_password as SP  # noqa: E402
 from core import voice_settings as VS  # noqa: E402
@@ -581,6 +582,57 @@ def effect_remember(ctx, win, value) -> None:
     SP.forget()
 
 
+def _run_update_check(win, *, auto_install=None):
+    """A fresh start's check (a new controller) against the local fake
+    GitHub; returns (requests made, the controller)."""
+    import time as _time
+
+    from PyQt6.QtWidgets import QApplication
+
+    from tests.fake_github import FakeGitHub, FakeHttpsHandler, FakeRelease, newer_than
+    from ui.update_ui import UpdateController
+
+    from axross._version import __version__
+
+    data = b"new axross"
+    server = FakeGitHub(FakeRelease(newer_than(__version__), {"axross-full": data}))
+    try:
+        controller = UpdateController(win)
+        controller.opener_factory = lambda: SU.build_opener(
+            handlers=[FakeHttpsHandler(server.port)])
+        controller.install_info = auto_install or SU.detect_install(frozen=False)
+        controller.start_check()
+        end = _time.time() + 10
+        while _time.time() < end and (controller.state in ("checking", "downloading")
+                                       or controller._check_job.running
+                                       or controller._download_job.running):
+            QApplication.instance().processEvents()
+            _time.sleep(0.01)
+        return server.api_requests(), controller
+    finally:
+        server.close()
+
+
+def effect_update_check(ctx, win, value) -> None:
+    requests, _controller = _run_update_check(win)
+    assert requests == (1 if value else 0)
+
+
+def effect_update_auto(ctx, win, value) -> None:
+    folder = Path(tempfile.mkdtemp(prefix="axross-matrix-update-"))
+    exe = folder / "axross-full"
+    exe.write_bytes(b"old axross")
+    exe.chmod(0o755)
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=None,
+                             platform="linux", machine="x86_64")
+    _requests, controller = _run_update_check(win, auto_install=inst)
+    assert (exe.read_bytes() == b"new axross") is value
+    assert controller.state == ("installed" if value else "available")
+    import shutil
+
+    shutil.rmtree(folder, ignore_errors=True)
+
+
 def effect_extension(ctx, win, value) -> None:
     host = win.extension_host
     assert (host.module(EXT_ID) is not None) is value
@@ -901,6 +953,18 @@ ROWS = [
         lambda c: SP.remember_setting(),
         lambda c, v: _edit_settings(c, SP.SETTING, v), ("no", 0),
         effect_remember),
+    Row("update_check_at_start", "updates", "settings.json update_check_at_start", (False,),
+        True,
+        _set_check("updates", "check_box"), _page_attr("updates", "check_box"),
+        lambda c: SU.check_at_start(),
+        lambda c, v: _edit_settings(c, SU.SETTING_CHECK, v), ("no", 0, None),
+        effect_update_check),
+    Row("update_auto_download", "updates", "settings.json update_auto_download", (True,),
+        False,
+        _set_check("updates", "auto_box"), _page_attr("updates", "auto_box"),
+        lambda c: SU.auto_download(),
+        lambda c, v: _edit_settings(c, SU.SETTING_AUTO, v), ("yes", 1),
+        effect_update_auto),
     Row("extension_enabled", "extensions", "extensions.json enabled", (True,), False,
         set_extension, shown_extension, lambda c: EXT_ID in EX.enabled_ids(),
         lambda c, v: c.stores.extensions.write_text(v), ("{", '{"enabled": "user:matrixext"}'),

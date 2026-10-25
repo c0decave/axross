@@ -102,8 +102,10 @@ def _ignore(*_args) -> None:
 
 def prime_notify_lookups(obj) -> None:
     """Let Qt's own threads call *obj*'s connectNotify / disconnectNotify
-    without the GIL; call it on the GUI thread right after making a Qt
-    Multimedia object (QMediaPlayer, QAudioOutput, QAudioSink, ...).
+    without the GIL; call it right after making a Qt Multimedia object
+    (QMediaPlayer, QAudioOutput, QAudioSink, ...), on the thread that made
+    it - the GUI thread or a Python-run QThread (the Media Player's decoder
+    and audio threads); any thread holding the GIL gives sip its answer.
 
     A PyQt-made object is a sip subclass: each of those calls first asks
     Python whether the method is reimplemented, and asking takes the GIL -

@@ -2,13 +2,20 @@
 pick a server, install it into podman (core.mcp_install).
 
 The sources are those switched on in Agent Settings > MCP Sources
-(core.mcp_catalog): the built-in catalog, Docker Hub's ``mcp`` namespace,
-the MCP Registry and the user's catalogs. A search asks them all at once,
+(core.mcp_catalog): the built-in catalog, the c0decave MCP Hub, Docker
+Hub's ``mcp`` namespace, the MCP Registry, Discover (curated lists,
+core.mcp_discover) and the user's catalogs. A search asks them all at once,
 off the GUI thread; the results are grouped by category, each with its
 source, kind, licence, last update and whether podman has its image.
 
-Everything a source says is shown as plain text. The install form asks
-what the server may reach: its network (none by default; an allowlist of
+A Discover entry is "link only" (Open Repository, no install) unless the
+MCP Registry or Docker Hub names its repository: then it says
+"installable via" that source and installs through it. The check runs in
+the background after a search (bounded, cached); *Refresh* reads the lists
+and checks again.
+
+Everything a source says is shown as plain text (tooltips escaped). The
+install form asks what the server may reach: its network (none by default; an allowlist of
 ``host:port``; full), its folders (read-only unless ticked writable), the
 values of its environment (secret ones are kept in the keyring) and its
 arguments. Install pulls or builds in the background with its output
@@ -19,6 +26,8 @@ Servers page; Save there writes it.
 
 from __future__ import annotations
 
+import html
+import logging
 import queue
 import threading
 
@@ -52,6 +61,7 @@ from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.column_fit import ColumnFitter
 
+log = logging.getLogger(__name__)
 _ENTRY_ROLE = Qt.ItemDataRole.UserRole
 NETWORK_LABELS = {
     "none": "None - no network (safest)",
@@ -67,8 +77,13 @@ class McpCatalogDialog(QDialog):
     installed = pyqtSignal(object, object, str)
 
     def __init__(self, parent=None, *, sources: M.CatalogSources | None = None, taken=(),
-                 podman: I.Podman | None = None, opener=None, search_now: bool = True) -> None:
+                 podman: I.Podman | None = None, opener=None, search_now: bool = True,
+                 category: str = "", query: str = "") -> None:
+        """*category* filters the list from the start (kept even when no
+        source names it, so an empty list says so); *query* is searched."""
         super().__init__(parent)
+        #: The category asked for (an agent profile's missing one).
+        self._wanted_category = category
         self.setWindowTitle(tr("Add MCP Server from Catalog"))
         self.resize(1100, 720)
         self._sources = (sources or M.CatalogSources()).sources(opener=opener)
@@ -81,6 +96,13 @@ class McpCatalogDialog(QDialog):
         self._search_cancel: threading.Event | None = None
         self._generation = 0
         self._busy = False
+        self._xref_cancel: threading.Event | None = None
+        self._xref_running = False
+        self._xref_checking: set[str] = set()
+        self._refill = QTimer(self)
+        self._refill.setSingleShot(True)
+        self._refill.setInterval(250)
+        self._refill.timeout.connect(self._fill_tree)
         #: Installed here, in order: (config, secrets, token).
         self.installs: list = []
 
@@ -94,14 +116,21 @@ class McpCatalogDialog(QDialog):
         self.source_combo.currentIndexChanged.connect(self._fill_tree)
         self.category_combo = QComboBox()
         self.category_combo.addItem(tr("All categories"), "")
+        if category:
+            self.category_combo.addItem(category, category)
+            self.category_combo.setCurrentIndex(1)
         self.category_combo.currentIndexChanged.connect(self._fill_tree)
         self.search_button = QPushButton(tr("Search"))
         self.search_button.clicked.connect(self.search)
+        self.refresh_button = QPushButton(tr("Refresh"))
+        self.refresh_button.setToolTip(tr("Read the lists and registries again (no cache)"))
+        self.refresh_button.clicked.connect(self.refresh)
         top = QHBoxLayout()
         top.addWidget(self.search_edit, 1)
         top.addWidget(self.source_combo)
         top.addWidget(self.category_combo)
         top.addWidget(self.search_button)
+        top.addWidget(self.refresh_button)
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -213,6 +242,8 @@ class McpCatalogDialog(QDialog):
                 "pypi packages) cannot be installed. Install rootless podman "
                 "(https://podman.io); remote servers work without it."))
         self._show_entry(None)
+        if query:
+            self.search_edit.setText(query)
         if search_now:
             self.search()
 
@@ -222,6 +253,8 @@ class McpCatalogDialog(QDialog):
         """Ask every source (in the background); the tree fills when done."""
         if self._search_cancel is not None:
             self._search_cancel.set()
+        if self._xref_cancel is not None:
+            self._xref_cancel.set()
         cancel = self._search_cancel = threading.Event()
         self._generation += 1
         generation = self._generation
@@ -242,6 +275,15 @@ class McpCatalogDialog(QDialog):
 
         threading.Thread(target=run, name="mcp-catalog-search", daemon=True).start()
 
+    def refresh(self) -> None:
+        """Forget what the sources cached (Discover's lists and checks) and
+        search again."""
+        for source in self._sources:
+            forget = getattr(source, "refresh", None)
+            if callable(forget):
+                forget()
+        self.search()
+
     def _take_results(self, payload) -> None:
         generation, results = payload
         if generation != self._generation:
@@ -253,13 +295,16 @@ class McpCatalogDialog(QDialog):
             total += len(result.entries)
             if result.error:
                 notes.append(tr("{source}: {why}").format(source=result.title, why=result.error))
+            notes.extend(tr("{source}: {why}").format(source=result.title, why=note)
+                         for note in result.notes)
             if result.warnings:
                 notes.append(tr("{source}: {n} entries skipped ({first})").format(
                     source=result.title, n=len(result.warnings), first=result.warnings[0]))
         self.status_label.setText(
             tr("{n} servers found.").format(n=total) + ("\n" + "\n".join(notes) if notes else ""))
         chosen = self.category_combo.currentData()
-        categories = sorted({e.category for r in results for e in r.entries})
+        categories = sorted({e.category for r in results for e in r.entries}
+                            | ({chosen} if chosen and chosen == self._wanted_category else set()))
         self.category_combo.blockSignals(True)
         self.category_combo.clear()
         self.category_combo.addItem(tr("All categories"), "")
@@ -268,6 +313,86 @@ class McpCatalogDialog(QDialog):
         self.category_combo.setCurrentIndex(max(0, self.category_combo.findData(chosen)))
         self.category_combo.blockSignals(False)
         self._fill_tree()
+        self._start_crossref(generation)
+
+    # -- Discover: the cross-reference --------------------------------------------------
+
+    def _discover(self):
+        from core.mcp_discover import DiscoverSource
+
+        return next((s for s in self._sources if isinstance(s, DiscoverSource)), None)
+
+    def _start_crossref(self, generation: int) -> None:
+        """Check the unchecked Discover entries in the background."""
+        source = self._discover()
+        result = next((r for r in self._results if r.source == "discover"), None)
+        if source is None or result is None:
+            return
+        todo = [e for e in result.entries if e.xref == "unchecked"]
+        if not todo:
+            return
+        cancel = self._xref_cancel = threading.Event()
+        inbox = self._inbox
+        self._xref_running = True
+        self._show_xref_state(len(todo))
+
+        def run() -> None:
+            done = source.crossref_all(
+                todo, cancel=cancel,
+                on_entry=lambda entry: inbox.put(("_take_checked", generation, entry)))
+            inbox.put(("_crossref_done", generation, done))
+
+        threading.Thread(target=run, name="mcp-discover-crossref", daemon=True).start()
+
+    def _show_xref_state(self, left: int) -> None:
+        lines = [line for line in self.status_label.text().split("\n")
+                 if not line.startswith(tr("Discover: checking"))]
+        if left:
+            lines.append(tr("Discover: checking {n} entries against the MCP Registry and "
+                            "Docker Hub…").format(n=left))
+        self.status_label.setText("\n".join(lines))
+
+    def _take_checked(self, generation: int, entry: M.CatalogEntry) -> None:
+        self._xref_checking.discard(entry.id)
+        if generation != self._generation:
+            return
+        for result in self._results:
+            if result.source != entry.source:
+                continue
+            result.entries = [entry if e.id == entry.id else e for e in result.entries]
+        if self._entry is not None and self._entry.id == entry.id and not self._busy:
+            item = self.tree.currentItem()
+            if item is not None:
+                item.setData(0, _ENTRY_ROLE, entry)
+            self._show_entry(item)
+        if not self._refill.isActive():
+            self._refill.start()
+
+    def _crossref_done(self, generation: int, _done: int) -> None:
+        if generation != self._generation:
+            return
+        self._xref_running = False
+        self._show_xref_state(0)
+        self._fill_tree()
+
+    def _check_now(self, entry: M.CatalogEntry) -> None:
+        """Check one selected Discover entry the background run has not reached."""
+        source = self._discover()
+        if source is None or entry.id in self._xref_checking:
+            return
+        self._xref_checking.add(entry.id)
+        generation = self._generation
+        inbox = self._inbox
+
+        def run() -> None:
+            try:
+                checked = source.check(entry)
+            except Exception:  # noqa: BLE001 - the entry stays unchecked, shown as such
+                log.exception("mcp catalog: checking %s failed", entry.id)
+                checked = entry
+            inbox.put(("_take_checked", generation, checked))
+
+        threading.Thread(target=run, name="mcp-discover-check", daemon=True).start()
 
     def _take_index(self, index) -> None:
         self._index = index
@@ -301,12 +426,10 @@ class McpCatalogDialog(QDialog):
                 group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                 self.tree.addTopLevelItem(group)
             source = next((s.title for s in self._sources if s.id == entry.source), entry.source)
-            kind = entry.kind if entry.installable else tr("{kind} (not installable)").format(
-                kind=entry.kind)
-            item = QTreeWidgetItem([entry.title or entry.name, source, kind, entry.license,
-                                    entry.updated, self._image_state(entry)])
+            item = QTreeWidgetItem([entry.title or entry.name, source, self._kind_text(entry),
+                                    entry.license, entry.updated, self._image_state(entry)])
             item.setData(0, _ENTRY_ROLE, entry)
-            item.setToolTip(0, entry.description[:500])
+            item.setToolTip(0, plain_tooltip(entry.description[:500]))
             group.addChild(item)
             if entry.id == current:
                 select = item
@@ -314,6 +437,17 @@ class McpCatalogDialog(QDialog):
         self.tree.blockSignals(False)
         if select is not None:
             self.tree.setCurrentItem(select)
+
+    @staticmethod
+    def _kind_text(entry: M.CatalogEntry) -> str:
+        if entry.xref == "unchecked":
+            return tr("not checked yet")
+        if entry.xref == "link":
+            return tr("link only")
+        if entry.via:
+            return tr("installable via {source}").format(source=entry.via)
+        return entry.kind if entry.installable else tr("{kind} (not installable)").format(
+            kind=entry.kind)
 
     def select_entry(self, entry_id: str) -> bool:
         """Select the entry *entry_id* in the tree (False: not shown)."""
@@ -354,6 +488,8 @@ class McpCatalogDialog(QDialog):
         self.args_edit.setText(" ".join(_quote(a) for a in entry.args))
         self.token_edit.clear()
         self._update_form()
+        if entry.xref == "unchecked" and not self._xref_running:
+            self._check_now(entry)
         source = next((s for s in self._sources if s.id == entry.source), None)
         if isinstance(source, M.DockerHubSource) and not entry.repository:
             inbox = self._inbox
@@ -378,7 +514,14 @@ class McpCatalogDialog(QDialog):
         if entry.description:
             lines += [entry.description, ""]
         lines.append(tr("Source: {s}").format(s=entry.source))
-        lines.append(tr("Runs: {what}").format(what=entry.package_ref))
+        if entry.category:
+            lines.append(tr("Category: {c}").format(c=entry.category))
+        if entry.listed_in:
+            lines.append(tr("Listed in: {lists}").format(lists=entry.listed_in))
+        if entry.xref in ("mcpregistry", "dockerhub"):
+            lines.append(tr("Installable via {source}").format(source=entry.via))
+        if entry.installable:
+            lines.append(tr("Runs: {what}").format(what=entry.package_ref))
         if entry.repository:
             lines.append(tr("Repository: {url}").format(url=entry.repository))
         if entry.page:
@@ -399,6 +542,11 @@ class McpCatalogDialog(QDialog):
             lines.append(tr("Variable {name}{secret}: {d}").format(
                 name=spec.name, secret=tr(" (secret)") if spec.secret else "",
                 d=spec.description))
+        if entry.maintainer:
+            lines += ["", tr("Maintained by {who}, not by axross. axross pins the version and runs "
+                             "it in a container; problems with the server itself go to its "
+                             "project{at}.").format(
+                who=entry.maintainer, at=f" ({entry.repository})" if entry.repository else "")]
         if entry.notes:
             lines += ["", entry.notes]
         if entry.why_not:
@@ -624,7 +772,15 @@ class McpCatalogDialog(QDialog):
             self._cancel.set()
         if self._search_cancel is not None:
             self._search_cancel.set()
+        if self._xref_cancel is not None:
+            self._xref_cancel.set()
         super().reject()
+
+
+def plain_tooltip(text: str) -> str:
+    """*text* as a tooltip that shows it as it is: Qt takes a tooltip that
+    looks like markup for rich text, so it is escaped inside ``<qt>``."""
+    return f"<qt>{html.escape(text).replace(chr(10), '<br>')}</qt>" if text else ""
 
 
 def _quote(arg: str) -> str:

@@ -644,12 +644,13 @@ def _run(args) -> int:
 
     install(detect_language(configured=stored_language()))
 
-    # Apply the SSH banner override globally before any Transport is
-    # instantiated downstream. Safe to call when paramiko is absent
-    # (headless MCP builds that drop it) — the helper is a no-op then.
-    from core.client_identity import apply_paramiko_banner_override
+    # The SSH banner override for every Transport made later - set the
+    # moment paramiko is imported, not by importing it now: the window
+    # needs no SSH until a connection opens. Harmless without paramiko
+    # (headless MCP builds that drop it): nothing ever imports it then.
+    from core.client_identity import banner_override_on_import
 
-    apply_paramiko_banner_override()
+    banner_override_on_import()
 
     # Route tempfile to tmpfs if the user opted in (off by default),
     # tmpfs is available and TMPDIR is not set. Affects every subsequent
@@ -904,7 +905,21 @@ def _run(args) -> int:
     log.info("Application ready")
     if smoke_ms is not None:
         _arm_gui_smoke(app, smoke_ms)
-    return app.exec()
+    else:
+        # Once per start, in the background, after the window is up
+        # (Settings > Updates; a smoke start never reaches the network).
+        from ui.update_ui import schedule_start_check
+
+        schedule_start_check(window)
+    status = app.exec()
+    # The window and every other Qt object Python owns go now: when this
+    # frame ends, releasing ``app`` deletes them from inside PyQt's walk of
+    # sip's object map, and a destructor that calls back into Python there
+    # can make sip move that map and the walk crash (core.qt_exit).
+    from core.qt_exit import delete_python_owned_qobjects
+
+    delete_python_owned_qobjects()
+    return status
 
 
 if __name__ == "__main__":

@@ -10,18 +10,27 @@ back to the table keeps the selection.
 Pictures are made by :func:`core.media_load.thumbnail` on the media
 viewer's :class:`ui.media_viewer.TaskRunner` - plain worker threads, newest
 request first, so the tiles in view come first and a dead remote cannot
-freeze the window. Only tiles that are painted ask for a picture. A file
-that cannot be shown (broken, too large, blocked by the security mode, a
-read error) keeps its icon and is not asked for again until the folder is
-listed anew with a different size or time.
+freeze the window. Only tiles that are painted ask for a picture, and a
+picture that arrives repaints its own tile only (the whole viewport per
+arrival painted every visible tile again: 60,066 tile paints for 1,961
+thumbnails in a folder of 2,000 photos). A file that cannot be shown
+(broken, too large, blocked by the security mode, a read error) keeps its
+icon and is not asked for again in that folder until it is listed with a
+different size or time; in another folder and back it is tried again.
+
+The pictures (at most :data:`MAX_CACHED`) are kept across folders while the
+pane stays on the same connection: going back to a folder reads nothing
+again - for a remote folder that was a new download of every image. They
+are keyed by path, size and time, so a changed file gets a new picture.
 """
 
 from __future__ import annotations
 
 import logging
+import weakref
 from collections import OrderedDict
 
-from PyQt6.QtCore import QItemSelectionModel, QModelIndex, QRect, QSize, Qt
+from PyQt6.QtCore import QItemSelectionModel, QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
 from PyQt6.QtGui import QFontMetrics, QPainter, QPixmap
 from PyQt6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemDelegate
 
@@ -32,7 +41,7 @@ log = logging.getLogger(__name__)
 
 #: Edge of a tile's picture in px.
 TILE_EDGE = 128
-#: Pictures kept in memory per pane; the oldest go first.
+#: Pictures kept in memory per pane (across its folders); the oldest go first.
 MAX_CACHED = 600
 _TEXT_HEIGHT = 34
 _PAD = 6
@@ -140,7 +149,10 @@ class ThumbnailView(QListView):
         self.destroyed.connect(lambda _obj=None: runner.shutdown())
         self._pictures: OrderedDict[tuple, QPixmap] = OrderedDict()
         self._failed: set[tuple] = set()
-        self._pending: set[tuple] = set()
+        #: key -> the tile that asked for it (repainted alone on arrival).
+        self._pending: dict[tuple, QPersistentModelIndex] = {}
+        #: The connection the pictures are of (weakly: a closed one may go).
+        self._backend_ref = None
         self._folder = None
         #: How many pictures were asked for (tests read it).
         self.requests_made = 0
@@ -209,10 +221,10 @@ class ThumbnailView(QListView):
             self._pictures.move_to_end(key)
             return pixmap
         if key not in self._failed and key not in self._pending:
-            self._request(media, key)
+            self._request(media, key, index)
         return None
 
-    def _request(self, media, key: tuple) -> None:
+    def _request(self, media, key: tuple, index: QModelIndex) -> None:
         from core import media_load
 
         backend, edge = self._pane._backend, self._edge
@@ -221,13 +233,13 @@ class ThumbnailView(QListView):
             return media_load.thumbnail(backend, media, cancel=cancel, edge=edge)
 
         if self._runner.submit(key, work):
-            self._pending.add(key)
+            self._pending[key] = QPersistentModelIndex(index)
             self.requests_made += 1
 
     def _on_loaded(self, key, value, error) -> None:
-        if key not in self._pending:
+        tile = self._pending.pop(key, None)
+        if tile is None:
             return  # asked for under an earlier listing
-        self._pending.discard(key)
         if error is not None or value is None or value.isNull():
             if error is not None:
                 log.debug("No thumbnail for %s: %s", key[0], error)
@@ -236,7 +248,10 @@ class ThumbnailView(QListView):
             self._pictures[key] = QPixmap.fromImage(value)
             while len(self._pictures) > MAX_CACHED:
                 self._pictures.popitem(last=False)
-        self.viewport().update()
+        if tile.isValid():
+            self.update(QModelIndex(tile))
+        else:  # its row went: whatever shows the file now
+            self.viewport().update()
 
     def _on_listing(self) -> None:
         """A new listing: what is still queued belongs to the old one."""
@@ -244,15 +259,28 @@ class ThumbnailView(QListView):
         self._pending.clear()
         self.viewport().update()
 
+    def _same_backend(self, backend) -> bool:
+        ref = self._backend_ref
+        return ref is not None and ref() is backend
+
     def _on_folder(self, _path: str = "") -> None:
-        """Another folder, or the same path on another connection: forget
-        the pictures of the old one."""
-        folder = (id(self._pane._backend), getattr(self._pane, "current_path", None))
-        if folder != self._folder:
-            self._folder = folder
+        """Another folder keeps the pictures (keyed by path, size and
+        time) and tries the failures again; the same path on another
+        connection is another file, so a new connection forgets both."""
+        backend = self._pane._backend
+        folder = getattr(self._pane, "current_path", None)
+        if not self._same_backend(backend):
+            try:
+                self._backend_ref = weakref.ref(backend)
+            except TypeError:  # not weakly referable: hold it like the pane does
+                self._backend_ref = lambda b=backend: b
             self._pictures.clear()
             self._failed.clear()
+            self._folder = folder
             self.viewport().update()
+        elif folder != self._folder:
+            self._folder = folder
+            self._failed.clear()
 
     def shutdown(self) -> None:
         self._runner.shutdown()
@@ -260,7 +288,15 @@ class ThumbnailView(QListView):
 
     # -- state for tests and the status line --------------------------------
     def _key_for_path(self, path: str):
-        for key in list(self._pictures) + list(self._failed) + list(self._pending):
+        """The key of *path* as listed now; for a path not listed here the
+        newest key kept for it (an older size or time may be kept too)."""
+        model = self.model()
+        column = self.modelColumn()
+        for row in range(model.rowCount()):
+            media = self._media_item(model.index(row, column))
+            if media is not None and media.path == path:
+                return self._key(media)
+        for key in reversed([*self._failed, *self._pictures, *self._pending]):
             if key[0] == path:
                 return key
         return None
@@ -274,7 +310,7 @@ class ThumbnailView(QListView):
             return "loaded"
         if key in self._failed:
             return "failed"
-        return "pending"
+        return "pending" if key in self._pending else None
 
     def thumbnail(self, path: str) -> QPixmap | None:
         key = self._key_for_path(path)

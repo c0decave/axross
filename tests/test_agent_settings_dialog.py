@@ -169,3 +169,38 @@ def test_edge_the_llm_profile_keeps_tuning_under_advanced(tmp_path):
     assert dlg.save()
     assert LP.LLMSettings.load(path).profile("local").temperature == 0.7
     dlg.close()
+
+
+# -- why a function box cannot be ticked -------------------------------------------
+# Reported: the five function boxes under Access looked broken - nothing said
+# that the master switch above them has to be on first.
+
+
+def test_happy_the_locked_function_boxes_say_why(tmp_path):
+    dlg = _dialog(tmp_path / "settings.json")
+    dlg.axross_check.setChecked(False)
+    assert not dlg.axross_off_hint.isHidden()
+    assert "Let agents use axross functions" in dlg.axross_off_hint.text()
+    for box in dlg._function_checks().values():
+        assert not box.isEnabled()
+        assert "Let agents use axross functions" in box.toolTip()
+    dlg.close()
+
+
+def test_sad_the_hint_goes_once_the_master_switch_is_on(tmp_path):
+    dlg = _dialog(tmp_path / "settings.json")
+    dlg.axross_check.setChecked(True)
+    assert dlg.axross_off_hint.isHidden()
+    for box in dlg._function_checks().values():
+        assert box.isEnabled()
+        assert "Let agents use axross functions" not in box.toolTip()
+    dlg.close()
+
+
+def test_edge_the_hint_follows_the_switch_back_and_forth(tmp_path):
+    dlg = _dialog(tmp_path / "settings.json")
+    for on in (True, False, True, False):
+        dlg.axross_check.setChecked(on)
+        assert dlg.axross_off_hint.isHidden() is on
+        assert all(b.isEnabled() is on for b in dlg._function_checks().values())
+    dlg.close()

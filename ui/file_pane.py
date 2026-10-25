@@ -89,6 +89,8 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "view-selected-media": ("media-view", None),
     # clipboard / edit
     "copy-path": (None, "Ctrl+C"),
+    "cut": (None, "Ctrl+X"),
+    "paste": (None, "Ctrl+V"),
     "rename": ("edit", "F2"),
     "batch-rename": ("edit", None),
     # transfer
@@ -750,6 +752,9 @@ class FilePaneWidget(QWidget):
     navigation_finished = pyqtSignal(str, bool)
     transfer_requested = pyqtSignal(list)  # list of full paths to transfer (copy)
     move_requested = pyqtSignal(list)  # list of full paths to move
+    #: Paste (Ctrl+V, right-click): move the pending Cut (ui.cut_clipboard)
+    #: into this pane's current folder; the main window does the move.
+    paste_requested = pyqtSignal()
     # paths, target pane, source pane id, is_move
     # paths, target pane, source pane id, move?, folder dropped on ("" = current)
     drop_transfer_requested = pyqtSignal(list, object, str, bool, str)
@@ -826,6 +831,9 @@ class FilePaneWidget(QWidget):
         self._identified_images: dict[str, tuple[int | None, bool]] = {}
 
         self._setup_ui()
+        from ui.cut_clipboard import cut_clipboard
+
+        cut_clipboard().changed.connect(self._apply_cut_marks)
         # The debounce timer is created in the GUI thread so its
         # singleShot fire happens in this thread too. Both ends of
         # the chain go through wrapper methods so subclasses (and
@@ -1206,6 +1214,7 @@ class FilePaneWidget(QWidget):
         elif isinstance(history, int):
             self._history_pos = history
         self._current_path = path
+        self._apply_cut_marks()
         self._retire_stale_menus()
         self._path_edit.setText(path)
         real_count = sum(1 for i in items if i.name != "..")
@@ -1472,6 +1481,7 @@ class FilePaneWidget(QWidget):
         threads cannot outlive the widget they report into.
         """
         self._shutting_down = True
+        self._drop_own_cut()
         self._nav_job.abandon()
         self._hover_timer.stop()
         if getattr(self, "_size_job", None) is not None:
@@ -1855,6 +1865,54 @@ class FilePaneWidget(QWidget):
         if selected and self._production_ok(f"move {len(selected)} item(s) away"):
             self.move_requested.emit(selected)
 
+    # -- Cut / Paste (ui.cut_clipboard) -----------------------------------------
+
+    def cut_selected(self) -> bool:
+        """Cut (Ctrl+X): remember the selected entries for a Paste in any
+        pane. Nothing is removed here - the move happens on Paste, and a
+        cut that is never pasted leaves every entry where it is. False when
+        nothing usable is selected (a pending cut then stays)."""
+        from ui.cut_clipboard import cut_clipboard
+
+        paths = self.selected_items()
+        if not paths:
+            return False
+        cut_clipboard().cut(self, self._backend, self._current_path, paths)
+        self._status.setText(
+            tr("Cut {count} item(s): Paste (Ctrl+V) in a folder moves them there").format(
+                count=len(paths))
+        )
+        return True
+
+    def can_paste(self) -> bool:
+        """A Cut is pending and a window listens to do the move."""
+        from ui.cut_clipboard import cut_clipboard
+
+        return (cut_clipboard().pending is not None
+                and self.receivers(self.paste_requested) > 0)
+
+    def paste_cut(self) -> bool:
+        """Paste (Ctrl+V): move the pending Cut into this pane's folder (the
+        main window checks, asks about name conflicts and queues the move)."""
+        if not self.can_paste():
+            return False
+        self.paste_requested.emit()
+        return True
+
+    def _drop_own_cut(self) -> bool:
+        """Forget a pending Cut of this pane; its entries stay where they are."""
+        from ui.cut_clipboard import cut_clipboard
+
+        return cut_clipboard().drop_source(self)
+
+    def _apply_cut_marks(self) -> None:
+        """Dim the entries of this folder that a pending Cut holds."""
+        if self._shutting_down:
+            return
+        from ui.cut_clipboard import cut_clipboard
+
+        self._model.set_cut_names(cut_clipboard().names_in(self._backend, self._current_path))
+
     def _production_ok(self, op_desc: str) -> bool:
         """The production tarpit for a destructive entry of this pane
         (see ui.production_gate): False when the user stopped it."""
@@ -2127,6 +2185,7 @@ class FilePaneWidget(QWidget):
         is stopped, so the next listing starts one on the new connection.
         """
         self._stop_watcher()
+        self._drop_own_cut()  # its entries belong to the old connection
         self._backend = backend
         self._identified_images.clear()  # paths of the old connection
         self._current_path = backend.home()
@@ -3014,18 +3073,24 @@ class FilePaneWidget(QWidget):
                 lambda _checked=False: self.view_media(selected_only=True),
             )
 
-        # -- clipboard / edit
-        if selected:
+        # -- clipboard / edit. Paste is offered on empty space too.
+        if selected or self.can_paste():
             group()
+        if selected:
             entry(
                 "copy-path",
                 tr("&Copy Path"),
                 lambda _checked=False: self._copy_paths_to_clipboard(),
             )
             if not hostile:
-                entry("rename", tr("&Rename"), self._rename_selected)
-                if len(selected) > 1:
-                    entry("batch-rename", tr("Batch Rename..."), self._batch_rename)
+                entry("cut", tr("Cut"), lambda _checked=False: self.cut_selected())
+        if self.can_paste():
+            paste = entry("paste", tr("Paste"), lambda _checked=False: self.paste_cut())
+            paste.setToolTip(tr("Move the cut entries into this folder"))
+        if selected and not hostile:
+            entry("rename", tr("&Rename"), self._rename_selected)
+            if len(selected) > 1:
+                entry("batch-rename", tr("Batch Rename..."), self._batch_rename)
 
         # -- transfer
         if selected:
@@ -4530,10 +4595,13 @@ class FilePaneWidget(QWidget):
         if cached is not None:
             return cached
         rows = min(self._proxy.rowCount(), _MEASURE_ROWS)
+        # The texts straight from the items (what data() shows), not one
+        # proxy + model round trip per row: ~30 ms per 5000 rows.
+        items = self._model._items
+        text_of = self._model.display_text
         lengths = []
-        for row in range(rows):
-            index = self._proxy.index(row, col)
-            text = index.data(Qt.ItemDataRole.DisplayRole)
+        for row, source in enumerate(self._proxy.source_rows(rows)):
+            text = text_of(items[source], col)
             lengths.append((len(text) if isinstance(text, str) else 0, row))
         lengths.sort(reverse=True)
         width = 0
@@ -5280,9 +5348,40 @@ class FilePaneWidget(QWidget):
     def toggle_view_mode(self) -> None:
         self.set_view_mode("details" if self.view_mode == "thumbnails" else "thumbnails")
 
+    def _escape_in_list(self) -> None:
+        """Esc in the file list undoes one thing, the most transient first:
+        a running load is stopped; else an active filter is cleared (it
+        hides entries, so the selection may be partly out of sight); else
+        the selection is cleared; else a pending Cut of this pane is dropped
+        (its entries stay where they are)."""
+        if self.is_loading:
+            self.cancel_navigation()
+        elif self._filter_edit.text():
+            self._filter_edit.clear()
+        elif self._table.selectionModel().hasSelection():
+            self._table.clearSelection()
+        else:
+            self._drop_own_cut()
+
+    def _escape_in_filter(self) -> None:
+        """Esc in the filter line: clear the filter and go back to the list
+        (the thumbnails in that view)."""
+        self._filter_edit.clear()
+        view = self._thumbs if self.view_mode == "thumbnails" else self._table
+        view.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
     def eventFilter(self, watched, event) -> bool:
         if event.type() in (QEvent.Type.FocusIn, QEvent.Type.MouseButtonPress):
             self.pane_focused.emit()
+
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and watched is self._filter_edit
+            and event.key() == Qt.Key.Key_Escape
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+        ):
+            self._escape_in_filter()
+            return True
 
         # Keyboard shortcuts when the table (or its viewport) has focus
         if event.type() == QEvent.Type.KeyPress and watched in self._key_views():
@@ -5360,10 +5459,7 @@ class FilePaneWidget(QWidget):
 
             # --- Selection ---
             if key == Qt.Key.Key_Escape and no_mods:
-                if self.is_loading:
-                    self.cancel_navigation()  # Esc stops a running load first
-                else:
-                    self._table.clearSelection()
+                self._escape_in_list()
                 return True
             if key == Qt.Key.Key_A and ctrl_shift:
                 self._invert_selection()
@@ -5398,6 +5494,12 @@ class FilePaneWidget(QWidget):
                     self._copy_paths_to_clipboard()
                     return True
                 return False  # let Ctrl+C propagate if nothing selected
+            if key == Qt.Key.Key_X and ctrl:
+                self.cut_selected()
+                return True
+            if key == Qt.Key.Key_V and ctrl:
+                self.paste_cut()
+                return True
 
             # --- Pane cycling ---
             if key == Qt.Key.Key_Tab and no_mods:

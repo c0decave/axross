@@ -46,7 +46,9 @@ Slash-Commands.
 
 *View > Panels > Scripts*: links die gespeicherten Skripte
 (`~/.config/axross/scripts/`) und die mitgelieferten **Examples**
-(read-only, **Copy to My Scripts** legt eine editierbare Kopie an), in
+(read-only; **Run** oder **Run in Console** zeigt den Usage-Aufruf des
+Examples zum Anpassen und führt es damit aus, **Copy to My Scripts** legt
+eine editierbare Kopie mit dem Aufruf als auskommentiertem "Try it"-Abschnitt an), in
 der Mitte ein Python-Editor mit Syntax-Highlighting, Zeilennummern und
 Auto-Indent (Tab = vier Spaces, Shift+Tab rückt aus), unten der Output.
 

@@ -81,6 +81,47 @@ class InitialEntriesTest(_Base):
         self.assertEqual(W.PollingWatcher._snapshot_of(listing).entries, w._snapshot().entries)
 
 
+class OffTheCallerThreadTest(_Base):
+    """Measured: turning 20,000 entries into the first snapshot took 15 ms
+    of every navigation's GUI-thread time; the watcher's thread does it."""
+
+    def test_perf_happy_the_first_snapshot_is_made_on_the_watcher_thread(self) -> None:
+        listing = self.fs.list_dir(str(self.tmp))
+        threads = []
+        real = W.PollingWatcher._snapshot_of
+
+        def recording(items):
+            threads.append(threading.current_thread())
+            return real(items)
+
+        with mock.patch.object(W.PollingWatcher, "_snapshot_of", staticmethod(recording)):
+            w = W.PollingWatcher(self.fs, str(self.tmp), self.cb, interval=0.2,
+                                 initial_entries=listing)
+            w.start()
+            self.addCleanup(w.stop, 2.0)
+            self.assertNotIn(threading.current_thread(), threads)
+            self.assertTrue(w.wait_for_tick(1, timeout=5))
+        self.assertTrue(threads)
+        self.assertNotIn(threading.current_thread(), threads)
+
+    def test_sad_without_a_listing_start_still_lists_at_once(self) -> None:
+        """start() promises that a change made after it returns is seen:
+        without a listing it must not leave its own to the thread."""
+        w = W.PollingWatcher(self.fs, str(self.tmp), self.cb, interval=0.2)
+        w.start()
+        self.addCleanup(w.stop, 2.0)
+        (self.tmp / "after.txt").write_text("x")
+        self.assertTrue(w.wait_for_tick(1, timeout=5))
+        self.assertIn(("created", str(self.tmp / "after.txt"), "file"), self.events)
+
+    def test_edge_a_listing_changed_by_the_caller_afterwards_does_not_matter(self) -> None:
+        listing = self.fs.list_dir(str(self.tmp))
+        w = self.start(initial_entries=listing)
+        listing.clear()  # the caller's list: the watcher keeps its own
+        self.assertTrue(w.wait_for_tick(2, timeout=5))
+        self.assertEqual(self.events, [])
+
+
 class PaneTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

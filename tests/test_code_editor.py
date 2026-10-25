@@ -659,6 +659,140 @@ def test_sad_a_small_file_is_still_coloured_at_once():
     assert not editor.highlighter.lexing and _formats_of(editor, 0)
 
 
+def _paint_of(editor):
+    """Every block's (start, length, colour, bold, italic) as the layout shows it."""
+    out, block = [], editor.document().begin()
+    while block.isValid():
+        out.append([(r.start, r.length, r.format.foreground().color().name(),
+                     r.format.fontWeight(), r.format.fontItalic()) for r in block.layout().formats()])
+        block = block.next()
+    return out
+
+
+def _settled(editor):
+    hl = editor.highlighter
+    assert _wait(lambda: not hl.lexing and not hl._timer.isActive())
+
+
+def _fresh(text):
+    from ui.code_editor import CodeEditor
+
+    editor = CodeEditor()
+    editor.set_language("Python")
+    editor.setPlainText(text)
+    _settled(editor)
+    return editor
+
+
+def _type_at(editor, line, column, text):
+    from PyQt6.QtGui import QTextCursor
+
+    cursor = QTextCursor(editor.document().findBlockByNumber(line))
+    cursor.movePosition(QTextCursor.MoveOperation.Right, n=column)
+    cursor.insertText(text)
+
+
+def _delete_line(editor, line):
+    from PyQt6.QtGui import QTextCursor
+
+    cursor = QTextCursor(editor.document().findBlockByNumber(line))
+    cursor.movePosition(QTextCursor.MoveOperation.NextBlock, QTextCursor.MoveMode.KeepAnchor)
+    cursor.removeSelectedText()
+
+
+def _relex_now(editor):
+    editor.highlighter.relex()
+    _settled(editor)
+
+
+_EDITS = {
+    "a keystroke in a line": lambda e: _type_at(e, 7, 4, "y"),
+    "a new line": lambda e: _type_at(e, 7, 0, "z = 1\n"),
+    "a deleted line": lambda e: _delete_line(e, 5),
+    "a triple quote that turns the rest into a string": lambda e: _type_at(e, 3, 0, '"""'),
+    "several edits before one pause": lambda e: (_type_at(e, 2, 0, "a = 2\n"), _delete_line(e, 9),
+                                                 _type_at(e, 12, 3, "#"), _type_at(e, 1, 0, "\n\n")),
+}
+
+
+@pytest.mark.parametrize("lines", [40, 6_000], ids=["small, lexed at once", "large, lexed off the thread"])
+@pytest.mark.parametrize("edit", list(_EDITS), ids=list(_EDITS))
+def test_happy_after_an_edit_every_line_shows_what_a_fresh_editor_shows(edit, lines):
+    """The relex after a typing pause repaints only the lines whose colours
+    changed - the result must be the paint of a fresh editor with that text."""
+    editor = _fresh(_big_python(lines))
+    _EDITS[edit](editor)
+    _relex_now(editor)
+    assert _paint_of(editor) == _paint_of(_fresh(editor.toPlainText()))
+
+
+def test_edge_an_edit_while_the_lexer_runs_still_ends_in_the_fresh_paint():
+    editor = _fresh(_big_python(6_000))
+    editor.highlighter.relex()  # lexing starts on the old text ...
+    _type_at(editor, 4, 0, "q = 3\n")  # ... and the text changes under it
+    _delete_line(editor, 20)
+    _settled(editor)
+    _relex_now(editor)
+    assert _paint_of(editor) == _paint_of(_fresh(editor.toPlainText()))
+
+
+def test_edge_a_line_without_colours_that_gains_some_is_repainted():
+    editor = _fresh("x\n" * 30 + "y = 1\n")
+    _type_at(editor, 10, 0, "def ")
+    _relex_now(editor)
+    assert _paint_of(editor) == _paint_of(_fresh(editor.toPlainText()))
+    assert _paint_of(editor)[10]
+
+
+def test_edge_switching_dark_and_light_repaints_every_line_in_the_new_colours():
+    text = _big_python(40)
+    editor = _fresh(text)
+    dark = editor.palette().base().color().lightness() < 128
+    before = _paint_of(editor)
+    editor.highlighter.set_dark(not dark)
+    _settled(editor)
+    other = _fresh(text)
+    other.highlighter.set_dark(not dark)
+    _settled(other)
+    assert _paint_of(editor) == _paint_of(other) != before
+
+
+def _count_highlights(editor, act):
+    from ui.code_editor import PygmentsHighlighter
+
+    calls = []
+    original = PygmentsHighlighter.highlightBlock
+
+    def counting(self, text):
+        calls.append(self.currentBlock().blockNumber())
+        return original(self, text)
+
+    with mock.patch.object(PygmentsHighlighter, "highlightBlock", counting):
+        act()
+    return calls
+
+
+@pytest.mark.parametrize("edit", ["a keystroke in a line", "a new line", "a deleted line"])
+def test_perf_a_typing_pause_in_a_large_file_repaints_a_few_lines_not_all(edit):
+    """2026-10-25 performance round: each typing pause in a 2 MB file held
+    the GUI thread 0.4 s - the relex repainted all 45,000 lines although one
+    had changed. Counted, not timed: the host's load moves timings."""
+    editor = _fresh(_big_python(20_000))
+    _EDITS[edit](editor)
+    calls = _count_highlights(editor, lambda: _relex_now(editor))
+    assert len(calls) <= 10, len(calls)
+    assert _paint_of(editor) == _paint_of(_fresh(editor.toPlainText()))
+
+
+def test_perf_sad_a_change_of_every_line_still_repaints_every_line():
+    """Negative control: the count above catches a relex that skips lines
+    it must repaint - a triple quote at the top recolours the whole file."""
+    editor = _fresh(_big_python(20_000))
+    _type_at(editor, 0, 0, '"""')
+    calls = _count_highlights(editor, lambda: _relex_now(editor))
+    assert len(calls) >= 19_000, len(calls)
+
+
 # -- find and replace where Python and Qt count differently (bughunt 2026-10-22:
 # the find bar mixed Python string indexes with QTextCursor positions, which
 # count a character outside the BMP - an emoji - as two; and a match across a

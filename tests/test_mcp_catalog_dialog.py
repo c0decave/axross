@@ -45,7 +45,8 @@ def _wait(predicate, seconds=30.0):
 
 def _settings(path: Path, **sources) -> None:
     s = S.AgentSettings()
-    s.mcp_sources = M.CatalogSources(**{"dockerhub": False, "mcpregistry": False, **sources})
+    s.mcp_sources = M.CatalogSources(**{"dockerhub": False, "mcpregistry": False,
+                                        "c0decave": False, "discover": False, **sources})
     s.save(path)
 
 
@@ -169,7 +170,7 @@ def test_happy_the_settings_dialog_and_the_tools_menu_reach_it(tmp_path, monkeyp
         assert server["name"] == "sequentialthinking" and server["container"] is True
         assert server["enabled"] is True
     finally:
-        stores.close_windows()
+        stores.restore()
 
 
 def test_happy_sources_are_switched_added_and_checked(tmp_path):
@@ -183,6 +184,10 @@ def test_happy_sources_are_switched_added_and_checked(tmp_path):
     dlg.show()
     dlg.show_tab("mcp_sources")
     assert dlg.source_builtin_check.isChecked() and not dlg.source_dockerhub_check.isChecked()
+    assert not dlg.source_hub_check.isChecked() and not dlg.source_discover_check.isChecked()
+    assert dlg.source_hub_check.text().startswith("c0decave MCP Hub")
+    for box in (dlg.source_hub_check, dlg.source_discover_check):
+        QTest.mouseClick(box, Qt.MouseButton.LeftButton, pos=QPoint(8, box.height() // 2))
     box = dlg.source_registry_check  # a click on its box, not the empty row beside the text
     QTest.mouseClick(box, Qt.MouseButton.LeftButton, pos=QPoint(8, box.height() // 2))
     assert dlg.add_source_file(str(good))
@@ -193,6 +198,7 @@ def test_happy_sources_are_switched_added_and_checked(tmp_path):
     assert dlg.save()
     back = S.AgentSettings.load(path).mcp_sources
     assert back.mcpregistry and not back.dockerhub and back.extra == (str(good),)
+    assert back.c0decave and back.discover
 
 
 # -- sad -----------------------------------------------------------------------------
@@ -360,7 +366,8 @@ def test_edge_pulled_images_are_marked_and_names_kept_free(tmp_path, monkeypatch
     podman.add_image("f" * 64, [entry.image_ref], [entry.image_ref])
     path = tmp_path / "agent.json"
     s = S.AgentSettings()
-    s.mcp_sources = M.CatalogSources(dockerhub=False, mcpregistry=False)
+    s.mcp_sources = M.CatalogSources(dockerhub=False, mcpregistry=False, c0decave=False,
+                                     discover=False)
     s.mcp_servers.append(C.McpServerConfig(name="time", command=("x",)))
     s.save(path)
     dlg = _dialog(path)
@@ -402,13 +409,150 @@ def test_edge_a_registry_entry_is_shown_as_untrusted_text(tmp_path, monkeypatch)
         "metadata": {"count": 1}}
     opener = FakeOpener({"registry.modelcontextprotocol.io": json.dumps(hostile).encode()})
     cat = __import__("ui.mcp_catalog_dialog", fromlist=["x"]).McpCatalogDialog(
-        sources=M.CatalogSources(builtin=False, dockerhub=False), opener=opener)
+        sources=M.CatalogSources(builtin=False, dockerhub=False, c0decave=False, discover=False),
+        opener=opener)
     cat.show()
     _wait(lambda: cat.tree.topLevelItemCount() > 0)
     _click_entry(cat, "mcpregistry:io.evil/x")
     text = cat.details.toPlainText()
     assert "<b>bold</b>" in text and "‮" not in text  # as text, not as markup
     assert "javascript" not in text and not cat.open_page_button.isEnabled()
+    cat.close()
+
+
+# -- the c0decave MCP Hub and Discover ------------------------------------------------
+
+
+def _discover_routes(**extra) -> dict:
+    import urllib.error
+
+    from core import mcp_discover as D
+    from tests.test_mcp_discover import WONG2_STYLE
+
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "mcp"
+    snapshot = json.loads(D.snapshot_path(D.LISTS[0]).read_text(encoding="utf-8"))["readme"]
+    hub_search = {"count": 1, "results": [
+        {"name": "nmap", "namespace": "mcp", "description": "Nmap", "is_private": False}]}
+    routes = {
+        M.HUB_URL: urllib.error.HTTPError(M.HUB_URL, 404, "Not Found", {}, None),
+        D.LISTS[0].url: snapshot.encode(),
+        D.LISTS[1].url: WONG2_STYLE.encode(),
+        "search=BurtTheCoder": (fixtures / "registry_burtthecoder.json").read_bytes(),
+        "registry.modelcontextprotocol.io": b'{"servers": [], "metadata": {"count": 0}}',
+        "/v2/repositories/mcp/nmap/tags/latest": json.dumps(
+            {"digest": "sha256:" + "b" * 64}).encode(),
+        "/v2/repositories/mcp/nmap/": json.dumps(
+            {"full_description": "**Repository**|https://github.com/vorotaai/nmap-mcp"}).encode(),
+        "/v2/repositories/mcp/?": json.dumps(hub_search).encode(),
+    }
+    routes.update(extra)
+    return routes
+
+
+def _discover_catalog(tmp_path, monkeypatch, routes, **sources):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    path = tmp_path / "agent.json"
+    _settings(path, builtin=False, c0decave=True, discover=True, **sources)
+    dlg = _dialog(path)
+    dlg.show()
+    opener = FakeOpener(routes)
+    cat = dlg.add_from_catalog(opener=opener)
+    _wait(lambda: cat.tree.topLevelItemCount() > 0)
+    return dlg, cat, opener
+
+
+def _item(cat, entry_id: str):
+    for i in range(cat.tree.topLevelItemCount()):
+        group = cat.tree.topLevelItem(i)
+        for j in range(group.childCount()):
+            if group.child(j).data(0, Qt.ItemDataRole.UserRole).id == entry_id:
+                return group.child(j)
+    return None
+
+
+def _kind_of(cat, entry_id: str) -> str:
+    item = _item(cat, entry_id)
+    return item.text(2) if item is not None else ""
+
+
+def test_happy_hub_and_discover_link_only_or_installed_via_docker_hub(tmp_path, monkeypatch):
+    podman = fake_podman(tmp_path, monkeypatch)
+    dlg, cat, _opener = _discover_catalog(tmp_path, monkeypatch, _discover_routes())
+    titles = [cat.source_combo.itemText(i) for i in range(cat.source_combo.count())]
+    assert "c0decave MCP Hub" in titles and "Discover" in titles
+    _wait(lambda: "not published yet" in cat.status_label.text())
+    assert "c0decave MCP Hub: not reachable or not published yet" in cat.status_label.text()
+    cat.source_combo.setCurrentIndex(cat.source_combo.findText("Discover"))
+    _wait(lambda: _kind_of(cat, "discover:vorotaai/nmap-mcp") ==
+          "installable via Docker Hub (mcp/*)")
+    _wait(lambda: _kind_of(cat, "discover:zoomeye-ai/mcp_zoomeye") == "link only")
+    _wait(lambda: _kind_of(cat, "discover:BurtTheCoder/mcp-shodan") ==
+          "installable via MCP Registry")
+    _click_entry(cat, "discover:zoomeye-ai/mcp_zoomeye")
+    text = cat.details.toPlainText()
+    assert "Category: Reconnaissance & OSINT" in text and "Retrieve cyberspace assets" in text
+    assert "Listed in: R00T-Kim/awesome-offensive-mcp" in text and "link only" in text
+    assert not cat.install_button.isEnabled() and cat.open_page_button.isEnabled()
+    with mock.patch("core.desktop_open.open_url") as opened:
+        QTest.mouseClick(cat.open_page_button, Qt.MouseButton.LeftButton)
+    opened.assert_called_once_with("https://github.com/zoomeye-ai/mcp_zoomeye")
+    _click_entry(cat, "discover:vorotaai/nmap-mcp")
+    assert "Installable via Docker Hub (mcp/*)" in cat.details.toPlainText()
+    assert cat.install_button.isEnabled()
+    QTest.mouseClick(cat.install_button, Qt.MouseButton.LeftButton)
+    _wait(lambda: cat.installs)
+    assert "Test passed" in cat.log.toPlainText(), cat.log.toPlainText()
+    assert ["pull", "docker.io/mcp/nmap@sha256:" + "b" * 64] in podman.calls("pull")
+    (server,) = dlg.settings.mcp_servers
+    assert server.package["source"] == "discover"
+    assert server.package["digest"] == "sha256:" + "b" * 64
+    cat.close()
+
+
+def test_sad_list_text_is_plain_and_tooltips_are_escaped(tmp_path, monkeypatch):
+    from core import mcp_discover as D
+
+    hostile = ("## Evil <i>Cat</i>\n- [**Esc <b>me</b>**](https://github.com/esc/x) - 1 < 2 and "
+               "<<b>> &amp; [click](javascript:alert(1)) \u202eend\n"
+               "- [**JS**](javascript:alert(1)) - never shown\n")
+    routes = _discover_routes(**{D.LISTS[1].url: hostile.encode()})
+    _dlg, cat, _opener = _discover_catalog(tmp_path, monkeypatch, routes)
+    _wait(lambda: _item(cat, "discover:esc/x") is not None)
+    item = _item(cat, "discover:esc/x")
+    entry = item.data(0, Qt.ItemDataRole.UserRole)
+    assert entry.title == "Esc me" and entry.category == "Evil Cat"
+    assert item.toolTip(0) == "<qt>" + __import__("html").escape(entry.description) + "</qt>"
+    assert "&lt;" in item.toolTip(0)
+    _click_entry(cat, "discover:esc/x")
+    text = cat.details.toPlainText()
+    assert "javascript" not in text and "\u202e" not in text and "1 < 2" in text
+    assert _item(cat, "discover:JS") is None
+    cat.close()
+
+
+def test_edge_refresh_reads_the_lists_again_and_hub_entries_are_checked(tmp_path, monkeypatch):
+    from core import mcp_discover as D
+
+    good = {"id": "scan", "name": "scan", "title": "Scan", "kind": "oci",
+            "image": "ghcr.io/c0decave/scan-mcp", "digest": "sha256:" + "c" * 64}
+    foreign = dict(good, id="other", name="other", image="docker.io/mcp/time")
+    hub = {"schema": M.SCHEMA, "version": 1, "entries": [good, foreign]}
+    routes = _discover_routes(**{M.HUB_URL: json.dumps(hub).encode()})
+    _dlg, cat, opener = _discover_catalog(tmp_path, monkeypatch, routes)
+    _wait(lambda: _item(cat, "scan") is not None)
+    assert _item(cat, "scan").text(1) == "c0decave MCP Hub"
+    assert "ghcr.io/c0decave/" in cat.status_label.text() and _item(cat, "other") is None
+
+    def readme_reads() -> int:
+        return sum(u in (D.LISTS[0].url, D.LISTS[1].url) for u in opener.urls)
+
+    assert readme_reads() == 2
+    cat.search()
+    _wait(lambda: cat.status_label.text().startswith(("1", "2", "3", "4", "5", "6", "7", "8",
+                                                       "9")))
+    assert readme_reads() == 2  # cached
+    QTest.mouseClick(cat.refresh_button, Qt.MouseButton.LeftButton)
+    _wait(lambda: readme_reads() == 4)
     cat.close()
 
 
@@ -439,3 +583,18 @@ def test_live_the_dialog_installs_and_uninstalls_a_real_image(tmp_path, real_pod
     assert dlg.save()
     if server.package.get("preexisting") != "true":
         assert real_podman.inspect(image) is None
+
+
+def test_happy_e2e_a_third_party_server_says_axross_does_not_maintain_it(tmp_path, monkeypatch):
+    fake_podman(tmp_path, monkeypatch)
+    path = tmp_path / "agent.json"
+    _settings(path)
+    dlg = _dialog(path)
+    cat = _open_catalog(dlg)
+    _click_entry(cat, "rea")
+    text = cat.details.toPlainText()
+    assert "Maintained by morluto, not by axross" in text
+    assert "https://github.com/morluto/rea" in text
+    _click_entry(cat, "time")
+    assert "Maintained by" not in cat.details.toPlainText()  # axross's own choice: no line
+    cat.close()

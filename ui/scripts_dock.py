@@ -31,6 +31,8 @@ from typing import Callable
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QKeySequence, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QInputDialog,
     QLabel,
@@ -233,6 +235,8 @@ class ScriptsDock(QDockWidget):
     activity = pyqtSignal()
     #: The user asked to run this saved script in the Console's REPL.
     run_in_console_requested = pyqtSignal(str)
+    #: (example name, its call): Run in Console of a bundled example.
+    run_example_in_console_requested = pyqtSignal(str, str)
 
     def __init__(
         self,
@@ -253,6 +257,8 @@ class ScriptsDock(QDockWidget):
         self._loading = False
         self._run: ScriptRun | None = None
         self._run_name = ""
+        #: What the running script only defines (SR.only_defines), for its end.
+        self._run_library: list[str] = []
         self._run_path = ""
 
         container = QWidget()
@@ -338,6 +344,39 @@ class ScriptsDock(QDockWidget):
     def _ask_name(self, title: str, label: str, default: str = "") -> str | None:
         text, ok = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, default)
         return text.strip() if ok else None
+
+    def _ask_example_call(self, name: str, usage: str) -> str | None:
+        """The call to run bundled example *name* with: its Usage block, to
+        adjust (paths, hosts, profiles). None: cancelled."""
+        from ui.close_corner import add_close_corner
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("Run Example {name}").format(name=name))
+        layout = QVBoxLayout(dialog)
+        note = QLabel(tr(
+            "{name} defines functions; this code calls them after it. Adjust paths, hosts "
+            "or profiles, then Run.").format(name=name))
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        edit = CodeEditor(dialog)
+        edit.setObjectName("axExampleCall")
+        edit.setPlainText(usage)
+        layout.addWidget(edit, 1)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dialog)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("Run"))
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        add_close_corner(dialog)
+        dialog.resize(640, 320)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return edit.toPlainText()
+
+    def _example_call(self) -> str | None:
+        name = self._current[1]
+        return self._ask_example_call(name, SR.usage_block(self.editor.toPlainText()))
 
     def _ask_unsaved(self, name: str) -> str:
         """``"save"``, ``"discard"`` or ``"cancel"``."""
@@ -486,8 +525,15 @@ class ScriptsDock(QDockWidget):
             self.run_action.setToolTip(blocked)
             self.console_action.setToolTip(blocked)
             return
-        self.run_action.setEnabled(user and not running)
-        self.console_action.setEnabled(user)
+        self.run_action.setEnabled((user or example) and not running)
+        self.console_action.setEnabled(user or example)
+        if example:
+            self.run_action.setToolTip(tr(
+                "Run this example in its own process with its call, shown first to adjust "
+                "(Ctrl+Return)"))
+            self.console_action.setToolTip(tr(
+                "Run this example with its call in the Console's live namespace"))
+            return
         self.run_action.setToolTip(tr("Run the saved script in its own process (Ctrl+Return)"))
         self.console_action.setToolTip(
             tr("Run in the Console's live namespace; the window waits until it finishes")
@@ -680,7 +726,12 @@ class ScriptsDock(QDockWidget):
         title = tr("Copy to My Scripts")
         name = self._ask_new_name(title, tr("Name of your copy:"), self._current[1])
         if name:
-            self._save_new(name, self.editor.toPlainText(), title)
+            text = self.editor.toPlainText()
+            usage = SR.usage_block(text)
+            if usage:
+                commented = "\n".join(f"# {line}" if line else "#" for line in usage.splitlines())
+                text = f"{text.rstrip()}\n\n\n{SR.TRY_IT_HEADER}\n{commented}\n"
+            self._save_new(name, text, title)
 
     def _jobs_note(self, name: str) -> str:
         jobs = self._jobs_by_script.get(name)
@@ -739,7 +790,8 @@ class ScriptsDock(QDockWidget):
     # Running
     # ------------------------------------------------------------------
     def run(self) -> None:
-        if self.is_running() or not self._is_user():
+        example = self._current is not None and self._current[0] == "example"
+        if self.is_running() or not (self._is_user() or example):
             return
         policy = security_mode.current_policy()
         if not policy.allow_scripts:
@@ -747,17 +799,23 @@ class ScriptsDock(QDockWidget):
                 tr("Scripts are blocked in {mode} security mode.").format(mode=policy.name)
             )
             return
-        if self._dirty and not self.save():
-            return
         name = self._current[1]
+        if example:
+            call = self._example_call()
+            if call is None:
+                return
+        elif self._dirty and not self.save():
+            return
         try:
-            command = SR.build_command(name)
+            command = SR.build_example_command(name, call) if example else SR.build_command(name)
         except (OSError, ValueError) as exc:
             self.status.setText(tr("Cannot run {name}: {e}").format(name=name, e=exc))
             return
         self.output.clear()
         self._run_name = name
-        self._run_path = os.path.join(command.cwd, f"{name}.py")
+        self._run_library = [] if example else SR.only_defines(self.editor.toPlainText())
+        self._run_path = (os.path.join(scripting._bundled_scripts_dir(), f"{name}.py")
+                          if example else os.path.join(command.cwd, f"{name}.py"))
         run = ScriptRun(command, SR.child_env(policy.name, watched=True), self)
         run.output.connect(self._on_run_output)
         run.ended.connect(self._on_run_ended)
@@ -779,12 +837,25 @@ class ScriptsDock(QDockWidget):
         run, self._run = self._run, None
         if run is not None:
             run.deleteLater()
-        self.status.setText(f"{self._run_name}: {message}")
+        text = f"{self._run_name}: {message}"
+        library = self._run_library
+        if library and message.startswith("exit status 0") and not self.output.toPlainText().strip():
+            text += " - " + tr(
+                "the script only defines {names}; nothing calls it. Call one at the end "
+                "(see the Try it section of a copied example).").format(names=", ".join(library))
+        self.status.setText(text)
         self._update_actions()
         self.activity.emit()
 
     def run_in_console(self) -> None:
-        if not self._is_user() or not security_mode.current_policy().allow_scripts:
+        if not security_mode.current_policy().allow_scripts:
+            return
+        if self._current is not None and self._current[0] == "example":
+            call = self._example_call()
+            if call is not None:
+                self.run_example_in_console_requested.emit(self._current[1], call)
+            return
+        if not self._is_user():
             return
         if self._dirty and not self.save():
             return
