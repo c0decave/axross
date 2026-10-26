@@ -180,6 +180,12 @@ def _backend_join(backend, *parts: str) -> str:
     return "/" + "/".join(cleaned)
 
 
+def _backend_parent(backend, path: str) -> str:
+    if hasattr(backend, "parent"):
+        return backend.parent(path)
+    return _path_flavour(backend).dirname(path)
+
+
 def _path_flavour(backend):
     """ntpath for a backend with backslash paths (LocalFS on Windows,
     WinRM), else posixpath."""
@@ -865,8 +871,22 @@ class _S3Handler(_BaseHandler):
         try:
             self.config.backend.remove(path)
         except OSError as exc:
-            log.debug("reverse-s3 DELETE failed: %s", exc)
-            # S3 returns 204 even for non-existent keys.
+            # S3 answers 204 for a key that does not exist - and only then: a
+            # client takes 204 for "gone" (rclone sync, restic prune). Backends
+            # differ in the error of a missing path (RamFS: plain OSError), so
+            # ask whether the object is still there.
+            log.debug("reverse-s3 DELETE %s failed: %s", path, exc)
+            try:
+                still_there = self.config.backend.exists(path)
+                is_folder = still_there and self.config.backend.is_dir(path)
+            except OSError:
+                still_there, is_folder = True, False
+            if still_there and not is_folder:  # a folder is no object: 204
+                if isinstance(exc, PermissionError):
+                    self._s3_error(403, "AccessDenied", str(exc))
+                else:
+                    self._s3_error(500, "InternalError", str(exc))
+                return
         self.send_response(204)
         self.send_header("Server", HEAD_BANNER)
         self.send_header("Content-Length", "0")
@@ -1137,10 +1157,25 @@ class _DAVHandler(_BaseHandler):
         path = self._backend_path()
         if path is None:
             return
+        if self._is_served_root(path):
+            self._send_simple(403, b"the served root cannot be deleted")
+            return
+        try:
+            present = self.config.backend.exists(path)
+        except OSError as exc:
+            # Unknown is not "gone": try the delete, whose failure is an error.
+            log.debug("reverse-dav DELETE %s: exists failed: %s", path, exc)
+            present = True
+        if not present:
+            self._send_simple(404)
+            return
         try:
             self.config.backend.remove(path, recursive=True)
         except OSError as exc:
-            self._send_simple(404, str(exc).encode("utf-8"))
+            # Never 404 for a path that is there: a client takes it for gone.
+            log.warning("reverse-dav DELETE %s failed: %s", path, exc)
+            code = 403 if isinstance(exc, PermissionError) else 500
+            self._send_simple(code, str(exc).encode("utf-8"))
             return
         self._send_simple(204)
 
@@ -1155,6 +1190,18 @@ class _DAVHandler(_BaseHandler):
         if path is None:
             return
         try:
+            # RFC 4918 9.3.1: MKCOL on an existing resource is 405. LocalFS
+            # mkdir succeeds on an existing folder, RamFS raises a plain
+            # OSError - so ask first.
+            if self.config.backend.exists(path):
+                self._send_simple(405, b"the resource already exists")
+                return
+            # 409 when a parent is missing: the server MUST NOT create the
+            # intermediate collections (LocalFS mkdir would - os.makedirs).
+            parent = _backend_parent(self.config.backend, path)
+            if parent and not self.config.backend.is_dir(parent):
+                self._send_simple(409, b"a parent collection does not exist")
+                return
             self.config.backend.mkdir(path)
         except FileExistsError:
             self._send_simple(405, b"directory already exists")
@@ -1192,6 +1239,9 @@ class _DAVHandler(_BaseHandler):
             return
         src_full = self._backend_path()
         if src_full is None:
+            return
+        if (move and self._is_served_root(src_full)) or self._is_served_root(dst_full):
+            self._send_simple(403, b"the served root cannot be moved or replaced")
             return
         if self.headers.get("Overwrite", "T").strip().upper() == "F":
             # RFC 4918 9.8.4 / 9.9.3: the client asked not to replace an
@@ -1273,6 +1323,11 @@ class _DAVHandler(_BaseHandler):
         self._send_simple(204)
 
     # ------- helpers ---------------------------------------------------
+
+    def _is_served_root(self, full: str) -> bool:
+        flavour = _path_flavour(self.config.backend)
+        root = self.config.root_path or flavour.sep
+        return flavour.normcase(flavour.normpath(full)) == flavour.normcase(flavour.normpath(root))
 
     def _backend_path(self) -> str | None:
         try:

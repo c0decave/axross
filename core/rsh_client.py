@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 from core.backend import SessionLifecycle
 from core.subprocess_env import clean_child_env
-from core.telnet_client import copy_command, rename_command
+from core.telnet_client import copy_command, remove_command, rename_command
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -410,8 +410,7 @@ class RshSession(SessionLifecycle):
 
     def remove(self, path: str, recursive: bool = False) -> None:
         path = _validate_path(self.normalize(path))
-        flag = "-rf" if recursive else "-f"
-        self._run_remote(f"rm {flag} -- {shlex.quote(path)}")
+        self._run_remote(remove_command(path, recursive=recursive))
 
     def mkdir(self, path: str) -> None:
         path = _validate_path(self.normalize(path))

@@ -8,8 +8,8 @@ module is a focused re-implementation against RFC 4918 (WebDAV) and
 RFC 4331 (quota).
 
 The public surface is :class:`WebDavSession`. Internally it talks to
-:class:`_WebDavClient` which owns the ``requests.Session`` and the
-XML parsing.
+:class:`_WebDavClient` which owns the ``requests.Session`` of every
+thread and the XML parsing.
 
 Requires: ``pip install axross[webdav]`` — ``requests`` +
 ``defusedxml``. ``defusedxml`` is **mandatory** because every
@@ -23,6 +23,8 @@ import errno
 import logging
 import posixpath
 import tempfile
+import threading
+import weakref
 from datetime import datetime, timezone
 from typing import IO, Any
 from urllib.parse import quote, unquote, urlsplit
@@ -127,6 +129,65 @@ def _parse_http_date(text: str) -> datetime:
 
 
 # ---------------------------------------------------------------------------
+# One requests.Session per thread
+# ---------------------------------------------------------------------------
+
+
+def _close_quietly(session) -> None:
+    try:
+        session.close()
+    except Exception:  # noqa: BLE001 - nothing left to report it to
+        pass
+
+
+class _ThreadSession:
+    """The requests.Session of one thread. ``closer`` closes it once:
+    when the thread ends (its threading.local entry, the only strong
+    reference, goes away) or when the client closes every session."""
+
+    __slots__ = ("session", "generation", "closer", "__weakref__")
+
+    def __init__(self, session, generation: int) -> None:
+        self.session = session
+        self.generation = generation
+        self.closer = weakref.finalize(self, _close_quietly, session)
+
+
+class _ThreadSessions:
+    """requests never promised that a Session is thread safe
+    (psf/requests#2766: the cookie jar, the adapters), and a WebDavSession
+    is used by transfer workers, listing threads and the GUI thread at
+    once. Each thread gets a Session of its own from ``factory`` and keeps
+    it for its later calls; :meth:`close_all` closes every one, and a
+    thread that calls again afterwards gets a new one."""
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+        self._lock = threading.Lock()
+        self._open: weakref.WeakSet[_ThreadSession] = weakref.WeakSet()
+        self._generation = 0
+
+    def get(self, factory):
+        holder = getattr(self._local, "holder", None)
+        if holder is not None and holder.generation == self._generation:
+            return holder.session
+        session = factory()
+        with self._lock:
+            holder = _ThreadSession(session, self._generation)
+            self._open.add(holder)
+        self._local.holder = holder  # replaces (and so closes) a stale one
+        return session
+
+    def close_all(self) -> None:
+        with self._lock:
+            holders = list(self._open)
+            self._open = weakref.WeakSet()
+            self._generation += 1
+        for holder in holders:
+            holder.closer()
+
+
+# ---------------------------------------------------------------------------
 # Internal WebDAV client — does the HTTP and XML
 # ---------------------------------------------------------------------------
 
@@ -186,15 +247,42 @@ class _WebDavClient:
         self._url_path = unquote(parts.path or "")
         self._auth = (username, password) if username else None
         self._timeout = timeout
-        self.session = requests.Session()
+        self._proxies = dict(proxies) if proxies else None
+        # The constructing thread's Session now: a proxy that cannot be
+        # locked in fails here, not on the first request.
+        self.session  # noqa: B018 - built for its side effect
+
+    @property
+    def session(self) -> "requests.Session":
+        """The calling thread's Session (see :class:`_ThreadSessions`)."""
+        sessions = self.__dict__.get("_thread_sessions")
+        if sessions is None:
+            sessions = self.__dict__.setdefault("_thread_sessions", _ThreadSessions())
+        return sessions.get(self._new_session)
+
+    def _new_session(self) -> "requests.Session":
+        """A Session built as every one of this client is: locked to the
+        profile proxy (never the environment's), with the axross
+        User-Agent. Auth and timeout go with each request (``_request``)."""
+        from core.client_identity import HTTP_USER_AGENT
         from core.proxy import lock_requests_session_to_profile_proxy
 
-        lock_requests_session_to_profile_proxy(self.session, proxies)
+        session = requests.Session()
+        try:
+            lock_requests_session_to_profile_proxy(session, getattr(self, "_proxies", None))
+        except BaseException:
+            session.close()
+            raise
         # Override default User-Agent so traffic doesn't shout
         # "python-requests/X.Y.Z". See docs/OPSEC.md #4.
-        from core.client_identity import HTTP_USER_AGENT
+        session.headers["User-Agent"] = HTTP_USER_AGENT
+        return session
 
-        self.session.headers["User-Agent"] = HTTP_USER_AGENT
+    def close(self) -> None:
+        """Close every thread's Session."""
+        sessions = self.__dict__.get("_thread_sessions")
+        if sessions is not None:
+            sessions.close_all()
 
     # ------------------------------------------------------------------
     # URL helpers
@@ -640,7 +728,7 @@ class WebDavSession(SessionLifecycle):
     def close(self) -> None:
         log.info("WebDAV disconnecting: %s", self._display_url)
         try:
-            self._client.session.close()
+            self._client.close()
         except Exception:  # noqa: BLE001
             pass
 

@@ -330,17 +330,27 @@ class TransferWorker(QObject):
     job_error = pyqtSignal(str, str)  # job_id, error_message
     job_started = pyqtSignal(str)  # job_id
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, scheduler=None, index: int = 0):
         super().__init__(parent)
         self._queue: Queue[TransferJob | None] = Queue()
         self._running = True
+        # A core.transfer_pool.JobScheduler shared with the other workers
+        # of a TransferManager; None: this worker's own queue.
+        self._scheduler = scheduler
+        self._index = index
 
     def enqueue(self, job: TransferJob) -> None:
+        if self._scheduler is not None:
+            self._scheduler.put(job)
+            return
         self._queue.put(job)
 
     def stop(self) -> None:
         self._running = False
-        self._queue.put(None)  # Sentinel to unblock
+        if self._scheduler is not None:
+            self._scheduler.wake()
+        else:
+            self._queue.put(None)  # Sentinel to unblock
 
     @staticmethod
     def _journal_identity(job: TransferJob) -> dict:
@@ -408,12 +418,44 @@ class TransferWorker(QObject):
     def run(self) -> None:
         """Main loop — processes jobs from the queue."""
         log.info("Transfer worker started")
-        while self._running:
-            job = self._queue.get()
-            if job is None:
-                break
-            self._process_job(job)
+        if self._scheduler is not None:
+            self._run_shared()
+        else:
+            while self._running:
+                job = self._queue.get()
+                if job is None:
+                    break
+                self._process_job(job)
         log.info("Transfer worker stopped")
+
+    def _run_shared(self) -> None:
+        """Take jobs from the shared scheduler until :meth:`stop`."""
+        scheduler = self._scheduler
+        while self._running:
+            taken = scheduler.take(self._index, lambda: not self._running)
+            if taken is None:
+                break
+            job, claimed = taken
+            try:
+                if claimed:
+                    self._process_job(job)
+                else:
+                    self._report_cancelled(job)
+            finally:
+                scheduler.done(job)
+
+    def _report_cancelled(self, job: TransferJob) -> None:
+        """A job cancelled while it waited for a busy session or path: the
+        signals and journal entries _process_job gives a cancelled job,
+        without a single backend call (the session belongs to another job)."""
+        job.status = TransferStatus.ACTIVE
+        self.job_started.emit(job.job_id)
+        self._record_journal_phase(job, "worker_start")
+        job.error_message = "Cancelled"
+        self._finish_journal(job, status="cancelled", error="Cancelled")
+        job.status = TransferStatus.CANCELLED
+        self.job_error.emit(job.job_id, "Cancelled")
+        log.info("Transfer cancelled: %s", job.filename)
 
     def _process_job(self, job: TransferJob) -> None:
         job.status = TransferStatus.ACTIVE
@@ -491,42 +533,44 @@ class TransferWorker(QObject):
                         f"to {job.dest_path}, but removing the source failed: {e}"
                     ) from e
 
+            # The journal first, in every branch below: whoever waits for
+            # the final status (or job_finished) reads the journal next.
+            self._finish_journal(job, status="done")
             job.status = TransferStatus.DONE
             # Final progress update
             self.progress.emit(job.job_id, job.total_bytes, job.total_bytes)
             self.job_finished.emit(job.job_id)
             log.info("Transfer complete: %s", job.filename)
-            self._finish_journal(job, status="done")
 
         except _DestinationKept as exc:
             job.skipped = True
+            self._finish_journal(job, status="skipped", error=str(exc))
             job.status = TransferStatus.DONE
             self.job_finished.emit(job.job_id)
             log.info("Transfer skipped: %s", exc)
-            self._finish_journal(job, status="skipped", error=str(exc))
             return
 
         except _ChecksumMismatch as exc:
-            job.status = TransferStatus.ERROR
             job.error_message = str(exc)
+            self._finish_journal(job, status="error", error=str(exc))
+            job.status = TransferStatus.ERROR
             self.job_error.emit(job.job_id, str(exc))
             log.error("Transfer integrity check FAILED: %s", exc)
-            self._finish_journal(job, status="error", error=str(exc))
             return
 
         except InterruptedError:
-            job.status = TransferStatus.CANCELLED
             job.error_message = "Cancelled"
+            self._finish_journal(job, status="cancelled", error="Cancelled")
+            job.status = TransferStatus.CANCELLED
             self.job_error.emit(job.job_id, "Cancelled")
             log.info("Transfer cancelled: %s", job.filename)
-            self._finish_journal(job, status="cancelled", error="Cancelled")
 
         except Exception as e:
-            job.status = TransferStatus.ERROR
             job.error_message = str(e)
+            self._finish_journal(job, status="error", error=str(e))
+            job.status = TransferStatus.ERROR
             self.job_error.emit(job.job_id, str(e))
             log.error("Transfer error for %s: %s", job.filename, e)
-            self._finish_journal(job, status="error", error=str(e))
 
     @staticmethod
     def _move_source_size(job: TransferJob) -> int | None:

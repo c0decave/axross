@@ -1031,11 +1031,12 @@ file as the S3 object and the SFTP copy?".
 
 Run one search query against many backends in parallel.
 
-The dispatcher picks the most efficient adapter per backend
-(IMAP SEARCH for IMAP, native ``find_by_query`` for DB-FS family,
-client-side walk for the rest). Pass either a pre-built
-:class:`core.search_federation.SearchQuery` (``query=…``) or the
-individual filter kwargs to construct one inline.
+Every backend is walked client-side (``core.file_search``); an
+adapter registered for its protocol replaces the walk. A backend
+none of whose roots can be read is in ``errors``, not a quiet zero.
+Pass either a pre-built :class:`core.search_federation.SearchQuery`
+(``query=…``) or the individual filter kwargs to construct one
+inline.
 
 Returns a :class:`core.search_federation.SearchResult`.
 

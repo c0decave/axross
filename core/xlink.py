@@ -3,7 +3,9 @@
 FTP, SMB (2+), S3, WebDAV, cloud drives... most lack a portable symlink
 primitive. This module defines a tiny ``.axlink`` file format that
 *any* backend can store because it's just a small JSON blob. The GUI
-renders those files as arrows and follows them on double-click.
+writes them (right-click > Create XLink…); it lists them as ordinary
+files and does not follow them - a double-click opens the JSON like any
+small text file. Scripts resolve one with :func:`target_of`.
 
 Shape
 -----

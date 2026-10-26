@@ -524,10 +524,10 @@ REPL slash commands (typed at the prompt; not Python):
   .help                       this list
   .scripts                    list saved scripts
   .save <name>                save THIS session's submitted source as a script
-  .load <name>                paste a saved script into the prompt
+  .load <name>                show a saved script
   .run <name>                 execute a saved script in the live namespace
   .delete <name>              remove a saved script
-  .open                       open the script directory in your file mgr
+  .open                       print the script folder
 """
 
     def _maybe_dispatch_slash(self, text: str) -> bool:
@@ -560,6 +560,14 @@ REPL slash commands (typed at the prompt; not Python):
             from core import scripting as _s
 
             try:
+                if arg in _s.list_scripts():
+                    # save_script replaces; a script of that name - maybe
+                    # written in the Scripts dock - is never overwritten here.
+                    self._append(
+                        f"save refused: a script named {arg!r} exists - "
+                        f"remove it first with .delete {arg} or pick another name\n"
+                    )
+                    return True
                 path = _s.save_script(arg, source)
                 self._append(f"saved → {path}\n")
             except (OSError, ValueError) as exc:
@@ -591,6 +599,9 @@ REPL slash commands (typed at the prompt; not Python):
             from core import scripting as _s
 
             try:
+                if arg not in _s.list_scripts():
+                    # delete_script is quiet about a missing file
+                    raise OSError(f"no saved script named {arg!r}")
                 _s.delete_script(arg)
                 self._append(f"deleted {arg}\n")
             except (OSError, ValueError) as exc:
@@ -704,7 +715,9 @@ REPL slash commands (typed at the prompt; not Python):
         self._append("\n" + "  ".join(matches) + "\n")
         prompt = PROMPT_CONT if self._buffer else PROMPT
         self._write_prompt(prompt)
-        self._append(line)
+        # Back as input, not as output: _append moves the input start past
+        # what it writes, so Enter submitted nothing of the typed line.
+        self._replace_input(line)
 
     # ------------------------------------------------------------------
     # Key handling — the core widget contract

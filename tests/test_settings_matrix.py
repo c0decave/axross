@@ -17,12 +17,25 @@ its effect is seen. For every row:
    closed to paranoid instead - deliberately, see core.security_mode).
 
 Cross effects (paranoid x sudo, x extensions, x proxy, x network search,
-theme x compact, show x highlight hidden) and the compatibility of old
-settings files follow the table.
+x the update check at start; theme x compact, show x highlight hidden,
+monochrome x icon colours, toolbar tint x category colours, parallel
+transfers x the jobs that run at once, update check x automatic download)
+and the compatibility of old settings files follow the table.
+
+The table goes on in tests/test_settings_matrix_network_llm.py (Network &
+Proxy, the fields of an LLM profile) and tests/test_settings_matrix_agent*.py
+(every tab of the Agent page). Operator: *„alle bereiche der tools plus neue
+matrix tests auch bei den einstellungen. wir brauchen eine saubere abdeckung
+aller hauptfeatures.“* **Completeness:** every input widget of every page
+(check box, combo box, spin box, slider, line and text edit, key sequence,
+list and table) is driven by a row (Row.widgets) or named in NOT_STORED with
+the reason; a setting added without a row fails
+test_every_stored_input_widget_has_a_row_or_a_reason.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import socket
@@ -42,7 +55,23 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
 from PyQt6.QtCore import QPointF, Qt  # noqa: E402
 from PyQt6.QtGui import QColor, QEnterEvent  # noqa: E402
-from PyQt6.QtWidgets import QMessageBox  # noqa: E402
+from PyQt6.QtWidgets import (  # noqa: E402
+    QAbstractItemView,
+    QAbstractSpinBox,
+    QCheckBox,
+    QComboBox,
+    QDial,
+    QKeySequenceEdit,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QRadioButton,
+    QSlider,
+    QSpinBox,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core import analysis_settings as ANS  # noqa: E402
 from core import audio_settings as AS  # noqa: E402
@@ -57,6 +86,7 @@ from core import remote_sweep as RW  # noqa: E402
 from core import self_update as SU  # noqa: E402
 from core import security_mode as SM  # noqa: E402
 from core import sudo_password as SP  # noqa: E402
+from core import transfer_pool as TP  # noqa: E402
 from core import voice_settings as VS  # noqa: E402
 from tests.proxy_testkit import EchoServer, FakeSocks5Server, allow_loopback_proxy  # noqa: E402
 from tests.settings_testkit import app, isolate  # noqa: E402
@@ -111,6 +141,14 @@ def ctx(tmp_path, monkeypatch):
     stores.restore()
     socks.close()
     echo.close()
+    for close in reversed(c.extras.get("closers", [])):  # servers a row started
+        close()
+
+
+def keep_open(ctx, server):
+    """*server* (anything with close()) is closed when the test ends."""
+    ctx.extras.setdefault("closers", []).append(server.close)
+    return server
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +349,12 @@ def effect_ramfs_reserve(ctx, win, value) -> None:
     assert _ram_session()._system_reserve == value * MIB
 
 
+def effect_parallel_transfers(ctx, win, value) -> None:
+    manager = win._transfer_manager
+    assert manager.max_parallel == value  # jobs that start from now on
+    assert len(manager._pool) >= value
+
+
 def effect_tmpfs(ctx, win, value) -> None:
     from core import tmpfs_detect
 
@@ -320,6 +364,16 @@ def effect_tmpfs(ctx, win, value) -> None:
     ctx.monkeypatch.setattr(tmpfs_detect, "preferred_tmpfs_dir", lambda: str(ram))
     ctx.monkeypatch.setattr(tempfile, "tempdir", tempfile.tempdir)
     assert tmpfs_detect.apply_tempdir_preference() == (str(ram) if value else None)
+
+
+def refused_unknown_proxy_type(ctx, win, bad) -> None:
+    """A stored proxy_type axross does not know: no connection at all (fail
+    closed, core.proxy_settings._known_type); an absent one connects directly."""
+    if bad is None:
+        assert PS.resolve("default", None, "db.internal", 5432).config is None
+        return
+    with pytest.raises(PS.ProxyResolutionError):
+        PS.resolve("default", None, "db.internal", 5432)
 
 
 def effect_proxy(ctx, win, value) -> None:
@@ -430,11 +484,12 @@ def _tuning_shown(dialog):
     return dialog.page("voice").values()["tuning"]
 
 
-def _voice_row(field, values, set_ui, shown, bad):
+def _voice_row(field, values, set_ui, shown, bad, widgets):
     return Row(f"voice_{field}", "voice", f"agent/voice.json {field}", values,
                VS.VoiceSettings().get(field), set_ui, shown,
                lambda c: VS.VoiceSettings.load().get(field),
-               lambda c, v: _edit_voice(c, field, v), bad, _voice_effect(field))
+               lambda c, v: _edit_voice(c, field, v), bad, _voice_effect(field),
+               widgets=tuple(f"voice.{w}" for w in widgets))
 
 
 def _edit_audio(ctx, key, value) -> None:
@@ -462,17 +517,22 @@ def _audio_effect(field):
             assert env.get(ME.AUDIO_BACKEND_VAR) == (None if value == "auto" else value)
         elif field == "output_volume":
             assert AR.output_gain() == value / 100
-        else:
+        elif field == "input_volume":
             assert AR.input_gain() == value / 100
+        else:  # the device the players open; "" is the system's default (None)
+            kind = field.split("_")[0]
+            device = getattr(AR, f"{kind}_device")()
+            assert (AR.device_id(device) if device is not None else "") == value
 
     return effect
 
 
-def _audio_row(field, values, set_ui, shown, bad):
+def _audio_row(field, values, set_ui, shown, bad, widget, *, setup=None):
     return Row(f"audio_{field}", "audio", f"audio.json {field}", values,
                AS.AudioSettings().get(field), set_ui, shown,
                lambda c: AS.AudioSettings.load().get(field),
-               lambda c, v: _edit_audio(c, field, v), bad, _audio_effect(field))
+               lambda c, v: _edit_audio(c, field, v), bad, _audio_effect(field),
+               widgets=(f"audio.{widget}",), setup=setup)
 
 
 def _edit_analysis(ctx, key, value) -> None:
@@ -517,11 +577,12 @@ def _set_analysis_categories(ctx, dialog, value) -> None:
     dialog.page("analysis").categories_edit.setPlainText("\n".join(value))
 
 
-def _analysis_row(field, values, set_ui, bad):
+def _analysis_row(field, values, set_ui, bad, widget):
     return Row(f"analysis_{field}", "analysis", f"analysis.json {field}", values,
                ANS.AnalysisSettings().get(field), set_ui, _analysis_value(field),
                lambda c: ANS.AnalysisSettings.load().get(field),
-               lambda c, v: _edit_analysis(c, field, v), bad, _analysis_effect(field))
+               lambda c, v: _edit_analysis(c, field, v), bad, _analysis_effect(field),
+               widgets=(f"analysis.{widget}",))
 
 
 def _set_hotkey(ctx, dialog, value) -> None:
@@ -589,7 +650,13 @@ def _run_update_check(win, *, auto_install=None):
 
     from PyQt6.QtWidgets import QApplication
 
-    from tests.fake_github import FakeGitHub, FakeHttpsHandler, FakeRelease, newer_than
+    from tests.fake_github import (
+        FakeGitHub,
+        FakeHttpsHandler,
+        FakeRelease,
+        newer_than,
+        trusted_test_key,
+    )
     from ui.update_ui import UpdateController
 
     from axross._version import __version__
@@ -597,18 +664,19 @@ def _run_update_check(win, *, auto_install=None):
     data = b"new axross"
     server = FakeGitHub(FakeRelease(newer_than(__version__), {"axross-full": data}))
     try:
-        controller = UpdateController(win)
-        controller.opener_factory = lambda: SU.build_opener(
-            handlers=[FakeHttpsHandler(server.port)])
-        controller.install_info = auto_install or SU.detect_install(frozen=False)
-        controller.start_check()
-        end = _time.time() + 10
-        while _time.time() < end and (controller.state in ("checking", "downloading")
-                                       or controller._check_job.running
-                                       or controller._download_job.running):
-            QApplication.instance().processEvents()
-            _time.sleep(0.01)
-        return server.api_requests(), controller
+        with trusted_test_key():  # the fake release is signed with the test key
+            controller = UpdateController(win)
+            controller.opener_factory = lambda: SU.build_opener(
+                handlers=[FakeHttpsHandler(server.port)])
+            controller.install_info = auto_install or SU.detect_install(frozen=False)
+            controller.start_check()
+            end = _time.time() + 10
+            while _time.time() < end and (controller.state in ("checking", "downloading")
+                                           or controller._check_job.running
+                                           or controller._download_job.running):
+                QApplication.instance().processEvents()
+                _time.sleep(0.01)
+            return server.api_requests(), controller
     finally:
         server.close()
 
@@ -715,6 +783,76 @@ def shown_extension(dialog) -> bool:
     return page.is_checked(page.row_of(EXT_ID))
 
 
+def _seed_hacker_theme(ctx) -> None:
+    """Hacker has an icon tint of its own: "theme" and "coloured" differ."""
+    _edit_window(ctx, window_prefs.THEME_KEY, "hacker")
+
+
+def set_icon_colours(ctx, dialog, value) -> None:
+    page = dialog.page("appearance")
+    mode, colour = value
+    _combo_data(page.icon_colours_combo, mode)
+    if mode == "one":
+        assert page.icon_colour_button.isEnabled()
+        with mock.patch("ui.settings_dialog.QColorDialog.getColor", return_value=QColor(colour)):
+            page.icon_colour_button.click()
+
+
+def _edit_icon_colours(ctx, bad) -> None:
+    _edit_window(ctx, window_prefs.ICON_COLOURS_KEY, bad[0])
+    _edit_window(ctx, window_prefs.ICON_COLOUR_KEY, bad[1])
+
+
+def effect_icon_colours(ctx, win, value) -> None:
+    """The colour every icon is drawn in now (ui.icon_provider)."""
+    from ui import icon_provider
+
+    mode, colour = value
+    hacker = themes.icon_tint_for(themes.resolve("hacker", themes.system_scheme()))
+    assert hacker  # else "theme" and "coloured" could not be told apart here
+    expected = {"theme": hacker, "coloured": None, "one": colour}[mode]
+    assert win._current_theme == "hacker"
+    assert icon_provider.get_tint() == expected
+    folder_own = icon_provider._ICON_COLORS["folder"]
+    assert icon_provider.stroke_colour("folder") == (expected or folder_own)
+
+
+#: The devices the audio probe of the matrix finds (core.multimedia_probe).
+AUDIO_DEVICES = {
+    "output": (("usb.headset.sink", "USB Headset"), ("hdmi.sink", "HDMI")),
+    "input": (("usb.headset.mic", "USB Headset Microphone"),),
+}
+
+
+class _FakeAudioDevice:
+    """A QAudioDevice as core.audio_route reads it: its id."""
+
+    def __init__(self, device_id: str) -> None:
+        self._id = device_id
+
+    def id(self) -> bytes:
+        return self._id.encode()
+
+
+def _seed_audio_devices(ctx) -> None:
+    """The audio probe answered ok with AUDIO_DEVICES; Qt lists the same."""
+    from core import audio_route as AR
+    from core import multimedia_probe as MPROBE
+
+    infos = {kind: tuple(MPROBE.AudioDeviceInfo(i, d) for i, d in devices)
+             for kind, devices in AUDIO_DEVICES.items()}
+    ctx.monkeypatch.setattr(MPROBE, "_result", MPROBE.ProbeResult(
+        ok=True, outputs=len(infos["output"]), inputs=len(infos["input"]),
+        output_devices=infos["output"], input_devices=infos["input"]))
+    for kind, devices in AUDIO_DEVICES.items():
+        listed = [_FakeAudioDevice(i) for i, _d in devices]
+        ctx.monkeypatch.setattr(AR, f"_{kind}s", lambda listed=listed: listed)
+
+
+def _set_audio_device(kind):
+    return lambda ctx, d, v: _combo_data(getattr(d.page("audio"), f"{kind}_combo"), v)
+
+
 # ---------------------------------------------------------------------------
 # The table
 # ---------------------------------------------------------------------------
@@ -737,9 +875,39 @@ class Row:
     new_window: bool = False
     #: What a hand-edited value reads as (default: the default).
     bad_reads_as: object = "default"
+    #: The input widgets of the page this row drives, as "page.attribute"
+    #: (test_every_stored_input_widget_has_a_row_or_a_reason holds them).
+    widgets: tuple = ()
+    #: (ctx) -> None: what the stores hold before the row starts (an MCP
+    #: server whose timeout the row sets, a theme the effect needs); axross
+    #: then starts again on them.
+    setup: object = None
+    #: A hand-edited store is read at the next start (the Agent dock keeps
+    #: what it read): the hand-edit step starts axross again. A save on the
+    #: page still takes effect at once (step 1 checks that).
+    edit_needs_start: bool = False
+    #: (ctx, window, bad) -> None: the effect of a hand-edited value when it is
+    #: not "the default again" - a proxy type axross does not know fails
+    #: closed (no connection) instead of connecting directly.
+    bad_effect: object = None
 
     def expected_for_bad(self):
         return self.default if self.bad_reads_as == "default" else self.bad_reads_as
+
+
+@dataclass(frozen=True)
+class Secret:
+    """A password-like field: typed, it goes to the keyring and is never
+    shown again; left empty, the stored one stays (check_secret)."""
+
+    id: str
+    page: str
+    widgets: tuple
+    setup: object  # (ctx) -> None: what the secret belongs to
+    type_in: object  # (ctx, dialog, value): typed on the page
+    kept: object  # (ctx) -> the value in the keyring ("" for none)
+    field: object  # (dialog) -> the text the field shows
+    effect: object  # (ctx, window, value): the credential is used
 
 
 def _page_attr(page_id, attr, method="isChecked"):
@@ -860,11 +1028,17 @@ ROWS = [
         lambda c: _ramfs("tmpfs_enabled"),
         lambda c, v: _edit_ramfs(c, "tmpfs_enabled", v), ("yes", 1),
         effect_tmpfs),
+    Row("parallel_transfers", "files", "settings.json parallel_transfers", (3, 8), 1,
+        _set_spin("files", "parallel_transfers_spin"),
+        _page_attr("files", "parallel_transfers_spin", "value"),
+        lambda c: TP.parallel_transfers(),
+        lambda c, v: _edit_settings(c, TP.PARALLEL_SETTING, v), (0, 9, True, "4"),
+        effect_parallel_transfers),
     Row("default_proxy", "network", "proxy.json proxy_type/host/port", ("socks5", "http"), "none",
         set_proxy, shown_proxy, stored_proxy,
         lambda c, v: c.stores.proxy.write_text(json.dumps({"proxy_type": v, "port": "x"})),
         ("bogus", 7, "socks9"),
-        effect_proxy),
+        effect_proxy, bad_effect=refused_unknown_proxy_type),
     Row("llm_profile", "llm", "llm.json profiles + active", ("local-qwen",), "",
         set_llm, shown_llm, lambda c: __import__("core.llm_profiles").llm_profiles
         .LLMSettings.load().active,
@@ -885,44 +1059,61 @@ ROWS = [
         ("bypass", "yolo", 3),
         effect_agent_mode),
     _voice_row("output_enabled", (True,), _set_check("voice", "output_check"),
-               _page_attr("voice", "output_check"), ("yes", 1, None)),
+               _page_attr("voice", "output_check"), ("yes", 1, None), ("output_check",)),
     _voice_row("language", ("de", "en"), _set_combo("voice", "language_combo"),
-               _combo_shown("voice", "language_combo"), ("fr", 5, None)),
+               _combo_shown("voice", "language_combo"), ("fr", 5, None), ("language_combo",)),
     _voice_row("voice_de", ("piper-de-kerstin",), _set_voice_combo("de"),
-               _voice_combo_shown("de"), ("piper-en-ryan", "robot", 5)),
+               _voice_combo_shown("de"), ("piper-en-ryan", "robot", 5), ("voice_combos[de]",)),
     _voice_row("voice_en", ("piper-en-lessac",), _set_voice_combo("en"),
-               _voice_combo_shown("en"), ("piper-de-thorsten", None)),
+               _voice_combo_shown("en"), ("piper-de-thorsten", None), ("voice_combos[en]",)),
     _voice_row("tuning", ({"piper-de-thorsten": {**VS.default_tuning(), "speed": 1.5,
                                                  "pitch": -2.0},
                            "piper-en-lessac": {**VS.default_tuning(), "volume": 0.5,
                                                "pause": 1.0}},),
                _set_tuning, _tuning_shown,
-               ("x", [1], {"piper-en-ryan": {"speed": 9}}, {"nope": {"speed": 1.5}})),
+               ("x", [1], {"piper-en-ryan": {"speed": 9}}, {"nope": {"speed": 1.5}}),
+               tuple(f"sliders[{lang}][{name}]" for lang in VS.VOICES for name in VS.TUNING)),
     _voice_row("input_mode", ("toggle", "conversation"), _set_combo("voice", "mode_combo"),
-               _combo_shown("voice", "mode_combo"), ("always", 2)),
-    _voice_row("hotkey", ("Ctrl+Shift+V", "F7"), _set_hotkey, _shown_hotkey, ("A", "", 9)),
+               _combo_shown("voice", "mode_combo"), ("always", 2), ("mode_combo",)),
+    _voice_row("hotkey", ("Ctrl+Shift+V", "F7"), _set_hotkey, _shown_hotkey, ("A", "", 9),
+               ("hotkey_edit",)),
     _voice_row("after_recognition", ("send",), _set_combo("voice", "after_combo"),
-               _combo_shown("voice", "after_combo"), ("print", False)),
+               _combo_shown("voice", "after_combo"), ("print", False), ("after_combo",)),
     _voice_row("silence_seconds", (2.5, 0.5), _set_spin("voice", "silence_spin"),
-               _page_attr("voice", "silence_spin", "value"), (0.1, 99, "1", True)),
+               _page_attr("voice", "silence_spin", "value"), (0.1, 99, "1", True),
+               ("silence_spin",)),
     _audio_row("backend", ("pulseaudio", "pipewire"), _set_combo("audio", "backend_combo"),
-               _combo_shown("audio", "backend_combo"), ("alsa", 1, None)),
+               _combo_shown("audio", "backend_combo"), ("alsa", 1, None), "backend_combo"),
     _audio_row("output_volume", (40, 0), _set_spin("audio", "output_slider"),
-               _page_attr("audio", "output_slider", "value"), (101, -1, "50", True, 50.5)),
+               _page_attr("audio", "output_slider", "value"), (101, -1, "50", True, 50.5),
+               "output_slider"),
     _audio_row("input_volume", (75,), _set_spin("audio", "input_slider"),
-               _page_attr("audio", "input_slider", "value"), (200, "loud", False)),
-    _analysis_row("auto_analyse", (False,), _set_check("analysis", "auto_check"), ("no", 0)),
-    _analysis_row("llm_profile", ("sift-model",), _set_analysis_profile, (5, None)),
+               _page_attr("audio", "input_slider", "value"), (200, "loud", False),
+               "input_slider"),
+    _audio_row("output_device", ("usb.headset.sink", "hdmi.sink"), _set_audio_device("output"),
+               _combo_shown("audio", "output_combo"), (5, None, ["usb.headset.sink"]),
+               "output_combo", setup=_seed_audio_devices),
+    _audio_row("input_device", ("usb.headset.mic",), _set_audio_device("input"),
+               _combo_shown("audio", "input_combo"), (7, False), "input_combo",
+               setup=_seed_audio_devices),
+    _analysis_row("auto_analyse", (False,), _set_check("analysis", "auto_check"), ("no", 0),
+                  "auto_check"),
+    _analysis_row("llm_profile", ("sift-model",), _set_analysis_profile, (5, None),
+                  "profile_combo"),
     _analysis_row("max_bytes", (1_000_000, 2_000_000), _set_analysis_mb,
-                  (0, -5, "big", True)),
-    _analysis_row("time_budget", (5.0, 3600.0), _set_analysis_seconds, (0, 3601, "60", True)),
-    _analysis_row("vision", (False,), _set_check("analysis", "vision_check"), ("no", 1)),
+                  (0, -5, "big", True), "max_bytes_spin"),
+    _analysis_row("time_budget", (5.0, 3600.0), _set_analysis_seconds, (0, 3601, "60", True),
+                  "time_spin"),
+    _analysis_row("vision", (False,), _set_check("analysis", "vision_check"), ("no", 1),
+                  "vision_check"),
     _analysis_row("context_tokens", (8192, 256), _set_spin("analysis", "context_spin"),
-                  (100, -1, "8k")),
-    _analysis_row("tags", (5, 32), _set_spin("analysis", "tags_spin"), (33, -1, True)),
+                  (100, -1, "8k"), "context_spin"),
+    _analysis_row("tags", (5, 32), _set_spin("analysis", "tags_spin"), (33, -1, True),
+                  "tags_spin"),
     _analysis_row("categories", (["Invoices", "Contracts"],), _set_analysis_categories,
-                  ("Invoices", ["a", "A"], [3])),
-    _analysis_row("cache", (False,), _set_check("analysis", "cache_check"), ("off", 0)),
+                  ("Invoices", ["a", "A"], [3]), "categories_edit"),
+    _analysis_row("cache", (False,), _set_check("analysis", "cache_check"), ("off", 0),
+                  "cache_check"),
     Row("metadata_write_mode", "metadata", "settings.json metadata_write_mode", (MT.MODE_COPY,),
         MT.MODE_IN_PLACE,
         lambda c, d, v: (d.page("metadata").copy_radio if v == MT.MODE_COPY
@@ -969,7 +1160,51 @@ ROWS = [
         set_extension, shown_extension, lambda c: EXT_ID in EX.enabled_ids(),
         lambda c, v: c.stores.extensions.write_text(v), ("{", '{"enabled": "user:matrixext"}'),
         effect_extension, new_window=True),
+    Row("icon_colours", "appearance", "session.json window.icon_colours + icon_colour",
+        (("coloured", None), ("one", "#3366ff")), ("theme", None),
+        set_icon_colours, lambda d: d.page("appearance").icon_colours(),
+        lambda c: (_window_pref(c, "icon_colours"), _window_pref(c, "icon_colour")),
+        _edit_icon_colours, (("sparkly", None), ("one", None), ("one", "red"), (5, "#ffffff")),
+        effect_icon_colours, new_window=True,
+        widgets=("appearance.icon_colours_combo",), setup=_seed_hacker_theme),
 ]
+
+#: The input widgets each plain row of ROWS drives (the factories name their own).
+_ROW_WIDGETS = {
+    "language": ("general.language_combo",),
+    "restore_layout_on_start": ("general.restore_check",),
+    "pane_activation": ("general.activation_combo",),
+    "theme": ("appearance.theme_combo",),
+    "compact": ("appearance.compact_check",),
+    "monochrome_icons": ("appearance.monochrome_check",),
+    "font_size": ("appearance.font_spin",),
+    "highlight_hidden": ("appearance.highlight_check",),
+    "hidden_color": ("appearance.theme_colour_radio", "appearance.own_colour_radio"),
+    "toolbar_grouping": ("toolbar.grouping_check",),
+    "toolbar_category_tint": ("toolbar.tint_check",),
+    "toolbar_category_colors": (),  # colour buttons: push buttons, not input widgets
+    "show_hidden": ("files.show_hidden_check",),
+    "max_open_mb": ("files.open_limit_spin",),
+    "ramfs_enabled": ("files.ramfs_check",),
+    "ramfs_max_bytes": ("files.ramfs_max_spin",),
+    "ramfs_system_reserve_bytes": ("files.ramfs_reserve_spin",),
+    "tmpfs_enabled": ("files.tmpfs_check",),
+    "parallel_transfers": ("files.parallel_transfers_spin",),
+    "default_proxy": ("network._type", "network._host", "network._port"),
+    "llm_profile": ("llm.name_edit",),
+    "agent_max_steps": ("agent.steps_spin",),
+    "agent_mode": ("agent.mode_combo",),
+    "metadata_write_mode": ("metadata.in_place_radio", "metadata.copy_radio"),
+    "metadata_confirm_remove": ("metadata.confirm_box",),
+    "remote_sweep_parallel": ("search.parallel_spin",),
+    "security_mode": ("security.paranoid_check",),
+    "remember_sudo_password": ("security.remember_check",),
+    "update_check_at_start": ("updates.check_box",),
+    "update_auto_download": ("updates.auto_box",),
+    "extension_enabled": ("extensions.table",),
+}
+ROWS = [row if row.widgets or row.id not in _ROW_WIDGETS
+        else dataclasses.replace(row, widgets=_ROW_WIDGETS[row.id]) for row in ROWS]
 
 
 def _start(ctx, *, closed: bool = False):
@@ -996,15 +1231,19 @@ def _reload(ctx, row):
 ROW_PARAMS = [pytest.param(row, id=row.id) for row in ROWS]
 
 
-def test_every_category_has_rows_and_every_row_its_page(ctx) -> None:
-    dialog = ctx.dialog()
-    assert {row.page for row in ROWS} == set(dialog.page_ids())
+def _set_up(ctx, row) -> None:
+    """The stores the row starts from (Row.setup), then a start on them;
+    the window is closed first so that its close writes nothing over them."""
+    if row.setup is not None:
+        ctx.stores.close_windows()
+        row.setup(ctx)
+        _start(ctx, closed=True)
 
 
-@pytest.mark.parametrize("row", ROW_PARAMS)
-def test_set_store_reload_effect(ctx, row) -> None:
+def check_set_store_reload_effect(ctx, row) -> None:
     """Cancel writes nothing; each value: set on the page -> OK -> stored ->
     a fresh load shows it -> its effect; then the default again."""
+    _set_up(ctx, row)
     before = ctx.stores.files()
     dialog = ctx.dialog()
     assert row.shown(dialog) == row.default  # a fresh home shows the default
@@ -1023,17 +1262,189 @@ def test_set_store_reload_effect(ctx, row) -> None:
         row.effect(ctx, win, value)  # and it does what it says
 
 
-@pytest.mark.parametrize("row", ROW_PARAMS)
-def test_hand_edited_value_falls_back(ctx, row) -> None:
+def check_hand_edited_value_falls_back(ctx, row) -> None:
+    _set_up(ctx, row)
     expected = row.expected_for_bad()
+    restart = row.new_window or row.edit_needs_start
     for bad in row.bad:
-        if row.new_window:
+        if restart:
             ctx.stores.close_windows()  # its close must not write over the edit
         row.write_bad(ctx, bad)
         assert row.stored(ctx) == expected, bad
-        win = _start(ctx, closed=True) if row.new_window else ctx.win  # starts without an error
+        win = _start(ctx, closed=True) if restart else ctx.win  # starts without an error
         assert row.shown(ctx.dialog(win)) == expected, bad
-        row.effect(ctx, win, expected)
+        if row.bad_effect is not None:
+            row.bad_effect(ctx, win, bad)
+        else:
+            row.effect(ctx, win, expected)
+
+
+def test_every_category_has_rows_and_every_row_its_page(ctx) -> None:
+    dialog = ctx.dialog()
+    assert {row.page for row in all_rows()} == set(dialog.page_ids())
+
+
+@pytest.mark.parametrize("row", ROW_PARAMS)
+def test_set_store_reload_effect(ctx, row) -> None:
+    check_set_store_reload_effect(ctx, row)
+
+
+@pytest.mark.parametrize("row", ROW_PARAMS)
+def test_hand_edited_value_falls_back(ctx, row) -> None:
+    check_hand_edited_value_falls_back(ctx, row)
+
+
+# ---------------------------------------------------------------------------
+# Completeness: every input widget that stores a value has a row
+# ---------------------------------------------------------------------------
+
+#: The modules whose tables continue ROWS (one file each, so that they run
+#: side by side). Their secrets tables (SECRETS) name the password fields.
+ROW_MODULES = ("tests.test_settings_matrix_network_llm", "tests.test_settings_matrix_agent")
+
+#: Input widgets that store nothing themselves, each with the reason.
+NOT_STORED = {
+    "network._test_host": "the target host of Test proxy; a probe, not stored",
+    "network._test_port": "the target port of Test proxy; a probe, not stored",
+    "llm.profile_list": "chooses the profile the form edits; the profiles are the rows",
+    "agent.agent_profile_list": "chooses the agent profile the form edits",
+    "agent.agent_profile_preview": "read-only: what a tab gets from the profile",
+    "agent.agent_profile_missing": "read-only: what the profile misses (Install from Catalog)",
+    "agent.prompt_list": "chooses the prompt profile the form edits",
+    "agent.sandbox_list": "chooses the sandbox profile the form edits",
+    "agent.host_edit": "the host typed for Add host; hosts_list holds what is stored",
+    "agent.server_list": "chooses the MCP server the form edits",
+    "agent.detected_list": "an action: a tick adds the detected server to MCP Servers, "
+                           "whose fields are the rows",
+    "agent.detected_details": "read-only: what was detected",
+    "agent.session_list": "chooses the tab the Sessions form edits",
+    "agent.session_editor.host_edit": "the host typed for Add host; hosts_list holds it",
+    "agent.agent_profile_access.host_edit": "the host typed for Add host; hosts_list holds it",
+    "agent.agent_profile_access.folders_table": "hidden: an agent profile has no folders "
+                                                "(AccessEditor(folders=False))",
+}
+
+#: What an input widget is: a value typed, ticked, chosen or slid. A widget
+#: inside another (a spin box's line edit, a combo in a table cell) belongs
+#: to that one; scroll bars move a view.
+INPUT_CLASSES = (QCheckBox, QRadioButton, QComboBox, QAbstractSpinBox, QSlider, QDial,
+                 QLineEdit, QKeySequenceEdit, QPlainTextEdit, QTextEdit, QAbstractItemView)
+
+
+def _names(obj, prefix: str, out: dict, depth: int = 0) -> None:
+    """id(widget) -> its name on *obj*: "attr", "attr[key]", "attr[k1][k2]",
+    and "owner.attr" inside a non-input widget held as an attribute."""
+    if depth > 3:
+        return
+    for attr, value in list(vars(obj).items()):
+        key = prefix + attr
+        if isinstance(value, QWidget):
+            out.setdefault(id(value), key)
+            if not isinstance(value, INPUT_CLASSES):
+                _names(value, key + ".", out, depth + 1)
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                if isinstance(v, QWidget):
+                    out.setdefault(id(v), f"{key}[{k}]")
+                elif isinstance(v, dict):
+                    for k2, v2 in v.items():
+                        if isinstance(v2, QWidget):
+                            out.setdefault(id(v2), f"{key}[{k}][{k2}]")
+
+
+def input_widgets(page) -> dict:
+    """name -> widget for every input widget of *page*; an unnamed one is
+    "?<Class>#<n>" (it fails the completeness test: name it)."""
+    names: dict = {}
+    _names(page, "", names)
+    out, unnamed = {}, 0
+    for widget in page.findChildren(QWidget):
+        if not isinstance(widget, INPUT_CLASSES):
+            continue
+        parent = widget.parentWidget()
+        while parent is not None and parent is not page and not isinstance(parent, INPUT_CLASSES):
+            parent = parent.parentWidget()
+        if parent is not None and parent is not page:
+            continue  # part of another input widget
+        name = names.get(id(widget)) or widget.objectName()
+        if not name:
+            name = f"?{type(widget).__name__}#{unnamed}"
+            unnamed += 1
+        out[name] = widget
+    return out
+
+
+def all_rows() -> list:
+    """ROWS and the tables of ROW_MODULES."""
+    import importlib
+
+    rows = list(ROWS)
+    for name in ROW_MODULES:
+        rows += importlib.import_module(name).ROWS
+    return rows
+
+
+def mapped_widgets() -> dict:
+    """"page.attr" -> the row (or secret) ids that drive it."""
+    import importlib
+
+    out: dict = {}
+    for row in all_rows():
+        for key in row.widgets:
+            out.setdefault(key, []).append(row.id)
+    for name in ROW_MODULES:
+        for secret in importlib.import_module(name).SECRETS:
+            for key in secret.widgets:
+                out.setdefault(key, []).append(secret.id)
+    return out
+
+
+def unmapped_widgets(dialog, mapped=None, allowed=None) -> tuple[list, list]:
+    """(input widgets of every page with no row and no reason, mapped or
+    allowed names no page has)."""
+    mapped = mapped_widgets() if mapped is None else mapped
+    allowed = NOT_STORED if allowed is None else allowed
+    found = {f"{pid}.{name}" for pid in dialog.page_ids()
+             for name in input_widgets(dialog.page(pid))}
+    missing = sorted(found - set(mapped) - set(allowed))
+    stale = sorted((set(mapped) | set(allowed)) - found)
+    return missing, stale
+
+
+def test_every_stored_input_widget_has_a_row_or_a_reason(ctx) -> None:
+    """A setting added to a page without a row in the matrix fails here."""
+    dialog = ctx.dialog()
+    missing, stale = unmapped_widgets(dialog)
+    assert not missing, f"input widgets without a matrix row or a NOT_STORED reason: {missing}"
+    assert not stale, f"rows or reasons name widgets no page has: {stale}"
+    both = sorted(set(mapped_widgets()) & set(NOT_STORED))
+    assert not both, f"a row drives them, yet NOT_STORED says they store nothing: {both}"
+    assert all(reason.strip() for reason in NOT_STORED.values())
+
+
+def test_the_completeness_check_sees_a_new_unmapped_setting(ctx) -> None:
+    """Negative control: a page with a new check box and an unnamed spin box
+    is reported, and so is a reason for a widget that is gone."""
+    from ui import settings_dialog as SD
+
+    class _NewPage(QWidget):
+        def __init__(self, parent=None) -> None:
+            super().__init__(parent)
+            layout = QVBoxLayout(self)
+            self.brand_new_check = QCheckBox("A brand-new setting")
+            layout.addWidget(self.brand_new_check)
+            layout.addWidget(QSpinBox())
+
+    SD.register_page("matrixprobe", "Matrix Probe", lambda parent, window: _NewPage(parent))
+    try:
+        dialog = ctx.dialog()
+        missing, stale = unmapped_widgets(dialog, allowed={**NOT_STORED, "matrixprobe.gone": "x"})
+    finally:
+        SD.unregister_page("matrixprobe")
+    probe = "matrixprobe."
+    assert [m for m in missing if m.startswith(probe)] == [
+        "matrixprobe.?QSpinBox#0", "matrixprobe.brand_new_check"]
+    assert [m for m in stale if m.startswith(probe)] == ["matrixprobe.gone"]
 
 
 # ---------------------------------------------------------------------------
@@ -1127,6 +1538,105 @@ def test_cross_the_ctrl_h_switch_and_the_settings_page_agree(ctx) -> None:
     ctx.win._hidden_action.trigger()  # Ctrl+H: off, stored at once
     assert _window_pref(ctx, "show_hidden") is False
     assert not ctx.dialog().page("files").show_hidden_check.isChecked()
+
+
+def test_cross_paranoid_mode_stops_the_update_check_at_start(ctx) -> None:
+    """Paranoid x Updates: the switch "check at start" stays on, but no
+    request leaves at start (core.self_update.start_check_allowed), and
+    the Updates page says why; back to normal, the check runs again."""
+    dialog = ctx.dialog()
+    dialog.page("security").paranoid_check.setChecked(True)
+    assert dialog.apply()
+    assert SU.check_at_start() is True
+    allowed, reason = SU.start_check_allowed()
+    assert not allowed and "paranoid" in reason
+    note = ctx.dialog().page("updates").start_note
+    assert not note.isHidden() and "paranoid" in note.text()
+    assert _run_update_check(ctx.win)[0] == 0  # the fake GitHub saw nothing
+    dialog = ctx.dialog()
+    dialog.page("security").paranoid_check.setChecked(False)
+    assert dialog.apply()
+    assert SU.start_check_allowed() == (True, "")
+    assert ctx.dialog().page("updates").start_note.isHidden()
+    assert _run_update_check(ctx.win)[0] == 1
+
+
+def test_cross_update_check_off_wins_over_auto_download(ctx) -> None:
+    """Edge: "download automatically" on, "check at start" off - nothing is
+    asked, so nothing is downloaded."""
+    dialog = ctx.dialog()
+    page = dialog.page("updates")
+    page.check_box.setChecked(False)
+    page.auto_box.setChecked(True)
+    assert dialog.apply()
+    folder = Path(tempfile.mkdtemp(prefix="axross-matrix-update-"))
+    exe = folder / "axross-full"
+    exe.write_bytes(b"old axross")
+    inst = SU.detect_install(frozen=True, executable=str(exe), bundle_dir=None,
+                             platform="linux", machine="x86_64")
+    requests, controller = _run_update_check(ctx.win, auto_install=inst)
+    assert requests == 0 and exe.read_bytes() == b"old axross" and controller.state == "idle"
+    import shutil
+
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_cross_parallel_transfers_bound_the_jobs_that_run_at_once(ctx) -> None:
+    """Files & Panes > Parallel transfers x the window's transfer manager:
+    with 3, never more than 3 jobs read at once (and more than one does);
+    with 1 again, the next jobs run one after the other."""
+    from core.local_fs import LocalFS
+    from tests.test_transfer_parallel import FINAL, SlowLocal, make_files, pump_until
+
+    manager = ctx.win._transfer_manager
+
+    def run(count: int, batch: str) -> int:
+        dialog = ctx.dialog()
+        dialog.page("files").parallel_transfers_spin.setValue(count)
+        if dialog.dirty_page_ids():
+            assert dialog.apply()
+        assert manager.max_parallel == count
+        source = SlowLocal(open_delay=0.08)
+        target = ctx.tmp_path / f"to-{batch}"
+        target.mkdir()
+        jobs = manager.transfer_files(source, LocalFS(), make_files(ctx.tmp_path / batch, 9),
+                                      str(target))
+        assert pump_until(lambda: all(j.status in FINAL for j in jobs), 30)
+        assert sorted(p.name for p in target.iterdir()) == [f"f{i:03d}.bin" for i in range(9)]
+        return source.max_inflight
+
+    assert 2 <= run(3, "three") <= 3
+    assert run(1, "one") == 1
+
+
+def test_cross_monochrome_icons_override_the_icon_colours(ctx) -> None:
+    """Monochrome x Icon colours: the choice is greyed out and kept, and
+    every icon takes the theme's single colour while monochrome is on."""
+    from ui import icon_provider
+
+    dialog = ctx.dialog()
+    page = dialog.page("appearance")
+    set_icon_colours(ctx, dialog, ("one", "#3366ff"))
+    page.monochrome_check.setChecked(True)
+    assert not page.icon_colours_combo.isEnabled() and not page.icon_colour_button.isEnabled()
+    assert dialog.apply()
+    assert icon_provider.get_tint() != "#3366ff"
+    assert _window_pref(ctx, "icon_colours") == "one"  # kept for later
+    dialog = ctx.dialog()
+    dialog.page("appearance").monochrome_check.setChecked(False)
+    assert dialog.apply()
+    assert icon_provider.get_tint() == "#3366ff"
+
+
+def test_cross_toolbar_tint_off_greys_out_the_category_colours(ctx) -> None:
+    dialog = ctx.dialog()
+    page = dialog.page("toolbar")
+    page.tint_check.setChecked(False)
+    assert not page.colours_box.isEnabled()
+    assert dialog.apply()
+    assert _tools_bar(ctx.win).styleSheet() == ""
+    page.tint_check.setChecked(True)
+    assert page.colours_box.isEnabled()
 
 
 def test_cross_view_theme_menu_and_zoom_store_like_the_page(ctx) -> None:

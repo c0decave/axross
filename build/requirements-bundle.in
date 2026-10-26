@@ -1,0 +1,91 @@
+# Top-level requirements of the one-file bundles: the input of
+# build/requirements-bundle.txt (the lock). Refresh it with
+# scripts/lock_bundle_deps.sh (the resolver runs in a container), never by
+# hand.
+#
+# Every base dependency and every extra of pyproject.toml is listed here
+# with its pyproject floor (tests/test_bundle_lock.py holds that), plus what
+# only the build needs. The resolver picks the newest release that satisfies
+# all of them; python -m security.dep_floor_audit --lock then checks every
+# exact pin against OSV, malicious-package entries included.
+#
+# Linux builds both flavours in the AlmaLinux 9 builder image
+# (Dockerfile.build); macOS and Windows build axross-slim in CI
+# (.github/workflows/cross-platform.yml) from the same lock. What only
+# axross-full (Linux) carries, or what slim excludes anyway, is marked
+# linux-only, so the CI bundles carry the same packages as before the lock.
+
+# --- base dependencies (pyproject [project].dependencies) ------------------
+# Qt 6.11.2 fixes the SVG, QXmlStreamReader and QDom advisories 6.10.2 is
+# subject to (wiki.qt.io/List_of_known_vulnerabilities_in_Qt_products);
+# axross renders SVG thumbnails of untrusted files.
+PyQt6>=6.11.0
+PyQt6-Qt6>=6.11.2
+PyQt6_sip>=13.11
+paramiko>=5.0,<6.0
+PySocks>=1.7
+keyring>=25.0
+Pillow>=13.0.0
+Pygments>=2.20.0
+cryptography>=50.0.0
+watchdog>=6.0.0
+pywinpty>=3.1 ; sys_platform == "win32"
+
+# --- extras in "all" -------------------------------------------------------
+smbprotocol>=1.13
+requests>=2.33.0
+defusedxml>=0.7
+boto3>=1.28
+azure-storage-blob>=12.19
+azure-storage-file-share>=12.15
+msal>=1.26
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.1
+google-auth-httplib2>=0.2
+dropbox>=12.0
+adb-shell>=0.4
+py7zr>=1.1.3
+rarfile>=4.0
+backports.zstd>=1.0 ; python_version < "3.14"
+tftpy>=0.8
+psycopg[binary]>=3.1
+redis>=5.0
+pymongo>=4.18.2
+dulwich>=1.2.9
+urllib3>=2.8.0
+dnspython>=2.6.1
+puremagic>=1.20
+chardet>=5.2
+pysnmp>=6.2
+ldap3>=2.9
+manuf>=1.1
+ipwhois>=1.3
+ntplib>=0.4
+pypdf>=6.21.2
+
+# --- extras outside "all": axross-full on Linux only ------------------------
+fusepy>=3.0 ; sys_platform == "linux"
+pywinrm>=0.4 ; sys_platform == "linux"
+impacket>=0.11 ; sys_platform == "linux"
+exchangelib>=5.0 ; sys_platform == "linux"
+sift-summarizer>=0.1.95 ; sys_platform == "linux"
+numpy>=2.0 ; sys_platform == "linux"
+piper-tts>=1.8.0 ; sys_platform == "linux"
+onnxruntime>=1.31.0 ; sys_platform == "linux"
+faster-whisper>=1.2.1 ; sys_platform == "linux"
+ctranslate2>=4.8.4 ; sys_platform == "linux"
+
+# --- outside pyproject: optional imports the Linux bundles carry -------------
+# core/mcp_server.py validates MCP tool arguments with jsonschema when it is
+# importable (it is not a pyproject dependency). The Linux builder has always
+# installed it; the macOS / Windows CI bundles never had it.
+jsonschema>=4.21 ; sys_platform == "linux"
+
+# --- build only -------------------------------------------------------------
+pyinstaller>=6.0
+# The Secret Service keyring backend the spec bundles (keyring pulls it in on
+# Linux; named so the pin is visible).
+SecretStorage>=3.3 ; sys_platform == "linux"
+# The installer itself: the lock is installed in one step that also replaces
+# the distro's pip, so pip runs hash-checked too.
+pip>=25.3

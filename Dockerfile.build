@@ -31,8 +31,12 @@
 #
 # Build + run via scripts/build_bundle_docker.sh — don't invoke
 # this Dockerfile directly.
-
-FROM almalinux:9
+#
+# The base is pinned by its index digest (almalinux:9 of 2026-10-02): a
+# re-pointed tag cannot change it. Its packages still move forward - every
+# build runs dnf upgrade below - so a new digest is needed only for a new
+# point release.
+FROM docker.io/library/almalinux:9@sha256:9819dc675b67b595c2b59e42be7763fca1a8bb217fa5944e04daa22e9a64db16
 
 # System deps: python3.12 for the interpreter, binutils for
 # PyInstaller's objcopy / strip calls on the bundled ELF, and
@@ -53,7 +57,17 @@ FROM almalinux:9
 # fuse-libs is here for the same reason: fusepy resolves libfuse via
 # ctypes at IMPORT time and raises "Unable to find libfuse" without it,
 # which the flavor=full pre-flight rejects.
-RUN dnf install -y \
+#
+# ``dnf upgrade`` first: the bundle carries this image's libssl, libcrypto,
+# libexpat, libpcre2, libxml2, libsqlite3, libz and libglib, so every security
+# update the base image lacks would ship in the binary (2026-10-26: openssl,
+# expat and pcre2 advisories rated Important were unapplied). EL9 updates keep
+# glibc at the 2.34 ABI, so the bundle's floor stays 2.34
+# (scripts/bundle_smoke.py --system-libs checks the symbol versions).
+# scripts/build_bundle_docker.sh refuses an image that still lists a security
+# update, which a cached layer from an older build would.
+RUN dnf upgrade -y \
+    && dnf install -y \
         python3.12 python3.12-pip binutils glibc-devel \
         mesa-libGL mesa-libEGL \
         libxkbcommon libxkbcommon-x11 \
@@ -94,36 +108,36 @@ WORKDIR /build
 # Install Python-level deps in a dedicated layer so source-only
 # changes don't bust this cache.
 #
-# Keep this list in lockstep with REQUIRED_MODS / FULL_MODS in
-# scripts/build_bundle.sh — that script's pre-flight refuses to
-# build if any of these are missing, so a drift here surfaces fast.
-# webdavclient3 is intentionally NOT installed: axross now ships its
-# own WebDAV client built on requests + defusedxml.
-# Floors mirror pyproject.toml, which is audited against OSV by
-# ``python -m security.dep_floor_audit``. Do not lower one here to
-# "make the build work" — that reintroduces a known-vulnerable release
-# into the shipped bundle, where users cannot upgrade it independently.
-COPY pyproject.toml ./
-RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir \
-        "paramiko>=5.0,<6.0" "cryptography>=41" "jsonschema>=4.21" \
-        "PySocks>=1.7" "Pillow>=12.3.0" \
-        "smbprotocol>=1.13" "boto3>=1.28" \
-        "requests>=2.33.0" "defusedxml>=0.7" \
-        "azure-storage-blob>=12.19" "azure-storage-file-share>=12.15" \
-        "msal>=1.26" \
-        "google-api-python-client>=2.100" "google-auth-oauthlib>=1.1" \
-        "google-auth-httplib2>=0.2" "dropbox>=12.0" \
-        "pywinrm>=0.4" "impacket>=0.11" "exchangelib>=5.0" \
-        "adb-shell>=0.4" "py7zr>=1.1.3" "rarfile>=4.0" "tftpy>=0.8" \
-        "psycopg[binary]>=3.1" "redis>=5.0" "pymongo>=4.6.3" "dulwich>=1.2.5" \
-        "dnspython>=2.6.1" "puremagic>=1.20" "chardet>=5.2" \
-        "ldap3>=2.9" "ipwhois>=1.3" "ntplib>=0.4" "pysnmp>=6.2" "manuf>=1.1" \
-        "pypdf>=6.18.1" "sift-summarizer>=0.1.95" "numpy>=2.0" \
-        "piper-tts==1.8.0" "onnxruntime==1.31.0" "faster-whisper==1.2.1" "ctranslate2==4.8.3" \
-        "PyQt6==6.10.2" "PyQt6-Qt6==6.10.2" "PyQt6_sip>=13.11" \
-        "fusepy>=3.0" \
-        "pyinstaller>=6.0" "keyring>=24.0" "SecretStorage>=3.3"
+# Every package comes from build/requirements-bundle.txt: one exact version
+# per package and the sha256 of each of its files, installed with
+# --require-hashes (a file that differs from the locked one stops the build)
+# and --only-binary=:all: (no package code runs at install time). The lock is
+# resolved from build/requirements-bundle.in by scripts/lock_bundle_deps.sh,
+# in a container; tests/test_bundle_lock.py holds it to pyproject.toml (every
+# base dependency and extra, every pin at or above its floor) and
+# ``python -m security.dep_floor_audit --lock`` checks every pin against OSV.
+#
+# Two steps. The distro's pip (23.2) cannot read hashes from a constraints
+# file, so it installs only the lock's own pip and setuptools first (from
+# requirements-bootstrap.txt, the same two entries); the distro's copies are
+# removed so no older pip or setuptools stays in the image. Then the hashed
+# pip installs the lock. adb-shell, fusepy and manuf publish no Python 3
+# wheel (manuf 1.1.5 only a py2-tagged one): they are built from their
+# hashed sdists (setup.py) without build isolation, against the hashed
+# setuptools - build isolation would fetch a build backend unhashed.
+#
+# Keep build/requirements-bundle.in in lockstep with REQUIRED_MODS /
+# FULL_MODS in scripts/build_bundle.sh — that script's pre-flight refuses to
+# build if any of them is missing, so a drift surfaces fast.
+COPY build/requirements-bundle.txt build/requirements-bootstrap.txt /tmp/lock/
+RUN python -m pip install --no-cache-dir --root-user-action=ignore \
+        --require-hashes --only-binary=:all: -r /tmp/lock/requirements-bootstrap.txt \
+    && dnf remove -y python3.12-pip python3.12-setuptools \
+    && dnf clean all \
+    && python -m pip install --no-cache-dir --root-user-action=ignore \
+        --require-hashes --only-binary=:all: --no-binary=adb-shell,fusepy,manuf \
+        --no-build-isolation -r /tmp/lock/requirements-bundle.txt \
+    && python -m pip check
 
 # Libraries Qt's plugins link against that PyInstaller can bundle only when
 # it finds them here: whatever is missing in this image is left to the
@@ -131,9 +145,13 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 # fails the build on it). libtiff.so.5 for the TIFF plugin (Arch and Fedora
 # ship .so.6 only), the xcb-util family for the xcb platform plugin (not
 # installed by default on Ubuntu or Debian: no window on X11), libXrandr
-# for the FFmpeg media plugin, libatomic for QtPdf. A layer of its own after
-# the pip layer, so adding to it does not rebuild the Python packages.
-RUN dnf install -y \
+# for the FFmpeg media plugin, libatomic for QtPdf. (Qt 6.11.2's TIFF plugin
+# carries its own libtiff and its QtPdf needs no libatomic, so those two are
+# no longer bundled; they stay installed for a build against an older Qt.)
+# A layer of its own after the pip layer, so adding to it does not rebuild
+# the Python packages.
+RUN dnf upgrade -y \
+    && dnf install -y \
         libtiff \
         xcb-util xcb-util-cursor xcb-util-wm xcb-util-image \
         xcb-util-keysyms xcb-util-renderutil \

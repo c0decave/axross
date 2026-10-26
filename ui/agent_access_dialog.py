@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -121,7 +121,10 @@ class AccessEditor(QWidget):
         row = QHBoxLayout()
         self.host_edit = QLineEdit()
         self.host_edit.setPlaceholderText("db.example:5432")
-        self.host_edit.returnPressed.connect(self.add_host)
+        # Enter adds the host and stays in the field (an event filter, not
+        # returnPressed: that let the key go on to the dialog's OK button,
+        # which closed the Access dialog after the first host).
+        self.host_edit.installEventFilter(self)
         self.host_add = QPushButton(tr("Add host"))
         self.host_add.clicked.connect(self.add_host)
         self.host_remove = QPushButton(tr("Remove"))
@@ -238,6 +241,16 @@ class AccessEditor(QWidget):
         hosts = self.network_combo.currentData() == "hosts"
         for widget in (self.hosts_list, self.host_edit, self.host_add, self.host_remove):
             widget.setEnabled(hosts)
+
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            watched is self.host_edit
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            self.add_host()
+            return True
+        return super().eventFilter(watched, event)
 
     def add_host(self) -> None:
         text = self.host_edit.text().strip()

@@ -105,6 +105,12 @@ TTL_STAT_DEFAULT = 30.0
 # stops asking.
 MAX_FALLBACK_DISCARD = 128 * 1024 * 1024
 
+#: The piece size a commit writes to the backend and a pre-fetch (or a
+#: skip on a handle without seek) reads from it: atomic_write_stream's
+#: default and the transfer queue's chunk. On a remote backend a piece can
+#: be a request of its own; 64 KiB pieces made a 5 MiB commit 81 writes.
+IO_CHUNK = 1024 * 1024
+
 
 @dataclass
 class _CacheSlot:
@@ -445,7 +451,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 raise FuseOSError(errno.EIO)
             discarded = 0
             while discarded < offset:
-                chunk = handle.read(min(64 * 1024, offset - discarded))
+                chunk = handle.read(min(IO_CHUNK, offset - discarded))
                 if not chunk:
                     break
                 discarded += len(chunk)
@@ -468,7 +474,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 # from the start of the file.
                 gap = offset - reader.pos
                 while gap:
-                    chunk = handle.read(min(64 * 1024, gap))
+                    chunk = handle.read(min(IO_CHUNK, gap))
                     if not chunk:
                         break
                     gap -= len(chunk)
@@ -615,7 +621,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
             try:
                 with self.backend.open_read(full) as src:
                     while True:
-                        chunk = src.read(64 * 1024)
+                        chunk = src.read(IO_CHUNK)
                         if not chunk:
                             break
                         tmp.write(chunk)
@@ -730,7 +736,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     with self.backend.open_read(full) as src:
                         remaining = length
                         while remaining > 0:
-                            chunk = src.read(min(64 * 1024, remaining))
+                            chunk = src.read(min(IO_CHUNK, remaining))
                             if not chunk:
                                 break
                             buf.write(chunk)
@@ -758,7 +764,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                     self.backend,
                     full,
                     buf,
-                    chunk_size=64 * 1024,
+                    chunk_size=IO_CHUNK,
                 )
             except OSError as exc:
                 log.warning("truncate(%s) flush failed: %s", full, exc)
@@ -816,7 +822,7 @@ class BackendFuseFS(Operations):  # type: ignore[misc]
                 self.backend,
                 full,
                 tmp,
-                chunk_size=64 * 1024,
+                chunk_size=IO_CHUNK,
             )
         except OSError as exc:
             log.warning("FUSE %s(%s) commit failed: %s", caller, full, exc)

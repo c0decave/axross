@@ -71,6 +71,9 @@ hiddenimports += [
     "cryptography.hazmat.backends.openssl",
     "cryptography.hazmat.bindings.openssl",
     "cryptography.hazmat.bindings.openssl.binding",
+    # core.self_update verifies the release signature (Ed25519) with a
+    # lazy import; without it every self-update is refused.
+    "cryptography.hazmat.primitives.asymmetric.ed25519",
 ]
 
 # Slice 6 helper deps — small pure-Python wrappers loaded lazily by
@@ -370,8 +373,11 @@ a.binaries = TOC(
     entry for entry in a.binaries if not host_owned(entry[0]) and not dropped(entry[0])
 )
 # Data the bundle never reads - unpacked at every start of the one-file
-# binary all the same (scripts/bundle_options.dropped_data).
-a.datas = TOC(entry for entry in a.datas if not dropped_data(entry[0]))
+# binary all the same (scripts/bundle_options.dropped_data). The DROPPED rule
+# applies here too: PyInstaller files its SYMLINK entries (the top-level
+# libQt6EglFSDeviceIntegration.so.6 -> PyQt6/Qt6/lib/...) under a.datas, and
+# a link to a dropped library would be left dangling.
+a.datas = TOC(entry for entry in a.datas if not dropped_data(entry[0]) and not dropped(entry[0]))
 
 # Licence texts of everything kept above (scripts/bundle_licenses.py): every
 # bundled Python distribution's own licence files under licenses/python/, and

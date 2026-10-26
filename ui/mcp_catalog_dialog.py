@@ -108,7 +108,6 @@ class McpCatalogDialog(QDialog):
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(tr("Search MCP servers (name, description, tag)"))
-        self.search_edit.returnPressed.connect(self.search)
         self.source_combo = QComboBox()
         self.source_combo.addItem(tr("All sources"), "")
         for source in self._sources:
@@ -122,6 +121,9 @@ class McpCatalogDialog(QDialog):
         self.category_combo.currentIndexChanged.connect(self._fill_tree)
         self.search_button = QPushButton(tr("Search"))
         self.search_button.clicked.connect(self.search)
+        # Enter in the search field clicks it; a returnPressed connection on
+        # top asked every catalog twice.
+        self.search_button.setDefault(True)
         self.refresh_button = QPushButton(tr("Refresh"))
         self.refresh_button.setToolTip(tr("Read the lists and registries again (no cache)"))
         self.refresh_button.clicked.connect(self.refresh)

@@ -15,6 +15,10 @@ build/*
 !build/axross.spec
 !build/axross.desktop
 !build/axross.svg
+# The hashed dependency lock of the bundles: osv-scanner skips ignored files.
+!build/requirements-bundle.in
+!build/requirements-bundle.txt
+!build/requirements-bootstrap.txt
 build-tmp/
 *.whl
 

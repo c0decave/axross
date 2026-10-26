@@ -15,8 +15,9 @@ import socket
 import tempfile
 import threading
 import time
+import weakref
 from datetime import datetime, timedelta, timezone
-from ftplib import FTP, FTP_TLS, error_perm  # nosec B402
+from ftplib import FTP, FTP_TLS, error_perm, error_temp  # nosec B402
 from ftplib import Error as _FtpLibError  # nosec B402
 from typing import IO, NoReturn
 
@@ -25,6 +26,7 @@ from core.backend import SessionLifecycle
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from core.read_spool import READ_CHUNK, new_read_spool
 from core.session_lock import io_lock, liveness_check, serialized
+from core.transfer_pool import MAX_PARALLEL
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -38,6 +40,27 @@ log = logging.getLogger(__name__)
 # without another NOOP, unless its socket is readable - a server-side
 # close ("421" + FIN) makes it readable and sends us down the NOOP path.
 LIVENESS_WINDOW = 10.0
+
+# Idle control connections a session keeps for its transfers (each
+# download and upload runs on one of its own): as many as transfer jobs
+# may run at once, so a run of them logs in once per job, not per file.
+IDLE_CONNECTIONS = MAX_PARALLEL
+
+# Seconds a connect, the login or any later reply on a control
+# connection may take (ftplib keeps it as the socket's timeout).
+SOCKET_TIMEOUT = 15.0
+
+# A refusal (421 / 530) within this many seconds after a login of ours
+# timed out or broke may be caused by that login: the server can still
+# count it (it was busy hashing the password when we gave up). Such a
+# refusal does not turn the session to one connection for good.
+LOGIN_FAILURE_GRACE = 60.0
+
+# How often a data connection is asked for when PASV / EPSV answers 425
+# (the server found no free passive port), and the pause before the next
+# ask, times the attempt.
+PASV_ATTEMPTS = 3
+PASV_RETRY_DELAY = 0.05
 
 # A framing line of a multi-line reply: three digits, then '-' or ' '.
 _FTP_REPLY_LINE = re.compile(r"^\d{3}[ -]")
@@ -196,6 +219,76 @@ def _is_not_found_reply(exc: BaseException) -> bool:
     return str(exc)[:3] == "550"
 
 
+# A 550 worded as a refusal ("Access is denied." - IIS, "Permission denied")
+# may answer for an entry that is there: no answer about the path.
+_REFUSAL_WORDING = re.compile(r"denied|permission|not allowed|forbidden", re.IGNORECASE)
+
+
+def _features(ftp) -> frozenset[str]:
+    """The keywords *ftp*'s server names in its ``FEAT`` reply (RFC 2389),
+    upper case, asked once per control connection. A refused FEAT
+    (5xx: an old server) names nothing; a 4xx reply is raised."""
+    cached = getattr(ftp, "_axross_features", None)
+    if isinstance(cached, frozenset):
+        return cached
+    try:
+        resp = ftp.sendcmd("FEAT")
+    except error_perm:
+        found: frozenset[str] = frozenset()
+    else:
+        found = frozenset(
+            line.split(None, 1)[0].upper()
+            for line in resp.split("\n")
+            if line.strip() and not _FTP_REPLY_LINE.match(line)
+        )
+    ftp._axross_features = found
+    return found
+
+
+def _mlst_exists(ftp, path: str) -> bool | None:
+    """Whether *path* is there by one ``MLST`` on the control connection
+    (RFC 3659 7): 250 is there, 550 is not. None when the server does not
+    offer MLST or its answer says nothing about the path (500 / 502 / 504:
+    not implemented after all - not asked again on this connection; 501;
+    a 550 worded as a refusal). Any other refusal is raised."""
+    if getattr(ftp, "_axross_mlst_refused", False) or "MLST" not in _features(ftp):
+        return None
+    try:
+        resp = ftp.sendcmd(f"MLST {path}")
+    except error_perm as exc:
+        code = str(exc)[:3]
+        if code in ("500", "502", "504"):
+            ftp._axross_mlst_refused = True
+            return None
+        if code == "501":
+            return None
+        if code == "550":
+            return None if _REFUSAL_WORDING.search(str(exc)) else False
+        raise
+    if resp[:3] == "250":
+        return True
+    if resp[:1] in ("1", "3"):
+        # Another reply is still to come: every later command would read
+        # the one before it. Closed, the next call logs in again.
+        _close_quietly(ftp)
+    raise OSError(f"FTP exists: unexpected reply to MLST {path}: {resp[:80]!r}")
+
+
+def _binary_mode(ftp) -> None:
+    """Put *ftp* in ``TYPE I`` unless it is known to be there: vsftpd
+    answers SIZE in ASCII mode with "550 Could not get file size", the
+    reply a missing file gets. A server that refuses TYPE I is not asked
+    again on this connection; SIZE then goes out as before."""
+    if getattr(ftp, "_axross_type", None) == "I" or getattr(ftp, "_axross_type_i_refused", False):
+        return
+    try:
+        ftp.voidcmd("TYPE I")
+    except error_perm:
+        ftp._axross_type_i_refused = True
+        return
+    ftp._axross_type = "I"  # also for a connection without _ControlChannelMixin
+
+
 def _ftp_errors_as_oserror(fn):
     """Re-raise ftplib protocol errors from ``fn`` as ``OSError``."""
 
@@ -226,6 +319,22 @@ def _quit_quietly(ftp) -> None:
         _close_quietly(ftp)
 
 
+def _socket_quiet(ftp) -> bool:
+    """True when nothing waits on *ftp*'s control socket: a server-side
+    close ("421" + FIN) makes it readable. Anything unexpected answers
+    False, so the caller checks the connection with a NOOP."""
+    sock = getattr(ftp, "sock", None)
+    if not isinstance(sock, socket.socket):
+        return False
+    try:
+        if getattr(sock, "pending", lambda: 0)():  # TLS bytes already buffered
+            return False
+        readable, _, _ = select.select([sock], [], [], 0)
+    except (OSError, ValueError):
+        return False
+    return not readable
+
+
 def _close_quietly(ftp) -> None:
     """Close a control connection without a QUIT round trip."""
     try:
@@ -235,14 +344,19 @@ def _close_quietly(ftp) -> None:
 
 
 class _SpooledWriter:
-    """Write to a temp file, then upload on close."""
+    """Write to a temp file, then upload on close.
 
-    def __init__(self, ftp: FTP, remote_path: str, append: bool = False, lock=None):
+    ``store(command, fileobj)`` runs the upload (FtpSession._store: on a
+    control connection of its own, or on the shared one); without it the
+    upload runs on ``ftp`` under ``lock``."""
+
+    def __init__(self, ftp: FTP | None, remote_path: str, append: bool = False, lock=None,
+                 store=None):
         self._ftp = ftp
         self._remote_path = remote_path
         self._append = append
-        # The session's I/O lock: the upload runs on the shared handle.
         self._lock = lock if lock is not None else contextlib.nullcontext()
+        self._store = store
         self._buf = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
         self._closed = False
 
@@ -266,8 +380,11 @@ class _SpooledWriter:
         try:
             self._buf.seek(0)
             cmd = "APPE" if self._append else "STOR"
-            with self._lock:
-                self._ftp.storbinary(f"{cmd} {self._remote_path}", self._buf)
+            if self._store is not None:
+                self._store(f"{cmd} {self._remote_path}", self._buf)
+            else:
+                with self._lock:
+                    self._ftp.storbinary(f"{cmd} {self._remote_path}", self._buf)
         finally:
             self._buf.close()
 
@@ -531,6 +648,54 @@ class _FtpProxyMixin:
         return conn, size
 
 
+class _ControlChannelMixin:
+    """Remembers the transfer type (``TYPE A`` / ``TYPE I``) the server
+    last accepted on this control connection, as ``_axross_type``; None
+    while unknown (a new connection, or a TYPE command whose reply is not
+    in yet or was a refusal). ftplib switches the type inside retrlines /
+    retrbinary / storbinary without telling anyone.
+
+    Also asks again for a passive data port the server answered with 425:
+    pure-ftpd (passive ports 30000-30010 in the lab) answered PASV with
+    "425 Unable to identify the local data socket: Address already in use"
+    for 1 of 300 uploads in 2 of 10 rounds with four jobs at a time
+    (measured 2026-10-26). 425 is transient (RFC 959 4.2.1) and no
+    transfer command has gone out yet."""
+
+    _axross_type: str | None = None
+
+    def makepasv(self):
+        for attempt in range(1, PASV_ATTEMPTS + 1):
+            try:
+                return super().makepasv()  # type: ignore[misc]
+            except error_temp as exc:
+                if str(exc)[:3] != "425" or attempt == PASV_ATTEMPTS:
+                    raise
+                log.debug("FTP passive port refused (%s); asking again", exc)
+                time.sleep(PASV_RETRY_DELAY * attempt)
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def putcmd(self, line):
+        if line[:5].upper() == "TYPE ":
+            self._axross_type = None  # unknown until the server says yes
+        super().putcmd(line)  # type: ignore[misc]
+
+    def _note_type(self, cmd: str) -> None:
+        if cmd[:5].upper() == "TYPE ":
+            self._axross_type = cmd[5:].strip().upper()
+
+    def sendcmd(self, cmd):
+        resp = super().sendcmd(cmd)  # type: ignore[misc]
+        if resp[:1] == "2":
+            self._note_type(cmd)
+        return resp
+
+    def voidcmd(self, cmd):
+        resp = super().voidcmd(cmd)  # type: ignore[misc]  # raises unless 2xx
+        self._note_type(cmd)
+        return resp
+
+
 class _LenientListingMixin:
     """``retrlines`` that decodes the data channel with ``errors="replace"``.
 
@@ -570,7 +735,7 @@ class _LenientListingMixin:
         return self.voidresp()
 
 
-class _FTP(_LenientListingMixin, FTP):
+class _FTP(_ControlChannelMixin, _LenientListingMixin, FTP):
     """Plain FTP with lenient listing decoding."""
 
 
@@ -583,7 +748,7 @@ def _control_session(ftp) -> object | None:
     return getattr(getattr(ftp, "sock", None), "session", None)
 
 
-class _FTP_TLS(_LenientListingMixin, FTP_TLS):
+class _FTP_TLS(_ControlChannelMixin, _LenientListingMixin, FTP_TLS):
     """FTPS with lenient listing decoding and TLS session reuse on data."""
 
     def ntransfercmd(self, cmd, rest=None):
@@ -596,11 +761,13 @@ class _FTP_TLS(_LenientListingMixin, FTP_TLS):
         return conn, size
 
 
-class _ProxyFTP(_FtpProxyMixin, _LenientListingMixin, FTP):
+class _ProxyFTP(_FtpProxyMixin, _ControlChannelMixin, _LenientListingMixin, FTP):
     """FTP subclass with proxy-aware control + data channels."""
 
 
-class _ProxyFTP_TLS(_FtpProxyMixin, _LenientListingMixin, FTP_TLS):
+class _ProxyFTP_TLS(
+    _FtpProxyMixin, _ControlChannelMixin, _LenientListingMixin, FTP_TLS
+):
     """FTPS subclass with proxy-aware control + data channels."""
 
 
@@ -657,7 +824,16 @@ class FtpSession(SessionLifecycle):
     """
 
     #: False for a session built without ``__init__``: no login parameters.
-    _separate_downloads = False
+    _separate_transfers = False
+
+    @property
+    def parallel_transfers_safe(self) -> bool:
+        """Two transfer jobs may share this session while every transfer
+        runs on a control connection of its own; once the server refused
+        a second one, the session carries one job at a time (asked again
+        by core.transfer_pool before every job). Metadata calls share the
+        session's connection under its lock either way."""
+        return self._separate_transfers is True
 
     def __init__(
         self,
@@ -707,11 +883,20 @@ class FtpSession(SessionLifecycle):
         )
         self._ftp: FTP | None = None
         self._has_mlsd = False
-        # Downloads run on a control connection of their own (see
-        # _StreamedDownload); the last finished one is kept for the next.
-        self._separate_downloads = True
-        self._spare_ftp: FTP | None = None
-        self._spare_lock = threading.Lock()
+        # Downloads (_StreamedDownload) and uploads (_store) run on control
+        # connections of their own; finished ones wait in _idle for the
+        # next transfer, IDLE_CONNECTIONS at most, newest last. _pool_generation counts
+        # disconnects: a connection handed out before one is not kept.
+        # _separate_cap: how many of ours the server allows beside the
+        # session's, once it refused one more.
+        self._separate_transfers = True
+        self._idle: list[tuple[FTP, float]] = []  # (connection, released at)
+        self._pool_lock = threading.Lock()
+        self._pool_changed = threading.Condition(self._pool_lock)
+        self._logins_in_flight = 0
+        self._pool_generation = 0
+        self._separate_cap: int | None = None
+        self._separate_open: weakref.WeakSet = weakref.WeakSet()
 
         if self._proxy.enabled and not self._passive:
             log.warning(
@@ -781,10 +966,10 @@ class FtpSession(SessionLifecycle):
                     self._host,
                     self._port,
                     self._proxy,
-                    timeout=15.0,
+                    timeout=SOCKET_TIMEOUT,
                 )
             else:
-                ftp.connect(self._host, self._port, timeout=15)
+                ftp.connect(self._host, self._port, timeout=SOCKET_TIMEOUT)
             ftp.login(self._username, self._password)
 
             if self._tls and isinstance(ftp, FTP_TLS):
@@ -834,9 +1019,8 @@ class FtpSession(SessionLifecycle):
 
     @serialized
     def disconnect(self) -> None:
-        spare = self._take_spare()
-        if spare is not None:
-            _quit_quietly(spare)
+        for idle in self._drain_pool():
+            _quit_quietly(idle)
         if self._ftp:
             log.info("FTP disconnecting from %s@%s", self._username, self._host)
             try:
@@ -872,16 +1056,7 @@ class FtpSession(SessionLifecycle):
         verified_at = getattr(self, "_verified_at", None)
         if verified_at is None or time.monotonic() - verified_at > LIVENESS_WINDOW:
             return False
-        sock = getattr(self._ftp, "sock", None)
-        if not isinstance(sock, socket.socket):
-            return False
-        try:
-            if getattr(sock, "pending", lambda: 0)():  # TLS bytes already buffered
-                return False
-            readable, _, _ = select.select([sock], [], [], 0)
-        except (OSError, ValueError):
-            return False
-        return not readable
+        return _socket_quiet(self._ftp)
 
     @_ftp_errors_as_oserror
     @serialized
@@ -1048,6 +1223,7 @@ class FtpSession(SessionLifecycle):
 
         # Fallback: SIZE + MDTM + CWD probe
         size_known = False
+        _binary_mode(ftp)
         try:
             size = ftp.size(path) or 0
             size_known = True
@@ -1117,11 +1293,31 @@ class FtpSession(SessionLifecycle):
     @_ftp_errors_as_oserror
     @serialized
     def exists(self, path: str) -> bool:
-        """False only when SIZE is refused, CWD answers 550 and the parent
-        listing lacks the name; any other refusal is an OSError -
-        server_side_copy(overwrite=False) takes False as its go-ahead to
-        write."""
+        """Whether the entry itself is there (a dangling link is).
+
+        False only on a definitive "not there": 550 to MLST on a server
+        that names MLST in FEAT, or else SIZE refused, CWD 550 and a parent
+        listing without the name. Any other refusal is an OSError -
+        server_side_copy(overwrite=False) and the transfer engine take
+        False as their go-ahead to write.
+
+        MLST needs no data connection and no failed CWD: pure-ftpd delays
+        every failed CWD by 100 ms times the failed CWDs so far on the
+        connection and drops it after the 50th (measured 2026-10-26), so
+        an upload of 300 new files lost every 51st one. Where a 550 to
+        MLST is not about the name itself, nothing can be overwritten: a
+        server whose MLST follows links answers it for a dangling link (no
+        data behind it), and for an entry in a folder without search
+        permission, where a write fails as well."""
+        if "\r" in path or "\n" in path:
+            # ftplib refuses to send it (ValueError), which SIZE below took
+            # for "a 213 reply it cannot parse".
+            raise OSError(errno.EINVAL, "FTP exists: a name with a line break cannot be sent", path)
         ftp = self._ensure_connected()
+        answer = _mlst_exists(ftp, path)
+        if answer is not None:
+            return answer
+        _binary_mode(ftp)
         try:
             ftp.size(path)
             return True
@@ -1136,7 +1332,9 @@ class FtpSession(SessionLifecycle):
         if self._cwd_reaches(ftp, path):
             return True
         # CWD answers 550 for a file too, and a refused SIZE may be the
-        # same 550 (vsftpd in ASCII mode): the parent listing decides.
+        # same 550 for a file that is there (a server that will not size
+        # an unreadable file, or SIZE in ASCII mode where TYPE I was
+        # refused): the parent listing decides.
         return self._parent_lists(ftp, path)
 
     @_ftp_errors_as_oserror
@@ -1231,66 +1429,178 @@ class FtpSession(SessionLifecycle):
 
     @_ftp_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
-        ftp = self._download_connection()
-        if ftp is None:
+        got = self._transfer_connection()
+        if got is None:
             return self._open_read_shared(path)
+        ftp, generation = got
+        done = functools.partial(self._release_connection, generation=generation)
         try:
             ftp.voidcmd("TYPE I")
             conn = ftp.transfercmd(f"RETR {path}")
         except error_perm as e:
             # "550 No such file": answered, the connection is fine.
-            self._keep_spare(ftp)
+            done(ftp)
             raise OSError(f"Cannot read {path}: {e}") from e
         except BaseException:
             _close_quietly(ftp)
             raise
-        return _StreamedDownload(ftp, conn, path, self._keep_spare)
+        return _StreamedDownload(ftp, conn, path, done)
 
-    def _download_connection(self) -> FTP | None:
-        """A logged-in control connection of its own for one download, or
-        None to download on the shared one: a session built without its
-        ``__init__`` has nothing to log in with, and a server that refused
-        a second connection is not asked again."""
-        if not self._separate_downloads:
+    def _store(self, command: str, fileobj) -> None:
+        """Upload *fileobj* with *command* (STOR / APPE): on a control
+        connection of its own, so that the session's connection and lock
+        stay free for other jobs; on the shared one, under the session
+        lock for the whole transfer, when the server allows no more."""
+        got = self._transfer_connection()
+        if got is None:
+            with io_lock(self):
+                self._ensure_connected().storbinary(command, fileobj)
+            return
+        ftp, generation = got
+        try:
+            ftp.storbinary(command, fileobj)
+        except error_perm:
+            # "553 Could not create file": answered, the connection is fine.
+            self._release_connection(ftp, generation=generation)
+            raise
+        except BaseException:
+            _close_quietly(ftp)
+            raise
+        self._release_connection(ftp, generation=generation)
+
+    def _transfer_connection(self) -> tuple[FTP, int] | None:
+        """A logged-in control connection of its own for one transfer and
+        the pool generation it belongs to, or None to transfer on the
+        shared one: a session built without its ``__init__`` has nothing
+        to log in with, a server that refused a second connection is not
+        asked again, and one that refused a further one is not asked for
+        more than it allowed."""
+        if not self._separate_transfers:
             return None
-        ftp = self._take_spare()
-        if ftp is not None:
+        while True:
+            with self._pool_lock:
+                generation = self._pool_generation
+                entry = self._idle.pop() if self._idle else None
+                if entry is None and self._separate_cap is not None:
+                    if self._open_separate() >= self._separate_cap:
+                        return None
+            if entry is None:
+                break
+            ftp, released_at = entry
+            # Used a moment ago and nothing waiting on it: no NOOP round
+            # trip, as for the session's connection (_recently_verified).
+            if time.monotonic() - released_at <= LIVENESS_WINDOW and _socket_quiet(ftp):
+                return ftp, generation
             try:
                 ftp.voidcmd("NOOP")
-                return ftp
+                return ftp, generation
             except (*_FTP_PROTOCOL_ERRORS, OSError):
                 _close_quietly(ftp)
+        with self._pool_lock:
+            self._logins_in_flight += 1
+        ftp = None
         try:
-            return self._login(announce=False)
+            ftp = self._login(announce=False)
         except _FtpLibError as exc:
             # "421 Too many connections", "530 ... maximum number of
-            # clients": the server allows this user one connection.
+            # clients": the server allows this user no more connections.
+            refused = exc
+        except (OSError, EOFError) as exc:
+            log.debug("FTP %s: no connection of its own for a transfer: %s", self._host, exc)
+            self._login_failed_at = time.monotonic()
+            refused = None
+        else:
+            refused = None
+        finally:
+            with self._pool_changed:
+                if ftp is not None:
+                    self._separate_open.add(ftp)
+                self._logins_in_flight -= 1
+                self._pool_changed.notify_all()
+        if ftp is not None:
+            return ftp, generation
+        if refused is not None:
+            self._refused(refused)
+        return None
+
+    def _refused(self, exc: Exception) -> None:
+        """The server refused one more connection.
+
+        * Right after a login of ours timed out or broke, the server may
+          still count that one: nothing is concluded, this transfer uses
+          the session's connection and the next one asks again.
+        * With some of ours open beside the session's, those are what it
+          allows: they go on carrying transfers side by side, and no more
+          are asked for until the session disconnects.
+        * With none open, it allows this user one connection: every
+          transfer uses the session's from now on, one job at a time.
+        """
+        with self._pool_changed:
+            # Logins started at the same time may still succeed: they are
+            # what the server allows, so wait for their outcome first.
+            self._pool_changed.wait_for(lambda: self._logins_in_flight == 0, timeout=60)
+            allowed = self._open_separate()
+            failed_at = getattr(self, "_login_failed_at", None)
+            ours = failed_at is not None and time.monotonic() - failed_at < LOGIN_FAILURE_GRACE
+            if ours:
+                pass
+            elif allowed:
+                self._separate_cap = allowed
+            else:
+                self._separate_transfers = False
+        if ours:
             log.info(
-                "FTP %s refused a second connection (%s); downloads use the session's",
+                "FTP %s refused another connection (%s) right after a login of ours "
+                "failed; this transfer uses the session's, the next one asks again",
                 self._host,
                 exc,
             )
-            self._separate_downloads = False
-        except (OSError, EOFError) as exc:
-            log.debug("FTP %s: no second connection for a download: %s", self._host, exc)
-        return None
+        elif allowed:
+            log.info(
+                "FTP %s refused another connection (%s); transfers use the %d it allowed",
+                self._host,
+                exc,
+                allowed,
+            )
+        else:
+            log.info(
+                "FTP %s refused a second connection (%s); transfers use the session's",
+                self._host,
+                exc,
+            )
 
-    def _take_spare(self) -> FTP | None:
-        lock = self.__dict__.get("_spare_lock")
-        if lock is None:
-            return None
-        with lock:
-            ftp, self._spare_ftp = self._spare_ftp, None
-        return ftp
+    def _open_separate(self) -> int:
+        """Connections of ours open beside the session's, idle or in use
+        (called with _pool_lock held). ftplib's close() drops ``sock``."""
+        return sum(1 for ftp in list(self._separate_open) if getattr(ftp, "sock", None))
 
-    def _keep_spare(self, ftp: FTP) -> None:
-        """Keep a finished download's connection for the next download,
-        so a run of them logs in once; one spare is enough."""
-        with self._spare_lock:
-            if self._spare_ftp is None and self._ftp is not None:
-                self._spare_ftp, ftp = ftp, None
+    def _release_connection(self, ftp: FTP, *, generation: int) -> None:
+        """A transfer is through with *ftp* and left it ready for the next
+        command: keep it for the next transfer, unless the session was
+        disconnected since it was handed out or IDLE_CONNECTIONS wait
+        already."""
+        with self._pool_lock:
+            if (
+                generation == self._pool_generation
+                and self._ftp is not None
+                and len(self._idle) < IDLE_CONNECTIONS
+            ):
+                self._idle.append((ftp, time.monotonic()))
+                ftp = None
         if ftp is not None:
             _quit_quietly(ftp)
+
+    def _drain_pool(self) -> list[FTP]:
+        """Take every idle connection; one in use is quit when its
+        transfer ends (the generation moves on)."""
+        lock = self.__dict__.get("_pool_lock")
+        if lock is None:
+            return []
+        with lock:
+            idle, self._idle = self._idle, []
+            self._pool_generation += 1
+            self._separate_cap = None
+        return [ftp for ftp, _released_at in idle]
 
     @serialized
     def _open_read_shared(self, path: str) -> IO[bytes]:
@@ -1313,8 +1623,11 @@ class FtpSession(SessionLifecycle):
     @_ftp_errors_as_oserror
     @serialized
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
+        # Connected now, so a dead server fails here and not after the
+        # caller spooled the whole file; the upload picks its connection
+        # when the writer closes (_store).
         ftp = self._ensure_connected()
-        return _SpooledWriter(ftp, path, append=append, lock=io_lock(self))
+        return _SpooledWriter(ftp, path, append=append, store=self._store)
 
     def normalize(self, path: str) -> str:
         return posixpath.normpath(path) or "/"

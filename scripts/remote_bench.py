@@ -4,6 +4,7 @@ Usage: python scripts/remote_bench.py --url sftp://USER:PASS@HOST[:PORT]
                                       [--url2 URL] [--latency-ms 20]
                                       [--entries 2000] [--files 500] [--mb 100]
                                       [--only NAME,...] [--json OUT] [--tree DIR]
+                                      [--parallel N]
 
 The numbers the operator's "complete review of where we can still optimise
 performance" asked for in the remote area, made repeatable. Remote cost is
@@ -268,7 +269,9 @@ def via_proxy(url: str, args, name: str, offset: int):
     if not port:
         raise SystemExit("--latency-ms needs an explicit port in the URL")
     listen = args.proxy_port + offset
-    proxy = Toxiproxy(f"http://{args.toxiproxy}:8474", name,
+    # The port in the name: two benches with their own --proxy-port share
+    # the lab's toxiproxy without removing each other's proxy.
+    proxy = Toxiproxy(f"http://{args.toxiproxy}:8474", f"{name}_{listen}",
                       f"{parts.hostname}:{port}", listen, args.latency_ms)
     netloc = parts.netloc.rsplit("@", 1)[0] + f"@{args.toxiproxy}:{listen}"
     return urllib.parse.urlunsplit(parts._replace(netloc=netloc)), proxy
@@ -324,7 +327,12 @@ def bench(args, home: str) -> dict:
     setup.mkdir(rroot)
     if rroot2 != rroot:
         setup2.mkdir(rroot2)
-    manager = TransferManager()
+    # Only when asked: an old --tree has no max_parallel and runs one job at a time.
+    if args.parallel != 1:
+        manager = TransferManager(max_parallel=args.parallel)
+    else:
+        manager = TransferManager()
+    results["parallel"] = args.parallel
 
     def record(name: str, wall: float, cpu: float, gui: float, snap: dict) -> None:
         results[f"{name}_wall_ms"] = round(wall * 1000, 1)
@@ -562,6 +570,8 @@ def main(argv=None) -> int:
     parser.add_argument("--mb", type=int, default=100, help="size of the big file")
     parser.add_argument("--plan", action="store_true",
                         help="queue as F5 does: destination check and a conflict plan first")
+    parser.add_argument("--parallel", type=int, default=1,
+                        help="transfer jobs that run at once (the Parallel transfers setting)")
     parser.add_argument("--only", help="comma-separated scenarios: " + ", ".join(SCENARIOS))
     parser.add_argument("--json", help="write the results to this file as well")
     parser.add_argument("--tree", default=str(ROOT), help="the axross checkout to measure")

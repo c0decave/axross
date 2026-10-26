@@ -105,15 +105,32 @@ def host_provided(soname: str) -> bool:
 #: /usr/lib64/gio/modules (on Arch a symlink to /usr/lib), and those need a
 #: newer glib ("undefined symbol: g_free_sized"). The --system-libs gate
 #: fails if anything left in the bundle still needs libgio.
+#:
+#: The Qt platform plugins axross never starts on leave as well: it opens
+#: its window on xcb or wayland and runs headless on offscreen (--script, the
+#: multimedia probe child, the bundle smoke); nothing selects the others. The
+#: VNC plugin carries CVE-2026-79680 (VNC password authentication bypass,
+#: open in Qt 6.11.2, fixed in 6.11.3): QT_QPA_PLATFORM=vnc would serve the
+#: window to the network behind a password check an attacker can skip.
+#: eglfs goes with its device integrations and their library.
 DROPPED = ("platformthemes/libqgtk3.so", "networkinformation/libqglib.so",
-           "libgio-2.0.so.0", "libgmodule-2.0.so.0")
+           "libgio-2.0.so.0", "libgmodule-2.0.so.0",
+           "platforms/libqvnc.so", "platforms/libqeglfs.so", "platforms/libqlinuxfb.so",
+           "platforms/libqminimal.so", "platforms/libqminimalegl.so",
+           "platforms/libqvkkhrdisplay.so", "libQt6EglFSDeviceIntegration.so.6")
+#: Folders the build removes with everything in them.
+DROPPED_FOLDERS = ("egldeviceintegrations",)
 
 
 def dropped(path: str) -> bool:
     """Whether the build removes *path* (a destination path in the bundle):
-    an entry of DROPPED is the whole path or its trailing components."""
+    an entry of DROPPED is the whole path or its trailing components, an
+    entry of DROPPED_FOLDERS is a folder on the path."""
     path = path.replace("\\", "/")
-    return any(path == d or path.endswith("/" + d) for d in DROPPED)
+    if any(path == d or path.endswith("/" + d) for d in DROPPED):
+        return True
+    folders = path.split("/")[:-1]
+    return any(f in folders for f in DROPPED_FOLDERS)
 
 
 #: googleapiclient's discovery documents: its PyInstaller hook bundles all

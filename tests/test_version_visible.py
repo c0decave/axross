@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from axross._version import __version__  # noqa: E402
 
@@ -34,8 +34,10 @@ def window():
     APP.processEvents()
 
 
-def _version_labels(win) -> list[QLabel]:
-    return [w for w in win.statusBar().findChildren(QLabel) if w.text() == LABEL]
+def _version_labels(win) -> list[QPushButton]:
+    # A flat button since 0.14.61: with an update notice a click opens the
+    # update window (tests/test_self_update_ui.py).
+    return [w for w in win.statusBar().findChildren(QPushButton) if w.text() == LABEL]
 
 
 def test_happy_the_status_bar_shows_the_version_bottom_right(window) -> None:

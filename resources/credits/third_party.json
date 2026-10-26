@@ -551,7 +551,7 @@
    "extras": [
     "voice"
    ],
-   "version": "4.8.3",
+   "version": "4.8.4",
    "group": "voice",
    "match": {
     "modules": [
@@ -1029,20 +1029,18 @@
    "id": "gcc-runtime",
    "name": "GCC runtime libraries",
    "kind": "library",
-   "purpose": "Fortran, OpenMP and atomic runtimes (numpy, CTranslate2, QtPdf)",
+   "purpose": "Fortran and OpenMP runtimes (numpy, CTranslate2)",
    "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
    "url": "https://gcc.gnu.org",
    "ships": [
-    "axross-full",
-    "axross-slim"
+    "axross-full"
    ],
    "note": "libquadmath is LGPL-2.1-or-later",
    "match": {
     "libraries": [
      "libgfortran",
      "libquadmath",
-     "libgomp",
-     "libatomic"
+     "libgomp"
     ]
    }
   },
@@ -1660,24 +1658,6 @@
    }
   },
   {
-   "id": "jbigkit",
-   "name": "JBIG-KIT",
-   "kind": "library",
-   "purpose": "JBIG compression used by the system LibTIFF",
-   "license": "GPL-2.0-or-later",
-   "url": "https://www.cl.cam.ac.uk/~mgk25/jbigkit/",
-   "ships": [
-    "axross-full",
-    "axross-slim"
-   ],
-   "via": "LibTIFF",
-   "match": {
-    "libraries": [
-     "libjbig"
-    ]
-   }
-  },
-  {
    "id": "jeepney",
    "name": "jeepney",
    "kind": "python",
@@ -2053,7 +2033,7 @@
    "id": "libtiff",
    "name": "LibTIFF",
    "kind": "library",
-   "purpose": "TIFF images (Pillow, Qt image plugin)",
+   "purpose": "TIFF images (Pillow)",
    "license": "libtiff",
    "url": "https://libtiff.gitlab.io/libtiff/",
    "ships": [
@@ -2061,7 +2041,7 @@
     "axross-slim",
     "pip"
    ],
-   "via": "Pillow, Qt 6",
+   "via": "Pillow",
    "match": {
     "libraries": [
      "libtiff"
@@ -4265,6 +4245,27 @@
    "match": {
     "libraries": [
      "libvmaf"
+    ]
+   }
+  },
+  {
+   "id": "watchdog",
+   "name": "watchdog",
+   "kind": "python",
+   "purpose": "Instant refresh of local folders (inotify, FSEvents, ReadDirectoryChangesW)",
+   "license": "Apache-2.0",
+   "url": "https://github.com/gorakhargosh/watchdog",
+   "ships": [
+    "axross-full",
+    "axross-slim",
+    "pip"
+   ],
+   "pypi": [
+    "watchdog"
+   ],
+   "match": {
+    "modules": [
+     "watchdog"
     ]
    }
   },

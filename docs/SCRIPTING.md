@@ -252,7 +252,7 @@ interpreter namespace.
 |---|---|
 | `.help` | This list |
 | `.scripts` | Names of every saved script |
-| `.save <name>` | Save the current session's history into `<name>.py` |
+| `.save <name>` | Save the current session's history into `<name>.py`; an existing script of that name is never replaced (`.delete` it first) |
 | `.load <name>` | Print the source of a saved script |
 | `.run <name>` | Execute a saved script in the live REPL namespace (refused in paranoid mode) |
 | `.delete <name>` | Remove a saved script |

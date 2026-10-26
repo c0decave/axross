@@ -20,13 +20,22 @@ question "can a user install a vulnerable version of axross?".
 
 This tool asks OSV that question directly, once per declared floor.
 
+``--lock`` asks the other question, for what axross itself ships: the
+one-file bundles are built from the exact pins of
+``build/requirements-bundle.txt`` (installed with ``--require-hashes``), so
+every pin there is checked against OSV - in one batch request - and any
+advisory fails, malicious-package entries (``MAL-*``) included. A floor can
+be clean while the pinned release is not, and the other way round.
+
 Usage
 -----
     python -m security.dep_floor_audit [--pyproject PATH] [--json]
+    python -m security.dep_floor_audit --lock build/requirements-bundle.txt [--json]
 
 Exit codes:
-    0  every declared floor is free of known advisories
-    1  at least one floor admits a known-vulnerable release
+    0  every declared floor (or every exact pin) is free of known advisories
+    1  at least one floor admits a known-vulnerable release, or a pin has an
+       advisory
     2  the audit could not run (network/parse failure)
 
 Network: talks to https://api.osv.dev only, over stdlib ``urllib``. It
@@ -54,6 +63,11 @@ except ImportError:  # pragma: no cover - exercised only on 3.10
     import tomli as tomllib  # type: ignore[no-redef]
 
 OSV_QUERY_URL = "https://api.osv.dev/v1/query"
+OSV_QUERYBATCH_URL = "https://api.osv.dev/v1/querybatch"
+#: OSV answers at most this many queries per batch request.
+OSV_BATCH_LIMIT = 1000
+#: OSV id prefix of the malicious-package database (OpenSSF).
+MALICIOUS_PREFIX = "MAL-"
 
 # PEP 508-ish: a distribution name, optional extras, then the specifier
 # soup. We deliberately do not implement the full grammar — the input is
@@ -166,20 +180,45 @@ def lowest_safe_version(vulns: Iterable[dict]) -> str | None:
     return max(fixes, key=_version_key)
 
 
-def osv_query(name: str, version: str, *, timeout: float = 30.0) -> list[dict]:
-    """Ask OSV which advisories affect ``name==version``."""
-    payload = json.dumps(
-        {"version": version, "package": {"name": name, "ecosystem": "PyPI"}}
-    ).encode()
+def _post_json(url: str, body: dict, *, timeout: float = 60.0) -> dict:
+    """POST *body* as JSON to one of the constant OSV URLs; the decoded answer."""
     request = urllib.request.Request(  # noqa: S310 — constant https URL
-        OSV_QUERY_URL,
-        data=payload,
+        url,
+        data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-        body = json.loads(response.read().decode())
+        return json.loads(response.read().decode())
+
+
+def osv_query(name: str, version: str, *, timeout: float = 30.0) -> list[dict]:
+    """Ask OSV which advisories affect ``name==version``."""
+    body = _post_json(
+        OSV_QUERY_URL,
+        {"version": version, "package": {"name": name, "ecosystem": "PyPI"}},
+        timeout=timeout,
+    )
     return body.get("vulns", [])
+
+
+def osv_querybatch(pairs: list[tuple[str, str]]) -> list[list[dict]]:
+    """The advisories of every ``(name, version)`` in *pairs*, in order, asked
+    in batches of OSV_BATCH_LIMIT. A result OSV pages (``next_page_token``)
+    is asked again on its own, so no advisory is cut off."""
+    out: list[list[dict]] = []
+    for start in range(0, len(pairs), OSV_BATCH_LIMIT):
+        chunk = pairs[start:start + OSV_BATCH_LIMIT]
+        queries = [{"package": {"name": n, "ecosystem": "PyPI"}, "version": v} for n, v in chunk]
+        results = _post_json(OSV_QUERYBATCH_URL, {"queries": queries}).get("results", [])
+        if len(results) != len(chunk):
+            raise ValueError(f"OSV answered {len(results)} results for {len(chunk)} queries")
+        for (name, version), result in zip(chunk, results):
+            if result.get("next_page_token"):
+                out.append(osv_query(name, version))
+            else:
+                out.append(list(result.get("vulns", [])))
+    return out
 
 
 def audit_floors(
@@ -209,6 +248,130 @@ def audit_floors(
     return findings
 
 
+# --------------------------------------------------------------------------
+# --lock: exact pins of a hashed requirements lock
+# --------------------------------------------------------------------------
+
+_PIN_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)\s*(?:;\s*(.*?))?\s*$")
+_HASH_RE = re.compile(r"^--hash=sha256:([0-9a-f]{64})$")
+
+
+@dataclass(frozen=True)
+class LockedPin:
+    """One entry of a hashed lock: ``name==version ; marker`` and its hashes."""
+
+    name: str
+    version: str
+    marker: str
+    hashes: tuple[str, ...]
+
+
+def parse_lock(text: str) -> list[LockedPin]:
+    """The entries of a ``pip install --require-hashes`` lock (as uv and
+    pip-tools write it), names PEP 503 normalised.
+
+    Raises ``ValueError`` on an entry that is not pinned with ``==``, an
+    entry without a sha256 hash, a hash that is not 64 hex digits, and a
+    lock without any entry - each would be installed unchecked or not
+    audited at all.
+    """
+    # Join continuation lines: an entry is one logical line.
+    logical: list[str] = []
+    pending = ""
+    for raw in text.splitlines():
+        line = raw.split(" #", 1)[0] if not raw.lstrip().startswith("#") else ""
+        line = line.rstrip()
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        pending += line
+        if pending.strip():
+            logical.append(pending.strip())
+        pending = ""
+    if pending.strip():
+        logical.append(pending.strip())
+
+    pins: list[LockedPin] = []
+    for entry in logical:
+        head, *options = re.split(r"\s+(?=--)", entry)
+        match = _PIN_RE.match(head)
+        if not match:
+            raise ValueError(f"not an exact pin (name==version): {head!r}")
+        hashes = []
+        for option in options:
+            found = _HASH_RE.match(option.strip())
+            if not found:
+                raise ValueError(f"{head}: not a sha256 hash option: {option.strip()!r}")
+            hashes.append(found.group(1))
+        if not hashes:
+            raise ValueError(f"{head}: no --hash, pip would install it unchecked")
+        pins.append(LockedPin(_normalise(match.group(1)), match.group(2),
+                              (match.group(3) or "").strip(), tuple(hashes)))
+    if not pins:
+        raise ValueError("no pinned entry in the lock")
+    return pins
+
+
+@dataclass(frozen=True)
+class LockFinding:
+    """One exact pin with advisories."""
+
+    package: str
+    version: str
+    advisories: list[str] = field(default_factory=list)
+    malicious: bool = False
+
+    def describe(self) -> str:
+        kind = "MALICIOUS PACKAGE" if self.malicious else "advisories"
+        return f"{self.package}=={self.version}: {kind}: {', '.join(self.advisories)}"
+
+
+def audit_lock(
+    pins: list[LockedPin],
+    *,
+    query_batch: Callable[[list[tuple[str, str]]], list[list[dict]]] = osv_querybatch,
+) -> list[LockFinding]:
+    """One :class:`LockFinding` per pinned ``name==version`` OSV has any
+    advisory for; each pair is asked once, whatever its markers."""
+    pairs = list(dict.fromkeys((p.name, p.version) for p in pins))
+    results = query_batch(pairs)
+    if len(results) != len(pairs):
+        raise ValueError(f"{len(results)} results for {len(pairs)} pins")
+    findings = []
+    for (name, version), vulns in zip(pairs, results):
+        ids = sorted({v.get("id", "?") for v in vulns})
+        if ids:
+            findings.append(LockFinding(name, version, ids,
+                                        any(i.startswith(MALICIOUS_PREFIX) for i in ids)))
+    return findings
+
+
+def _main_lock(path: Path, as_json: bool) -> int:
+    try:
+        pins = parse_lock(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        print(f"cannot read the lock {path}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        # Looked up at call time, so a test can replace the network call.
+        findings = audit_lock(pins, query_batch=lambda pairs: osv_querybatch(pairs))
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        print(f"lock audit could not complete: {exc}", file=sys.stderr)
+        return 2
+    pairs = len({(p.name, p.version) for p in pins})
+    if as_json:
+        print(json.dumps([f.__dict__ for f in findings], indent=2))
+    elif not findings:
+        print(f"OK — no known advisories against any of the {pairs} exact pins in {path}")
+    else:
+        malicious = sum(f.malicious for f in findings)
+        print(f"{len(findings)} of {pairs} exact pins have advisories "
+              f"({malicious} malicious):\n")
+        for finding in findings:
+            print(f"  {finding.describe()}")
+    return 1 if findings else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -221,7 +384,15 @@ def main(argv: list[str] | None = None) -> int:
         help="path to pyproject.toml (default: repo root)",
     )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument(
+        "--lock",
+        type=Path,
+        help="audit the exact pins of this hashed lock (build/requirements-bundle.txt) "
+        "instead of the pyproject floors; any advisory fails, malicious ones included",
+    )
     args = parser.parse_args(argv)
+    if args.lock is not None:
+        return _main_lock(args.lock, args.json)
 
     try:
         metadata = tomllib.loads(args.pyproject.read_text())["project"]

@@ -6,6 +6,7 @@ import os
 import posixpath
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -469,6 +470,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._transfer_target_panes: set[FilePaneWidget] = set()
         # Destination checks of F5 / F6 / drops still running (ScanJob).
         self._conflict_checks: set = set()
+        # Checked transfers waiting for their conflict prompt while another
+        # one is open (see _next_conflict_prompt), and whether one is.
+        self._conflict_waiting: list = []
+        self._conflict_prompting = False
         self._transfer_manager.job_finished.connect(self._on_transfer_finished)
         self._transfer_manager.all_finished.connect(self._on_all_transfers_finished)
         # Undos carried out by the transfer engine, recorded as undone only
@@ -479,9 +484,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # folders that wait for all their jobs.
         self._tag_moves: dict[str, tuple[str, str, str, str, str]] = {}
         self._tag_folder_moves: list[dict] = []
-        # Ended jobs whose tags follow on the next event-loop turn, in one
-        # batch with one write of tags.json (job id, ended well).
+        # Ended jobs whose tags follow in one batch with one write of
+        # tags.json (job id, ended well); see _queue_tag_job.
         self._tag_job_queue: list[tuple[str, bool | None]] = []
+        self._tag_last_flush = 0.0
         self._transfer_manager.job_finished.connect(self._tags_on_move_finished)
         self._transfer_manager.job_error.connect(self._tags_on_move_error)
         self._transfer_manager.job_finished.connect(self._on_undo_job_finished)
@@ -6262,9 +6268,13 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             self._conflict_checks.discard(check)
             check.deleteLater()
             self.statusBar().clearMessage()
-            title = tr("Move") if move else tr("Copy")
             if cancelled:
                 return
+            self._conflict_waiting.append(lambda: decide(kind, value))
+            self._next_conflict_prompt()
+
+        def decide(kind: str, value) -> None:
+            title = tr("Move") if move else tr("Copy")
             if self._transfer_manager.cancel_epoch != cancel_epoch:
                 log.info("Transfer dropped: Cancel All was pressed while the destination "
                          "was checked")
@@ -6298,6 +6308,24 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         check.finished.connect(finished)
         self.statusBar().showMessage(tr("Checking the destination for existing names…"))
         check.start(work)
+
+    def _next_conflict_prompt(self) -> None:
+        """Ask about the checked transfers in the order their checks
+        finished, one at a time. A prompt (QDialog.exec, a message box)
+        runs the event loop; a second check finishing meanwhile opened its
+        own prompt on top of the first. Now it waits for the open one."""
+        if self._conflict_prompting:
+            return
+        self._conflict_prompting = True
+        try:
+            while self._conflict_waiting:
+                step = self._conflict_waiting.pop(0)
+                try:
+                    step()
+                except Exception:  # noqa: BLE001 - the next transfer is still asked
+                    log.exception("Transfer conflict prompt failed")
+        finally:
+            self._conflict_prompting = False
 
     def _resolve_transfer_conflicts(self, dest_backend, scan):
         """Ask about each conflict of *scan*; a ConflictPlan, or None on Cancel."""
@@ -6445,20 +6473,31 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
     def _tags_on_move_error(self, job_id: str, _error: str = "") -> None:
         self._queue_tag_job(job_id, False)
 
+    #: The least time between two writes of tags.json while a move ends job
+    #: after job. Applied on the next event-loop turn alone, 300 moved files
+    #: wrote it 38 to 98 times once the panes refreshed during the move
+    #: (watchdog): each turn carried only a few ended jobs.
+    TAG_FLUSH_GAP_MS = 250
+
     def _queue_tag_job(self, job_id: str, ok: bool | None) -> None:
         """Every ended job wrote tags.json once (1000 moved files: 1.5 s of
-        GUI time); they are applied together on the next event-loop turn."""
+        GUI time); they are applied together: on the next event-loop turn,
+        or :data:`TAG_FLUSH_GAP_MS` after the last batch if that was later."""
         if job_id not in self._tag_moves and not any(
                 job_id in folder["pending"] for folder in self._tag_folder_moves):
             return  # no tag follows this job
         if not self._tag_job_queue:
-            QTimer.singleShot(0, self._flush_tag_jobs)
+            since = (time.monotonic() - self._tag_last_flush) * 1000
+            QTimer.singleShot(max(0, int(self.TAG_FLUSH_GAP_MS - since)), self._flush_tag_jobs)
         self._tag_job_queue.append((job_id, ok))
 
     def _flush_tag_jobs(self) -> None:
         from core import tags as TG
 
         queue, self._tag_job_queue = self._tag_job_queue, []
+        self._tag_last_flush = time.monotonic()
+        if not queue:
+            return  # already applied (the window closed in between)
         store = TG.store()
         try:
             with store.batch():
@@ -7273,28 +7312,43 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
 
     def _setup_status_bar(self) -> None:
         """The running version, bottom right; a permanent widget, so a
-        temporary status message never covers it."""
-        from axross._version import __version__
-
-        self._version_label = QLabel(f"axross {__version__}")
-        self._version_label.setProperty("role", "muted")
-        self._version_label.setToolTip(tr("Version of this axross"))
-        # The update notice, left of the version, hidden until a newer
-        # version is found (ui.update_ui).
+        temporary status message never covers it. Once a newer version is
+        found it says so ("axross 0.14.60 · Update available: 0.14.61"),
+        and a click opens the update window (ui.update_ui)."""
         from ui.update_ui import UpdateController
 
         self._update_controller = UpdateController(self)
         self._update_dialog = None
-        self._update_button = QPushButton()
-        self._update_button.setObjectName("axUpdateNotice")
-        self._update_button.setFlat(True)
-        self._update_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._update_button.setToolTip(tr("A newer axross is available"))
-        self._update_button.clicked.connect(lambda _checked=False: self.show_update_dialog())
-        self._update_button.setVisible(False)
-        self.statusBar().addPermanentWidget(self._update_button)
-        self.statusBar().addPermanentWidget(self._version_label)
+        self._version_button = QPushButton()
+        self._version_button.setObjectName("axVersion")
+        self._version_button.setFlat(True)
+        self._version_button.clicked.connect(lambda _checked=False: self._version_clicked())
+        self.statusBar().addPermanentWidget(self._version_button)
+        self._show_version_notice("")
         self._update_controller.changed.connect(self._refresh_update_notice)
+
+    def _show_version_notice(self, notice: str) -> None:
+        """The version bottom right, plain or with the update notice."""
+        from axross._version import __version__
+
+        shown = f"axross {__version__}"
+        button = self._version_button
+        button.setProperty("notice", bool(notice))
+        button.setProperty("role", "" if notice else "muted")
+        if notice:
+            button.setText(f"{shown} · {notice}".replace("&", "&&"))
+            button.setToolTip(tr("{notice} - click for the update window").format(notice=notice))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            button.setText(shown)
+            button.setToolTip(tr("Version of this axross"))
+            button.unsetCursor()
+        button.style().unpolish(button)
+        button.style().polish(button)
+
+    def _version_clicked(self) -> None:
+        if self._version_button.property("notice"):
+            self.show_update_dialog()
 
     # --- self-update (ui.update_ui, core.self_update) ---
     def update_controller(self):
@@ -7328,8 +7382,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         controller = self._update_controller
         visible = controller.notice_visible()
         text = controller.notice_text() if visible else ""
-        self._update_button.setText(text.replace("&", "&&"))
-        self._update_button.setVisible(visible)
+        self._show_version_notice(controller.status_text() if visible else "")
         self._update_menu_action.setText(text.replace("&", "&&"))
         self._update_menu_action.setVisible(visible)
 
@@ -7973,6 +8026,8 @@ and an MCP server.</p>
             event.ignore()
             return
         log.info("Application closing, cleaning up...")
+        if self._tag_job_queue:
+            self._flush_tag_jobs()  # ended moves whose tags wait for the gap
         if scripts is not None:
             try:
                 scripts.shutdown()  # a running script ends with the window
@@ -7988,6 +8043,7 @@ and an MCP server.</p>
         for check in list(self._conflict_checks):
             check.abandon()
         self._conflict_checks.clear()
+        self._conflict_waiting.clear()
         for tp in self._terminal_panes:
             # One broken pane must not skip the cleanup below (transfer
             # threads, connections, temp dirs).

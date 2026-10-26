@@ -144,13 +144,25 @@ def _probe_pop3(session: Any) -> None:
 
 
 def _probe_webdav(session: Any) -> None:
-    sess = getattr(session, "_session", None) or getattr(session, "session", None)
-    url = getattr(session, "_base_url", "") or getattr(session, "base_url", "")
-    if sess is None or not url:
-        raise OSError("no requests.Session/url to probe")
-    resp = sess.request("OPTIONS", url, timeout=10)
-    if resp.status_code >= 500:
-        raise OSError(f"OPTIONS returned {resp.status_code}")
+    client = getattr(session, "_client", None)
+    if callable(getattr(client, "_request", None)):
+        # core.webdav_client.WebDavSession: its client sends the OPTIONS
+        # over the probing thread's own requests.Session, with the
+        # session's auth and profile proxy.
+        resp = client._request("OPTIONS", "/", timeout=10)
+    else:
+        sess = getattr(session, "_session", None) or getattr(session, "session", None)
+        url = getattr(session, "_base_url", "") or getattr(session, "base_url", "")
+        if sess is None or not url:
+            raise OSError("no requests.Session/url to probe")
+        resp = sess.request("OPTIONS", url, timeout=10)
+    try:
+        if resp.status_code >= 500:
+            raise OSError(f"OPTIONS returned {resp.status_code}")
+    finally:
+        close = getattr(resp, "close", None)
+        if close is not None:
+            close()
 
 
 #: Probes that send a command on a handle the session's own workers use

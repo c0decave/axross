@@ -57,7 +57,7 @@ def test_happy_an_installed_model_is_available(share):
 def test_edge_the_voice_extra_pins_the_checked_versions():
     reqs = dict(r.split(">=") for r in F.EXTRAS["voice"])
     assert reqs == {"piper-tts": "1.8.0", "onnxruntime": "1.31.0", "faster-whisper": "1.2.1",
-                    "ctranslate2": "4.8.3"}
+                    "ctranslate2": "4.8.4"}
 
 
 def test_sad_the_voice_extra_is_not_part_of_all():

@@ -104,7 +104,8 @@ def _from_dict(raw: dict) -> ProxyDefaults:
 def _read(p: Path) -> tuple[ProxyDefaults, bool]:
     """The stored defaults and whether the file could be read. A missing
     file is readable: it means "no default proxy". A file that exists but
-    cannot be read, is no JSON / UTF-8 or no object is not."""
+    cannot be read, is no JSON / UTF-8, no object or names a proxy type
+    axross does not know is not."""
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -113,7 +114,21 @@ def _read(p: Path) -> tuple[ProxyDefaults, bool]:
         return ProxyDefaults(), False
     if not isinstance(raw, dict):
         return ProxyDefaults(), False
+    if not _known_type(raw.get("proxy_type")):
+        # A hand-edited type axross does not know ("socks9", a number): the
+        # user meant a proxy, and "none" would connect directly.
+        return _from_dict(raw), False
     return _from_dict(raw), True
+
+
+def _known_type(value: object) -> bool:
+    """Whether a stored proxy_type is absent, "none" or a type axross knows."""
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    ptype = _clean(value, 32).lower()
+    return ptype in ("", "none") or is_valid_proxy_type(ptype)
 
 
 def load(path: Path | None = None) -> ProxyDefaults:

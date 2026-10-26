@@ -24,8 +24,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: "3.12"
     - name: Qt runtime libraries (Linux)
@@ -54,14 +54,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: "3.12"
-    - name: Install axross and PyInstaller
+    - name: Install the locked build dependencies
+      # The hashed lock the Linux bundles are built from (Dockerfile.build):
+      # one exact version and the sha256 of every file per package; a file
+      # that differs stops the build. pip and setuptools first (the same two
+      # entries), then the lock; adb-shell and manuf publish no Python 3 wheel
+      # and are built against the hashed setuptools, without fetching a
+      # build backend.
+      # The spec builds from the checkout, so axross itself is not installed.
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install ".[all]" pyinstaller
+        python -m pip install --require-hashes --only-binary=:all: -r build/requirements-bootstrap.txt
+        python -m pip install --require-hashes --only-binary=:all: --no-binary=adb-shell,manuf --no-build-isolation -r build/requirements-bundle.txt
     - name: Build axross-slim
       env:
         AXROSS_BUNDLE_FLAVOR: slim
@@ -74,7 +81,7 @@ jobs:
       # Cocoa on macOS, the desktop on Windows: the checks above never open
       # a window, so a crash on the way to it passed every run before.
       run: python scripts/bundle_smoke.py --native dist
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: axross-slim-${{ runner.os }}-${{ runner.arch }}
         path: dist/axross-slim*

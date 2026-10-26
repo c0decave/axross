@@ -29,6 +29,7 @@ on demand via :func:`snapshot_now`.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -112,6 +113,18 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_snapshots_trail_ts
     ON snapshots(trail_id, ts);
 """
+
+
+@contextlib.contextmanager
+def _db():
+    """The trail database for one call, closed again when it is done - a
+    connection left to the garbage collector keeps the file open and is a
+    ResourceWarning since Python 3.13."""
+    conn = _connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _connect() -> sqlite3.Connection:
@@ -231,6 +244,34 @@ def _walk_collect(
     return rows, truncated
 
 
+def _unique_paths(rows: list[dict]) -> list[dict]:
+    """Rows whose paths are unique. A folder may list two entries of one
+    name (Google Drive allows it); each is a file of its own and is
+    recorded, the second and later as ``<path>  (duplicate N)`` - numbered
+    in the order of (size, mtime, head hash), so an unchanged folder that
+    lists them in another order gets the same keys. A key that a real file
+    already has moves on to the next number."""
+    by_path: dict[str, list[dict]] = {}
+    for r in rows:
+        by_path.setdefault(r["path"], []).append(r)
+    if all(len(group) == 1 for group in by_path.values()):
+        return rows
+    taken = set(by_path)
+    out: list[dict] = []
+    for path, group in by_path.items():
+        group.sort(key=lambda r: (r["size"], r["mtime"], r["sha_prefix"]))
+        out.append(group[0])
+        n = 1
+        for r in group[1:]:
+            n += 1
+            while f"{path}  (duplicate {n})" in taken:
+                n += 1
+            key = f"{path}  (duplicate {n})"
+            taken.add(key)
+            out.append({**r, "path": key})
+    return out
+
+
 def _hash_head(backend, path: str) -> str:
     """SHA-256 prefix of the first ``HEAD_HASH_BYTES`` bytes of a file.
     Returns empty on failure — never raises out of the trail loop."""
@@ -283,7 +324,7 @@ def _compute_tree_hash(rows: list[dict]) -> str:
 def list_trails() -> list[dict]:
     """Return every recorded trail with a brief summary."""
     out: list[dict] = []
-    with _connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             "SELECT name, backend_label, path, interval_s, head_hash, "
             "last_snapshot_at, started_at FROM trails ORDER BY name"
@@ -324,10 +365,11 @@ def snapshot_now(
         max_files=max_files,
         head_hash=head_hash,
     )
+    rows = _unique_paths(rows)
     tree_hash = _compute_tree_hash(rows)
     total_bytes = sum(r["size"] for r in rows)
     ts = time.time()
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute("BEGIN")
         # upsert the trail
         cur = conn.execute(
@@ -375,7 +417,7 @@ def snapshot_now(
 
 def list_snapshots(trail_name: str, *, limit: int = 100) -> list[Snapshot]:
     out: list[Snapshot] = []
-    with _connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             "SELECT s.id, t.name, s.ts, s.file_count, s.total_bytes, "
             "       s.tree_hash, s.truncated "
@@ -406,7 +448,7 @@ def diff_snapshots(snapshot_a: int, snapshot_b: int) -> TrailDiff:
     only in B are ``added``.
     """
     diff = TrailDiff()
-    with _connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             "SELECT path, size, mtime, sha_prefix FROM files WHERE snapshot_id = ?",
             (snapshot_a,),

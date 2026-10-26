@@ -17,14 +17,14 @@ sys.path.insert(0, str(ROOT))
 
 from core import features as F  # noqa: E402
 
-DOCKERFILE = (ROOT / "Dockerfile.build").read_text(encoding="utf-8")
+LOCK = (ROOT / "build" / "requirements-bundle.txt").read_text(encoding="utf-8")
 SPEC = (ROOT / "build" / "axross.spec").read_text(encoding="utf-8")
 BUNDLE = (ROOT / "scripts" / "build_bundle.sh").read_text(encoding="utf-8")
 LICENSES = (ROOT / "THIRD_PARTY_LICENSES.md").read_text(encoding="utf-8")
 OFFER = ROOT / "build" / "licenses" / "voice" / "SOURCE-OFFER.txt"
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 PINS = {"piper-tts": "1.8.0", "onnxruntime": "1.31.0", "faster-whisper": "1.2.1",
-        "ctranslate2": "4.8.3"}
+        "ctranslate2": "4.8.4"}
 
 
 def _full_block() -> str:
@@ -34,8 +34,11 @@ def _full_block() -> str:
 
 
 def test_happy_the_builder_installs_the_pinned_voice_packages():
+    """The builder installs build/requirements-bundle.txt (hashed): the voice
+    packages are pinned there, Linux only (axross-full)."""
     for name, version in PINS.items():
-        assert f'"{name}=={version}"' in DOCKERFILE, name
+        assert re.search(rf"^{re.escape(name)}=={re.escape(version)} ; sys_platform == 'linux' \\$",
+                         LOCK, re.M), name
 
 
 def test_happy_the_pins_meet_the_extras_floors():

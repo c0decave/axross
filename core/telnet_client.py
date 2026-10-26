@@ -858,6 +858,22 @@ def rename_command(src: str, dst: str) -> str:
     )
 
 
+def remove_command(path: str, *, recursive: bool, quote=shlex.quote) -> str:
+    """Shell command that removes ``path`` like the backends' remove().
+
+    Not recursive: a folder goes with ``rmdir`` (refused when it is not
+    empty), anything else - a symlink to a folder too - with ``rm -f``.
+    ``test -d`` follows a link: ``rmdir`` on a link to a folder failed
+    ("Not a directory"), and ``rm -f`` alone refuses an empty folder.
+    Recursive: ``rm -rf``, which removes a link itself, never the folder it
+    points to. *quote* quotes the path for the remote shell; ``--`` ends
+    the options, so a name that starts with ``-`` is never one."""
+    q = quote(path)
+    if recursive:
+        return f"rm -rf -- {q}"
+    return f"if test -d {q} && ! test -L {q}; then rmdir -- {q}; else rm -f -- {q}; fi"
+
+
 def copy_command(src: str, dst: str, *, preserve: bool = False) -> str:
     """Shell command that copies the file ``src`` to the path ``dst``.
 
@@ -1502,16 +1518,7 @@ class TelnetSession(SessionLifecycle):
         self._exec(f"mkdir -p {shlex.quote(self.normalize(path))}")
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        path = self.normalize(path)
-        qpath = shlex.quote(path)
-        if recursive:
-            self._exec(f"rm -rf {qpath}")
-        else:
-            # Check if directory
-            if self.is_dir(path):
-                self._exec(f"rmdir {qpath}")
-            else:
-                self._exec(f"rm -f {qpath}")
+        self._exec(remove_command(self.normalize(path), recursive=recursive))
 
     def rename(self, src: str, dst: str) -> None:
         self._exec(rename_command(self.normalize(src), self.normalize(dst)))

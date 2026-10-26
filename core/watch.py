@@ -376,8 +376,15 @@ def watch(
         factory = _WATCHER_FACTORIES.get(proto)
         if factory is not None:
             w = factory(backend, path, callback, interval=interval)
-            w.start()
-            return w
+            try:
+                w.start()
+            except OSError as exc:
+                # The folder is gone, or the inotify instance/watch limit is
+                # reached: the pane is still watched, by polling.
+                log.warning("Push watcher for %s could not start (%s); polling instead", path, exc)
+                w.stop()
+            else:
+                return w
 
     w = PollingWatcher(backend, path, callback, interval=interval, initial_entries=initial_entries)
     w.start()
@@ -400,53 +407,60 @@ if _WatchdogObserver is not None:
 
     class _LocalFSInotifyWatcher(Watcher):
         """watchdog-backed watcher for LocalFS. Uses inotify on Linux,
-        FSEvents on macOS, ReadDirectoryChangesW on Windows."""
+        FSEvents on macOS, ReadDirectoryChangesW on Windows.
+
+        The observer runs its own thread, so this watcher starts none:
+        :meth:`start` schedules the folder and raises ``OSError`` when it
+        cannot be watched (gone, or the inotify limit reached), and
+        :func:`watch` then falls back to polling."""
 
         def __init__(self, backend, path, callback, interval: float = 2.0) -> None:
             super().__init__(backend, path, callback)
             self._observer = _WatchdogObserver()
+            self._started = False
 
-        def _map(self, event_name: str) -> str:
-            return {
-                "created": "created",
-                "modified": "modified",
-                "deleted": "deleted",
-                "moved": "modified",
-            }.get(event_name, "modified")
-
-        def _run(self) -> None:
-            watcher_self = self
+        def start(self) -> None:
+            if self._started:
+                return
+            watcher = self
 
             class _Handler(FileSystemEventHandler):
                 def on_created(self, ev):
-                    watcher_self._emit(
-                        "created",
-                        ev.src_path,
-                        "dir" if ev.is_directory else "file",
-                    )
+                    watcher._emit("created", ev.src_path, _kind(ev))
 
                 def on_modified(self, ev):
-                    watcher_self._emit(
-                        "modified",
-                        ev.src_path,
-                        "dir" if ev.is_directory else "file",
-                    )
+                    watcher._emit("modified", ev.src_path, _kind(ev))
 
                 def on_deleted(self, ev):
-                    watcher_self._emit(
-                        "deleted",
-                        ev.src_path,
-                        "dir" if ev.is_directory else "file",
-                    )
+                    watcher._emit("deleted", ev.src_path, _kind(ev))
 
-            self._observer.schedule(_Handler(), self._path, recursive=False)
-            self._observer.start()
+                def on_moved(self, ev):
+                    # A rename inside the folder, or a move out of / into it.
+                    watcher._emit("deleted", ev.src_path, _kind(ev))
+                    watcher._emit("created", ev.dest_path, _kind(ev))
+
             try:
-                while not self._stop_event.wait(0.5):
-                    pass
-            finally:
-                self._observer.stop()
-                self._observer.join(timeout=5)
+                self._observer.schedule(_Handler(), self._path, recursive=False)
+                self._observer.start()
+            except OSError:
+                self._shut_observer()
+                raise
+            self._started = True
 
-    register_watcher_factory("sftp", lambda *a, **kw: PollingWatcher(*a, **kw))
+        def stop(self, timeout: float = 5.0) -> None:
+            self._stop_event.set()
+            self._shut_observer(timeout)
+            self._started = False
+
+        def _shut_observer(self, timeout: float = 5.0) -> None:
+            try:
+                self._observer.stop()
+                if self._observer.is_alive():
+                    self._observer.join(timeout=timeout)
+            except Exception as exc:  # noqa: BLE001 - never block a pane's teardown
+                log.debug("watchdog observer stop for %s: %s", self._path, exc)
+
+    def _kind(ev) -> str:
+        return "dir" if ev.is_directory else "file"
+
     register_watcher_factory("local", _LocalFSInotifyWatcher)

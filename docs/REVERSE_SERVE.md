@@ -114,12 +114,12 @@ gateway, not a hardened S3 cluster**.
 | `HEAD /<bucket>/<key>` (HeadObject) | ✓ |
 | `HEAD /<bucket>` (HeadBucket) | ✓ |
 | `PUT /<bucket>/<key>` (PutObject) | ✓ |
-| `DELETE /<bucket>/<key>` (DeleteObject) | ✓ |
+| `DELETE /<bucket>/<key>` (DeleteObject) | ✓ - 204 also for a key that does not exist; a delete the backend refuses is 403 `AccessDenied` (500 for any other failure), never 204 |
 | `POST /<bucket>?delete` (DeleteObjects) | ✗ |
 | Multipart upload | ✗ |
 | Versioning | ✗ |
 | Tags / ACLs / Lifecycle | ✗ |
-| Signed URLs / V4 auth | ✗ (Bearer only) |
+| Signed URLs / V4 signatures | ✗ - the signature is not checked; the access key id is compared with the token (see *Auth*) |
 
 Path-style only. Virtual-host-style (`bucket.example.com/key`) is
 not parsed. Single-PUT uploads cap at the body limit (8 GiB);
@@ -133,11 +133,11 @@ larger objects need multipart, which we don't speak yet.
 | `GET` (file or HTML index for dirs) | ✓ |
 | `HEAD` | ✓ |
 | `PUT` | ✓ |
-| `DELETE` | ✓ (recursive) |
-| `MKCOL` | ✓ |
-| `MOVE`, `COPY` | ✓ (uses backend native rename / copy where present) |
+| `DELETE` | ✓ (recursive); 404 only when nothing is there, 403 when the backend refuses; `DELETE /` (the served root) is refused with 403 |
+| `MKCOL` | ✓ - 405 on an existing resource, 409 when a parent is missing (never created implicitly) |
+| `MOVE`, `COPY` | ✓ (uses backend native rename / copy where present); `Overwrite: F` honoured; moving the served root, or onto it, is refused with 403 |
 | `PROPFIND` Depth 0/1 | ✓ |
-| `PROPFIND` Depth infinity | ✗ — declines |
+| `PROPFIND` Depth infinity | answered like Depth 1 (the resource and its direct children) |
 | `LOCK` / `UNLOCK` | ✓ as no-ops (returns plausible tokens) |
 | `PROPPATCH` | ✗ |
 

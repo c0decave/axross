@@ -288,8 +288,14 @@ def test_perf_sad_the_former_filter_read_it_per_row():
 #: A filter pass costs at most this share of the former one. Measured
 #: 21 ms against 35 ms over 20,000 entries; most of what is left is Qt
 #: calling a Python filterAcceptsRow at all (20 ms for one that returns
-#: True). Compared in one process, so the host's load hits both.
+#: True). Compared in one process, so the host's load hits both. On a loaded
+#: host one comparison still went either way (the former filter against itself:
+#: 44 ms against 64 ms), so each verdict gets up to ATTEMPTS comparisons: a real
+#: regression fails every one, noise does not fail them all.
 FILTER_SHARE = 0.8
+
+
+ATTEMPTS = 3
 
 
 def _paired_costs(first, second, rounds: int = 3) -> tuple[float, float]:
@@ -300,12 +306,24 @@ def _paired_costs(first, second, rounds: int = 3) -> tuple[float, float]:
     return min(a), min(b)
 
 
+def _holds_once(check, first, second) -> tuple[bool, list]:
+    seen = []
+    for _ in range(ATTEMPTS):
+        costs = _paired_costs(first, second)
+        seen.append(costs)
+        if check(*costs):
+            return True, seen
+    return False, seen
+
+
 def test_perf_happy_a_filter_pass_over_20000_entries_is_cheaper():
-    new, old = _paired_costs(FileSortProxyModel, _OldProxy)
-    assert new < old * FILTER_SHARE, (new, old)
+    ok, seen = _holds_once(lambda new, old: new < old * FILTER_SHARE,
+                           FileSortProxyModel, _OldProxy)
+    assert ok, seen
 
 
 def test_perf_sad_the_comparison_catches_a_filter_as_slow_as_before():
     """Negative control: the former filter against itself is no cheaper."""
-    again, old = _paired_costs(_OldProxy, _OldProxy)
-    assert not again < old * FILTER_SHARE, (again, old)
+    ok, seen = _holds_once(lambda again, old: not again < old * FILTER_SHARE,
+                           _OldProxy, _OldProxy)
+    assert ok, seen

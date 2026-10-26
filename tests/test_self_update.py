@@ -34,9 +34,12 @@ from tests.fake_github import (  # noqa: E402
     FakeRelease,
     newer_than,
     older_than,
+    trust_test_key,
 )
 
 NEW = newer_than(__version__)
+#: The pinned release keys, read before any test patches them.
+RELEASE_KEYS = SU.TRUSTED_KEYS
 OLD_BYTES = b"\x7fELF old axross binary " * 100
 NEW_BYTES = b"\x7fELF new axross binary " * 5000  # > one 64 KiB chunk
 
@@ -46,6 +49,12 @@ def _no_env_proxy(monkeypatch):
     for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy",
                  "ALL_PROXY", "no_proxy", "NO_PROXY", SU.NO_CHECK_ENV):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _trust_the_test_key(monkeypatch):
+    """Every fake release is signed with the test key (tests/fake_github.py)."""
+    trust_test_key(monkeypatch)
 
 
 @pytest.fixture
@@ -281,8 +290,9 @@ def test_happy_e2e_download_verify_replace_keep_previous(fake, binary):
     assert leftovers(binary.parent) == []
     assert seen[-1] == (len(NEW_BYTES), len(NEW_BYTES))
     assert [d for d, _ in seen] == sorted(d for d, _ in seen)
-    # SHA256SUMS and the binary, each through github.com's redirect.
-    assert fake.hosts() == [API_HOST, WEB_HOST, ASSET_HOST, WEB_HOST, ASSET_HOST]
+    # SHA256SUMS, its signature and the binary, each through github.com's redirect.
+    assert fake.hosts() == [API_HOST, WEB_HOST, ASSET_HOST, WEB_HOST, ASSET_HOST, WEB_HOST,
+                            ASSET_HOST]
 
 
 def test_happy_the_original_mode_is_kept(fake, binary):
@@ -319,7 +329,7 @@ def test_happy_the_api_version_header_goes_to_the_api_only(fake, binary, monkeyp
     release = SU.check(opener=opener_for(fake)).release
     SU.update(release, frozen_install(binary), opener=opener_for(fake))
     assert sent[0] == (API_HOST, "2022-11-28")
-    assert all(value is None for host, value in sent[1:]) and len(sent) == 5
+    assert all(value is None for host, value in sent[1:]) and len(sent) == 7  # + SHA256SUMS.sig
 
 
 def test_edge_an_older_previous_is_replaced(fake, binary):
@@ -358,7 +368,8 @@ def test_sad_missing_sha256sums_entry_is_refused(fake, binary, api_digest):
     with pytest.raises(SU.ChecksumError, match="no entry for axross-full"):
         SU.update(release, frozen_install(binary), opener=opener_for(fake))
     assert binary.read_bytes() == OLD_BYTES and leftovers(binary.parent) == []
-    assert ASSET_HOST in fake.hosts() and fake.hosts().count(WEB_HOST) == 1  # binary not fetched
+    # SHA256SUMS and its signature, the binary not fetched
+    assert ASSET_HOST in fake.hosts() and fake.hosts().count(WEB_HOST) == 2
 
 
 def test_sad_a_release_without_sha256sums_is_refused(fake, binary):
@@ -414,7 +425,7 @@ def test_sad_an_asset_above_the_bound_is_not_downloaded(fake, binary):
     release = SU.check(opener=opener_for(fake)).release
     with pytest.raises(SU.UpdateError, match="larger"):
         SU.update(release, frozen_install(binary), opener=opener_for(fake))
-    assert fake.hosts().count(ASSET_HOST) <= 1  # at most SHA256SUMS
+    assert fake.hosts().count(ASSET_HOST) <= 2  # at most SHA256SUMS and its signature
 
 
 def test_edge_a_cut_download_leaves_nothing(fake, binary):
@@ -696,17 +707,26 @@ UI_LABELS = ("Download and Install", "Skip This Version", "Remind Me Later", "Re
 def test_happy_each_guide_documents_the_update(name):
     text = (ROOT / name).read_text(encoding="utf-8")
     assert "\n| Updates | " in text and "\n## Updates\n" in text
-    for needle in (SU.NO_CHECK_ENV, "SHA256SUMS", ".previous", "pip install -U axross",
-                   "~/.cache/axross/update/", "release-assets.githubusercontent.com"):
+    for needle in (SU.NO_CHECK_ENV, "SHA256SUMS", SU.SIG_NAME, "Ed25519", ".previous",
+                   "pip install -U axross", "~/.cache/axross/update/",
+                   "release-assets.githubusercontent.com"):
         assert needle in text, needle
 
 
 def test_happy_packaging_and_opsec_document_the_contract():
     packaging = (ROOT / "docs/PACKAGING.md").read_text(encoding="utf-8")
     for needle in (SU.FLAVOR_FILE, SU.NO_CHECK_ENV, SU.SUMS_NAME, "axross-slim-macos-arm64",
-                   "axross-slim-windows-x64.exe", *sorted(SU.ALLOWED_HOSTS)):
+                   "axross-slim-windows-x64.exe", *sorted(SU.ALLOWED_HOSTS),
+                   SU.SIG_NAME, "scripts/sign_release.py", "raw 64-byte Ed25519",
+                   *RELEASE_KEYS):
         assert needle in packaging, needle
     assert SU.NO_CHECK_ENV in (ROOT / "docs/OPSEC.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("name", ["README.md", "README_de.md", "README_es.md"])
+def test_happy_each_readme_says_releases_are_signed(name):
+    text = (ROOT / name).read_text(encoding="utf-8")
+    assert SU.SIG_NAME in text and "Ed25519" in text
 
 
 def test_sad_the_labels_the_docs_name_exist_in_the_code():

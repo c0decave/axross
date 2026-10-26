@@ -229,6 +229,28 @@ class ResolveTest(_Isolated):
         r = PS.resolve("default", None, "example.com", 22)
         self.assertEqual((r.config, r.source), (None, "default-none"))
 
+    def test_sad_an_unknown_proxy_type_fails_closed(self) -> None:
+        """A hand-edited proxy_type axross does not know ("socks9", a typo,
+        a number) read as "none" and connected directly; the user meant a
+        proxy, so it fails closed like an unreadable file."""
+        self.default()
+        for value in ("socks9", "bogus", 7, True, ["socks5"]):
+            with self.subTest(value=value):
+                raw = json.loads(self.path.read_text())
+                raw["proxy_type"] = value
+                self.path.write_text(json.dumps(raw))
+                with self.assertRaises(PS.ProxyResolutionError):
+                    PS.resolve("default", None, "example.com", 22)
+                # The Settings page still opens on it, showing no proxy.
+                self.assertEqual(PS.load(self.path).proxy_type, "none")
+
+    def test_edge_none_and_a_missing_type_still_connect_directly(self) -> None:
+        for raw in ({"proxy_type": "none"}, {"proxy_type": None}, {}, {"proxy_type": " NONE "}):
+            with self.subTest(raw=raw):
+                self.path.write_text(json.dumps(raw))
+                r = PS.resolve("default", None, "example.com", 22)
+                self.assertEqual((r.config, r.source), (None, "default-none"))
+
     def test_sad_an_unreadable_default_fails_closed(self) -> None:
         """A truncated / non-UTF-8 / non-object proxy.json must not turn
         "use the default proxy" into a direct connection."""

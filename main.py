@@ -469,6 +469,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     global _NOTIFY_FD
+    # First of all: a one-file bundle keeps reading its modules from the file
+    # it started from, even after an update renamed a new version over it
+    # (core.frozen_archive; before, the next late import failed in zlib).
+    from core.frozen_archive import pin_frozen_archive
+
+    pin_frozen_archive()
     # Before anything can start a child: give the process the environment
     # it started with (a frozen bundle points LD_LIBRARY_PATH, QT_PLUGIN_PATH
     # and more into its unpacked folder, and host programs then load our

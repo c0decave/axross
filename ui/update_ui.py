@@ -8,6 +8,10 @@
   "Update to X.Y.Z…", shown only when a newer version is there; both open
 * :class:`UpdateDialog` - not modal: the versions, the release notes, a link
   to the release page and the buttons.
+* :class:`ReleaseNotesView` - the release notes, rendered as Markdown. The
+  body comes from the network: raw HTML in it is shown as text, no
+  resource (image, style sheet) is ever loaded, and only http(s) links
+  open, through core.desktop_open.
 * :class:`UpdatesPage` - Settings > Updates.
 """
 
@@ -19,7 +23,8 @@ import time
 import types
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QTextDocument
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -28,9 +33,9 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -106,6 +111,14 @@ class UpdateController(QObject):
         if self.state == FINISH:
             return tr("Finish the Update to {version}…").format(version=version)
         return tr("Update to {version}…").format(version=version)
+
+    def status_text(self) -> str:
+        """The notice next to the version bottom right: like
+        :meth:`notice_text`, but a found version reads "Update available"."""
+        if self.state == AVAILABLE:
+            version = self.release.version if self.release else ""
+            return tr("Update available: {version}").format(version=version)
+        return self.notice_text()
 
     def _progress_text(self, state: dict) -> str:
         self.progress = (state.get("scanned", 0), state.get("indexed", 0))
@@ -206,6 +219,12 @@ class UpdateController(QObject):
         if kind == "error":
             if isinstance(value, SU.Cancelled):
                 message = tr("The download was cancelled; nothing was changed.")
+            elif isinstance(value, SU.SignatureError):
+                log.warning("update refused, bad signature: %s", value)
+                message = tr("The update is refused: release {version} is not signed with "
+                             "the axross release key ({reason}). Nothing was changed.").format(
+                                 version=self.release.version if self.release else "?",
+                                 reason=str(value).rstrip("."))
             else:
                 reason = str(value) if isinstance(value, SU.UpdateError) else repr(value)
                 log.warning("update download failed: %s", reason)
@@ -276,6 +295,54 @@ class UpdateController(QObject):
         self._download_job.abandon()
 
 
+#: Qt's GitHub Markdown, without raw HTML: an HTML span or block in the
+#: notes is shown as the text it is (with HTML, Qt interprets it: a
+#: <script> block swallowed the rest of the notes in a test).
+NOTES_MARKDOWN = (QTextDocument.MarkdownFeature.MarkdownDialectGitHub
+                  | QTextDocument.MarkdownFeature.MarkdownNoHTML)
+#: The only link schemes the notes open.
+WEB_SCHEMES = ("http", "https")
+
+
+class ReleaseNotesView(QTextBrowser):
+    """Release notes from the network, as Markdown: no resource is loaded
+    (:meth:`loadResource` answers nothing, for any URL), raw HTML is text,
+    and a link opens only when it is http(s) with a host."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setOpenLinks(False)
+        self.setOpenExternalLinks(False)
+        self.anchorClicked.connect(self._open_link)
+        self._source: str | None = None
+        #: The resources the notes asked for and did not get (for tests).
+        self.refused_resources: set[str] = set()
+
+    def set_notes(self, text: str) -> None:
+        """Render *text*; the same text again keeps the document."""
+        if text == self._source:
+            return
+        self._source = text
+        self.document().setMarkdown(text, NOTES_MARKDOWN)
+
+    def loadResource(self, kind: int, name: QUrl):  # noqa: N802 - Qt
+        """Nothing, for every resource: release notes load no image or
+        style sheet, remote or local."""
+        if len(self.refused_resources) < 100:
+            self.refused_resources.add(name.toString())
+        return None
+
+    @staticmethod
+    def _open_link(url: QUrl) -> None:
+        if url.scheme().lower() not in WEB_SCHEMES or not url.host():
+            log.info("release notes: link not opened (only http and https): %s",
+                     url.toString()[:200])
+            return
+        from core import desktop_open
+
+        desktop_open.open_url(url)
+
+
 class UpdateDialog(QDialog):
     """Help > Check for Updates…, and what the notice opens."""
 
@@ -292,8 +359,7 @@ class UpdateDialog(QDialog):
         self.version_label = QLabel()
         self.version_label.setProperty("role", "muted")
         self.version_label.setWordWrap(True)
-        self.notes = QPlainTextEdit()
-        self.notes.setReadOnly(True)
+        self.notes = ReleaseNotesView()
         self.link_label = QLabel()
         self.link_label.setTextFormat(Qt.TextFormat.RichText)
         self.link_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
@@ -345,8 +411,8 @@ class UpdateDialog(QDialog):
             version=c.current_version, kind=kind))
         has_notes = release is not None and bool(release.notes)
         self.notes.setVisible(has_notes)
-        if has_notes and self.notes.toPlainText() != release.notes:
-            self.notes.setPlainText(release.notes)
+        if has_notes:
+            self.notes.set_notes(release.notes)
         self.link_label.setVisible(release is not None)
         if release is not None:
             self.link_label.setText(
@@ -465,7 +531,8 @@ class UpdatesPage(_FormPage):
         self.layout_.addWidget(_note(tr(
             "Only github.com, api.github.com and release-assets.githubusercontent.com are "
             "contacted, over https, through the default proxy (Network & Proxy). A download "
-            "is checked against the SHA256SUMS of its release before anything is replaced.")))
+            "is checked against the SHA256SUMS of its release, whose signature must verify "
+            "with the axross release key, before anything is replaced.")))
         if controller is not None:
             controller.changed.connect(self._show_last)
         self._show_last()
@@ -511,6 +578,7 @@ class UpdatesPage(_FormPage):
 
 __all__ = [
     "START_CHECK_DELAY_MS",
+    "ReleaseNotesView",
     "UpdateController",
     "UpdateDialog",
     "UpdatesPage",

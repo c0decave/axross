@@ -31,6 +31,7 @@ at each start; a container whose podman had to be killed is removed by name.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -853,9 +854,17 @@ class McpClient:
             log.debug("mcp client: closing %s failed", self.config.name, exc_info=True)
 
 
+def _credentials_digest(token: str, secrets: dict) -> str:
+    """What a client was connected with, as a digest (the pool keeps no
+    secret text of its own)."""
+    text = json.dumps([token, sorted(secrets.items())])
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 class McpClientPool:
     """The connected servers of the GUI, shared by every Agent tab:
-    connected on first use, reconnected when their config changes."""
+    connected on first use, reconnected when their config changes - or the
+    token or secret values (keyring) they would connect with now."""
 
     def __init__(self, *, token_lookup: Callable[[str], str] | None = None,
                  wrap_for: Callable[[McpServerConfig], Callable | None] | None = None) -> None:
@@ -879,14 +888,18 @@ class McpClientPool:
         return tools, errors
 
     def _tools_of(self, config: McpServerConfig, wrap_for) -> list[ExternalTool]:
+        # The token and the secret values live in the keyring, not in the
+        # signature: a client connected with other ones is connected again.
+        token = self._token_lookup(config.name) if config.bearer else ""
+        secrets = secrets_of(config) if config.transport == "stdio" else {}
+        digest = _credentials_digest(token, secrets)
         with self._lock:
             held = self._clients.get(config.name)
-            if held is not None and held[0] == config.signature():
+            if held is not None and held[0] == config.signature() and held[3] == digest:
                 return list(held[2])
         if held is not None:
             self.drop(config.name)
-        token = self._token_lookup(config.name) if config.bearer else ""
-        client = McpClient(config, token=token, wrap=wrap_for(config))
+        client = McpClient(config, token=token, wrap=wrap_for(config), secrets=secrets)
         try:
             found = client.tools()
         except Exception:
@@ -894,7 +907,7 @@ class McpClientPool:
             raise
         with self._lock:
             old = self._clients.get(config.name)
-            self._clients[config.name] = (config.signature(), client, found)
+            self._clients[config.name] = (config.signature(), client, found, digest)
             self._always |= {t.name for t in found if t.always_ask}
         if old is not None:
             old[1].close()

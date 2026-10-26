@@ -47,6 +47,13 @@ from ui.scan_job import ScanJob
 
 log = logging.getLogger(__name__)
 
+#: Protocols without a login name: the Username row is hidden for them and
+#: validation never asks for one - one list, so a hidden field can never be
+#: a required one (it was for RamFS, TFTP and MTP).
+NO_USERNAME_PROTOCOLS = frozenset(
+    {"nfs", "onedrive", "sharepoint", "gdrive", "dropbox", "gopher", "pjl", "ramfs", "tftp", "mtp"}
+)
+
 
 class _ConnectThread(QThread):
     """Background thread for test connection to avoid freezing the UI."""
@@ -640,18 +647,7 @@ class ConnectionDialog(QDialog):
         self._set_form_row_visible(self._port, needs_host)
 
         # Username visibility — cloud OAuth and no-auth protocols don't need it
-        needs_username = proto not in (
-            "nfs",
-            "onedrive",
-            "sharepoint",
-            "gdrive",
-            "dropbox",
-            "gopher",
-            "pjl",
-            "ramfs",
-            "tftp",
-            "mtp",
-        )
+        needs_username = proto not in NO_USERNAME_PROTOCOLS
         self._set_form_row_visible(self._username, needs_username)
 
         # Username label
@@ -1238,11 +1234,12 @@ class ConnectionDialog(QDialog):
         elif proto == "ramfs":
             pass  # an in-process RAM workspace: no host, no login
         else:
-            # SFTP, FTP, FTPS need host + username
+            # SFTP, FTP, FTPS need host + username; a protocol whose Username
+            # row is hidden (MTP) must not ask for one.
             if not host:
                 QMessageBox.warning(self, "Validation", "Host is required.")
                 return False
-            if not username:
+            if not username and proto not in NO_USERNAME_PROTOCOLS:
                 QMessageBox.warning(self, "Validation", "Username is required.")
                 return False
 

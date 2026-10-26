@@ -20,6 +20,11 @@
 # Outputs:
 #   dist/axross-<flavor>                         (portable ELF)
 #
+# Environment:
+#   AXROSS_BUILDER_TAG       builder image tag (default axross-builder:alma9-glibc2.34)
+#   AXROSS_BUILDER_NO_CACHE  1 = rebuild every layer (picks up new security updates)
+#   AXROSS_DIST_DIR          where the ELF is copied to (default <repo>/dist)
+#
 # Requires podman (preferred) or docker on the host — no Python,
 # PyInstaller, or Qt needed locally; the container brings its own.
 # Override the auto-detection with CONTAINER_ENGINE=<binary>. First
@@ -58,12 +63,35 @@ if [[ -z "$ENGINE" ]] || ! command -v "$ENGINE" >/dev/null 2>&1; then
 fi
 echo ">>> Using container engine: $ENGINE"
 
-IMAGE_TAG="axross-builder:alma9-glibc2.34"
+IMAGE_TAG="${AXROSS_BUILDER_TAG:-axross-builder:alma9-glibc2.34}"
+DIST_DIR="${AXROSS_DIST_DIR:-$PROJECT_ROOT/dist}"
+
+BUILD_ARGS=()
+if [[ "${AXROSS_BUILDER_NO_CACHE:-0}" == "1" ]]; then
+    BUILD_ARGS+=(--no-cache)  # the base is digest-pinned: no pull needed
+fi
 
 echo ">>> Building builder image $IMAGE_TAG (one-time, ~1 GB)"
-"$ENGINE" build -f Dockerfile.build -t "$IMAGE_TAG" .
+"$ENGINE" build "${BUILD_ARGS[@]}" -f Dockerfile.build -t "$IMAGE_TAG" .
 
-mkdir -p "$PROJECT_ROOT/dist"
+# The bundle carries the image's system libraries (libssl, libexpat,
+# libpcre2 ...). Dockerfile.build runs dnf upgrade, but a cached layer keeps
+# the updates of the day it was built: refuse an image that still lists a
+# security update instead of shipping its libraries.
+echo ">>> Checking $IMAGE_TAG for unapplied security updates"
+if ! PENDING=$("$ENGINE" run --rm --entrypoint dnf "$IMAGE_TAG" -q updateinfo list --security); then
+    echo "ERROR: could not read the security updates of $IMAGE_TAG (no network?)" >&2
+    exit 7
+fi
+if [[ -n "$PENDING" ]]; then
+    echo "ERROR: $IMAGE_TAG lacks security updates:" >&2
+    echo "$PENDING" >&2
+    echo "Rebuild without the layer cache: AXROSS_BUILDER_NO_CACHE=1 $0 $FLAVOR" >&2
+    exit 7
+fi
+echo "    ✓ no security update pending"
+
+mkdir -p "$DIST_DIR"
 
 # Run the build inside the container. scripts/build_bundle.sh
 # drops the ELF under /build/dist inside the container; we copy
@@ -76,11 +104,11 @@ echo ">>> Running $FLAVOR build inside the container"
 
 echo ">>> Copying axross-$FLAVOR out of the container"
 "$ENGINE" cp "$CONTAINER_ID:/build/dist/axross-$FLAVOR" \
-             "$PROJECT_ROOT/dist/axross-$FLAVOR"
+             "$DIST_DIR/axross-$FLAVOR"
 
 "$ENGINE" rm -v "$CONTAINER_ID" >/dev/null
 
-ELF_PATH="$PROJECT_ROOT/dist/axross-$FLAVOR"
+ELF_PATH="$DIST_DIR/axross-$FLAVOR"
 BINARY_SIZE=$(du -h "$ELF_PATH" | cut -f1)
 echo
 echo ">>> Built $ELF_PATH ($BINARY_SIZE)"

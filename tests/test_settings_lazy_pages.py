@@ -265,7 +265,7 @@ def test_e2e_the_real_window_opens_one_page_finds_and_saves_through_ok(stores, w
             dialog = next(w for w in APP.topLevelWidgets()
                           if isinstance(w, SettingsDialog) and w.isVisible())
             seen["built_at_open"] = set(built)
-            QTest.keyClicks(dialog.filter_edit, "parallel")
+            QTest.keyClicks(dialog.filter_edit, "hosts searched")
             seen["visible"] = dialog.visible_page_ids()
             item = dialog._items["search"]
             rect = dialog.tree.visualItemRect(item)

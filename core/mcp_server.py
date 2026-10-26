@@ -1002,7 +1002,7 @@ def _hash_one_path(
     return {"value": hasher.hexdigest(), "source": "stream"}
 
 
-def _enforce_root(path: str, root: str) -> str:
+def _enforce_root(path: str, root: str, *, real_root: str | None = None) -> str:
     """Normalise *path* and refuse it when it escapes *root*.
 
     The MCP server is configured with one backend rooted at a
@@ -1031,6 +1031,13 @@ def _enforce_root(path: str, root: str) -> str:
     not-yet-created file returns its would-be absolute path with
     symlink-resolved parents. The write then happens at that
     resolved location, which is still prefix-checked.
+
+    *real_root* is ``realpath(abspath(root))`` when the caller already
+    resolved it - once per tool call for a tool that checks many paths
+    (:func:`_root_resolver`); the result is then exactly the same as
+    without it. The path's own realpath is always taken here. Never
+    resolve a root once for longer than one call: a root re-pointed
+    while the server runs must be seen by the next call.
 
     Returns the cleaned absolute path on success. Raises
     :class:`PermissionError` when either pass finds an escape; the
@@ -1067,7 +1074,8 @@ def _enforce_root(path: str, root: str) -> str:
     # The root itself has to be realpath'd too: an operator who set
     # ``--mcp-root`` to a path whose parents contain a symlink
     # should still get a consistent comparison.
-    real_root = op.realpath(abs_root)
+    if real_root is None:
+        real_root = op.realpath(abs_root)
     # Rebuild the "inside" check against the realpath form.
     if real_root == "/":
         return real_path
@@ -1081,6 +1089,24 @@ def _enforce_root(path: str, root: str) -> str:
         f"path {path!r} resolves to {real_path!r} via symlink, "
         f"which escapes the configured MCP root {real_root!r}"
     )
+
+
+def _root_resolver():
+    """An ``enforce(path, root)`` like :func:`_enforce_root` that resolves
+    each root once, at its first use, and reuses it for the rest of this
+    resolver's life. Make one per tool call - never keep one across calls,
+    so a root re-pointed between calls is resolved again."""
+    import os.path as op
+
+    resolved: dict[str, str] = {}
+
+    def enforce(path: str, root: str) -> str:
+        real_root = resolved.get(root)
+        if real_root is None:
+            real_root = resolved[root] = op.realpath(op.abspath(root or "/"))
+        return _enforce_root(path, root, real_root=real_root)
+
+    return enforce
 
 
 def _enforce_root_entry(path: str, root: str) -> str:
@@ -1255,6 +1281,17 @@ def _build_tools(
         if bid == "local":
             return _default_backend
         raise ValueError(f"unknown backend {bid!r}; call 'list_backends' to see available ids")
+
+    def _call_scope(active_backend=None):
+        """:func:`_scope_path` for the many paths of ONE tool call (grep,
+        the index search, recursive_checksum): each root is resolved once
+        for the call, every path still on its own. A new one per call."""
+        if active_backend is not None and _is_remote(active_backend):
+            return _groups.check_remote_path
+        if read_root is None:
+            return lambda path: path
+        enforce = _root_resolver()
+        return lambda path: _confined(path, read_roots, enforce)
 
     def _scope_path(path: str, active_backend=None) -> str:
         """Apply the configured MCP root to a tool path.
@@ -1438,12 +1475,13 @@ def _build_tools(
         if args.get("max_size"):
             kwargs["max_size"] = int(args["max_size"])
         entries = MX.search_all(**kwargs)
+        scope = _call_scope(resolved)
 
         def _in_root(entry_path: str) -> bool:
             # The index is shared by every session of every backend id;
             # only rows under the configured MCP root may leave.
             try:
-                _scope_path(entry_path, resolved)
+                scope(entry_path)
             except (PermissionError, ValueError):
                 return False
             return True
@@ -1546,7 +1584,8 @@ def _build_tools(
         ``recursive_checksum`` based on prior knowledge.
         """
         backend = _resolve_backend(args)
-        path = _scope_path(args.get("path") or "/", backend)
+        scope = _call_scope(backend)
+        path = scope(args.get("path") or "/")
         algo = (args.get("algorithm") or "sha256").lower()
         if algo not in _HASHLIB_ALGOS:
             raise ValueError(
@@ -1594,7 +1633,7 @@ def _build_tools(
                 return
             ctx.check_cancel()
             try:
-                safe_full_path = _scope_path(full_path, backend)
+                safe_full_path = scope(full_path)
                 result = _hash_one_path(
                     backend,
                     safe_full_path,
@@ -1922,7 +1961,8 @@ def _build_tools(
             regex = re.compile(pattern)
         except re.error as exc:
             raise ValueError(f"grep: bad regex {pattern!r}: {exc}") from exc
-        start = _scope_path(args.get("path") or "/", backend)
+        scope = _call_scope(backend)
+        start = scope(args.get("path") or "/")
         max_depth = int(args.get("max_depth") or 2)
         max_matches = int(args.get("max_matches") or 100)
         max_matches = min(max_matches, MAX_GREP_MATCHES)
@@ -1958,7 +1998,7 @@ def _build_tools(
                 if size > MAX_GREP_FILE_BYTES:
                     continue
                 try:
-                    safe_full = _scope_path(full, backend)
+                    safe_full = scope(full)
                     with backend.open_read(safe_full) as fh:
                         raw = fh.read(MAX_GREP_FILE_BYTES + 1)
                 except (OSError, PermissionError):

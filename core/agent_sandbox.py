@@ -115,6 +115,13 @@ RULES: dict[str, LevelRules] = {
 }
 
 
+def _list_of(data: dict, key: str) -> list:
+    """*data[key]* when it is a list, else [] - a hand-edited ``"hosts": 5``
+    must not stop the start, nor a string be read one character a host."""
+    value = data.get(key)
+    return value if isinstance(value, list) else []
+
+
 @dataclass
 class SandboxProfile:
     name: str = "Normal"
@@ -148,7 +155,7 @@ class SandboxProfile:
         ):
             return None
         mounts: list[tuple[str, bool]] = []
-        for item in data.get("mounts") or ():
+        for item in _list_of(data, "mounts"):
             if (
                 isinstance(item, dict)
                 and isinstance(item.get("path"), str)
@@ -159,7 +166,7 @@ class SandboxProfile:
                     mounts.append(pair)
         hosts = tuple(
             f"[{h}]:{p}" if ":" in h else f"{h}:{p}"
-            for h, p in parse_hosts(h for h in data.get("hosts") or () if isinstance(h, str))
+            for h, p in parse_hosts(h for h in _list_of(data, "hosts") if isinstance(h, str))
         )
         image = data.get("image")
         return cls(

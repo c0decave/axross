@@ -210,6 +210,19 @@ worker threads and survive a refused dialog or a closed pane.
   still running: none of its files is queued.
 - **Verify.** A per-job `verify_checksum` flag re-hashes the
   destination after the upload and rejects on mismatch.
+- **Parallel transfers.** *Edit → Settings… → Files & Panes →
+  Parallel transfers* (1–8, default 1) lets several jobs run side by
+  side, started in queue order; that hides the round trips of many
+  small files on a slow link. A connection that cannot carry two jobs
+  at once (SCP and every other protocol except local files, RAM
+  workspaces, SFTP, SMB, FTP, WebDAV and S3) still runs its jobs one
+  by one, and two jobs never write the same destination at once. A
+  change applies to the jobs that start after it. Each SFTP job runs on
+  an SSH channel of its own, and servers limit the channels per
+  connection (OpenSSH `MaxSessions`, 10 by default). Each FTP transfer
+  runs on a control connection of its own; servers often limit the
+  connections per user or address, and an FTP connection whose server
+  refuses a second login runs its jobs one by one.
 
 ## Filesystem feature layer
 
@@ -260,7 +273,7 @@ native protocol doesn't support them.
 | Open External Terminal Here | Right-click (local panes) | Starts `$TERMINAL`, else the first installed of x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — with the folder as working directory, detached, no shell involved. |
 | Cut / Paste | Right-click (Paste also on empty space), `Ctrl+X` / `Ctrl+V` | Cut remembers the selection and removes nothing (the entries are dimmed); Paste in any pane moves them into its folder through the transfer queue - see *Transfers*. A cut never pasted leaves everything in place. |
 | Move to Trash | Right-click | Universal recycle bin. Runs like Delete Permanently: in the background, with the same second question for hidden entries. |
-| Delete Permanently | Right-click, `Del` | First counts what will go (folders, files, bytes, hidden entries) off the GUI thread, then asks. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP, and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
+| Delete Permanently | Right-click, `Del` | First counts what will go (folders, files, bytes, hidden entries) off the GUI thread, then asks. A selected folder that holds hidden entries (dotfiles, or a backend's hidden flag) - or one the check could not fully read - needs a second OK whose default is No. The removal runs in the background: the status line shows the progress, Cancel stops at the next entry - also inside a folder being deleted on a local path, SMB, SFTP or FTP (SFTP removes a folder's files in batches of 16 requests at once and stops after the running batch), and the status line then says how much of that folder went (removed entries stay removed; a server that deletes a whole folder in one request, such as WebDAV or S3, finishes that folder first) - failures are listed per entry, and the folder is reloaded at the end. A path that is already being deleted is refused, also from the other pane. |
 | Show Trash… | Right-click | Restore / permanently-delete dialog. |
 | Show Versions… | Right-click | Snapshot browser — Save Version As, Restore as Current. |
 | Show Checksum… | Right-click | Native checksum (S3 ETag, Drive md5, ssh sha256sum…) with stream-hash fallback. |
@@ -379,8 +392,9 @@ archives, is axross' own Find Files (`core.file_search`,
 ## Path bar
 
 - **Auto-refresh ◉** subscribes the pane to `core.watch`; debounced
-  refresh on backend changes. On by default for local folders (inotify,
-  or a cheap local poll); off for remote ones, where it would list the
+  refresh on backend changes. On by default for local folders (inotify
+  through watchdog, or a cheap local poll when the inotify limit is
+  reached); off for remote ones, where it would list the
   folder again every 2 seconds - one click turns it on for that pane.
 - **Live filter** types into the path bar to filter the listing in
   real time. **Ctrl+F** jumps to the filter field; **Esc** there clears
@@ -685,8 +699,8 @@ ips = axross.dns_resolve("example.com")
 |---|---|
 | ``.help`` | List slash-commands |
 | ``.scripts`` | Saved scripts in ``~/.config/axross/scripts/`` |
-| ``.save <name>`` | Save THIS session's submitted source |
-| ``.load <name>`` | Paste a saved script into the prompt |
+| ``.save <name>`` | Save THIS session's submitted source; an existing script of that name is never replaced (``.delete`` it first) |
+| ``.load <name>`` | Print the source of a saved script |
 | ``.run <name>`` | Execute a saved script in the live namespace |
 | ``.delete <name>`` | Remove a saved script |
 | ``.open`` | Print the script directory path |
@@ -1292,7 +1306,7 @@ finds a setting by its name (type *sudo*, *proxy* or *zoom*).
 | General | Language (applies at the next start), restore the layout of the last session on start, when a pane becomes the active one (on click, or after resting the mouse 0.5–3 s in it) |
 | Appearance | Theme, compact mode, monochrome icons, icon colours (Theme default; Own colours in every theme - also in Hacker and Amber, which draw every icon in one colour; One colour of your choice), font size (zoom), highlight hidden files and their colour (a colour that is hard to read on the theme is used only after a question) |
 | Toolbar | Group the buttons by category, show each category's colour behind its buttons, the colour of each category (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
-| Files & Panes | Show hidden files, open size limit, RAM workspaces (on / off, size limit, memory kept free) and temporary files in RAM (applies at the next start) |
+| Files & Panes | Show hidden files, open size limit, parallel transfers, RAM workspaces (on / off, size limit, memory kept free) and temporary files in RAM (applies at the next start) |
 | Network & Proxy | The default proxy, bypass list, PAC script, a test |
 | LLM Profiles | The LLM servers of the Agent and Analysis docks; *Fetch models* opens a list with each model's size, parameters, quantisation and which one is loaded, as far as the server reports them |
 | Analysis (sift) | Automatic analysis of the selected file (off: a selection only names the file, *Analyse* explains it), the LLM profile of *Analyse with LLM* (the active one, or one of its own - the Agent keeps its choice), max bytes read per file (it caps a remote file's copy too), time budget per file, vision, context tokens (0 = what the server says), tags per file, categories (one per line), keep sift's results in the cache, *Clear Cache*; sift's version, or a link to *Help → Features…* when this build has no sift |
@@ -1349,7 +1363,9 @@ The one-file binaries (`axross-full`, `axross-slim`, the macOS and Windows
 - **Help → Check for Updates…** checks now and shows the answer, also
   when axross is up to date.
 - **The update window** shows this and the new version, the release notes
-  and a link to the release page, and offers **Download and Install**,
+  (rendered as Markdown; images and other resources in them are never
+  loaded, HTML in them is shown as text, and only http and https links
+  open, in the browser) and a link to the release page, and offers **Download and Install**,
   **Skip This Version** (no notice for that version again; asked by hand,
   it is still offered) and **Remind Me Later** (no notice until the next
   start).
@@ -1357,7 +1373,13 @@ The one-file binaries (`axross-full`, `axross-slim`, the macOS and Windows
   gets axross-full, a slim build gets its slim one), checks its SHA-256
   against the `SHA256SUMS` of the same release (and against GitHub's own
   digest of the file) and refuses anything that does not match - nothing
-  is replaced then, and the partial file is removed. A verified file
+  is replaced then, and the partial file is removed. Before any of that,
+  the `SHA256SUMS` itself must carry a valid signature: `SHA256SUMS.sig`
+  is an Ed25519 signature made with the axross release key, whose public
+  half is built into axross. A release without it, or with one that does
+  not verify, is refused with "The update is refused: release X.Y.Z is not
+  signed with the axross release key" - someone who could change the
+  release could change its checksums, but not make that signature. A verified file
   replaces the running binary in one atomic rename, with the old file's
   permissions; the old one stays next to it as `<name>.previous`. It takes
   effect at the next start; **Restart Now** closes axross (it asks about

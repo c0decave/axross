@@ -93,6 +93,10 @@ def _sftp_errors_as_oserror(fn):
 #: READDIR requests kept on the wire while a folder is listed.
 LISTING_READDIRS_IN_FLIGHT = 16
 
+#: REMOVE requests a recursive delete keeps on the wire (one batch); the
+#: pane's Cancel is asked between batches.
+RMTREE_REMOVES_IN_FLIGHT = 16
+
 
 class _AnswersByNumber:
     """Receives the answers to pipelined requests (registered as their
@@ -994,9 +998,17 @@ class SSHSession(SessionLifecycle):
     _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
 
     def _rmtree(self, path: str, depth: int = 0) -> None:
-        """Recursively remove a directory tree via SFTP."""
+        """Recursively remove a directory tree via SFTP.
+
+        The folder's files go first, in batches of
+        :data:`RMTREE_REMOVES_IN_FLIGHT` pipelined REMOVEs
+        (:meth:`_remove_files`), then each sub-folder recurses. The pane's
+        Cancel is asked before every batch and every sub-folder, so it
+        stops the walk after the running batch.
+        """
         check_tree_depth(path, depth, self._MAX_TREE_DEPTH)
-        children = []
+        files: list[str] = []
+        folders: list[str] = []
         for attr in self._list_attrs(path):
             try:
                 child = safe_join(self, path, attr.filename)
@@ -1004,15 +1016,65 @@ class SSHSession(SessionLifecycle):
                 raise OSError(
                     f"Cannot recursively remove {path}: unsafe child name {attr.filename!r}: {exc}"
                 ) from exc
-            children.append((attr, child))
-        for attr, child in children:
-            removal_cancel.checkpoint(child)  # the pane's Cancel stops here
-            if stat_module.S_ISDIR(attr.st_mode or 0):
-                self._rmtree(child, depth + 1)
-            else:
-                self.sftp.remove(child)
+            (folders if stat_module.S_ISDIR(attr.st_mode or 0) else files).append(child)
+        for start in range(0, len(files), RMTREE_REMOVES_IN_FLIGHT):
+            batch = files[start : start + RMTREE_REMOVES_IN_FLIGHT]
+            removal_cancel.checkpoint(batch[0])  # the pane's Cancel stops here
+            self._remove_files(batch)
+        for child in folders:
+            removal_cancel.checkpoint(child)
+            self._rmtree(child, depth + 1)
             removal_cancel.removed(child)
         self.sftp.rmdir(path)
+
+    def _remove_files(self, paths: list[str]) -> None:
+        """``sftp.remove`` of every path, the REMOVEs pipelined: all go out,
+        then the answers are read in request order, each removed file
+        reported to :func:`removal_cancel.removed`.
+
+        A failing answer raises what ``sftp.remove`` raised for it (the
+        first one in request order), but only after every answer still on
+        the wire was read: no request is left for another call to read.
+        The other files of the batch are removed by then.
+        """
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
+            for path in paths:
+                sftp.remove(path)
+                removal_cancel.removed(path)
+            return
+        from paramiko.sftp import CMD_REMOVE, CMD_STATUS
+
+        receiver = _AnswersByNumber()
+        first_error: Exception | None = None
+        try:
+            sent = [
+                (path, sftp._async_request(receiver, CMD_REMOVE, sftp._adjust_cwd(path)))
+                for path in paths
+            ]
+            for path, num in sent:
+                while num not in receiver.answers:
+                    sftp._read_response()
+                t, msg = receiver.answers.pop(num)
+                if t == CMD_STATUS:  # paramiko's remove() looks at nothing else
+                    try:
+                        sftp._convert_status(msg)  # what sftp.remove raises
+                    except (OSError, EOFError, UnicodeError) as exc:
+                        if first_error is None:
+                            first_error = exc
+                        continue
+                removal_cancel.removed(path)
+        finally:
+            # Whatever stopped the loop, the answers still out are read
+            # before anything else is sent. A dead connection raises its
+            # own error here.
+            try:
+                while any(owner is receiver for owner in list(sftp._expecting.values())):
+                    sftp._read_response()
+            finally:
+                receiver.answers.clear()
+        if first_error is not None:
+            raise first_error
 
     @_sftp_errors_as_oserror
     def rename(self, src: str, dst: str) -> None:

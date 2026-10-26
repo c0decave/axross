@@ -112,8 +112,13 @@ def _pane(app, monkeypatch, session):
     pane = TP.TerminalPaneWidget()
     _OPEN.append(pane)
     pane.resize(700, 400)
+    # The pane's own read timer (50 ms) may fire while it is shown and
+    # pumped - on a loaded host it did, drained everything before the test
+    # counted a render, and the test saw none. The output arrives after.
+    held, session.out = session.out, []
     pane.show()
     _pump(app)
+    session.out = held
     return pane
 
 

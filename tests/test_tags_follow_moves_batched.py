@@ -188,3 +188,71 @@ def test_sad_a_failed_job_in_a_batch_keeps_only_its_own_tag(win, store, tmp_path
     assert store.tags_of("Local", str(dst / "a.txt")) == ["Important"]
     assert store.tags_of("Local", str(dst / "c.txt")) == ["Important"]
     assert store.tags_of("Local", str(src / "b.txt")) == ["Important"]  # its tag stayed
+
+
+# -- jobs that end on a busy event loop ------------------------------------------------
+# With watchdog the panes of a move refresh while it runs (inotify), so the event
+# loop turns far more often: applied "on the next turn", 300 moved files wrote
+# tags.json 38 to 98 times instead of at most 30. The flushes now keep a gap.
+
+
+def _count_flushes(win, monkeypatch):
+    calls = []
+    real = win._flush_tag_jobs
+
+    def counting():
+        calls.append(time.monotonic())
+        real()
+
+    monkeypatch.setattr(win, "_flush_tag_jobs", counting)
+    return calls
+
+
+def _pending(win, count, first=0):
+    for i in range(first, first + count):
+        win._tag_moves[f"job{i}"] = ("Local", "Local", "", f"/src/f{i}", f"/dst/f{i}")
+        win._tags_on_move_finished(f"job{i}")
+
+
+def test_happy_a_single_ended_job_is_applied_on_the_next_turn(win, monkeypatch):
+    flushes = _count_flushes(win, monkeypatch)
+    _pending(win, 1)
+    APP.processEvents()
+    assert len(flushes) == 1
+    assert win._tag_job_queue == [] and win._tag_moves == {}
+
+
+def test_edge_jobs_ending_on_a_busy_loop_share_one_flush(win, monkeypatch):
+    flushes = _count_flushes(win, monkeypatch)
+    _pending(win, 1)
+    APP.processEvents()
+    assert len(flushes) == 1
+    # Twenty more jobs end, one per event-loop turn, inside the gap.
+    for i in range(1, 21):
+        _pending(win, 1, first=i)
+        APP.processEvents()
+    assert len(flushes) == 1
+    end = time.monotonic() + 2.0
+    while time.monotonic() < end and win._tag_job_queue:
+        APP.processEvents()
+        time.sleep(0.01)
+    assert len(flushes) == 2
+    assert flushes[1] - flushes[0] >= win.TAG_FLUSH_GAP_MS / 1000 - 0.02
+    assert win._tag_job_queue == [] and win._tag_moves == {}
+
+
+def test_sad_closing_the_window_applies_what_is_still_queued(win, store):
+    store.tag("Local", "", "/src/a.txt", "Important")
+    win._tag_moves["late"] = ("Local", "Local", "", "/src/a.txt", "/dst/a.txt")
+    win._flush_tag_jobs()  # a flush just ran: the next one would wait the gap
+    win._tag_moves["late"] = ("Local", "Local", "", "/src/a.txt", "/dst/a.txt")
+    job = mock.Mock(status=None, skipped=False)
+    from core.transfer_worker import TransferStatus
+
+    job.status = TransferStatus.DONE
+    with mock.patch.object(win._transfer_manager, "get_job", return_value=job):
+        win._tags_on_move_finished("late")
+        assert win._tag_job_queue  # waiting for the gap
+        win.close()
+    assert win._tag_job_queue == []
+    assert store.tags_of("Local", "/dst/a.txt") == ["Important"]

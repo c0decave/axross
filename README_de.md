@@ -154,9 +154,9 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](slideshow_de.md)**.
     `inspect_targets` macht das Gleiche für eine heterogene
     `(backend, path)`-Liste („ist die lokale /tmp/foo.bin wirklich
     dasselbe File wie das S3-Objekt und die SFTP-Kopie?").
-    `federated_search([…])` übersetzt eine Anfrage in die effizienteste
-    native Suche pro Backend — IMAP SEARCH für IMAP, `find_by_query`
-    für DB-FS, generischer Walker sonst. `dashboard()` rendert
+    `federated_search([…])` führt eine Anfrage parallel auf vielen
+    Backends aus - Name, Inhalt, Größe, Datum - mit Hit-Cap und Timeout
+    pro Backend. `dashboard()` rendert
     Ein-Bildschirm-Federation-Status (text / markdown / json).
     Connection-Health-Pulse probt jede Session mit dem billigsten
     No-Op des Protokolls; Production-Tarpit-Countdown beim ersten
@@ -412,9 +412,11 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](slideshow_de.md)**.
     Start im Hintergrund die GitHub-Releases (**Settings → Updates**; aus
     mit `AXROSS_NO_UPDATE_CHECK=1` und im `paranoid`-Mode) und zeigen
     **Update to X.Y.Z…** in der Statusleiste und im Help-Menü; **Help →
-    Check for Updates…** fragt sofort. **Download and Install** prüft den
-    SHA-256 gegen die SHA256SUMS des Releases und den Digest von GitHub,
-    ersetzt das Binary atomar und behält das alte; **Restart Now** prüft
+    Check for Updates…** fragt sofort. **Download and Install** prüft die
+    Ed25519-Signatur der SHA256SUMS des Releases (`SHA256SUMS.sig`, gegen
+    den in axross eingebauten Release-Key), dann den SHA-256 gegen die
+    SHA256SUMS und den Digest von GitHub, ersetzt das Binary atomar und
+    behält das alte; **Restart Now** prüft
     es erneut, bevor es die neue Version startet.
 
 43. **Mitgelieferte Beispiele laufen direkt.** **Run** oder **Run in
@@ -561,7 +563,7 @@ Die Liste wird aus [`resources/credits/third_party.json`](resources/credits/thir
 | [Feather icons](https://github.com/feathericons/feather) | Style model of axross's own SVG icons (re-drawn, no files copied) | MIT | axross-Quellcode |
 | [FFmpeg (ffmpeg, ffprobe)](https://ffmpeg.org) | Video thumbnails, media details, removing audio/video metadata | LGPL-2.1-or-later OR GPL-2.0-or-later OR GPL-3.0-only | auf dem eigenen System |
 | [fusepy](https://github.com/fusepy/fusepy) | Mounting an axross connection as a local folder (FUSE) | ISC | axross-full, axross-slim, pip [fuse] |
-| [GCC runtime libraries](https://gcc.gnu.org) | Fortran, OpenMP and atomic runtimes (numpy, CTranslate2, QtPdf) | GPL-3.0-or-later WITH GCC-exception-3.1 | axross-full, axross-slim |
+| [GCC runtime libraries](https://gcc.gnu.org) | Fortran and OpenMP runtimes (numpy, CTranslate2) | GPL-3.0-or-later WITH GCC-exception-3.1 | axross-full |
 | [GLib](https://gitlab.gnome.org/GNOME/glib) | Main loop and D-Bus integration of Qt's platform plugins | LGPL-2.1-or-later | axross-full, axross-slim |
 | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | Key-value files of Python's dbm module | GPL-3.0-or-later | axross-full |
 | [GNU Readline](https://tiswww.case.edu/php/chet/readline/rltop.html) | Line editing of Python's readline module | GPL-3.0-or-later | axross-full, axross-slim |
@@ -638,6 +640,7 @@ Die Liste wird aus [`resources/credits/third_party.json`](resources/credits/thir
 | [urllib3](https://github.com/urllib3/urllib3) | HTTP connection pool (proxies, S3, WebDAV) | MIT | axross-full, axross-slim, pip [git] |
 | [util-linux libraries](https://github.com/util-linux/util-linux) | UUIDs, block device and mount information (GLib, Python's uuid module) | LGPL-2.1-or-later AND BSD-3-Clause | axross-full, axross-slim |
 | [VirtualBox (VBoxManage)](https://www.virtualbox.org) | VirtualBox disk images | GPL-3.0-only | auf dem eigenen System |
+| [watchdog](https://github.com/gorakhargosh/watchdog) | Instant refresh of local folders (inotify, FSEvents, ReadDirectoryChangesW) | Apache-2.0 | axross-full, axross-slim, pip |
 | [X.Org client libraries](https://www.x.org) | X11 display connection of Qt's xcb platform plugin | MIT AND X11 | axross-full, axross-slim |
 | [xdg-utils (xdg-open)](https://gitlab.freedesktop.org/xdg/xdg-utils) | Opening files and links with the desktop's programs | MIT | auf dem eigenen System |
 | [XZ Utils (liblzma)](https://tukaani.org/xz/) | LZMA/XZ compression (Python's lzma module, Pillow) | 0BSD AND LicenseRef-PublicDomain | axross-full, axross-slim |
@@ -645,7 +648,7 @@ Die Liste wird aus [`resources/credits/third_party.json`](resources/credits/thir
 | [Zstandard](https://github.com/facebook/zstd) | Zstandard compression (Pillow, system libraries) | BSD-3-Clause OR GPL-2.0-only | axross-full, axross-slim |
 
 <details>
-<summary>114 weitere Libraries, die mit den Projekten oben kommen</summary>
+<summary>113 weitere Libraries, die mit den Projekten oben kommen</summary>
 
 | Projekt | Benutzt von | Lizenz | Kommt mit |
 |---|---|---|---|
@@ -694,7 +697,6 @@ Die Liste wird aus [`resources/credits/third_party.json`](resources/credits/thir
 | [jaraco.classes](https://github.com/jaraco/jaraco.classes) | keyring | MIT | axross-full, axross-slim, pip |
 | [jaraco.context](https://github.com/jaraco/jaraco.context) | keyring | MIT | axross-full, axross-slim, pip |
 | [jaraco.functools](https://github.com/jaraco/jaraco.functools) | keyring | MIT | axross-full, axross-slim, pip |
-| [JBIG-KIT](https://www.cl.cam.ac.uk/~mgk25/jbigkit/) | LibTIFF | GPL-2.0-or-later | axross-full, axross-slim |
 | [jeepney](https://gitlab.com/takluyver/jeepney) | keyring | MIT | axross-full, axross-slim, pip |
 | [Jinja2](https://github.com/pallets/jinja) | Flask | BSD-3-Clause | axross-full, pip (mit einem Extra) |
 | [jmespath](https://github.com/jmespath/jmespath.py) | boto3 | MIT | axross-full, axross-slim, pip (mit einem Extra) |
@@ -704,7 +706,7 @@ Die Liste wird aus [`resources/credits/third_party.json`](resources/credits/thir
 | [libjpeg-turbo](https://libjpeg-turbo.org) | Pillow, Qt 6 | IJG AND BSD-3-Clause | axross-full, axross-slim, pip |
 | [libpng](https://www.libpng.org) | Pillow, Qt 6 | libpng-2.0 | axross-full, axross-slim, pip |
 | [libpq](https://www.postgresql.org) | psycopg-binary | PostgreSQL | axross-full, axross-slim, pip (mit einem Extra) |
-| [LibTIFF](https://libtiff.gitlab.io/libtiff/) | Pillow, Qt 6 | libtiff | axross-full, axross-slim, pip |
+| [LibTIFF](https://libtiff.gitlab.io/libtiff/) | Pillow | libtiff | axross-full, axross-slim, pip |
 | [libunistring](https://www.gnu.org/software/libunistring/) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (mit einem Extra) |
 | [libvpx](https://chromium.googlesource.com/webm/libvpx) | PyAV | BSD-3-Clause | axross-full, pip (mit einem Extra) |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | Pillow, Qt 6 | BSD-3-Clause | axross-full, axross-slim, pip |

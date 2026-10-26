@@ -649,8 +649,9 @@ class AdbSession(SessionLifecycle):
     # Mutation
     # ------------------------------------------------------------------
     def remove(self, path: str, recursive: bool = False) -> None:
-        flag = "-rf" if recursive else "-f"
-        out = self._shell(f"rm {flag} {self._shell_q(path)}")
+        from core.telnet_client import remove_command
+
+        out = self._shell(remove_command(path, recursive=recursive, quote=self._shell_q))
         if out.strip():
             # rm on Android's toybox is quiet on success; any output
             # indicates a refusal.

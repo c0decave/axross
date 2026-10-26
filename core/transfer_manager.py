@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,7 @@ from core import backend_registry
 from core.capability_contracts import contract_for_backend
 from core.path_policy import safe_join, safe_leaf, transfer_leaf
 from core.transfer_conflicts import IF_EXISTS_OVERWRITE, prefetch_stats
+from core.transfer_pool import MAX_PARALLEL, JobScheduler, parallel_transfers, valid_parallel
 from core.transfer_worker import (
     TransferDirection,
     TransferJob,
@@ -252,8 +254,14 @@ class TransferManager(QObject):
     # Internal: a walk thread hands its result to the GUI thread.
     _walk_done = pyqtSignal(object)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, max_parallel: int | None = None):
+        """*max_parallel*: jobs that may run at the same time (1..MAX_PARALLEL); None
+        reads the "Parallel transfers" setting (core.transfer_pool)."""
         super().__init__(parent)
+        if max_parallel is None:
+            max_parallel = parallel_transfers()
+        elif not valid_parallel(max_parallel):
+            raise ValueError(f"max_parallel must be 1..{MAX_PARALLEL}, not {max_parallel!r}")
         self._jobs: dict[str, TransferJob] = {}
         self._queued_count = 0
         self._active_count = 0
@@ -274,20 +282,52 @@ class TransferManager(QObject):
         self._cancel_epoch = 0
         self._walk_done.connect(self._finish_walk)
 
-        # Worker thread
-        self._worker = TransferWorker()
-        self._thread = QThread()
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
+        # Worker threads. They share one queue (core.transfer_pool); with
+        # max_parallel 1 the first worker is the only one and runs the jobs
+        # one after the other, in queue order, as the single worker did.
+        # _worker / _thread are that first worker: every job is queued
+        # through _worker.enqueue.
+        self._scheduler = JobScheduler(max_parallel)
+        self._pool: list[tuple[TransferWorker, QThread]] = []
+        self._worker, self._thread = self._add_worker()
+        self._ensure_workers(max_parallel)
 
-        # Connect worker signals
-        self._worker.progress.connect(self._on_progress)
-        self._worker.speed_update.connect(self._on_speed)
-        self._worker.job_started.connect(self._on_job_started)
-        self._worker.job_finished.connect(self._on_job_finished)
-        self._worker.job_error.connect(self._on_job_error)
+    def _add_worker(self) -> tuple[TransferWorker, QThread]:
+        worker = TransferWorker(scheduler=self._scheduler, index=len(self._pool))
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
 
-        self._thread.start()
+        worker.progress.connect(self._on_progress)
+        worker.speed_update.connect(self._on_speed)
+        worker.job_started.connect(self._on_job_started)
+        worker.job_finished.connect(self._on_job_finished)
+        worker.job_error.connect(self._on_job_error)
+
+        self._pool.append((worker, thread))
+        thread.start()
+        return worker, thread
+
+    def _ensure_workers(self, count: int) -> None:
+        while len(self._pool) < count:
+            self._add_worker()
+
+    @property
+    def max_parallel(self) -> int:
+        """Jobs that may run at the same time."""
+        return self._scheduler.limit
+
+    def set_max_parallel(self, count: int) -> None:
+        """Let up to *count* (1..MAX_PARALLEL) jobs run at once. Jobs that start from
+        now on obey it; running jobs finish. Workers are only added, never
+        taken away while the manager lives: one above the limit idles (a
+        worker thread keeps its SFTP channel, so a later raise reuses it)."""
+        if not valid_parallel(count):
+            raise ValueError(f"parallel transfers must be 1..{MAX_PARALLEL}, not {count!r}")
+        if self._shut_down:
+            return
+        self._ensure_workers(count)
+        self._scheduler.set_limit(count)
 
     def transfer_file(
         self,
@@ -822,6 +862,8 @@ class TransferManager(QObject):
         job = self._jobs.get(job_id)
         if job:
             job.cancel_event.set()
+            # A job waiting for a busy session can be reported now.
+            self._scheduler.wake()
             log.info("Cancel requested for %s", job_id)
 
     def cancel_all(self) -> None:
@@ -834,6 +876,7 @@ class TransferManager(QObject):
         for job in self._jobs.values():
             if job.status in (TransferStatus.PENDING, TransferStatus.ACTIVE):
                 job.cancel_event.set()
+        self._scheduler.wake()
 
     @property
     def cancel_epoch(self) -> int:
@@ -935,9 +978,14 @@ class TransferManager(QObject):
     def shutdown(self) -> None:
         self._shut_down = True  # a walk still running registers nothing
         self.cancel_all()
-        self._worker.stop()
-        self._thread.quit()
-        self._thread.wait(5000)
+        for worker, _thread in self._pool:
+            worker.stop()
+        # One budget for all of them: a worker in a backend call that does
+        # not notice the cancel holds up the quit no longer than one did.
+        deadline = time.monotonic() + 5.0
+        for _worker, thread in self._pool:
+            thread.quit()
+            thread.wait(max(0, int((deadline - time.monotonic()) * 1000)))
 
     # --- Slots for worker signals ---
 

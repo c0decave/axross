@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "axross"
 description = "A multi-protocol file manager, scripting surface, and MCP server built with PyQt6, for Linux, macOS and Windows"
 readme = { file = "README_PYPI.md", content-type = "text/markdown" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dynamic = ["version"]
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -32,7 +32,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -52,15 +51,21 @@ dependencies = [
     "paramiko>=5.0,<6.0",
     "PySocks>=1.7",
     "keyring>=25.0",
-    # >=12.3.0 clears 35 advisories that Pillow 10.x/11.x are subject
-    # to (PYSEC-2023-175 through PYSEC-2026-3496).
-    "Pillow>=12.3.0",
+    # 41 advisories affect 12.3.0; 13.0.0 is the first release free of
+    # them. It needs Python >= 3.11 - and 3.10 reached its end of life on
+    # 2026-10-01 (no security fixes of its own any more), so axross needs
+    # 3.11 too. The bundles pin it as well (build/requirements-bundle.txt).
+    "Pillow>=13.0.0",
     # Syntax highlighting in the text editor (ui/code_editor.py imports it
     # unguarded). 2.20.0 is the lowest release free of known advisories.
     "Pygments>=2.20.0",
     # The encrypted overlay and certificate inspection import it directly;
-    # paramiko only asks for >=3.3. 49.0.0 clears the known advisories.
-    "cryptography>=49.0.0",
+    # paramiko only asks for >=3.3. 50.0.0 clears the known advisories.
+    "cryptography>=50.0.0",
+    # Local panes see changes at once (inotify / FSEvents /
+    # ReadDirectoryChangesW) instead of listing the folder every 2 s
+    # (core/watch.py). 6.0.0: no known advisories.
+    "watchdog>=6.0.0",
     # The local terminal on Windows (ConPTY); POSIX uses the pty module.
     # 3.1 is the version whose PtyProcess API ui/terminal_widget.py follows.
     'pywinpty>=3.1; sys_platform == "win32"',
@@ -89,9 +94,9 @@ archive = ["py7zr>=1.1.3", "rarfile>=4.0", "backports.zstd>=1.0; python_version 
 tftp = ["tftpy>=0.8"]
 postgres = ["psycopg[binary]>=3.1"]
 redis = ["redis>=5.0"]
-mongo = ["pymongo>=4.6.3"]
+mongo = ["pymongo>=4.18.2"]
 # urllib3: core/proxy.py builds the proxied pool manager dulwich talks through.
-git = ["dulwich>=1.2.5", "urllib3>=2.8.0"]
+git = ["dulwich>=1.2.9", "urllib3>=2.8.0"]
 dns = ["dnspython>=2.6.1"]
 magic = ["puremagic>=1.20"]
 encoding = ["chardet>=5.2"]
@@ -102,7 +107,7 @@ whois = ["ipwhois>=1.3"]
 ntp = ["ntplib>=0.4"]
 # Removing PDF metadata (Info dictionary + XMP, full rewrite). Reading works
 # without it through QtPdf. Not mutagen: GPL-2.0+ would bind the binary.
-metadata = ["pypdf>=6.4.0"]
+metadata = ["pypdf>=6.21.2"]
 # File analysis (Analysis dock), an opt-in extra: not part of "all".
 sift = ["sift-summarizer>=0.1.86"]
 # Media Player extension: equalizer and spectrum (playback works without).
@@ -110,7 +115,7 @@ media = ["numpy>=2.0"]
 # Talking with the Agent dock: Piper speech output and local faster-whisper
 # recognition. An opt-in extra, not part of "all": piper-tts is
 # GPL-3.0-or-later. Voices and models are downloaded in Help > Features….
-voice = ["piper-tts>=1.8.0", "onnxruntime>=1.31.0", "faster-whisper>=1.2.1", "ctranslate2>=4.8.3"]
+voice = ["piper-tts>=1.8.0", "onnxruntime>=1.31.0", "faster-whisper>=1.2.1", "ctranslate2>=4.8.4"]
 all = [
     "smbprotocol>=1.13",
     "defusedxml>=0.7",
@@ -129,8 +134,8 @@ all = [
     "tftpy>=0.8",
     "psycopg[binary]>=3.1",
     "redis>=5.0",
-    "pymongo>=4.6.3",
-    "dulwich>=1.2.5",
+    "pymongo>=4.18.2",
+    "dulwich>=1.2.9",
     "urllib3>=2.8.0",
     "dnspython>=2.6.1",
     "puremagic>=1.20",
@@ -140,7 +145,7 @@ all = [
     "manuf>=1.1",
     "ipwhois>=1.3",
     "ntplib>=0.4",
-    "pypdf>=6.4.0",
+    "pypdf>=6.21.2",
 ]
 
 [project.scripts]

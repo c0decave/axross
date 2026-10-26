@@ -577,12 +577,13 @@ class ToolbarPage(_FormPage):
 
 
 class FilesPage(_FormPage):
-    """Show hidden files, the open size limit, RAM workspaces."""
+    """Show hidden files, the open size limit, parallel transfers, RAM workspaces."""
 
     def __init__(self, window, parent: QWidget | None = None) -> None:
         super().__init__(window, parent)
         from core import open_limits as OL
         from core import ramfs_settings as RS
+        from core import transfer_pool as TP
 
         form = QFormLayout()
         self.show_hidden_check = QCheckBox(tr("Show hidden files (Ctrl+H)"))
@@ -596,6 +597,19 @@ class FilesPage(_FormPage):
         form.addRow("", _note(tr("The largest file the text and hex viewers, the media "
                                  "viewer and the metadata tools read.")))
         self.layout_.addLayout(form)
+
+        transfers = QGroupBox(tr("Transfers"))
+        transfers_form = QFormLayout(transfers)
+        self.parallel_transfers_spin = QSpinBox()
+        self.parallel_transfers_spin.setRange(1, TP.MAX_PARALLEL)
+        self.parallel_transfers_spin.setValue(TP.parallel_transfers())
+        transfers_form.addRow(tr("Parallel transfers"), self.parallel_transfers_spin)
+        transfers_form.addRow("", _note(tr(
+            "Copy and move jobs that run at the same time; 1 runs them one after the "
+            "other. Hides the round trips of many small files on a slow link. A "
+            "connection that cannot carry two jobs at once (FTP, WebDAV, S3, ...) "
+            "still runs its jobs one by one. Applies to jobs that start after the change.")))
+        self.layout_.addWidget(transfers)
 
         ram = QGroupBox(tr("RAM workspace"))
         ram_form = QFormLayout(ram)
@@ -627,6 +641,7 @@ class FilesPage(_FormPage):
         return {
             "show_hidden": self.show_hidden_check.isChecked(),
             "open_limit": self.open_limit_spin.value(),
+            "parallel_transfers": self.parallel_transfers_spin.value(),
             "ramfs_enabled": self.ramfs_check.isChecked(),
             "ramfs_max_mib": self.ramfs_max_spin.value(),
             "ramfs_reserve_mib": self.ramfs_reserve_spin.value(),
@@ -641,6 +656,13 @@ class FilesPage(_FormPage):
             self._window.set_show_hidden(changed["show_hidden"])
         if "open_limit" in changed:
             OL.set_max_open_mb(changed["open_limit"])
+        if "parallel_transfers" in changed:
+            from core import transfer_pool as TP
+
+            TP.set_parallel_transfers(changed["parallel_transfers"])
+            manager = getattr(self._window, "_transfer_manager", None)
+            if manager is not None:
+                manager.set_max_parallel(changed["parallel_transfers"])
         ram_keys = {"ramfs_enabled", "ramfs_max_mib", "ramfs_reserve_mib", "tmpfs_enabled"}
         if ram_keys & changed.keys():
             # Read again: only what changed here replaces what is stored.
@@ -841,7 +863,8 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
                 ("toolbar", "icon bar", "buttons", "category", "categories", "group",
                  "colour", "color", "tint"), None),
     "files": ("Files & Panes", lambda p, w: FilesPage(w, p),
-              ("hidden", "open size limit", "ram", "tmpfs", "memory", "workspace"), None),
+              ("hidden", "open size limit", "ram", "tmpfs", "memory", "workspace",
+               "transfers", "copy", "move"), None),
     "network": ("Network & Proxy", _network_page,
                 ("proxy", "socks", "http", "pac", "bypass", "network"), None),
     "llm": ("LLM Profiles", _llm_page, ("llm", "model", "endpoint", "api key", "ollama"), None),

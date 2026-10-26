@@ -405,6 +405,26 @@ objdump -T dist/axross-full | awk '/GLIBC_/ {print $5}' \
 # Expected: GLIBC_2.34 (or lower) — nothing newer.
 ```
 
+### Pinned, hashed dependencies
+
+The builder installs nothing by name: every Python package comes from
+`build/requirements-bundle.txt`, one exact version per package with the
+sha256 of each of its files, installed with `--require-hashes
+--only-binary=:all:`. The macOS and Windows CI bundles install the same
+file. Its input is `build/requirements-bundle.in` (every pyproject
+requirement with its floor, plus PyInstaller); refresh it with
+
+```bash
+scripts/lock_bundle_deps.sh          # resolver (uv) runs in a container
+python -m security.dep_floor_audit --lock build/requirements-bundle.txt
+```
+
+and commit both files with `build/requirements-bootstrap.txt` (`git add
+-f`: a global `build/` ignore hides them). The image also runs `dnf
+upgrade`; `scripts/build_bundle_docker.sh` refuses an image that still
+lists a security update (`AXROSS_BUILDER_NO_CACHE=1` rebuilds every
+layer). What each gate covers: `docs/SUPPLY_CHAIN_AUDIT.md`.
+
 ### Why AlmaLinux 9 and not older / newer bases?
 
 * **RHEL 8 / Ubuntu 20.04 (glibc 2.28 / 2.31)** would reach more
@@ -535,12 +555,16 @@ AXROSS_FROZEN_BINARY=dist/axross-slim .venv/bin/python -m pytest tests/test_froz
 
 # 6. Sha256 everything
 ( cd dist && sha256sum axross-* ) | tee dist/SHA256SUMS
+
+# 7. Sign SHA256SUMS with the release key (writes dist/SHA256SUMS.sig)
+.venv/bin/python scripts/sign_release.py /path/to/release-key.pem dist/SHA256SUMS
 ```
 
-Checksums go into the release notes. Linux AppImage signing
+Checksums go into the release notes. `SHA256SUMS` and `SHA256SUMS.sig`
+are both release assets; without the signature no installed binary
+updates (see below). Linux AppImage signing
 (`gpg --detach-sign dist/axross-full-x86_64.AppImage`) is a
-nice-to-have; for internal lab distribution SHA256 alone is
-usually enough.
+nice-to-have on top.
 
 ## Self-update: what a release must carry
 
@@ -565,13 +589,44 @@ it is refused by every installed binary, nothing is replaced:
   format, with one line per binary (step 6 above). No line for the
   binary, or a different hash: refused. GitHub's own `digest` of an asset,
   where the API gives one, must agree with it as well.
+* **`SHA256SUMS.sig`**, the detached signature of `SHA256SUMS` (step 7):
+  the **raw 64-byte Ed25519 signature** of the exact bytes of
+  `SHA256SUMS` (not base64, nothing normalised - CRLF or a missing final
+  newline are signed as they are). The binaries pin the public release
+  key, raw 32 bytes in base64, in `core/self_update.py` `TRUSTED_KEYS`
+  (`rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68=`). The signature is
+  checked after `SHA256SUMS` and the signature are fetched and before any
+  entry of `SHA256SUMS` is read or the binary is fetched. Refused: no
+  `SHA256SUMS.sig` asset, one that is larger than 64 bytes (not even
+  downloaded), one of any other size, one that differs from GitHub's
+  digest of it, or one that does not verify with a pinned key (a
+  `SHA256SUMS` changed after signing, another key). The checksums and
+  GitHub's digests come from the release itself and only catch a broken
+  download; the signature is what someone who can change the release
+  cannot make.
+  `scripts/sign_release.py <key.pem> <SHA256SUMS>` writes it next to
+  `SHA256SUMS`: the key is a PEM private Ed25519 key (`openssl genpkey
+  -algorithm ed25519 -out release-key.pem`; an encrypted one asks for its
+  passphrase), refused when group or others can read the file or when it
+  is a symlink; no key material is printed, only the derived public key;
+  a key not pinned in `TRUSTED_KEYS` is refused unless `--allow-unpinned`
+  is given; the new signature is verified with the derived public key,
+  through the updater's own check, before the file is written.
+  **Key rotation:** `TRUSTED_KEYS` is a tuple and any one key verifying
+  is enough. Add the new public key in a release signed with the old key,
+  sign with the new key only once the binaries in use carry it, then
+  drop the old one.
+  **Migration:** binaries of 0.14.50 and older do not check signatures;
+  they pick their assets by exact name (`axross-full`, `SHA256SUMS`, ...)
+  and ignore `SHA256SUMS.sig`, so they keep updating - into a binary
+  that checks it from then on.
 * **Hosts**: the API on `api.github.com`; the download URL
   `https://github.com/c0decave/axross/releases/download/vX.Y.Z/<name>`
   answers 302 to `release-assets.githubusercontent.com` (measured
   2026-10-25; `objects.githubusercontent.com` before). Only these four
   hosts, only https, at most five redirects; bounds: 1 MiB for the API
-  answer, 64 KiB for `SHA256SUMS`, 1 GiB for a binary, which must have
-  exactly the size the API states.
+  answer, 64 KiB for `SHA256SUMS`, 64 bytes for `SHA256SUMS.sig`, 1 GiB
+  for a binary, which must have exactly the size the API states.
 
 A distribution package (deb, rpm, a container image) must not replace
 itself: start it with `AXROSS_NO_UPDATE_CHECK=1` in the environment (no

@@ -84,6 +84,17 @@ class TaggedIndex:
         return at < len(self._sorted) and self._sorted[at].startswith(prefix)
 
 
+
+def _list_field(data: dict, key: str) -> list:
+    """*key* of a hand-editable tags.json when it is a list; anything else
+    (a number made a TypeError out of store()) reads as empty."""
+    value = data.get(key)
+    if isinstance(value, list):
+        return value
+    if value is not None:
+        log.warning("Tags: %r in tags.json is not a list; ignored", key)
+    return []
+
 class TagStore:
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -114,7 +125,7 @@ class TagStore:
         if not isinstance(data, dict):
             return
         tags = []
-        for raw in data.get("tags") or []:
+        for raw in _list_field(data, "tags"):
             try:
                 tags.append(Tag(_check_name(raw["name"]), _check_colour(raw["color"])))
             except (TypeError, KeyError, ValueError):
@@ -122,7 +133,7 @@ class TagStore:
         if isinstance(data.get("tags"), list):
             self._tags = tags
         known = {t.name for t in self._tags}
-        for raw in data.get("items") or []:
+        for raw in _list_field(data, "items"):
             try:
                 backend, path = raw["backend"], raw["path"]
                 if not isinstance(backend, str) or not isinstance(path, str) or not path:

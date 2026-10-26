@@ -148,20 +148,28 @@ class AgentSession:
             if isinstance(data.get(name), bool):
                 setattr(out, name, data[name])
         out.access = SessionAccess.from_dict(data.get("access"))
-        out.groups = [g for g in data.get("groups") or [] if isinstance(g, str)]
+        out.groups = [g for g in _list_of(data, "groups") if isinstance(g, str)]
         out.extra_folders = [
             (os.path.normpath(e["path"]), e.get("mode") == "rw")
-            for e in data.get("extra_folders") or []
+            for e in _list_of(data, "extra_folders")
             if isinstance(e, dict) and isinstance(e.get("path"), str) and os.path.isabs(e["path"])
         ]
-        out.transcript = [_transcript_entry(e) for e in data.get("transcript") or []
+        out.transcript = [_transcript_entry(e) for e in _list_of(data, "transcript")
                           if isinstance(e, dict)]
         out.messages = [
             m
-            for m in data.get("messages") or []
+            for m in _list_of(data, "messages")
             if isinstance(m, dict) and isinstance(m.get("role"), str)
         ]
         return out
+
+
+def _list_of(data: dict, key: str) -> list:
+    """*data[key]* when it is a list, else [] - a hand-edited
+    ``"extra_folders": 5`` must not stop the start, nor a string be read one
+    character an entry."""
+    value = data.get(key)
+    return value if isinstance(value, list) else []
 
 
 #: The kinds of transcript line besides a plain one: "reasoning" is a

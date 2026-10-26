@@ -5,7 +5,7 @@ the latest release of ``c0decave/axross``, in the background, with one
 request. When it is newer, the window says so; *Download* fetches the
 binary of this build's kind, checks it and puts it in place. It takes
 effect at the next start - nothing that was downloaded is ever run before
-its checksum matched, and only on *Restart Now*.
+its signature and checksum matched, and only on *Restart Now*.
 
 Which file (:func:`detect_install`):
 
@@ -34,12 +34,25 @@ urllib's environment proxies.
 Checks before anything is replaced:
 
 * the asset URL is the release's own download URL, every size is bounded
-  (:data:`MAX_API_BYTES`, :data:`MAX_SUMS_BYTES`, :data:`MAX_ASSET_BYTES`)
-  and a download must have exactly the size the release states;
-* the SHA-256 must equal the entry of the release's ``SHA256SUMS`` (no
+  (:data:`MAX_API_BYTES`, :data:`MAX_SUMS_BYTES`, :data:`SIG_BYTES`,
+  :data:`MAX_ASSET_BYTES`) and a download must have exactly the size the
+  release states;
+* the release's ``SHA256SUMS`` must carry a valid signature
+  (:func:`verify_signature`): the asset ``SHA256SUMS.sig`` is the raw
+  64-byte Ed25519 signature of the exact bytes of ``SHA256SUMS``, made with
+  the release key whose public half is pinned in :data:`TRUSTED_KEYS`. No
+  signature, one of another size, or one that does not verify: refused,
+  before any entry of ``SHA256SUMS`` is read and before the binary is
+  fetched. The checksums and GitHub's digests come from the release itself;
+  the signature is what someone who can change the release cannot make;
+* the SHA-256 must equal the entry of the signed ``SHA256SUMS`` (no
   entry, no file: refused) and, where the API gives one, its ``digest``
-  of the same asset - both from the same release;
+  of the same asset;
 * a refused or cut download leaves nothing behind.
+
+Releases are signed with ``scripts/sign_release.py`` (docs/PACKAGING.md).
+Binaries released before signing (0.14.50 and older) do not check it;
+they ignore the extra asset (they pick assets by their exact name).
 
 Replacing (:func:`install`): the new file is written next to the running
 binary (same file system), fsynced, gets the old file's mode; the old one
@@ -76,6 +89,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from base64 import b64decode
+from binascii import Error as Base64Error
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -97,6 +112,15 @@ ALLOWED_HOSTS = frozenset({
     "objects.githubusercontent.com",
 })
 SUMS_NAME = "SHA256SUMS"
+#: The detached signature of SHA256SUMS: raw Ed25519 signature bytes.
+SIG_NAME = SUMS_NAME + ".sig"
+#: An Ed25519 signature is exactly this long; it is also the size bound.
+SIG_BYTES = 64
+#: The public release keys (raw 32 bytes, base64) a SHA256SUMS may be
+#: signed with; any one of them verifying is enough. More than one only
+#: while a key is rotated: a new key is added here a release before the
+#: releases are signed with it. Tests replace it with their own key.
+TRUSTED_KEYS: tuple[str, ...] = ("rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68=",)
 #: Written into the bundle by build/axross.spec: "full" or "slim". In the
 #: first-party folder "axross" (core.third_party.FIRST_PARTY): a file at
 #: the bundle root would be an unclaimed part of the bundle to the release
@@ -144,6 +168,11 @@ class RateLimited(UpdateError):
 
 class ChecksumError(UpdateError):
     """What came does not match the release's checksums - refused."""
+
+
+class SignatureError(ChecksumError):
+    """The release's SHA256SUMS carries no valid signature of the release
+    key - refused."""
 
 
 class NotWritable(UpdateError):
@@ -599,16 +628,79 @@ def _remove_stale(folder: Path, name: str) -> None:
         _unlink(stale)
 
 
-def _expected_sha256(release: Release, asset: Asset, opener) -> str:
+def _public_keys(keys) -> list:
+    """The usable Ed25519 keys among *keys* (base64 of the raw 32 bytes);
+    an entry that is none is skipped, never trusted."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    usable = []
+    for key in keys:
+        try:
+            raw = b64decode(key, validate=True) if isinstance(key, str) else b""
+        except (Base64Error, ValueError):
+            raw = b""
+        if len(raw) != 32:
+            log.error("update: a pinned release key is not 32 bytes of base64 - skipped")
+            continue
+        try:
+            usable.append(Ed25519PublicKey.from_public_bytes(raw))
+        except ValueError:
+            log.error("update: a pinned release key is not an Ed25519 key - skipped")
+    return usable
+
+
+def verify_signature(data: bytes, signature, keys=None) -> None:
+    """Refuse (:class:`SignatureError`) unless *signature* is a valid
+    Ed25519 signature of exactly *data* by one of *keys* (default
+    :data:`TRUSTED_KEYS`)."""
+    from cryptography.exceptions import InvalidSignature
+
+    keys = TRUSTED_KEYS if keys is None else keys
+    if not isinstance(signature, (bytes, bytearray)) or len(signature) != SIG_BYTES:
+        size = len(signature) if isinstance(signature, (bytes, bytearray)) else "no"
+        raise SignatureError(f"{SIG_NAME} has {size} bytes; a signature is exactly "
+                             f"{SIG_BYTES} bytes - refused")
+    public_keys = _public_keys(keys)
+    if not public_keys:
+        raise SignatureError("this axross has no usable release key to check the signature "
+                             "with - refused")
+    for public_key in public_keys:
+        try:
+            public_key.verify(bytes(signature), bytes(data))
+        except InvalidSignature:
+            continue
+        return
+    raise SignatureError(f"the signature in {SIG_NAME} does not verify with the axross "
+                         f"release key: {SUMS_NAME} was not signed by it - refused")
+
+
+def _signed_sums(release: Release, opener) -> bytes:
+    """The bytes of the release's SHA256SUMS, after its signature verified."""
     sums_asset = release.asset(SUMS_NAME)
     if sums_asset is None:
         raise ChecksumError(f"release {release.version} has no {SUMS_NAME} - refused")
     if sums_asset.size > MAX_SUMS_BYTES:
         raise ChecksumError(f"{SUMS_NAME} is larger than {MAX_SUMS_BYTES} bytes - refused")
+    sig_asset = release.asset(SIG_NAME)
+    if sig_asset is None:
+        raise SignatureError(f"release {release.version} has no {SIG_NAME}: it is not signed "
+                             "- refused")
+    if sig_asset.size > SIG_BYTES:
+        raise SignatureError(f"{SIG_NAME} is larger than {SIG_BYTES} bytes - refused")
     data = fetch(sums_asset.url, opener=opener, max_bytes=sums_asset.size,
                  deadline=time.monotonic() + API_TIMEOUT, timeout=API_TIMEOUT)
     if sums_asset.digest and hashlib.sha256(data).hexdigest() != sums_asset.digest:
         raise ChecksumError(f"{SUMS_NAME} differs from GitHub's digest of it - refused")
+    signature = fetch(sig_asset.url, opener=opener, max_bytes=sig_asset.size,
+                      deadline=time.monotonic() + API_TIMEOUT, timeout=API_TIMEOUT)
+    if sig_asset.digest and hashlib.sha256(signature).hexdigest() != sig_asset.digest:
+        raise ChecksumError(f"{SIG_NAME} differs from GitHub's digest of it - refused")
+    verify_signature(data, signature)
+    return data
+
+
+def _expected_sha256(release: Release, asset: Asset, opener) -> str:
+    data = _signed_sums(release, opener)
     expected = parse_sums(data.decode("utf-8", errors="replace")).get(asset.name)
     if expected is None:
         raise ChecksumError(f"the {SUMS_NAME} of release {release.version} has no entry for "
@@ -622,8 +714,8 @@ def download(release: Release, inst: Install, *, dest_dir, opener=None,
              progress: Callable[[int, int], None] | None = None,
              cancel: threading.Event | None = None) -> Downloaded:
     """Fetch this build's asset of *release* into a hidden file in
-    *dest_dir* and check it against the release's SHA256SUMS. The file is
-    removed on any failure."""
+    *dest_dir* and check it against the release's signed SHA256SUMS. The
+    file is removed on any failure."""
     if not inst.can_download:
         raise UpdateError(inst.why_not())
     asset = release.asset(inst.asset)
@@ -896,6 +988,9 @@ __all__ = [
     "NotWritable",
     "RateLimited",
     "Release",
+    "SIG_NAME",
+    "SignatureError",
+    "TRUSTED_KEYS",
     "UpdateError",
     "asset_name",
     "build_opener",
@@ -911,4 +1006,5 @@ __all__ = [
     "restart",
     "save_copy",
     "update",
+    "verify_signature",
 ]

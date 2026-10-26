@@ -67,6 +67,7 @@ from core.telnet_client import (  # noqa: E402 — re-using telnet shell-output 
     _parse_ls_la,
     _parse_stat_gnu,
     copy_command,
+    remove_command,
     rename_command,
 )
 
@@ -796,15 +797,7 @@ class SCPSession(SessionLifecycle):
         self._exec(f"mkdir -p {shlex.quote(self.normalize(path))}")
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        path = self.normalize(path)
-        qpath = shlex.quote(path)
-        if recursive:
-            self._exec(f"rm -rf {qpath}")
-        else:
-            if self.is_dir(path):
-                self._exec(f"rmdir {qpath}")
-            else:
-                self._exec(f"rm -f {qpath}")
+        self._exec(remove_command(self.normalize(path), recursive=recursive))
 
     def rename(self, src: str, dst: str) -> None:
         self._exec(rename_command(self.normalize(src), self.normalize(dst)))

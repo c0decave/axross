@@ -654,3 +654,38 @@ def test_e2e_tagging_a_file_refits_the_name_column(store, tmp_path, folder):
     finally:
         win.close()
         win.deleteLater()
+
+
+# -- a hand-edited tags.json with the wrong shapes ------------------------------------
+# {"tags": 5} or {"items": 7} raised TypeError out of TG.store() ("'int' object is
+# not iterable"): the loops read data.get(...) or [] without asking for a list.
+
+
+@pytest.mark.parametrize("data", [
+    {"tags": 5, "items": 7},
+    {"tags": "Important", "items": "abc"},
+    {"tags": {"name": "x"}, "items": {"backend": "Local"}},
+    {"tags": None, "items": None},
+])
+def test_sad_wrong_shapes_load_as_empty_without_an_error(tmp_path, monkeypatch, data):
+    path = tmp_path / "tags.json"
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(T, "tags_file", lambda: path)
+    T.reset_cache()
+    try:
+        store = T.store()
+        assert store.tags_of("Local", "/x") == []
+        assert [t.name for t in store.tags()]  # the default tags are there
+    finally:
+        T.reset_cache()
+
+
+def test_edge_a_wrong_items_shape_keeps_good_tag_definitions(tmp_path, monkeypatch):
+    path = tmp_path / "tags.json"
+    path.write_text(json.dumps({"tags": [{"name": "Mine", "color": "#112233"}], "items": 7}))
+    monkeypatch.setattr(T, "tags_file", lambda: path)
+    T.reset_cache()
+    try:
+        assert [t.name for t in T.store().tags()] == ["Mine"]
+    finally:
+        T.reset_cache()

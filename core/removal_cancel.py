@@ -8,8 +8,10 @@ only act between the selected top-level entries.
 
 The caller (the pane's delete job) opens a :func:`cancellable_removal`
 scope on its worker thread around ``backend.remove``. The tree walks call
-:func:`checkpoint` before every entry and :func:`removed` after it; once the
-scope's *cancelled* answers true, the next checkpoint raises
+:func:`checkpoint` before every entry and :func:`removed` after it (the
+SFTP walk checks before every batch of pipelined file removals, and still
+reports each file); once the scope's *cancelled* answers true, the next
+checkpoint raises
 :class:`RemovalCancelled`, which says how many entries inside were removed
 so far. Outside a scope both calls do nothing, so every other caller of
 ``remove`` (transfers, scripts, MCP) behaves as before.

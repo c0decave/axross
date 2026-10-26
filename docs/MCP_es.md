@@ -527,7 +527,11 @@ a `/` y dejaría pasar
 `PermissionError`, respondido como -32603 con
 `data.type = "PermissionError"` y un mensaje que nombra la raíz. Los
 grupos de capacidades (§9) pasan cada ruta local por la misma
-comprobación.
+comprobación. Las herramientas que comprueban muchas rutas en una
+llamada (`grep`, `search`, `recursive_checksum`) resuelven la root una
+vez por llamada y cada ruta por separado; la siguiente llamada resuelve
+la root de nuevo, así que una root redirigida mientras el servidor corre
+la ve la siguiente llamada.
 
 `remove`, `rename` y `transfer_move` actúan sobre la propia entrada
 del directorio: tras la misma comprobación solo resuelven el padre

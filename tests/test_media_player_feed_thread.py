@@ -510,7 +510,9 @@ dev = next(d for d in QMediaDevices.audioOutputs() if d.description() == {sink!r
 audio_route.output_device = lambda *a: dev
 eng = MPX.default_engine()
 problems = []
-eng.playback_problem.connect(problems.append)
+# EqEngine (numpy, full) reports playback_problem; SimpleEngine (QMediaPlayer, slim) failed.
+(getattr(eng, "playback_problem", None) or eng.failed).connect(problems.append)
+print("ENGINE", type(eng).__name__, flush=True)
 eng.load({track!r}); eng.play()
 def gui(seconds):
     end = time.monotonic() + seconds

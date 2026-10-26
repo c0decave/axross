@@ -66,9 +66,12 @@ class MainDispatchTest(unittest.TestCase):
 
 
 class FullBundleShipsSiftTest(unittest.TestCase):
+    # The builder installs the hashed lock (Dockerfile.build), not names.
+    LOCK = ROOT / "build" / "requirements-bundle.txt"
+
     def test_happy_the_builder_installs_sift(self) -> None:
-        text = (ROOT / "Dockerfile.build").read_text()
-        self.assertRegex(text, r'"sift-summarizer>=[0-9.]+"')
+        text = self.LOCK.read_text()
+        self.assertRegex(text, r"(?m)^sift-summarizer==[0-9.]+ ; sys_platform == 'linux'")
 
     def test_happy_the_full_preflight_requires_sift(self) -> None:
         text = (ROOT / "scripts" / "build_bundle.sh").read_text()
@@ -82,11 +85,10 @@ class FullBundleShipsSiftTest(unittest.TestCase):
         self.assertIn('"sift"', slim.group(1))
         self.assertRegex(text, r'collect_submodules\("sift"\)')
 
-    def test_edge_the_builder_pypdf_floor_meets_sifts(self) -> None:
+    def test_edge_the_builder_pypdf_pin_meets_sifts_floor(self) -> None:
         # sift reads PDFs only with pypdf >= 6.18.1 (sift's pyproject, extra "pdf").
-        text = (ROOT / "Dockerfile.build").read_text()
-        floor = re.search(r'"pypdf>=([0-9.]+)"', text).group(1)
-        self.assertGreaterEqual(tuple(int(x) for x in floor.split(".")), (6, 18, 1))
+        pin = re.search(r"(?m)^pypdf==([0-9.]+) ", self.LOCK.read_text()).group(1)
+        self.assertGreaterEqual(tuple(int(x) for x in pin.split(".")), (6, 18, 1))
 
 
 if __name__ == "__main__":

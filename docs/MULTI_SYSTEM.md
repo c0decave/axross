@@ -18,7 +18,7 @@ and MCP — and reusable across all 30+ protocols axross speaks.
 | `axross.explain(backend, path)` | Heuristic guess at what kind of directory this is. |
 | `axross.compare_file([b1, b2, …], path)` | Same path across N backends — metadata + diff. |
 | `axross.inspect_targets([(b1, p1), (b2, p2), …])` | Compare a list of (backend, path) pairs. |
-| `axross.federated_search([b1, b2, …], name=…, contains=…)` | One query, native search per protocol. |
+| `axross.federated_search([b1, b2, …], name=…, contains=…)` | One query, many backends in parallel. |
 | `axross.resumable_copy(src, srcp, dst, dstp)` | Cross-backend copy with checkpoint resume. |
 | `axross.dashboard(fmt="text")` | One-screen federation status. |
 
@@ -188,17 +188,12 @@ gives you the boolean.
 >>> print(rep.summary if hasattr(rep, 'summary') else f"{len(rep.hits)} hits")
 ```
 
-Per-backend adapter dispatch:
-
-| Backend | Native query used |
-|---|---|
-| IMAP | IMAP `SEARCH` (full-text + date predicates) |
-| Postgres-FS / SQLite-FS / Mongo-FS / Redis-FS | native `find_by_query` (LIKE / `$regex` / SCAN) |
-| Anything else | client-side recursive walk with optional content `read` for `contains=` |
-
-If a backend has no native adapter, the generic walker still produces
-correct results — just at client-side speeds. Add a custom adapter
-via `core.search_federation.register_adapter(protocol, callable)`.
+Every backend - IMAP and the DB-FS backends included - is searched by
+the same client-side recursive walk, with a content `read` (first 64 KiB
+of each file) for `contains=`. Hits are paths the backend opens, on IMAP
+`/<mailbox>/<uid>_<subject>.eml`. A protocol with a faster native search
+plugs it in via `core.search_federation.register_adapter(protocol,
+callable)`.
 
 Bounded: per-backend hit cap (default 500), total hit cap (5000),
 per-backend timeout (60 s), parallelism (8). Caps mark the result

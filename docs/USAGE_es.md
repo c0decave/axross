@@ -213,6 +213,20 @@ rechazado o un panel cerrado.
   de carpetas sigue en marcha: ninguno de sus ficheros entra en cola.
 - **Verify.** El flag `verify_checksum` por job re-hashea el
   destino tras el upload y rechaza en caso de mismatch.
+- **Parallel transfers.** *Edit → Settings… → Files & Panes →
+  Parallel transfers* (1–8, 1 por defecto) deja correr varios jobs a
+  la vez, iniciados en el orden de la cola; así se ocultan los round
+  trips de muchos ficheros pequeños en un enlace lento. Una conexión
+  que no puede llevar dos jobs a la vez (SCP y cualquier otro
+  protocolo salvo ficheros locales, workspaces en RAM, SFTP, SMB, FTP,
+  WebDAV y S3) sigue con sus jobs de uno en uno, y dos jobs nunca
+  escriben el mismo destino a la vez. Un cambio vale para los jobs que
+  empiezan después. Cada job SFTP usa un channel SSH propio, y los
+  servidores limitan los channels por conexión (OpenSSH `MaxSessions`,
+  10 por defecto). Cada transfer FTP usa una control connection propia;
+  los servidores suelen limitar las conexiones por usuario o dirección,
+  y una conexión FTP cuyo servidor rechaza un segundo login sigue con
+  sus jobs de uno en uno.
 
 ## Capa de funcionalidades del filesystem
 
@@ -1094,7 +1108,7 @@ encuentra un ajuste por su nombre (escribe *sudo*, *proxy* o *zoom*).
 | General | Idioma (al siguiente arranque), restaurar el layout de la última sesión al arrancar, cuándo un panel se vuelve activo (con clic o tras 0,5–3 s con el ratón dentro) |
 | Appearance | Theme, compact mode, monochrome icons, icon colours (Theme default; Own colours in every theme - también en Hacker y Amber, que dibujan cada icono en un color; One colour a elegir), tamaño de letra (zoom), resaltar hidden files y su color (un color difícil de leer en el theme solo tras preguntar) |
 | Toolbar | Agrupar los botones por categoría, mostrar el color de cada categoría detrás de sus botones, el color de cada categoría (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
-| Files & Panes | Mostrar hidden files, open size limit, workspaces en RAM (sí / no, límite de tamaño, memoria que queda libre) y ficheros temporales en RAM (al siguiente arranque) |
+| Files & Panes | Mostrar hidden files, open size limit, parallel transfers, workspaces en RAM (sí / no, límite de tamaño, memoria que queda libre) y ficheros temporales en RAM (al siguiente arranque) |
 | Network & Proxy | El proxy por defecto, lista de bypass, script PAC, una prueba |
 | LLM Profiles | Los servidores LLM de los docks Agent y Analysis; *Fetch models* abre una lista con tamaño, parámetros, cuantización y el modelo cargado de cada uno, en la medida en que el servidor los indica |
 | Analysis (sift) | Análisis automático del archivo seleccionado (desactivado: una selección solo nombra el archivo, *Analyse* lo explica), el perfil LLM de *Analyse with LLM* (el activo, o uno propio - el Agent conserva su elección), máximo de bytes leídos por archivo (limita también la copia de un archivo remoto), time budget por archivo, vision, context tokens (0 = lo que indica el servidor), tags por archivo, categories (una por línea), guardar los resultados de sift en la cache, *Clear Cache*; la versión de sift, o un enlace a *Help → Features…* cuando esta build no tiene sift |
@@ -1156,7 +1170,10 @@ GitHub de `c0decave/axross`:
 - **Help → Check for Updates…** comprueba al momento y muestra la
   respuesta, también cuando axross está al día.
 - **La ventana de update** muestra esta versión y la nueva, las release
-  notes y un enlace a la página del release, y ofrece **Download and
+  notes (mostradas como Markdown; nunca se cargan imágenes ni otros
+  recursos de ellas, el HTML se muestra como texto y solo se abren los
+  enlaces http y https, en el navegador) y un enlace a la página del
+  release, y ofrece **Download and
   Install**, **Skip This Version** (ningún aviso más para esa versión;
   preguntando a mano se sigue ofreciendo) y **Remind Me Later** (ningún
   aviso hasta el siguiente arranque).
@@ -1164,7 +1181,13 @@ GitHub de `c0decave/axross`:
   recibe axross-full, un build slim su binario slim), comprueba su SHA-256
   contra el `SHA256SUMS` del mismo release (y contra el digest propio de
   GitHub del archivo) y rechaza todo lo que no coincida: entonces no se
-  sustituye nada y el archivo parcial se borra. Un archivo verificado
+  sustituye nada y el archivo parcial se borra. Antes, el propio
+  `SHA256SUMS` debe llevar una firma válida: `SHA256SUMS.sig` es una firma
+  Ed25519 hecha con la release key de axross, cuya clave pública va
+  integrada en axross. Un release sin ella, o con una que no verifica, se
+  rechaza ("The update is refused: release X.Y.Z is not signed with the
+  axross release key"): quien pudiera cambiar el release podría cambiar
+  sus checksums, pero no crear esa firma. Un archivo verificado
   sustituye al binario en marcha con un rename atómico, con los permisos
   del archivo antiguo; el antiguo queda al lado como `<name>.previous`.
   Surte efecto en el siguiente arranque; **Restart Now** cierra axross

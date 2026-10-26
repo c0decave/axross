@@ -1220,8 +1220,13 @@ def collect_hits(backend, query: SearchQuery, *, max_hits: int,
 
     limits = SearchLimits(max_hits=max_hits, max_content_bytes=max_content_bytes,
                           max_visited=MAX_GENERIC_VISITED)
-    run_search([SearchScope(backend, root) for root in roots], query, on_hit=keep,
-               limits=limits)
+    summary = run_search([SearchScope(backend, root) for root in roots], query, on_hit=keep,
+                         limits=limits)
+    if not hits and summary.errors and summary.scanned == 0:
+        # Not one file could be read - an unreachable host or a root that
+        # does not exist. federated_search reports a raise per backend; a
+        # quiet empty list read as "no matches" on that backend.
+        raise OSError("; ".join(summary.errors[:3]))
     return hits
 
 

@@ -10,7 +10,8 @@ walks for a remote one - so Cancel could not stop it: the status said
 Now the delete runs inside :func:`core.removal_cancel.cancellable_removal`:
 the tree walks (core.removal_cancel.rmtree for local paths, the SMB, SFTP
 and FTP walkers) call ``checkpoint()`` before every entry and ``removed()``
-after it. A cancel stops at the next entry with ``RemovalCancelled``, which
+after it (SFTP: before every batch of pipelined file removals). A cancel
+stops at the next entry with ``RemovalCancelled``, which
 carries how many entries inside were removed, and the pane says that the
 folder was partly deleted - never "nothing was deleted" when part was.
 Backends whose server removes a tree in one request (WebDAV, S3, cloud
@@ -224,25 +225,38 @@ def test_happy_smb_walk_counts_every_entry_when_not_cancelled(monkeypatch):
     assert fake.calls[-1] == ("rmdir", sub)
 
 
-def test_happy_sftp_walk_stops_at_the_next_entry():
+def test_happy_sftp_walk_stops_at_the_next_batch():
+    # SFTP removes a folder's files in pipelined batches
+    # (core.ssh_client.RMTREE_REMOVES_IN_FLIGHT): Cancel is asked before
+    # each batch, so the running batch is removed in full.
     from paramiko import SFTPAttributes
+    from paramiko.sftp import CMD_REMOVE, CMD_RMDIR
     from sftp_hostile_kit import attr, hostile_session
+
+    from core.ssh_client import RMTREE_REMOVES_IN_FLIGHT as BATCH
 
     with hostile_session() as (script, s):
         st = SFTPAttributes()
         st.st_mode, st.st_size = 0o040755, 0
         script.stat = st
-        script.listing = [attr("a.txt"), attr("b.txt"), attr("c.txt")]
+        names = [f"f{n:02d}.txt" for n in range(BATCH + 4)]
+        script.listing = [attr(n) for n in names]
         calls = []
-        real_remove, real_rmdir = s.sftp.remove, s.sftp.rmdir
-        s.sftp.remove = lambda p: (calls.append(("remove", p)), real_remove(p))
-        s.sftp.rmdir = lambda p: (calls.append(("rmdir", p)), real_rmdir(p))
+        real_async = s.sftp._async_request
+
+        def recording(owner, t, *args):
+            if t in (CMD_REMOVE, CMD_RMDIR):
+                calls.append((t, args[0].decode()))
+            return real_async(owner, t, *args)
+
+        s.sftp._async_request = recording
         c = _Counting(after=2)
         with RC.cancellable_removal(c.cancelled, c.on_removed):
             with pytest.raises(RC.RemovalCancelled) as caught:
                 s.remove("/sub", recursive=True)
-        assert caught.value.removed == 2
-        assert calls == [("remove", "/sub/a.txt"), ("remove", "/sub/b.txt")]
+        assert caught.value.removed == BATCH
+        assert caught.value.path == f"/sub/{names[BATCH]}"
+        assert calls == [(CMD_REMOVE, f"/sub/{n}") for n in names[:BATCH]]
 
 
 def test_happy_ftp_walk_stops_at_the_next_entry():

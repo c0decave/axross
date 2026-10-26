@@ -48,8 +48,8 @@ EXTRAS: dict[str, tuple[str, ...]] = {
     "tftp": ("tftpy>=0.8",),
     "postgres": ("psycopg[binary]>=3.1",),
     "redis": ("redis>=5.0",),
-    "mongo": ("pymongo>=4.6.3",),
-    "git": ("dulwich>=1.2.5", "urllib3>=2.8.0"),
+    "mongo": ("pymongo>=4.18.2",),
+    "git": ("dulwich>=1.2.9", "urllib3>=2.8.0"),
     "dns": ("dnspython>=2.6.1",),
     "magic": ("puremagic>=1.20",),
     "encoding": ("chardet>=5.2",),
@@ -58,11 +58,11 @@ EXTRAS: dict[str, tuple[str, ...]] = {
     "mac": ("manuf>=1.1",),
     "whois": ("ipwhois>=1.3",),
     "ntp": ("ntplib>=0.4",),
-    "metadata": ("pypdf>=6.4.0",),
+    "metadata": ("pypdf>=6.21.2",),
     "sift": ("sift-summarizer>=0.1.86",),
     "media": ("numpy>=2.0",),
     "voice": ("piper-tts>=1.8.0", "onnxruntime>=1.31.0", "faster-whisper>=1.2.1",
-              "ctranslate2>=4.8.3"),
+              "ctranslate2>=4.8.4"),
 }
 
 #: Extras that are no backend: (extra, name, import probe, what it gives).

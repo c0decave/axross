@@ -372,7 +372,7 @@ class HexWidget(QWidget):
             if key == Qt.Key.Key_PageUp:
                 self._cursor_pos = max(0, self._cursor_pos - delta)
             else:
-                self._cursor_pos = min(len(self._data) - 1, self._cursor_pos + delta)
+                self._cursor_pos = max(0, min(len(self._data) - 1, self._cursor_pos + delta))
             self._ensure_cursor_visible()
             return
 
@@ -426,6 +426,14 @@ class HexWidget(QWidget):
 
         super().keyPressEvent(event)
 
+    def focusNextPrevChild(self, next: bool) -> bool:
+        # Tab switches between the hex and the ASCII column (keyPressEvent);
+        # without this Qt moves the focus on before the key arrives.
+        # Shift+Tab still moves the focus out of the view.
+        if next:
+            return False
+        return super().focusNextPrevChild(next)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         delta = event.angleDelta().y()
         lines = -delta // 40 if delta else 0
@@ -469,19 +477,24 @@ class HexWidget(QWidget):
 
         return -1
 
-    def goto_offset(self, offset: int) -> None:
-        """Jump cursor to a specific byte offset."""
+    def goto_offset(self, offset: int) -> bool:
+        """Jump cursor to a specific byte offset; False when the file has
+        no byte there."""
         if 0 <= offset < len(self._data):
             self._cursor_pos = offset
             self._cursor_nibble = 0
             self._ensure_cursor_visible()
+            return True
+        return False
 
     def search_bytes(self, pattern: bytes) -> int:
         """Search for a byte pattern starting from cursor. Returns offset or -1."""
         start = self._cursor_pos + 1
         idx = self._data.find(pattern, start)
         if idx == -1 and start > 0:
-            idx = self._data.find(pattern, 0, start)
+            # From the top again, up to and including a match that begins
+            # at the cursor (the end bound is where such a match ends).
+            idx = self._data.find(pattern, 0, start - 1 + len(pattern))
         if idx >= 0:
             self._cursor_pos = idx
             self._ensure_cursor_visible()
@@ -629,6 +642,12 @@ class HexEditorDialog(QDialog):
         self._btn_close = QPushButton("Close")
         self._btn_close.clicked.connect(self._on_close)
         btn_layout.addWidget(self._btn_close)
+
+        # No default button: Enter in the Goto field clicked "Find Next" (the
+        # first auto-default button) after going to the offset, and Enter in
+        # the Search field searched twice.
+        for button in (search_btn, goto_btn, self._btn_save, self._btn_reload, self._btn_close):
+            button.setAutoDefault(False)
 
         layout.addLayout(btn_layout)
 
@@ -813,10 +832,16 @@ class HexEditorDialog(QDialog):
                 offset = int(text, 16)
             else:
                 offset = int(text, 16)
-            self._hex_widget.goto_offset(offset)
-            self._update_status()
         except ValueError:
+            offset = -1
+        if offset < 0:
             self._status_label.setText("Invalid offset")
+            return
+        if not self._hex_widget.goto_offset(offset):
+            size = len(self._hex_widget.get_data())
+            self._status_label.setText(f"Offset 0x{offset:X} is past the end ({size} bytes)")
+            return
+        self._update_status()
 
     def _on_close(self) -> None:
         if self._hex_widget.is_modified:

@@ -524,7 +524,10 @@ Symlink unter der Root (extern oder vom LLM selbst über das
 `PermissionError`, beantwortet als -32603 mit
 `data.type = "PermissionError"` und einer Message, die die Root nennt.
 Die Capability-Gruppen (§9) schicken jeden lokalen Pfad durch
-denselben Check.
+denselben Check. Tools, die in einem Call viele Pfade prüfen (`grep`,
+`search`, `recursive_checksum`), lösen die Root einmal pro Call auf und
+jeden Pfad weiterhin einzeln; der nächste Call löst die Root neu auf,
+eine während des Laufs umgebogene Root sieht also der nächste Call.
 
 `remove`, `rename` und `transfer_move` wirken auf den Verzeichnis-
 eintrag selbst: nach demselben Check lösen sie nur den Parent auf

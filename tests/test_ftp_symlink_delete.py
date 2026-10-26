@@ -42,7 +42,10 @@ class _DirFtpServer:
     ``missing_listing``: ``"error"`` answers a listing of a missing path
     with 550; ``"empty"`` sends an empty listing, as vsftpd does for NLST.
     ``size``: False refuses every ``SIZE`` (a server that allows it in
-    binary mode only).
+    binary mode only); ``"binary"`` answers it after ``TYPE I`` only and
+    refuses it in ASCII mode, the FTP default, as vsftpd does.
+    ``feat``: answer ``FEAT``, naming ``MLST`` when ``mlsd`` is not
+    ``"none"``; False refuses ``FEAT`` with 502.
     ``utf8``: False refuses ``OPTS UTF8 ON``; the client then speaks latin-1.
     ``dash_a``: ``"parse"`` reads a leading ``-a`` of LIST / NLST as the
     option and, like pure-ftpd (measured 2026-10-21), leaves dot entries
@@ -58,9 +61,10 @@ class _DirFtpServer:
         list_style: str = "unix",
         mdtm: bool = False,
         missing_listing: str = "error",
-        size: bool = True,
+        size: bool | str = True,
         utf8: bool = True,
         dash_a: str = "parse",
+        feat: bool = False,
     ) -> None:
         self.root = root
         self.dash_a = dash_a
@@ -70,6 +74,7 @@ class _DirFtpServer:
         self.missing_listing = missing_listing
         self.size = size
         self.utf8 = utf8
+        self.feat = feat
         self.commands: list[str] = []
         self._lsock = socket.create_server(("127.0.0.1", 0))
         self.port = self._lsock.getsockname()[1]
@@ -117,7 +122,8 @@ class _DirFtpServer:
 
     def _mlsd_line(self, real: str, name: str) -> str:
         kind = "dir" if os.path.isdir(real) else "file"  # follows links
-        return f"type={kind};size={os.stat(real).st_size}; {name}"
+        st = os.stat(real) if os.path.exists(real) else os.lstat(real)  # a dangling link
+        return f"type={kind};size={st.st_size}; {name}"
 
     # --- protocol --------------------------------------------------------
 
@@ -146,6 +152,7 @@ class _DirFtpServer:
     def _serve(self, conn: socket.socket) -> None:
         cwd = "/"
         data_l = None
+        binary = False  # RFC 959: ASCII until TYPE I
         conn.sendall(b"220 fake\r\n")
         f = conn.makefile("rb")
         for raw in f:
@@ -161,7 +168,12 @@ class _DirFtpServer:
             elif verb == "OPTS" and not self.utf8 and arg.upper().startswith("UTF8"):
                 conn.sendall(b"504 no utf8 here\r\n")
             elif verb in ("OPTS", "TYPE", "NOOP"):
+                if verb == "TYPE":
+                    binary = arg.upper().startswith("I")
                 conn.sendall(b"200 ok\r\n")
+            elif verb == "FEAT" and self.feat:
+                mlst = "" if self.mlsd == "none" else " MLST type*;size*;\r\n"
+                conn.sendall(f"211-Features:\r\n SIZE\r\n{mlst}211 End\r\n".encode())
             elif verb == "QUIT":
                 conn.sendall(b"221 bye\r\n")
                 return
@@ -221,7 +233,7 @@ class _DirFtpServer:
                 self._send_data(conn, data_l, out)
                 data_l = None
             elif verb == "SIZE":
-                if self.size and os.path.isfile(real):
+                if self.size and (self.size != "binary" or binary) and os.path.isfile(real):
                     conn.sendall(f"213 {os.path.getsize(real)}\r\n".encode())
                 else:
                     conn.sendall(b"550 no\r\n")

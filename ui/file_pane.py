@@ -4853,7 +4853,13 @@ class FilePaneWidget(QWidget):
             )
             return
         target_path = self._backend.join(folder, name)
+        leaf = name if XL.is_xlink_path(name) else name + XL.LINK_SUFFIX
         try:
+            # create_xlink replaces what is there (atomic_write); like New
+            # Folder and New File, an existing name is refused, not overwritten.
+            if self._backend.exists(self._backend.join(folder, leaf)):
+                QMessageBox.warning(self, "Create XLink", f"Path already exists:\n{leaf}")
+                return
             final = XL.create_xlink(
                 self._backend,
                 target_path,

@@ -4207,7 +4207,7 @@
       ],
       "returns": "SearchResult",
       "summary": "Run one search query against many backends in parallel.",
-      "doc": "Run one search query against many backends in parallel.\n\nThe dispatcher picks the most efficient adapter per backend\n(IMAP SEARCH for IMAP, native ``find_by_query`` for DB-FS family,\nclient-side walk for the rest). Pass either a pre-built\n:class:`core.search_federation.SearchQuery` (``query=…``) or the\nindividual filter kwargs to construct one inline.\n\nReturns a :class:`core.search_federation.SearchResult`.",
+      "doc": "Run one search query against many backends in parallel.\n\nEvery backend is walked client-side (``core.file_search``); an\nadapter registered for its protocol replaces the walk. A backend\nnone of whose roots can be read is in ``errors``, not a quiet zero.\nPass either a pre-built :class:`core.search_federation.SearchQuery`\n(``query=…``) or the individual filter kwargs to construct one\ninline.\n\nReturns a :class:`core.search_federation.SearchResult`.",
       "examples": [],
       "raises": [],
       "mutates": false,

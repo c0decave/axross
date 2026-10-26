@@ -25,6 +25,7 @@ from core import third_party as T  # noqa: E402
 
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 DOCKERFILE = (ROOT / "Dockerfile.build").read_text(encoding="utf-8")
+BUNDLE_LOCK = (ROOT / "build" / "requirements-bundle.txt").read_text(encoding="utf-8")
 
 
 def _raw() -> dict:
@@ -105,7 +106,9 @@ def test_happy_pinned_versions_are_the_ones_the_builder_installs():
         assert by_id[entry_id].version == pin
     for entry_id in ("piper-tts", "onnxruntime", "faster-whisper", "ctranslate2"):
         name = by_id[entry_id].pypi[0]
-        assert f'"{name}=={by_id[entry_id].version}"' in DOCKERFILE, entry_id
+        # The builder installs the hashed lock (Dockerfile.build).
+        assert re.search(rf"^{re.escape(name)}=={re.escape(by_id[entry_id].version)} ",
+                         BUNDLE_LOCK, re.M), entry_id
 
 
 def test_happy_filter_looks_at_name_purpose_licence_and_shipping():

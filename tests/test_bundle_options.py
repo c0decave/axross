@@ -156,3 +156,72 @@ def test_edge_the_kept_document_is_the_one_the_client_builds():
     for name in B.KEPT_DISCOVERY_DOCUMENTS:
         api, version, _json = name.split(".")
         assert f'build("{api}", "{version}"' in source, name
+
+
+# --- Qt platform plugins: only the ones axross starts on -------------------
+# The PyQt6-Qt6 wheel ships every Linux platform plugin. axross opens its
+# window on xcb or wayland and runs headless on offscreen (the multimedia
+# probe child, --script, the bundle smoke); nothing selects the others. The
+# VNC plugin (libqvnc) carries CVE-2026-79680, a VNC password authentication
+# bypass still open in Qt 6.11.2: a bundle that ships it lets anyone who
+# starts axross with QT_QPA_PLATFORM=vnc serve it to the network.
+
+UNUSED_PLATFORM_FILES = [
+    "PyQt6/Qt6/plugins/platforms/libqvnc.so",
+    "PyQt6/Qt6/plugins/platforms/libqeglfs.so",
+    "PyQt6/Qt6/plugins/platforms/libqlinuxfb.so",
+    "PyQt6/Qt6/plugins/platforms/libqminimal.so",
+    "PyQt6/Qt6/plugins/platforms/libqminimalegl.so",
+    "PyQt6/Qt6/plugins/platforms/libqvkkhrdisplay.so",
+    "PyQt6/Qt6/plugins/egldeviceintegrations/libqeglfs-emu-integration.so",
+    "PyQt6/Qt6/plugins/egldeviceintegrations/libqeglfs-x11-integration.so",
+    "PyQt6/Qt6/plugins/egldeviceintegrations/libqeglfs-kms-integration.so",
+    "PyQt6/Qt6/lib/libQt6EglFSDeviceIntegration.so.6",
+    "libQt6EglFSDeviceIntegration.so.6",
+]
+KEPT_PLATFORM_FILES = [
+    "PyQt6/Qt6/plugins/platforms/libqxcb.so",
+    "PyQt6/Qt6/plugins/platforms/libqwayland.so",
+    "PyQt6/Qt6/plugins/platforms/libqwayland-egl.so",
+    "PyQt6/Qt6/plugins/platforms/libqwayland-generic.so",
+    "PyQt6/Qt6/plugins/platforms/libqoffscreen.so",
+    "PyQt6/Qt6/plugins/xcbglintegrations/libqxcb-glx-integration.so",
+    "PyQt6/Qt6/plugins/wayland-shell-integration/libxdg-shell.so",
+    "PyQt6/Qt6/lib/libQt6XcbQpa.so.6",
+    "PyQt6/Qt6/lib/libQt6WaylandClient.so.6",
+    # macOS and Windows: the native platform and offscreen stay.
+    "PyQt6/Qt6/plugins/platforms/libqcocoa.dylib",
+    "PyQt6\\Qt6\\plugins\\platforms\\qwindows.dll",
+    "PyQt6/Qt6/plugins/platforms/libqoffscreen.dylib",
+]
+
+
+@pytest.mark.parametrize("path", UNUSED_PLATFORM_FILES)
+def test_happy_unused_platform_plugins_leave_the_bundle(path):
+    assert B.dropped(path)
+
+
+@pytest.mark.parametrize("path", KEPT_PLATFORM_FILES)
+def test_sad_the_platforms_axross_starts_on_stay(path):
+    assert not B.dropped(path)
+
+
+def test_edge_a_name_that_only_starts_like_a_dropped_plugin_stays():
+    """``libqvnc.so`` is dropped, a hypothetical ``libqvncx.so`` or a folder
+    named like the plugin is not: whole trailing path components match."""
+    assert not B.dropped("PyQt6/Qt6/plugins/platforms/libqvncx.so")
+    assert not B.dropped("PyQt6/Qt6/plugins/platforms/libqvnc.so.debug")
+    assert not B.dropped("egldeviceintegrations")
+    assert B.dropped("PyQt6/Qt6/plugins/egldeviceintegrations/libqeglfs-new-integration.so")
+
+
+def test_edge_the_spec_drops_from_the_data_toc_too():
+    """PyInstaller files its SYMLINK entries (the top-level
+    ``libQt6EglFSDeviceIntegration.so.6`` -> ``PyQt6/Qt6/lib/...``) under
+    ``a.datas``, not ``a.binaries``: filtering the binaries alone left a
+    dangling link to the dropped library in the first 6.11.2 build."""
+    spec = (ROOT / "build" / "axross.spec").read_text(encoding="utf-8")
+    datas_filter = re.search(r"^a\.datas = TOC\(entry for entry in a\.datas if (.*)\)$", spec, re.M)
+    assert datas_filter, "no filter of a.datas in the spec"
+    assert "dropped(entry[0])" in datas_filter.group(1)
+    assert "dropped_data(entry[0])" in datas_filter.group(1)

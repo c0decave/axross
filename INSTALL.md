@@ -5,7 +5,7 @@ This is the single canonical install reference. The top-level READMEs
 
 ## Prerequisites
 
-- **Python** ≥ 3.10
+- **Python** ≥ 3.11
 - **Linux**: `apt install python3-venv` or the equivalent on your distro so
   `python3 -m venv` is available.
 - **Linux GUI / containers**: PyQt6 ships Qt itself, but minimal images still

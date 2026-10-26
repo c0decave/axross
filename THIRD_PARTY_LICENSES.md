@@ -34,6 +34,7 @@ Installed by `pip install axross`.
 | PyQt6 | GPL-3.0-only OR LicenseRef-Riverbank-Commercial | https://www.riverbankcomputing.com/software/pyqt/ |
 | PySocks | BSD-3-Clause | https://github.com/Anorov/PySocks |
 | pywinpty | MIT | https://github.com/andfoy/pywinpty |
+| watchdog | Apache-2.0 | https://github.com/gorakhargosh/watchdog |
 <!-- /third-party:runtime -->
 
 ## Optional (per-extra) dependencies
@@ -106,7 +107,7 @@ are not bundled - Help > Features… downloads them (pinned SHA-256,
 <!-- third-party:voice -->
 | Component | SPDX license | Note |
 |---|---|---|
-| ctranslate2 4.8.3 | MIT | Runs the Whisper speech recognition models |
+| ctranslate2 4.8.4 | MIT | Runs the Whisper speech recognition models |
 | espeak-ng 1.52.0.1 (commit 724808c5a83f9ef95fdd0db886ba7ba537ff224a) | GPL-3.0-or-later | Phonemes for the Piper voices (statically linked into piper's espeakbridge, with its data) |
 | faster-whisper 1.2.1 | MIT | Local speech recognition of the Agent dock |
 | onnxruntime 1.31.0 | MIT | Runs the Piper voice models |
@@ -265,6 +266,7 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [tzlocal](https://github.com/regebro/tzlocal) | MIT | Used by exchangelib: tzinfo object for the local timezone | full |
 | [uritemplate](https://github.com/python-hyper/uritemplate) | BSD-3-Clause OR Apache-2.0 | Used by google-api-python-client: Implementation of RFC 6570 URI Templates | full |
 | [urllib3](https://github.com/urllib3/urllib3) | MIT | HTTP connection pool (proxies, S3, WebDAV) | full, slim |
+| [watchdog](https://github.com/gorakhargosh/watchdog) | Apache-2.0 | Instant refresh of local folders (inotify, FSEvents, ReadDirectoryChangesW) | full, slim |
 | [Werkzeug](https://github.com/pallets/werkzeug) | BSD-3-Clause | Used by Flask: The comprehensive WSGI web application library | full |
 | [xmltodict](https://github.com/martinblech/xmltodict) | MIT | Used by pywinrm: Makes working with XML feel like you are working with JSON | full |
 <!-- /third-party:python-binaries -->
@@ -297,7 +299,7 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [FFmpeg (PyAV build)](https://ffmpeg.org) | LGPL-3.0-or-later | Audio decoding for local speech recognition; the build reports "libavcodec license: LGPL version 3 or later"; it loads the x264 and x265 libraries below | full |
 | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) 7.1.2 | LGPL-2.1-or-later | Audio and video decoding of the media viewer and the Media Player (Qt Multimedia); the build reports "libavcodec license: LGPL version 2.1 or later" | full, slim |
 | [FreeType](https://freetype.org) | FTL OR GPL-2.0-or-later | Font rendering of Pillow | full, slim |
-| [GCC runtime libraries](https://gcc.gnu.org) | GPL-3.0-or-later WITH GCC-exception-3.1 | Fortran, OpenMP and atomic runtimes (numpy, CTranslate2, QtPdf); libquadmath is LGPL-2.1-or-later | full, slim |
+| [GCC runtime libraries](https://gcc.gnu.org) | GPL-3.0-or-later WITH GCC-exception-3.1 | Fortran and OpenMP runtimes (numpy, CTranslate2); libquadmath is LGPL-2.1-or-later | full |
 | [GLib](https://gitlab.gnome.org/GNOME/glib) | LGPL-2.1-or-later | Main loop and D-Bus integration of Qt's platform plugins | full, slim |
 | [GMP](https://gmplib.org) | LGPL-3.0-or-later OR GPL-2.0-or-later | Arbitrary-precision arithmetic used by Nettle | full |
 | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | GPL-3.0-or-later | Key-value files of Python's dbm module | full |
@@ -307,7 +309,6 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | MIT | Text shaping (Qt, Pillow) | full, slim |
 | [ICU](https://icu.unicode.org) 73.2 | Unicode-DFS-2016 | Unicode support of Qt (collation, conversion, text boundaries) | full, slim |
 | [Intel VPL dispatcher](https://github.com/intel/libvpl) | MIT | Hardware video acceleration dispatcher of PyAV's FFmpeg | full |
-| [JBIG-KIT](https://www.cl.cam.ac.uk/~mgk25/jbigkit/) | GPL-2.0-or-later | JBIG compression used by the system LibTIFF | full, slim |
 | [keyutils](https://git.kernel.org/pub/scm/linux/kernel/git/dhowells/keyutils.git) | LGPL-2.1-or-later | Kernel key retention used by MIT Kerberos | full, slim |
 | [libavif](https://github.com/AOMediaCodec/libavif) | BSD-2-Clause | AVIF images in Pillow | full, slim |
 | [libcap](https://sites.google.com/site/fullycapable/) | BSD-3-Clause OR GPL-2.0-only | POSIX capabilities used by libsystemd | full, slim |
@@ -320,7 +321,7 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [libpq](https://www.postgresql.org) | PostgreSQL | PostgreSQL client library of psycopg | full, slim |
 | [libselinux](https://github.com/SELinuxProject/selinux) | LicenseRef-PublicDomain | SELinux library used by GLib and libpq | full, slim |
 | [libsystemd](https://systemd.io) | LGPL-2.1-or-later AND MIT | Journal and D-Bus helpers used by system libraries | full, slim |
-| [LibTIFF](https://libtiff.gitlab.io/libtiff/) | libtiff | TIFF images (Pillow, Qt image plugin) | full, slim |
+| [LibTIFF](https://libtiff.gitlab.io/libtiff/) | libtiff | TIFF images (Pillow) | full, slim |
 | [libunistring](https://www.gnu.org/software/libunistring/) | LGPL-3.0-or-later OR GPL-2.0-or-later | Unicode string functions used by GnuTLS | full |
 | [libvpx](https://chromium.googlesource.com/webm/libvpx) | BSD-3-Clause | VP8/VP9 codec library of PyAV's FFmpeg | full |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | BSD-3-Clause | WebP images (Pillow, Qt image plugin) | full, slim |

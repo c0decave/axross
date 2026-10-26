@@ -16,6 +16,11 @@ ruff>=0.5
 # ── packaging ─────────────────────────────────────────────────
 build>=1.2
 twine>=5.1
+# twine's requests pulls these in; osv-scanner v2 resolves this file and
+# picked releases with advisories (certifi PYSEC-2026-4320, idna
+# PYSEC-2026-215) while no floor was named.
+certifi>=2026.10.19
+idna>=3.15
 tomli>=2.0; python_version < "3.11"
 
 # ── deps some tests exercise directly ─────────────────────────

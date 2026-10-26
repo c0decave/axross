@@ -206,6 +206,20 @@ geschlossenes Pane.
   Ordner-Walk noch läuft: keine seiner Dateien kommt in die Queue.
 - **Verify.** Pro-Job-Flag `verify_checksum` re-hasht das Ziel nach
   dem Upload und lehnt bei Mismatch ab.
+- **Parallel transfers.** *Edit → Settings… → Files & Panes →
+  Parallel transfers* (1–8, vorgegeben 1) lässt mehrere Jobs
+  nebeneinander laufen, gestartet in Queue-Reihenfolge; das versteckt
+  die Round Trips vieler kleiner Dateien auf einer langsamen Leitung.
+  Eine Verbindung, die keine zwei Jobs zugleich tragen kann (SCP und
+  jedes andere Protokoll außer lokalen Dateien, RAM-Workspaces, SFTP,
+  SMB, FTP, WebDAV und S3), arbeitet ihre Jobs weiter einzeln ab, und
+  zwei Jobs schreiben nie zugleich dasselbe Ziel. Eine Änderung gilt
+  für die Jobs, die danach starten. Jeder SFTP-Job läuft auf einem
+  eigenen SSH-Channel, und Server begrenzen die Channels pro
+  Verbindung (OpenSSH `MaxSessions`, vorgegeben 10). Jeder FTP-Transfer
+  läuft auf einer eigenen Control Connection; Server begrenzen oft die
+  Verbindungen pro User oder Adresse, und eine FTP-Verbindung, deren
+  Server einen zweiten Login ablehnt, arbeitet ihre Jobs einzeln ab.
 
 ## Backend-übergreifender Feature-Layer
 
@@ -1085,7 +1099,7 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 | General | Sprache (gilt ab dem nächsten Start), Layout der letzten Session beim Start wiederherstellen, wann ein Pane aktiv wird (per Klick oder nach 0,5–3 s Maus im Pane) |
 | Appearance | Theme, Compact Mode, Monochrome Icons, Icon Colours (Theme default; Own colours in every theme - auch in Hacker und Amber, die jedes Icon in einer Farbe zeichnen; One colour nach Wahl), Schriftgröße (Zoom), Hidden Files hervorheben und ihre Farbe (eine auf dem Theme schwer lesbare Farbe erst nach Rückfrage) |
 | Toolbar | Buttons nach Kategorie gruppieren, die Farbe jeder Kategorie hinter ihren Buttons zeigen, die Farbe jeder Kategorie (Connections, Windows & Panes, Files & Search, Media, LLM & Agent, Tools & System, Extensions), *Reset to Defaults* |
-| Files & Panes | Hidden Files zeigen, Open Size Limit, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und Temp-Dateien im RAM (gilt ab dem nächsten Start) |
+| Files & Panes | Hidden Files zeigen, Open Size Limit, Parallel transfers, RAM-Workspaces (an / aus, Größenlimit, frei gehaltener Speicher) und Temp-Dateien im RAM (gilt ab dem nächsten Start) |
 | Network & Proxy | Default-Proxy, Bypass-Liste, PAC-Script, ein Test |
 | LLM Profiles | Die LLM-Server von Agent- und Analysis-Dock; *Fetch models* öffnet eine Liste mit Größe, Parametern, Quantisierung und dem geladenen Modell, soweit der Server sie meldet |
 | Analysis (sift) | Automatische Analyse der gewählten Datei (aus: eine Auswahl nennt die Datei nur, *Analyse* erklärt sie), das LLM-Profil von *Analyse with LLM* (das aktive oder ein eigenes - der Agent behält seine Wahl), Max Bytes pro Datei (begrenzt auch die Kopie einer Remote-Datei), Time Budget pro Datei, Vision, Context Tokens (0 = was der Server meldet), Tags pro Datei, Categories (eine pro Zeile), sifts Ergebnisse im Cache behalten, *Clear Cache*; sifts Version, oder ein Link zu *Help → Features…*, wenn dieser Build kein sift hat |
@@ -1148,7 +1162,10 @@ Windows-`axross-slim`) aktualisieren sich aus den GitHub-Releases von
 - **Help → Check for Updates…** prüft sofort und zeigt die Antwort, auch
   wenn axross aktuell ist.
 - **Das Update-Fenster** zeigt diese und die neue Version, die Release
-  Notes und einen Link zur Release-Seite und bietet **Download and
+  Notes (als Markdown dargestellt; Bilder und andere Ressourcen darin
+  werden nie geladen, HTML darin erscheint als Text, und nur http- und
+  https-Links öffnen sich, im Browser) und einen Link zur Release-Seite
+  und bietet **Download and
   Install**, **Skip This Version** (für diese Version kein Hinweis mehr;
   von Hand gefragt, wird sie trotzdem angeboten) und **Remind Me Later**
   (kein Hinweis bis zum nächsten Start).
@@ -1156,7 +1173,13 @@ Windows-`axross-slim`) aktualisieren sich aus den GitHub-Releases von
   bekommt axross-full, ein Slim-Build sein Slim-Binary), prüft dessen
   SHA-256 gegen die `SHA256SUMS` desselben Release (und gegen GitHubs
   eigenen Digest der Datei) und lehnt alles ab, was nicht passt - dann
-  wird nichts ersetzt, und die Teildatei wird gelöscht. Eine geprüfte
+  wird nichts ersetzt, und die Teildatei wird gelöscht. Vorher muss die
+  `SHA256SUMS` selbst gültig signiert sein: `SHA256SUMS.sig` ist eine
+  Ed25519-Signatur mit dem axross-Release-Key, dessen Public Key in axross
+  eingebaut ist. Ein Release ohne sie, oder mit einer, die nicht
+  verifiziert, wird abgelehnt ("The update is refused: release X.Y.Z is
+  not signed with the axross release key") - wer das Release ändern kann,
+  kann dessen Checksummen ändern, aber nicht diese Signatur erzeugen. Eine geprüfte
   Datei ersetzt das laufende Binary mit einem atomaren Rename, mit den
   Permissions der alten Datei; die alte bleibt daneben als
   `<name>.previous`. Sie wirkt ab dem nächsten Start; **Restart Now**

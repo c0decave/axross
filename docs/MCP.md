@@ -509,6 +509,10 @@ configured root (either externally or by the LLM using the
 rejected with `PermissionError`, answered as -32603 with
 `data.type = "PermissionError"` and a message naming the root. The
 capability groups (§9) run every local path through the same check.
+Tools that check many paths in one call (`grep`, `search`,
+`recursive_checksum`) resolve the root once per call and still resolve
+every path on its own; the next call resolves the root again, so a
+root re-pointed while the server runs is seen by the next call.
 
 `remove`, `rename` and `transfer_move` act on the directory entry
 itself: after the same check they resolve only the parent

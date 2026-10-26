@@ -464,8 +464,10 @@ geteiltem State.
 
 Rechtsklick → "Create XLink…". Erzeugt eine `.axlink`-JSON-Datei
 die auf eine andere Backend-URL zeigt. Verwendbar um z.B. in einem
-SFTP-Pane auf eine S3-Datei zu verweisen — ein Doppelklick auf die
-`.axlink` navigiert axross zum Ziel.
+SFTP-Pane auf eine S3-Datei zu verweisen. Der Pane folgt dem Link nicht:
+ein Doppelklick öffnet die `.axlink` als JSON-Text, Skripte lesen das Ziel
+mit `core.xlink.target_of()`. Ein Name, dessen `.axlink` es schon gibt,
+wird abgelehnt statt überschrieben.
 
 Allowlist von Schemes (sftp, s3, webdav, https, smb, axross-link,
 ax-cas) verhindert dass jemand dir ein `.axlink` mit
@@ -694,10 +696,12 @@ genug dass laufende Operationen nicht gestört werden.
 ### Watch (Auto-Refresh)
 
 Das Toggle-Symbol ◉ in der Pfadleiste abonniert das Pane auf
-`core.watch`. Auf LocalFS wird inotify via `watchdog` genutzt (wenn
-installiert), sonst wird per 2-Sekunden-Intervall die
-Verzeichnisstruktur gepollt und Differenzen erkannt. Der Pane
-refresht debounced bei Änderungen.
+`core.watch`. Auf LocalFS meldet `watchdog` (eine Dependency der
+Basisinstallation) jede Änderung sofort: inotify unter Linux, FSEvents
+unter macOS, ReadDirectoryChangesW unter Windows. Kann der Ordner so nicht
+beobachtet werden (inotify-Limit erreicht), und auf allen anderen Backends,
+wird die Verzeichnisstruktur alle 2 Sekunden gepollt und auf Differenzen
+geprüft. Der Pane refresht debounced bei Änderungen.
 
 ---
 
@@ -1008,5 +1012,6 @@ Metadata-Adressranges (169.254.169.254/AWS-IMDS, 10/8, etc.).
   nutzen, welche komplett ignorieren.
 - [WINDOWS_TESTING.md](WINDOWS_TESTING.md) — WinRM/WMI/DFS-N
   Test-Target aufsetzen.
-- [TEST_COVERAGE_MATRIX.md](TEST_COVERAGE_MATRIX.md) — welches
-  Backend welche Operation wie gut abdeckt.
+- [TEST_COVERAGE_MATRIX.md](TEST_COVERAGE_MATRIX.md) — gemessene
+  Line- und Branch-Coverage je Hauptfeature und dessen End-to-end-Tests,
+  erzeugt von `scripts/coverage_matrix.py`.

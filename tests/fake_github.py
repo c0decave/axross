@@ -12,10 +12,18 @@ by the ``Host`` header, the way the real chain looks (measured 2026-10-25):
 server in plain HTTP, Host header unchanged, so the code under test keeps
 its real https URLs, host checks and redirect handling. ``tls=`` serves the
 same routes over real TLS (for the proxy test, through a CONNECT proxy).
+
+Every release carries ``SHA256SUMS.sig``, an Ed25519 signature of its
+``SHA256SUMS`` made with :data:`TEST_SIGNING_KEY` - a key generated per test
+run, never the real release key. A test makes the code under test trust it
+with :func:`trust_test_key` (``monkeypatch``) or :func:`trusted_test_key`
+(a context manager).
 """
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import hashlib
 import http.client
 import http.server
@@ -27,10 +35,48 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
 API_HOST = "api.github.com"
 WEB_HOST = "github.com"
 ASSET_HOST = "release-assets.githubusercontent.com"
 REPO = "c0decave/axross"
+SUMS = "SHA256SUMS"
+SIG = "SHA256SUMS.sig"
+
+#: The signing key of every fake release (generated per test run).
+TEST_SIGNING_KEY = Ed25519PrivateKey.generate()
+
+
+def public_key_b64(private_key: Ed25519PrivateKey) -> str:
+    """The raw 32-byte public key of *private_key* in base64 - the form
+    core.self_update.TRUSTED_KEYS pins."""
+    raw = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return base64.b64encode(raw).decode("ascii")
+
+
+TEST_PUBLIC_KEY = public_key_b64(TEST_SIGNING_KEY)
+
+
+def trust_test_key(monkeypatch, *extra: str) -> None:
+    """Make core.self_update trust :data:`TEST_SIGNING_KEY` (and *extra*)."""
+    from core import self_update as SU
+
+    monkeypatch.setattr(SU, "TRUSTED_KEYS", (TEST_PUBLIC_KEY, *extra))
+
+
+@contextlib.contextmanager
+def trusted_test_key():
+    """:func:`trust_test_key` for code without a monkeypatch fixture."""
+    from core import self_update as SU
+
+    saved = SU.TRUSTED_KEYS
+    SU.TRUSTED_KEYS = (TEST_PUBLIC_KEY,)
+    try:
+        yield
+    finally:
+        SU.TRUSTED_KEYS = saved
 
 
 @dataclass
@@ -49,6 +95,15 @@ class FakeRelease:
     digest_override: dict[str, str] = field(default_factory=dict)
     #: name -> the size the API states (None: the real size).
     size_override: dict[str, int] = field(default_factory=dict)
+    #: The key SHA256SUMS.sig is made with.
+    signing_key: Ed25519PrivateKey = field(default_factory=lambda: TEST_SIGNING_KEY)
+    #: Leave the SHA256SUMS.sig asset out of the release.
+    without_sig: bool = False
+    #: Bytes of SHA256SUMS.sig instead of the signature (a broken one).
+    sig_override: bytes | None = None
+    #: The bytes the signature covers instead of the SHA256SUMS served (a
+    #: release whose SHA256SUMS was rewritten after it was signed).
+    signed_sums: bytes | None = None
 
     @property
     def tag(self) -> str:
@@ -63,10 +118,18 @@ class FakeRelease:
             lines.append(f"{digest or hashlib.sha256(data).hexdigest()}  {name}")
         return "\n".join(lines) + "\n"
 
+    def signature(self) -> bytes:
+        if self.sig_override is not None:
+            return self.sig_override
+        signed = self.signed_sums if self.signed_sums is not None else self.sums_text().encode()
+        return self.signing_key.sign(signed)
+
     def all_files(self) -> dict[str, bytes]:
         files = dict(self.files)
         if not self.without_sums:
-            files["SHA256SUMS"] = self.sums_text().encode()
+            files[SUMS] = self.sums_text().encode()
+        if not self.without_sig:
+            files[SIG] = self.signature()
         return files
 
     def json(self) -> dict:

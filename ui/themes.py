@@ -880,6 +880,23 @@ def _indicator_css(key: str) -> str:
     )
 
 
+def _version_css(key: str) -> str:
+    """The version bottom right (ui.main_window): secondary text without a
+    button frame; with an update notice in the theme's accent, so it is
+    seen and reads as something to click."""
+    muted, _base, accent, _mark = _INDICATOR_COLOURS[key]
+    return (
+        "\nQPushButton#axVersion {\n"
+        f"    border: none;\n    background: transparent;\n    color: {muted};\n"
+        "    padding: 0 6px;\n"
+        "}\n"
+        'QPushButton#axVersion[notice="true"] {\n'
+        f"    color: {accent};\n    font-weight: bold;\n"
+        "}\n"
+        'QPushButton#axVersion[notice="true"]:hover {\n    text-decoration: underline;\n}\n'
+    )
+
+
 def normalize(theme: object) -> str:
     """Return a valid theme id; anything unknown becomes the default."""
     if isinstance(theme, str) and (theme in _VALID or theme == DEFAULT_THEME):
@@ -922,6 +939,8 @@ def stylesheet_for(theme: object, system_scheme: str | None, compact: bool = Fal
         css += _indicator_css("amber")
     else:
         css = _CLASSIC_MUTED_LIGHT + _NATIVE_HEADER_CSS + _indicator_css("native")
+    css += _version_css("classic" if resolved == "dark" else
+                        resolved if resolved in _INDICATOR_COLOURS else "native")
     if compact:
         css += COMPACT_CSS
     return css

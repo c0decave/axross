@@ -101,7 +101,8 @@ class MetadataSearchDialog(QDialog):
         form = QFormLayout(criteria)
         self._needle_edit = QLineEdit()
         self._needle_edit.setPlaceholderText("substring of name (case-insensitive)")
-        self._needle_edit.returnPressed.connect(self._do_search)
+        # Enter searches through the default button (Search); a
+        # returnPressed connection on top searched twice.
         form.addRow("Name contains:", self._needle_edit)
 
         self._ext_edit = QLineEdit()

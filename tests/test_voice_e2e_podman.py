@@ -11,7 +11,7 @@ Skips cleanly unless podman, the image (python:3.14-slim) and the two
 directories are there:
 
   AXROSS_VOICE_WHEELS  wheels for cp314: piper-tts 1.8.0, onnxruntime 1.31.0,
-                       faster-whisper 1.2.1, ctranslate2 4.8.3 and their deps
+                       faster-whisper 1.2.1, ctranslate2 4.8.4 and their deps
   AXROSS_VOICE_MODELS  voices/de_DE-thorsten-high.onnx(.json),
                        voices/en_US-ryan-medium.onnx(.json), whisper-small/
 """
@@ -33,7 +33,7 @@ WHEELS = os.environ.get("AXROSS_VOICE_WHEELS", "")
 MODELS = os.environ.get("AXROSS_VOICE_MODELS", "")
 #: Runs over the 11 terms (synthesis is stochastic: more runs, tighter rates).
 RUNS = int(os.environ.get("AXROSS_VOICE_E2E_RUNS", "3"))
-PINS = ("piper-tts==1.8.0", "onnxruntime==1.31.0", "faster-whisper==1.2.1", "ctranslate2==4.8.3")
+PINS = ("piper-tts==1.8.0", "onnxruntime==1.31.0", "faster-whisper==1.2.1", "ctranslate2==4.8.4")
 
 
 def _engine_env() -> dict:

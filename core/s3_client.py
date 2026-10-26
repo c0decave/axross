@@ -234,7 +234,18 @@ class S3Session(SessionLifecycle):
                 "it will be parsed automatically."
             )
 
-        self._s3 = boto3.client(**kwargs)
+        # A boto3 Session of this S3Session's own. boto3.client() would
+        # build the client from the shared default session, and "invoking
+        # boto3.client() inside of a concurrent context may result in
+        # response ordering issues or interpreter failures from underlying
+        # SSL modules" (boto3 guide, clients.html) - two profiles connecting
+        # at once, or a transfer worker connecting one. The low-level client
+        # itself is thread safe as long as no custom event hooks are
+        # registered on it, and none are; it is not replaced after the
+        # connection test, so several transfer jobs may share it
+        # (core.transfer_pool).
+        self._boto_session = boto3.session.Session()
+        self._s3 = self._boto_session.client(**kwargs)
 
         # Test connection — handle region redirects and try multiple methods
         self._connect_with_redirect(bucket, kwargs)
@@ -270,7 +281,7 @@ class S3Session(SessionLifecycle):
                     log.info("S3 bucket '%s' redirected to region %s", bucket, real_region)
                     self._region = real_region
                     kwargs["region_name"] = real_region
-                    self._s3 = boto3.client(**kwargs)
+                    self._s3 = self._boto_session.client(**kwargs)
                     try:
                         self._test_bucket(bucket)
                         return

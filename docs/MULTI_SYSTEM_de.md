@@ -19,7 +19,7 @@ die axross spricht.
 | `axross.explain(backend, path)` | Heuristische Vermutung „was IST das hier für ein Verzeichnis?". |
 | `axross.compare_file([b1, b2, …], path)` | Gleicher Pfad über N Backends — Metadata + Diff. |
 | `axross.inspect_targets([(b1, p1), (b2, p2), …])` | Heterogene `(backend, path)`-Liste vergleichen. |
-| `axross.federated_search([b1, b2, …], name=…, contains=…)` | Eine Anfrage, native Suche pro Protokoll. |
+| `axross.federated_search([b1, b2, …], name=…, contains=…)` | Eine Anfrage, viele Backends parallel. |
 | `axross.resumable_copy(src, srcp, dst, dstp)` | Cross-Backend-Copy mit Checkpoint-Resume. |
 | `axross.dashboard(fmt="text")` | Ein-Bildschirm-Federation-Status. |
 
@@ -181,16 +181,11 @@ gibt das Boolean.
 ... )
 ```
 
-Per-Backend-Adapter-Dispatch:
-
-| Backend | Native Anfrage |
-|---|---|
-| IMAP | IMAP `SEARCH` (Volltext + Datums-Prädikate) |
-| Postgres-FS / SQLite-FS / Mongo-FS / Redis-FS | nativer `find_by_query` (LIKE / `$regex` / SCAN) |
-| Sonst | client-seitiger Walker mit optionalem Content-`read` für `contains=` |
-
-Ohne nativen Adapter läuft der generische Walker — korrekt, aber
-client-seitig langsam. Eigener Adapter:
+Jedes Backend - IMAP und die DB-FS-Backends eingeschlossen - durchsucht
+derselbe client-seitige Walker, mit Content-`read` (die ersten 64 KiB je
+Datei) für `contains=`. Hits sind Pfade, die das Backend öffnet, bei IMAP
+`/<mailbox>/<uid>_<subject>.eml`. Ein Protokoll mit schnellerer nativer
+Suche hängt sie ein über
 `core.search_federation.register_adapter(protocol, callable)`.
 
 Gekappt: Per-Backend-Cap 500, Total-Cap 5000, Per-Backend-Timeout

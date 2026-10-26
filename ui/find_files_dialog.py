@@ -208,7 +208,8 @@ class FindFilesDialog(QDialog):
             tr("Text without * ? [ ] matches anywhere in the name; a pattern (*.jpg, IMG_????.*) "
                "the whole name. Upper and lower case are the same.")
         )
-        self.name_edit.returnPressed.connect(self.start_search)
+        # Enter searches through the default button (Search, below); a
+        # returnPressed connection on top started the search twice.
         self.name_regex_box = QCheckBox(tr("Regex"), self)
         self.name_regex_box.setToolTip(tr("The name is a regular expression (case-sensitive; "
                                           "(?i) ignores case)"))
@@ -223,7 +224,6 @@ class FindFilesDialog(QDialog):
             tr("Searched line by line in the first 32 MiB of each file - with ripgrep (rg) "
                "when it is installed")
         )
-        self.contains_edit.returnPressed.connect(self.start_search)
         self.contains_regex_box = QCheckBox(tr("Regex"), self)
         self.case_box = QCheckBox(tr("Case-sensitive"), self)
         text_row.addWidget(self.contains_edit, 1)

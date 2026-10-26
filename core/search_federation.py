@@ -1,24 +1,22 @@
-"""Universal search federation — translate one query into per-backend
-native search.
+"""Universal search federation - one query over many backends at once.
 
 The motivating sysadmin / programmer ask: *"find all files containing
 ``hostname.example`` across my SFTP boxes, S3 buckets and IMAP
 mailboxes"*. Doing that by hand means six different command-line
-tools. This module translates a single ``SearchQuery`` into the most
-efficient native query each backend can run, fans out in parallel,
-and merges the results.
+tools. This module runs a single ``SearchQuery`` on every backend in
+parallel and merges the results.
 
-Per-protocol adapters live in this module (instead of in each backend
-file) so the federation logic is in one place. Each adapter takes:
+Every backend is searched by the client-side walk of
+:mod:`core.file_search` (``_generic_adapter``). A protocol with a faster
+native search plugs in an adapter with :func:`register_adapter`; it takes:
 
 * the ``backend`` instance (already opened),
 * a ``SearchQuery`` describing what to find,
 * a max-results cap for that backend,
 
-and returns a list of :class:`SearchHit` dataclasses. An adapter that
-cannot honour a particular query field gracefully degrades by adding
-a ``warning`` to the hit set or by falling back to the generic
-client-side ``find + grep`` adapter (``_generic_adapter``).
+and returns a list of :class:`SearchHit` dataclasses whose ``path`` the
+backend opens. A backend that cannot be searched at all (an adapter
+raises, or none of its roots can be read) lands in ``SearchResult.errors``.
 
 Design choices:
 
@@ -415,123 +413,11 @@ def _to_epoch(raw: Any) -> float:
         return 0.0
 
 
-# ---------------------------------------------------------------------------
-# IMAP adapter — uses the IMAP SEARCH command, no client-side walk.
-# ---------------------------------------------------------------------------
-
-
-def _imap_adapter(
-    backend,
-    query: SearchQuery,
-    max_hits: int,
-) -> list[SearchHit]:
-    label = _label(backend)
-    if not hasattr(backend, "search_messages"):
-        log.debug("imap adapter: backend has no search_messages — falling through")
-        return _generic_adapter(backend, query, max_hits)
-    criteria: list[str] = []
-    if query.contains:
-        # IMAP TEXT is body+headers substring; IMAP doesn't speak regex
-        # natively. If the caller passed a regex we fall back to client-side.
-        if query.contains_is_regex:
-            return _generic_adapter(backend, query, max_hits)
-        criteria.extend(["TEXT", _imap_quote(query.contains)])
-    if query.modified_after:
-        criteria.extend(["SINCE", _imap_date(query.modified_after)])
-    if query.modified_before:
-        criteria.extend(["BEFORE", _imap_date(query.modified_before)])
-    if not criteria:
-        criteria = ["ALL"]
-    try:
-        message_ids = backend.search_messages(" ".join(criteria))
-    except (OSError, AttributeError) as exc:
-        log.debug("imap adapter: search_messages failed: %s", exc)
-        return _generic_adapter(backend, query, max_hits)
-
-    hits: list[SearchHit] = []
-    for msg_id in message_ids[:max_hits]:
-        hits.append(
-            SearchHit(
-                backend_label=label,
-                path=str(msg_id),
-                warning="IMAP returns message IDs, not paths; use imap_search verb to retrieve",
-            )
-        )
-    return hits
-
-
-def _imap_quote(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def _imap_date(epoch: float) -> str:
-    import datetime as _dt
-
-    return _dt.datetime.fromtimestamp(epoch).strftime("%d-%b-%Y")
-
-
-# ---------------------------------------------------------------------------
-# DB-FS adapters — Postgres / SQLite / Mongo. They have schema'd
-# tables with a ``path`` + ``content`` column that we can SELECT
-# against without walking the FS.
-# ---------------------------------------------------------------------------
-
-
-def _dbfs_adapter(
-    backend,
-    query: SearchQuery,
-    max_hits: int,
-) -> list[SearchHit]:
-    """Use the DB-FS native query if available.
-
-    The DB-FS backends (postgres / sqlite / mongo / redis) all keep a
-    ``files`` table/collection with ``path`` + ``size`` + ``mtime`` +
-    ``content``. If the backend exposes ``find_by_query`` we use that;
-    otherwise we fall back to the generic walker (still correct, just
-    not as fast as native SQL).
-    """
-    if not hasattr(backend, "find_by_query"):
-        return _generic_adapter(backend, query, max_hits)
-    label = _label(backend)
-    try:
-        rows = backend.find_by_query(
-            name_glob=query.name or None,
-            contains=query.contains or None,
-            contains_is_regex=query.contains_is_regex,
-            min_size=query.min_size if query.min_size >= 0 else None,
-            max_size=query.max_size if query.max_size >= 0 else None,
-            limit=max_hits,
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.debug("dbfs adapter: find_by_query failed: %s", exc)
-        return _generic_adapter(backend, query, max_hits)
-    hits: list[SearchHit] = []
-    for row in rows:
-        hits.append(
-            SearchHit(
-                backend_label=label,
-                path=str(row.get("path", "")),
-                size=int(row.get("size", 0) or 0),
-                mtime=_to_epoch(row.get("mtime")),
-                is_dir=bool(row.get("is_dir", False)),
-                snippet=str(row.get("snippet", ""))[:200],
-            )
-        )
-    return hits
-
-
-# ---------------------------------------------------------------------------
-# Adapter registration
-# ---------------------------------------------------------------------------
-
-# IMAP → native SEARCH. POP3 has no SEARCH; falls back to generic.
-register_adapter("imap", _imap_adapter)
-
-# DB-FS family — try native query first; the adapter itself
-# falls back to generic if the optional method is absent.
-for _proto in ("postgres", "sqlite", "mongo", "redis"):
-    register_adapter(_proto, _dbfs_adapter)
-
+# No built-in adapter: every backend is searched by the generic walker.
+# The IMAP (SEARCH) and DB-FS adapters waited for query methods no backend
+# has, and IMAP SEARCH answers message numbers, not the
+# /<mailbox>/<uid>_<subject>.eml paths the walker finds. A protocol that
+# gets a native search plugs it in with register_adapter().
 
 # Note: SFTP could shell out to ``find / -name foo`` for big speedups,
 # but that requires a remote shell + careful escaping; the generic
