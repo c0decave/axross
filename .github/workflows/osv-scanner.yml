@@ -26,6 +26,9 @@ permissions:
   security-events: write
   # Read commit contents
   contents: read
+  # The v2 reusable workflow's job asks for it; GitHub does not start a
+  # nested job that asks for more than this workflow grants.
+  actions: read
 
 jobs:
   scan-scheduled:

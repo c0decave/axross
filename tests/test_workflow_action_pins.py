@@ -83,3 +83,73 @@ def test_edge_comments_and_local_actions_are_not_actions_to_pin():
             'b1d267aea5211fa648d9d442fa64b90dbdcbdd36" # v2.7.0\n')
     assert unpinned(text) == []
     assert len(uses_lines(text)) == 2
+
+
+# --- reusable workflows get the permissions they ask for ---------------------
+
+#: The permissions each pinned reusable workflow's job requests, read from the
+#: workflow file at the pinned SHA. GitHub does not start a nested job that
+#: asks for more than its caller grants ("startup_failure"): osv-scanner-action
+#: v2.7.0 asks for actions: read, which v1.7.1 did not, and the first push with
+#: the new pin never ran the scan. A new reusable workflow or a new pin has to
+#: be read and entered here.
+REUSABLE_NEEDS = {
+    ("google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml",
+     "b1d267aea5211fa648d9d442fa64b90dbdcbdd36"):
+        {"actions": "read", "contents": "read", "security-events": "write"},
+    ("google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml",
+     "b1d267aea5211fa648d9d442fa64b90dbdcbdd36"):
+        {"actions": "read", "contents": "read", "security-events": "write"},
+}
+_LEVEL = {"none": 0, "read": 1, "write": 2}
+
+
+def reusable_calls(text: str) -> list[tuple[str, tuple[str, str], dict]]:
+    """(job, (workflow path, sha), granted permissions) of every job that
+    calls a reusable workflow; a job's own permissions replace the
+    workflow's."""
+    yaml = pytest.importorskip("yaml")
+    doc = yaml.safe_load(text) or {}
+    top = doc.get("permissions") or {}
+    out = []
+    for name, job in (doc.get("jobs") or {}).items():
+        uses = str(job.get("uses", ""))
+        if "/.github/workflows/" not in uses:
+            continue
+        path, _, sha = uses.partition("@")
+        out.append((name, (path, sha), job.get("permissions", top) or {}))
+    return out
+
+
+def missing_permissions(granted, needed: dict) -> list[str]:
+    if granted == "write-all":
+        return []
+    if granted == "read-all":
+        granted = {k: "read" for k in needed}
+    return [f"{scope}: {level}" for scope, level in needed.items()
+            if _LEVEL.get(str(granted.get(scope, "none")), 0) < _LEVEL[level]]
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_happy_every_reusable_workflow_gets_what_it_asks_for(path):
+    for job, key, granted in reusable_calls(path.read_text(encoding="utf-8")):
+        assert key in REUSABLE_NEEDS, f"{path.name}:{job}: read the permissions of {key}"
+        assert missing_permissions(granted, REUSABLE_NEEDS[key]) == [], (path.name, job)
+
+
+def test_sad_a_caller_without_actions_read_is_refused():
+    text = ("permissions:\n  security-events: write\n  contents: read\njobs:\n  scan:\n"
+            "    uses: \"google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@"
+            "b1d267aea5211fa648d9d442fa64b90dbdcbdd36\"\n")
+    [(_job, key, granted)] = reusable_calls(text)
+    assert missing_permissions(granted, REUSABLE_NEEDS[key]) == ["actions: read"]
+
+
+def test_edge_job_permissions_replace_the_workflows_and_shorthands_count():
+    text = ("permissions: write-all\njobs:\n  scan:\n    permissions:\n      contents: read\n"
+            "    uses: \"o/r/.github/workflows/x.yml@" + "a" * 40 + "\"\n  build:\n"
+            "    runs-on: ubuntu-latest\n")
+    [(job, _key, granted)] = reusable_calls(text)
+    assert job == "scan" and granted == {"contents": "read"}
+    assert missing_permissions("write-all", {"actions": "write"}) == []
+    assert missing_permissions("read-all", {"actions": "write"}) == ["actions: write"]
