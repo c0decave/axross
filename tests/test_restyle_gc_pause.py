@@ -154,3 +154,66 @@ def test_edge_the_pause_restores_the_collector_state_even_on_error() -> None:
         assert not gc.isenabled()  # it was off before; it stays off
     finally:
         (gc.enable if was else gc.disable)()
+
+
+# -- the pause costs no collection (2026-10-25) ---------------------------------------
+#
+# collection_paused ran gc.collect() before every restyle: 11-20 ms each, three
+# while the window is built and one or two per theme switch (scripts/ui_bench.py,
+# theme median 232-237 -> 196-198 ms without it). The safety is the paused
+# collector, not the collection before: the reproduction above survives 5 of 5
+# runs with gc.disable() alone and crashes 5 of 5 with neither.
+
+
+def test_happy_the_pause_does_not_collect_up_front(monkeypatch) -> None:
+    from ui import themes
+
+    collected = []
+    monkeypatch.setattr(themes.gc, "collect", lambda *a: collected.append(a) or 0)
+    was = gc.isenabled()
+    gc.enable()
+    try:
+        with themes.collection_paused():
+            assert not gc.isenabled()
+        assert gc.isenabled()
+    finally:
+        (gc.enable if was else gc.disable)()
+    assert collected == []
+
+
+def test_sad_garbage_from_before_the_restyle_survives_it_and_is_collected_later() -> None:
+    done = _run(
+        """
+        import weakref
+        from ui import themes
+        app.setStyleSheet("QWidget { color: black; }")
+        keep = make_garbage()
+        probe = QWidget()
+        probe._cycle = probe
+        ref = weakref.ref(probe)
+        del probe
+        with themes.collection_paused():
+            app.setStyleSheet("QWidget { color: red; }")
+            assert ref() is not None  # not collected while Qt walks its widgets
+        gc.collect()
+        print("collected" if ref() is None else "alive")
+        print("survived")
+        """
+    )
+    assert done.returncode == 0, (done.returncode, done.stderr[-2000:])
+    assert "survived" in done.stdout and "collected" in done.stdout
+
+
+def test_edge_repeated_window_theme_switches_with_garbage_survive() -> None:
+    done = _run(
+        """
+        from ui.main_window import MainWindow
+        win = MainWindow()
+        for theme in ("modern-dark", "modern-light", "hacker", "amber", "classic", "modern"):
+            keep = make_garbage()
+            win._apply_theme(theme)
+        print("survived")
+        """
+    )
+    assert done.returncode == 0, (done.returncode, done.stderr[-2000:])
+    assert "survived" in done.stdout

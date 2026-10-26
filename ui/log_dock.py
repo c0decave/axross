@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import weakref
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -70,7 +70,8 @@ LEVEL_COLORS = {
 class LogDock(QDockWidget):
     """Dockable panel showing application log messages."""
 
-    # Fires every time a log line lands AND passes the level filter.
+    # Fires when a log line lands AND passes the level filter - once for
+    # the records of one burst, which are written together.
     # MainWindow uses this to colour the dock's tab label when the
     # dock isn't currently raised, so background activity doesn't
     # stay invisible.
@@ -139,6 +140,15 @@ class LogDock(QDockWidget):
 
         self.setWidget(container)
         self._msg_count = 0
+        # Records wait here for the next turn of the event loop and are
+        # written together (_write_pending): a burst is one edit per run of
+        # lines of one level, not one edit, label and scroll per record.
+        self._pending: list[tuple[str, int]] = []
+        self._formats: dict[int, QTextCharFormat] = {}
+        self._write_timer = QTimer(self)
+        self._write_timer.setSingleShot(True)
+        self._write_timer.setInterval(0)
+        self._write_timer.timeout.connect(self._write_pending)
 
     def _install_handler(self) -> None:
         self._bridge = _LogSignalBridge(self)
@@ -165,24 +175,50 @@ class LogDock(QDockWidget):
     def _on_log_record(self, message: str, level: int) -> None:
         if level < self._min_level:
             return
+        self._pending.append((message, level))
+        if not self._write_timer.isActive():
+            self._write_timer.start()
+            self.activity.emit()  # once per burst, as its first record arrives
 
-        color = LEVEL_COLORS.get(level, "#d4d4d4")
+    def _format(self, level: int) -> QTextCharFormat:
+        fmt = self._formats.get(level)
+        if fmt is None:
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(LEVEL_COLORS.get(level, "#d4d4d4")))
+            self._formats[level] = fmt
+        return fmt
 
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color))
-
+    def _write_pending(self) -> None:
+        """Write the records collected since the last turn of the event loop."""
+        pending, self._pending = self._pending, []
+        if not pending:
+            return
+        self._msg_count += len(pending)
+        # The view keeps its newest lines only: older records of the burst
+        # would be written just to be dropped again.
+        cap = self._log_view.maximumBlockCount()
+        if cap > 0:
+            pending = pending[-cap:]
         # A cursor of its own: the view's cursor is where the user clicked
         # or marked text, and must stay there.
         cursor = QTextCursor(self._log_view.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(message + "\n", fmt)
+        cursor.beginEditBlock()
+        try:
+            run: list[str] = []
+            run_level = pending[0][1]
+            for message, level in pending:
+                if level != run_level:
+                    cursor.insertText("".join(run), self._format(run_level))
+                    run, run_level = [], level
+                run.append(message + "\n")
+            cursor.insertText("".join(run), self._format(run_level))
+        finally:
+            cursor.endEditBlock()
 
-        self._msg_count += 1
         self._count_label.setText(f"{self._msg_count} messages")
 
         self._follow_newest()
-
-        self.activity.emit()
 
     def _follow_newest(self, *_range) -> None:
         """With Auto-Scroll on, show the newest line.
@@ -209,6 +245,7 @@ class LogDock(QDockWidget):
         self._min_level = level_map.get(text, logging.DEBUG)
 
     def _clear(self) -> None:
+        self._pending.clear()  # arrived before the click: cleared with the rest
         self._log_view.clear()
         self._msg_count = 0
         self._count_label.setText("0 messages")

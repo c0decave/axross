@@ -29,6 +29,7 @@ hostile host cannot make a parameter allocate or loop beyond the grid.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections import deque
 
@@ -47,6 +48,10 @@ _GROUND, _ESC, _ESC_INTER, _CSI, _STRING, _STRING_ESC = range(6)
 #: CSI finals that move the cursor (A B C D E F G ` H f d a, r homes, u
 #: restores) or edit the screen (J K X P @ L M): they end a pending wrap.
 _ENDS_PENDING_WRAP = frozenset("ABCDEFG`HfdaruJKXP@LM")
+
+#: Two or more printable ASCII characters: one cell each, nothing to
+#: interpret - written a row at a time (VTScreen._print_run).
+_ASCII_RUN = re.compile(r"[\x20-\x7e]{2,}")
 
 
 def _width(ch: str) -> int:
@@ -169,11 +174,20 @@ class VTScreen:
 
     def feed(self, text: str) -> None:
         """Interpret *text* (decoded output of the host)."""
-        for ch in text:
+        i, end = 0, len(text)
+        while i < end:
+            ch = text[i]
+            i += 1
             state = self._state
             if state == _GROUND:
                 code = ord(ch)
                 if code >= 0x20 and code != 0x7F and not 0x80 <= code <= 0x9F:
+                    # Followed by more plain text: the run goes in whole.
+                    if code < 0x7F and i < end and " " <= text[i] <= "~":
+                        run = _ASCII_RUN.match(text, i - 1)
+                        self._print_run(run.group())
+                        i = run.end()
+                        continue
                     self._print(ch)
                 elif ch == "\x1b":
                     self._state = _ESC
@@ -279,6 +293,29 @@ class VTScreen:
             self._wrap_pending = self._autowrap
         else:
             self._col = last + 1
+
+    def _print_run(self, run: str) -> None:
+        """``_print`` of every character of *run* (printable ASCII: one cell
+        each), a row at a time: the same cells, cursor, wraps and scrolls."""
+        cols = self.cols
+        i, end = 0, len(run)
+        while i < end:
+            if self._wrap_pending:
+                self._col = 0
+                self._linefeed()
+            line = self._grid[self._row]
+            col = self._col
+            take = min(cols - col, end - i)
+            line[col:col + take] = run[i:i + take]
+            i += take
+            if col + take < cols:
+                self._col = col + take
+                continue
+            self._col = cols - 1
+            self._wrap_pending = self._autowrap
+            if not self._autowrap and i < end:
+                line[cols - 1] = run[-1]  # each further character overwrites the last cell
+                return
 
     def _push_scrollback(self, line: list[str]) -> None:
         if self.scrollback.maxlen:

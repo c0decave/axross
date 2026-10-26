@@ -2384,12 +2384,11 @@ class FilePaneWidget(QWidget):
             return
         store = T.store()
         backend = self._backend.name
+        # One write of tags.json for the whole selection (core.tags).
         if all(name in store.tags_of(backend, p) for p in paths):
-            for path in paths:
-                store.untag(backend, path, name)
+            store.untag_many(backend, paths, name)
         else:
-            for path in paths:
-                store.tag(backend, self.profile_name, path, name)
+            store.tag_many(backend, self.profile_name, paths, name)
         self._tags_changed()
 
     def new_tag_for_selection(self) -> None:
@@ -2399,8 +2398,7 @@ class FilePaneWidget(QWidget):
         tag = ask_new_tag(self)
         if tag is None:
             return
-        for path in self.selected_items():
-            T.store().tag(self._backend.name, self.profile_name, path, tag.name)
+        T.store().tag_many(self._backend.name, self.profile_name, self.selected_items(), tag.name)
         self._tags_changed()
 
     def _tags_follow_rename(self, old_path: str, new_path: str) -> None:

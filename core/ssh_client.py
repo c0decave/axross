@@ -26,7 +26,12 @@ from core.client_identity import SSH_LOCAL_VERSION, apply_paramiko_banner_overri
 from core.exec_util import COMMAND_NOT_FOUND, digest_from_sum_output
 from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth, safe_join
 from core.profiles import ConnectionProfile
-from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
+from core.proxy import (
+    ProxyConfig,
+    create_direct_socket,
+    create_proxy_socket,
+    enable_tcp_nodelay,
+)
 from core.redaction import redact_text
 from core.ssh_config import expand_proxy_command
 from core.subprocess_env import clean_child_env
@@ -85,17 +90,43 @@ def _sftp_errors_as_oserror(fn):
     return wrapper
 
 
+#: READDIR requests kept on the wire while a folder is listed.
+LISTING_READDIRS_IN_FLIGHT = 16
+
+
+class _AnswersByNumber:
+    """Receives the answers to pipelined requests (registered as their
+    owner, so paramiko hands each one over, whoever reads it) and keeps
+    them by request number."""
+
+    def __init__(self) -> None:
+        self.answers: dict[int, tuple[int, paramiko.Message]] = {}
+
+    def _async_response(self, t, msg, num) -> None:
+        self.answers[num] = (t, msg)
+
+
 def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAttributes]:
-    """``sftp.listdir_attr(path)`` with names decoded leniently.
+    """``sftp.listdir_attr(path)`` with pipelined READDIRs and names decoded
+    leniently.
+
+    paramiko sends one READDIR and waits for its answer before the next;
+    each answer is a slice of the folder (OpenSSH about 100 names), so a big
+    folder cost a round trip per slice and every folder one more for the
+    answer that says "end". Here :data:`LISTING_READDIRS_IN_FLIGHT` stay on
+    the wire; answers are used in request order, and those after the end
+    of the folder are ignored.
 
     SFTP v3 names are bytes and OpenSSH sends them as stored, so a latin-1
     name is ordinary; paramiko decodes each strictly as UTF-8
     (Message.get_text) and one such name made the whole folder unlistable
-    with UnicodeDecodeError. This is paramiko's listdir_attr loop with
-    ``errors="replace"`` - the FTP backend's choice for the same case: the
-    entry shows, and addressing it fails cleanly on the server.
+    with UnicodeDecodeError. Names are decoded with ``errors="replace"`` -
+    the FTP backend's choice for the same case: the entry shows, and
+    addressing it fails cleanly on the server.
     """
-    from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_NAME, CMD_OPENDIR, CMD_READDIR
+    from collections import deque
+
+    from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_NAME, CMD_OPENDIR, CMD_READDIR, CMD_STATUS
 
     def text(raw: bytes) -> str:
         return raw.decode("utf-8", errors="replace")
@@ -104,20 +135,44 @@ def _listdir_attr(sftp: paramiko.SFTPClient, path: str) -> list[paramiko.SFTPAtt
     if t != CMD_HANDLE:
         raise paramiko.SFTPError("Expected handle")
     handle = msg.get_binary()
+    receiver = _AnswersByNumber()
+    in_flight: deque[int] = deque()
     entries: list[paramiko.SFTPAttributes] = []
-    while True:
+
+    def send() -> None:
+        in_flight.append(sftp._async_request(receiver, CMD_READDIR, handle))
+
+    try:
+        for _ in range(LISTING_READDIRS_IN_FLIGHT):
+            send()
+        while in_flight:
+            num = in_flight.popleft()
+            while num not in receiver.answers:
+                sftp._read_response()
+            t, msg = receiver.answers.pop(num)
+            if t == CMD_STATUS:
+                try:
+                    sftp._convert_status(msg)  # OSError for a failure
+                except EOFError:  # the end of the folder
+                    break
+            if t != CMD_NAME:
+                raise paramiko.SFTPError("Expected name response")
+            for _ in range(msg.get_int()):
+                filename = text(msg.get_string())
+                longname = text(msg.get_string())
+                attr = paramiko.SFTPAttributes._from_msg(msg, filename, longname)
+                if filename not in (".", ".."):
+                    entries.append(attr)
+            send()
+    finally:
+        # The READDIRs still out are answered before CLOSE (end of folder,
+        # or whatever a failing server says): nothing is left for another
+        # request to read. A dead connection raises its own error here.
         try:
-            t, msg = sftp._request(CMD_READDIR, handle)
-        except EOFError:  # end of the directory
-            break
-        if t != CMD_NAME:
-            raise paramiko.SFTPError("Expected name response")
-        for _ in range(msg.get_int()):
-            filename = text(msg.get_string())
-            longname = text(msg.get_string())
-            attr = paramiko.SFTPAttributes._from_msg(msg, filename, longname)
-            if filename not in (".", ".."):
-                entries.append(attr)
+            while any(owner is receiver for owner in list(sftp._expecting.values())):
+                sftp._read_response()
+        finally:
+            receiver.answers.clear()
     sftp._request(CMD_CLOSE, handle)
     return entries
 
@@ -514,6 +569,9 @@ class SSHSession(SessionLifecycle):
                 )
             else:
                 sock = create_direct_socket(profile.host, profile.port, family=family)
+            # Without it every request after an exec channel waited ~40 ms
+            # for a delayed ACK (Nagle); see core.proxy.enable_tcp_nodelay.
+            enable_tcp_nodelay(sock)
 
             log.info("Creating SSH transport to %s:%d", profile.host, profile.port)
             self._transport = paramiko.Transport(sock)
@@ -764,8 +822,15 @@ class SSHSession(SessionLifecycle):
         (SSH and SCP working, SFTP switched off - common on NAS boxes)
         answers by closing the channel; paramiko then says only
         "Channel closed.", which reads like a dropped connection."""
+        from core.sftp_io import ReadAheadRaw
+
         try:
-            return paramiko.SFTPClient.from_transport(self._transport)
+            # Room for two read-ahead windows: with paramiko's 2 MiB default
+            # the server could send only 2 MiB of the 8 MiB a window asks
+            # for per round trip (a download at 20 ms: ~52 MB/s, not ~90).
+            return paramiko.SFTPClient.from_transport(
+                self._transport, window_size=2 * ReadAheadRaw.MAX_WINDOW
+            )
         except paramiko.ChannelException as exc:
             # The server would not open one more channel at all - not an
             # SFTP question (ChannelException is an SSHException, so it
@@ -795,11 +860,9 @@ class SSHSession(SessionLifecycle):
         """The folder's entries; a name that is not UTF-8 does not make the
         whole folder unlistable (see :func:`_listdir_attr`)."""
         sftp = self.sftp
-        try:
-            return sftp.listdir_attr(path)
-        except UnicodeDecodeError:
-            log.debug("SFTP %s holds a name that is not UTF-8; listing it leniently", path)
+        if isinstance(sftp, paramiko.SFTPClient):
             return _listdir_attr(sftp, path)
+        return sftp.listdir_attr(path)  # a stand-in client (tests)
 
     @_sftp_errors_as_oserror
     def list_dir(self, path: str) -> list[FileItem]:
@@ -815,6 +878,85 @@ class SSHSession(SessionLifecycle):
         attr = self.sftp.lstat(path)
         name = posixpath.basename(path) or path
         return self._attr_to_item(attr, name_override=name)
+
+    #: ``is_dir(path)`` is the type of the LSTAT ``stat(path)`` makes (False
+    #: for not found): a caller holding a ``stat_many`` answer can take it
+    #: from there instead of asking again.
+    is_dir_from_stat = True
+
+    #: LSTAT requests kept on the wire by :meth:`stat_many`.
+    STAT_MANY_IN_FLIGHT = 64
+
+    @_sftp_errors_as_oserror
+    def stat_many(self, paths: list[str]) -> list[FileItem | OSError]:
+        """``stat`` of every path with pipelined LSTATs: per path the
+        FileItem ``stat`` returns, or the OSError it raises. A lost
+        connection raises for the whole batch.
+
+        ``stat`` one path after the other is a waited-for round trip each;
+        copying a selection of N files asked 3 N of them before the first
+        byte moved.
+        """
+        from collections import deque
+
+        sftp = self.sftp
+        if not isinstance(sftp, paramiko.SFTPClient):  # a stand-in client (tests)
+            return [self._stat_or_error(path) for path in paths]
+        from paramiko.sftp import CMD_LSTAT
+
+        receiver = _AnswersByNumber()
+        results: list[FileItem | OSError | None] = [None] * len(paths)
+        pending: deque[tuple[int, int]] = deque()
+        upcoming = iter(enumerate(paths))
+        try:
+            while True:
+                while len(pending) < self.STAT_MANY_IN_FLIGHT:
+                    nxt = next(upcoming, None)
+                    if nxt is None:
+                        break
+                    index, path = nxt
+                    num = sftp._async_request(receiver, CMD_LSTAT, sftp._adjust_cwd(path))
+                    pending.append((index, num))
+                if not pending:
+                    break
+                index, num = pending.popleft()
+                while num not in receiver.answers:
+                    sftp._read_response()
+                t, msg = receiver.answers.pop(num)
+                results[index] = self._stat_answer(sftp, paths[index], t, msg)
+        finally:
+            try:
+                while any(owner is receiver for owner in list(sftp._expecting.values())):
+                    sftp._read_response()
+            finally:
+                receiver.answers.clear()
+        return results  # type: ignore[return-value]
+
+    def _stat_or_error(self, path: str) -> FileItem | OSError:
+        try:
+            return self.stat(path)
+        except OSError as exc:
+            return exc
+
+    def _stat_answer(self, sftp, path: str, t: int, msg) -> FileItem | OSError:
+        """What ``stat(path)`` returns or raises for LSTAT answer *t*/*msg*
+        (``sftp.lstat`` and the ``_sftp_errors_as_oserror`` mapping)."""
+        from paramiko.sftp import CMD_ATTRS, CMD_STATUS
+
+        try:
+            if t == CMD_STATUS:
+                sftp._convert_status(msg)  # the OSError lstat raises
+            if t != CMD_ATTRS:
+                raise paramiko.SFTPError("Expected attributes")
+            attr = paramiko.SFTPAttributes._from_msg(msg)
+            return self._attr_to_item(attr, name_override=posixpath.basename(path) or path)
+        except EOFError as exc:
+            detail = str(exc) or type(exc).__name__
+            return OSError(f"SFTP stat: connection to the server failed: {detail}")
+        except (paramiko.SFTPError, UnicodeError) as exc:
+            return OSError(f"SFTP stat: unusable answer from the server: {exc}")
+        except OSError as exc:
+            return exc
 
     @_sftp_errors_as_oserror
     def is_dir(self, path: str) -> bool:

@@ -43,6 +43,7 @@ from ui.network_proxy_dialog import (
     kind_from_indexes,
     transport_index,
 )
+from ui.scan_job import ScanJob
 
 log = logging.getLogger(__name__)
 
@@ -161,19 +162,21 @@ class ConnectionDialog(QDialog):
         self._profile_name.setPlaceholderText("Profile name (for saving)")
         conn_form.addRow("Name:", self._profile_name)
 
-        # Protocol selector
+        # Protocol selector. The names first; whether each backend is
+        # installed is asked off the GUI thread (_label_job): the first ask
+        # imports its packages (~1 s for all). The hints follow then.
         self._protocol_combo = QComboBox()
         backends = all_backends()
         self._protocol_ids: list[str] = []
         for info in backends:
-            label = info.display_name
-            if not info.available:
-                if info.required_extra:
-                    label += f"  (pip install axross[{info.required_extra}])"
-                elif info.install_hint:
-                    label += f"  (needs {info.install_hint})"
-            self._protocol_combo.addItem(label)
+            self._protocol_combo.addItem(info.display_name)
             self._protocol_ids.append(info.protocol_id)
+        self._labels_ready = False
+        self._label_job = ScanJob(self)
+        self._label_job.finished.connect(
+            lambda kind, value, _cancelled, b=backends: self._on_availability(b, kind, value))
+        self._label_job.start(
+            lambda _cancel, _progress, b=backends: [bool(info.available) for info in b])
         # Default to SFTP
         if "sftp" in self._protocol_ids:
             self._protocol_combo.setCurrentIndex(self._protocol_ids.index("sftp"))
@@ -1064,6 +1067,29 @@ class ConnectionDialog(QDialog):
             self._loaded_profile, _proxy_password_override=None, **fields
         )
 
+    @property
+    def labels_ready(self) -> bool:
+        """The protocol list names the backends that are not installed."""
+        return self._labels_ready
+
+    @staticmethod
+    def _protocol_label(info, available: bool) -> str:
+        label = info.display_name
+        if not available:
+            if info.required_extra:
+                label += f"  (pip install axross[{info.required_extra}])"
+            elif info.install_hint:
+                label += f"  (needs {info.install_hint})"
+        return label
+
+    def _on_availability(self, backends, kind: str, value) -> None:
+        self._labels_ready = True
+        if kind != "done":
+            log.warning("Could not check which backends are installed: %s", value)
+            return
+        for index, (info, available) in enumerate(zip(backends, value)):
+            self._protocol_combo.setItemText(index, self._protocol_label(info, available))
+
     def _validate_backend_available(self) -> bool:
         """False (and Help > Features… offered) when the chosen backend's
         dependencies are missing. A backend without a pip extra names the
@@ -1382,6 +1408,7 @@ class ConnectionDialog(QDialog):
         self.accept()
 
     def done(self, result: int) -> None:  # noqa: D102 - Qt override
+        self._label_job.abandon()  # an answer still coming relabels no closed dialog
         # A test still running must neither report to the closed dialog nor
         # be destroyed with it (the window keeps this dialog until exit).
         from ui.thread_lifetime import detach_running_thread

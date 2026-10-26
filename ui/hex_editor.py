@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QRect, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRect, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -14,6 +14,7 @@ from PyQt6.QtGui import (
     QKeySequence,
     QPainter,
     QPaintEvent,
+    QStaticText,
     QWheelEvent,
 )
 from PyQt6.QtWidgets import (
@@ -129,6 +130,9 @@ class HexWidget(QWidget):
 
         # Scrollbar will be set externally
         self._scrollbar: QScrollBar | None = None
+        # (font key, 256 hex pairs, 256 ASCII cells) as prepared texts: a
+        # repaint draws them instead of laying out two texts per byte.
+        self._static_texts: tuple | None = None
 
     def set_scrollbar(self, scrollbar: QScrollBar) -> None:
         self._scrollbar = scrollbar
@@ -181,14 +185,44 @@ class HexWidget(QWidget):
             self._scrollbar.setValue(self._scroll_offset)
         self.update()
 
+    def _texts(self) -> tuple[list[QStaticText], list[QStaticText]]:
+        """The hex pair and the ASCII cell of every byte value, prepared
+        for the widget's font (again when the font changed)."""
+        font = self.font()
+        key = font.key()
+        if self._static_texts is None or self._static_texts[0] != key:
+            def prepared(text: str) -> QStaticText:
+                static = QStaticText(text)
+                static.setTextFormat(Qt.TextFormat.PlainText)
+                static.prepare(font=font)
+                return static
+
+            self._static_texts = (
+                key,
+                [prepared(f"{byte:02X}") for byte in range(256)],
+                [prepared(chr(byte) if 32 <= byte < 127 else ".") for byte in range(256)],
+            )
+        return self._static_texts[1], self._static_texts[2]
+
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.fillRect(self.rect(), self._bg_color)
         painter.setFont(self.font())
+        hex_texts, ascii_texts = self._texts()
+        ascent = self._fm.ascent()
+        # A prepared text is drawn from its top left, its baseline the font's
+        # ascent below: shifted, it sits where drawText at y + ascent puts it.
+        shift = ascent - QFontMetrics(self.font()).ascent()
 
         visible = self._visible_lines()
         start_line = self._scroll_offset
         end_line = min(start_line + visible + 1, self._total_lines())
+        if self._selection_start >= 0:
+            sel_low = min(self._selection_start, self._selection_end)
+            sel_high = max(self._selection_start, self._selection_end)
+        else:
+            sel_low, sel_high = 1, 0  # no byte is selected
+        pen = None  # set only when the colour changes
 
         for line_idx in range(start_line, end_line):
             y = (line_idx - start_line) * self._char_h
@@ -198,7 +232,7 @@ class HexWidget(QWidget):
             # Offset column
             painter.setPen(self._offset_color)
             offset_text = f"{offset:08X}: "
-            painter.drawText(0, y + self._fm.ascent(), offset_text)
+            painter.drawText(0, y + ascent, offset_text)
 
             # Separator line
             painter.setPen(self._separator_color)
@@ -206,19 +240,18 @@ class HexWidget(QWidget):
             painter.drawLine(sep_x, y, sep_x, y + self._char_h)
             sep_x2 = int(self._ascii_start - self._char_w * 0.5)
             painter.drawLine(sep_x2, y, sep_x2, y + self._char_h)
+            pen = None
 
             # Hex + ASCII columns
+            top = y + shift
             for i, byte in enumerate(line_bytes):
                 byte_offset = offset + i
                 is_cursor = byte_offset == self._cursor_pos
-                is_selected = self._selection_start >= 0 and min(
-                    self._selection_start, self._selection_end
-                ) <= byte_offset <= max(self._selection_start, self._selection_end)
+                is_selected = sel_low <= byte_offset <= sel_high
                 is_modified = byte_offset in self._modified_offsets
 
                 # Hex position
                 hex_x = int(self._hex_start + i * 3 * self._char_w)
-                hex_text = f"{byte:02X}"
 
                 # Draw cursor/selection background in hex
                 if is_cursor and self._editing_hex:
@@ -232,12 +265,14 @@ class HexWidget(QWidget):
                         self._selection_color,
                     )
 
-                painter.setPen(self._modified_color if is_modified else self._text_color)
-                painter.drawText(hex_x, y + self._fm.ascent(), hex_text)
+                colour = self._modified_color if is_modified else self._text_color
+                if colour is not pen:
+                    painter.setPen(colour)
+                    pen = colour
+                painter.drawStaticText(QPointF(hex_x, top), hex_texts[byte])
 
                 # ASCII position
                 ascii_x = int(self._ascii_start + i * self._char_w)
-                ascii_char = chr(byte) if 32 <= byte < 127 else "."
 
                 # Draw cursor/selection background in ASCII
                 if is_cursor and not self._editing_hex:
@@ -251,8 +286,11 @@ class HexWidget(QWidget):
                         self._selection_color,
                     )
 
-                painter.setPen(self._modified_color if is_modified else self._ascii_color)
-                painter.drawText(ascii_x, y + self._fm.ascent(), ascii_char)
+                colour = self._modified_color if is_modified else self._ascii_color
+                if colour is not pen:
+                    painter.setPen(colour)
+                    pen = colour
+                painter.drawStaticText(QPointF(ascii_x, top), ascii_texts[byte])
 
         painter.end()
 

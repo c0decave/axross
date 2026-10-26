@@ -78,6 +78,7 @@ def _dialog(downloader):
     dlg = FeaturesDialog(downloader=downloader)
     dlg.show()
     APP.processEvents()
+    assert _wait(lambda: dlg.loaded, 30)  # asked off the GUI thread
     return dlg
 
 
@@ -113,6 +114,9 @@ def test_happy_e2e_download_selected_fetches_and_refreshes(share):
         assert dlg.download_models_button.isEnabled()
         dlg.download_models_button.click()
         assert _wait(lambda: "downloaded" in dlg.status.text().lower())
+        # The window asks again when the downloads are done (off the GUI thread).
+        assert _wait(lambda: dlg.loaded and dlg.feature_at(
+            _row(dlg, "voice:piper-de-kerstin")).available)
         assert got == ["piper-de-kerstin"]
         assert dlg.feature_at(_row(dlg, "voice:piper-de-kerstin")).available
         assert "Kerstin" in dlg.log.toPlainText()

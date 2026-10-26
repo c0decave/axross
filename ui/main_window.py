@@ -83,6 +83,14 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _under_any(path: str, roots: set[str]) -> bool:
+    """*path* is in *roots* or lies below one of them, with ``/`` or ``\\``
+    as the separator (a root of ``/`` is kept as ``""``)."""
+    if path in roots:
+        return True
+    return any(path[:i] in roots for i, ch in enumerate(path) if ch in "/\\")
+
+
 def _is_ssh_session(backend) -> bool:
     """``isinstance(backend, SSHSession)`` without importing paramiko at
     start-up (~0.13 s): until core.ssh_client is loaded no SSH session can
@@ -471,6 +479,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # folders that wait for all their jobs.
         self._tag_moves: dict[str, tuple[str, str, str, str, str]] = {}
         self._tag_folder_moves: list[dict] = []
+        # Ended jobs whose tags follow on the next event-loop turn, in one
+        # batch with one write of tags.json (job id, ended well).
+        self._tag_job_queue: list[tuple[str, bool | None]] = []
         self._transfer_manager.job_finished.connect(self._tags_on_move_finished)
         self._transfer_manager.job_error.connect(self._tags_on_move_error)
         self._transfer_manager.job_finished.connect(self._on_undo_job_finished)
@@ -6396,12 +6407,16 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         store = TG.store()
         src, dst = source.backend.name, target.backend.name
         profile = getattr(target, "profile_name", "") or ""
-        tagged = [p for p in selected if store.has_tags_under(src, p)]
+        index = store.tagged_index(src)  # one pass over the tags, not one per entry
+        tagged = [p for p in selected if index.has_tags_under(p)]
         if not tagged:
             return
+        # A job is tracked when its source is a tagged entry or lies below
+        # one: its own path or one of its parents (split at / and \) is in
+        # the set - instead of comparing every job with every tagged entry.
+        roots = {p for p in tagged} | {p.rstrip("/\\") for p in tagged}
         for job in jobs:
-            if any(job.source_path == p or job.source_path.startswith(p.rstrip("/\\") + sep)
-                   for p in tagged for sep in ("/", "\\")):
+            if _under_any(job.source_path, roots):
                 self._tag_moves[job.job_id] = (src, dst, profile, job.source_path, job.dest_path)
         sep = source.backend.separator() or "/"
         for path in tagged:
@@ -6425,6 +6440,38 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             })
 
     def _tags_on_move_finished(self, job_id: str) -> None:
+        self._queue_tag_job(job_id, None)
+
+    def _tags_on_move_error(self, job_id: str, _error: str = "") -> None:
+        self._queue_tag_job(job_id, False)
+
+    def _queue_tag_job(self, job_id: str, ok: bool | None) -> None:
+        """Every ended job wrote tags.json once (1000 moved files: 1.5 s of
+        GUI time); they are applied together on the next event-loop turn."""
+        if job_id not in self._tag_moves and not any(
+                job_id in folder["pending"] for folder in self._tag_folder_moves):
+            return  # no tag follows this job
+        if not self._tag_job_queue:
+            QTimer.singleShot(0, self._flush_tag_jobs)
+        self._tag_job_queue.append((job_id, ok))
+
+    def _flush_tag_jobs(self) -> None:
+        from core import tags as TG
+
+        queue, self._tag_job_queue = self._tag_job_queue, []
+        store = TG.store()
+        try:
+            with store.batch():
+                for job_id, ok in queue:
+                    if ok is None:
+                        self._tags_job_finished(job_id)
+                    else:
+                        self._tag_moves.pop(job_id, None)
+                        self._tags_folder_progress(job_id, False)
+        except OSError as exc:  # tags.json not writable: the moves themselves stand
+            log.warning("Tags could not follow the moved files: %s", exc)
+
+    def _tags_job_finished(self, job_id: str) -> None:
         from core import tags as TG
         from core.transfer_worker import TransferStatus
 
@@ -6438,10 +6485,6 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             except OSError as exc:  # tags.json not writable: the move itself stands
                 log.warning("Tags could not follow %s -> %s: %s", old, new, exc)
         self._tags_folder_progress(job_id, ok or entry is None)
-
-    def _tags_on_move_error(self, job_id: str, _error: str = "") -> None:
-        self._tag_moves.pop(job_id, None)
-        self._tags_folder_progress(job_id, False)
 
     def _tags_folder_progress(self, job_id: str, ok: bool) -> None:
         """A moved folder's own tags follow once every job below it ended

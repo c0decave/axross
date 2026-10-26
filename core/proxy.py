@@ -1259,6 +1259,30 @@ def patched_create_connection(profile_or_config):
             socket.create_connection = original  # type: ignore[assignment]
 
 
+def enable_tcp_nodelay(sock) -> bool:
+    """Switch off Nagle's algorithm on *sock*; True when it was set.
+
+    For a session of many small request/answer packets (SSH): with Nagle a
+    small packet sent while an earlier one is unacknowledged waits for that
+    ACK, and the peer delays a lone ACK by up to 40 ms. paramiko never sets
+    the option; OpenSSH's client does for an sftp session. Anything that is
+    not a TCP socket (a ProxyCommand pipe, a UNIX socket) or a socket that
+    refuses the option is left as it is.
+    """
+    if not isinstance(sock, socket.socket):
+        return False
+    try:
+        if sock.family not in (socket.AF_INET, socket.AF_INET6):
+            return False
+        if sock.type != socket.SOCK_STREAM:
+            return False
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError as exc:
+        log.debug("TCP_NODELAY not set: %s", exc)
+        return False
+    return True
+
+
 def create_direct_socket(
     host: str,
     port: int,

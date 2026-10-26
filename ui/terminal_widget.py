@@ -49,6 +49,37 @@ MIN_GRID_ROWS = 5
 # user actually cares about when the flood arrives.
 TERMINAL_BUFFER_CAP_BYTES = 32 * 1024 * 1024
 
+#: A terminal's output poll: every POLL_INTERVAL_MS while the shell is
+#: quiet, at once again (POLL_BUSY_INTERVAL_MS) while it has more output
+#: than one poll took in. One poll reads in pieces of OUTPUT_READ_BYTES,
+#: never waiting, and stops after OUTPUT_POLL_BUDGET_S: a flood stays in
+#: the pty (the writer waits) and the window keeps answering in between.
+POLL_INTERVAL_MS = 50
+POLL_BUSY_INTERVAL_MS = 0
+OUTPUT_READ_BYTES = 16 * 1024
+OUTPUT_POLL_BUDGET_S = 0.025
+
+
+def drain_output(session, feed, *, budget_s: float | None = None) -> tuple[int, bool]:
+    """Hand what *session* has ready to *feed* (bytes), piece by piece,
+    without waiting: until nothing is ready or *budget_s* (default
+    OUTPUT_POLL_BUDGET_S) is spent. Returns (bytes taken, more may be
+    waiting). A session without ``read_ready`` (an extension's own, an
+    older one) is read with ``read()``."""
+    budget = OUTPUT_POLL_BUDGET_S if budget_s is None else budget_s
+    ready = getattr(session, "read_ready", None)
+    read = (lambda: ready(OUTPUT_READ_BYTES)) if callable(ready) else session.read
+    taken = 0
+    deadline = time.perf_counter() + budget
+    while True:
+        data = read()
+        if not data:
+            return taken, False
+        taken += len(data)
+        feed(data)
+        if time.perf_counter() >= deadline:
+            return taken, True
+
 
 # OpSec: shell-history suppression sent on every freshly-invoked
 # remote shell. Order matters — ``unset HISTFILE`` first so the
@@ -294,19 +325,25 @@ class TerminalEmulator(QPlainTextEdit):
             self._search_bar.show()
             self._search_bar.focus_input()
 
-    def feed_bytes(self, data: bytes) -> None:
+    def feed_bytes(self, data: bytes, *, render: bool = True) -> None:
         """Output of the host as it arrived: a UTF-8 character split
-        between two reads is decoded whole."""
-        self.append_output(self._decoder.decode(data))
+        between two reads is decoded whole. *render* as in append_output."""
+        self.append_output(self._decoder.decode(data), render=render)
 
-    def append_output(self, text: str) -> None:
-        """Interpret *text* (decoded host output) and show the result.
-        Answers the host asked for (a cursor report) go out on
-        ``data_ready`` like typed input."""
+    def append_output(self, text: str, *, render: bool = True) -> None:
+        """Interpret *text* (decoded host output) and show the result -
+        with *render* False only on the screen, until render(): a poll that
+        took several pieces draws once. Answers the host asked for (a
+        cursor report) go out on ``data_ready`` like typed input, at once."""
         self._screen.feed(text)
         replies = self._screen.take_replies()
         if replies:
             self.data_ready.emit(replies)
+        if render:
+            self._render()
+
+    def render(self) -> None:
+        """Show what the screen took in since the last drawing."""
         self._render()
 
     def message(self, text: str) -> None:
@@ -638,12 +675,20 @@ class LocalTerminalSession:
             os.write(self._master_fd, data)
 
     def read(self, size: int = 4096) -> bytes:
+        """The shell's output, waiting up to 50 ms for some; b"" if none."""
+        return self._read(size, 0.05)
+
+    def read_ready(self, size: int = OUTPUT_READ_BYTES) -> bytes:
+        """The shell's output that is there now, without waiting; b"" if none."""
+        return self._read(size, 0)
+
+    def _read(self, size: int, timeout: float) -> bytes:
         if self._winpty is not None:
-            return self._read_winpty(size)
+            return self._read_winpty(size, timeout)
         if self._master_fd is None:
             return b""
         try:
-            r, _, _ = select.select([self._master_fd], [], [], 0.05)
+            r, _, _ = select.select([self._master_fd], [], [], timeout)
             if r:
                 return os.read(self._master_fd, size)
         except OSError as e:
@@ -651,11 +696,11 @@ class LocalTerminalSession:
             log.debug("Local terminal read ended: %s", e)
         return b""
 
-    def _read_winpty(self, size: int) -> bytes:
+    def _read_winpty(self, size: int, timeout: float = 0.05) -> bytes:
         # fileno() is a socket that pywinpty's reader thread feeds; select
         # waits on sockets on Windows too, so the read never blocks.
         try:
-            r, _, _ = select.select([self._winpty.fileno()], [], [], 0.05)
+            r, _, _ = select.select([self._winpty.fileno()], [], [], timeout)
             if r:
                 return self._winpty.read(size).encode("utf-8")
         except (EOFError, OSError, ValueError) as e:
@@ -817,6 +862,10 @@ class SSHTerminalSession:
             self._running = False
             log.debug("SSH terminal read ended: %s", e)
         return b""
+
+    def read_ready(self, size: int = OUTPUT_READ_BYTES) -> bytes:
+        """read() never waits: what the channel has now; b"" if none."""
+        return self.read(size)
 
     def resize(self, rows: int, cols: int) -> None:
         if self._channel is not None and not self._channel.closed:
@@ -1045,7 +1094,7 @@ class TerminalDock(QDockWidget):
 
         # Read timer — polls ALL active sessions for output
         self._read_timer = QTimer(self)
-        self._read_timer.setInterval(50)
+        self._read_timer.setInterval(POLL_INTERVAL_MS)
         self._read_timer.timeout.connect(self._poll_output)
 
     def _current_key(self) -> str:
@@ -1220,6 +1269,7 @@ class TerminalDock(QDockWidget):
 
     def _poll_output(self) -> None:
         any_active = False
+        more = False
         for key, tab in list(self._tabs.items()):
             if not tab.session:
                 continue
@@ -1237,31 +1287,16 @@ class TerminalDock(QDockWidget):
                 log.info("Terminal session ended: %s", key)
                 continue
             any_active = True
-
-            data = tab.session.read()
-            if data:
-                text = tab.decoder.decode(data)
-                # Cap the buffer so a flooding remote can't saturate RAM.
-                # Keep the trailing half of the cap when we overflow —
-                # the recent output is what the user cares about if the
-                # flood just arrived.
-                if len(tab.buffer) + len(text) > TERMINAL_BUFFER_CAP_BYTES:
-                    keep = TERMINAL_BUFFER_CAP_BYTES // 2
-                    combined = tab.buffer + text
-                    tab.buffer = combined[-keep:]
-                else:
-                    tab.buffer += text
-
-                # The visible tab's screen is the widget's: it renders and
-                # answers the host itself; a background tab's screen only
-                # takes the text and its answers go out here.
-                if key == self._current_key() and self._terminal.screen is tab.screen:
-                    self._terminal.append_output(text)
-                else:
-                    tab.screen.feed(text)
-                    replies = tab.screen.take_replies()
-                    if replies:
-                        tab.session.write(replies)
+            # The visible tab's screen is the widget's: it answers the host
+            # itself and draws once below; a background tab's screen only
+            # takes the text and its answers go out here.
+            shown = key == self._current_key() and self._terminal.screen is tab.screen
+            taken, waiting = drain_output(
+                tab.session, lambda data, tab=tab, shown=shown: self._take_output(tab, data, shown))
+            more = more or waiting
+            if taken:
+                if shown:
+                    self._terminal.render()
                 # Any session producing output — raised or not — counts
                 # as activity so the dock's tab gets highlighted when
                 # the user is looking at Log or Transfers.
@@ -1269,6 +1304,29 @@ class TerminalDock(QDockWidget):
 
         if not any_active:
             self._read_timer.stop()
+        else:
+            self._read_timer.setInterval(POLL_BUSY_INTERVAL_MS if more else POLL_INTERVAL_MS)
+
+    def _take_output(self, tab: "_TerminalTab", data: bytes, shown: bool) -> None:
+        """One piece of *tab*'s output: into its buffer and its screen."""
+        text = tab.decoder.decode(data)
+        # Cap the buffer so a flooding remote can't saturate RAM.
+        # Keep the trailing half of the cap when we overflow —
+        # the recent output is what the user cares about if the
+        # flood just arrived.
+        if len(tab.buffer) + len(text) > TERMINAL_BUFFER_CAP_BYTES:
+            keep = TERMINAL_BUFFER_CAP_BYTES // 2
+            combined = tab.buffer + text
+            tab.buffer = combined[-keep:]
+        else:
+            tab.buffer += text
+        if shown:
+            self._terminal.append_output(text, render=False)
+        else:
+            tab.screen.feed(text)
+            replies = tab.screen.take_replies()
+            if replies:
+                tab.session.write(replies)
 
     def _clear_output(self) -> None:
         self._terminal.clear()

@@ -12,7 +12,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from core import backend_registry
 from core.capability_contracts import contract_for_backend
 from core.path_policy import safe_join, safe_leaf, transfer_leaf
-from core.transfer_conflicts import IF_EXISTS_OVERWRITE
+from core.transfer_conflicts import IF_EXISTS_OVERWRITE, prefetch_stats
 from core.transfer_worker import (
     TransferDirection,
     TransferJob,
@@ -181,6 +181,16 @@ def _self_target_refusal(
     return ""
 
 
+def _is_dir_from_stat(answer) -> bool:
+    """``is_dir`` from a ``stat_many`` answer, for a backend whose is_dir is
+    its stat's type: False for not found, the error for anything else."""
+    if isinstance(answer, (FileNotFoundError, NotADirectoryError)):
+        return False
+    if isinstance(answer, OSError):
+        raise answer
+    return bool(getattr(answer, "is_dir", False))
+
+
 def _should_use_temp_file(backend: FileBackend) -> bool:
     """Check if a backend benefits from the temp-file-then-rename pattern.
 
@@ -292,18 +302,24 @@ class TransferManager(QObject):
         dest_listing: _DestListings | None = None,
         if_exists: str = IF_EXISTS_OVERWRITE,
         source_item=None,
+        stat_answer=None,
     ) -> TransferJob:
         """Enqueue a single file transfer.
 
         *size* is the source size when the caller already has it from a
         listing (0 or None: ask the backend); *source_item* is that
-        listing entry. *dest_listing* shares destination listings across
-        one batch (see _DestListings). *if_exists* is what the worker does
+        listing entry. *stat_answer* is what ``source_backend.stat`` just
+        returned for the path (a batched stat): it stands for that call.
+        *dest_listing* shares destination listings across one batch (see
+        _DestListings). *if_exists* is what the worker does
         with an existing destination (see ``core.transfer_conflicts``).
         """
         # Get file size for progress
         if size:
             total_bytes = size
+        elif stat_answer is not None:
+            source_item = stat_answer
+            total_bytes = stat_answer.size
         else:
             try:
                 source_item = source_backend.stat(source_path)
@@ -416,6 +432,9 @@ class TransferManager(QObject):
         """
         jobs = []
         dest_listing = _DestListings(dest_backend)
+        # One batch instead of an is_dir and a stat round trip per selected
+        # path (where the backend can, see prefetch_stats).
+        known = prefetch_stats(source_backend, list(source_paths))
         for src_path in source_paths:
             if self._walk_cancelled():
                 break
@@ -437,8 +456,12 @@ class TransferManager(QObject):
                 dest_path, if_exists = resolved
 
             # Check if source is a directory — if so, recurse
+            source_item = known.get(src_path)
             try:
-                src_is_dir = source_backend.is_dir(src_path)
+                if source_item is not None and getattr(source_backend, "is_dir_from_stat", False):
+                    src_is_dir = _is_dir_from_stat(source_item)
+                else:
+                    src_is_dir = source_backend.is_dir(src_path)
                 refusal = _self_target_refusal(
                     source_backend, src_path, dest_backend, dest_path, is_dir=src_is_dir
                 )
@@ -466,6 +489,9 @@ class TransferManager(QObject):
             except OSError as e:
                 log.warning("Could not stat %s, transferring as file: %s", src_path, e)
 
+            prefetched = {}
+            if source_item is not None and not isinstance(source_item, OSError):
+                prefetched = {"stat_answer": source_item}
             job = self.transfer_file(
                 source_backend,
                 dest_backend,
@@ -475,6 +501,7 @@ class TransferManager(QObject):
                 move=move,
                 dest_listing=dest_listing,
                 if_exists=if_exists,
+                **prefetched,
             )
             jobs.append(job)
 

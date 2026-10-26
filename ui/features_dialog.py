@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
 from core import features as F
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.scan_job import ScanJob
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +96,13 @@ class FeaturesDialog(QDialog):
             from axross import __version__ as version
         self._version = version
         self._features: list[F.Feature] = []
+        # collect() runs off the GUI thread (_collect_job): its backend probes
+        # import every optional package the first time (~1 s). A feature
+        # asked for meanwhile is selected when the answer is in.
+        self._loaded = False
+        self._pending_select = ""
+        self._collect_job = ScanJob(self)
+        self._collect_job.finished.connect(self._on_collected)
         self._family = F.system_family()
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -150,9 +158,31 @@ class FeaturesDialog(QDialog):
 
     # -- table -----------------------------------------------------------------------------
 
+    @property
+    def loaded(self) -> bool:
+        """The table shows an answer of collect() (or why there is none)."""
+        return self._loaded
+
     def reload(self) -> None:
-        self._features = F.collect()
+        """Ask every feature's state again, off the GUI thread; the table
+        keeps the last answer until the new one arrives."""
+        self._loaded = False
+        self.summary.setText(tr("Checking what is installed…"))
+        self._update_buttons()
+        self._collect_job.start(lambda _cancel, _progress: F.collect(), replace=True)
+
+    def _on_collected(self, kind: str, value, _cancelled: bool) -> None:
+        self._loaded = True
+        if kind != "done":
+            log.warning("Could not check the features: %s", value)
+            self.summary.setText(tr("Could not check the features: {error}").format(error=value))
+            self._update_buttons()
+            return
+        self._features = value
         self._fill()
+        key, self._pending_select = self._pending_select, ""
+        if key:
+            self.select(key)
 
     def _fill(self) -> None:
         shown = [f for f in self._features if not (self.missing_only.isChecked() and f.available)]
@@ -179,7 +209,11 @@ class FeaturesDialog(QDialog):
         return [self.feature_at(row) for row in rows]
 
     def select(self, key: str) -> None:
-        """Show the feature *key* selected (the missing-only filter off)."""
+        """Show the feature *key* selected (the missing-only filter off) -
+        once the features are in, when they are still being checked."""
+        if not self._loaded:
+            self._pending_select = key
+            return
         if not any(f.key == key for f in self._features):
             return
         self.missing_only.setChecked(False)
@@ -191,7 +225,7 @@ class FeaturesDialog(QDialog):
                 return
 
     def _update_buttons(self) -> None:
-        chosen = self._selected()
+        chosen = self._selected() if self._loaded else []
         pip = [f for f in chosen if f.requirements and not f.available]
         self.install_button.setEnabled(self._can_pip and bool(pip) and self._process is None)
         models = [f for f in chosen if f.download and not f.available]
@@ -309,6 +343,7 @@ class FeaturesDialog(QDialog):
         desktop_open.open_url(QUrl(F.download_url(self._version)))
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt
+        self._collect_job.abandon()  # an answer still coming fills no closed window
         if self._download_cancel is not None:
             self._download_cancel.set()  # the download stops and leaves nothing behind
         proc = self._process

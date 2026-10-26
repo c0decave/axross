@@ -203,6 +203,34 @@ class TransferStatus(Enum):
 _STORAGE_FINGERPRINTS = frozenset({"s3-etag", "etag"})
 
 
+def _hashes_whole_local_file(backend) -> bool:
+    """True when *backend*'s checksum is LocalFS's: SHA-256 of a full read."""
+    from core.local_fs import LocalFS
+
+    return isinstance(backend, LocalFS) and type(backend).checksum is LocalFS.checksum
+
+
+def _could_match(value, other_backend) -> bool:
+    """Whether native checksum *value* can be compared with the other side's
+    at all: not empty, no storage fingerprint, and SHA-256 when the other
+    side is a local file (LocalFS returns nothing else)."""
+    if not value:
+        return False
+    algo = value.partition(":")[0]
+    if algo in _STORAGE_FINGERPRINTS:
+        return False
+    return algo == "sha256" or not _hashes_whole_local_file(other_backend)
+
+
+def _native_checksum(backend, path: str, side: str):
+    """``backend.checksum(path)``, or None when it fails."""
+    try:
+        return backend.checksum(path)
+    except Exception as exc:
+        log.debug("%s checksum unavailable: %s", side, exc)
+        return None
+
+
 class _ChecksumMismatch(Exception):
     """Raised by _verify_integrity when source and destination
     checksums disagree after a completed transfer. Caught by the
@@ -543,16 +571,20 @@ class TransferWorker(QObject):
         dst = job.dest_backend
         if src is None or dst is None:
             return
-        try:
-            src_cs = src.checksum(job.source_path)
-        except Exception as exc:
-            src_cs = None
-            log.debug("Source checksum unavailable: %s", exc)
-        try:
-            dst_cs = dst.checksum(job.dest_path)
-        except Exception as exc:
-            dst_cs = None
-            log.debug("Dest checksum unavailable: %s", exc)
+        src_cs = dst_cs = None
+        # The second value is asked for only when the first could match it:
+        # the verdict is the same, and a local file's "checksum" (a read of
+        # the whole file) is not computed for a comparison that cannot
+        # happen - so the other side goes first when only the source is
+        # local.
+        if _hashes_whole_local_file(src) and not _hashes_whole_local_file(dst):
+            dst_cs = _native_checksum(dst, job.dest_path, "Dest")
+            if _could_match(dst_cs, src):
+                src_cs = _native_checksum(src, job.source_path, "Source")
+        else:
+            src_cs = _native_checksum(src, job.source_path, "Source")
+            if _could_match(src_cs, dst):
+                dst_cs = _native_checksum(dst, job.dest_path, "Dest")
         # Native fast path: both sides returned non-empty values with
         # the same algo prefix. Use what the backend gave us.
         if src_cs and dst_cs:
@@ -673,13 +705,20 @@ class TransferWorker(QObject):
             # "the source", would remove the only copy.
             raise OSError(f"source and destination are the same: {job.dest_path}")
 
-        self._check_existing_destination(job)
+        present = None
+        if not (job.use_temp_file and job.if_exists == "fail" and not job.resume):
+            # Through a fresh temp file nothing is replaced before the
+            # rename, and "fail" is checked again right before it: this
+            # second round trip per file (every F5 onto a free name) would
+            # only spare the write in a rare race. "newer" must decide
+            # before reading; a resume must not touch its partial.
+            present = self._check_existing_destination(job)
         if job.use_temp_file:
             return self._do_transfer_with_temp(job, progress_callback)
-        return self._do_transfer_direct(job, progress_callback)
+        return self._do_transfer_direct(job, progress_callback, known_absent=present is False)
 
     @staticmethod
-    def _check_existing_destination(job: TransferJob) -> None:
+    def _check_existing_destination(job: TransferJob) -> bool | None:
         """Enforce ``job.if_exists`` against the destination as it is NOW.
 
         The conflict prompt looked at the destination earlier; a file that
@@ -687,11 +726,12 @@ class TransferWorker(QObject):
         about another state. ``"fail"`` raises :class:`FileExistsError`,
         ``"newer"`` raises :class:`_DestinationKept` unless the source is
         strictly newer. A destination that cannot be checked counts as
-        present: guessing "absent" is how a file gets overwritten.
+        present: guessing "absent" is how a file gets overwritten. Returns
+        whether it was there (None for "overwrite": not asked).
         """
         mode = job.if_exists
         if mode == "overwrite":
-            return
+            return None
         dest_backend = job.dest_backend
         try:
             present = dest_backend.exists(job.dest_path)
@@ -700,12 +740,12 @@ class TransferWorker(QObject):
                 f"cannot check whether {job.dest_path} already exists: {exc}"
             ) from exc
         if not present:
-            return
+            return False
         if mode == "newer":
             src_mtime = TransferWorker._mtime_of(job.source_backend, job.source_path)
             dst_mtime = TransferWorker._mtime_of(dest_backend, job.dest_path)
             if src_mtime is not None and dst_mtime is not None and src_mtime > dst_mtime:
-                return
+                return True
             raise _DestinationKept(
                 f"{job.dest_path} is not older than {job.source_path}; kept"
             )
@@ -725,13 +765,17 @@ class TransferWorker(QObject):
         self,
         job: TransferJob,
         progress_callback,
+        *,
+        known_absent: bool = False,
     ) -> int:
         """Write directly to dest_path (no temp file + rename).
 
         Used for backends where temp-file rename is unsupported (IMAP),
         extremely expensive (rsync), or pointless because the backend
         already buffers internally via SpooledWriter (FTP, WebDAV, S3,
-        Azure Blob, cloud backends).
+        Azure Blob, cloud backends). *known_absent*: the no-overwrite check
+        just found no destination, so the rollback snapshot need not ask
+        again (on FTP a missing file is several refused commands).
         """
         source_backend = job.source_backend
         dest_backend = job.dest_backend
@@ -748,10 +792,13 @@ class TransferWorker(QObject):
         # written, and a failed read-back of an existing destination
         # must not reach the rollback, which would take it for a partial
         # file of ours and remove it.
-        destination_existed, destination_snapshot = _snapshot_direct_destination(
-            dest_backend,
-            job.dest_path,
-        )
+        if known_absent:
+            destination_existed, destination_snapshot = False, None
+        else:
+            destination_existed, destination_snapshot = _snapshot_direct_destination(
+                dest_backend,
+                job.dest_path,
+            )
         try:
             with source_backend.open_read(job.source_path) as src:
                 dst = dest_backend.open_write(job.dest_path, append=False)

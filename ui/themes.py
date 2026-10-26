@@ -50,11 +50,13 @@ def collection_paused() -> Iterator[None]:
     copied list of widgets and send each an event. A Python handler on one
     of them (the script editor re-highlights on a palette change) allocates
     and can start the collector, which deletes widgets only Python owned
-    while Qt still walks its list: a segfault. Garbage is collected first,
-    then the collector waits until the walk is over.
+    while Qt still walks its list: a segfault. The collector waits until
+    the walk is over; garbage from before it is collected after it. (No
+    collection first: it cost 11-20 ms per restyle, and the paused
+    collector alone keeps tests/test_restyle_gc_pause.py's reproduction
+    alive.)
     """
     was_enabled = gc.isenabled()
-    gc.collect()
     gc.disable()
     try:
         yield

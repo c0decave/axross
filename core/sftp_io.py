@@ -10,10 +10,11 @@ linear scan.
 
 :class:`ReadAheadRaw` keeps both bounded: once reads are sequential it asks
 for a window of requests at once (pipelined READs), the window doubling from
-:attr:`MIN_WINDOW` to :attr:`MAX_WINDOW`; a seek drops back to plain,
-request-sized reads, so random access (archive previews, hex views) does
-not pull megabytes it never uses. Wrapped in :class:`io.BufferedReader`
-it offers the full binary-file interface.
+:attr:`MIN_WINDOW` to :attr:`MAX_WINDOW`; a seek drops the read-ahead,
+so random access (archive previews, hex views) does not pull megabytes it
+never uses. The bytes a read asks for are always requested at once: a
+1 MiB read is 32 pipelined READs, one round trip, not 32. Wrapped in
+:class:`io.BufferedReader` it offers the full binary-file interface.
 """
 
 from __future__ import annotations
@@ -57,6 +58,10 @@ class ReadAheadRaw(io.RawIOBase):
         self._seq_end = 0  # where a sequential read would continue
         self._window = 0
         self._size: int | None = None
+        # Where the last window came back short (the end of the file then):
+        # a read from there is one plain request, not a window of answers
+        # that say "end of file".
+        self._short_at: int | None = None
 
     # -- io.RawIOBase ---------------------------------------------------
     def readable(self) -> bool:
@@ -97,7 +102,15 @@ class ReadAheadRaw(io.RawIOBase):
             self._buf = b""
             try:
                 if self._f is not None:
-                    self._f.close()
+                    # Not waited for: paramiko ignores the answer to a
+                    # CLOSE anyway (SFTPFile._close), and the server handles
+                    # this connection's requests in order. A round trip less
+                    # per file read.
+                    close_async = getattr(self._f, "_close", None)
+                    if callable(close_async):
+                        close_async(async_=True)
+                    else:
+                        self._f.close()
             finally:
                 super().close()
 
@@ -124,15 +137,26 @@ class ReadAheadRaw(io.RawIOBase):
         else:
             self._window = 0
         self._buf = b""
-        if self._window > n:
-            end = min(self._pos + self._window, self._remote_size())
+        # What the caller asks for is no read-ahead: request all of it at
+        # once (pipelined) even after a seek, and the window beyond it only
+        # while reading sequentially.
+        # No stat first: requests past the end of the file come back empty
+        # (_fill stops at the first short answer), and a stat per file was
+        # one more round trip than the data of a small file.
+        # At most MAX_WINDOW per round trip: a larger read returns short
+        # and the caller (io.BufferedReader) reads on.
+        want = min(max(self._window, n), self.MAX_WINDOW)
+        if want > self.REQUEST and self._pos != self._short_at:
+            end = self._pos + want
+            if self._size is not None:  # known from a seek to the end
+                end = min(end, self._size)
             if end > self._pos:
                 self._fill(end)
                 hit = self._from_buffer(n)
                 if hit is not None:
                     return hit
-        # Random access, the tail past the size we know (the file grew),
-        # or a window that came back empty: one plain read.
+        # A read of one request, the tail past the size we know (the file
+        # grew), or a window that came back empty: one plain read.
         self._f.seek(self._pos)
         data = self._f.read(n)
         self._pos += len(data)
@@ -165,14 +189,17 @@ class ReadAheadRaw(io.RawIOBase):
                 raise answers.error
             raise OSError(f"SFTP read: {answers.error}") from answers.error
         parts: list[bytes] = []
+        short = False
         for offset, length in chunks:
             part = answers.data.get(offset, b"")
             parts.append(part)
             if len(part) < length:
-                break  # end of file (the file may have shrunk since stat)
+                short = True  # the end of the file (it may have shrunk)
+                break
         data = b"".join(parts)
         self._buf, self._buf_start = data, self._pos
         self._seq_end = self._pos + len(data)
+        self._short_at = self._seq_end if short else None
 
 
 class _ReadAnswers:
@@ -245,6 +272,25 @@ class _WriteAcks:
                 self.error = exc
 
 
+class _CloseAnswer:
+    """Receives the status answer to a CLOSE sent behind pipelined WRITEs."""
+
+    def __init__(self) -> None:
+        self.answered = False
+        self.error: Exception | None = None
+
+    def _async_response(self, t, msg, num) -> None:
+        from paramiko.sftp import CMD_STATUS, SFTPError
+
+        self.answered = True
+        try:
+            if t != CMD_STATUS:
+                raise SFTPError("expected a status answer to CLOSE")
+            self._sftp._convert_status(msg)
+        except Exception as exc:  # noqa: BLE001 - kept, raised by the writer
+            self.error = exc
+
+
 class PipelinedWriter(io.RawIOBase):
     """Sends WRITEs without waiting for each answer (one round trip per
     32 KiB otherwise), at most :attr:`MAX_IN_FLIGHT` at a time, and checks
@@ -298,43 +344,48 @@ class PipelinedWriter(io.RawIOBase):
         if self.closed:
             return
         try:
-            self.flush()
-        except BaseException:
-            # Already failing: that error is the one to report, so the
-            # handle is released the lenient way.
-            try:
-                self._f.close()
-            finally:
-                super().close()
-            raise
-        try:
             self._close_handle()
         finally:
             super().close()
 
     def _close_handle(self) -> None:
-        """Send CLOSE and check its status.
+        """Send CLOSE behind the last WRITEs and wait for all their answers
+        at once; raise a failed WRITE first, then a failed CLOSE.
 
-        paramiko's ``SFTPFile.close`` drops any error the CLOSE answer
-        carries. OpenSSH's sftp-server answers with the errno of
-        close(2), which is where NFS reports a write it could not store
-        (EDQUOT, ENOSPC) — an upload the server says failed.
+        The server handles requests on one handle in the order it received
+        them, so CLOSE need not wait for the WRITE answers: one round trip
+        instead of two per file. Its status is checked: paramiko's
+        ``SFTPFile.close`` drops any error the CLOSE answer carries, and
+        OpenSSH's sftp-server answers with the errno of close(2), which is
+        where NFS reports a write it could not store (EDQUOT, ENOSPC) — an
+        upload the server says failed.
         """
+        from paramiko import SSHException
         from paramiko.file import BufferedFile
         from paramiko.sftp import CMD_CLOSE
 
         f = self._f
         if getattr(f, "_closed", False):
+            self.flush()
             return
         # Marks the paramiko file closed (its own buffer is empty: every
-        # WRITE went out above), so its __del__ sends no second CLOSE.
+        # WRITE went out already), so its __del__ sends no second CLOSE.
         BufferedFile.close(f)
-        from paramiko import SSHException
-
+        closing = _CloseAnswer()
+        closing._sftp = self._sftp
         try:
-            self._sftp._request(CMD_CLOSE, f.handle)
+            self._sftp._async_request(closing, CMD_CLOSE, f.handle)
+            while self._in_flight() or not closing.answered:
+                self._sftp._read_response()
         except (OSError, EOFError, SSHException) as exc:
+            if self._in_flight():
+                detail = str(exc) or type(exc).__name__
+                raise OSError(f"SFTP write: connection to the server failed: {detail}") from exc
+            self._raise_failure()
             raise OSError(f"SFTP close failed: {exc}") from exc
+        self._raise_failure()
+        if closing.error is not None:
+            raise OSError(f"SFTP close failed: {closing.error}") from closing.error
 
     def _in_flight(self) -> int:
         acks = self._acks

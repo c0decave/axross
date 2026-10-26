@@ -170,6 +170,15 @@ def _sanitize_op_entry(d: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+class _Visits(dict):
+    """The visits ``_load`` read, carrying whether the file was taken in
+    completely (``complete``), so ``_save`` under the same lock need not
+    read the file a second time to find out. A plain dict carries nothing:
+    ``_save`` reads the file then, as before."""
+
+    complete: bool | None = None
+
+
 def _read() -> tuple[dict[str, HostVisit], bool]:
     """The stored visits, and whether the file was taken in completely
     (a missing file is: it holds nothing)."""
@@ -205,19 +214,31 @@ def _read() -> tuple[dict[str, HostVisit], bool]:
 
 
 def _load() -> dict[str, HostVisit]:
-    return _read()[0]
+    visits, complete = _read()
+    loaded = _Visits(visits)
+    loaded.complete = complete
+    return loaded
 
 
-def _keep_incomplete_file() -> None:
+def _keep_incomplete_file(complete: bool | None = None) -> None:
     """Before ``_save`` replaces a file ``_read`` cannot take in completely,
     keep a copy of it: what was loaded from it is all that would remain.
-    Raises OSError when that copy cannot be made, so the save does not run."""
-    if not _read()[1] and not keep_unreadable_copy(_history_file()):
+    Raises OSError when that copy cannot be made, so the save does not run.
+
+    *complete* is what the caller's own ``_read`` under the same lock found
+    (None: read the file here)."""
+    if complete is None:
+        complete = _read()[1]
+    if not complete and not keep_unreadable_copy(_history_file()):
         raise OSError(f"not replacing the unreadable {_history_file()}: no copy could be kept")
 
 
-def _save(visits: dict[str, HostVisit]) -> None:
-    """Atomic write at 0o600. Trims to ``MAX_HOSTS`` newest entries."""
+def _save(visits: dict[str, HostVisit], *, complete: bool | None = None) -> None:
+    """Atomic write at 0o600. Trims to ``MAX_HOSTS`` newest entries.
+
+    *complete*: whether the caller's ``_read``, made under the lock it still
+    holds, took the file in completely - saves reading it a second time
+    (default: what *visits* carries when ``_load`` made it, else read)."""
     # Defense-in-depth tripwire: every mutator MUST hold the
     # shared RMW lock. If a future code path lands that
     # forgets the wrapper, the security/ helper surfaces a WARNING so
@@ -231,7 +252,9 @@ def _save(visits: dict[str, HostVisit]) -> None:
     except OSError as exc:
         log.debug("visit_history: cannot chmod %s: %s", path.parent, exc)
 
-    _keep_incomplete_file()
+    if complete is None:
+        complete = getattr(visits, "complete", None)
+    _keep_incomplete_file(complete)
     items = sorted(visits.values(), key=lambda v: v.last_seen, reverse=True)
     if len(items) > MAX_HOSTS:
         items = items[:MAX_HOSTS]
@@ -248,8 +271,12 @@ def _save(visits: dict[str, HostVisit]) -> None:
             posix_compat.fchmod_private(fd, 0o600)
         except OSError as exc:
             log.debug("visit_history: cannot chmod tmpfile: %s", exc)
+        # json.dumps, not json.dump: dump streams through the pure-Python
+        # encoder (10 ms for a full history), dumps uses the C one - the
+        # same text.
+        text = json.dumps(payload, indent=2)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
+            fh.write(text)
         os.replace(tmp_path, path)
     except Exception:
         try:
@@ -385,7 +412,7 @@ def clear(host: str | None = None) -> int:
         keep = {k: v for k, v in visits.items() if v.host.lower() != h}
         dropped = len(visits) - len(keep)
         if dropped:
-            _save(keep)
+            _save(keep, complete=getattr(visits, "complete", None))
         return dropped
 
 

@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -694,6 +695,12 @@ class ProfileManager:
         # (``name -> to_dict()``). save() compares the file against it to
         # tell what another writer (a script, the MCP server) changed.
         self._base: dict[str, dict] = {}
+        # Profiles whose sensitive fields have not been read from the keyring
+        # yet: get() and all_profiles() read them at a profile's first use
+        # (four keyring lookups per profile - a manager that only lists
+        # names, or looks up one profile, needs none or four, not 4 x all).
+        self._secrets_unread: set[str] = set()
+        self._secrets_lock = threading.Lock()
         self.load()
 
     @staticmethod
@@ -726,9 +733,8 @@ class ProfileManager:
         try:
             loaded, skipped = self._read_file()
             self._base = {name: p.to_dict() for name, p in loaded.items()}
-            self._profiles = {
-                name: self._restore_sensitive_fields(p) for name, p in loaded.items()
-            }
+            self._profiles = dict(loaded)
+            self._secrets_unread = set(loaded)
             self._file_not_fully_loaded = skipped
             log.info("Loaded %d profiles from %s", len(self._profiles), PROFILES_FILE)
         except (json.JSONDecodeError, OSError, ValueError) as e:
@@ -762,11 +768,14 @@ class ProfileManager:
                 continue  # added or changed here: this manager's version wins
             if name not in disk:
                 del self._profiles[name]
+                self._secrets_unread.discard(name)
             elif disk_dicts[name] != base:
-                self._profiles[name] = self._restore_sensitive_fields(disk[name])
+                self._profiles[name] = disk[name]
+                self._secrets_unread.add(name)
         for name, profile in disk.items():
             if name not in self._base and name not in self._profiles:
-                self._profiles[name] = self._restore_sensitive_fields(profile)
+                self._profiles[name] = profile
+                self._secrets_unread.add(name)
 
     def _preserve_unloaded_file(self) -> bool:
         """Copy the profile file load() could not take in completely
@@ -862,7 +871,24 @@ class ProfileManager:
             log.error("Failed to save profiles: %s", e)
 
     def get(self, name: str) -> ConnectionProfile | None:
-        return self._profiles.get(name)
+        profile = self._profiles.get(name)
+        if profile is not None and name in self._secrets_unread:
+            self._read_secrets(name, profile)
+        return profile
+
+    def _read_secrets(self, name: str, profile: ConnectionProfile) -> None:
+        """Fill *profile*'s sensitive fields from the keyring, once. The name
+        leaves the unread set only after the fields are filled, so another
+        thread never gets the profile half-filled."""
+        with self._secrets_lock:
+            if self._profiles.get(name) is not profile:
+                # Replaced meanwhile (a save merged another writer's edit):
+                # the caller still holds this object, so it gets its secrets
+                # too; the new one is read at its own first use.
+                self._restore_sensitive_fields(profile)
+            elif name in self._secrets_unread:
+                self._restore_sensitive_fields(profile)
+                self._secrets_unread.discard(name)
 
     def list_names(self) -> list[str]:
         return sorted(self._profiles.keys())
@@ -878,6 +904,7 @@ class ProfileManager:
             failed = ", ".join(sorted(failed_secret_fields))
             raise RuntimeError(f"Could not store secret fields in keyring: {failed}")
         self._profiles[profile.name] = profile
+        self._secrets_unread.discard(profile.name)  # the caller's object is complete
         if not profile.store_password:
             delete_password(profile.name)
         if not profile.store_proxy_password and proxy_entry(profile.name) not in self._profiles:
@@ -896,6 +923,7 @@ class ProfileManager:
                     delete_proxy_password(name)
                 self._delete_sensitive_fields(name, self._foreign_entries(name))
             del self._profiles[name]
+            self._secrets_unread.discard(name)
             self.save()
 
     def _foreign_entries(self, name: str) -> set[str]:
@@ -906,7 +934,7 @@ class ProfileManager:
         )
 
     def all_profiles(self) -> list[ConnectionProfile]:
-        return list(self._profiles.values())
+        return [p for p in (self.get(name) for name in list(self._profiles)) if p is not None]
 
     @staticmethod
     def _restore_sensitive_fields(profile: ConnectionProfile) -> ConnectionProfile:

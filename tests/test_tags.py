@@ -501,6 +501,9 @@ def test_sad_a_failed_move_job_keeps_the_tags(tmp_path, monkeypatch):
                                       "failed": False})
         monkeypatch.setattr(win._transfer_manager, "get_job", lambda jid: job)
         win._tags_on_move_error("j1", "disk full")
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.processEvents()  # ended jobs are applied on the next event-loop turn
         assert store.tags_of("Local", "/s/d/f.txt") == ["Important"]
         assert store.tags_of("Local", "/s/d") == ["Review later"]
         assert not win._tag_moves and not win._tag_folder_moves

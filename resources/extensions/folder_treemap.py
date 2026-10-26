@@ -3,6 +3,8 @@ subfolder, its area the size."""
 
 from __future__ import annotations
 
+import sys
+
 EXTENSION = {
     "name": "Folder Treemap",
     "version": "1.0",
@@ -57,9 +59,39 @@ def folder_sizes(backend, folder: str, *, max_entries: int = MAX_ENTRIES):
     return out, complete[0]
 
 
+class _RowSum:
+    """The running sum of a row, equal to ``sum(row)`` to the last bit:
+    compensated (Neumaier) as the built-in ``sum`` adds floats since Python
+    3.12, plainly before."""
+
+    __slots__ = ("hi", "lo")
+    compensated = sys.version_info >= (3, 12)
+
+    def __init__(self) -> None:
+        self.hi = 0.0
+        self.lo = 0.0
+
+    def add(self, x: float) -> None:
+        hi = self.hi
+        t = hi + x
+        if self.compensated:
+            if abs(hi) >= abs(x):
+                self.lo += (hi - t) + x
+            else:
+                self.lo += (x - t) + hi
+        self.hi = t
+
+    def value(self) -> float:
+        return self.hi + self.lo if self.lo else self.hi
+
+
 def squarify(sizes: list[float], x: float, y: float, w: float, h: float):
     """Rectangles ``(x, y, w, h)`` for *sizes* (sorted large to small),
-    filling the box with aspect ratios near 1 (Bruls et al.)."""
+    filling the box with aspect ratios near 1 (Bruls et al.).
+
+    Linear: the row keeps its sum as it grows, and its worst aspect ratio
+    comes from its first (largest) and last (smallest) box - the ratio
+    ``max(side² r / s², s² / (side² r))`` is largest at either end."""
     values = [s for s in sizes if s > 0]
     rects: list[tuple[float, float, float, float]] = []
     total = sum(values)
@@ -67,19 +99,30 @@ def squarify(sizes: list[float], x: float, y: float, w: float, h: float):
         return rects
     scaled = [v * w * h / total for v in values]
 
-    def worst(row, side):
-        s = sum(row)
-        return max(max(side * side * r / (s * s), s * s / (side * side * r)) for r in row)
+    def worst(largest: float, smallest: float, s: float, side: float) -> float:
+        return max(side * side * largest / (s * s), s * s / (side * side * smallest))
 
     i = 0
-    while i < len(scaled):
+    count = len(scaled)
+    while i < count:
         side = min(w, h)
-        row = [scaled[i]]
+        start = i
+        row_sum = _RowSum()
+        row_sum.add(scaled[i])
+        s = row_sum.value()
+        current = worst(scaled[i], scaled[i], s, side)
         i += 1
-        while i < len(scaled) and worst(row + [scaled[i]], side) <= worst(row, side):
-            row.append(scaled[i])
+        while i < count:
+            grown = _RowSum()
+            grown.hi, grown.lo = row_sum.hi, row_sum.lo
+            grown.add(scaled[i])
+            grown_s = grown.value()
+            candidate = worst(scaled[start], scaled[i], grown_s, side)
+            if candidate > current:
+                break
+            row_sum, s, current = grown, grown_s, candidate
             i += 1
-        s = sum(row)
+        row = scaled[start:i]
         if w >= h:  # lay the row out as a column on the left
             cw = s / h
             cy = y
@@ -117,6 +160,10 @@ def activate(api):
             self.complete = True
             self.message = "Open a folder to see its treemap."
             self.boxes: list[tuple[QRectF, tuple[str, int, bool]]] = []
+            # (entries, width, height) the boxes were laid out for: a repaint
+            # of the same folder at the same size reuses them.
+            self._laid_out = None
+            self._rects: list = []
             self.setMouseTracking(True)
             self.setMinimumSize(200, 160)
 
@@ -134,7 +181,12 @@ def activate(api):
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.message)
                 return
             shown = [e for e in self.entries if e[1] > 0]
-            rects = squarify([e[1] for e in shown], 0, 0, self.width(), self.height())
+            key = (self.entries, self.width(), self.height())
+            if self._laid_out is None or any(a is not b and a != b
+                                             for a, b in zip(self._laid_out, key)):
+                self._rects = squarify([e[1] for e in shown], 0, 0, self.width(), self.height())
+                self._laid_out = key
+            rects = self._rects
             for n, ((rx, ry, rw, rh), entry) in enumerate(zip(rects, shown)):
                 box = QRectF(rx, ry, rw, rh)
                 hue = (n * 47) % 360

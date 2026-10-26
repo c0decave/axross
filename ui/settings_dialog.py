@@ -57,6 +57,11 @@ Esc and the [x] discard every change not yet applied.
   has said why), or raise OSError / ValueError with the reason.
 
 ``shutdown()`` (optional) runs when the dialog closes.
+
+**A page is built when it is first needed** - shown, asked for with
+``SettingsDialog.page()``, or searched: the first letter typed into "Find a
+setting" builds the pages not built yet, whose widgets' texts the filter
+matches. A page never built holds no change, so OK and Apply skip it.
 """
 
 from __future__ import annotations
@@ -901,11 +906,17 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(tr("Settings"))
         self.resize(980, 660)
         self._window = window
+        # A page is built when it is first shown, asked for or searched
+        # (_page_built): one page at opening, not fifteen.
         self._pages: dict[str, QWidget] = {}
         self._titles: dict[str, str] = {}
+        self._factories: dict[str, Callable] = {}
+        self._keywords: dict[str, list[str]] = {}
+        self._subs: dict[str, tuple] = {}
         self._terms: dict[str, list[str]] = {}
         self._items: dict[str, QTreeWidgetItem] = {}
         self._scrolls: dict[str, QScrollArea] = {}
+        self._paranoid_wired = False
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText(tr("Find a setting"))
@@ -982,23 +993,12 @@ class SettingsDialog(QDialog):
         return out
 
     def _build_pages(self) -> None:
+        """The list of every category; their pages come with _page_built."""
         for page_id, title, factory, keywords, subs in self._categories():
-            try:
-                page = factory(None, self._window)
-            except Exception:  # noqa: BLE001 - one broken page must not cost the others
-                log.exception("Settings page %s could not be built", page_id)
-                page = QLabel(tr("This page could not be opened; see the log."))
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-            scroll.setWidget(page)
-            self.stack.addWidget(scroll)
-            self._pages[page_id] = page
-            self._scrolls[page_id] = scroll
+            self._factories[page_id] = factory
             self._titles[page_id] = title
-            self._terms[page_id] = (
-                [title.lower()] + [k.lower() for k in keywords] + _searchable_texts(page)
-            )
+            self._keywords[page_id] = [title.lower()] + [k.lower() for k in keywords]
+            self._subs[page_id] = subs
             item = QTreeWidgetItem([title])
             item.setData(0, _ID_ROLE, page_id)
             self.tree.addTopLevelItem(item)
@@ -1008,20 +1008,58 @@ class SettingsDialog(QDialog):
                 child.setData(0, _ID_ROLE, page_id)
                 child.setData(0, _SUB_ROLE, sub_id)
                 item.addChild(child)
-            if subs and isinstance(getattr(page, "tabs", None), QTabWidget):
-                page.tabs.currentChanged.connect(
-                    lambda index, pid=page_id: self._follow_tab(pid, index)
-                )
         self.tree.expandAll()
+
+    def _page_built(self, page_id: str) -> QWidget:
+        """The page *page_id*, built now if it was not yet (KeyError for no
+        such category)."""
+        page = self._pages.get(page_id)
+        if page is not None:
+            return page
+        factory = self._factories[page_id]
+        try:
+            page = factory(None, self._window)
+        except Exception:  # noqa: BLE001 - one broken page must not cost the others
+            log.exception("Settings page %s could not be built", page_id)
+            page = QLabel(tr("This page could not be opened; see the log."))
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(page)
+        self.stack.addWidget(scroll)
+        self._pages[page_id] = page
+        self._scrolls[page_id] = scroll
+        self._terms[page_id] = self._keywords[page_id] + _searchable_texts(page)
+        if self._subs[page_id] and isinstance(getattr(page, "tabs", None), QTabWidget):
+            page.tabs.currentChanged.connect(
+                lambda index, pid=page_id: self._follow_tab(pid, index)
+            )
+        self._wire_paranoid_preview()
+        return page
+
+    def _build_every_page(self) -> None:
+        for page_id in self._titles:
+            self._page_built(page_id)
+
+    def _wire_paranoid_preview(self) -> None:
+        """Once the Security and the Extensions page are both built, the
+        second shows what the first's paranoid switch will do - also a
+        switch flipped before the Extensions page was built."""
         security = self._pages.get("security")
-        if isinstance(security, SecurityPage) and "extensions" in self._pages:
-            security.paranoid_check.toggled.connect(self._preview_paranoid)
+        if (self._paranoid_wired or not isinstance(security, SecurityPage)
+                or "extensions" not in self._pages):
+            return
+        self._paranoid_wired = True
+        security.paranoid_check.toggled.connect(self._preview_paranoid)
+        on = security.paranoid_check.isChecked()
+        if on != security._baseline.get("paranoid"):
+            self._preview_paranoid(on)
 
     def page(self, page_id: str) -> QWidget:
-        return self._pages[page_id]
+        return self._page_built(page_id)
 
     def page_ids(self) -> list[str]:
-        return list(self._pages)
+        return list(self._titles)
 
     def current_page_id(self) -> str:
         item = self.tree.currentItem()
@@ -1056,7 +1094,7 @@ class SettingsDialog(QDialog):
         if item is None:
             return
         page_id = item.data(0, _ID_ROLE)
-        page = self._pages[page_id]
+        page = self._page_built(page_id)
         self.stack.setCurrentWidget(self._scrolls[page_id])
         self.title_label.setText(self._titles[page_id])
         sub = item.data(0, _SUB_ROLE)
@@ -1076,7 +1114,7 @@ class SettingsDialog(QDialog):
     def _offer_llm_profiles(self) -> None:
         """Profiles added or renamed on the LLM page, not yet saved, can be
         chosen for new agent tabs and for analysis already."""
-        llm = self._pages.get("llm")
+        llm = self._page_built("llm") if "llm" in self._titles else None
         if not hasattr(llm, "profile_names"):
             return
         for page_id in ("agent", "analysis"):
@@ -1099,6 +1137,8 @@ class SettingsDialog(QDialog):
         *text* (case-insensitive); the first of them is selected when the
         selected one is hidden."""
         needle = text.strip().lower()
+        if needle:
+            self._build_every_page()  # the names of a page are its widgets' texts
         first = None
         for page_id, item in self._items.items():
             match = not needle or any(needle in term for term in self._terms[page_id])
@@ -1116,7 +1156,9 @@ class SettingsDialog(QDialog):
 
     # -- OK / Apply / Cancel --------------------------------------------------
     def dirty_page_ids(self) -> list[str]:
-        return [pid for pid, page in self._pages.items() if _page_dirty(page)]
+        # In the order of the list: pages are built in the order they are used.
+        return [pid for pid in self._titles
+                if pid in self._pages and _page_dirty(self._pages[pid])]
 
     def apply(self) -> bool:
         """Check, then save every changed page (the rule in the module

@@ -4949,13 +4949,18 @@ def test_scp_interactive_shell_multiplex():
     )
     s.connect(password=_SSH_PASS, on_unknown_host=_auto_trust)
     try:
-        before = s.list_dir(s.home())
+        # Not the home folder: the shell's first command makes ~/.ash_history
+        # there, so on a fresh lab container the two listings differ by it
+        # (the SFTP twin above lists data/ for the same reason).
+        folder = s.join(s.home(), "data")
+        before = s.list_dir(folder)
+        assert len(before) > 0
         with s.interactive_shell() as sh:
             sh.read_until(b"$ ", timeout=5.0)
             sh.write(b"whoami\n")
             out = sh.read_until(b"$ ", timeout=5.0)
             assert _SSH_USER.encode() in out, out[-200:]
-            during = s.list_dir(s.home())
+            during = s.list_dir(folder)
             assert [i.name for i in during] == [i.name for i in before]
     finally:
         s.disconnect()

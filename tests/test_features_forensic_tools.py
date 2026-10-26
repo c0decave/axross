@@ -102,6 +102,12 @@ def test_e2e_the_features_window_lists_them_under_missing_only(monkeypatch):
     dlg = FeaturesDialog()
     dlg.show()
     app.processEvents()
+    import time
+
+    end = time.monotonic() + 30  # the window asks what is installed off the GUI thread
+    while not dlg.loaded and time.monotonic() < end:
+        app.processEvents()
+        time.sleep(0.005)
     try:
         dlg.missing_only.setChecked(True)
         shown = {dlg.feature_at(r).key: r for r in range(dlg.table.rowCount())}

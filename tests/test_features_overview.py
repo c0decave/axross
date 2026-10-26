@@ -163,12 +163,24 @@ def missing(monkeypatch):
         replace(f, available=False) if f.key in gone else f for f in real()])
 
 
+def _wait_loaded(dlg, seconds: float = 30.0) -> None:
+    """The window asks what is installed off the GUI thread: wait for it."""
+    import time
+
+    end = time.monotonic() + seconds
+    while not dlg.loaded and time.monotonic() < end:
+        APP.processEvents()
+        time.sleep(0.005)
+    assert dlg.loaded
+
+
 def _dialog(**kw):
     from ui.features_dialog import FeaturesDialog
 
     dlg = FeaturesDialog(**kw)
     dlg.show()
     APP.processEvents()
+    _wait_loaded(dlg)
     return dlg
 
 
@@ -297,6 +309,13 @@ def test_sad_connection_dialog_labels_name_no_made_up_extra(manager):
 
     dlg = ConnectionDialog(manager)
     try:
+        import time
+
+        end = time.monotonic() + 30  # the dialog asks what is installed off the GUI thread
+        while not dlg.labels_ready and time.monotonic() < end:
+            APP.processEvents()
+            time.sleep(0.005)
+        assert dlg.labels_ready
         for index, proto in enumerate(dlg._protocol_ids):
             info = get(proto)
             label = dlg._protocol_combo.itemText(index)
@@ -341,6 +360,7 @@ def test_e2e_help_menu_opens_features(tmp_path):
         action.trigger()
         APP.processEvents()
         dlg = win._features_dialog
+        _wait_loaded(dlg)
         assert dlg.isVisible() and dlg.table.rowCount() > 10
         dlg.close()
     finally:
@@ -380,6 +400,7 @@ def test_e2e_window_opens_features_at_sift_from_the_dock(tmp_path):
         win._analysis_dock.features_requested.emit("extra:sift")
         APP.processEvents()
         dlg = win._features_dialog
+        _wait_loaded(dlg)
         rows = {i.row() for i in dlg.table.selectedIndexes()}
         assert [dlg.feature_at(r).key for r in rows] == ["extra:sift"]
         dlg.close()

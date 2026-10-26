@@ -198,6 +198,11 @@ class _RlCompleter:
         return {n for n in out if not n.startswith("_")}
 
 
+#: Paragraph and line separators, frame marks -> "\n"; a no-break space -> " ".
+_PLAIN_TEXT = str.maketrans({"\u2029": "\n", "\u2028": "\n", "\ufdd0": "\n", "\ufdd1": "\n",
+                             "\u00a0": " "})
+
+
 class ReplWidget(QPlainTextEdit):
     """Qt-embedded Python REPL.
 
@@ -303,6 +308,11 @@ class ReplWidget(QPlainTextEdit):
         """Drop head bytes when the console buffer crosses the cap.
         We slice off the front so the most-recent output stays
         readable (matches how the terminal dock handles flooding)."""
+        # The document counts UTF-16 units (and its final paragraph end),
+        # never fewer than the text has characters: below the cap there,
+        # the text is below it too - no copy of the whole buffer to know.
+        if self.document().characterCount() - 1 <= CONSOLE_BUFFER_CAP_CHARS:
+            return
         full = self.toPlainText()
         if len(full) <= CONSOLE_BUFFER_CAP_CHARS:
             return
@@ -317,7 +327,16 @@ class ReplWidget(QPlainTextEdit):
         self._append(prompt)
 
     def _current_input(self) -> str:
-        return self.toPlainText()[self._input_start :]
+        """The text typed after the prompt, as toPlainText() shows it.
+
+        Read through a cursor from ``_input_start`` - a position counted in
+        UTF-16 units, as Qt counts: slicing the Python string with it cut
+        a character off the input for every emoji in the output before."""
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(min(self._input_start, self.document().characterCount() - 1))
+        cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+        # What toPlainText() turns into "\n" and " " (QTextDocument::toPlainText).
+        return cursor.selectedText().translate(_PLAIN_TEXT)
 
     def _replace_input(self, new_text: str) -> None:
         cursor = self.textCursor()

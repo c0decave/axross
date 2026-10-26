@@ -114,6 +114,24 @@ def unique_name(name: str, taken: set[str], *, is_dir: bool = False) -> str:
         n += 1
 
 
+def prefetch_stats(backend, paths: list[str]) -> dict[str, object]:
+    """``stat`` of each of *paths* in one batch where the backend offers
+    ``stat_many`` (SFTP: pipelined), as {path: FileItem or the OSError
+    ``stat`` raises}; ``{}`` otherwise, for fewer than two paths, or when
+    the batch fails - the caller then asks per path, as before."""
+    stat_many = getattr(backend, "stat_many", None)
+    if not callable(stat_many) or len(paths) < 2:
+        return {}
+    try:
+        results = stat_many(list(paths))
+    except Exception as exc:  # noqa: BLE001 - per-path calls report it
+        log.debug("batched stat of %d paths failed: %s", len(paths), exc)
+        return {}
+    if len(results) != len(paths):
+        return {}
+    return dict(zip(paths, results))
+
+
 def scan_conflicts(
     source_backend: FileBackend,
     dest_backend: FileBackend,
@@ -170,13 +188,16 @@ def scan_conflicts(
             )
 
     top: list[tuple[str, str, object]] = []
+    known = prefetch_stats(source_backend, list(source_paths))
     for path in source_paths:
         try:
             name = transfer_leaf(source_backend, dest_backend, _leaf(source_backend, path))
         except ValueError:
             continue  # transfer_files skips it as well
         try:
-            item = source_backend.stat(path)
+            item = known[path] if path in known else source_backend.stat(path)
+            if isinstance(item, OSError):
+                raise item
         except OSError as exc:
             # transfer_files then copies it as a file.
             log.debug("conflict scan: cannot stat %s: %s", path, exc)

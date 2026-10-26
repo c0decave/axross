@@ -32,7 +32,12 @@ import paramiko
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
 from core.profiles import ConnectionProfile
-from core.proxy import ProxyConfig, create_direct_socket, create_proxy_socket
+from core.proxy import (
+    ProxyConfig,
+    create_direct_socket,
+    create_proxy_socket,
+    enable_tcp_nodelay,
+)
 from core.redaction import redact_text
 from core.ssh_client import (
     CleanEnvProxyCommand,
@@ -392,6 +397,9 @@ class SCPSession(SessionLifecycle):
                 )
             else:
                 sock = create_direct_socket(profile.host, profile.port, family=family)
+            # Without it every request after an exec channel waited ~40 ms
+            # for a delayed ACK (Nagle); see core.proxy.enable_tcp_nodelay.
+            enable_tcp_nodelay(sock)
 
             log.info("Creating SSH transport to %s:%d (SCP mode)", profile.host, profile.port)
 

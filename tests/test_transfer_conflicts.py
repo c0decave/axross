@@ -313,6 +313,117 @@ class WorkerRecheckTest(_Tree):
         self.assertEqual(job.status, TransferStatus.DONE)
         self.assertEqual((self.dst / "a.txt").read_text(), "new")
 
+    def _count_dest_exists(self, job) -> list[str]:
+        """Runs *job*; the destination paths its backend was asked
+        ``exists`` about."""
+        asked: list[str] = []
+        real_exists = self.fs.exists
+
+        def exists(path):
+            if path == job.dest_path:
+                asked.append(path)
+            return real_exists(path)
+
+        with mock.patch.object(self.fs, "exists", exists):
+            self.run_job(job)
+        return asked
+
+    def test_happy_fail_mode_through_a_temp_file_asks_once_right_before_the_rename(self) -> None:
+        # Every F5 job onto a free name runs in "fail" mode; a remote
+        # destination paid a round trip per check. Through a temp file
+        # nothing is replaced before the rename, so that check is enough.
+        from core.transfer_worker import TransferStatus
+
+        (self.src / "a.txt").write_text("new")
+        job = self.job("a.txt", "fail")
+        self.assertEqual(self._count_dest_exists(job), [job.dest_path])
+        self.assertEqual(job.status, TransferStatus.DONE)
+        self.assertEqual((self.dst / "a.txt").read_text(), "new")
+
+    def test_happy_fail_mode_writing_directly_asks_once(self) -> None:
+        # FTP, WebDAV, S3: the no-overwrite check and the rollback snapshot
+        # asked exists() back to back - on FTP a missing file is four
+        # commands and a listing, and the server slows down every refusal.
+        from core.transfer_worker import TransferStatus
+
+        (self.src / "a.txt").write_text("new")
+        job = self.job("a.txt", "fail", use_temp=False)
+        self.assertEqual(self._count_dest_exists(job), [job.dest_path])
+        self.assertEqual(job.status, TransferStatus.DONE)
+        self.assertEqual((self.dst / "a.txt").read_text(), "new")
+
+    def test_sad_a_failed_direct_write_in_fail_mode_leaves_no_partial(self) -> None:
+        from core.transfer_worker import TransferStatus
+
+        (self.src / "a.txt").write_text("new" * 1000)
+        job = self.job("a.txt", "fail", use_temp=False)
+
+        class Broken:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, n=-1):
+                raise OSError("source vanished")
+
+        with mock.patch.object(self.fs, "open_read", lambda path: Broken()):
+            self.run_job(job)
+        self.assertEqual(job.status, TransferStatus.ERROR)
+        self.assertFalse((self.dst / "a.txt").exists())
+
+    def test_edge_overwrite_and_present_newer_destinations_still_snapshot(self) -> None:
+        from core.transfer_worker import TransferStatus
+
+        (self.src / "a.txt").write_text("new")
+        job = self.job("a.txt", "overwrite", use_temp=False)
+        self.assertEqual(len(self._count_dest_exists(job)), 1)  # the snapshot's
+        (self.dst / "b.txt").write_text("old")
+        _age(self.dst / "b.txt", 3600)
+        (self.src / "b.txt").write_text("new")
+        job = self.job("b.txt", "newer", use_temp=False)
+        # Present: the check's answer is not reused, the snapshot asks.
+        self.assertEqual(len(self._count_dest_exists(job)), 2)
+        self.assertEqual(job.status, TransferStatus.DONE)
+        self.assertEqual((self.dst / "b.txt").read_text(), "new")
+
+    def test_edge_a_fail_mode_resume_still_checks_before_touching_its_partial(self) -> None:
+        from core.transfer_worker import TransferStatus, partial_name
+
+        (self.src / "a.txt").write_text("new content")
+        (self.dst / "a.txt").write_text("appeared later")
+        job = self.job("a.txt", "fail")
+        partial = self.dst / partial_name("a.txt", job.job_id, "")
+        partial.write_text("new")
+        job.resume, job.temp_path = True, str(partial)
+        self.run_job(job)
+        self.assertEqual(job.status, TransferStatus.ERROR)
+        self.assertEqual(partial.read_text(), "new")  # untouched
+        self.assertEqual((self.dst / "a.txt").read_text(), "appeared later")
+
+    def test_edge_fail_mode_writing_directly_still_checks_before_the_first_write(self) -> None:
+        from core.transfer_worker import TransferStatus
+
+        (self.src / "a.txt").write_text("new")
+        (self.dst / "a.txt").write_text("appeared later")
+        job = self.job("a.txt", "fail", use_temp=False)
+        with mock.patch.object(self.fs, "open_write", side_effect=AssertionError("wrote")):
+            self.run_job(job)
+        self.assertEqual(job.status, TransferStatus.ERROR)
+        self.assertIn("already exists", job.error_message)
+        self.assertEqual((self.dst / "a.txt").read_text(), "appeared later")
+
+    def test_edge_newer_mode_still_decides_before_reading_the_source(self) -> None:
+        (self.src / "a.txt").write_text("new")
+        (self.dst / "a.txt").write_text("newer at the destination")
+        _age(self.src / "a.txt", 3600)
+        job = self.job("a.txt", "newer")
+        with mock.patch.object(self.fs, "open_read", side_effect=AssertionError("read")):
+            self.run_job(job)
+        self.assertTrue(job.skipped)
+        self.assertEqual((self.dst / "a.txt").read_text(), "newer at the destination")
+
     def test_edge_newer_mode_keeps_a_newer_destination_and_the_moved_source(self) -> None:
         from core.transfer_worker import TransferStatus
 

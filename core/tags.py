@@ -13,6 +13,8 @@ defaults are used.
 
 from __future__ import annotations
 
+import bisect
+import contextlib
 import json
 import logging
 import os
@@ -64,12 +66,33 @@ class TaggedFile:
     added: float = 0.0
 
 
+class TaggedIndex:
+    """The tagged paths of one backend, sorted: ``has_tags_under`` answers
+    as TagStore.has_tags_under does, by a set lookup and one bisect."""
+
+    def __init__(self, paths) -> None:
+        self._sorted = sorted(paths)
+        self._set = set(self._sorted)
+
+    def has_tags_under(self, path: str) -> bool:
+        sep = TagStore._sep(path)
+        base = path.rstrip(sep)
+        if path in self._set or base in self._set:
+            return True
+        prefix = base + sep
+        at = bisect.bisect_left(self._sorted, prefix)
+        return at < len(self._sorted) and self._sorted[at].startswith(prefix)
+
+
 class TagStore:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.RLock()
         self._tags: list[Tag] = [Tag(n, c) for n, c in DEFAULT_TAGS]
         self._items: dict[tuple[str, str], TaggedFile] = {}
+        # batch(): nesting depth and whether a write was held back.
+        self._batch_depth = 0
+        self._batch_dirty = False
         self._load()
 
     # -- file ------------------------------------------------------------------------------
@@ -112,7 +135,27 @@ class TagStore:
             except (TypeError, KeyError, ValueError):
                 log.warning("Tags: a bad entry skipped: %r", raw)
 
+    @contextlib.contextmanager
+    def batch(self):
+        """Changes inside write tags.json once, at the end of the outermost
+        batch - also when the block raises (what changed is kept)."""
+        with self._lock:
+            self._batch_depth += 1
+            try:
+                yield self
+            finally:
+                self._batch_depth -= 1
+                if self._batch_depth == 0 and self._batch_dirty:
+                    self._batch_dirty = False
+                    self._write()
+
     def _save(self) -> None:
+        if self._batch_depth:
+            self._batch_dirty = True
+            return
+        self._write()
+
+    def _write(self) -> None:
         payload = {
             "tags": [{"name": t.name, "color": t.colour} for t in self._tags],
             "items": [{"backend": e.backend_name, "profile": e.profile_name, "path": e.path,
@@ -196,30 +239,53 @@ class TagStore:
             return list(entry.tags) if entry else []
 
     def tag(self, backend_name: str, profile_name: str, path: str, name: str) -> None:
+        self.tag_many(backend_name, profile_name, (path,), name)
+
+    def tag_many(self, backend_name: str, profile_name: str, paths, name: str) -> None:
+        """Tag every one of *paths* with *name* and write the file once - the
+        effect of :meth:`tag` per path (a selection of thousands rewrote the
+        whole file per path). Raises KeyError for an unknown tag (nothing
+        changed) and ValueError at :data:`MAX_ITEMS`, after writing the
+        paths that fitted."""
         with self._lock:
             if not any(t.name == name for t in self._tags):
                 raise KeyError(f"no tag {name!r}")
-            entry = self._items.get((backend_name, path))
-            if entry is None:
-                if len(self._items) >= MAX_ITEMS:
-                    raise ValueError(f"more than {MAX_ITEMS} tagged files")
-                entry = TaggedFile(backend_name, profile_name, path, [], time.time())
-                self._items[(backend_name, path)] = entry
-            if profile_name:
-                entry.profile_name = profile_name
-            if name not in entry.tags:
-                entry.tags.append(name)
-                self._save()
+            changed = False
+            try:
+                for path in paths:
+                    entry = self._items.get((backend_name, path))
+                    if entry is None:
+                        if len(self._items) >= MAX_ITEMS:
+                            raise ValueError(f"more than {MAX_ITEMS} tagged files")
+                        entry = TaggedFile(backend_name, profile_name, path, [], time.time())
+                        self._items[(backend_name, path)] = entry
+                    if profile_name:
+                        entry.profile_name = profile_name
+                    if name not in entry.tags:
+                        entry.tags.append(name)
+                        changed = True
+            finally:
+                if changed:
+                    self._save()
 
     def untag(self, backend_name: str, path: str, name: str) -> None:
+        self.untag_many(backend_name, (path,), name)
+
+    def untag_many(self, backend_name: str, paths, name: str) -> None:
+        """Take *name* off every one of *paths* and write the file once (not
+        at all when none carried it) - the effect of :meth:`untag` per path."""
         with self._lock:
-            entry = self._items.get((backend_name, path))
-            if entry is None or name not in entry.tags:
-                return
-            entry.tags.remove(name)
-            if not entry.tags:
-                del self._items[(backend_name, path)]
-            self._save()
+            changed = False
+            for path in paths:
+                entry = self._items.get((backend_name, path))
+                if entry is None or name not in entry.tags:
+                    continue
+                entry.tags.remove(name)
+                if not entry.tags:
+                    del self._items[(backend_name, path)]
+                changed = True
+            if changed:
+                self._save()
 
     def items_with(self, name: str) -> list[TaggedFile]:
         with self._lock:
@@ -265,6 +331,12 @@ class TagStore:
                 moved = True
             if moved:
                 self._save()
+
+    def tagged_index(self, backend_name: str) -> TaggedIndex:
+        """A snapshot of *backend_name*'s tagged paths that answers
+        has_tags_under() without a scan per question."""
+        with self._lock:
+            return TaggedIndex(p for b, p in self._items if b == backend_name)
 
     def has_tags_under(self, backend_name: str, path: str) -> bool:
         """*path* or anything below it carries a tag - a cheap check before

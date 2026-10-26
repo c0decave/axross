@@ -20,9 +20,12 @@ from PyQt6.QtWidgets import (
 from core.i18n import tr
 from ui.pane_drag import DraggableHeader, PaneDropZones
 from ui.terminal_widget import (
+    POLL_BUSY_INTERVAL_MS,
+    POLL_INTERVAL_MS,
     LocalTerminalSession,
     SSHTerminalSession,
     TerminalEmulator,
+    drain_output,
 )
 
 if TYPE_CHECKING:
@@ -219,7 +222,7 @@ class TerminalPaneWidget(QWidget):
 
         # Poll timer
         self._read_timer = QTimer(self)
-        self._read_timer.setInterval(50)
+        self._read_timer.setInterval(POLL_INTERVAL_MS)
         self._read_timer.timeout.connect(self._poll_output)
 
     def _get_transport(self):
@@ -473,9 +476,12 @@ class TerminalPaneWidget(QWidget):
             self._terminal.message("\n--- Session ended ---\n")
             return
 
-        data = self._session.read()
-        if data:
-            self._terminal.feed_bytes(data)
+        # Everything the shell wrote, drawn once; a flood: again at once.
+        taken, more = drain_output(
+            self._session, lambda data: self._terminal.feed_bytes(data, render=False))
+        if taken:
+            self._terminal.render()
+        self._read_timer.setInterval(POLL_BUSY_INTERVAL_MS if more else POLL_INTERVAL_MS)
 
     def shutdown(self) -> None:
         if self._btn_pin.isChecked():

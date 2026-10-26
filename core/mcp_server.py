@@ -157,6 +157,41 @@ except ImportError:  # pragma: no cover
 
 log = logging.getLogger(__name__)
 
+#: Validators of the tools' input schemas, by schema text. jsonschema.validate
+#: checks the SCHEMA against its metaschema before the arguments - 4 ms of
+#: $ref resolution per tools/call; a kept validator was checked once.
+_SCHEMA_VALIDATORS: dict[str, Any] = {}
+_SCHEMA_VALIDATORS_MAX = 1024
+_SCHEMA_VALIDATORS_LOCK = threading.Lock()
+
+
+def _validate_arguments(args, schema: dict) -> None:
+    """``jsonschema.validate(args, schema)``: raises the same
+    ValidationError (best_match of the same validator class) or, for a
+    schema that is itself invalid, the same SchemaError - with the
+    metaschema check made once per schema text instead of per call."""
+    try:
+        key = json.dumps(schema)
+    except (TypeError, ValueError):  # not JSON: no key to keep it under
+        jsonschema.validate(args, schema)
+        return
+    validator = _SCHEMA_VALIDATORS.get(key)
+    if validator is None:
+        import copy
+
+        cls = jsonschema.validators.validator_for(schema)
+        cls.check_schema(schema)  # SchemaError: nothing is kept
+        # A copy: a later edit of the tool's dict must not change what this
+        # validator (shared by every schema with this text) checks.
+        validator = cls(copy.deepcopy(schema))
+        with _SCHEMA_VALIDATORS_LOCK:
+            if len(_SCHEMA_VALIDATORS) >= _SCHEMA_VALIDATORS_MAX:
+                _SCHEMA_VALIDATORS.clear()
+            _SCHEMA_VALIDATORS[key] = validator
+    error = jsonschema.exceptions.best_match(validator.iter_errors(args))
+    if error is not None:
+        raise error
+
 # Separate logger for write-tool audit trail. Operators typically
 # route this to a different sink (append-only file, SIEM) than the
 # general-purpose log. Every successful OR refused write lands
@@ -3839,7 +3874,7 @@ def _dispatch(
             # immediately fail in the worker is rejected upfront.
             if _JSONSCHEMA_AVAILABLE:
                 try:
-                    jsonschema.validate(args, tool.schema)
+                    _validate_arguments(args, tool.schema)
                 except jsonschema.ValidationError as exc:
                     return _err(
                         req_id,
@@ -3980,7 +4015,7 @@ def _dispatch(
         # own ValueError-raising checks.
         if _JSONSCHEMA_AVAILABLE:
             try:
-                jsonschema.validate(args, tool.schema)
+                _validate_arguments(args, tool.schema)
             except jsonschema.ValidationError as exc:
                 if cancels is not None and req_id is not None:
                     cancels.unregister(req_id)
