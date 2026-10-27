@@ -18,7 +18,6 @@ import hashlib
 import logging
 import posixpath
 import re
-import shlex
 import socket
 import tempfile
 import threading
@@ -31,6 +30,7 @@ import paramiko
 
 from core.append_helpers import read_existing_for_append
 from core.backend import SessionLifecycle
+from core.exec_util import shell_path
 from core.profiles import ConnectionProfile
 from core.proxy import (
     ProxyConfig,
@@ -251,7 +251,7 @@ class _SpooledWriter:
             data = self._buf.read()
         finally:
             self._buf.close()
-        qpath = shlex.quote(self._remote_path)
+        qpath = shell_path(self._remote_path)
 
         if self._caps.transfer_method == "base64":
             self._upload_base64(data, qpath)
@@ -741,7 +741,7 @@ class SCPSession(SessionLifecycle):
         path = self.normalize(path)
         from core.exec_util import ls_dir_operand
 
-        output = self._exec(f"{self._env_prefix()}ls -la {shlex.quote(ls_dir_operand(path))}")
+        output = self._exec(f"{self._env_prefix()}ls -la {shell_path(ls_dir_operand(path))}")
         if not output.strip():
             # ls -la of a folder prints at least "."; Rebex's shell answers a
             # missing path with nothing and exit 0.
@@ -752,7 +752,7 @@ class SCPSession(SessionLifecycle):
 
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
-        qpath = shlex.quote(path)
+        qpath = shell_path(path)
         if self._caps.has_stat_gnu:
             output = self._exec(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
             return _parse_stat_gnu(output)
@@ -794,7 +794,7 @@ class SCPSession(SessionLifecycle):
         return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
-        self._exec(f"mkdir -p {shlex.quote(self.normalize(path))}")
+        self._exec(f"mkdir -p {shell_path(self.normalize(path))}")
 
     def remove(self, path: str, recursive: bool = False) -> None:
         self._exec(remove_command(self.normalize(path), recursive=recursive))
@@ -813,7 +813,7 @@ class SCPSession(SessionLifecycle):
         path = self.normalize(path)
         if self._caps.transfer_method == "scp":
             return self._scp_read(path)
-        qpath = shlex.quote(path)
+        qpath = shell_path(path)
         use_base64 = self._caps.transfer_method == "base64"
         tool = "base64" if use_base64 else "cat"
         cmd = f"base64 < {qpath}" if use_base64 else f"cat {qpath}"
@@ -873,7 +873,7 @@ class SCPSession(SessionLifecycle):
         spool = tempfile.SpooledTemporaryFile(max_size=_READ_SPOOL_MAX)
         try:
             with self._lock:
-                chan = self._scp_channel(f"scp -f {shlex.quote(path)}")
+                chan = self._scp_channel(f"scp -f {shell_path(path)}")
                 try:
                     chan.sendall(b"\0")
                     header = _scp_read_line(chan)
@@ -918,7 +918,7 @@ class SCPSession(SessionLifecycle):
         if not self._client:
             raise ConnectionError("Not connected")
         with self._lock:
-            chan = self._scp_channel(f"scp -t {shlex.quote(path)}")
+            chan = self._scp_channel(f"scp -t {shell_path(path)}")
             try:
                 _scp_status(chan, path)
                 chan.sendall(b"C0644 %d %s\n" % (len(data), name.encode("utf-8")))
@@ -973,12 +973,12 @@ class SCPSession(SessionLifecycle):
     def chmod(self, path: str, mode: int) -> None:
         if not self._caps.has_chmod:
             raise OSError("chmod not available on remote system")
-        self._exec(f"chmod {oct(mode)[2:]} {shlex.quote(self.normalize(path))}")
+        self._exec(f"chmod {oct(mode)[2:]} {shell_path(self.normalize(path))}")
 
     def readlink(self, path: str) -> str:
         if not self._caps.has_readlink:
             raise OSError("readlink not available on remote system")
-        output = self._exec(f"readlink {shlex.quote(self.normalize(path))}")
+        output = self._exec(f"readlink {shell_path(self.normalize(path))}")
         result = output.strip()
         if not result:
             raise OSError(f"Not a symlink: {path}")
@@ -1008,7 +1008,7 @@ class SCPSession(SessionLifecycle):
         if not tool:
             return ""
         path = self.normalize(path)
-        output, code = self._exec_raw(f"{tool} {shlex.quote(path)} 2>/dev/null")
+        output, code = self._exec_raw(f"{tool} {shell_path(path)} 2>/dev/null")
         if code != 0 or not output:
             return ""
         from core.exec_util import digest_from_sum_output
@@ -1020,7 +1020,7 @@ class SCPSession(SessionLifecycle):
         if not self._caps.has_df:
             return (0, 0, 0)
         path = self.normalize(path)
-        qpath = shlex.quote(path)
+        qpath = shell_path(path)
         # Try df -B1 (GNU) first
         output, code = self._exec_raw(f"df -B1 {qpath} 2>/dev/null")
         if code == 0:

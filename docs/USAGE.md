@@ -104,16 +104,25 @@ PgUp** switch them, and each one keeps its own source and target pane.
 - **Detach to Window** (Workspace menu or the tab's right-click menu)
   puts the workspace on a window of its own — move it to another
   screen. Closing that window brings the workspace back as a tab.
-- **Move a pane:** **Workspace → Move Pane to Workspace** sends the
-  active pane to another workspace (or a new one), or drag a pane's
-  header onto a pane of another workspace or window. File panes and
-  terminal panes drag alike (a terminal pane's ⇄ button moves it too);
+- **Send a pane to another workspace:** right-click the pane and choose
+  **Send to Workspace** - in a file pane's list (on a file or on the
+  empty area, at the end of the menu), on a pane's header, or in a
+  terminal - and
+  pick a workspace or **New Workspace**. The workspaces are numbered as
+  their tabs stand (**1: Workspace 1**, **2: Logs**; a detached one says
+  *(window)*), and for 1 to 9 the digit picks the entry while the menu
+  is open.
+  **Workspace → Send Pane to Workspace** does the same for the active
+  pane, or drag a pane's header onto a pane of another workspace or
+  window. File panes and terminal panes drag alike (a terminal pane's ⇄
+  button sends it too); a workspace whose last pane leaves closes;
   hold a dragged pane over a workspace tab for half a second and that
   tab opens, so a pane reaches a workspace in the background.
 - **Extension panels** (Media Player, Drives Overview, Markdown Preview,
   …) are on all workspaces until you put one on a workspace: the ⇄
-  button in its title bar (or a right click on the title bar) offers
-  every workspace, **New Workspace** and **All Workspaces**, and
+  button in its title bar (or a right click on the title bar, *Send to
+  Workspace*) offers every workspace (the one it is on ticked), **New
+  Workspace** and **All Workspaces**, and
   **Workspace → Add Extension Panel** (also in the tab's right-click
   menu) brings a panel into a workspace. There it is a pane: it shows
   only with its workspace, goes along when the workspace is detached,
@@ -140,7 +149,8 @@ Closing axross saves the layout to `session.json`; the next start
 rebuilds it automatically:
 
 - the splitter tree with its sizes, the window geometry, the dock
-  layout (which docks are open and where) and the theme;
+  layout (which docks are open and where, and which tabs axross made
+  itself) and the theme;
 - local panes on their folders — a folder deleted since then opens
   the home folder instead, without a dialog;
 - local terminal panes as a fresh shell in the same place, in the
@@ -164,6 +174,31 @@ the default single pane. A missing, unreadable or invalid
 the log. **File > Restore Last Session** (**Ctrl+Shift+R**) still
 rebuilds the saved layout on demand, and there remote file panes do
 connect.
+
+### Docks: the right column and automatic tabs
+
+- The right dock column (Analysis, Agent, detached conversations,
+  extension panels such as the Media Player) reaches down to the
+  window's bottom edge; the bottom area (Transfers, Terminal, Log,
+  Console, Scripts) is as wide as the panes and the Bookmarks column.
+  The Bookmarks column stops above the bottom area, which keeps the
+  bottom area's tables and terminal lines wide.
+- When the docks of a column need more height than the column has -
+  each a useful part of its content (200 px, or all of it when it
+  needs less), not only its title bar - neighbouring docks are tabbed
+  together until they fit; the tabs sit at the bottom of the group.
+  Nothing overlaps, also when a window manager holds the window
+  smaller (tiling, maximized).
+- When there is room again (a larger window, a dock closed, floated or
+  moved away), the docks axross tabbed go back to being stacked where
+  they were. Docks you tabbed yourself stay tabbed, and a dock you take
+  out of an automatic tab group is not tabbed again for that - only
+  when the column could not even hold the docks' title bars.
+- Nothing moves while a mouse button is down (a separator or a dock
+  being dragged); the check runs once the resize settled. Panels laid
+  out on a workspace are panes there and are not part of a column.
+- Which tabs axross made is kept in `session.json` with the dock
+  layout, so after a restart they come apart again when there is room.
 
 ## Transfers
 
@@ -561,8 +596,14 @@ bar docks it again.
   animated visualization: spectrum, mirrored spectrum, radial spectrum,
   oscilloscope, stereo VU meter, line spectrum (log frequency axis),
   waterfall (spectrogram), polar spectrum, stereo scope (goniometer: L
-  against R) or a starfield that speeds up with the bass - a click on it
-  switches to the next. Its right-click menu lists every visualization
+  against R), a starfield that speeds up with the bass, an LED equalizer
+  (blocks with a falling peak block), particle columns (dots, with sparks
+  rising from the beat), a wave ribbon that twists with the beat,
+  ridgelines (the spectrum's history in depth under a striped sun), a
+  spectrum terrain (the history as a wireframe landscape), a 3D ring of
+  bars, a kaleidoscope (mirrored petals from bass, middle and treble) or
+  bell curves (a bump per band) - a click on it switches to the next.
+  Its right-click menu lists every visualization
   and colour scheme (Classic, Fire, Ice, Neon, Mono, *Follow the theme*,
   *Custom*), the bar count and the frame rate cap; *Visualizer
   Settings…* (also *Extensions → Media Player Visualizer…*) adds the
@@ -579,6 +620,31 @@ bar docks it again.
   and files dropped onto the panel still land in the playlist. The
   visualization, its colours and options and the folded equalizer and
   playlist come back on the next start.
+- **Bluetooth** (bundled extension, *Extensions → Manage
+  Extensions…*) — a panel to connect speakers, headphones and other
+  Bluetooth devices through BlueZ (`bluetoothd`) on the system D-Bus; no
+  program is started. It shows the adapter (several: pick one) with a
+  *Powered* switch, and *Scan* lists what is in range: name, address,
+  type (speaker, headset, phone, keyboard …), signal strength in dBm
+  while scanning, battery where the device reports it, and Connected /
+  Paired / Trusted. A scan stops by itself after 2 minutes. For the
+  selected device: *Pair* (*Cancel Pairing* while it runs), *Trust* /
+  *Untrust* (a trusted device may reconnect by itself), *Connect*,
+  *Disconnect*, *Remove* (after a confirmation). Speakers and headphones
+  usually pair without a question; when a device asks for a passkey
+  confirmation, a PIN or a passkey, a dialog asks you - nothing is
+  accepted without your answer, and closing the dialog is a no.
+  *Use as Audio Output* connects a speaker or headset if needed, waits
+  up to 20 s for its output to appear in the sound server and makes it
+  the output of *Edit → Settings… → Audio*, which the Media Player and
+  the other players follow at once; when no output appears (the A2DP
+  profile is not available, e.g. PipeWire's or PulseAudio's Bluetooth
+  support is missing) the panel says so and offers *Audio Settings…*.
+  BlueZ's errors become sentences (adapter off, blocked by rfkill, wrong
+  PIN, device out of range, profile unavailable). Without the system
+  D-Bus, without a running `bluetoothd` or without an adapter the panel
+  says so and offers nothing else; it notices when the service starts
+  or an adapter is plugged in. Linux only.
 - **SSH terminal** — tabbed dock next to the transfer queue. Local
   PTY (`pty.fork()`) and remote SSH-over-paramiko are both
   available; the SSH variant reuses the existing connection rather
@@ -637,6 +703,11 @@ Scripts: `axross.metadata`, `axross.remove_metadata`,
   indicator.
 - Right-click a transfer for **Cancel**, **Retry**, **Open
   destination folder**.
+- The Log dock filters by level and by area: *Areas* next to the level
+  is a list of the logging areas to tick (an area takes its sub-areas;
+  *Other* is anything outside them, *All Areas* the default). Either
+  filter shows the lines received so far again. What is logged at all is
+  set in *Edit → Settings… → Logging* (see [Logging](#logging)).
 - The terminal (dock and terminal pane) is a VT100 / xterm screen:
   carriage return, cursor moves, erase, scroll regions and the
   alternate screen work, so zsh prompts, line editing, `less`, `top`
@@ -901,10 +972,15 @@ is said so.
 **Detach as Panel** - or drag the tab well away from the tab bar - and
 the conversation becomes a panel of its own; **Tools → New Agent
 Window** (or ⧉ beside "+") opens a new conversation directly as one.
+**Send to Workspace** in the same tab menu does it in one step: the
+conversation is detached and laid out on the workspace you pick, or with
+**New Workspace** alone on a new workspace, where it is the main view
+- right-click that workspace's tab and choose **Detach to Window** to
+give it a window of its own.
 The same conversation moves: a running task keeps going and its
 questions still come, nothing restarts. Such a panel is placed like an
 extension panel: on **All Workspaces** (the window's dock area) or, from
-the ⇄ button or a right click on its title bar (*Move to Workspace*) or
+the ⇄ button or a right click on its title bar (*Send to Workspace*) or
 **Workspace → Add Extension Panel**, on one workspace, where it is a
 pane - dragged by its title bar, resized, taken along when the workspace
 is detached. ⇲ (or *Attach to Agent Dock* in the right-click menu) puts
@@ -1318,6 +1394,7 @@ finds a setting by its name (type *sudo*, *proxy* or *zoom*).
 | Security | Paranoid security mode (kept for the next start; `AXROSS_SECURITY_MODE` in the environment wins), remember the sudo password |
 | Extensions | Which extensions are switched on |
 | Updates | Check for updates at start, download updates automatically, *Check Now*, the last check (see [Updates](#updates)) |
+| Logging | The overall level (DEBUG, INFO, WARNING, ERROR), a level per area (Inherit, a level or Off; third-party libraries WARNING), the log file's size and rotated files, *Log to terminal (stderr)*, collapsing repeated messages, *Reset to Defaults* (see [Logging](#logging)) |
 
 The **Analysis (sift)** page writes `~/.config/axross/analysis.json`; the
 open Analysis dock uses a saved change at once and explains the file on
@@ -1341,6 +1418,41 @@ were changed are written; OK and Apply check every changed page first and
 save nothing at all while one has a problem (that page is shown, the
 problem is named above it); then each changed page is saved and takes
 effect at once. Cancel, Esc and the [x] discard what was not applied.
+
+### Logging
+
+The **Logging** page decides what goes into the log - without filling it.
+Every part of axross belongs to one area: Application, Protocols (one
+entry per family: SFTP / SSH / SCP / rsync, SMB / DFS, FTP / TFTP, WebDAV,
+cloud storage, NFS / iSCSI, mail and news, WinRM / WMI, databases, Git /
+SVN, devices, legacy protocols, connections and proxy), Local Files,
+Transfers, Indexing / Search, Analysis, Agent / LLM, MCP (client and
+server), Scripting, Media / Audio / Voice, Update, Security, Terminal,
+Extensions, User Interface and Third-Party Libraries (paramiko, smbprotocol,
+urllib3 and requests, the cloud SDKs, Pillow, asyncio, ...). An area is at
+*Inherit* (the level of the area above it, at the top the overall level),
+DEBUG, INFO, WARNING, ERROR or *Off*. The overall level is INFO;
+third-party libraries are WARNING, so DEBUG for SMB shows axross's SMB
+steps, not every packet of the library. Set one area to DEBUG to follow a
+problem there while the rest stays at INFO - its debug lines are not even
+made while the area is quieter.
+
+The log file is `~/.local/state/axross/logs/axross.log` (readable only by
+you); it rolls over at 5 MiB and keeps 3 rotated files - both are set on
+the page (1-100 MiB, 1-20 files). *Log to terminal (stderr)* writes the
+same lines to the terminal axross was started from. *Collapse repeated
+messages* (on, 10 s): a message identical to one written less than the
+window ago (same area, level, text and error) is counted instead of
+written, and the count follows as one line, `Last message repeated 999
+more times in 10.0 s: ...` - a timer failing every 10 ms gives two lines
+per window, not a hundred a second. *Reset to Defaults* shows the defaults;
+OK or Apply saves them. Every change applies at once and is kept in
+`~/.config/axross/logging.json`.
+
+`--debug` on the command line logs every axross area at DEBUG for that run
+and writes to the terminal; `--verbose` raises every area to at least
+INFO, also with the terminal. Third-party libraries keep their level
+there, and the page says while such a flag is in force.
 
 *Tools → Network & Proxy…, LLM Profiles…, Agent Settings…, MCP Servers…,
 Metadata Settings…* and *Extensions → Manage Extensions…* open the Settings window
@@ -1436,7 +1548,11 @@ environment or in the paranoid security mode; *Check Now* still works.
   (`/run/user/$UID`, else `/dev/shm`) instead of the disk: nothing lands
   on disk, but it takes RAM, so it is off by default. A `TMPDIR` set in
   the environment always wins.
-- `~/.local/state/axross/logs/axross.log` — rotating log file (5 MB, 3 backups).
+- `~/.config/axross/logging.json` — the Logging settings: the overall level, the level
+  of each area, the log file's size and rotated files, the terminal, the collapse of
+  repeated messages (`0o600`).
+- `~/.local/state/axross/logs/axross.log` — rotating log file (5 MiB, 3 rotated files
+  unless *Edit → Settings… → Logging* says otherwise; `0o600`).
 
 ## Where to go next
 

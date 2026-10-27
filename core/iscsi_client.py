@@ -24,7 +24,7 @@ from typing import IO
 
 from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
-from core.local_fs import entry_stat, group_name, owner_name
+from core.local_fs import copy_file_onto, entry_stat, group_name, owner_name
 from core.path_policy import confined_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
@@ -261,7 +261,7 @@ class IscsiSession(SessionLifecycle):
 
     def copy(self, src: str, dst: str) -> None:
         """Server-side copy on the mounted block device."""
-        shutil.copy2(self._real(src), self._real(dst))
+        copy_file_onto(self._real(src), self._real(dst))
 
     # ------------------------------------------------------------------
     # iSCSI-specific verbs (API_GAPS round 2)

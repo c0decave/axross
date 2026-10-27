@@ -141,9 +141,9 @@ remotos, extensiones) es un grupo de capacidades, ver §9.
 | `read_file(path, max_bytes=, encoding=)` | Contenido en base64; tope de 4 MiB por defecto. `encoding="text"` devuelve `text` (UTF-8, `replaced=true` si se sustituyeron bytes no decodificables) — para modelos que no saben decodificar base64. |
 | `checksum(path, algorithm=)`  | `sha256` (por defecto), `sha1`, `md5` o `sha512`. Usa el hash nativo del backend solo si es del algoritmo pedido; si no, hace streaming por hashlib (emite progreso). |
 | `search(needle, ext, min_size, max_size)` | Índice de metadatos offline, acotado al backend activo y a la raíz MCP. |
-| `walk(path, max_depth, max_entries)`      | Listado recursivo acotado; emite `notifications/progress`. |
-| `recursive_checksum(path, algorithm, max_files, max_depth, max_file_bytes)` | Hashea cada fichero bajo una ruta (por defecto salta ficheros de más de 1 GiB); un frame de progreso por fichero hasheado. |
-| `grep(pattern, path, max_depth, max_matches)` | Regex sobre contenido. Salta ficheros >4 MiB, tope 500 coincidencias; emite progreso. |
+| `walk(path, max_depth, max_entries)`      | Listado recursivo acotado; emite `notifications/progress`. Las carpetas que no se pudieron listar aparecen en `unreadable`; `complete` es false entonces. |
+| `recursive_checksum(path, algorithm, max_files, max_depth, max_file_bytes)` | Hashea cada fichero bajo una ruta (por defecto salta ficheros de más de 1 GiB); un frame de progreso por fichero hasheado. Una carpeta que no se pudo listar es un registro `error` con `folder: true`; `complete` dice si se hasheó cada fichero. |
+| `grep(pattern, path, max_depth, max_matches)` | Regex sobre contenido. Salta ficheros >4 MiB, tope 500 coincidencias; emite progreso. Carpetas y ficheros ilegibles aparecen en `unreadable`; ninguna coincidencia con `complete: false` no es una respuesta. |
 | `list_versions(path)` | Metadatos por versión donde el backend lo soporte.                 |
 | `open_version_read(path, version_id, max_bytes=)` | Contenido base64 de una versión concreta.      |
 | `preview(path, edge=256)` | Miniatura de imagen — devuelta como MCP **image content** con mimeType correcto. |

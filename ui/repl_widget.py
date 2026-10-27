@@ -51,6 +51,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.dock_frame import BOTTOM_DOCK_HINT_PX, framed
+
 log = logging.getLogger(__name__)
 
 PROMPT = ">>> "
@@ -1007,7 +1009,10 @@ class ConsoleDock(QDockWidget):
         # for the list + a paragraph of docstring without crowding.
         splitter.setSizes([700, 280])
         layout.addWidget(splitter)
-        self.setWidget(container)
+        # In a frame that scrolls when the bottom area is low, and that asks
+        # for no more height than the tab in front of the bottom group: Qt
+        # opens the group at its tallest tab's hint (ui.dock_frame).
+        self.setWidget(framed(container, self, max_hint_height=BOTTOM_DOCK_HINT_PX))
 
         # Forward each executed statement as an activity ping so the
         # tab-highlighter notices REPL work that happens in the

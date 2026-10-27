@@ -330,7 +330,8 @@ class S3Session(SessionLifecycle):
         try:
             self._s3.head_bucket(Bucket=self._bucket)
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("S3 liveness check of bucket %s failed: %s", self._bucket, exc)
             return False
 
     def close(self) -> None:
@@ -567,7 +568,19 @@ class S3Session(SessionLifecycle):
         src_key = self._to_key(src)
         dst_key = self._to_key(dst)
 
-        if self.is_dir(src):
+        src_is_dir = self.is_dir(src)
+        # Copy + delete onto an existing folder merged into it (namesakes
+        # replaced, the source deleted) or put a file beside it that hid it.
+        if self.is_dir(dst):
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot rename {src} -> {dst}: the destination is a folder", dst
+            )
+        if src_is_dir and self.exists(dst):
+            raise FileExistsError(
+                errno.EEXIST, f"Cannot rename the folder {src} over the file {dst}", dst
+            )
+
+        if src_is_dir:
             if self._object_beside_prefix(src_key, src):
                 # Moving the folder tree would leave the file behind and
                 # moving the file would not be what a folder rename means.

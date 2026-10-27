@@ -61,6 +61,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from core.llm_profiles import LLMProfile
+from core.structured_log import log_event
 
 log = logging.getLogger(__name__)
 audit = logging.getLogger("core.agent.audit")
@@ -1306,6 +1307,26 @@ class Agent:
         return ""
 
     def run(self, task: str) -> AgentResult:
+        """Work on *task* until the model answers, the steps run out or it is
+        stopped. Its start and end are logged - the size of the task, never
+        its text."""
+        import time
+
+        log_event(log, logging.INFO, "agent.task.start", profile=self.config.profile.name,
+                  task_chars=len(task), max_steps=int(self.config.max_steps))
+        started = time.monotonic()
+        try:
+            result = self._run(task)
+        except Exception as exc:
+            log_event(log, logging.WARNING, "agent.task.end", stopped="error",
+                      error=f"{type(exc).__name__}: {exc}"[:300],
+                      seconds=round(time.monotonic() - started, 2))
+            raise
+        log_event(log, logging.INFO, "agent.task.end", stopped=result.stopped,
+                  tool_calls=len(result.calls), seconds=round(time.monotonic() - started, 2))
+        return result
+
+    def _run(self, task: str) -> AgentResult:
         profile = self.config.profile
         # With a transport its owner sends, and asks for the consent.
         if self._transport is None and profile.needs_consent():

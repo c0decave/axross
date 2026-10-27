@@ -94,6 +94,17 @@ def stat_hidden_flag(st) -> bool:
 _ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ENAMETOOLONG})
 
 
+def copy_file_onto(src: str, dst: str) -> None:
+    """Copy the file *src* to the path *dst* (timestamps kept), replacing
+    a file there. ``shutil.copy2`` puts *src* INTO *dst* when *dst* is a
+    folder or a link to one and reports success - copy() then answered
+    "done" while *dst* was still a folder; that is an IsADirectoryError
+    now, as the shell backends' ``cp`` refuses it (copy_command)."""
+    if os.path.isdir(dst):
+        raise IsADirectoryError(errno.EISDIR, "copy target is a folder", dst)
+    shutil.copy2(src, dst)
+
+
 def entry_stat(path: str, *, follow: bool = False) -> os.stat_result | None:
     """``os.lstat`` (``os.stat`` with ``follow``) of *path*, or None when
     nothing is there.
@@ -274,8 +285,8 @@ class LocalFS(SessionLifecycle):
         raise OSError(f"{type(self).__name__} does not expose file version history")
 
     def copy(self, src: str, dst: str) -> None:
-        """Server-side copy via shutil.copy2 (preserves timestamps)."""
-        shutil.copy2(src, dst)
+        """Server-side copy (timestamps kept); never into a folder *dst*."""
+        copy_file_onto(src, dst)
 
     def local_path(self, path: str) -> str:
         """The path on this machine's filesystem (see core.storage_identity)."""

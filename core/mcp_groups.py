@@ -1977,6 +1977,9 @@ def _build_transfer(env: GroupEnv) -> list:
             def copied() -> int:
                 return sum(1 for e in entries if e["action"] == "copied")
 
+            # Every part of the tree left out gets a record and makes the
+            # copy incomplete: dropped silently, a partial copy looked whole
+            # to an agent that deletes the source next (bulk_copy, 0.12.10).
             truncated = False
             top = sb.stat(src)
             if not getattr(top, "is_dir", False):
@@ -1988,33 +1991,48 @@ def _build_transfer(env: GroupEnv) -> list:
                     cur_src, cur_dst, depth = queue.pop(0)
                     try:
                         children = sorted(sb.list_dir(cur_src), key=lambda c: c.name)
-                    except OSError:
+                    except OSError as exc:
+                        record(cur_src, cur_dst, 0, "error", folder=True,
+                               error=redact_text(f"{type(exc).__name__}: {exc}"))
                         continue
                     for child in children:
                         name = getattr(child, "name", "")
-                        if not name or name in (".", "..") or getattr(child, "is_link", False):
+                        if not name or name in (".", ".."):
                             continue
+                        size = int(getattr(child, "size", 0) or 0)
                         try:
                             child_src = safe_join(sb, cur_src, name)
                             child_dst = safe_join(db, cur_dst, name)
                         except ValueError:
+                            record(cur_src, cur_dst, size, "skipped", reason="unsafe-name",
+                                   name=redact_text(repr(name)))
+                            continue
+                        if getattr(child, "is_link", False):
+                            record(child_src, child_dst, size, "skipped", reason="symlink")
                             continue
                         if _confined(env, sb, child_src) is None:
+                            record(child_src, child_dst, size, "skipped", reason="outside-root")
                             continue
                         if getattr(child, "is_dir", False):
                             if depth < max_depth:
                                 queue.append((child_src, child_dst, depth + 1))
+                            else:
+                                truncated = True
+                                record(child_src, child_dst, 0, "skipped", reason="max-depth")
                             continue
                         if copied() >= max_files:
                             truncated = True
                             break
-                        one(child_src, child_dst, int(getattr(child, "size", 0) or 0))
+                        one(child_src, child_dst, size)
                         ctx.progress(float(copied()), float(max_files), f"copied {child_src}")
+            from core.mcp_server import _bulk_copy_complete
+
             return {
                 "src": src,
                 "dst": dst,
                 "copied": copied(),
                 "truncated": truncated,
+                "complete": _bulk_copy_complete(entries, truncated),
                 "entries": entries,
             }
 
@@ -2079,8 +2097,12 @@ def _build_transfer(env: GroupEnv) -> list:
             "destination folders are created. resumable=true copies each file in 4 MiB "
             "segments with a local manifest: a cancelled or failed run continues where it "
             "stopped when called again with the same arguments. Returns {src, dst, copied, "
-            "truncated, entries: [{src, dst, size, action (copied|skipped|error), reason, "
-            "bytes, resumed_segments, error}]}. Progress per file; cancellable.",
+            "truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), "
+            "reason, bytes, resumed_segments, error, folder}]}. Every part left out has a "
+            "record: reason exists, too-large, symlink, unsafe-name, outside-root or "
+            "max-depth (also sets truncated); a folder that could not be listed is an error "
+            "with folder=true. complete is true only when every file was copied or already "
+            "existed. Progress per file; cancellable.",
             {
                 **ends,
                 "overwrite": _bool_prop("Replace existing destination files.", default=False),

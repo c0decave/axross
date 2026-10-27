@@ -297,7 +297,7 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [espeak-ng](https://github.com/espeak-ng/espeak-ng) 1.52.0.1 (commit 724808c5a83f9ef95fdd0db886ba7ba537ff224a) | GPL-3.0-or-later | Phonemes for the Piper voices (statically linked into piper's espeakbridge, with its data) | full |
 | [Expat](https://libexpat.github.io) | MIT | XML parsing (Python's xml modules) | full, slim |
 | [FFmpeg (PyAV build)](https://ffmpeg.org) | LGPL-3.0-or-later | Audio decoding for local speech recognition; the build reports "libavcodec license: LGPL version 3 or later"; it loads the x264 and x265 libraries below | full |
-| [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) 7.1.2 | LGPL-2.1-or-later | Audio and video decoding of the media viewer and the Media Player (Qt Multimedia); the build reports "libavcodec license: LGPL version 2.1 or later" | full, slim |
+| [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) 7.1.5 | LGPL-2.1-or-later | Audio and video decoding of the media viewer and the Media Player (Qt Multimedia); the build reports "libavcodec license: LGPL version 2.1 or later" | full, slim |
 | [FreeType](https://freetype.org) | FTL OR GPL-2.0-or-later | Font rendering of Pillow | full, slim |
 | [GCC runtime libraries](https://gcc.gnu.org) | GPL-3.0-or-later WITH GCC-exception-3.1 | Fortran and OpenMP runtimes (numpy, CTranslate2); libquadmath is LGPL-2.1-or-later | full |
 | [GLib](https://gitlab.gnome.org/GNOME/glib) | LGPL-2.1-or-later | Main loop and D-Bus integration of Qt's platform plugins | full, slim |
@@ -356,6 +356,269 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [zlib](https://zlib.net) | Zlib | Deflate compression (Python, Qt and many libraries) | full, slim |
 | [Zstandard](https://github.com/facebook/zstd) | BSD-3-Clause OR GPL-2.0-only | Zstandard compression (Pillow, system libraries) | full, slim |
 <!-- /third-party:native-binaries -->
+
+## Native files inside the Linux binaries
+
+Every ELF file inside `axross-full` and `axross-slim` of the current release,
+with its version and where it comes from: the components above, file by file.
+The release notes name the components and their versions.
+
+<!-- third-party:native-files -->
+<!-- Generated from the built binaries by `python scripts/native_inventory.py --write dist/axross-full dist/axross-slim`; tests/test_native_inventory.py fails at release time when it drifts. -->
+
+`axross-full` 433 ELF files (222 of them Python extension modules); `axross-slim` 315 ELF files (145 of them Python extension modules). *Read from*: `rpm` the builder image's package, `wheel` the library is the wheel's own, `sbom` the wheel's SBOM, `file` a version string in the file, `sibling` that string in the library of the same build next to it, `soname` only the ABI number of the file name, `credits` not in the binary: the version resources/credits/third_party.json names.
+
+| File | Component | Version | Read from | Shipped by | In |
+|---|---|---|---|---|---|
+| `libbz2.so.1` | [bzip2](https://sourceware.org/bzip2/) | 1.0.8-11.el9 | rpm | rpm bzip2-libs | full, slim |
+| `libdbus-1.so.3` | [D-Bus](https://www.freedesktop.org/wiki/Software/dbus/) | 1.12.20-8.el9 | rpm | rpm dbus-libs | full, slim |
+| `libexpat.so.1` | [Expat](https://libexpat.github.io) | 2.5.0-6.el9_8.7 | rpm | rpm expat | full, slim |
+| `libfuse.so.2` | [libfuse 2](https://github.com/libfuse/libfuse) | 2.9.9-17.el9 | rpm | rpm fuse-libs | full, slim |
+| `libgdbm.so.6` | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | 1.23-1.el9 | rpm | rpm gdbm-libs | full |
+| `libgdbm_compat.so.4` | [GNU dbm](https://www.gnu.org.ua/software/gdbm/) | 1.23-1.el9 | rpm | rpm gdbm-libs | full |
+| `libglib-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
+| `libgobject-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
+| `libgthread-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | 2.68.4-19.el9_8.10 | rpm | rpm glib2 | full, slim |
+| `libgraphite2.so.3` | [Graphite](https://github.com/silnrsi/graphite) | 1.3.14-9.el9 | rpm | rpm graphite2 | full, slim |
+| `libharfbuzz.so.0` | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | 2.7.4-10.el9 | rpm | rpm harfbuzz | full, slim |
+| `libkeyutils.so.1` | [keyutils](https://git.kernel.org/pub/scm/linux/kernel/git/dhowells/keyutils.git) | 1.6.3-1.el9 | rpm | rpm keyutils-libs | full, slim |
+| `libgssapi_krb5.so.2` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
+| `libk5crypto.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
+| `libkrb5.so.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
+| `libkrb5support.so.0` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.21.1-10.el9_8 | rpm | rpm krb5-libs | full, slim |
+| `libblkid.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libblkid | full, slim |
+| `libbrotlicommon.so.1` | [Brotli (C library)](https://github.com/google/brotli) | 1.0.9-10.el9_8.1 | rpm | rpm libbrotli | full, slim |
+| `libbrotlidec.so.1` | [Brotli (C library)](https://github.com/google/brotli) | 1.0.9-10.el9_8.1 | rpm | rpm libbrotli | full, slim |
+| `libcap.so.2` | [libcap](https://sites.google.com/site/fullycapable/) | 2.48-10.el9_8.1 | rpm | rpm libcap | full, slim |
+| `libcom_err.so.2` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.46.5-8.el9 | rpm | rpm libcom_err | full, slim |
+| `libffi.so.8` | [libffi](https://sourceware.org/libffi/) | 3.4.2-8.el9 | rpm | rpm libffi | full, slim |
+| `libgcrypt.so.20` | [Libgcrypt and libgpg-error](https://www.gnupg.org/software/libgcrypt/) | 1.10.0-13.el9_8 | rpm | rpm libgcrypt | full, slim |
+| `libgpg-error.so.0` | [Libgcrypt and libgpg-error](https://www.gnupg.org/software/libgcrypt/) | 1.42-5.el9 | rpm | rpm libgpg-error | full, slim |
+| `libmount.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libmount | full, slim |
+| `libpng16.so.16` | [libpng](https://www.libpng.org) | 1.6.37-15.el9_8.2 | rpm | rpm libpng | full, slim |
+| `libselinux.so.1` | [libselinux](https://github.com/SELinuxProject/selinux) | 3.6-3.el9 | rpm | rpm libselinux | full, slim |
+| `libuuid.so.1` | [util-linux libraries](https://github.com/util-linux/util-linux) | 2.37.4-25.el9 | rpm | rpm libuuid | full, slim |
+| `libX11.so.6` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9 | rpm | rpm libX11 | full, slim |
+| `libX11-xcb.so.1` | [X.Org client libraries](https://www.x.org) | 1.8.12-1.el9 | rpm | rpm libX11-xcb | full, slim |
+| `libXau.so.6` | [X.Org client libraries](https://www.x.org) | 1.0.9-8.el9 | rpm | rpm libXau | full, slim |
+| `libxcb-glx.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libxcb-randr.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libxcb-render.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libxcb-shape.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libxcb-shm.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libxcb-sync.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libxcb-xfixes.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libxcb-xkb.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-9.el9 | rpm | rpm libxcb | full, slim |
+| `libXext.so.6` | [X.Org client libraries](https://www.x.org) | 1.3.4-8.el9 | rpm | rpm libXext | full, slim |
+| `libxkbcommon.so.0` | [libxkbcommon](https://xkbcommon.org) | 1.0.3-4.el9 | rpm | rpm libxkbcommon | full, slim |
+| `libxkbcommon-x11.so.0` | [libxkbcommon](https://xkbcommon.org) | 1.0.3-4.el9 | rpm | rpm libxkbcommon-x11 | full, slim |
+| `libxml2.so.2` | [libxml2](https://gitlab.gnome.org/GNOME/libxml2) | 2.9.13-14.el9_8.5 | rpm | rpm libxml2 | full, slim |
+| `libXrandr.so.2` | [X.Org client libraries](https://www.x.org) | 1.5.2-8.el9 | rpm | rpm libXrandr | full, slim |
+| `libXrender.so.1` | [X.Org client libraries](https://www.x.org) | 0.9.10-16.el9_8.1 | rpm | rpm libXrender | full, slim |
+| `libzstd.so.1` | [Zstandard](https://github.com/facebook/zstd) | 1.5.5-1.el9 | rpm | rpm libzstd | full, slim |
+| `liblz4.so.1` | [LZ4](https://github.com/lz4/lz4) | 1.9.3-5.el9 | rpm | rpm lz4-libs | full, slim |
+| `libmpdec.so.3` | [mpdecimal](https://www.bytereef.org/mpdecimal/) | 2.5.1-3.el9 | rpm | rpm mpdecimal | full, slim |
+| `libtinfo.so.6` | [ncurses (libtinfo)](https://invisible-island.net/ncurses/) | 6.2-12.20210508.el9 | rpm | rpm ncurses-libs | full, slim |
+| `libcrypto.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8-2.el9_8 | rpm | rpm openssl-libs | full, slim |
+| `libssl.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8-2.el9_8 | rpm | rpm openssl-libs | full, slim |
+| `libpcre.so.1` | [PCRE and PCRE2](https://www.pcre.org) | 8.44-4.el9 | rpm | rpm pcre | full, slim |
+| `libpcre2-8.so.0` | [PCRE and PCRE2](https://www.pcre.org) | 10.40-7.el9_8 | rpm | rpm pcre2 | full, slim |
+| `libpython3.12.so.1.0` | [Python](https://www.python.org) | 3.12.15-1.el9_8 | rpm | rpm python3.12-libs | full, slim |
+| `libreadline.so.8` | [GNU Readline](https://tiswww.case.edu/php/chet/readline/rltop.html) | 8.1-4.el9 | rpm | rpm readline | full, slim |
+| `libsqlite3.so.0` | [SQLite](https://www.sqlite.org) | 3.34.1-11.el9_8 | rpm | rpm sqlite-libs | full, slim |
+| `libsystemd.so.0` | [libsystemd](https://systemd.io) | 252-67.el9_8.6.alma.1 | rpm | rpm systemd-libs | full, slim |
+| `libxcb-util.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-19.el9 | rpm | rpm xcb-util | full, slim |
+| `libxcb-cursor.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.1.4-3.el9 | rpm | rpm xcb-util-cursor | full, slim |
+| `libxcb-image.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-19.el9 | rpm | rpm xcb-util-image | full, slim |
+| `libxcb-keysyms.so.1` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.0-17.el9 | rpm | rpm xcb-util-keysyms | full, slim |
+| `libxcb-render-util.so.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.3.9-20.el9 | rpm | rpm xcb-util-renderutil | full, slim |
+| `libxcb-icccm.so.4` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 0.4.1-22.el9 | rpm | rpm xcb-util-wm | full, slim |
+| `liblzma.so.5` | [XZ Utils (liblzma)](https://tukaani.org/xz/) | 5.2.5-8.el9_8.1 | rpm | rpm xz-libs | full, slim |
+| `libz.so.1` | [zlib](https://zlib.net) | 1.2.11-40.el9 | rpm | rpm zlib | full, slim |
+| `av.libs/libasound-c7818c60.so.2.0.0` | [alsa-lib](https://github.com/alsa-project/alsa-lib) | 2.0.0 | soname | wheel av 19.0.2 | full |
+| `av.libs/libavcodec-d61378e8.so.63.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
+| `av.libs/libavdevice-c9c4901c.so.63.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
+| `av.libs/libavfilter-6a4661f8.so.12.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
+| `av.libs/libavformat-7f5186bf.so.63.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
+| `av.libs/libavutil-8f0ab4ee.so.61.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
+| `av.libs/libdav1d-0fe430b9.so.7.0.0` | [dav1d](https://code.videolan.org/videolan/dav1d) | 7.0.0 | soname | wheel av 19.0.2 | full |
+| `av.libs/libdrm-b0291a67.so.2.4.0` | [libdrm](https://gitlab.freedesktop.org/mesa/drm) | 2.4.115-2.el8 | sbom | wheel av 19.0.2 | full |
+| `av.libs/libgmp-8c6c054f.so.10.5.0` | [GMP](https://gmplib.org) | 10.5.0 | soname | wheel av 19.0.2 | full |
+| `av.libs/libgnutls-e2125fb5.so.30.42.0` | [GnuTLS](https://www.gnutls.org) | 3.8.13 | file | wheel av 19.0.2 | full |
+| `av.libs/libhogweed-e2118ea2.so.7.0` | [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | 7.0 | soname | wheel av 19.0.2 | full |
+| `av.libs/libnettle-6eb03162.so.9.0` | [Nettle](https://www.lysator.liu.se/~nisse/nettle/) | 9.0 | soname | wheel av 19.0.2 | full |
+| `av.libs/libopus-114e2b1a.so.0.11.1` | [Opus](https://opus-codec.org) | 1.6.1 | file | wheel av 19.0.2 | full |
+| `av.libs/libsharpyuv-48a062bd.so.0.1.2` | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 0.1.2 | soname | wheel av 19.0.2 | full |
+| `av.libs/libSvtAv1Enc-cc8e453e.so.4.2.0` | [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1) | 4.2.0 | file | wheel av 19.0.2 | full |
+| `av.libs/libswresample-d0a74e06.so.7.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | file | wheel av 19.0.2 | full |
+| `av.libs/libswscale-cd7831fd.so.10.1.102` | [FFmpeg (PyAV build)](https://ffmpeg.org) | 9.0.2 | sibling | wheel av 19.0.2 | full |
+| `av.libs/libunistring-09f6121d.so.5.2.1` | [libunistring](https://www.gnu.org/software/libunistring/) | 5.2.1 | soname | wheel av 19.0.2 | full |
+| `av.libs/libvmaf-258f7447.so.3.2.0` | [VMAF](https://github.com/Netflix/vmaf) | 3.2.0 | soname | wheel av 19.0.2 | full |
+| `av.libs/libvpl-e4e9cae8.so.2.16` | [Intel VPL dispatcher](https://github.com/intel/libvpl) | 2.16 | soname | wheel av 19.0.2 | full |
+| `av.libs/libvpx-e67815b1.so.12.1.0` | [libvpx](https://chromium.googlesource.com/webm/libvpx) | 1.17.0 | file | wheel av 19.0.2 | full |
+| `av.libs/libwebp-0c5118d0.so.7.2.0` | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 7.2.0 | soname | wheel av 19.0.2 | full |
+| `av.libs/libwebpmux-e1880640.so.3.1.2` | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 3.1.2 | soname | wheel av 19.0.2 | full |
+| `av.libs/libx264-d6533a8d.so.165` | [x264](https://www.videolan.org/developers/x264.html) | 165 | soname | wheel av 19.0.2 | full |
+| `av.libs/libx265-eebb7db1.so.217` | [x265](https://bitbucket.org/multicoreware/x265_git) | 4.3+1-e9b8812 | file | wheel av 19.0.2 | full |
+| `av.libs/libXau-154567c4.so.6.0.0` | [X.Org client libraries](https://www.x.org) | 1.0.9-3.el8 | sbom | wheel av 19.0.2 | full |
+| `av.libs/libxcb-5ddf6756.so.1.1.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-1.el8 | sbom | wheel av 19.0.2 | full |
+| `av.libs/libxcb-shape-7716c890.so.0.0.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-1.el8 | sbom | wheel av 19.0.2 | full |
+| `av.libs/libxcb-shm-0be6dfbf.so.0.0.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-1.el8 | sbom | wheel av 19.0.2 | full |
+| `av.libs/libxcb-xfixes-6de855b8.so.0.0.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.13.1-1.el8 | sbom | wheel av 19.0.2 | full |
+| `ctranslate2.libs/libctranslate2-42c542ff.so.4.8.4` | [ctranslate2](https://github.com/OpenNMT/CTranslate2) | 4.8.4 | wheel | wheel ctranslate2 4.8.4 | full |
+| `ctranslate2.libs/libgomp-e985bcbb.so.1.0.0` | [GCC runtime libraries](https://gcc.gnu.org) | 8.5.0-28.el8_10.alma.1 | sbom | wheel ctranslate2 4.8.4 | full |
+| `numpy.libs/libgfortran-83c28eba-468e71e5.so.5.0.0` | [GCC runtime libraries](https://gcc.gnu.org) | 5.0.0 | soname | wheel numpy 2.5.4 | full |
+| `numpy.libs/libquadmath-2284e583-a9307bba.so.0.0.0` | [GCC runtime libraries](https://gcc.gnu.org) | 0.0.0 | soname | wheel numpy 2.5.4 | full |
+| `numpy.libs/libscipy_openblas64_-f48b354e.so` | [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS) | 0.3.34 | file | wheel numpy 2.5.4 | full |
+| `onnxruntime/capi/libonnxruntime_providers_shared.so` | [onnxruntime](https://github.com/microsoft/onnxruntime) | 1.31.0 | wheel | wheel onnxruntime 1.31.0 | full |
+| `pillow.libs/libavif-c6062d5f.so.16.4.2` | [libavif](https://github.com/AOMediaCodec/libavif) | 1.4.2 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libbrotlicommon-53534446.so.1.2.0` | [Brotli (C library)](https://github.com/google/brotli) | 1.2.0 | soname | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libbrotlidec-7e5462ba.so.1.2.0` | [Brotli (C library)](https://github.com/google/brotli) | 1.2.0 | soname | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libfreetype-57f805ba.so.6.20.6` | [FreeType](https://freetype.org) | 2.14.3 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libharfbuzz-fb49c9fc.so.0.61450.0` | [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | 14.5.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libjpeg-6dc8d115.so.62.4.0` | [libjpeg-turbo](https://libjpeg-turbo.org) | 3.2.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/liblcms2-88eaba2f.so.2.0.19` | [Little CMS](https://www.littlecms.com) | 2.19.1 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/liblzma-de26b416.so.5.8.4` | [XZ Utils (liblzma)](https://tukaani.org/xz/) | 5.8.4 | soname | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libopenjp2-e530e1bf.so.2.5.4` | [OpenJPEG](https://www.openjpeg.org) | 2.5.4 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libpng16-1d1ba958.so.16.58.0` | [libpng](https://www.libpng.org) | 16.58.0 | soname | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libsharpyuv-0066295b.so.0.1.2` | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 1.6.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libtiff-20b7e810.so.6.3.0` | [LibTIFF](https://libtiff.gitlab.io/libtiff/) | 4.7.2 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libwebp-51b0b3f7.so.7.2.0` | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 1.6.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libwebpdemux-9fe2abcc.so.2.0.17` | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 1.6.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libwebpmux-8fb1c9f6.so.3.1.2` | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 1.6.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libXau-154567c4.so.6.0.0` | [X.Org client libraries](https://www.x.org) | 1.0.9-3.el8 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libxcb-9065bb12.so.1.1.0` | [libxcb and xcb-util](https://xcb.freedesktop.org) | 1.17.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| `pillow.libs/libzstd-40ad5e7e.so.1.5.7` | [Zstandard](https://github.com/facebook/zstd) | 1.5.7 | soname | wheel pillow 13.0.0 | full, slim |
+| `piper/espeakbridge.so` | [espeak-ng](https://github.com/espeak-ng/espeak-ng) | 1.52.0.1 (commit 724808c5a83f9ef95fdd0db886ba7ba537ff224a) | credits | wheel piper-tts 1.8.0 | full |
+| `psycopg_binary.libs/libcom_err-2abe824b.so.2.1` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.42.9-19.el7 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libcrypt-bc2db45e.so.1` | [libxcrypt](https://github.com/besser82/libxcrypt) | 1 | soname | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libcrypto-2d1629ee.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8 | file | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libgssapi_krb5-497db0c6.so.2.2` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.15.1-55.el7_9 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libk5crypto-b1f99d5c.so.3.1` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.15.1-55.el7_9 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libkeyutils-dfe70bd6.so.1.5` | [keyutils](https://git.kernel.org/pub/scm/linux/kernel/git/dhowells/keyutils.git) | 1.5.8-3.el7 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libkrb5-fcafa220.so.3.3` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.15.1-55.el7_9 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libkrb5support-d0bcff84.so.0.1` | [MIT Kerberos](https://web.mit.edu/kerberos/) | 1.15.1-55.el7_9 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/liblber-a44a5afb.so.2.0.200` | [OpenLDAP client libraries](https://www.openldap.org) | 2.0.200 | soname | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libldap-7c3a4b12.so.2.0.200` | [OpenLDAP client libraries](https://www.openldap.org) | 2.0.200 | soname | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libpcre-9513aab5.so.1.2.0` | [PCRE and PCRE2](https://www.pcre.org) | 8.32-17.el7 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libpq-e9b5c9ac.so.5.18` | [libpq](https://www.postgresql.org) | 5.18 | soname | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libsasl2-84219a89.so.3.0.0` | [Cyrus SASL](https://www.cyrusimap.org/sasl/) | 2.1.26-24.el7_9 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libselinux-0922c95c.so.1` | [libselinux](https://github.com/SELinuxProject/selinux) | 2.5-15.el7 | sbom | wheel psycopg-binary 3.3.6 | full, slim |
+| `psycopg_binary.libs/libssl-8bd944e8.so.3` | [OpenSSL](https://www.openssl.org) | 3.5.8 | sibling | wheel psycopg-binary 3.3.6 | full, slim |
+| `PyQt6/Qt6/lib/libavcodec.so.61` | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) | 7.1.5 | file | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libavformat.so.61` | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) | 7.1.5 | file | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libavutil.so.59` | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) | 7.1.5 | file | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libicudata.so.73` | [ICU](https://icu.unicode.org) | 73 | soname | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libicui18n.so.73` | [ICU](https://icu.unicode.org) | 73 | soname | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libicuuc.so.73` | [ICU](https://icu.unicode.org) | 73 | soname | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Concurrent.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Core.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6DBus.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6FFmpegStub-crypto.so.3` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6FFmpegStub-ssl.so.3` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6FFmpegStub-va-drm.so.2` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6FFmpegStub-va-x11.so.2` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6FFmpegStub-va.so.2` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Gui.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Multimedia.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6MultimediaWidgets.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Network.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6OpenGL.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Pdf.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6PdfWidgets.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Qml.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6QmlMeta.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6QmlModels.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6QmlWorkerScript.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Quick.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Svg.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6WaylandClient.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6Widgets.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6WlShellIntegration.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libQt6XcbQpa.so.6` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libswresample.so.5` | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) | 7.1.5 | file | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/lib/libswscale.so.8` | [FFmpeg (Qt Multimedia build)](https://ffmpeg.org) | 7.1.5 | sibling | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/generic/libqevdevkeyboardplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/generic/libqevdevmouseplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/generic/libqevdevtabletplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/generic/libqevdevtouchplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/generic/libqtuiotouchplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/iconengines/libqsvgicon.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqgif.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqicns.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqico.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqjpeg.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqpdf.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqsvg.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqtga.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqtiff.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqwbmp.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/imageformats/libqwebp.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/multimedia/libffmpegmediaplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/networkinformation/libqconnman.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/networkinformation/libqnetworkmanager.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/platforminputcontexts/libcomposeplatforminputcontextplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/platforminputcontexts/libibusplatforminputcontextplugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/platforms/libqoffscreen.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/platforms/libqwayland.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/platforms/libqxcb.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/platformthemes/libqxdgdesktopportal.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/tls/libqcertonlybackend.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/tls/libqopensslbackend.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-decoration-client/libadwaita.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-decoration-client/libbradient.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-graphics-integration-client/libdmabuf-server.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-graphics-integration-client/libdrm-egl-server.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-graphics-integration-client/libshm-emulation-server.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-graphics-integration-client/libvulkan-server.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-shell-integration/libfullscreen-shell-v1.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-shell-integration/libivi-shell.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-shell-integration/libqt-shell.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-shell-integration/libwl-shell-plugin.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/wayland-shell-integration/libxdg-shell.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/xcbglintegrations/libqxcb-egl-integration.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `PyQt6/Qt6/plugins/xcbglintegrations/libqxcb-glx-integration.so` | [Qt 6](https://www.qt.io) | 6.11.2 | wheel | wheel pyqt6-qt6 6.11.2 | full, slim |
+| `bin/fd` | [fd](https://github.com/sharkdp/fd) | 10.5.0 | file | build | full |
+| `bin/rg` | [ripgrep](https://github.com/BurntSushi/ripgrep) | 15.2.0 | file | build | full |
+| `650fdafa2468af73c11f__mypyc.cpython-312-x86_64-linux-gnu.so` (1 extension modules) | [chardet](https://github.com/chardet/chardet) | - | - | bundle | full, slim |
+| `_brotli.cpython-312-x86_64-linux-gnu.so` (1 extension modules) | [brotli](https://github.com/google/brotli) | - | - | bundle | full, slim |
+| `_cffi_backend.cpython-312-x86_64-linux-gnu.so` (1 extension modules) | [cffi](https://github.com/python-cffi/cffi) | - | - | bundle | full, slim |
+| `python3.12/lib-dynload/` (50 (full), 48 (slim) extension modules) | [Python](https://www.python.org) | 3.12.15-1.el9_8 | rpm | rpm python3.12-libs | full, slim |
+| `av/` (50 extension modules) | [PyAV](https://github.com/PyAV-Org/PyAV) | 19.0.2 | wheel | wheel av 19.0.2 | full |
+| `backports/` (1 extension modules) | [backports.zstd](https://github.com/rogdham/backports.zstd) | 1.8.0 | wheel | wheel backports-zstd 1.8.0 | full, slim |
+| `bcrypt/` (1 extension modules) | [bcrypt](https://github.com/pyca/bcrypt) | 5.0.0 | wheel | wheel bcrypt 5.0.0 | full, slim |
+| `chardet/` (16 extension modules) | [chardet](https://github.com/chardet/chardet) | 7.7.0 | wheel | wheel chardet 7.7.0 | full, slim |
+| `charset_normalizer/` (2 extension modules) | [charset-normalizer](https://github.com/jawah/charset_normalizer) | 3.5.2 | wheel | wheel charset-normalizer 3.5.2 | full, slim |
+| `cryptography/` (1 extension modules) | [cryptography](https://github.com/pyca/cryptography) | 50.0.2 | wheel | wheel cryptography 50.0.2 | full, slim |
+| `ctranslate2/` (1 extension modules) | [ctranslate2](https://github.com/OpenNMT/CTranslate2) | 4.8.4 | wheel | wheel ctranslate2 4.8.4 | full |
+| `dulwich/` (3 extension modules) | [dulwich](https://github.com/dulwich/dulwich) | 1.2.19 | wheel | wheel dulwich 1.2.19 | full, slim |
+| `hf_xet/` (1 extension modules) | [hf-xet](https://github.com/huggingface/xet-core) | 1.7.0 | wheel | wheel hf-xet 1.7.0 | full |
+| `inflate64/` (1 extension modules) | [inflate64](https://github.com/miurahr/inflate64) | 1.0.4 | wheel | wheel inflate64 1.0.4 | full, slim |
+| `lxml/` (7 extension modules) | [lxml](https://github.com/lxml/lxml) | 6.1.3 | wheel | wheel lxml 6.1.3 | full |
+| `markupsafe/` (1 extension modules) | [MarkupSafe](https://github.com/pallets/markupsafe) | 3.0.4 | wheel | wheel markupsafe 3.0.4 | full |
+| `numpy/` (13 extension modules) | [numpy](https://github.com/numpy/numpy) | 2.5.4 | wheel | wheel numpy 2.5.4 | full |
+| `onnxruntime/` (1 extension modules) | [onnxruntime](https://github.com/microsoft/onnxruntime) | 1.31.0 | wheel | wheel onnxruntime 1.31.0 | full |
+| `PIL/` (6 extension modules) | [Pillow](https://github.com/python-pillow/Pillow) | 13.0.0 | wheel | wheel pillow 13.0.0 | full, slim |
+| `psutil/` (1 extension modules) | [psutil](https://github.com/giampaolo/psutil) | 7.2.2 | wheel | wheel psutil 7.2.2 | full, slim |
+| `psycopg_binary/` (2 extension modules) | [psycopg-binary](https://github.com/psycopg/psycopg) | 3.3.6 | wheel | wheel psycopg-binary 3.3.6 | full, slim |
+| `bcj/` (1 extension modules) | [pybcj](https://github.com/miurahr/pybcj) | 1.0.8 | wheel | wheel pybcj 1.0.8 | full, slim |
+| `Cryptodome/` (42 extension modules) | [pycryptodomex](https://github.com/Legrandin/pycryptodome) | 3.24.1 | wheel | wheel pycryptodomex 3.24.1 | full, slim |
+| `bson/` (1 extension modules) | [pymongo](https://github.com/mongodb/mongo-python-driver) | 4.19.0 | wheel | wheel pymongo 4.19.0 | full, slim |
+| `pymongo/` (1 extension modules) | [pymongo](https://github.com/mongodb/mongo-python-driver) | 4.19.0 | wheel | wheel pymongo 4.19.0 | full, slim |
+| `nacl/` (1 extension modules) | [PyNaCl](https://github.com/pyca/pynacl) | 1.6.2 | wheel | wheel pynacl 1.6.2 | full, slim |
+| `pyppmd/` (1 extension modules) | [pyppmd](https://github.com/miurahr/pyppmd) | 1.3.1 | wheel | wheel pyppmd 1.3.1 | full, slim |
+| `PyQt6/` (11 extension modules) | [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | 6.11.0 | wheel | wheel pyqt6 6.11.0 | full, slim |
+| `yaml/` (1 extension modules) | [PyYAML](https://github.com/yaml/pyyaml) | 6.0.3 | wheel | wheel pyyaml 6.0.3 | full, slim |
+| `rpds/` (1 extension modules) | [rpds-py](https://github.com/crate-py/rpds) | 2026.9.1 | wheel | wheel rpds-py 2026.9.1 | full, slim |
+| `tokenizers/` (1 extension modules) | [tokenizers](https://github.com/huggingface/tokenizers) | 0.23.3 | wheel | wheel tokenizers 0.23.3 | full |
+| linked into the wheel's modules | [OpenSSL](https://www.openssl.org) | 4.0.3 | sbom | wheel cryptography 50.0.2 | full, slim |
+| linked into the wheel's modules | FriBiDi | 1.0.17 | sbom | wheel pillow 13.0.0 | full, slim |
+| linked into the wheel's modules | fribidi-shim | 1.x | sbom | wheel pillow 13.0.0 | full, slim |
+| linked into the wheel's modules | libimagequant | 4.4.1 | sbom | wheel pillow 13.0.0 | full, slim |
+| linked into the wheel's modules | raqm | 0.11.0 | sbom | wheel pillow 13.0.0 | full, slim |
+| linked into the wheel's modules | [zlib](https://zlib.net) | 2.3.3 | sbom | wheel pillow 13.0.0 | full, slim |
+<!-- /third-party:native-files -->
 
 ## System tools invoked via subprocess
 

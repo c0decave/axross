@@ -61,6 +61,7 @@ hiddenimports += [
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
     "PyQt6.QtSvg",          # icon_provider renders SVGs via QSvgRenderer
+    "PyQt6.QtDBus",         # core.bluetooth talks to BlueZ (the Bluetooth extension)
     "PyQt6.sip",
 ]
 

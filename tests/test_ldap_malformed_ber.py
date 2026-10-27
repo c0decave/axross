@@ -68,6 +68,10 @@ def test_sad_undecodable_answer_is_an_oserror(srv, mutate, op):
         call()
 
 
-def test_edge_exists_reads_an_undecodable_answer_as_no(srv):
+def test_edge_exists_raises_on_an_undecodable_answer(srv):
+    """An answer that cannot be read says nothing about the entry: exists()
+    is False only for "not found" (a False here let a caller take a
+    present entry for a missing one and overwrite it)."""
     srv.mutate_search = _unknown_tag_answer
-    assert _session(srv).exists(f"/{BASE}/cn=alice") is False
+    with pytest.raises(OSError, match="malformed answer"):
+        _session(srv).exists(f"/{BASE}/cn=alice")

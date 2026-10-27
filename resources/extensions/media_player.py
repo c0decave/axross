@@ -27,7 +27,9 @@ from PyQt6.QtCore import (
     QLineF,
     QMetaObject,
     QObject,
+    QPoint,
     QPointF,
+    QRect,
     QRectF,
     QSize,
     Qt,
@@ -38,17 +40,20 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QActionGroup,
+    QBrush,
     QColor,
     QFont,
     QIcon,
     QImage,
     QLinearGradient,
     QPainter,
+    QPainterPath,
     QPalette,
     QPen,
     QPixmap,
     QPolygonF,
     QRadialGradient,
+    QTransform,
 )
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -152,8 +157,23 @@ MAX_REMOTE_BYTES = 512 * 1024 * 1024
 #: The arrow keys seek by this much, with Shift by the big step (ms).
 SEEK_STEP_MS = 5_000
 SEEK_BIG_STEP_MS = 30_000
+#: Seconds of decoded audio the equalizer engine keeps behind the queue, so
+#: a seek back into them needs no decoder: QAudioDecoder cannot seek, and
+#: decoding from the top again took up to 0.8 s for a seek back to 40 s of
+#: a 60 s track on a real sink, more the later in the track
+#: (tests/test_media_player_seek_memory.py). Twice the big keyboard step:
+#: Shift+Left twice in a row stays in memory. 23 MB at 48 kHz.
+HISTORY_SECONDS = 2 * SEEK_BIG_STEP_MS // 1000
+#: The memory's bound in bytes: a 192 kHz sound card keeps less time.
+HISTORY_MAX_BYTES = 64 * 1024 * 1024
 #: ⏮ starts the track again once it played this long, else goes back.
 RESTART_AFTER_MS = 3_000
+#: How often a sound card stream that closed by itself is opened again per
+#: play or seek before playback fails with a message.
+MAX_SINK_REOPENS = 3
+#: A stopped sink is silent at once but keeps its stream this long, or until
+#: the next sink has opened (ms): see EqEngine._park_sink.
+PARK_MS = 1000
 #: + and - change the volume by this many slider steps (of 100).
 VOLUME_STEP = 5
 REPEAT_MODES = ("off", "all", "one")
@@ -209,6 +229,81 @@ def control_icon(name: str, colour: str, size: int = 32) -> QIcon:
             painter.end()
         cached = _control_icon_cache[key] = QIcon(pixmap)
     return cached
+
+
+def history_frames(rate: int) -> int:
+    """Frames of decoded float stereo audio kept behind the queue at
+    *rate*: HISTORY_SECONDS, at most HISTORY_MAX_BYTES."""
+    return min(HISTORY_SECONDS * rate, HISTORY_MAX_BYTES // 8)
+
+
+class DecodedMemory:
+    """One stretch of a track's decoded float stereo frames (8 bytes each),
+    the newest *limit()* frames of it: what the equalizer engine played or
+    skipped lately, for a seek back without the decoder. Kept as chunks -
+    a bytearray that drops its oldest bytes moved all 23 MB now and then:
+    25 us an append on average, up to 9 ms holding the GIL (measured)."""
+
+    def __init__(self, limit) -> None:
+        #: limit() -> frames kept at most (read on each append).
+        self.limit = limit
+        self._chunks: collections.deque = collections.deque()
+        self.nbytes = 0
+        #: The track frame after the last one held.
+        self.end = 0
+
+    @property
+    def start(self) -> int:
+        """The track frame of the oldest frame held (== end: none)."""
+        return self.end - self.nbytes // 8
+
+    def forget(self, at: int = 0) -> None:
+        """Empty, to be filled from track frame *at* on."""
+        self._chunks.clear()
+        self.nbytes = 0
+        self.end = at
+
+    def append(self, raw: bytes, start: int) -> None:
+        """*raw* - whole frames from track frame *start* on - after what is
+        held; when they do not follow on it, they replace it."""
+        if not raw:
+            return
+        if start != self.end:
+            self.forget(start)
+        self._chunks.append(bytes(raw))
+        self.nbytes += len(raw)
+        self.end += len(raw) // 8
+        excess = self.nbytes - max(0, int(self.limit())) * 8
+        while excess > 0:
+            first = self._chunks[0]
+            if len(first) <= excess:
+                self._chunks.popleft()
+                cut = len(first)
+            else:
+                self._chunks[0] = first[excess:]
+                cut = excess
+            self.nbytes -= cut
+            excess -= cut
+
+    def take_from(self, frame: int) -> bytes:
+        """The frames from track frame *frame* (held) to the end, which no
+        longer are held."""
+        if not self.start <= frame < self.end:
+            raise ValueError(f"frame {frame} is not held ({self.start}-{self.end})")
+        taken = []
+        need = (self.end - frame) * 8
+        while need:
+            last = self._chunks.pop()
+            if len(last) <= need:
+                taken.append(last)
+                need -= len(last)
+            else:
+                taken.append(last[len(last) - need:])
+                self._chunks.append(last[:len(last) - need])
+                need = 0
+        self.nbytes -= (self.end - frame) * 8
+        self.end = frame
+        return b"".join(reversed(taken))
 
 
 def is_audio(name: str) -> bool:
@@ -382,9 +477,69 @@ def fetch_remote(backend, paths, temp_root: str | None = None):
     ``([(local copy, name)], skipped, truncated, folder)``. Every file is
     bounded by MAX_REMOTE_BYTES and the drop by MAX_REMOTE_TOTAL_BYTES; a
     file over its bound fails the drop, the folder then goes. Runs on a
-    worker thread: backend calls only, no Qt."""
+    worker thread: backend calls only, no Qt. The panel copies file by file
+    instead (:meth:`PlayerPanel.add_remote`): the first track plays while
+    the rest still copies."""
+    remote, skipped, truncated = list_remote(backend, paths)
+    if not remote:
+        return [], skipped, truncated, ""
+    folder = remote_temp_folder(temp_root)
+    out: list[tuple[str, str]] = []
+    total = 0
+    try:
+        for index, (path, name) in enumerate(remote):
+            target, total = copy_remote(backend, path, name, folder, index, total)
+            out.append((target, name))
+    except BaseException:
+        _forget_temp(folder)
+        raise
+    return out, skipped, truncated, folder
+
+
+def remote_temp_folder(temp_root: str | None = None) -> str:
+    """A new temporary folder for remote tracks' copies, registered at once:
+    an unload while it fills still removes it."""
     import tempfile
 
+    folder = os.path.abspath(tempfile.mkdtemp(prefix="axross-media-", dir=temp_root))
+    _TEMP_FOLDERS.append(folder)
+    return folder
+
+
+def copy_remote(backend, path: str, name: str, folder: str, index: int,
+                total: int = 0) -> tuple[str, int]:
+    """Copy the remote track *path* as *name* into *folder* (its own
+    subfolder *index*: equal names do not clash): the local copy and
+    *total* plus its bytes. Over MAX_REMOTE_BYTES, or *total* over
+    MAX_REMOTE_TOTAL_BYTES, raises OSError and leaves no part behind."""
+    subfolder = os.path.join(folder, str(index))
+    os.mkdir(subfolder)
+    target = os.path.join(subfolder, name)
+    copied = 0
+    try:
+        with backend.open_read(path) as src, open(target, "wb") as dst:
+            while True:
+                chunk = src.read(1 << 20)
+                if not chunk:
+                    break
+                copied += len(chunk)
+                total += len(chunk)
+                if copied > MAX_REMOTE_BYTES:
+                    raise OSError(f"{name} is larger than {MAX_REMOTE_BYTES >> 20} MB")
+                if total > MAX_REMOTE_TOTAL_BYTES:
+                    raise OSError(f"the tracks are larger than "
+                                  f"{MAX_REMOTE_TOTAL_BYTES >> 20} MB together")
+                dst.write(chunk)
+    except BaseException:
+        shutil.rmtree(subfolder, ignore_errors=True)
+        raise
+    return target, total
+
+
+def list_remote(backend, paths):
+    """The tracks among *paths* of a remote *backend*, folders walked as
+    :func:`collect_local` walks them: ``([(path, name)], skipped,
+    truncated)``. Backend calls only, no Qt."""
     remote: list[tuple[str, str]] = []
     skipped = 0
     others = 0  # files in the folders that are no track
@@ -434,37 +589,8 @@ def fetch_remote(backend, paths, temp_root: str | None = None):
         else:
             skipped += 1
     if not remote:
-        return [], skipped + others, truncated, ""
-    folder = os.path.abspath(tempfile.mkdtemp(prefix="axross-media-", dir=temp_root))
-    # Registered at once: an unload while this copies still removes it.
-    _TEMP_FOLDERS.append(folder)
-    out: list[tuple[str, str]] = []
-    total = 0
-    try:
-        for index, (path, name) in enumerate(remote):
-            os.mkdir(os.path.join(folder, str(index)))  # equal names do not clash
-            target = os.path.join(folder, str(index), name)
-            copied = 0
-            with backend.open_read(path) as src, open(target, "wb") as dst:
-                while True:
-                    chunk = src.read(1 << 20)
-                    if not chunk:
-                        break
-                    copied += len(chunk)
-                    total += len(chunk)
-                    if copied > MAX_REMOTE_BYTES:
-                        raise OSError(f"{name} is larger than {MAX_REMOTE_BYTES >> 20} MB")
-                    if total > MAX_REMOTE_TOTAL_BYTES:
-                        raise OSError(f"the tracks are larger than "
-                                      f"{MAX_REMOTE_TOTAL_BYTES >> 20} MB together")
-                    dst.write(chunk)
-            out.append((target, name))
-    except BaseException:
-        _forget_temp(folder)
-        raise
-    if not out:
-        _forget_temp(folder)
-    return out, skipped, truncated, folder
+        return [], skipped + others, truncated
+    return remote, skipped, truncated
 
 
 def _forget_temp(folder: str) -> None:
@@ -1005,11 +1131,18 @@ class QtSink:
     def start(self) -> None:
         self._io = self._sink.start()
 
+    def alive(self) -> bool:
+        """Whether the stream start() opened can still be written: a
+        QIODevice whose wrapper sip marked deleted raises on every call."""
+        from PyQt6 import sip
+
+        return self._io is not None and not sip.isdeleted(self._io)
+
     def bytes_free(self) -> int:
-        return self._sink.bytesFree() if self._io is not None else 0
+        return self._sink.bytesFree() if self.alive() else 0
 
     def write(self, data: bytes) -> int:
-        return int(self._io.write(data)) if self._io is not None else 0
+        return int(self._io.write(data)) if self.alive() else 0
 
     def suspend(self) -> None:
         self._sink.suspend()
@@ -1232,13 +1365,19 @@ class _ThreadHost(QObject):
 
 
 class _FeedHost(_ThreadHost):
-    """In the audio thread: the pump timer's ticks."""
+    """In the audio thread: the pump timer's ticks, the park timer's end."""
 
     @pyqtSlot()
     def tick(self) -> None:
         engine = self._engine()
         if engine is not None:
             engine._signal("_pump")
+
+    @pyqtSlot()
+    def park_timeout(self) -> None:
+        engine = self._engine()
+        if engine is not None:
+            engine._signal("_park_timeout")
 
 
 class _EqHost(_ThreadHost):
@@ -1311,13 +1450,16 @@ class EqEngine(QObject):
     made it: their slots there run queued.
 
     Seeking: QAudioDecoder has no seek, so :meth:`seek` takes the target
-    from the audio already decoded ahead when it lies there (the equalizer
-    runs on unbroken), lets the decoder run on and drops what it decodes
-    up to the target when it lies ahead, and starts the decoder again from
-    the top otherwise. Dropped audio skips the equalizer, which starts from
-    silence at the target - as a fresh start there would. The decoder runs
-    600-2500x real time (MP3/Ogg/FLAC/WAV measured), so a seek 10 minutes
-    into an MP3 takes about a second, into a WAV a quarter of one.
+    from the audio already decoded - ahead in the queue, or behind it in
+    the memory of the last HISTORY_SECONDS fed to the equalizer - when it
+    lies there, lets the decoder run on and drops what it decodes up to
+    the target when it lies ahead, and starts the decoder again from the
+    top otherwise. The equalizer starts from silence at the target - as a
+    fresh start there would. The decoder hands out one buffer per round
+    trip through its thread (21-24 ms of MP3 or Ogg, 85 ms of WAV): about
+    160x real time for an MP3 with the GUI thread idle, a third of that
+    with it busy in Python (measured), so a seek back beyond the memory
+    into minute 10 of an MP3 takes seconds.
     """
 
     finished_playing = pyqtSignal()
@@ -1362,6 +1504,11 @@ class EqEngine(QObject):
         #: 2.35 s later (measured) - after the queue ahead had played.
         self._pending = bytearray()
         self._ready = bytearray()
+        #: The memory: decoded frames the queue no longer holds (fed to the
+        #: equalizer, skipped by a seek ahead, dropped on the way to a
+        #: seek target), up to history_frames(), and the track frame after
+        #: its last - for a seek back without the decoder (_remember).
+        self._memory = DecodedMemory(lambda: history_frames(self.rate))
         #: Frames fed to the equalizer since the chain (re)started, frames it
         #: gave back (after its latency was dropped), whether its tail went out.
         self._fed = 0
@@ -1371,6 +1518,12 @@ class EqEngine(QObject):
         self._decoder_starts = 0
         self._skip = 0
         self._sink = None
+        #: The stopped sink whose stream stays open until the next one has
+        #: opened (_park_sink), and the timer that closes it otherwise.
+        self._parked = None
+        self._park_timer = None
+        #: Sound card streams opened again since the last play or seek.
+        self._sink_reopens = 0
         #: Track frame the frames written to the sink count from (a seek
         #: target); frames written since; frames read from the decoder
         #: since its start; the frame decoding drops up to (None: none).
@@ -1401,6 +1554,8 @@ class EqEngine(QObject):
         #: and True while it stops the decoder itself - QAudioDecoder emits
         #: finished() from stop(), which is no end of the track.
         self._decoder_run = 0
+        #: Frames the decoder read in its current run (the decoder thread's).
+        self._decoder_frames = 0
         self._decoder_holding = False
         self._decoder_finish_waiting = False
         self._stopping_decoder = False
@@ -1449,6 +1604,10 @@ class EqEngine(QObject):
         prime_notify_lookups(self._timer)
         self._timer.setInterval(10)
         self._timer.timeout.connect(self._feed.tick)
+        self._park_timer = QTimer(self._feed)
+        prime_notify_lookups(self._park_timer)
+        self._park_timer.setSingleShot(True)
+        self._park_timer.timeout.connect(self._feed.park_timeout)
 
     def _build_eq_timer(self) -> None:
         """In the equalizer thread: its timer."""
@@ -1530,11 +1689,15 @@ class EqEngine(QObject):
                 self._decode.call(self._dec_close)
             except RuntimeError:  # the decoder thread ended already (the exit)
                 log.debug("Media Player: the decoder was not closed", exc_info=True)
+        if self._park_timer is not None and not sip.isdeleted(self._park_timer):
+            self._park_timer.stop()
+        self._release_parked()
         if self._sink is not None:
             self._sink.stop()
             self._sink = None
         self._pending.clear()
         self._ready.clear()
+        self._forget()
         self._carry = b""
         self._written_frames = self._base_frames = self._start_frames = 0
         self.state = "stopped"
@@ -1542,6 +1705,8 @@ class EqEngine(QObject):
         self._eq.post(self._eq_close)  # close() waits for it, outside the lock
         if self._timer is not None and not sip.isdeleted(self._timer):
             sip.delete(self._timer)  # in its own thread: at once
+        if self._park_timer is not None and not sip.isdeleted(self._park_timer):
+            sip.delete(self._park_timer)
         if not sip.isdeleted(self):
             self.changed.emit()
 
@@ -1599,6 +1764,7 @@ class EqEngine(QObject):
         self._start_frames = 0
         self._written_frames = 0
         self.monitor.pause()
+        self._sink_reopens = 0
         self._sink = self._new_sink()
         self.state = "playing"
         # The decoder starts in its thread, not waited for; a file it cannot
@@ -1621,11 +1787,10 @@ class EqEngine(QObject):
     def stop(self) -> None:
         self._set_running(False)
         self._stop_decoder()
-        if self._sink is not None:
-            self._sink.stop()
-            self._sink = None
+        self._park_sink()
         self._pending.clear()
         self._ready.clear()
+        self._forget()
         self._carry = b""
         self._written_frames = 0
         self._base_frames = 0
@@ -1651,11 +1816,13 @@ class EqEngine(QObject):
         current = self._base_frames + self._written_frames
         pending_start = self._base_frames + self._fed  # track frame of the queue's first
         ahead = len(self._pending) // 8
-        if current <= target < pending_start + ahead:
-            # Decoded already: drop up to the target (a target inside the
-            # few milliseconds in the equalizer starts at the queue).
-            del self._pending[: max(0, target - pending_start) * 8]
-            target = max(target, pending_start)
+        if pending_start <= target < pending_start + ahead:
+            # Decoded already, ahead in the queue: it starts at the target,
+            # what lies before goes to the memory; the decoder runs on.
+            self._remember(bytes(self._pending[:(target - pending_start) * 8]), pending_start)
+            del self._pending[:(target - pending_start) * 8]
+            self._reset_equalizer()
+        elif self._recall(target, pending_start):
             self._reset_equalizer()
         elif not self._decoding_done and target >= self._raw_frames:
             self._restart_chain(target)
@@ -1668,10 +1835,12 @@ class EqEngine(QObject):
         self._written_frames = 0
         self._carry = b""
         self.monitor.pause()
-        # What the sound card holds is from before the seek.
-        if self._sink is not None:
-            self._sink.stop()
-        self._sink = self._new_sink()
+        self._sink_reopens = 0
+        # What the sound card holds is from before the seek. The next sink
+        # opens before the old one stops: stopped first, its QIODevice was
+        # deleted and the new one got its address - and its wrapper was then
+        # marked deleted (PulseAudio backend): every write raised.
+        self._replace_sink()
         if self.state == "paused":
             self._sink.suspend()
         self.changed.emit()
@@ -1692,8 +1861,6 @@ class EqEngine(QObject):
             return
         position = self.position_ms()
         old_rate = self.rate
-        self._sink.stop()
-        self._sink = None
         self._carry = b""
         self._prepare_format()
         self.monitor.pause()
@@ -1703,7 +1870,8 @@ class EqEngine(QObject):
             self._start_decoder(target)
             self._base_frames = target
             self._written_frames = 0
-        self._sink = self._new_sink()
+        self._sink_reopens = 0
+        self._replace_sink()  # the new one first, as seek() does
         if self.state == "paused":
             self._sink.suspend()
 
@@ -1713,6 +1881,32 @@ class EqEngine(QObject):
         if threading.get_ident() == self._feed.ident:
             return self._current_position()
         return self._position
+
+    def _remember(self, raw: bytes, start: int) -> None:
+        """Keep *raw* - decoded frames from track frame *start* on that
+        leave the queue (or never enter it) - in the memory."""
+        self._memory.append(raw, start)
+
+    def _forget(self, at: int = 0) -> None:
+        self._memory.forget(at)
+
+    def _recall(self, target: int, pending_start: int) -> bool:
+        """Start the queue at *target* from the memory when it holds that
+        frame and the audio still to come follows on its end: the queue's
+        first frame, or - on the way to a seek target - the decoder's next.
+        False when it cannot."""
+        memory = self._memory
+        if not memory.start <= target < memory.end:
+            return False
+        if self._drop_to is not None:
+            follows = not self._pending and memory.end == self._raw_frames
+        else:
+            follows = memory.end == pending_start
+        if not follows:
+            return False
+        self._pending[:0] = memory.take_from(target)
+        self._drop_to = None  # the decoder's next frames follow on
+        return True
 
     def _current_position(self) -> int:
         if self.state == "stopped":
@@ -1755,12 +1949,46 @@ class EqEngine(QObject):
             self.monitor = PlaybackMonitor(rate)
             self._recent = np.zeros((FRAME, 2), np.float32)
 
+    def _replace_sink(self) -> None:
+        """Open a new sink, then stop and free the old one."""
+        self._park_sink()
+        self._sink = self._new_sink()
+
+    def _park_sink(self) -> None:
+        """Silence the sink at once, but stop it - which deletes its stream's
+        QIODevice - only once the next sink has opened (_new_sink), or after
+        PARK_MS. Stopped first, the next stream's QIODevice got the deleted
+        one's C++ address and its wrapper was then marked deleted (PulseAudio
+        backend): every write raised - on a seek, a track change, a reroute."""
+        sink, self._sink = self._sink, None
+        if sink is None:
+            return
+        self._release_parked()
+        sink.suspend()
+        self._parked = sink
+        if self._park_timer is not None and not sip.isdeleted(self._park_timer):
+            self._park_timer.start(PARK_MS)
+
+    def _release_parked(self) -> None:
+        """Stop the parked sink (a factory that hands out one sink for all -
+        tests - keeps it when it is the sink in use again)."""
+        parked, self._parked = self._parked, None
+        if parked is not None and parked is not self._sink:
+            parked.stop()
+
+    def _park_timeout(self) -> None:
+        self._release_parked()
+
     def _new_sink(self):
         if self._sink_format is None:
             self._prepare_format()
         sink = self.sink_factory(self._sink_format)
         sink.set_volume(self.volume)
         sink.start()
+        self._sink = sink
+        self._release_parked()
+        if self._park_timer is not None and not sip.isdeleted(self._park_timer):
+            self._park_timer.stop()
         return sink
 
     def _stop_decoder(self) -> None:
@@ -1781,12 +2009,15 @@ class EqEngine(QObject):
 
     def _restart_chain(self, drop_to: int) -> None:
         """A fresh equalizer and queue for audio from frame *drop_to* on;
-        the decoder (running) drops what it decodes before it."""
+        the decoder (running) drops what it decodes before it - into the
+        memory, like the queue's audio."""
+        self._remember(bytes(self._pending), self._base_frames + self._fed)
         self._reset_equalizer()
         self._pending.clear()
         self._decoded_frames = 0
         self._drop_to = drop_to if drop_to > self._raw_frames else None
         self._decoding_done = False
+        self._resume_decoder()  # what it decodes now is dropped: it may go on at once
 
     def _start_decoder(self, drop_to: int) -> None:
         """Decode from the top, dropping the frames before *drop_to*. The
@@ -1797,6 +2028,8 @@ class EqEngine(QObject):
         decoder error (_dec_error); a stop sent meanwhile runs after it."""
         self._stop_decoder()
         self._raw_frames = 0
+        self._pending.clear()
+        self._forget(0)  # it decodes from the top: the memory refills from there
         self._restart_chain(drop_to)
         self._decoder_starts += 1
         self._decode.post_slot(self._decoder, "start",
@@ -1806,11 +2039,10 @@ class EqEngine(QObject):
         """The end of the track, reached by a seek past it."""
         self._set_running(False)
         self._stop_decoder()
-        if self._sink is not None:
-            self._sink.stop()
-            self._sink = None
+        self._park_sink()
         self._pending.clear()
         self._ready.clear()
+        self._forget()
         self._carry = b""
         self._decoding_done = True
         self._written_frames = self._base_frames = self._start_frames = 0
@@ -1835,6 +2067,11 @@ class EqEngine(QObject):
                 self._decoder_done()
             else:
                 self._take_decoded(item)
+        self._resume_decoder()
+
+    def _resume_decoder(self) -> None:
+        """Ask the decoder thread for the buffer it held back once there
+        is room for it."""
         if (self._decoder_holding and not self._resume_posted and not self._closed
                 and self._decoder_room()):
             self._resume_posted = True
@@ -1879,8 +2116,10 @@ class EqEngine(QObject):
         offset = 0
         if self._drop_to is not None:
             if self._raw_frames <= self._drop_to:
+                self._remember(raw, start)
                 return  # before the seek target
             offset = self._drop_to - start
+            self._remember(raw[:offset * 8], start)
             self._drop_to = None
         self._decoded_frames += frames - offset
         self._pending += raw[offset * 8:]
@@ -1934,8 +2173,10 @@ class EqEngine(QObject):
                 want = max(HOP, int(EQ_AHEAD_SECONDS * self.rate) - ready,
                            int(2 * self._eq_last_batch * self.rate))
                 count = min(len(self._pending) // 8, want)
-                block = np.frombuffer(bytes(self._pending[:count * 8]), np.float32).reshape(-1, 2)
+                raw = bytes(self._pending[:count * 8])
+                block = np.frombuffer(raw, np.float32).reshape(-1, 2)
                 del self._pending[:count * 8]
+                self._remember(raw, self._base_frames + self._fed)
                 self._fed += count
                 tail_due = self._decoding_done and not self._pending
             generation, equalizer = self._eq_generation, self.equalizer
@@ -2006,11 +2247,21 @@ class EqEngine(QObject):
     def _decoder_room(self) -> bool:
         """Whether the decoder may hand out one more buffer: what waits in
         the queue, for the equalizer and for the sink stays below
-        MAX_AHEAD_SECONDS (the decoder waits until its buffer is read)."""
+        MAX_AHEAD_SECONDS (the decoder waits until its buffer is read).
+        On the way to a seek target its audio is dropped - into the memory
+        - not played: it goes on while the queue holds less than the
+        memory's bound more. Bounded by the sound card's pace it stood
+        still for up to a feed tick after every MAX_AHEAD_SECONDS of audio
+        (tests/test_media_player_seek_far.py). Read from the audio thread
+        too: the drop target and the frame count may be a step old, which
+        only moves a wait by a buffer."""
         with self._queue_lock:
             queued = self._queued_bytes
-        return (queued + len(self._pending) + len(self._ready)
-                < MAX_AHEAD_SECONDS * self.rate * 8)
+        limit = MAX_AHEAD_SECONDS * self.rate * 8
+        drop_to = self._drop_to
+        if drop_to is not None and self._decoder_frames < drop_to:
+            return queued < limit + history_frames(self.rate) * 8
+        return queued + len(self._pending) + len(self._ready) < limit
 
     def _dec_set_source(self, path: str) -> None:
         self._decoder.setSource(QUrl.fromLocalFile(path))
@@ -2022,6 +2273,7 @@ class EqEngine(QObject):
         """A new run of the decoder; its start() follows from Qt's event
         loop (_ThreadHost.post_slot)."""
         self._decoder_run += 1
+        self._decoder_frames = 0
         self._decoder_holding = self._decoder_finish_waiting = False
 
     def _dec_stop(self) -> None:
@@ -2066,6 +2318,7 @@ class EqEngine(QObject):
         if buffer.isValid() and buffer.byteCount() > 0:
             size = buffer.byteCount() // 8 * 8
             raw = buffer.constData().asstring(size)
+            self._decoder_frames += size // 8
             with self._queue_lock:
                 self._queue.append(raw)
                 self._queued_bytes += len(raw)
@@ -2100,10 +2353,28 @@ class EqEngine(QObject):
         self.changed.emit()
         self.failed.emit(text)
 
+    def _reopen_sink(self) -> None:
+        """The sound card's stream is gone (not by a stop of ours): open it
+        once more, MAX_SINK_REOPENS times per play or seek, then fail with
+        one message instead of an error on every tick. What the old stream
+        held is not played again."""
+        if self._sink_reopens >= MAX_SINK_REOPENS:
+            self._fail("The sound card's stream keeps closing; playback stopped")
+            return
+        self._sink_reopens += 1
+        log.warning("Media Player: the sound card's stream was gone; opening it again")
+        self._carry = b""
+        self._replace_sink()
+        if self.state == "paused":
+            self._sink.suspend()
+
     @_in_audio_thread
     def _pump(self) -> None:
         sink = self._sink
         if sink is None:
+            return
+        if not getattr(sink, "alive", lambda: True)():
+            self._reopen_sink()
             return
         self._drain()
         if self._sink is not sink:
@@ -2341,9 +2612,25 @@ VISUALIZER_NAMES = {
     "polar": "Polar spectrum",
     "lissajous": "Stereo scope",
     "starfield": "Starfield",
+    "led": "LED equalizer",
+    "particles": "Particle columns",
+    "ribbon": "Wave ribbon",
+    "ridges": "Ridgelines",
+    "terrain": "Spectrum terrain",
+    "ring": "3D ring",
+    "kaleidoscope": "Kaleidoscope",
+    "bells": "Bell curves",
 }
 #: The faces drawn from the raw samples; the others from the spectrum bars.
 _SAMPLE_MODES = ("scope", "vu", "lissajous")
+#: The faces drawn from the spectrum's history (Visualizer.history).
+_HISTORY_MODES = ("ridges", "terrain")
+#: The faces whose picture turns with the onsets (Visualizer.phase).
+_PHASE_MODES = ("ribbon", "kaleidoscope")
+#: The faces that paint with numpy: without it they stay empty (an exception
+#: in paintEvent aborts the whole process under PyQt6).
+_NUMPY_PAINT_MODES = ("led", "particles", "ribbon", "ridges", "terrain", "ring",
+                      "kaleidoscope", "bells")
 
 
 class ColourScheme(NamedTuple):
@@ -2507,16 +2794,57 @@ def _segments(points) -> list:
     return [QLineF(points[i], points[i + 1]) for i in range(len(points) - 1)]
 
 
+def _points_are_doubles() -> bool:
+    """Whether a QPolygonF keeps its points as pairs of doubles (qreal is
+    double unless Qt was built with QT_COORD_TYPE=float)."""
+    probe = QPolygonF()
+    probe.fill(QPointF(), 1)
+    buffer = probe.data()
+    buffer.setsize(16)
+    np.frombuffer(buffer, np.float64)[:] = (1.5, -2.25)
+    return (probe[0].x(), probe[0].y()) == (1.5, -2.25)
+
+
+_DOUBLE_POINTS: bool | None = None
+
+
+def qpolygon(xs, ys) -> QPolygonF:
+    """The points (xs[i], ys[i]) as a QPolygonF, written into its buffer
+    from numpy: no QPointF object per point (a Python object each costs
+    about a microsecond, and a face draws thousands a frame)."""
+    global _DOUBLE_POINTS
+    xs = np.asarray(xs, np.float64).reshape(-1)
+    ys = np.asarray(ys, np.float64).reshape(-1)
+    count = min(len(xs), len(ys))
+    polygon = QPolygonF()
+    if count == 0:
+        return polygon
+    if _DOUBLE_POINTS is None:
+        _DOUBLE_POINTS = _points_are_doubles()
+    if not _DOUBLE_POINTS:  # pragma: no cover - a Qt with float coordinates
+        return QPolygonF([QPointF(x, y) for x, y in zip(xs[:count].tolist(),
+                                                         ys[:count].tolist())])
+    polygon.fill(QPointF(), count)
+    buffer = polygon.data()
+    buffer.setsize(count * 16)
+    view = np.frombuffer(buffer, np.float64).reshape(count, 2)
+    view[:, 0] = xs[:count]
+    view[:, 1] = ys[:count]
+    return polygon
+
+
 class Visualizer(QWidget):
     """The sound as a picture, at up to the fps cap while playing. A left
     click goes to the next face (:data:`VISUALIZER_NAMES`), a double click
     (or F11) asks for fullscreen and Esc out of it, the right button opens
     the menu: every face, every colour scheme, bar count and frame rate,
     and what the host adds (:attr:`menu_hook`). Each face asks the engine
-    only for what it shows: the spectra, the waterfall and the starfield
-    for an FFT (:meth:`current_bars`), the scopes and the VU meter for the
-    raw samples (:meth:`current_samples`). An engine without numpy answers
-    None: the face stays empty."""
+    only for what it shows: the scopes and the VU meter (_SAMPLE_MODES)
+    for the raw samples (:meth:`current_samples`), every other face for an
+    FFT (:meth:`current_bars`) - the ridgelines and the terrain keep a
+    history of it (_HISTORY_MODES), the ribbon and the kaleidoscope turn
+    with its onsets (_PHASE_MODES). An engine without numpy answers None:
+    the face stays empty."""
 
     #: The default bar count (VISUAL_OPTIONS["bars"]).
     BARS = 32
@@ -2535,6 +2863,52 @@ class Visualizer(QWidget):
     STAR_BOOST = 1.2
     STAR_NEAR = 0.04
     BASS_HZ = 250.0
+    #: The LED equalizer: blocks a column at most (fewer when one would be
+    #: under LED_MIN_PITCH pixels), the share of a block that is gap.
+    LED_SEGMENTS = 24
+    LED_MIN_PITCH = 6
+    LED_GAP = 0.28
+    #: The particle columns: a dot is DOT_SHARE of a column wide (in pixels
+    #: within DOT_SIZE), a row DOT_PITCH dots above the next. A spark rises
+    #: from a bar that jumps by SPARK_ONSET or more to at least SPARK_FLOOR:
+    #: SPARK_SPAWN a frame and SPARK_MAX alive at most, rising SPARK_RISE of
+    #: the height a second (give or take 40 %) for SPARK_LIFE seconds.
+    DOT_SHARE = 0.62
+    DOT_SIZE = (2.0, 12.0)
+    DOT_PITCH = 1.5
+    SPARK_ONSET = 0.08
+    SPARK_FLOOR = 0.25
+    SPARK_SPAWN = 6
+    SPARK_MAX = 160
+    SPARK_RISE = 0.5
+    SPARK_LIFE = 1.2
+    #: The wave ribbon: its lines, the points of each, its twists across the
+    #: window, and its width against its height.
+    RIBBON_LINES = 9
+    RIBBON_POINTS = 120
+    RIBBON_TWISTS = 2.5
+    RIBBON_WIDTH = 0.7
+    #: Stretches of the ribbon, each in one colour from quiet (left) to loud.
+    RIBBON_COLOURS = 8
+    #: Radians the onset phase (:attr:`phase`) turns per unit of spectral
+    #: flux - the mean rise of the bars from one frame to the next: the beat
+    #: turns the ribbon and the kaleidoscope on, a still sound holds them.
+    FLUX_TURN = 3.0
+    #: Rows of the spectrum's history the ridgelines show; the terrain shows
+    #: the last TERRAIN_ROWS of them, the farthest TERRAIN_FAR times as far
+    #: away as the nearest.
+    HISTORY_ROWS = 28
+    TERRAIN_ROWS = 22
+    TERRAIN_FAR = 6.0
+    #: The ring's height against its width (a circle seen at a tilt), and
+    #: the size of its far side against its near side.
+    RING_TILT = 0.3
+    RING_FAR = 0.55
+    #: The kaleidoscope: KALEIDO_FOLD turns of the picture, each mirrored.
+    KALEIDO_FOLD = 6
+    #: The bell curves: bumps at most (more bars are grouped), points a bump.
+    BELLS_MAX = 32
+    BELL_POINTS = 25
     #: How long the face's name shows after a switch.
     LABEL_SECONDS = 1.5
     #: In fullscreen the mouse pointer hides after this long without a move.
@@ -2576,6 +2950,18 @@ class Visualizer(QWidget):
         self.vu_peaks = [0.0, 0.0]
         self.stars = None
         self._rng = np.random.default_rng() if np is not None else None
+        #: Turns with the onsets (spectral flux), still while the sound is.
+        self.phase = 0.0
+        #: The particle columns' sparks: rows of (bar, height 0..1, age in
+        #: seconds, rise a second), or None.
+        self.sparks = None
+        #: The last bars as the engine gave them: what an onset rises from.
+        self._previous = None
+        #: (key, pictures) a face draws from (the LED blocks, the dots):
+        #: only the shown face's, for its size, bar count and scheme.
+        self._sprites = None
+        self._ring_cache = None
+        self._pen_cache: dict = {}
         self._label_until = 0.0
         self._clicks_from = self.mode
         self._last_press = -(10 ** 9)
@@ -2607,6 +2993,7 @@ class Visualizer(QWidget):
         if mode == self.mode:
             return
         self.mode = mode
+        self._sprites = None  # the last face's pictures (up to 100 MB at 4K) go
         if announce:
             self._label_until = time.monotonic() + self.LABEL_SECONDS
             self._label_timer.start(int(self.LABEL_SECONDS * 1000) + 50)
@@ -2682,7 +3069,12 @@ class Visualizer(QWidget):
         angles = [*half, *(2 * math.pi - a for a in reversed(half))]
         self._polar_unit = [(math.sin(a), -math.cos(a)) for a in angles]
         self.waterfall = np.zeros((self.WATERFALL_ROWS, n), np.uint8) if np is not None else None
+        self.history = np.zeros((self.HISTORY_ROWS, n), np.float32) if np is not None else None
         self._bass = None
+        self.sparks = None
+        self._previous = None
+        self._sprites = None
+        self._ring_cache = None
 
     def _apply_scheme(self) -> None:
         if self.scheme == "custom":
@@ -2706,19 +3098,25 @@ class Visualizer(QWidget):
                                  colours.peak)),
         }
         self._lut = None
+        self._sprites = None
+        self._ring_cache = None
+        self._pen_cache = {}
         self.update()
 
     def _colour(self, key: str) -> QColor:
         return self._palette_cache[key]
 
-    def _level_colour(self, level: float) -> QColor:
+    def _level_hex(self, level: float) -> str:
         """Quiet over middle to loud, like the bars' gradient."""
         level = min(1.0, max(0.0, level))
         if level < 0.6:
             a, b, t = self.colours.low, self.colours.mid, level / 0.6
         else:
             a, b, t = self.colours.mid, self.colours.high, (level - 0.6) / 0.4
-        return QColor(_mix(a, b, t))
+        return _mix(a, b, t)
+
+    def _level_colour(self, level: float) -> QColor:
+        return QColor(self._level_hex(level))
 
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt
         super().changeEvent(event)
@@ -2880,6 +3278,31 @@ class Visualizer(QWidget):
             stars[gone, 1] = self._rng.uniform(-1, 1, count)
             stars[gone, 2] = 1.0
 
+    def _move_sparks(self, rise) -> bool:
+        """The particle columns' sparks: the alive ones rise and age, new ones
+        start where a bar jumped (*rise*: each bar's rise since the last
+        frame, None for none). True while any is alive."""
+        fps = self.options["fps"]
+        sparks = self.sparks
+        if sparks is not None and len(sparks):
+            sparks[:, 1] += sparks[:, 3] / fps
+            sparks[:, 2] += 1.0 / fps
+            sparks = sparks[(sparks[:, 2] < self.SPARK_LIFE) & (sparks[:, 1] < 1.1)]
+        if rise is not None and self._rng is not None:
+            levels = np.asarray(self.levels, np.float64)
+            jumped = np.nonzero((rise >= self.SPARK_ONSET) & (levels >= self.SPARK_FLOOR))[0]
+            if len(jumped) > self.SPARK_SPAWN:
+                jumped = self._rng.choice(jumped, self.SPARK_SPAWN, replace=False)
+            count = len(jumped)
+            if count:
+                new = np.column_stack([jumped + self._rng.uniform(-0.3, 0.3, count),
+                                       levels[jumped], np.zeros(count),
+                                       self.SPARK_RISE * self._rng.uniform(0.6, 1.4, count)])
+                sparks = new if sparks is None or not len(sparks) else np.vstack([sparks, new])
+                sparks = sparks[-self.SPARK_MAX:]
+        self.sparks = sparks
+        return sparks is not None and len(sparks) > 0
+
     def _timer_tick(self) -> None:
         """The timer's tick: nothing while nobody can see the face (a closed
         dock, another tab) - its FFT took 2-3 % of a core for nothing."""
@@ -2923,6 +3346,13 @@ class Visualizer(QWidget):
         values = np.zeros(n, np.float32)
         count = min(n, len(bars))
         values[:count] = np.asarray(bars, np.float32)[:count]
+        # an engine's broken numbers (NaN, inf) must not reach the painting
+        values = np.clip(np.nan_to_num(values, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
+        previous, self._previous = self._previous, values
+        rise = None
+        if previous is not None and previous.shape == values.shape:
+            rise = np.maximum(values - previous, 0.0)
+            self.phase = (self.phase + self.FLUX_TURN * float(rise.mean())) % (4 * math.pi)
         fps = self.options["fps"]
         keep = (self.options["smoothing"] / 100.0) ** (VISUAL_OPTIONS["fps"][2] / fps)
         fall = self.options["peak_fall"] / 100.0 / fps
@@ -2937,6 +3367,17 @@ class Visualizer(QWidget):
             self.waterfall[-1] = np.round(np.clip(values, 0.0, 1.0) * 255).astype(np.uint8)
         elif self.mode == "starfield":  # the stars drift on in silence too
             self._move_stars(values)
+        elif self.mode in _HISTORY_MODES:
+            self.history[:-1] = self.history[1:]
+            self.history[-1] = levels
+            # a copy: the history changes in place, the last picture's must not
+            self._paint_if_moved(self.history.copy())
+            return
+        elif self.mode == "particles" and self._move_sparks(rise):
+            pass  # sparks in the air: it moves
+        elif self.mode in _PHASE_MODES:
+            self._paint_if_moved([*levels, *peaks, self.phase])
+            return
         else:
             self._paint_if_moved([*levels, *peaks])
             return
@@ -2950,6 +3391,8 @@ class Visualizer(QWidget):
         try:
             painter.fillRect(self.rect(), self._colour("background"))
             if self.width() < 8 or self.height() < 8:
+                return
+            if np is None and self.mode in _NUMPY_PAINT_MODES:
                 return
             getattr(self, f"_paint_{self.mode}")(painter)
             if time.monotonic() < self._label_until:
@@ -3200,6 +3643,545 @@ class Visualizer(QWidget):
             painter.setPen(pen)
             painter.drawPoints(QPolygonF([QPointF(float(x), float(y))
                                           for x, y in zip(sx[chosen], sy[chosen])]))
+
+    # -- the faces drawn from pictures: the LED equalizer, the particle columns -----------
+
+    def _pictures(self, build):
+        """The pictures the shown face draws from, made by build(width,
+        height) once for this size, bar count and scheme (the scheme drops
+        them: :meth:`_apply_scheme`)."""
+        key = (self.mode, self.width(), self.height(), len(self.levels))
+        if self._sprites is None or self._sprites[0] != key:
+            self._sprites = (key, build(self.width(), self.height()))
+        return self._sprites[1]
+
+    def _columns(self, width: int) -> tuple[list[int], int]:
+        """Each bar's column: its left pixel, and the width all share (a
+        gap of a quarter column between)."""
+        step = width / len(self.levels)
+        return ([int(round(i * step + step * 0.12)) for i in range(len(self.levels))],
+                max(1, int(round(step * 0.76))))
+
+    def _blank(self, width: int, height: int) -> QImage:
+        image = QImage(width, height, QImage.Format.Format_RGB32)
+        image.fill(self._colour("background"))
+        return image
+
+    def led_layout(self, height: float) -> tuple[int, float, float]:
+        """(blocks a column, pixels from one block to the next, pixels of
+        gap between two)."""
+        segments = max(3, min(self.LED_SEGMENTS, int(height // self.LED_MIN_PITCH)))
+        pitch = max(1.0, (height - 2) / segments)
+        return segments, pitch, max(1.0, round(pitch * self.LED_GAP))
+
+    def _led_pictures(self, width: int, height: int):
+        """Every block lit (a colour per block, quiet to loud) and every
+        block unlit (the same, dimmed into the background); the top pixel
+        row and the height of each block."""
+        segments, pitch, gap = self.led_layout(height)
+        lefts, column = self._columns(width)
+        lit, unlit = self._blank(width, height), self._blank(width, height)
+        tops, heights = [], []
+        for k in range(segments):
+            top = int(round(height - 1 - (k + 1) * pitch))
+            tops.append(top)
+            heights.append(max(1, int(round(height - 1 - k * pitch - gap)) - top))
+        gaps = [(0, lefts[0])] + [(left + column, following - left - column)
+                                  for left, following in zip(lefts, [*lefts[1:], width])]
+        background = self._colour("background")
+        for image, dim in ((lit, False), (unlit, True)):
+            painter = QPainter(image)
+            for k in range(segments):  # a row of blocks across, then the gaps cut in
+                colour = self._level_hex((k + 0.5) / segments)
+                if dim:
+                    colour = _mix(self.colours.background, colour, 0.18)
+                painter.fillRect(0, tops[k], width, heights[k], QColor(colour))
+            for left, gap in gaps:
+                if gap > 0:
+                    painter.fillRect(left, 0, gap, height, background)
+            painter.end()
+        return lit, unlit, tops, heights
+
+    def _paint_led(self, painter: QPainter) -> None:
+        """Columns of blocks with gaps, lit from the bottom up to the level
+        in a colour per block, the unlit ones dimly there, the highest block
+        reached lately (the peak) in the peak colour, falling."""
+        lit, unlit, tops, heights = self._pictures(self._led_pictures)
+        segments = len(tops)
+        painter.drawImage(0, 0, unlit)
+        lefts, column = self._columns(self.width())
+        bottom = self.height()
+        cap = self._colour("peak")
+        for left, level, peak in zip(lefts, self.levels, self.peaks):
+            on = min(segments, int(level * segments + 0.5))
+            if on:
+                top = tops[on - 1]
+                painter.drawImage(QPoint(left, top), lit, QRect(left, top, column, bottom - top))
+            high = min(segments, int(peak * segments + 0.5))
+            if high:
+                painter.fillRect(left, tops[high - 1], column, heights[high - 1], cap)
+
+    def _dot_layout(self, width: float, height: float) -> tuple[float, float, int]:
+        """(dot size, pixels from one row of dots to the next, rows)."""
+        step = width / len(self.levels)
+        size = min(max(step * self.DOT_SHARE, self.DOT_SIZE[0]), self.DOT_SIZE[1])
+        pitch = max(size * self.DOT_PITCH, 3.0)
+        return size, pitch, max(1, int((height - 4) // pitch))
+
+    def _dot_pictures(self, width: int, height: int):
+        """Every dot unlit (dimmed), lit (a colour per row, quiet to loud)
+        and in the peak colour: one column drawn, then copied to each bar."""
+        size, pitch, rows = self._dot_layout(width, height)
+        step = width / len(self.levels)
+        strip_width = max(1, int(math.ceil(step)))
+        pictures = []
+        for kind in ("unlit", "lit", "peak"):
+            strip = self._blank(strip_width, height)
+            painter = QPainter(strip)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            for r in range(rows):
+                if kind == "peak":
+                    colour = self.colours.peak
+                else:
+                    colour = self._level_hex((r + 0.5) / rows)
+                    if kind == "unlit":
+                        colour = _mix(self.colours.background, colour, 0.16)
+                painter.setBrush(QColor(colour))
+                painter.drawEllipse(QPointF(strip_width / 2, height - 2 - (r + 0.5) * pitch),
+                                    size / 2, size / 2)
+            painter.end()
+            image = self._blank(width, height)
+            painter = QPainter(image)
+            for i in range(len(self.levels)):
+                painter.drawImage(int(round(i * step + (step - strip_width) / 2)), 0, strip)
+            painter.end()
+            pictures.append(image)
+        return pictures
+
+    def _paint_particles(self, painter: QPainter) -> None:
+        """The bars as columns of round dots, the unlit ones dimly there, the
+        peak as a dot in the peak colour; sparks rise from a band that
+        jumps and fade as they age."""
+        unlit, lit, peak = self._pictures(self._dot_pictures)
+        width, height = self.width(), self.height()
+        size, pitch, rows = self._dot_layout(width, height)
+        step = width / len(self.levels)
+        column = max(1, int(math.ceil(step)))
+        painter.drawImage(0, 0, unlit)
+        for i, (level, top_level) in enumerate(zip(self.levels, self.peaks)):
+            left = int(round(i * step + (step - column) / 2))
+            on = min(rows, int(level * rows + 0.5))
+            if on:
+                top = max(0, int(height - 2 - on * pitch))
+                painter.drawImage(QPoint(left, top), lit, QRect(left, top, column, height - top))
+            high = min(rows, int(top_level * rows + 0.5))
+            if high:
+                top = max(0, int(height - 2 - high * pitch))
+                painter.drawImage(QPoint(left, top), peak,
+                                  QRect(left, top, column, int(math.ceil(pitch)) + 1))
+        sparks = self.sparks
+        if sparks is None or not len(sparks):
+            return
+        xs = (sparks[:, 0] + 0.5) * step
+        ys = height - 2 - sparks[:, 1] * rows * pitch
+        age = sparks[:, 2] / self.SPARK_LIFE
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen()
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setWidthF(max(2.0, size * 0.7))
+        for low, high, key in ((0.0, 1 / 3, "peak"), (1 / 3, 2 / 3, "high"), (2 / 3, 2.0, "mid")):
+            chosen = (age >= low) & (age < high)
+            if chosen.any():
+                pen.setColor(self._colour(key))
+                painter.setPen(pen)
+                painter.drawPoints(qpolygon(xs[chosen], ys[chosen]))
+
+    # -- the faces that turn with the onsets: the ribbon, the kaleidoscope ----------------
+
+    def ribbon_curves(self, width: float, height: float):
+        """The ribbon's lines: x (RIBBON_POINTS) and y (RIBBON_LINES x
+        points). Its height follows the bands from left (bass) to right
+        (treble), pinched at both ends; it twists RIBBON_TWISTS times - its
+        lines meet where it shows its edge - and the twist moves with
+        :attr:`phase`."""
+        levels = np.asarray(self.levels, np.float64)
+        n = len(levels)
+        u = np.linspace(0.0, 1.0, self.RIBBON_POINTS)
+        smooth = np.convolve(np.pad(levels, 2, mode="edge"), [1 / 9, 2 / 9, 3 / 9, 2 / 9, 1 / 9],
+                             "valid")
+        amplitude = 0.2 + 0.8 * np.sqrt(np.interp(u * (n - 1), np.arange(n), smooth))
+        envelope = np.sin(np.pi * u) ** 0.6
+        theta = 2 * np.pi * self.RIBBON_TWISTS * u + self.phase
+        wave = 0.7 * np.sin(theta) + 0.3 * np.sin(2 * np.pi * 1.3 * u - 0.5 * self.phase)
+        offsets = np.linspace(-1.0, 1.0, self.RIBBON_LINES)[:, None]
+        shape = (wave + self.RIBBON_WIDTH * offsets * np.cos(theta)) / (1 + self.RIBBON_WIDTH)
+        ys = height / 2 - height * 0.46 * envelope * amplitude * shape
+        return u * width, ys
+
+    def _paint_ribbon(self, painter: QPainter) -> None:
+        """A ribbon of thin lines in the scheme's colours from left (quiet)
+        to right (loud), its middle line in the peak colour. One pixel wide
+        and a colour per stretch: a wider pen goes through Qt's path stroker
+        and a gradient pen is several times dearer (measured)."""
+        width, height = self.width(), self.height()
+        xs, ys = self.ribbon_curves(width, height)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        middle = self.RIBBON_LINES // 2
+        stretches = self.RIBBON_COLOURS
+        bounds = np.linspace(0, len(xs) - 1, stretches + 1).round().astype(int)
+        pen = QPen()
+        pen.setWidthF(1.0)
+        for s in range(stretches):
+            start, stop = int(bounds[s]), int(bounds[s + 1]) + 1
+            pen.setColor(self._level_colour((s + 0.5) / stretches))
+            painter.setPen(pen)
+            for j in range(self.RIBBON_LINES):
+                if j != middle:
+                    painter.drawPolyline(qpolygon(xs[start:stop], ys[j, start:stop]))
+        pen.setColor(self._colour("peak"))
+        painter.setPen(pen)
+        painter.drawPolyline(qpolygon(xs, ys[middle]))
+
+    def kaleido_rotation(self) -> float:
+        """The kaleidoscope's turn (radians): one of its mirror axes."""
+        return self.phase * 0.5
+
+    def _paint_kaleidoscope(self, painter: QPainter) -> None:
+        """A petal (bass), orbs (middle) and spikes (treble) in a wedge,
+        turned KALEIDO_FOLD times and each copy mirrored - an N-fold
+        symmetric picture, turning with the onsets; orbs in the peak colour
+        mark the peaks."""
+        width, height = self.width(), self.height()
+        cx, cy = width / 2, height / 2
+        radius = max(1.0, min(cx, cy) - 2)
+        fold = self.KALEIDO_FOLD
+        alpha = math.pi / fold
+        groups = [float(part.mean()) if len(part) else 0.0
+                  for part in np.array_split(np.asarray(self.levels, np.float64), 6)]
+        peak = max(self.peaks) if self.peaks else 0.0
+
+        def at(r: float, angle: float) -> QPointF:
+            return QPointF(r * math.cos(angle), r * math.sin(angle))
+
+        length = radius * (0.35 + 0.6 * (groups[0] + groups[1]) / 2)
+        petal = QPainterPath(at(radius * 0.06, alpha * 0.5))
+        petal.cubicTo(at(length * 0.5, alpha * 1.7), at(length * 0.95, alpha * 1.1),
+                      at(length, alpha * 0.45))
+        petal.cubicTo(at(length * 0.75, -alpha * 0.1), at(length * 0.35, alpha * 0.05),
+                      at(radius * 0.06, alpha * 0.5))
+        orbs = QPainterPath()
+        for j, level in enumerate(groups[2:4]):
+            centre = at(radius * (0.3 + 0.18 * j + 0.25 * level), alpha * (0.3 + 0.4 * j))
+            size = radius * (0.03 + 0.09 * level)
+            orbs.addEllipse(centre, size, size)
+        spikes = QPainterPath()
+        for j, level in enumerate(groups[4:6]):
+            r = radius * (0.55 + 0.1 * j + 0.3 * level)
+            reach = radius * (0.06 + 0.16 * level)
+            angle = alpha * (0.85 - 0.5 * j)
+            spikes.addPolygon(QPolygonF([at(r - reach, angle), at(r, angle + alpha * 0.12),
+                                         at(r + reach, angle), at(r, angle - alpha * 0.12)]))
+            spikes.closeSubpath()
+        marks = QPainterPath()
+        marks.addEllipse(at(radius * (0.16 + 0.12 * peak), alpha * 0.5), radius * 0.035,
+                         radius * 0.035)
+        turn = math.degrees(self.kaleido_rotation())
+        copies = []
+        for k in range(fold):
+            for mirrored in (False, True):
+                transform = QTransform()
+                transform.translate(cx, cy)
+                transform.rotate(turn + k * 360.0 / fold)
+                if mirrored:
+                    transform.scale(1, -1)
+                copies.append(transform)
+        # a hollow in the petal (a translucent halo round it was tried: a
+        # large alpha-blended fill took the dearest frame to the budget)
+        hollow = QTransform.fromScale(0.58, 0.58).map(petal)
+        layers = ((petal, self._colour("low")),
+                  (hollow, self._colour("track")), (orbs, self._colour("mid")),
+                  (spikes, self._colour("high")), (marks, self._colour("peak")))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)  # a pen's stroke would cost more than the fills
+        for path, colour in layers:
+            painter.setBrush(colour)
+            for transform in copies:
+                painter.setTransform(transform)
+                painter.drawPath(path)
+        painter.resetTransform()
+
+    # -- the faces drawn from the history: the ridgelines, the terrain --------------------
+
+    def _depth_pens(self, rows: int) -> list:
+        """A pen per history row, back to front: the scheme's colours from
+        quiet (far) to loud (near), the far ones dimmed into the background;
+        the front row in the peak colour (readable on any background)."""
+        key = ("depth", rows)
+        pens = self._pen_cache.get(key)
+        if pens is None:
+            pens = []
+            for k in range(rows):
+                depth = k / max(1, rows - 1)
+                if k == rows - 1:
+                    colour = self._colour("peak")
+                else:
+                    colour = QColor(_mix(self.colours.background, self._level_hex(depth),
+                                         0.3 + 0.6 * depth))
+                pen = QPen(colour)
+                pen.setWidthF(1.0)  # wider goes through the path stroker: 100x dearer
+                pens.append(pen)
+            self._pen_cache[key] = pens
+        return pens
+
+    def ridge_layout(self, width: float, height: float) -> list:
+        """Per history row, back to front: (baseline y, the height full sound
+        rises to, left x, right x) - the far rows higher up the window,
+        narrower and flatter, like ridges in the distance."""
+        rows = self.HISTORY_ROWS
+        top, bottom = height * 0.32, height - 3
+        spacing = (bottom - top) / (rows - 1)
+        reach = min(height * 0.28, spacing * 7)
+        layout = []
+        for k in range(rows):
+            depth = k / (rows - 1)
+            half = width * 0.4 * (0.72 + 0.28 * depth)
+            layout.append((top + k * spacing, reach * (0.75 + 0.25 * depth),
+                           width / 2 - half, width / 2 + half))
+        return layout
+
+    def sun_layout(self, width: float, height: float):
+        """The sun behind the ridges: (centre x, centre y on the horizon,
+        radius - larger with the bass), or None when there is no room."""
+        if width < 120 or height < 120:
+            return None
+        bass = self._bass_level(np.asarray(self.levels, np.float32))
+        return (width / 2, height * 0.32, min(width, height) * 0.15 * (1.0 + 0.6 * bass))
+
+    def _paint_sun(self, painter: QPainter, cx: float, cy: float, radius: float) -> None:
+        """Rays into the sky and the upper half of a disc in stripes that
+        thin out towards the horizon."""
+        far = math.hypot(self.width(), self.height())
+        rays = []
+        for i in range(1, 36):
+            angle = math.pi + math.pi * i / 36
+            dx, dy = math.cos(angle), math.sin(angle)
+            rays.append(QLineF(cx + dx * radius * 1.2, cy + dy * radius * 1.2,
+                               cx + dx * far, cy + dy * far))
+        painter.setPen(QPen(self._colour("grid"), 1))
+        painter.drawLines(rays)
+        gradient = QLinearGradient(0, cy - radius, 0, cy)
+        gradient.setColorAt(0.0, self._colour("high"))
+        gradient.setColorAt(1.0, self._colour("mid"))
+        stripes = 9
+        band = radius / stripes
+        for i in range(stripes):
+            top = cy - radius + i * band
+            thick = band * (1.0 - 0.75 * i / stripes)
+            middle = top + thick / 2
+            half = math.sqrt(max(0.0, radius * radius - (cy - middle) ** 2))
+            painter.fillRect(QRectF(cx - half, top, 2 * half, thick), gradient)
+
+    def _paint_ridges(self, painter: QPainter) -> None:
+        """The spectrum's history as ridgelines, the newest in front: each
+        ridge filled with the background, so it hides the ones behind; a
+        striped sun that grows with the bass behind them."""
+        width, height = self.width(), self.height()
+        sun = self.sun_layout(width, height)
+        if sun is not None:
+            self._paint_sun(painter, *sun)
+        history = self.history
+        n = history.shape[1]
+        u = (np.arange(n) + 0.5) / n
+        envelope = np.sin(np.pi * u) ** 0.6
+        margin = width * 0.04
+        pens = self._depth_pens(len(history))
+        background = QBrush(self._colour("background"))
+        hint = QPainter.RenderHint.Antialiasing
+        for k, (base, reach, left, right) in enumerate(self.ridge_layout(width, height)):
+            xs = np.concatenate(([margin, left], left + u * (right - left),
+                                 [right, width - margin]))
+            ys = np.concatenate(([base, base], base - history[k] * envelope * reach, [base, base]))
+            ridge = qpolygon(xs, ys)
+            # the fill hides what is behind; its edge lies under the line, so
+            # it needs no antialiasing (ten times dearer with it, measured)
+            painter.setRenderHint(hint, False)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(background)
+            painter.drawPolygon(ridge)
+            painter.setRenderHint(hint, True)
+            painter.setPen(pens[k])
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolyline(ridge)
+
+    def terrain_horizon(self, height: float) -> float:
+        return height * 0.3
+
+    def terrain_points(self, width: float, height: float):
+        """The last TERRAIN_ROWS of the history as a landscape in
+        perspective, back to front: x, y and the ground under each point
+        (rows x bars). A row TERRAIN_FAR times as far away is that much
+        narrower, lower and nearer the horizon."""
+        history = self.history[-self.TERRAIN_ROWS:]
+        rows, n = history.shape
+        horizon = self.terrain_horizon(height)
+        depth = np.linspace(self.TERRAIN_FAR, 1.0, rows)[:, None]
+        u = (np.arange(n) + 0.5) / n - 0.5
+        xs = width / 2 + u[None, :] * width * 1.15 / depth
+        base = np.broadcast_to(horizon + (height - 4 - horizon) / depth, (rows, n)).copy()
+        return xs, base - history * height * 0.5 / depth, base
+
+    def _paint_terrain(self, painter: QPainter) -> None:
+        """A wireframe landscape of the spectrum's history receding to the
+        horizon, coloured dots on its front half, the peaks as dots above
+        the front row."""
+        width, height = self.width(), self.height()
+        xs, ys, base = self.terrain_points(width, height)
+        rows, n = xs.shape
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(self._colour("grid"), 1))
+        for i in range(0, n, max(1, n // 24)):
+            painter.drawPolyline(qpolygon(xs[:, i], ys[:, i]))
+        for k, pen in enumerate(self._depth_pens(rows)):
+            painter.setPen(pen)
+            painter.drawPolyline(qpolygon(xs[k], ys[k]))
+        history = self.history[-rows:]
+        front = slice(rows // 2, rows)
+        fx, fy, levels = xs[front], ys[front], history[front]
+        pen = QPen()
+        pen.setCapStyle(Qt.PenCapStyle.SquareCap)  # round antialiased points: 6x dearer
+        pen.setWidthF(2.5)
+        for low, high, key in ((0.35, 0.65, "mid"), (0.65, 2.0, "high")):
+            chosen = (levels >= low) & (levels < high)
+            if chosen.any():
+                pen.setColor(self._colour(key))
+                painter.setPen(pen)
+                painter.drawPoints(qpolygon(fx[chosen], fy[chosen]))
+        peaks = np.asarray(self.peaks, np.float64)
+        pen.setColor(self._colour("peak"))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setWidthF(3.5)
+        painter.setPen(pen)
+        painter.drawPoints(qpolygon(xs[-1], base[-1] - peaks * height * 0.5 - 4))
+
+    # -- the ring, the bell curves ---------------------------------------------------------
+
+    def _ring_frame(self, width: float, height: float) -> tuple[float, float, float, float]:
+        """The ring's ellipse: (centre x, centre y, half width, half height)."""
+        rx = max(1.0, min(width * 0.42, height * 0.3 / self.RING_TILT))
+        ry = rx * self.RING_TILT
+        return width / 2, height - ry - max(4.0, height * 0.06), rx, ry
+
+    def ring_layout(self, width: float, height: float):
+        """The foot of each bar on a ring seen at a tilt (an ellipse RING_TILT
+        as high as wide), bar 0 nearest: x, y and its size against the
+        nearest (RING_FAR on the far side)."""
+        n = len(self.levels)
+        angles = 2 * np.pi * np.arange(n) / n + np.pi / 2
+        cx, cy, rx, ry = self._ring_frame(width, height)
+        sines = np.sin(angles)
+        return (cx + rx * np.cos(angles), cy + ry * sines,
+                self.RING_FAR + (1.0 - self.RING_FAR) * (sines + 1) / 2)
+
+    def ring_colours(self) -> list:
+        """A colour per bar going round the ring through the scheme's
+        colours - quiet in front, loud at the back, and round again (no seam)
+        - each made readable on the background."""
+        n = len(self.levels)
+        key = (n, self.colours)
+        if self._ring_cache is None or self._ring_cache[0] != key:
+            background = self.colours.background
+            colours = [readable_on(self._level_hex(1 - abs(2 * i - n) / n), background)
+                       for i in range(n)]
+            # as drawn: the far side a third of the way into the background
+            _xs, _ys, scales = self.ring_layout(1.0, 1.0)
+            drawn = [QColor(_mix(c, background, (1.0 - float(scale)) / (1.0 - self.RING_FAR) / 3))
+                     for c, scale in zip(colours, scales)]
+            self._ring_cache = (key, colours, drawn)
+        return self._ring_cache[1]
+
+    def _paint_ring(self, painter: QPainter) -> None:
+        """The bars standing on a tilted ring, the far ones smaller and drawn
+        first, the near ones over them; the peaks as ticks in the peak
+        colour."""
+        width, height = self.width(), self.height()
+        xs, ys, scales = self.ring_layout(width, height)
+        self.ring_colours()
+        colours = self._ring_cache[2]
+        n = len(self.levels)
+        cx, cy, rx, ry = self._ring_frame(width, height)
+        reach = max(1.0, (cy - ry - 4) / self.RING_FAR)  # a full far bar ends at the top
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(self._colour("grid"), 1))
+        painter.setBrush(self._colour("track"))
+        painter.drawEllipse(QPointF(cx, cy), rx, ry)
+        painter.setBrush(self._colour("background"))
+        painter.drawEllipse(QPointF(cx, cy), rx * 0.55, ry * 0.55)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        cap = self._colour("peak")
+        bar = 2 * math.pi * rx / n * 0.5
+        for i in np.argsort(ys, kind="stable").tolist():
+            scale = float(scales[i])
+            x, y, thick = float(xs[i]), float(ys[i]), max(1.0, bar * scale)
+            rise = self.levels[i] * reach * scale
+            if rise >= 1:
+                painter.fillRect(QRectF(x - thick / 2, y - rise, thick, rise), colours[i])
+            top = self.peaks[i] * reach * scale
+            if top >= 1:
+                painter.fillRect(QRectF(x - thick / 2, y - top - 3, thick, 2), cap)
+
+    def _bell_frame(self, width: float, height: float):
+        """(where each group of bars starts, the centre x of each, one
+        standard deviation in pixels, the baseline y, the height a full
+        group rises to)."""
+        n = len(self.levels)
+        groups = min(n, self.BELLS_MAX)
+        return ((np.arange(groups) * n) // groups, (np.arange(groups) + 0.5) / groups * width,
+                width / groups * 0.5, height - 3, max(1.0, height - 8))
+
+    def bell_shapes(self, width: float, height: float):
+        """A gaussian bump per group of bars (BELLS_MAX at most): x and y
+        (groups x BELL_POINTS, three standard deviations either side) and
+        each group's level (its loudest bar)."""
+        starts, centres, sigma, base, reach = self._bell_frame(width, height)
+        loudest = np.maximum.reduceat(np.asarray(self.levels, np.float64), starts)
+        offsets = np.linspace(-3.0, 3.0, self.BELL_POINTS)
+        kernel = np.exp(-0.5 * offsets ** 2)
+        xs = centres[:, None] + offsets[None, :] * sigma
+        return xs, base - loudest[:, None] * reach * kernel[None, :], loudest
+
+    def _paint_bells(self, painter: QPainter) -> None:
+        """Bumps filled from the quiet to the loud colour, the louder ones in
+        front, outlined in their level's colour; the peaks as ticks."""
+        width, height = self.width(), self.height()
+        xs, ys, loudest = self.bell_shapes(width, height)
+        starts, centres, sigma, base, reach = self._bell_frame(width, height)
+        painter.fillRect(QRectF(0, base, width, 1), self._colour("grid"))
+        gradient = self._gradient(height, 0)
+        pen = QPen()
+        pen.setWidthF(1.0)  # wider goes through the path stroker
+        hint = QPainter.RenderHint.Antialiasing
+        for g in np.argsort(loudest, kind="stable").tolist():
+            bump = qpolygon(np.concatenate(([xs[g, 0]], xs[g], [xs[g, -1]])),
+                            np.concatenate(([base], ys[g], [base])))
+            # the fill's edge lies under the antialiased outline, so it needs
+            # no antialiasing: faster in each of three interleaved A/B runs
+            # (cheapest frame 3.8-5.5 ms against 7.2-9.4 ms at 1920x1080);
+            # 1.6 % of the pixels differ, all on the outlines
+            painter.setRenderHint(hint, False)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(gradient)
+            painter.drawPolygon(bump)
+            painter.setRenderHint(hint, True)
+            pen.setColor(self._level_colour(float(loudest[g])))
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolyline(bump)
+        tops = np.maximum.reduceat(np.asarray(self.peaks, np.float64), starts)
+        cap = self._colour("peak")
+        for centre, top in zip(centres.tolist(), tops.tolist()):
+            painter.fillRect(QRectF(centre - sigma * 0.8, base - top * reach - 3, sigma * 1.6, 2),
+                             cap)
 
     def _paint_label(self, painter: QPainter) -> None:
         text = tr(VISUALIZER_NAMES[self.mode])
@@ -3924,9 +4906,13 @@ class PlayerPanel(QWidget):
         for path, title in found:
             item = self._append(path, title)
             first = first or item
+        self._say_added(len(found), skipped, truncated)
+        return first
+
+    def _say_added(self, count: int, skipped: int = 0, truncated: bool = False) -> None:
         parts = []
-        if found:
-            parts.append(tr("Added {count} track(s).").format(count=len(found)))
+        if count:
+            parts.append(tr("Added {count} track(s).").format(count=count))
         if skipped:
             parts.append(tr("Skipped {count} entry(s): not audio, not readable, or in a "
                             "folder nested too deep.")
@@ -3935,7 +4921,72 @@ class PlayerPanel(QWidget):
             parts.append(tr("Only the first {count} tracks were taken.")
                          .format(count=MAX_DROP_FILES))
         self.note.setText(" ".join(parts) or tr("Nothing to add."))
-        return first
+
+    def add_remote(self, backend, paths, *, play_first: bool = False, failed=None) -> None:
+        """Add the tracks among *paths* of a remote *backend*: listed, then
+        copied one by one to a bounded temporary folder (copy_remote), all
+        off the GUI thread. Each track lands in the playlist once copied -
+        the first plays at once with *play_first* - instead of after the
+        whole selection: eight 4 MB tracks at 40 MB/s started after 958 ms
+        (tests/test_media_player_remote_progressive.py). A copy that fails
+        (a bound, the connection) stops the rest; *failed(exc)* is told
+        and the note says it - the tracks copied before stay."""
+        paths = list(paths)
+
+        def say_failed(exc) -> None:
+            if self._gone():
+                return
+            self.note.setText(tr("Cannot add: {error}").format(error=exc))
+            if failed is not None:
+                failed(exc)
+
+        def listed(result) -> None:
+            remote, skipped, truncated, folder = result
+            if self._gone():
+                if folder:
+                    _forget_temp(folder)
+                return
+            if not remote:
+                self._say_added(0, skipped, truncated)
+                return
+            copy_next({"remote": remote, "skipped": skipped, "truncated": truncated,
+                       "folder": folder, "index": 0, "total": 0})
+
+        def copy_next(job) -> None:
+            path, name = job["remote"][job["index"]]
+            self._background(
+                lambda: copy_remote(backend, path, name, job["folder"], job["index"],
+                                    job["total"]),
+                lambda result: copied(job, result),
+                lambda exc: copy_failed(job, exc))
+
+        def copied(job, result) -> None:
+            target, job["total"] = result
+            if self._gone():
+                return  # the folder goes with the extension
+            name = job["remote"][job["index"]][1]
+            item = self._append(target, name)
+            job["index"] += 1
+            count = len(job["remote"])
+            if job["index"] == 1 and play_first:
+                self.play_item(item)
+            if job["index"] < count:
+                self.note.setText(tr("Copied {done} of {count} track(s)…").format(
+                    done=job["index"], count=count))
+                copy_next(job)
+            else:
+                self._say_added(count, job["skipped"], job["truncated"])
+
+        def copy_failed(job, exc) -> None:
+            if job["index"] == 0:
+                _forget_temp(job["folder"])  # nothing of it is in the playlist
+            say_failed(exc)
+
+        def listing():
+            remote, skipped, truncated = list_remote(backend, paths)
+            return remote, skipped, truncated, remote_temp_folder() if remote else ""
+
+        self._background(listing, listed, say_failed)
 
     def _background(self, work, done, failed) -> None:
         if self.run_in_background is not None:
@@ -3967,9 +5018,7 @@ class PlayerPanel(QWidget):
             self._background(lambda: collect_local(paths),
                              lambda r: self.add_collected(*r), failed)
             return
-        backend = ctx.backend
-        self._background(lambda: fetch_remote(backend, paths),
-                         lambda r: self.add_collected(r[0], r[1], r[2]), failed)
+        self.add_remote(ctx.backend, paths)
 
     def _add_dialog(self) -> None:
         from PyQt6.QtWidgets import QFileDialog
@@ -4960,21 +6009,15 @@ def activate(api):
 
     def play(ctx) -> None:
         """Add the selection and play the first of it: local files at once,
-        remote ones copied to a bounded temporary folder off the GUI
-        thread first."""
+        remote ones copied one by one to a bounded temporary folder off the
+        GUI thread - the first plays once it is copied (add_remote)."""
         paths = list(ctx.paths)
         if ctx.is_local:
             first = panel.add_collected(*collect_local(paths))
             if first is not None:
                 panel.play_item(first)
             return
-
-        def done(result) -> None:
-            first = panel.add_collected(result[0], result[1], result[2])
-            if first is not None:
-                panel.play_item(first)
-
-        api.run_in_background(lambda: fetch_remote(ctx.backend, paths), on_done=done,
-                              on_error=lambda exc: api.notify(f"Cannot play: {exc}"))
+        panel.add_remote(ctx.backend, paths, play_first=True,
+                         failed=lambda exc: api.notify(f"Cannot play: {exc}"))
 
     api.add_context_action("Play in Media Player", play, applies_to="files", extensions=AUDIO_SUFFIXES)

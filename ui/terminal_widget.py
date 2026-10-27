@@ -400,9 +400,13 @@ class TerminalEmulator(QPlainTextEdit):
             self.data_ready.emit(text.encode("utf-8"))
         event.accept()
 
+    #: Called with the right-click menu after its own entries - the pane
+    #: holding this terminal adds Send to Workspace (ui.terminal_pane).
+    context_menu_hook = None
+
     def _context_menu(self) -> QMenu:
         """Copy, Paste (to the host) and Select All - no Cut, Delete, Undo:
-        the screen belongs to the host."""
+        the screen belongs to the host - then what context_menu_hook adds."""
         menu = QMenu(self)
         copy = menu.addAction("Copy")
         copy.setEnabled(self.textCursor().hasSelection())
@@ -413,6 +417,9 @@ class TerminalEmulator(QPlainTextEdit):
         menu.addSeparator()
         select_all = menu.addAction("Select All")
         select_all.triggered.connect(self.selectAll)
+        hook = self.context_menu_hook
+        if hook is not None:
+            hook(menu)
         return menu
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -1090,7 +1097,13 @@ class TerminalDock(QDockWidget):
         self._terminal.grid_resized.connect(self._on_grid_resized)
         layout.addWidget(self._terminal, stretch=1)
 
-        self.setWidget(container)
+        # In a scroll area (ui.dock_frame): the bottom area sits beside the
+        # right dock column, and the row of controls above would otherwise
+        # make every window with a right dock at least that row wide plus
+        # the column. With room the terminal fills the dock as before.
+        from ui.dock_frame import framed
+
+        self.setWidget(framed(container, self))
 
         # Read timer — polls ALL active sessions for output
         self._read_timer = QTimer(self)

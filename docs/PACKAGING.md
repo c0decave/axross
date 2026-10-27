@@ -558,9 +558,19 @@ AXROSS_FROZEN_BINARY=dist/axross-slim .venv/bin/python -m pytest tests/test_froz
 
 # 7. Sign SHA256SUMS with the release key (writes dist/SHA256SUMS.sig)
 .venv/bin/python scripts/sign_release.py /path/to/release-key.pem dist/SHA256SUMS
+
+# 8. Every ELF of the Linux binaries with its version: THIRD_PARTY_LICENSES.md
+#    and the release notes section (fails when a typed credits version disagrees)
+.venv/bin/python scripts/native_inventory.py dist/axross-full dist/axross-slim --check
+.venv/bin/python scripts/native_inventory.py dist/axross-full dist/axross-slim \
+    --notes dist/NATIVE-COMPONENTS.md
 ```
 
-Checksums go into the release notes. `SHA256SUMS` and `SHA256SUMS.sig`
+Checksums go into the release notes, and so does
+`dist/NATIVE-COMPONENTS.md`: every release names the native components
+of its Linux binaries with their versions. `--write` instead of
+`--check` regenerates the "Native files inside the Linux binaries" table
+of THIRD_PARTY_LICENSES.md when the lock or the builder image changed. `SHA256SUMS` and `SHA256SUMS.sig`
 are both release assets; without the signature no installed binary
 updates (see below). Linux AppImage signing
 (`gpg --detach-sign dist/axross-full-x86_64.AppImage`) is a

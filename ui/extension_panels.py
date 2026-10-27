@@ -3,10 +3,10 @@
 area, as it always did and still does by default - or to one workspace,
 where it is laid out like a pane.
 
-* **Moving** a panel: its title bar's Move to Workspace button (or a right
-  click on the title bar) offers every workspace, New Workspace and All
-  Workspaces; a workspace's Add Extension Panel menu (Workspace menu, tab
-  menu) brings any loaded panel there.
+* **Moving** a panel: its title bar's Send to Workspace button (or a right
+  click on the title bar) offers every workspace (numbered as the tabs
+  stand), New Workspace and All Workspaces; a workspace's Add Extension
+  Panel menu (Workspace menu, tab menu) brings any loaded panel there.
 * **On a workspace** the panel sits in the workspace's splitters: it shows
   with its workspace and hides with it, goes along with a detached one,
   is dragged by its title bar onto another pane, takes a dragged pane on
@@ -24,6 +24,12 @@ where it is laid out like a pane.
   back there. A workspace that held only such a panel stays while its
   extension is off. The places of a switched-off extension's panels are
   saved with the session too.
+* **Size**: a panel's content sits in a scroll area (ui.dock_frame), so
+  the panel takes the space the dock area or the workspace gives it and its
+  content scrolls when that is less than it needs - its content's smallest
+  size no longer adds up with the other panels' into a window larger than
+  the screen. ``widget()`` and ``setWidget()`` still give and take the
+  content itself.
 
 Session: a panel on a workspace is a ``{"type": "extension", "panel":
 <the dock's object name>}`` entry of that workspace's layout. The object
@@ -50,6 +56,7 @@ from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QDockWidget, QMenu, QSplitter, QToolButton, QWidget
 
 from core.i18n import tr
+from ui.dock_frame import PanelFrame
 from ui.dock_titlebar import DockTitleBar
 from ui.pane_drag import PANE_DRAG_THRESHOLD, PaneDropZones, start_pane_drag
 
@@ -79,7 +86,8 @@ class ExtensionDock(QDockWidget):
     """The dock ``api.add_dock`` makes. In the dock area it is a plain
     panel; on a workspace (*pane mode*) it is a pane: it takes a dragged
     pane (``pane_drop_requested``, as the file and terminal panes), does
-    not float, and its [x] takes it out of the workspace."""
+    not float, and its [x] takes it out of the workspace. Its content sits
+    in a :class:`PanelFrame`; ``widget()`` is the content."""
 
     #: (dragged pane's id, this panel, zone) - as FilePaneWidget's.
     pane_drop_requested = pyqtSignal(str, object, str)
@@ -94,6 +102,35 @@ class ExtensionDock(QDockWidget):
         self._pane_mode = False
         self._pane_drop = PaneDropZones(self)
         self.setAcceptDrops(True)
+        self._frame = PanelFrame(self)
+        super().setWidget(self._frame)
+
+    # -- the content, in its scroll area ------------------------------------------------------
+
+    def widget(self) -> QWidget | None:
+        """The panel's content (not the scroll area around it)."""
+        frame = self._frame
+        return None if sip.isdeleted(frame) else frame.content()
+
+    def setWidget(self, widget: QWidget | None) -> None:  # noqa: N802 - Qt API
+        """*widget* becomes the content; one it replaces stays alive, a
+        hidden child of the panel, as QDockWidget.setWidget leaves it."""
+        frame = self._frame
+        if sip.isdeleted(frame) or widget is frame.content():
+            return
+        old = frame.take_content()
+        if old is not None:
+            old.setParent(self)
+            old.hide()
+        if widget is not None:
+            frame.set_content(widget)
+
+    def takeWidget(self) -> QWidget | None:  # noqa: N802 - Qt naming
+        """Out of the panel: the content without a parent. Whoever moves
+        the content elsewhere takes it first (the Agent dock attaching a
+        conversation)."""
+        frame = self._frame
+        return None if sip.isdeleted(frame) else frame.take_content()
 
     def owner(self):
         """The main window this panel belongs to (None once it is gone)."""
@@ -163,7 +200,7 @@ class ExtensionDock(QDockWidget):
 
 class ExtensionPanelTitleBar(DockTitleBar):
     """The title bar of an extension panel: the built-in panels' one plus a
-    Move to Workspace button (and the same menu on a right click). On a
+    Send to Workspace button (and the same menu on a right click). On a
     workspace the float and close-all buttons go - a pane has neither -
     and a drag on the bar drags the panel like a pane's header."""
 
@@ -172,12 +209,12 @@ class ExtensionPanelTitleBar(DockTitleBar):
         super().__init__(title, icon_name, dock, reopen_hint=reopen_hint)
         self._pane_mode = False
         self._pane_drag_start: QPoint | None = None
-        self.move_menu = QMenu(tr("Move to Workspace"), self)
+        self.move_menu = QMenu(tr("Send to Workspace"), self)
         self.move_menu.aboutToShow.connect(self._fill_move_menu)
         self.move_button = QToolButton(self)
         self.move_button.setText("⇄")  # ⇄, as a terminal pane's button
-        self.move_button.setToolTip(tr("Move to Workspace"))
-        self.move_button.setAccessibleName(tr("Move to Workspace"))
+        self.move_button.setToolTip(tr("Send to Workspace"))
+        self.move_button.setAccessibleName(tr("Send to Workspace"))
         self.move_button.setAutoRaise(True)
         self.move_button.setFixedSize(QSize(22, 22))
         self.move_button.clicked.connect(self._pop_move_menu)
@@ -530,20 +567,17 @@ class ExtensionPanelsMixin:
     # -- menus ----------------------------------------------------------------------------
 
     def _fill_panel_move_menu(self, dock: ExtensionDock, menu: QMenu) -> None:
-        """Every workspace (the one holding *dock* ticked), New Workspace and
-        All Workspaces (ticked while it is in the dock area)."""
-        from ui.workspaces import tab_label
-
+        """Every workspace, numbered (the one holding *dock* ticked), New
+        Workspace and All Workspaces (ticked while it is in the dock area)."""
         here = self.extension_panel_workspace(dock)
-        for ws in self._workspaces:
-            action = menu.addAction(tab_label(ws.name))
-            action.setCheckable(True)
-            action.setChecked(ws is here)
-            action.triggered.connect(
-                lambda _c=False, w=ws, d=dock: self._move_or_show_panel(d, w))
-        menu.addSeparator()
-        menu.addAction(tr("New Workspace")).triggered.connect(
-            lambda _c=False, d=dock: self.move_extension_panel_to_new_workspace(d))
+
+        def send(ws, d=dock):
+            if ws is None:
+                self.move_extension_panel_to_new_workspace(d)
+            else:
+                self._move_or_show_panel(d, ws)
+
+        self.fill_workspace_targets(menu, send, here=here, tick_here=True)
         everywhere = menu.addAction(tr("All Workspaces"))
         everywhere.setCheckable(True)
         everywhere.setChecked(here is None)

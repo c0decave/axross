@@ -362,6 +362,30 @@ STREAM_HASH_PROGRESS_EVERY = 4
 # quietly pull a multi-GB VM image through a WAN backend. Callers
 # that really want to hash those can bump ``max_file_bytes`` per-call.
 RECURSIVE_CHECKSUM_MAX_FILE_BYTES = 1 << 30  # 1 GiB
+
+
+def _list_or_note(backend, folder: str, root: str, unreadable: list[dict]):
+    """``backend.list_dir(folder)`` for a tree walk, or None when it failed:
+    the failure is noted in *unreadable* as ``{path, error}``. The walk's
+    own *root* raises instead - an unreadable root gave an empty answer
+    that looked like an empty tree (walk), no match (grep) or nothing to
+    hash (recursive_checksum)."""
+    try:
+        return backend.list_dir(folder)
+    except OSError as exc:
+        if folder == root:
+            raise
+        unreadable.append({"path": folder, "error": redact_text(str(exc))})
+        return None
+
+
+def _all_hashed(entries: list[dict], truncated: bool) -> bool:
+    """Whether a recursive_checksum left nothing out: no cut, and every
+    record a checksum (not an error, a too-large skip or a folder it could
+    not list)."""
+    return not truncated and all("checksum" in e for e in entries)
+
+
 def _bulk_copy_complete(entries: list[dict], truncated: bool) -> bool:
     """Whether a bulk_copy left nothing out: the walk ran to the end and
     every record is a copy or a requested "exists" skip."""
@@ -1517,15 +1541,13 @@ def _build_tools(
         if max_depth < 0 or max_entries <= 0:
             raise ValueError("walk: max_depth must be ≥0 and max_entries > 0")
         entries: list[dict] = []
+        unreadable: list[dict] = []
         queue: list[tuple[str, int]] = [(path, 0)]
         while queue and len(entries) < max_entries:
             ctx.check_cancel()
             cur, depth = queue.pop(0)
-            try:
-                children = backend.list_dir(cur)
-            except OSError:
-                # Hidden perms or a vanished directory — skip and keep
-                # walking; don't abort the whole request on one branch.
+            children = _list_or_note(backend, cur, path, unreadable)
+            if children is None:
                 continue
             for child in children:
                 if len(entries) >= max_entries:
@@ -1555,7 +1577,12 @@ def _build_tools(
                         message=f"walked {len(entries)} entries @ {cur}",
                     )
         truncated = len(entries) >= max_entries and bool(queue)
-        return {"entries": entries, "truncated": truncated}
+        return {
+            "entries": entries,
+            "truncated": truncated,
+            "unreadable": unreadable,
+            "complete": not truncated and not unreadable,
+        }
 
     def _recursive_checksum(args, ctx):
         """Hash every file under ``path`` breadth-first up to
@@ -1680,9 +1707,14 @@ def _build_tools(
             ) from exc
         if not getattr(root_stat, "is_dir", False):
             _hash_file(path, int(getattr(root_stat, "size", 0) or 0))
-            return {"entries": entries, "truncated": False}
+            return {
+                "entries": entries,
+                "truncated": False,
+                "complete": _all_hashed(entries, False),
+            }
 
         # BFS over the tree.
+        unreadable: list[dict] = []
         queue: list[tuple[str, int]] = [(path, 0)]
         while queue:
             hashed = sum(1 for e in entries if "checksum" in e)
@@ -1691,11 +1723,8 @@ def _build_tools(
                 break
             ctx.check_cancel()
             cur, depth = queue.pop(0)
-            try:
-                children = backend.list_dir(cur)
-            except OSError:
-                # Hidden perms or a vanished directory — skip and keep
-                # walking; don't abort the whole request on one branch.
+            children = _list_or_note(backend, cur, path, unreadable)
+            if children is None:
                 continue
             for child in children:
                 hashed = sum(1 for e in entries if "checksum" in e)
@@ -1715,7 +1744,16 @@ def _build_tools(
                     continue
                 size = int(getattr(child, "size", 0) or 0)
                 _hash_file(full, size)
-        return {"entries": entries, "truncated": truncated}
+        # The files below a folder it could not list are missing: say so.
+        entries.extend(
+            {"path": u["path"], "folder": True, "algorithm": algo, "error": u["error"]}
+            for u in unreadable
+        )
+        return {
+            "entries": entries,
+            "truncated": truncated,
+            "complete": _all_hashed(entries, truncated),
+        }
 
     tools = [
         _Tool(
@@ -1817,6 +1855,11 @@ def _build_tools(
             description=(
                 "Breadth-first recursive listing under path. Caps at "
                 "max_depth (default 4) and max_entries (default 1000). "
+                "Returns {entries: [{path, name, is_dir, size}], truncated, "
+                "unreadable: [{path, error}], complete}: unreadable names "
+                "every folder below path that could not be listed; complete "
+                "is true only when nothing was cut or left out. An "
+                "unreadable path itself is an error. "
                 "Emits MCP progress notifications when the caller "
                 "supplied _meta.progressToken."
             ),
@@ -1838,7 +1881,11 @@ def _build_tools(
                 "is either {path, size, algorithm, checksum, source} "
                 '(hashed), {path, size, algorithm, skipped: "too-large"} '
                 "(file above max_file_bytes), or {path, size, algorithm, "
-                'error: "<msg>"} (backend refused that one file). '
+                'error: "<msg>"} (backend refused that one file), or '
+                '{path, folder: true, algorithm, error} (a folder that '
+                "could not be listed: the files below it are missing). "
+                "complete is true only when every file was hashed and "
+                "nothing was cut; an unreadable path itself is an error. "
                 "Emits one progress notification per hashed file; a "
                 "notifications/cancelled lands within one chunk of the "
                 "current file. algorithm is one of sha256 / sha1 / md5 "
@@ -1971,14 +2018,14 @@ def _build_tools(
                 "grep: max_depth must be ≥0 and max_matches > 0",
             )
         matches: list[dict] = []
+        unreadable: list[dict] = []
         queue: list[tuple[str, int]] = [(start, 0)]
         files_scanned = 0
         while queue and len(matches) < max_matches:
             ctx.check_cancel()
             cur, depth = queue.pop(0)
-            try:
-                children = backend.list_dir(cur)
-            except OSError:
+            children = _list_or_note(backend, cur, start, unreadable)
+            if children is None:
                 continue
             for child in children:
                 if len(matches) >= max_matches:
@@ -2001,7 +2048,9 @@ def _build_tools(
                     safe_full = scope(full)
                     with backend.open_read(safe_full) as fh:
                         raw = fh.read(MAX_GREP_FILE_BYTES + 1)
-                except (OSError, PermissionError):
+                except OSError as exc:
+                    # "No match" in a file it could not read is no answer.
+                    unreadable.append({"path": full, "error": redact_text(str(exc))})
                     continue
                 files_scanned += 1
                 if files_scanned % WALK_PROGRESS_EVERY == 0:
@@ -2033,6 +2082,8 @@ def _build_tools(
             "matches": matches,
             "files_scanned": files_scanned,
             "truncated": truncated,
+            "unreadable": unreadable,
+            "complete": not truncated and not unreadable,
         }
 
     def _preview(args, ctx):
@@ -2098,8 +2149,12 @@ def _build_tools(
                 description=(
                     "Regex search inside file contents under a root path. "
                     "Recurses up to max_depth (default 2); skips files "
-                    "larger than 4 MiB. Returns up to max_matches "
-                    "(default 100, ceiling 500) {path, line_no, line}. "
+                    "larger than 4 MiB. Returns {matches: up to max_matches "
+                    "(default 100, ceiling 500) {path, line_no, line}, "
+                    "files_scanned, truncated, unreadable: [{path, error}] "
+                    "(folders and files that could not be read), complete}. "
+                    "No match with complete=false is no answer. An unreadable "
+                    "path itself is an error. "
                     "Cooperates with notifications/cancelled."
                 ),
                 schema={

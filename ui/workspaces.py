@@ -9,9 +9,11 @@ splits, restored sessions, layout presets) lands there unchanged.
 * A workspace detaches to a :class:`WorkspaceWindow` - another screen, or
   side by side - and comes back as a tab when that window is closed.
 * Panes - file and terminal panes alike - move between workspaces from
-  Workspace > Move Pane to, or by dragging a pane onto a pane of another
-  workspace. Held over a workspace tab, a dragged pane opens that tab after
-  TAB_DRAG_SWITCH_MS, so a background workspace is reachable too.
+  Workspace > Send Pane to Workspace, from a right click on the pane (Send
+  to Workspace, :func:`add_send_to_workspace_menu`), or by dragging a pane
+  onto a pane of another workspace. Held over a workspace tab, a dragged
+  pane opens that tab after TAB_DRAG_SWITCH_MS, so a background workspace
+  is reachable too.
 * A new workspace starts with a file list or a local terminal
   (Workspace > New Workspace); Add Terminal Pane puts another local shell
   into the workspace on screen, side by side - several shells in one
@@ -107,6 +109,22 @@ def session_problem(workspaces) -> tuple[str, list]:
             return "A workspace window geometry is not text.", []
         trees.append(tree)
     return "", trees
+
+
+def add_send_to_workspace_menu(pane, menu: QMenu) -> QMenu | None:
+    """Send to Workspace ▸ for *pane* at the end of *menu* - the right-click
+    menus of a file pane, a pane's header and a terminal's screen - filled
+    by the window that holds the pane (``fill_move_menu_for``: the other
+    workspaces numbered as their tabs stand, then New Workspace). Nothing is
+    added, and None returned, when that window has no workspaces or *pane*
+    is none of its panes: a pane that cannot move offers no entry."""
+    owner = pane.window()
+    can_send = getattr(owner, "can_send_to_workspace", None)
+    if can_send is None or not can_send(pane):
+        return None
+    sub = menu.addMenu(tr("Send to Workspace"))
+    owner.fill_move_menu_for(pane, sub)
+    return sub
 
 
 def window_shortcut_actions(owner) -> list[QAction]:
@@ -294,6 +312,29 @@ class WorkspaceMixin:
             [h for h in self._pane_placeholders if self.workspace_of(h) is ws],
         )
 
+    def numbered_workspaces(self) -> list[Workspace]:
+        """The workspaces as the menus number them: the tabs in the order
+        they stand (the user can drag them), then the detached ones."""
+        tabs = self._workspace_tabs
+        attached = sorted((w for w in self._workspaces if w.window is None),
+                          key=lambda w: tabs.indexOf(w.root))
+        return attached + [w for w in self._workspaces if w.window is not None]
+
+    def workspace_label(self, ws: Workspace, number: int | None = None) -> str:
+        """*ws* in a Send to Workspace menu: "&1: Workspace 1" - its *number*
+        (default: its place in numbered_workspaces), whose digit picks it
+        while the menu is open up to 9, then its name as typed; "(window)"
+        when detached."""
+        n = number if number is not None else self.numbered_workspaces().index(ws) + 1
+        text = f"{n}: {tab_label(ws.name)}"
+        if ws.window is not None:
+            text += tr(" (window)")
+        return f"&{text}" if n <= 9 else text
+
+    def can_add_workspace(self) -> bool:
+        """Below the MAX_WORKSPACES ceiling."""
+        return len(self._workspaces) < MAX_WORKSPACES
+
     def _next_workspace_name(self) -> str:
         taken = {ws.name for ws in self._workspaces}
         n = 1
@@ -471,7 +512,7 @@ class WorkspaceMixin:
         ValueError for an unknown *start*."""
         if start not in START_KINDS:
             raise ValueError(f"a workspace starts with one of {START_KINDS}, not {start!r}")
-        if len(self._workspaces) >= MAX_WORKSPACES:
+        if not self.can_add_workspace():
             self.statusBar().showMessage(
                 tr("No more than {n} workspaces.").format(n=MAX_WORKSPACES), 5000)
             return None
@@ -733,7 +774,7 @@ class WorkspaceMixin:
         return isinstance(widget, ExtensionDock)
 
     def _pane_to_move(self):
-        """What Move Pane to Workspace moves: the terminal pane or the
+        """What Send Pane to Workspace moves: the terminal pane or the
         extension panel on a workspace that has the keyboard focus, else
         the active file pane."""
         from PyQt6.QtWidgets import QApplication
@@ -746,6 +787,18 @@ class WorkspaceMixin:
                 return widget
             widget = widget.parentWidget()
         return self._active_pane
+
+    def can_send_to_workspace(self, pane) -> bool:
+        """*pane* is something Send to Workspace moves: a file or terminal
+        pane laid out on one of this window's workspaces, or one of its
+        extension panels (wherever it is)."""
+        if pane is None or sip.isdeleted(pane):
+            return False
+        if self._is_extension_panel(pane):
+            return pane in self.extension_panels()
+        if not (pane in self._panes or pane in self._terminal_panes):
+            return False
+        return self.workspace_of(pane) is not None
 
     def move_active_pane_to_new_workspace(self, pane=None) -> Workspace | None:
         pane = pane if pane is not None else self._pane_to_move()
@@ -809,7 +862,7 @@ class WorkspaceMixin:
         close.setEnabled(len(self._workspaces) > 1)
         close.triggered.connect(lambda _c=False, w=ws: self.close_workspace(w))
         menu.addSeparator()
-        move = menu.addMenu(tr("Move Pane to Workspace"))
+        move = menu.addMenu(tr("Send Pane to Workspace"))
         move.setEnabled(self._pane_to_move() is not None)
         move.aboutToShow.connect(lambda m=move: self._fill_move_menu(m))
         self._fill_move_menu(move)
@@ -829,24 +882,49 @@ class WorkspaceMixin:
 
     def fill_move_menu_for(self, pane, menu: QMenu) -> None:
         """The other workspaces and New Workspace, each moving *pane* (a
-        file or terminal pane) - for the Workspace menu and a terminal
-        pane's header button. For an extension panel: every workspace,
-        New Workspace and All Workspaces (ui.extension_panels)."""
+        file or terminal pane) - for Send to Workspace on a right click,
+        the Workspace menu and a terminal pane's header button. For an
+        extension panel: every workspace, New Workspace and All Workspaces
+        (ui.extension_panels)."""
         menu.clear()
         if pane is None:
             return
         if self._is_extension_panel(pane):
             self._fill_panel_move_menu(pane, menu)
             return
-        here = self.workspace_of(pane)
-        for ws in self._workspaces:
-            if ws is here:
+
+        def send(ws, p=pane):
+            if ws is None:
+                self.move_active_pane_to_new_workspace(p)
+            else:
+                self.move_pane_to_workspace(p, ws)
+
+        self.fill_workspace_targets(menu, send, here=self.workspace_of(pane))
+
+    def fill_workspace_targets(self, menu: QMenu, pick, *, here: Workspace | None = None,
+                               tick_here: bool = False) -> None:
+        """The entries of every Send to Workspace menu: the workspaces,
+        numbered (workspace_label), then New Workspace - each calling
+        *pick* with its workspace, New Workspace with None. *here* (where
+        the thing sits) is left out, or with *tick_here* listed and ticked.
+        New Workspace is off at the MAX_WORKSPACES ceiling. A workspace
+        gone by the time an entry is picked is not passed on."""
+        for number, ws in enumerate(self.numbered_workspaces(), 1):
+            if ws is here and not tick_here:
                 continue
-            menu.addAction(tab_label(ws.name)).triggered.connect(
-                lambda _c=False, w=ws, p=pane: self.move_pane_to_workspace(p, w))
+            action = menu.addAction(self.workspace_label(ws, number))
+            if tick_here:
+                action.setCheckable(True)
+                action.setChecked(ws is here)
+            action.triggered.connect(
+                lambda _c=False, w=ws: pick(w) if w in self._workspaces else None)
         menu.addSeparator()
-        menu.addAction(tr("New Workspace")).triggered.connect(
-            lambda _c=False, p=pane: self.move_active_pane_to_new_workspace(p))
+        new = menu.addAction(tr("New Workspace"))
+        if not self.can_add_workspace():
+            new.setEnabled(False)
+            new.setToolTip(tr("No more than {n} workspaces.").format(n=MAX_WORKSPACES))
+            menu.setToolTipsVisible(True)
+        new.triggered.connect(lambda _c=False: pick(None))
 
     def _show_workspace(self, ws: Workspace) -> None:
         if ws.window is not None:

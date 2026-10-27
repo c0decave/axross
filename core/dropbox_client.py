@@ -477,7 +477,8 @@ class DropboxSession(SessionLifecycle):
         try:
             self._dbx.users_get_current_account()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("Dropbox liveness check failed: %s", exc)
             return False
 
     def close(self) -> None:

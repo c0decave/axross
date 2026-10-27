@@ -221,6 +221,9 @@ def test_e2e_happy_a_click_goes_to_the_next_visualization_and_wraps(tmp_path):
 
 def test_e2e_happy_every_visualization_draws_the_sound_and_differs():
     vis = visualizer(sine(1000.0, amp=0.8))
+    # A seeded star field: of 3000 random ones, 13 put no near star on this
+    # grid's sampled pixels (measured) and the starfield failed the check.
+    vis.reset_stars(seed=1)
     try:
         faces = {}
         for mode in MP.Visualizer.MODES:
@@ -249,6 +252,7 @@ def test_e2e_happy_the_real_engine_feeds_every_visualization():
     vis = MP.Visualizer(engine)
     vis.resize(300, 100)
     vis.show()
+    vis.reset_stars(seed=1)  # a random star field can miss the sampled grid
     try:
         for mode in MP.Visualizer.MODES:
             vis.set_mode(mode)

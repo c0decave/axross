@@ -489,14 +489,16 @@ class BookmarkManager:
         """The file's tree in dumped form; ``[]`` when there is no file and
         ``None`` when it cannot be read (it is then set aside)."""
         try:
-            raw = bf.read_text(encoding="utf-8")
+            raw = bf.read_bytes()
         except FileNotFoundError:
             return []
         except OSError as e:
             log.error("Failed to re-read bookmarks: %s", e)
             return None
         try:
-            data = json.loads(raw)
+            # Decoded here, not by read_text(): a file another writer left
+            # in another encoding is set aside like one that is no JSON.
+            data = json.loads(raw.decode("utf-8"))
             if not isinstance(data, list):
                 raise TypeError("Bookmarks JSON must be a list")
         except (ValueError, TypeError) as e:

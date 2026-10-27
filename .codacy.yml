@@ -1,0 +1,8 @@
+# Codacy reads every file a tool reports on as UTF-8 when it writes its SARIF
+# report, and an image or audio file stopped it for good (tests/test_codacy_config.py).
+exclude_paths:
+  - "**/*.png"
+  - "**/*.wav"
+  - "**/*.mp3"
+  - "**/*.ogg"
+  - "**/*.flac"

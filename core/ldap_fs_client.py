@@ -102,6 +102,9 @@ def _segment_name(rdn: str) -> str:
 #: Simple Paged Results (RFC 2696): its control OID, the page size asked
 #: for (below Active Directory's MaxPageSize of 1000) and a bound on pages.
 _PAGED_OID = "1.2.840.113556.1.4.319"
+# LDAP result codes (RFC 4511 4.1.9) a BASE search tells apart.
+_NO_SUCH_OBJECT = 32
+_INSUFFICIENT_ACCESS = 50
 _PAGE_SIZE = 500
 _MAX_PAGES = 2000
 
@@ -331,16 +334,7 @@ class LdapFsSession(SessionLifecycle):
         dn = self._dn(path)
         if not dn:
             return FileItem(name="/", is_dir=True)
-        ok, entries = self._search(
-            f"LDAP stat {path}",
-            search_base=dn,
-            search_filter="(objectClass=*)",
-            search_scope=BASE,
-            attributes=["*", "+"],
-        )
-        if not ok or not entries:
-            raise FileNotFoundError(f"LDAP entry not found: {path}")
-        entry = entries[0]
+        entry = self._base_entry(f"LDAP stat {path}", dn, path)
         rdn = _leading_rdn(entry.entry_dn)
         return self._entry_to_item(entry, _segment_name(rdn))
 
@@ -351,10 +345,11 @@ class LdapFsSession(SessionLifecycle):
             return False
 
     def exists(self, path: str) -> bool:
+        """False only for noSuchObject; a refused or failed search raises."""
         try:
             self.stat(path)
             return True
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError:
             return False
 
     def open_read(self, path: str) -> IO[bytes]:
@@ -367,17 +362,9 @@ class LdapFsSession(SessionLifecycle):
                 f"# namingContext: {n}" for n in self._naming_contexts
             )
             return io.BytesIO(text.encode("utf-8"))
-        _ok, entries = self._search(
-            f"LDAP open_read {path}",
-            search_base=dn,
-            search_filter="(objectClass=*)",
-            search_scope=BASE,
-            attributes=["*", "+"],
-        )
-        if not entries:
-            raise FileNotFoundError(f"LDAP entry not found: {path}")
+        entry = self._base_entry(f"LDAP open_read {path}", dn, path)
         try:
-            ldif = entries[0].entry_to_ldif()
+            ldif = entry.entry_to_ldif()
         except _LDAP_DECODE_ERRORS as exc:
             raise OSError(f"LDAP open_read {path}: cannot render the entry: {exc}") from exc
         if isinstance(ldif, str):
@@ -507,6 +494,31 @@ class LdapFsSession(SessionLifecycle):
                 f"{what}: malformed answer from the server ({type(exc).__name__}: {exc})"
             ) from exc
         return bool(ok), entries
+
+    def _base_entry(self, what: str, dn: str, path: str):
+        """The entry *dn* itself (a BASE search). FileNotFoundError only
+        for noSuchObject (32) or a success without an entry: a refusal
+        (insufficientAccessRights, 50) is PermissionError and any other
+        result - busy, unavailable, a time limit - OSError. All of them
+        used to read as "not found"."""
+        ok, entries = self._search(
+            what,
+            search_base=dn,
+            search_filter="(objectClass=*)",
+            search_scope=BASE,
+            attributes=["*", "+"],
+        )
+        if ok and entries:
+            return entries[0]
+        result = getattr(self._conn, "result", None)
+        result = result if isinstance(result, dict) else {}
+        code = result.get("result", 0)
+        if ok or code in (0, None, _NO_SUCH_OBJECT):
+            raise FileNotFoundError(f"LDAP entry not found: {path}")
+        reason = f"{what}: {result.get('description') or 'result'} ({code})"
+        if code == _INSUFFICIENT_ACCESS:
+            raise PermissionError(reason)
+        raise OSError(reason)
 
     def _search_all(self, what: str, **kwargs) -> list:
         """Every entry of a search, page by page (RFC 2696). A server that

@@ -101,6 +101,15 @@ swiss-army, no cluster S3 endurecido**.
 
 ## Qué está implementado
 
+Un stat o un listado que falla nunca se responde como "no existe": 404,
+`NoSuchKey` y `NoSuchBucket` significan que la ruta realmente falta; un
+rechazo es 403 (`AccessDenied`), cualquier otro fallo 500
+(`InternalError`). Una carpeta que no se puede listar hace fallar el
+PROPFIND o el ListObjects en vez de aparecer vacía u omitir sus claves:
+los clientes de sincronización (rclone, `aws s3 sync --delete`) toman una
+respuesta vacía o más corta por "borrado" y eliminan su copia. Un `COPY`
+WebDAV sobre una carpeta existente se rechaza (409), nunca copia dentro.
+
 ### S3
 
 | Verbo | Estado |

@@ -135,9 +135,9 @@ transfers, remote profiles, extensions) is a capability group, see §9.
 | `read_file(path, max_bytes=, encoding=)` | Base64-encoded file content; capped at 4 MiB by default. `encoding="text"` returns `text` (UTF-8, `replaced=true` when undecodable bytes were replaced) — for models that cannot decode Base64. |
 | `checksum(path, algorithm=)`  | `sha256` (default), `sha1`, `md5` or `sha512`. Uses the backend's native hash only when it is of the requested algorithm, else streams the file through hashlib (emits progress). |
 | `search(needle, ext, min_size, max_size)` | Offline metadata index, scoped to the active backend's id and the MCP root. |
-| `walk(path, max_depth, max_entries)`      | Bounded recursive listing; emits `notifications/progress`. |
-| `recursive_checksum(path, algorithm, max_files, max_depth, max_file_bytes)` | Hash every file under a path (files over 1 GiB skipped by default); one progress frame per hashed file. |
-| `grep(pattern, path, max_depth, max_matches)` | Regex search inside file contents. Skips files over 4 MiB, caps matches at 500; emits progress. |
+| `walk(path, max_depth, max_entries)`      | Bounded recursive listing; emits `notifications/progress`. Folders it could not list are named in `unreadable`; `complete` is false then. |
+| `recursive_checksum(path, algorithm, max_files, max_depth, max_file_bytes)` | Hash every file under a path (files over 1 GiB skipped by default); one progress frame per hashed file. A folder it could not list is an `error` record with `folder: true`; `complete` says whether every file was hashed. |
+| `grep(pattern, path, max_depth, max_matches)` | Regex search inside file contents. Skips files over 4 MiB, caps matches at 500; emits progress. Folders and files it could not read are named in `unreadable`; no match with `complete: false` is no answer. |
 | `list_versions(path)` | Per-version metadata where the backend supports it.                |
 | `open_version_read(path, version_id, max_bytes=)` | Base64 content of a specific version.          |
 | `preview(path, edge=256)` | Thumbnail of an image — returned as MCP **image content** with proper mimeType. |

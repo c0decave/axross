@@ -83,6 +83,24 @@ class UnreadableHistoryTest(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), b'[{"host": "\xff"}]')
         self.assertEqual(self.copies(), [])
 
+    def test_sad_a_non_finite_time_reads_as_never_and_renders(self) -> None:
+        """Found by a mutation sweep of the hand-editable stores: JSON's
+        -Infinity in ``last_seen`` made format_visit (the REPL and the
+        dashboard) raise OverflowError; NaN sorted the list at random."""
+        for value in (float("-inf"), float("inf"), float("nan")):
+            entry = {"protocol": "sftp", "host": "h", "username": "u", "last_seen": value,
+                     "recent_ops": [{"ts": value, "verb": "get", "desc": "x"}]}
+            self.path.write_text(json.dumps([entry], allow_nan=True), encoding="utf-8")
+            visit = VH.where_was_i("h")
+            self.assertEqual(visit.last_seen, 0.0)
+            self.assertEqual(visit.recent_ops[0]["ts"], 0.0)
+            self.assertIn("never", VH.format_visit(visit))
+
+    def test_edge_a_finite_time_is_kept(self) -> None:
+        entry = {"protocol": "sftp", "host": "h", "username": "u", "last_seen": 1234.5}
+        self.path.write_text(json.dumps([entry]), encoding="utf-8")
+        self.assertEqual(VH.where_was_i("h").last_seen, 1234.5)
+
     def test_edge_clearing_everything_needs_no_copy(self) -> None:
         self.path.write_text(json.dumps([{"protocol": "sftp", "host": "a"}]))
         self.assertEqual(VH.clear(), 1)

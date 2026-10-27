@@ -63,6 +63,19 @@ class UnreadableBookmarksTest(unittest.TestCase):
         self.assertEqual(mgr.all(), [])
         self.assertEqual([p.read_bytes() for p in self._set_aside()], [raw])
 
+    def test_sad_a_file_that_turns_non_utf8_while_running_survives_the_next_save(self) -> None:
+        """Another writer (a hand edit in a Latin-1 editor) changes the file
+        after the manager loaded it: the save re-reads it to merge, and the
+        UnicodeDecodeError escaped that re-read - the new bookmark was not
+        saved and the change raised out of the click."""
+        mgr = BM.BookmarkManager()
+        mgr.add(BM.Bookmark(name="home", path="/home"))
+        raw = '[{"name": "café", "path": "/c"}]'.encode("latin-1")
+        self.file.write_bytes(raw)
+        mgr.add(BM.Bookmark(name="new", path="/tmp"))
+        self.assertEqual([p.read_bytes() for p in self._set_aside()], [raw])
+        self.assertEqual(sorted(b.name for b in BM.BookmarkManager().all()), ["home", "new"])
+
     def test_edge_a_json_object_instead_of_a_list_is_set_aside(self) -> None:
         self.file.write_text('{"name": "x"}', encoding="utf-8")
         BM.BookmarkManager().add(BM.Bookmark(name="y", path="/y"))

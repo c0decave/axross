@@ -546,6 +546,18 @@ def _skipped_module(top: str, stdlib: frozenset[str]) -> bool:
             or top.startswith("_sysconfigdata_"))
 
 
+def entries_by_path(entries: Sequence[Entry], name: str) -> list[Entry]:
+    """The entries whose ``paths`` globs match the bundle name *name*."""
+    return [e for e in entries if any(fnmatch.fnmatchcase(name, p) for p in e.paths)]
+
+
+def entries_by_library(entries: Sequence[Entry], name: str) -> list[Entry]:
+    """The entries whose ``libraries`` globs match the family of the shared
+    library *name* (see :func:`normalise_library`)."""
+    family = normalise_library(name)
+    return [e for e in entries if any(fnmatch.fnmatchcase(family, p) for p in e.libraries)]
+
+
 @dataclass
 class BundleReport:
     #: TOC names / ``module X`` / dist-info folders no entry claims.
@@ -596,16 +608,14 @@ def classify_bundle(entries: Sequence[Entry], flavor: str, toc: Iterable[tuple[s
     for kind, name in toc:
         if kind not in ("b", "x"):
             continue
-        by_path = [e for e in entries if any(fnmatch.fnmatchcase(name, p) for p in e.paths)]
+        by_path = entries_by_path(entries, name)
         if by_path:
             for e in by_path:
                 claim(e.id, name)
             continue
         first = name.split("/", 1)[0]
         if kind == "b" and _is_library(name):
-            family = normalise_library(name)
-            owners = [e for e in entries
-                      if any(fnmatch.fnmatchcase(family, p) for p in e.libraries)]
+            owners = entries_by_library(entries, name)
             for e in owners:
                 claim(e.id, name)
             if not owners:

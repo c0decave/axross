@@ -144,7 +144,7 @@ class ExtensionAPI:
 
     def add_dock(self, title: str, widget: QWidget) -> QDockWidget:
         """A panel docked on the right, with the title bar of the built-in
-        panels (float, [x], close all in this area) and a Move to Workspace
+        panels (float, [x], close all in this area) and a Send to Workspace
         button; its show/hide entry goes into the Extensions menu, which
         also reopens it after [x].
 
@@ -634,6 +634,9 @@ class ExtensionHost(QObject):
             return False
         api = ExtensionAPI(self, info)
         module_name = f"axross_extension_{info.source}_{info.module_name}"
+        from core import log_config
+
+        log_config.prepare_logger(module_name)  # its level before its code logs
         # The startup guard: a marker while the extension's code runs, so
         # a hang or crash in it is found by the next start.
         marker = EX.begin_activation(info)

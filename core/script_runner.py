@@ -28,6 +28,7 @@ the child writes to a pipe of its own.
 
 from __future__ import annotations
 
+import atexit
 import codecs
 import json
 import math
@@ -70,6 +71,13 @@ RESULT_FD_ENV = "AXROSS_SCRIPT_RESULT_FD"
 MAX_RESULT_RECORD_BYTES = 256 * 1024
 #: Bytes of an example's call the child reads from stdin.
 MAX_EXAMPLE_CALL_BYTES = 64 * 1024
+#: Environment variable with the seconds after which a bounded run's child
+#: ends itself (:func:`child_deadline`): the parent enforces the time limit
+#: from a thread of its own, which dies with axross.
+DEADLINE_ENV = "AXROSS_SCRIPT_DEADLINE"
+#: Seconds the child's own deadline lies past the parent's soft stop and
+#: its grace, so the parent's SIGTERM normally comes first.
+CHILD_DEADLINE_MARGIN = 2.0
 #: First line of the section "Copy to My Scripts" appends: the example's
 #: Usage block, commented out (some name hosts to scan or profiles to open).
 TRY_IT_HEADER = "# --- Try it: remove the # in front of the lines below, adjust them, then Run ---"
@@ -301,6 +309,51 @@ def _namespace_keys(namespace: dict) -> list[str]:
     return keys[:MAX_NAMESPACE_KEYS]
 
 
+def child_deadline(timeout_s: float) -> float:
+    """Seconds after which a run bounded by *timeout_s* ends itself."""
+    return float(timeout_s) + STOP_GRACE_SECONDS + CHILD_DEADLINE_MARGIN
+
+
+def _arm_own_deadline() -> float | None:
+    """In the child: end this process once :data:`DEADLINE_ENV` seconds have
+    passed, even when axross - which enforces the limit - is gone (quit,
+    crashed, killed); a faulthandler timer is a C thread that needs no GIL.
+    The variable is removed, so what the script starts does not inherit it.
+    Returns the seconds armed, or None."""
+    raw = os.environ.pop(DEADLINE_ENV, None)
+    try:
+        seconds = float(raw) if raw else 0.0
+    except ValueError:
+        return None
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    import faulthandler
+
+    faulthandler.dump_traceback_later(seconds, exit=True)
+    return seconds
+
+
+#: Process groups of the bounded runs in flight (their leaders' pids).
+_LIVE_GROUPS: set[int] = set()
+_LIVE_LOCK = threading.Lock()
+
+
+def _kill_live_groups() -> None:
+    """atexit: kill the process group of every bounded run still in flight -
+    the thread that would stop it at its limit ends with this process."""
+    with _LIVE_LOCK:
+        groups = list(_LIVE_GROUPS)
+        _LIVE_GROUPS.clear()
+    for pid in groups:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
+atexit.register(_kill_live_groups)
+
+
 def _take_result_fd() -> int | None:
     """The descriptor named by ``RESULT_FD_ENV``, removed from the
     environment and made non-inheritable, so neither the script nor a
@@ -344,6 +397,7 @@ def child_main(argv: list[str], *, call: str | None = None) -> int:
     SystemExit status, not cut to 0..255), ``namespace_keys`` and, for
     an uncaught exception, ``error_type``, ``error`` and ``traceback``.
     """
+    _arm_own_deadline()
     result_fd = _take_result_fd()
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -582,6 +636,7 @@ def run_bounded(
 
     env = child_env(current_policy().name)
     env.update(env_overrides or {})
+    env[DEADLINE_ENV] = f"{child_deadline(timeout_s):.3f}"
     posix = os.name == "posix"
     extra: dict = {}
     result_read = result_write = None
@@ -609,51 +664,60 @@ def run_bounded(
     finally:
         if result_write is not None:
             os.close(result_write)  # the child holds its own copy
-    wake = threading.Event()
-    out = _StreamReader(proc.stdout, max_output_chars, wake, text=True)
-    err = _StreamReader(proc.stderr, max_output_chars, wake, text=True)
-    readers = [out, err]
-    record_reader = None
-    if result_read is not None:
-        record_reader = _StreamReader(
-            open(result_read, "rb", buffering=0), MAX_RESULT_RECORD_BYTES, wake, text=False
-        )
-        readers.append(record_reader)
-    if cmd.stdin_text is not None:
-        try:
-            proc.stdin.write(cmd.stdin_text.encode("utf-8"))
-        except OSError:
-            pass
-        finally:
+    if posix:
+        # Until it is stopped below: a normal exit of axross kills the group
+        # (the thread that enforces the limit dies with the process).
+        with _LIVE_LOCK:
+            _LIVE_GROUPS.add(proc.pid)
+    try:
+        wake = threading.Event()
+        out = _StreamReader(proc.stdout, max_output_chars, wake, text=True)
+        err = _StreamReader(proc.stderr, max_output_chars, wake, text=True)
+        readers = [out, err]
+        record_reader = None
+        if result_read is not None:
+            record_reader = _StreamReader(
+                open(result_read, "rb", buffering=0), MAX_RESULT_RECORD_BYTES, wake, text=False
+            )
+            readers.append(record_reader)
+        if cmd.stdin_text is not None:
             try:
-                proc.stdin.close()
+                proc.stdin.write(cmd.stdin_text.encode("utf-8"))
             except OSError:
                 pass
+            finally:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
 
-    deadline = started + float(timeout_s)
-    stop: str | None = None
-    while not _has_exited(proc):
-        if out.exceeded or err.exceeded:
-            stop = "output"
-            break
-        if cancel_event is not None and cancel_event.is_set():
-            stop = "cancel"
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            stop = "timeout"
-            break
-        wake.wait(min(0.05, remaining))
-    if stop is not None:
-        _signal_group(proc, hard=False)
-        grace_end = time.monotonic() + STOP_GRACE_SECONDS
-        while not _has_exited(proc) and time.monotonic() < grace_end:
-            time.sleep(0.02)
-    _signal_group(proc, hard=True)
-    try:
-        proc.wait(timeout=STOP_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL is not ignorable
-        pass
+        deadline = started + float(timeout_s)
+        stop: str | None = None
+        while not _has_exited(proc):
+            if out.exceeded or err.exceeded:
+                stop = "output"
+                break
+            if cancel_event is not None and cancel_event.is_set():
+                stop = "cancel"
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                stop = "timeout"
+                break
+            wake.wait(min(0.05, remaining))
+        if stop is not None:
+            _signal_group(proc, hard=False)
+            grace_end = time.monotonic() + STOP_GRACE_SECONDS
+            while not _has_exited(proc) and time.monotonic() < grace_end:
+                time.sleep(0.02)
+        _signal_group(proc, hard=True)
+        try:
+            proc.wait(timeout=STOP_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL is not ignorable
+            pass
+    finally:
+        with _LIVE_LOCK:
+            _LIVE_GROUPS.discard(proc.pid)
     duration_ms = int((time.monotonic() - started) * 1000)
     drain_end = time.monotonic() + OUTPUT_DRAIN_SECONDS
     for reader in readers:

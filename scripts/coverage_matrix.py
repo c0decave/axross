@@ -406,10 +406,20 @@ FEATURES: tuple[Feature, ...] = (
             "ui/window_prefs.py",
             "ui/window_move.py",
             "ui/dock_titlebar.py",
+            "ui/dock_frame.py",
+            "ui/dock_fit.py",
         ],
         [
             (
                 "tests/test_workspaces.py::test_e2e_main_window_shortcuts_work_in_a_detached_window",
+                "ui",
+            ),
+            (
+                "tests/test_dock_panels_fit_window.py::test_e2e_panes_conversations_and_player_on_all_workspaces_do_not_overlap",
+                "ui",
+            ),
+            (
+                "tests/test_dock_column_fit.py::test_e2e_five_right_docks_are_tabbed_to_fit_1600x980_and_1280x800",
                 "ui",
             ),
             (
@@ -1129,6 +1139,18 @@ FEATURES: tuple[Feature, ...] = (
     # ------------------------------------------------------------------ system
     _f(
         "System",
+        "bluetooth",
+        "Bluetooth panel: scan, pair, connect, audio output",
+        ["core/bluetooth.py", "resources/extensions/bluetooth.py"],
+        [
+            (
+                "tests/test_bluetooth_panel.py::test_happy_scan_pair_connect_and_use_as_output_e2e",
+                "ui",
+            )
+        ],
+    ),
+    _f(
+        "System",
         "extensions",
         "Extensions host, manager and small bundled extensions",
         [
@@ -1201,6 +1223,22 @@ FEATURES: tuple[Feature, ...] = (
             ),
             (
                 "tests/test_log_dock_batching.py::test_e2e_the_main_windows_log_dock_takes_a_burst_in_few_edits",
+                "ui",
+            ),
+        ],
+    ),
+    _f(
+        "System",
+        "logging",
+        "Logging per area: Settings > Logging, repeat collapse, Log dock area filter",
+        ["core/log_areas.py", "core/log_config.py", "ui/logging_settings_page.py"],
+        [
+            (
+                "tests/test_logging_settings_page.py::test_e2e_settings_dialog_area_level_reaches_logging_the_log_dock_and_the_next_start",
+                "ui",
+            ),
+            (
+                "tests/test_log_dock_areas.py::test_e2e_the_main_windows_log_dock_filters_by_area",
                 "ui",
             ),
         ],

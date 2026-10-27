@@ -182,7 +182,8 @@ def test_release_the_binary_carries_the_licence_texts(flavor, path):
                 missing.append(f"python {pypi}")
     if "licenses/system/LIBRARIES.txt" in names:
         manifest = archive.extract("licenses/system/LIBRARIES.txt").decode("utf-8")
-        listed = dict(line.split("\t", 1) for line in manifest.splitlines() if line.strip())
+        listed = {line.split("\t")[0]: line.split("\t")[1]
+                  for line in manifest.splitlines() if line.strip()}
     else:
         missing.append("licenses/system/LIBRARIES.txt")
         listed = {}

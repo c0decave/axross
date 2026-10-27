@@ -46,6 +46,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from core import process_launcher
+from core.structured_log import log_event
 
 log = logging.getLogger(__name__)
 
@@ -767,9 +768,14 @@ class McpClient:
             self._transport = _Http(config.url, token, config.timeout)
         try:
             self.server_info = self._initialize()
-        except Exception:
+        except Exception as exc:
+            log.warning("mcp client: the server %r did not start: %s", config.name, exc)
             self.close()
             raise
+        log_event(log, logging.INFO, "mcp.client.up", server=config.name,
+                  transport=config.transport, container=bool(config.container),
+                  server_name=str(self.server_info.get("name", ""))[:80],
+                  server_version=str(self.server_info.get("version", ""))[:40])
 
     def _call(self, method: str, params: dict) -> dict:
         with self._lock:
@@ -852,6 +858,7 @@ class McpClient:
             self._transport.close()
         except Exception:  # noqa: BLE001 - closing is best effort
             log.debug("mcp client: closing %s failed", self.config.name, exc_info=True)
+        log_event(log, logging.INFO, "mcp.client.closed", server=self.config.name)
 
 
 def _credentials_digest(token: str, secrets: dict) -> str:

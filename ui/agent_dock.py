@@ -6,7 +6,9 @@ one JSON file each and come back at the next start when "Keep tabs" is on
 (Tools > Agent Settings…).
 
 A tab can be detached into a panel of its own (tab menu > Detach as Panel,
-or dragged out of the tab bar) and attached back; Tools > New Agent Window
+or dragged out of the tab bar) and attached back, or sent straight onto a
+workspace (tab menu > Send to Workspace > a workspace or New Workspace, a
+panel laid out there in one step); Tools > New Agent Window
 opens a new conversation as such a panel (ui.agent_panels). A detached
 conversation stays a tab of this dock in all but the place it is shown:
 voice, settings, the link lamp and agent events cover it as well.
@@ -75,6 +77,7 @@ from core.agent_session import DETACHED_PLACES, AgentSession, SessionStore
 from core.mcp_client import McpClientPool
 from core.i18n import tr
 from ui.agent_panels import AgentPanel, DetachTabBar, alive, weak_call
+from ui.dock_frame import framed
 
 log = logging.getLogger(__name__)
 
@@ -2056,7 +2059,8 @@ class AgentDock(QDockWidget):
         self.new_window_button.clicked.connect(lambda: self.new_window())
         corner_row.addWidget(self.new_window_button)
         self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
-        self.setWidget(self.tabs)
+        # In a scroll area: the dock's smallest size is not its tabs' (ui.dock_frame).
+        self.setWidget(framed(self.tabs, self))
         QShortcut(QKeySequence("Ctrl+T"), self.tabs, activated=lambda: self.new_tab(),
                   context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
@@ -2375,6 +2379,11 @@ class AgentDock(QDockWidget):
             return menu
         menu.addAction(tr("Detach as Panel")).triggered.connect(
             lambda _checked=False, t=tab: self.detach_tab(t))
+        fill = getattr(self.panel_host, "fill_workspace_targets", None)
+        if fill is not None:
+            # Send to Workspace ▸: detached and laid out there in one step.
+            send = menu.addMenu(tr("Send to Workspace"))
+            fill(send, lambda ws, t=tab: self.send_tab_to_workspace(t, ws))
         menu.addAction(tr("Rename…")).triggered.connect(
             lambda _checked=False, t=tab: self.rename_tab(self.tabs.indexOf(t)))
         menu.addAction(tr("Apply Profile…")).triggered.connect(
@@ -2404,6 +2413,39 @@ class AgentDock(QDockWidget):
         tab.session.detached = "all"
         self._save(tab)
         log.info("Agent conversation %s detached", tab.session.id)
+        return panel
+
+    def send_tab_to_workspace(self, tab, ws) -> AgentPanel | None:
+        """Send to Workspace on a tab: detach *tab* into a panel and lay it
+        out on workspace *ws* of the window - with *ws* None on a new
+        workspace of its own, where the conversation is the only pane. The
+        panel, or None when the window has no workspaces, *ws* is not one
+        of them, no workspace can be added, or *tab* is no tab of this
+        dock: the tab then stays where it is."""
+        host = self.panel_host
+        if host is None or not hasattr(host, "move_extension_panel"):
+            return None
+        if not isinstance(tab, AgentTab) or tab.dock is not self or self.tabs.indexOf(tab) < 0:
+            return None
+        if ws is None and not host.can_add_workspace():
+            return None
+        if ws is not None and ws not in host.workspaces():
+            return None
+        panel = self.detach_tab(tab)
+        if panel is None:
+            return None
+        if ws is None:
+            moved = host.move_extension_panel_to_new_workspace(panel) is not None
+        else:
+            moved = host.move_extension_panel(panel, ws)
+        if not moved:
+            # Checked above, so not expected: the conversation goes back
+            # rather than staying on All Workspaces unasked.
+            log.warning("Agent conversation %s: no place on a workspace, back as a tab",
+                        tab.session.id)
+            self.attach_panel(panel)
+            return None
+        tab.input.setFocus()
         return panel
 
     def _detach(self, tab: AgentTab) -> AgentPanel:

@@ -336,13 +336,14 @@ Weitere Screenshots, jeder mit Erklärung: **[die Slideshow](slideshow_de.md)**.
 
 33. **Media Player.** Ein Extension-Panel für MP3, FLAC, Ogg, Opus, AAC
     und mehr: Playlist mit Drag & Drop und M3U, Seeking, Shuffle und
-    Repeat, ein einklappbarer 10-Band-Equalizer mit Presets, zehn
+    Repeat, ein einklappbarer 10-Band-Equalizer mit Presets, achtzehn
     Visualisierungen (Spektrum, gespiegelt, radial, Linien- und
     Polar-Spektrum, Waterfall, Oszilloskop, Stereo-Scope, VU-Meter,
-    Starfield), zwischen denen ein Klick darauf wechselt, in Farbschemata
-    oder eigenen Farben, im Fullscreen wie ein Screensaver oder in einem
-    eigenen Fenster, eine einklappbare Playlist, Titel, Interpret und
-    Cover.
+    Starfield, LED equalizer, Particle columns, Wave ribbon, Ridgelines,
+    Spectrum terrain, 3D ring, Kaleidoscope, Bell curves), zwischen denen
+    ein Klick darauf wechselt, in Farbschemata oder eigenen Farben, im
+    Fullscreen wie ein Screensaver oder in einem eigenen Fenster, eine
+    einklappbare Playlist, Titel, Interpret und Cover.
 
 34. **Bookmarks für viele Orte.** Mehrfachauswahl, Gruppen sortiert nach
     Name, Pfad oder Alter, Terminal-Bookmarks (auf einem Profil, einem

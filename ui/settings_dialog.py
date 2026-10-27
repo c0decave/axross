@@ -37,6 +37,9 @@ Extensions  which extensions are switched on                 extensions.json
 Updates     check for updates at start, download them        settings.json
             automatically, Check Now, the last check
             (ui.update_ui)
+Logging     the overall level, a level per area, the log     logging.json
+            file's size and count, the terminal, collapsing
+            repeated messages (ui.logging_settings_page)
 ==========  ===============================================  ==============================
 
 **OK, Apply, Cancel - one rule for every page.** Only pages whose values
@@ -125,6 +128,7 @@ CATEGORY_ORDER: tuple[str, ...] = (
     "security",
     "extensions",
     "updates",
+    "logging",
 )
 
 
@@ -846,6 +850,18 @@ def _updates_page(parent, window):
     return updates_page(parent, window)
 
 
+def _logging_page(parent, window):
+    from ui.logging_settings_page import LoggingPage
+
+    return LoggingPage(parent)
+
+
+def _logging_keywords() -> tuple[str, ...]:
+    from ui.logging_settings_page import KEYWORDS
+
+    return KEYWORDS
+
+
 def _agent_sub_pages() -> tuple[tuple[str, str], ...]:
     from ui.agent_settings_dialog import AGENT_TABS
 
@@ -885,6 +901,7 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "updates": ("Updates", _updates_page,
                 ("update", "updates", "version", "github", "download", "release", "upgrade"),
                 None),
+    "logging": ("Logging", _logging_page, _logging_keywords(), None),
 }
 
 #: Called after a page saved: id -> window method name.

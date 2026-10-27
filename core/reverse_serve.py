@@ -227,6 +227,49 @@ def _mkdir_best_effort(backend, path: str) -> None:
         pass
 
 
+def _is_absent(backend, path: str, exc: OSError) -> bool:
+    """Whether *exc*, raised by a stat or a listing of *path*, means the
+    path is not there. A client takes 404 / NoSuchKey / an empty listing
+    for "gone" (rclone sync, ``aws s3 sync --delete``) and deletes its
+    copy, so a timeout or a refusal must never read as one. Backends whose
+    stat raises a plain OSError for a missing path (RamFS) are asked
+    exists(), which says False only for "not found"."""
+    if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
+        return True
+    if isinstance(exc, PermissionError):
+        return False
+    exists = getattr(backend, "exists", None)
+    if not callable(exists):
+        return False
+    try:
+        return not exists(path)
+    except Exception as probe_exc:  # noqa: BLE001 - unknown is not gone
+        log.debug("reverse-serve: exists(%s) failed: %s", path, probe_exc)
+        return False
+
+
+def _stat_entry(backend, path: str):
+    """``backend.stat(path)``, or None when the path is not there. Any
+    other failure is raised (see :func:`_is_absent`)."""
+    try:
+        return backend.stat(path)
+    except OSError as exc:
+        if _is_absent(backend, path, exc):
+            return None
+        raise
+
+
+def _list_entries(backend, path: str) -> list | None:
+    """``backend.list_dir(path)``, or None when the folder is not there.
+    Any other failure is raised: an unlistable folder is no empty one."""
+    try:
+        return backend.list_dir(path)
+    except OSError as exc:
+        if _is_absent(backend, path, exc):
+            return None
+        raise
+
+
 def _entry_size(item) -> int:
     return int(getattr(item, "size", 0) or 0)
 
@@ -384,6 +427,16 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if body:
             self.wfile.write(body)
+
+    def _send_failure(self, what: str, exc: OSError) -> None:
+        """A stat or listing that failed: 403 for a refusal, 500 else -
+        never 404, which a client takes for "gone"."""
+        log.warning("reverse-%s %s failed: %s", self._flavour_name(), what, exc)
+        code = 403 if isinstance(exc, PermissionError) else 500
+        self._send_simple(code, str(exc).encode("utf-8"))
+
+    def _flavour_name(self) -> str:
+        return "s3" if isinstance(self, _S3Handler) else "dav"
 
     def _read_body(self) -> bytes:
         length = self._content_length(default=0)
@@ -602,6 +655,15 @@ class _S3Handler(_BaseHandler):
         directory under ``config.root_path``."""
         return _rooted_join(self.config.backend, self.config.root_path, bucket, key)
 
+    def _s3_failure(self, what: str, exc: OSError) -> None:
+        """A stat or listing that failed: AccessDenied for a refusal,
+        InternalError else - never NoSuchKey / NoSuchBucket."""
+        log.warning("reverse-s3 %s failed: %s", what, exc)
+        if isinstance(exc, PermissionError):
+            self._s3_error(403, "AccessDenied", str(exc))
+        else:
+            self._s3_error(500, "InternalError", str(exc))
+
     def _s3_error(self, code: int, s3_code: str, message: str) -> None:
         body_xml = (
             "<?xml version='1.0' encoding='UTF-8'?>"
@@ -664,11 +726,21 @@ class _S3Handler(_BaseHandler):
             after = start_after
         bucket_root = _rooted_join(self.config.backend, self.config.root_path, bucket)
         try:
+            root_item = _stat_entry(self.config.backend, bucket_root)
+        except OSError as exc:
+            self._s3_failure(f"list {bucket}", exc)
+            return
+        if root_item is None or not getattr(root_item, "is_dir", False):
+            self._s3_error(404, "NoSuchBucket", "bucket not found")
+            return
+        try:
             entries, walk_truncated = _walk_keys(
                 self.config.backend, bucket_root, prefix, MAX_LIST_WALK_KEYS
             )
         except OSError as exc:
-            self._s3_error(404, "NoSuchBucket", str(exc))
+            # A folder that could not be listed: its keys would be missing
+            # from a listing that says it is complete.
+            self._s3_failure(f"list {bucket}", exc)
             return
         if walk_truncated:
             # Pages are cut from the sorted whole: a walk that stopped
@@ -744,8 +816,11 @@ class _S3Handler(_BaseHandler):
     def _handle_head_bucket(self, bucket: str) -> None:
         bucket_root = _rooted_join(self.config.backend, self.config.root_path, bucket)
         try:
-            self.config.backend.stat(bucket_root)
-        except OSError:
+            item = _stat_entry(self.config.backend, bucket_root)
+        except OSError as exc:
+            self._s3_failure(f"HEAD {bucket}", exc)
+            return
+        if item is None or not getattr(item, "is_dir", False):
             self._s3_error(404, "NoSuchBucket", "bucket not found")
             return
         self._send_simple(200)
@@ -753,9 +828,11 @@ class _S3Handler(_BaseHandler):
     def _handle_get_object(self, bucket: str, key: str) -> None:
         path = self._backend_path_for(bucket, key)
         try:
-            item = self.config.backend.stat(path)
+            item = _stat_entry(self.config.backend, path)
         except OSError as exc:
-            log.debug("reverse-s3 GET stat failed: %s", exc)
+            self._s3_failure(f"GET {path}", exc)
+            return
+        if item is None:
             self._s3_error(404, "NoSuchKey", "key not found")
             return
         if getattr(item, "is_dir", False):
@@ -788,8 +865,11 @@ class _S3Handler(_BaseHandler):
     def _handle_head_object(self, bucket: str, key: str) -> None:
         path = self._backend_path_for(bucket, key)
         try:
-            item = self.config.backend.stat(path)
-        except OSError:
+            item = _stat_entry(self.config.backend, path)
+        except OSError as exc:
+            self._s3_failure(f"HEAD {path}", exc)
+            return
+        if item is None:
             self._s3_error(404, "NoSuchKey", "key not found")
             return
         if getattr(item, "is_dir", False):
@@ -936,9 +1016,11 @@ def _walk_keys(
         if len(out) >= max_keys:
             truncated = True
             break
-        try:
-            entries = backend.list_dir(path)
-        except OSError:
+        # A folder that vanished since its parent was listed is gone; any
+        # other failure raises - skipping it would drop its keys from a
+        # listing that says it is complete.
+        entries = _list_entries(backend, path)
+        if entries is None:
             continue
         for item in entries:
             full = _backend_join(backend, path, item.name)
@@ -1060,8 +1142,11 @@ class _DAVHandler(_BaseHandler):
         if path is None:
             return
         try:
-            item = self.config.backend.stat(path)
-        except OSError:
+            item = _stat_entry(self.config.backend, path)
+        except OSError as exc:
+            self._send_failure(f"stat {path}", exc)
+            return
+        if item is None:
             self._send_simple(404)
             return
         self.send_response(200)
@@ -1082,8 +1167,11 @@ class _DAVHandler(_BaseHandler):
         if path is None:
             return
         try:
-            item = self.config.backend.stat(path)
-        except OSError:
+            item = _stat_entry(self.config.backend, path)
+        except OSError as exc:
+            self._send_failure(f"stat {path}", exc)
+            return
+        if item is None:
             self._send_simple(404)
             return
         if getattr(item, "is_dir", False):
@@ -1277,16 +1365,24 @@ class _DAVHandler(_BaseHandler):
             return
         depth = self.headers.get("Depth", "1").strip()
         try:
-            item = self.config.backend.stat(path)
-        except OSError:
+            item = _stat_entry(self.config.backend, path)
+        except OSError as exc:
+            self._send_failure(f"stat {path}", exc)
+            return
+        if item is None:
             self._send_simple(404)
             return
         items: list[tuple[str, Any]] = [(self._url_for(path), item)]
         if depth in ("1", "infinity") and getattr(item, "is_dir", False):
             try:
-                entries = self.config.backend.list_dir(path)
-            except OSError:
-                entries = []
+                entries = _list_entries(self.config.backend, path)
+            except OSError as exc:
+                # An unlistable folder is no empty folder.
+                self._send_failure(f"PROPFIND {path}", exc)
+                return
+            if entries is None:
+                self._send_simple(404)
+                return
             for child in entries:
                 child_path = _backend_join(self.config.backend, path, child.name)
                 items.append((self._url_for(child_path), child))

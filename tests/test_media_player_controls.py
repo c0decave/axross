@@ -1187,8 +1187,9 @@ def test_happy_a_remote_drop_goes_through_the_background_and_temp(tmp_path, monk
         mime.setData(MP.TRANSFER_MIME_TYPE, b"{}")
         assert drop_on(panel.playlist, mime)
         assert panel.playlist.count() == 0 and len(jobs) == 1  # nothing on the GUI thread
-        work, done, _error = jobs[0]
-        done(work())
+        while jobs:  # the listing, then one copy per track
+            work, done, _error = jobs.pop(0)
+            done(work())
         assert rows(panel) == ["a.wav", "b.wav"]
         assert all(MP._is_temp_copy(panel.playlist.item(i).data(Qt.ItemDataRole.UserRole))
                    for i in range(2))

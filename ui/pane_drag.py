@@ -1,7 +1,8 @@
 """Dragging panes to rearrange them - the part file panes and terminal panes
 share.
 
-A pane's header is the drag handle (:class:`DraggableHeader`); the drag
+A pane's header is the drag handle (:class:`DraggableHeader`), and its
+right click offers Send to Workspace (ui.workspaces); the drag
 carries only :data:`PANE_MIME_TYPE` with the dragged pane's ``id()`` - no
 text, so neither a terminal nor an editor takes it as input. A pane that
 takes the drop shows where it would land (:class:`DropOverlay`) and asks
@@ -16,7 +17,7 @@ import logging
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt
 from PyQt6.QtGui import QDrag, QMouseEvent, QPainter, QPixmap
-from PyQt6.QtWidgets import QLabel, QWidget
+from PyQt6.QtWidgets import QLabel, QMenu, QWidget
 
 from core.i18n import tr
 from ui.layout_utils import detect_drop_zone
@@ -86,6 +87,17 @@ class DraggableHeader(QLabel):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         self._drag_start = None
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt override
+        """A right click on the header: Send to Workspace ▸ for the pane -
+        no menu at all where the pane cannot move (not on a workspace)."""
+        from ui.workspaces import add_send_to_workspace_menu
+
+        menu = QMenu(self)
+        if add_send_to_workspace_menu(self._pane, menu) is not None:
+            menu.exec(event.globalPos())
+        menu.deleteLater()
+        event.accept()
 
     def _start_pane_drag(self) -> None:
         start_pane_drag(self, self._pane)

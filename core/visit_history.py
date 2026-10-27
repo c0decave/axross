@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -146,7 +147,7 @@ class HostVisit:
             host=str(d.get("host", "")),
             username=str(d.get("username", "")),
             last_path=str(d.get("last_path", ""))[:MAX_PATH_LEN],
-            last_seen=float(d.get("last_seen", 0.0) or 0.0),
+            last_seen=_finite_time(d.get("last_seen")),
             visit_count=int(d.get("visit_count", 0) or 0),
             recent_ops=[
                 _sanitize_op_entry(x) for x in d.get("recent_ops", []) if isinstance(x, dict)
@@ -154,12 +155,20 @@ class HostVisit:
         )
 
 
+def _finite_time(value) -> float:
+    """Epoch seconds from a hand-editable field; 0.0 ("never") for a
+    missing, non-numeric or non-finite one - JSON's Infinity made
+    format_visit raise OverflowError, NaN sorted the list at random."""
+    seconds = float(value or 0.0)
+    return seconds if math.isfinite(seconds) else 0.0
+
+
 def _sanitize_op_entry(d: dict) -> dict:
     """Clamp + coerce one ``recent_ops`` entry. Hostile JSON could
     otherwise blow the file size up or smuggle CR/LF for log
     poisoning."""
     return {
-        "ts": float(d.get("ts", 0.0) or 0.0),
+        "ts": _finite_time(d.get("ts")),
         "verb": str(d.get("verb", ""))[:32],
         "desc": str(d.get("desc", ""))[:MAX_OP_DESC_LEN].replace("\n", " ").replace("\r", ""),
     }

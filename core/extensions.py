@@ -254,7 +254,9 @@ def _read_settings() -> tuple[dict, bool]:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}, True
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # UnicodeDecodeError: a file that is not UTF-8 - read_text() raises
+        # it, and the main window reads this while it is built.
         log.warning("Cannot read %s: %s", path, exc)
         return {}, False
     try:

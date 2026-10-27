@@ -1,10 +1,11 @@
 """Agent conversations as panels of their own.
 
 A tab of the Agent dock (ui.agent_dock) is *detached* into an
-:class:`AgentPanel` - from the tab's right-click menu (Detach as Panel) or
-by dragging the tab out of the tab bar - and *attached* back from the
-panel's title bar (Attach to Agent Dock). Tools > New Agent Window opens a
-fresh conversation directly as such a panel.
+:class:`AgentPanel` - from the tab's right-click menu (Detach as Panel, or
+Send to Workspace, which lays the panel out on the picked workspace or a
+new one in the same step) or by dragging the tab out of the tab bar - and
+*attached* back from the panel's title bar (Attach to Agent Dock). Tools >
+New Agent Window opens a fresh conversation directly as such a panel.
 
 The panel carries the tab itself: the same AgentTab widget with its
 session, its running task, its open questions and its transcript moves
@@ -15,9 +16,9 @@ a detached conversation as well.
 
 An AgentPanel is an extension panel (ui.extension_panels.ExtensionDock):
 it is on All Workspaces (the window's dock area) or laid out on a
-workspace like a pane, moved from its title bar or the Add Extension Panel
-menu, dragged by its title bar and takes dragged panes. Unlike an
-extension's panel, its [x] closes the conversation - asking first when
+workspace like a pane, moved from its title bar (Send to Workspace) or the
+Add Extension Panel menu, dragged by its title bar and takes dragged
+panes. Unlike an extension's panel, its [x] closes the conversation - asking first when
 there is anything to lose, as closing a tab does - and a closed workspace
 leaves it on screen on All Workspaces instead of hiding it.
 

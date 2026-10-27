@@ -72,9 +72,20 @@ def test_happy_system_libraries_bring_their_rpm_licence_files(tmp_path):
     binaries = [("libssl.so.3", "/usr/lib64/libssl.so.3", "BINARY"),
                 ("PIL/_imaging.so", "/site/PIL/_imaging.so", "BINARY")]
     datas, manifest = BL.system_licence_datas(
-        binaries, query=lambda path: "openssl-libs", licence_files=lambda pkg: [lic])
+        binaries, query=lambda path: "openssl-libs", licence_files=lambda pkg: [lic],
+        version=lambda pkg: "3.5.8-2.el9_8")
     assert datas == [(lic, "licenses/system/openssl-libs")]
-    assert manifest == ["libssl.so.3\topenssl-libs"]
+    assert manifest == ["libssl.so.3\topenssl-libs\t3.5.8-2.el9_8"]
+
+
+def test_happy_rpm_version_is_version_and_release():
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return "3.5.8-2.el9_8\n"
+    assert BL.rpm_version("openssl-libs", run=run) == "3.5.8-2.el9_8"
+    assert calls == [["-q", "--qf", "%{VERSION}-%{RELEASE}\n", "openssl-libs"]]
 
 
 def _fake_rpm(tmp_path, listed: dict[str, list[str]], sources: dict[str, str],
@@ -134,8 +145,19 @@ def test_sad_a_distribution_without_files_or_missing_files_gives_nothing(tmp_pat
 def test_sad_an_unowned_library_or_a_failing_rpm_is_listed_without_texts():
     binaries = [("libfoo.so.1", "/usr/lib64/libfoo.so.1", "BINARY")]
     datas, manifest = BL.system_licence_datas(binaries, query=lambda path: None,
-                                              licence_files=lambda pkg: [])
-    assert datas == [] and manifest == ["libfoo.so.1\t-"]
+                                              licence_files=lambda pkg: [],
+                                              version=lambda pkg: "1-1")
+    assert datas == [] and manifest == ["libfoo.so.1\t-\t-"]
+
+
+def test_sad_a_package_whose_version_rpm_cannot_tell_is_listed_with_a_dash():
+    binaries = [("libfoo.so.1", "/usr/lib64/libfoo.so.1", "BINARY")]
+    _, manifest = BL.system_licence_datas(binaries, query=lambda path: "foo",
+                                          licence_files=lambda pkg: [],
+                                          version=lambda pkg: None)
+    assert manifest == ["libfoo.so.1\tfoo\t-"]
+    assert BL.rpm_version("foo", run=lambda args: None) is None
+    assert BL.rpm_version("foo", run=lambda args: "package foo is not installed\n") is None
 
 
 def test_happy_a_licence_kept_as_documentation_is_found(tmp_path):
@@ -189,10 +211,13 @@ def test_edge_libraries_in_subfolders_are_not_system_libraries():
 def test_edge_one_package_for_many_libraries_is_collected_once():
     binaries = [("libkrb5.so.3", "/usr/lib64/libkrb5.so.3", "BINARY"),
                 ("libk5crypto.so.3", "/usr/lib64/libk5crypto.so.3", "BINARY")]
+    asked = []
     datas, manifest = BL.system_licence_datas(binaries, query=lambda path: "krb5-libs",
-                                              licence_files=lambda pkg: ["/l/krb5/LICENSE"])
+                                              licence_files=lambda pkg: ["/l/krb5/LICENSE"],
+                                              version=lambda pkg: asked.append(pkg) or "1.21")
     assert datas == [("/l/krb5/LICENSE", "licenses/system/krb5-libs")]
-    assert manifest == ["libk5crypto.so.3\tkrb5-libs", "libkrb5.so.3\tkrb5-libs"]
+    assert manifest == ["libk5crypto.so.3\tkrb5-libs\t1.21", "libkrb5.so.3\tkrb5-libs\t1.21"]
+    assert asked == ["krb5-libs"]
 
 
 def test_edge_two_licence_files_with_one_name_stay_apart():

@@ -506,22 +506,26 @@ class _WebDavClient:
         resp = self._request("DELETE", path)
         self._check_status(resp, allowed=(200, 204, 404))
 
-    def move(self, src: str, dst: str) -> None:
-        dst_url = self._full_url(dst)
-        resp = self._request(
-            "MOVE",
-            src,
-            headers={"Destination": dst_url, "Overwrite": "T"},
-        )
-        self._check_status(resp, allowed=(200, 201, 204))
+    def move(self, src: str, dst: str, *, overwrite: bool = False) -> None:
+        self._move_or_copy("MOVE", src, dst, overwrite)
 
-    def copy(self, src: str, dst: str) -> None:
-        dst_url = self._full_url(dst)
+    def copy(self, src: str, dst: str, *, overwrite: bool = False) -> None:
+        self._move_or_copy("COPY", src, dst, overwrite)
+
+    def _move_or_copy(self, method: str, src: str, dst: str, overwrite: bool) -> None:
+        """MOVE / COPY with ``Overwrite: F`` unless *overwrite*. With T the
+        server DELETES an existing destination first (RFC 4918 9.8.4,
+        9.9.3), a whole folder included. A taken destination under F is
+        412: FileExistsError."""
         resp = self._request(
-            "COPY",
+            method,
             src,
-            headers={"Destination": dst_url, "Overwrite": "T"},
+            headers={"Destination": self._full_url(dst), "Overwrite": "T" if overwrite else "F"},
         )
+        if resp.status_code == 412 and not overwrite:
+            raise FileExistsError(
+                errno.EEXIST, f"WebDAV {method}: the destination exists", dst
+            )
         self._check_status(resp, allowed=(200, 201, 204))
 
     def quota(self, path: str = "/") -> tuple[int, int, int]:
@@ -722,7 +726,8 @@ class WebDavSession(SessionLifecycle):
             return True
         except FileNotFoundError:
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("WebDAV liveness check failed: %s", exc)
             return False
 
     def close(self) -> None:
@@ -829,9 +834,30 @@ class WebDavSession(SessionLifecycle):
 
     def rename(self, src: str, dst: str) -> None:
         try:
-            self._client.move(self._norm(src), self._norm(dst))
+            self._guarded_move_or_copy(self._client.move, src, dst, "rename")
         except WebDavRequestError as e:
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
+
+    def _guarded_move_or_copy(self, call, src: str, dst: str, what: str) -> None:
+        """*call* (the client's move or copy) without letting the server
+        delete a folder to make room. A taken destination is replaced only
+        when both ends are files - what rename and copy do on every other
+        backend; a folder at either end is refused and nothing changes."""
+        src, dst = self._norm(src), self._norm(dst)
+        try:
+            call(src, dst)
+            return
+        except FileExistsError:
+            pass
+        if self.is_dir(dst):
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot {what} {src} -> {dst}: the destination is a folder", dst
+            )
+        if self.is_dir(src):
+            raise FileExistsError(
+                errno.EEXIST, f"Cannot {what} the folder {src} over the file {dst}", dst
+            )
+        call(src, dst, overwrite=True)
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         if append:
@@ -857,7 +883,7 @@ class WebDavSession(SessionLifecycle):
     def copy(self, src: str, dst: str) -> None:
         """WebDAV COPY method — server-side, no client bytes."""
         try:
-            self._client.copy(self._norm(src), self._norm(dst))
+            self._guarded_move_or_copy(self._client.copy, src, dst, "copy")
         except WebDavRequestError as exc:
             raise OSError(f"WebDAV copy {src} -> {dst} failed: {exc}") from exc
 

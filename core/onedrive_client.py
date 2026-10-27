@@ -588,7 +588,8 @@ class OneDriveSession(SessionLifecycle):
             url = f"{GRAPH_BASE}{self._drive_prefix()}"
             self._graph_get(url)
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("OneDrive liveness check failed: %s", exc)
             return False
 
     def close(self) -> None:

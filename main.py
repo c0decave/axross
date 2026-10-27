@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import logging.handlers
 import os
 import subprocess
 import sys
@@ -16,39 +15,12 @@ LOG_FILE = LOG_DIR / "axross.log"
 
 
 def setup_logging(debug: bool = False, verbose: bool = False) -> None:
-    """The log file always; with *debug* (DEBUG) or *verbose* (INFO) the
-    terminal too."""
-    level = logging.DEBUG if debug else logging.INFO
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(LOG_DIR, 0o700)
-    except OSError:
-        pass
+    """The log file always, the levels and the rest of Settings > Logging
+    (core.log_config); --debug (DEBUG) and --verbose (INFO) lower every
+    axross area to that level for this run and turn the terminal on."""
+    from core import log_config
 
-    root = logging.getLogger()
-    root.setLevel(level)
-    for handler in list(root.handlers):
-        if getattr(handler, "_axross_handler", False):
-            root.removeHandler(handler)
-
-    file_handler = logging.handlers.RotatingFileHandler(
-        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    file_handler._axross_handler = True  # type: ignore[attr-defined]
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    )
-    root.addHandler(file_handler)
-    try:
-        os.chmod(LOG_FILE, 0o600)
-    except OSError:
-        pass
-
-    if debug or verbose:
-        console = logging.StreamHandler(sys.stderr)
-        console._axross_handler = True  # type: ignore[attr-defined]
-        console.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
-        root.addHandler(console)
+    log_config.configure(LOG_FILE, debug=debug, verbose=verbose)
 
 
 CRASH_FILE_NAME = "crash.log"
@@ -472,9 +444,13 @@ def main() -> int:
     # First of all: a one-file bundle keeps reading its modules from the file
     # it started from, even after an update renamed a new version over it
     # (core.frozen_archive; before, the next late import failed in zlib).
-    from core.frozen_archive import pin_frozen_archive
+    from core.frozen_archive import lock_bundle_dir, pin_frozen_archive
 
     pin_frozen_archive()
+    # And its unpacked folder (/tmp/_MEI*) is locked against the daily temp
+    # cleaner, which deleted the files a long-running process had not
+    # touched since its start (core.frozen_archive.lock_bundle_dir).
+    lock_bundle_dir()
     # Before anything can start a child: give the process the environment
     # it started with (a frozen bundle points LD_LIBRARY_PATH, QT_PLUGIN_PATH
     # and more into its unpacked folder, and host programs then load our

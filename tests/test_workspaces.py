@@ -538,12 +538,12 @@ def test_edge_workspace_menu_lists_and_moves(window):
     menu.aboutToShow.emit()
     labels = [a.text().replace("&", "") for a in menu.actions()]
     assert "New Workspace" in labels and "Rename Workspace…" in labels
-    move = next(a for a in menu.actions() if a.menu() and "Move Pane" in a.text().replace("&", ""))
+    move = next(a for a in menu.actions() if a.menu() and "Send Pane" in a.text().replace("&", ""))
     move.menu().aboutToShow.emit()
     targets = [a.text() for a in move.menu().actions()]
-    assert "Second" in targets and "Workspace 1" not in targets
+    assert "&2: Second" in targets and not any("Workspace 1" in t for t in targets)
     pane = window._active_pane
-    next(a for a in move.menu().actions() if a.text() == "Second").trigger()
+    next(a for a in move.menu().actions() if a.text() == "&2: Second").trigger()
     assert window.workspace_of(pane).name == "Second"
 
 
@@ -582,8 +582,8 @@ def test_happy_the_terminal_header_offers_the_workspaces(window):
     menu = term.workspace_menu()
     menu.aboutToShow.emit()
     labels = [a.text() for a in menu.actions()]
-    assert "Other" in labels and "Workspace 1" not in labels and "New Workspace" in labels
-    next(a for a in menu.actions() if a.text() == "Other").trigger()
+    assert "&2: Other" in labels and "&1: Workspace 1" not in labels and "New Workspace" in labels
+    next(a for a in menu.actions() if a.text() == "&2: Other").trigger()
     assert window.workspace_of(term).name == "Other"
     term.shutdown()
 
@@ -596,9 +596,9 @@ def test_happy_the_workspace_menu_moves_a_focused_terminal(window, monkeypatch):
     assert window._pane_to_move() is term
     menu = window._workspace_menu
     menu.aboutToShow.emit()
-    move = next(a for a in menu.actions() if a.menu() and "Move Pane" in a.text())
+    move = next(a for a in menu.actions() if a.menu() and "Send Pane" in a.text())
     move.menu().aboutToShow.emit()
-    next(a for a in move.menu().actions() if a.text() == "Target").trigger()
+    next(a for a in move.menu().actions() if a.text() == "&2: Target").trigger()
     assert window.workspace_of(term).name == "Target"
     term.shutdown()
 
@@ -748,7 +748,7 @@ def test_sad_unpinning_a_never_pinned_terminal_changes_nothing(window):
 
 
 # -- a workspace name is shown as typed (bughunt 2026-10-22: "R&D" showed as
-# "RD" with an underlined D in the tab, the Workspace menu and the Move Pane
+# "RD" with an underlined D in the tab, the Workspace menu and the Send Pane
 # menus, where "&" marks a mnemonic) -----------------------------------------------
 
 
@@ -767,9 +767,9 @@ def test_edge_an_ampersand_in_a_workspace_name_is_shown_as_typed(window):
     menu = window._workspace_menu
     menu.aboutToShow.emit()
     assert "R&D" in [_shown(a.text()) for a in menu.actions()]
-    move = next(a for a in menu.actions() if a.menu() and "Move Pane" in a.text())
+    move = next(a for a in menu.actions() if a.menu() and "Send Pane" in a.text())
     move.menu().aboutToShow.emit()
-    target = next(a for a in move.menu().actions() if _shown(a.text()) == "R&D")
+    target = next(a for a in move.menu().actions() if _shown(a.text()) == "2: R&D")
     pane = window._active_pane
     target.trigger()
     assert window.workspace_of(pane) is ws

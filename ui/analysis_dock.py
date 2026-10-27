@@ -60,6 +60,7 @@ from core import analysis_settings as AS
 from core import llm_profiles as LP
 from core.file_analysis import AnalysisResult, FileAnalyzer, Target
 from core.i18n import tr
+from ui.dock_frame import framed
 
 log = logging.getLogger(__name__)
 
@@ -451,7 +452,8 @@ class AnalysisDock(QDockWidget):
         buttons.addWidget(self.again)
         buttons.addWidget(self.llm_button)
         layout.addLayout(buttons)
-        self.setWidget(body)
+        # In a scroll area: the dock's smallest size is not its body's (ui.dock_frame).
+        self.setWidget(framed(body, self))
         self._set_mode_icon(False)
         self.refresh_profiles()  # again on Show and after the profile dialog, never per selection
         if self.ensure_available():

@@ -111,17 +111,25 @@ panel de origen y de destino.
 - **Detach to Window** (menú Workspace o clic derecho en el tab) pone el
   workspace en una ventana propia — por ejemplo en otra pantalla. Al
   cerrar esa ventana, el workspace vuelve como tab.
-- **Mover un panel:** **Workspace → Move Pane to Workspace** envía el
-  panel activo a otro workspace (o a uno nuevo); o arrastra la cabecera
-  del panel sobre un panel de otro workspace o ventana. Los paneles de
-  archivos y los de terminal se arrastran igual (un panel de terminal
-  también con su botón ⇄); si mantienes un panel arrastrado medio
+- **Enviar un panel a otro workspace:** clic derecho en el panel →
+  **Send to Workspace** - en la lista de un panel de archivos (sobre un
+  archivo o sobre el área vacía, al final del menú), en la cabecera de un
+  panel o en un terminal - y elige un workspace o **New Workspace**. Los
+  workspaces van numerados como están sus tabs (**1: Workspace 1**,
+  **2: Logs**; uno separado lleva *(window)*), y del 1 al 9 la cifra
+  elige la entrada mientras el menú está abierto. **Workspace → Send Pane
+  to Workspace** hace lo mismo con el panel activo; o arrastra la
+  cabecera del panel sobre un panel de otro workspace o ventana. Los
+  paneles de archivos y los de terminal se arrastran igual (un panel de
+  terminal también con su botón ⇄); un workspace cuyo último panel se va
+  se cierra; si mantienes un panel arrastrado medio
   segundo sobre un tab de workspace, ese tab se abre, así un panel
   llega también a un workspace en segundo plano.
 - **Paneles de extensiones** (Media Player, Drives Overview, Markdown
   Preview, …) están en todos los workspaces hasta que pones uno en un
   workspace: el botón ⇄ de su barra de título (o un clic derecho en
-  ella) ofrece cada workspace, **New Workspace** y **All Workspaces**, y
+  ella, *Send to Workspace*) ofrece cada workspace (el suyo marcado),
+  **New Workspace** y **All Workspaces**, y
   **Workspace → Add Extension Panel** (también en el menú del clic
   derecho del tab) lleva un panel a un workspace. Allí es un panel más:
   solo aparece con su workspace, se va con él cuando se separa en una
@@ -150,7 +158,8 @@ Al cerrar, axross guarda el layout en `session.json`; el siguiente
 arranque lo reconstruye automáticamente:
 
 - el árbol de splitters con sus tamaños, la geometry de la ventana, el
-  layout de los docks (cuáles están abiertos y dónde) y el theme;
+  layout de los docks (cuáles están abiertos y dónde, y qué tabs hizo
+  axross por sí mismo) y el theme;
 - los panels locales en sus carpetas — una carpeta borrada desde
   entonces abre la carpeta home, sin diálogo;
 - los panels de terminal locales como una shell nueva en el mismo
@@ -175,6 +184,33 @@ muestra entonces el layout por defecto con un solo panel. Un
 layout por defecto; el motivo queda en el log. **File > Restore Last
 Session** (**Ctrl+Shift+R**) sigue reconstruyendo el layout guardado
 a petición, y ahí los panels remotos sí conectan.
+
+### Docks: la columna derecha y los tabs automáticos
+
+- La columna de docks de la derecha (Analysis, Agent, conversaciones
+  separadas, extension panels como el Media Player) llega hasta el
+  borde inferior de la ventana; el área inferior (Transfers, Terminal,
+  Log, Console, Scripts) es tan ancha como los panels y la columna de
+  Bookmarks. La columna de Bookmarks termina encima del área inferior,
+  así sus tablas y líneas de terminal siguen anchas.
+- Cuando los docks de una columna necesitan más altura de la que tiene
+  la columna - cada uno una parte útil de su contenido (200 px, o todo
+  si necesita menos), no solo su barra de título -, los docks vecinos
+  se juntan en tabs hasta que caben; los tabs quedan abajo del grupo.
+  Nada se superpone, tampoco cuando un window manager mantiene la
+  ventana más pequeña (tiling, maximizada).
+- Cuando vuelve a haber sitio (ventana más grande, un dock cerrado,
+  flotante o movido a otro lugar), los docks que axross juntó en tabs
+  vuelven a apilarse donde estaban. Los docks que juntaste tú siguen en
+  tabs, y un dock que sacas de un grupo automático no se vuelve a
+  juntar por eso - solo si la columna no pudiera ni siquiera con las
+  barras de título de los docks.
+- Mientras un botón del ratón está pulsado (se arrastra un separador o
+  un dock) nada se mueve; la comprobación llega cuando el resize se ha
+  calmado. Los panels colocados en un workspace son panes allí y no
+  forman parte de ninguna columna.
+- Qué tabs hizo axross se guarda en `session.json` con el layout de los
+  docks, así que tras reiniciar se separan otra vez cuando hay sitio.
 
 ## Transferencias
 
@@ -432,8 +468,15 @@ vuelve a acoplar.
   espectro, espectro reflejado, espectro radial, osciloscopio, VU meter
   estéreo, espectro en línea (eje de frecuencia logarítmico), waterfall
   (espectrograma), espectro polar, stereo scope (goniómetro: L contra
-  R) o un starfield que acelera con el bajo - un clic en ella pasa a la
-  siguiente. Su menú del click derecho lista cada visualización y cada
+  R), un starfield que acelera con el bajo, un ecualizador LED (bloques
+  con un bloque de pico que cae), columnas de partículas (puntos de los
+  que suben chispas con el ritmo), un wave ribbon que gira con el ritmo,
+  ridgelines (el historial del espectro en profundidad bajo un sol a
+  rayas), un terreno del espectro (el historial como paisaje wireframe),
+  un anillo 3D de barras, un caleidoscopio (pétalos reflejados del bajo,
+  los medios y los agudos) o curvas de campana (una por banda) - un clic
+  en ella pasa a la siguiente. Su menú del click derecho lista cada
+  visualización y cada
   esquema de colores (Classic, Fire, Ice, Neon, Mono, *Follow the
   theme*, *Custom*), el número de barras y el límite de frame rate;
   *Visualizer Settings…* (también *Extensions → Media Player
@@ -451,6 +494,32 @@ vuelve a acoplar.
   archivos soltados sobre el panel siguen llegando a la playlist. La
   visualización, sus colores y opciones, y el ecualizador y la playlist
   plegados vuelven en el siguiente inicio.
+- **Bluetooth** (extensión incluida, *Extensions → Manage
+  Extensions…*) — un panel para conectar altavoces, auriculares y otros
+  dispositivos Bluetooth a través de BlueZ (`bluetoothd`) en el D-Bus del
+  sistema; no se inicia ningún programa. Muestra el adaptador (si hay
+  varios: elige uno) con el interruptor *Powered*, y *Scan* lista lo que
+  está al alcance: nombre, dirección, tipo (altavoz, headset, teléfono,
+  teclado …), intensidad de señal en dBm durante el escaneo, batería si
+  el dispositivo la informa, y Connected / Paired / Trusted. Un escaneo
+  se detiene solo a los 2 minutos. Para el dispositivo elegido: *Pair*
+  (*Cancel Pairing* mientras dura), *Trust* / *Untrust* (un dispositivo de
+  confianza puede volver a conectarse solo), *Connect*, *Disconnect*,
+  *Remove* (tras una confirmación). Altavoces y auriculares suelen
+  emparejarse sin preguntar; cuando un dispositivo pide confirmar un
+  passkey, un PIN o un passkey, un diálogo te pregunta - nada se acepta
+  sin tu respuesta, y cerrar el diálogo es un no. *Use as Audio Output*
+  conecta un altavoz o headset si hace falta, espera hasta 20 s a que su
+  salida aparezca en el servidor de sonido y la convierte en la salida de
+  *Edit → Settings… → Audio*, que el Media Player y los demás
+  reproductores siguen al instante; si no aparece ninguna salida (el
+  perfil A2DP no está disponible, p. ej. falta el soporte Bluetooth de
+  PipeWire o PulseAudio) el panel lo dice y ofrece *Audio Settings…*. Los
+  errores de BlueZ se convierten en frases (adaptador apagado, bloqueado
+  por rfkill, PIN incorrecto, dispositivo fuera de alcance, perfil no
+  disponible). Sin el D-Bus del sistema, sin `bluetoothd` en marcha o sin
+  adaptador el panel lo dice y no ofrece nada más; se da cuenta cuando el
+  servicio arranca o se conecta un adaptador. Solo Linux.
 - **Terminal SSH** — dock con pestañas junto a la cola de
   transferencias. PTY local (`pty.fork()`) y SSH-remoto via
   paramiko están ambos disponibles; la variante SSH reusa la
@@ -512,6 +581,12 @@ sobre el contenido del fichero. Scripts: `axross.metadata`,
   Click la levanta y limpia el indicador.
 - Click derecho en una transferencia para **Cancel**, **Retry**,
   **Open destination folder**.
+- El dock de Log filtra por nivel y por área: *Areas* junto al nivel es
+  una lista de las áreas de logging para marcar (un área incluye sus
+  sub-áreas; *Other* es todo lo de fuera, *All Areas* el valor por
+  defecto). Ambos filtros vuelven a mostrar las líneas recibidas. Qué se
+  registra se ajusta en *Edit → Settings… → Logging* (ver
+  [Logging](#logging)).
 - El terminal (dock y pane de terminal) es una pantalla VT100 / xterm:
   retorno de carro, movimientos del cursor, borrado, regiones de
   scroll y la pantalla alternativa funcionan, así que los prompts de
@@ -692,11 +767,16 @@ termina sin respuesta, se dice.
 **Conversaciones en panels propios.** Clic derecho en un tab → **Detach
 as Panel** - o arrastrar el tab lejos de la barra de tabs - convierte la
 conversación en un panel propio; **Tools → New Agent Window** (o ⧉ junto
-a "+") abre una conversación nueva directamente como panel. Se mueve la
+a "+") abre una conversación nueva directamente como panel. **Send to
+Workspace** en el mismo menú del tab lo hace en un paso: la conversación
+se separa y se coloca en el workspace elegido, o con **New Workspace**
+sola en uno nuevo, donde es la vista principal - clic derecho en el tab
+de ese workspace → **Detach to Window** le da una ventana propia. Se
+mueve la
 misma conversación: una tarea en curso sigue, sus preguntas siguen
 llegando, nada se reinicia. Un panel así se coloca como un panel de
 extensión: en **All Workspaces** (el área de docks de la ventana) o -
-con el botón ⇄ o un clic derecho en su barra de título (*Move to
+con el botón ⇄ o un clic derecho en su barra de título (*Send to
 Workspace*) o **Workspace → Add Extension Panel** - en un workspace,
 donde es un pane: se arrastra por su barra de título, cambia de tamaño y
 va con el workspace cuando este se separa. ⇲ (o *Attach to Agent Dock*
@@ -1120,6 +1200,7 @@ encuentra un ajuste por su nombre (escribe *sudo*, *proxy* o *zoom*).
 | Security | Paranoid security mode (se mantiene al siguiente arranque; `AXROSS_SECURITY_MODE` en el entorno tiene prioridad), recordar la contraseña de sudo |
 | Extensions | Qué extensions están activadas |
 | Updates | Check for updates at start, descargar updates automáticamente, *Check Now*, el último check (ver [Updates](#updates)) |
+| Logging | El nivel general (DEBUG, INFO, WARNING, ERROR), un nivel por área (Inherit, un nivel u Off; las librerías third-party en WARNING), el tamaño y la rotación del log file, *Log to terminal (stderr)*, agrupar mensajes repetidos, *Reset to Defaults* (ver [Logging](#logging)) |
 
 La página **Analysis (sift)** escribe `~/.config/axross/analysis.json`;
 el dock Analysis abierto usa un cambio guardado al momento y vuelve a
@@ -1146,6 +1227,41 @@ cada página cambiada y no guardan nada mientras una tenga un problema (se
 muestra esa página y el problema encima); después cada página cambiada se
 guarda y surte efecto al momento. Cancel, Esc y la [x] descartan lo no
 aplicado.
+
+### Logging
+
+La página **Logging** decide qué entra en el log - sin llenarlo de ruido.
+Cada parte de axross pertenece a un área: Application, Protocols (una
+entrada por familia: SFTP / SSH / SCP / rsync, SMB / DFS, FTP / TFTP,
+WebDAV, cloud storage, NFS / iSCSI, correo y news, WinRM / WMI, bases de
+datos, Git / SVN, devices, protocolos legacy, conexiones y proxy), Local
+Files, Transfers, Indexing / Search, Analysis, Agent / LLM, MCP (client y
+server), Scripting, Media / Audio / Voice, Update, Security, Terminal,
+Extensions, User Interface y Third-Party Libraries (paramiko, smbprotocol,
+urllib3 y requests, los SDK de cloud, Pillow, asyncio, ...). Un área está
+en *Inherit* (el nivel del área de arriba, arriba del todo el nivel
+general), DEBUG, INFO, WARNING, ERROR u *Off*. El nivel general es INFO;
+las librerías third-party están en WARNING, así que DEBUG para SMB muestra
+los pasos SMB de axross, no cada paquete de la librería. Un área en DEBUG
+sigue un problema allí mientras el resto queda en INFO - sus líneas de
+debug ni se generan mientras el área está más baja.
+
+El log file es `~/.local/state/axross/logs/axross.log` (solo tú lo puedes
+leer); rota a los 5 MiB y guarda 3 ficheros rotados - ambos se ajustan en
+la página (1-100 MiB, 1-20 ficheros). *Log to terminal (stderr)* escribe
+las mismas líneas en el terminal desde el que se arrancó axross.
+*Collapse repeated messages* (activado, 10 s): un mensaje idéntico a uno
+escrito hace menos que la ventana (misma área, nivel, texto y error) se
+cuenta en vez de escribirse, y la cuenta sigue en una línea,
+`Last message repeated 999 more times in 10.0 s: ...` - un timer que falla
+cada 10 ms da dos líneas por ventana, no cien por segundo. *Reset to Defaults* muestra
+los valores por defecto; OK o Apply los guardan. Cada cambio surte efecto
+al momento y se guarda en `~/.config/axross/logging.json`.
+
+`--debug` en la línea de comandos registra cada área de axross en DEBUG
+durante esa ejecución y escribe en el terminal; `--verbose` sube cada área
+a INFO como mínimo, también con terminal. Las librerías third-party
+mantienen su nivel, y la página lo indica mientras rige un flag así.
 
 *Tools → Network & Proxy…, LLM Profiles…, Agent Settings…, MCP Servers…, Metadata
 Settings…* y *Extensions → Manage Extensions…* abren la ventana Settings en
@@ -1248,7 +1364,10 @@ security mode; *Check Now* sigue funcionando.
   disco RAM (`/run/user/$UID`, si no `/dev/shm`) en vez del disco: nada
   toca el disco, pero consume RAM, por eso está desactivado por defecto. Un
   `TMPDIR` definido en el entorno siempre tiene prioridad.
-- `~/.local/state/axross/logs/axross.log` — log rotativo (5 MB, 3 backups).
+- `~/.config/axross/logging.json` — los ajustes de Logging: nivel general, nivel por
+  área, tamaño y rotación del log file, terminal, agrupar mensajes repetidos (`0o600`).
+- `~/.local/state/axross/logs/axross.log` — log rotativo (5 MiB, 3 ficheros rotados
+  salvo que *Edit → Settings… → Logging* diga otra cosa; `0o600`).
 
 ## A dónde ir después
 

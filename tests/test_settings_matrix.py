@@ -1300,7 +1300,8 @@ def test_hand_edited_value_falls_back(ctx, row) -> None:
 
 #: The modules whose tables continue ROWS (one file each, so that they run
 #: side by side). Their secrets tables (SECRETS) name the password fields.
-ROW_MODULES = ("tests.test_settings_matrix_network_llm", "tests.test_settings_matrix_agent")
+ROW_MODULES = ("tests.test_settings_matrix_network_llm", "tests.test_settings_matrix_agent",
+               "tests.test_settings_matrix_logging")
 
 #: Input widgets that store nothing themselves, each with the reason.
 NOT_STORED = {

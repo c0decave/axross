@@ -341,12 +341,14 @@ Más capturas de pantalla, cada una con su explicación: **[la slideshow](slides
 
 33. **Media Player.** Un panel de extensión para MP3, FLAC, Ogg, Opus,
     AAC y más: playlist con drag & drop y M3U, seeking, shuffle y
-    repeat, un ecualizador de 10 bandas con presets que se pliega, diez
-    visualizaciones (espectro, espejo, radial, espectro en línea y polar,
-    waterfall, osciloscopio, stereo scope, vúmetro, starfield) entre las
-    que cambia un clic sobre ellas, en esquemas de colores o colores
-    propios, en fullscreen como un screensaver o en una ventana propia,
-    una playlist que se pliega, título, artista y portada.
+    repeat, un ecualizador de 10 bandas con presets que se pliega,
+    dieciocho visualizaciones (espectro, espejo, radial, espectro en línea
+    y polar, waterfall, osciloscopio, stereo scope, vúmetro, starfield,
+    ecualizador LED, columnas de partículas, wave ribbon, ridgelines,
+    terreno del espectro, anillo 3D, caleidoscopio, curvas de campana)
+    entre las que cambia un clic sobre ellas, en esquemas de colores o
+    colores propios, en fullscreen como un screensaver o en una ventana
+    propia, una playlist que se pliega, título, artista y portada.
 
 34. **Bookmarks para muchos sitios.** Selección múltiple, grupos
     ordenados por nombre, ruta o antigüedad, bookmarks de terminal (en

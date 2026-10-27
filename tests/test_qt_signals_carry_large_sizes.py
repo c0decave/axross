@@ -32,6 +32,7 @@ REVIEWED_INT_SIGNALS = {
     "ui/llm_settings_dialog.py:done",
     "ui/agent_dock.py:recall",
     "ui/agent_dock.py:checked",  # a connection check's token: a change counter
+    "core/bluetooth.py:agent_cancelled",  # a pairing question's token: a counter
     "ui/agent_panels.py:detach_requested",  # the index of the tab dragged out
     "ui/terminal_widget.py:grid_resized",
     "ui/analysis_dock.py:finished",

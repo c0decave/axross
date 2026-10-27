@@ -518,7 +518,8 @@ class GDriveSession(SessionLifecycle):
         try:
             self._service.about().get(fields="user").execute()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("Google Drive liveness check failed: %s", exc)
             return False
 
     def close(self) -> None:

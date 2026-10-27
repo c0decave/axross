@@ -688,6 +688,34 @@ def test_happy_e2e_the_dialog_renders_the_notes_and_guards_the_links(stores, fak
     assert notes.document().begin().text() == "Highlights"
 
 
+def test_happy_e2e_long_notes_open_at_their_first_line(stores, fake):
+    """Seen on the 0.14.102 dialog: the notes opened scrolled to their end -
+    setMarkdown left the text cursor there, and showing the view scrolled to
+    it. A reader starts at the top."""
+    fake.release.notes = "## Highlights\n\n" + "".join(
+        f"- change number {i}, with enough words to fill the line\n" for i in range(200))
+    win, controller = started_window(stores, fake)
+    win.start_update_check()
+    wait_for(lambda: idle(controller))
+    QTest.mouseClick(win._version_button, Qt.MouseButton.LeftButton)
+    pump(0.3)
+    (dialog,) = update_dialogs()
+    bar = dialog.notes.verticalScrollBar()
+    assert bar.maximum() > 0  # the notes do not fit: there is somewhere to scroll
+    assert bar.value() == 0
+    assert dialog.notes.textCursor().position() == 0
+
+
+def test_edge_new_notes_start_at_the_top_again():
+    view = notes_view("".join(f"line {i}\n\n" for i in range(300)))
+    view.resize(300, 120)
+    view.show()
+    view.verticalScrollBar().setValue(view.verticalScrollBar().maximum())
+    view.set_notes("".join(f"other {i}\n\n" for i in range(300)))
+    pump()
+    assert view.verticalScrollBar().value() == 0 and view.textCursor().position() == 0
+
+
 # --- the version bottom right ----------------------------------------------------
 
 

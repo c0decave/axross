@@ -24,7 +24,7 @@ import types
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QTextDocument
+from PyQt6.QtGui import QTextCursor, QTextDocument
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -324,6 +324,9 @@ class ReleaseNotesView(QTextBrowser):
             return
         self._source = text
         self.document().setMarkdown(text, NOTES_MARKDOWN)
+        # setMarkdown leaves the cursor at the end, and showing the view
+        # scrolls to it: the notes opened at their last line.
+        self.moveCursor(QTextCursor.MoveOperation.Start)
 
     def loadResource(self, kind: int, name: QUrl):  # noqa: N802 - Qt
         """Nothing, for every resource: release notes load no image or

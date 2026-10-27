@@ -225,10 +225,10 @@ def test_e2e_the_title_bar_menu_moves_a_panel_to_a_workspace_and_back(window):
     pump()
     bar = dock.titleBarWidget()
     button = bar.move_button
-    assert button.isVisible() and button.toolTip() == "Move to Workspace"
+    assert button.isVisible() and button.toolTip() == "Send to Workspace"
     menu = bar.move_menu
     texts = menu_texts(menu)
-    assert texts[:2] == ["Workspace 1", "B"]
+    assert texts[:2] == ["1: Workspace 1", "2: B"]
     assert "New Workspace" in texts and "All Workspaces" in texts
     assert menu_action(menu, "All Workspaces").isChecked()
 
@@ -238,11 +238,11 @@ def test_e2e_the_title_bar_menu_moves_a_panel_to_a_workspace_and_back(window):
         return fake_exec
 
     # A click on the button opens the menu; picking "B" moves the panel.
-    with mock.patch.object(QMenu, "exec", pick("B")):
+    with mock.patch.object(QMenu, "exec", pick("2: B")):
         QTest.mouseClick(button, Qt.MouseButton.LeftButton)
     pump()
     assert window.extension_panel_workspace(dock) is b
-    assert menu_action(menu, "B").isChecked()
+    assert menu_action(menu, "2: B").isChecked()
     menu_action(menu, "All Workspaces").trigger()
     pump()
     assert window.extension_panel_workspace(dock) is None
@@ -269,8 +269,8 @@ def test_e2e_the_title_bar_right_click_menu_offers_the_same(window):
     bar = dock.titleBarWidget()
     with mock.patch.object(QMenu, "exec", fake_exec):
         bar.show_context_menu(QPoint(5, 5))
-    assert "Move to Workspace" in seen
-    assert "> B" in seen and "> All Workspaces" in seen and "> New Workspace" in seen
+    assert "Send to Workspace" in seen
+    assert "> 2: B" in seen and "> All Workspaces" in seen and "> New Workspace" in seen
 
 
 def test_e2e_the_workspace_tab_menu_adds_an_extension_panel(window):
@@ -793,9 +793,9 @@ def test_e2e_move_pane_to_workspace_moves_the_focused_panel(window):
         pytest.skip("no keyboard focus on this platform plugin")
     assert window._pane_to_move() is dock
     window._fill_workspace_menu()
-    move = menu_action(window._workspace_menu, "Move Pane to Workspace").menu()
+    move = menu_action(window._workspace_menu, "Send Pane to Workspace").menu()
     assert "All Workspaces" in menu_texts(move)
-    menu_action(move, "Workspace 1").trigger()
+    menu_action(move, "1: Workspace 1").trigger()
     pump()
     assert window.extension_panel_workspace(dock) is a
 
@@ -858,7 +858,7 @@ def test_e2e_bundled_markdown_preview_and_drives_overview_on_workspaces(own_home
         dr_info, drives = bundled(win, "drives_overview")
         a, b = two_workspaces(win)
         win.move_extension_panel(md, b)
-        menu_action(drives.titleBarWidget().move_menu, "B").trigger()
+        menu_action(drives.titleBarWidget().move_menu, "2: B").trigger()
         pump(0.2)
         assert win.extension_panel_workspace(md) is b
         assert win.extension_panel_workspace(drives) is b

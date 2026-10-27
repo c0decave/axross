@@ -510,9 +510,13 @@ class AdbSession(SessionLifecycle):
         """Shell-quote *path* for embedding in a shell command. We
         use shlex.quote which is safe against filename metachars
         AND against path traversal at the wire layer (the quoted
-        form prevents glob / eval expansion).
+        form prevents glob / eval expansion). A relative path that starts
+        with ``-`` gets ``./`` first (exec_util.shell_path): ``readlink -f``
+        answered its own error text as the link target.
         """
-        return shlex.quote(path)
+        from core.exec_util import shell_path
+
+        return shell_path(path)
 
     # ------------------------------------------------------------------
     # Listing / stat

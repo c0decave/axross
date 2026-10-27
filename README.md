@@ -25,7 +25,7 @@ surface so an LLM can drive the whole thing.**
 - **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
 - **Resumable transfers** — survive Ctrl-C and VPN drops, resume from the last verified segment.
 - **Archives as folders** — browse ZIP, TAR and 7z, nested ones too, extract only what you pick, zip-bomb-safe.
-- **Extensions** — Media Player, Forensic Tools, Treemap, VirtualBox and more, each off until you switch it on.
+- **Extensions** — Media Player, Bluetooth, Forensic Tools, Treemap, VirtualBox and more, each off until you switch it on.
 - **Install in one line** — `pip install axross`, or a single-file binary for Linux, macOS and Windows.
 
 Axross is a multi-protocol file manager and security toolkit built
@@ -245,8 +245,8 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
 23. **Extensions.** Python plugins add Extensions-menu entries, right-click
     actions and panels (**Extensions → Manage Extensions…**). Every
     extension starts switched off, finding one never runs it, and
-    `paranoid` mode loads none. Eleven bundled ones, among them Media Player, Forensic Tools,
-    Drives Overview, VirtualBox and Backup Repositories. See
+    `paranoid` mode loads none. Twelve bundled ones, among them Media Player, Bluetooth,
+    Forensic Tools, Drives Overview, VirtualBox and Backup Repositories. See
     [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 24. **An LLM agent in its own dock.** **View → Panels → Agent** talks to
@@ -316,12 +316,14 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
 
 33. **Media Player.** An extension panel for MP3, FLAC, Ogg, Opus, AAC
     and more: playlist with drag & drop and M3U, seeking, shuffle and
-    repeat, a 10-band equalizer with presets that folds away, ten
+    repeat, a 10-band equalizer with presets that folds away, eighteen
     visualizations (spectrum, mirrored, radial, line and polar spectrum,
-    waterfall, oscilloscope, stereo scope, VU meter, starfield) a click on
-    them switches between, in colour schemes or your own colours,
-    fullscreen like a screensaver or in a window of their own, a playlist
-    that folds away, title, artist and cover.
+    waterfall, oscilloscope, stereo scope, VU meter, starfield, LED
+    equalizer, particle columns, wave ribbon, ridgelines, spectrum
+    terrain, 3D ring, kaleidoscope, bell curves) a click on them switches
+    between, in colour schemes or your own colours, fullscreen like a
+    screensaver or in a window of their own, a playlist that folds away,
+    title, artist and cover.
 
 34. **Bookmarks for many places.** Multi-select, groups sorted by name,
     path or age, terminal bookmarks (on a profile, a bare host or
@@ -470,7 +472,7 @@ Full table of extras + system tools per protocol:
 | [INSTALL.md](INSTALL.md) | Prerequisites, per-protocol extras, OAuth setup, wheel build, dev setup. |
 | [docs/USAGE.md](docs/USAGE.md) · [USAGE_de.md](docs/USAGE_de.md) · [USAGE_es.md](docs/USAGE_es.md) | User guide — connections, panes, transfers, terminal, right-click actions. |
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + `axross.*` API + slash-commands + 32 bundled scripts + MCP scripting tools. |
-| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the eleven bundled extensions. |
+| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the twelve bundled extensions. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
 | [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | For LLM agents: how to drive axross over MCP and the `axross.*` API correctly, with the tool catalog generated from the manifest. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |

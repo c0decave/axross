@@ -10,7 +10,8 @@ Two sources, both read at build time inside the builder image:
 * every shared library the builder system contributes (a top-level library
   copied from /usr/lib64 and friends) brings the licence files of its rpm
   package: ``licenses/system/<package>/``, and a line in
-  ``licenses/system/LIBRARIES.txt`` names the package of each library.
+  ``licenses/system/LIBRARIES.txt`` names the package and its
+  version-release for each library (scripts/native_inventory.py reads it).
 
 tests/test_third_party_bundle.py checks a built binary for both.
 """
@@ -103,6 +104,13 @@ def rpm_package(path: str, run: Callable[[list[str]], str | None] = _rpm) -> str
     return name if name and " " not in name else None
 
 
+def rpm_version(package: str, run: Callable[[list[str]], str | None] = _rpm) -> str | None:
+    """``VERSION-RELEASE`` of the installed *package*, or None."""
+    out = (run(["-q", "--qf", "%{VERSION}-%{RELEASE}\n", package]) or "").strip().splitlines()
+    value = out[0].strip() if out else ""
+    return value if value and " " not in value else None
+
+
 def rpm_licence_files(package: str, run: Callable[[list[str]], str | None] = _rpm) -> list[str]:
     """The licence files of *package* that exist: what ``rpm -qL`` marks as
     licence, else the documentation files (``rpm -qd``) named like a licence
@@ -140,20 +148,24 @@ def rpm_licence_files(package: str, run: Callable[[list[str]], str | None] = _rp
 def system_licence_datas(binaries: Iterable[tuple],
                          query: Callable[[str], str | None] = rpm_package,
                          licence_files: Callable[[str], list[str]] = rpm_licence_files,
+                         version: Callable[[str], str | None] = rpm_version,
                          ) -> tuple[list[tuple[str, str]], list[str]]:
     """Licence files for the top-level shared libraries in *binaries* (the
     PyInstaller TOC: dest, source, typecode) that come from the system, and
-    the LIBRARIES.txt lines (``<library>\\t<package or ->``)."""
+    the LIBRARIES.txt lines (``<library>\\t<package or ->\\t<version or ->``)."""
     datas: list[tuple[str, str]] = []
     manifest: list[str] = []
     done: set[str] = set()
+    versions: dict[str, str] = {}
     for dest, source, *_ in binaries:
         if "/" in dest or not os.path.basename(dest).startswith("lib"):
             continue
         if not str(source).startswith(SYSTEM_LIBRARY_DIRS):
             continue
         package = query(str(source))
-        manifest.append(f"{dest}\t{package or '-'}")
+        if package and package not in versions:
+            versions[package] = version(package) or "-"
+        manifest.append(f"{dest}\t{package or '-'}\t{versions.get(package or '', '-')}")
         if not package or package in done:
             continue
         done.add(package)

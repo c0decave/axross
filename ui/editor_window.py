@@ -593,8 +593,13 @@ class EditorWindow(QMainWindow):
         try:
             exists = backend.exists(path)
             folder = exists and backend.is_dir(path)
-        except OSError:
-            exists = folder = False  # the write below says what is wrong
+        except OSError as exc:
+            # Unknown is not "free": writing now could replace a file the
+            # user was never asked about.
+            QMessageBox.critical(self, tr("Save As"), tr(
+                "Cannot check whether {path} already exists; nothing was written.\n"
+                "{error}").format(path=path, error=exc))
+            return False
         if folder:
             QMessageBox.warning(self, tr("Save As"), tr(
                 "{path} is a folder. Choose a file name.").format(path=path))

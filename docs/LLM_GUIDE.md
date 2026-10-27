@@ -324,7 +324,7 @@ Search the offline metadata index by name substring, extension, and size range. 
 
 #### `walk` — read-only · walk (60 s) · stdio + http · *backend*
 
-Breadth-first recursive listing under path. Caps at max_depth (default 4) and max_entries (default 1000). Emits MCP progress notifications when the caller supplied _meta.progressToken.
+Breadth-first recursive listing under path. Caps at max_depth (default 4) and max_entries (default 1000). Returns {entries: [{path, name, is_dir, size}], truncated, unreadable: [{path, error}], complete}: unreadable names every folder below path that could not be listed; complete is true only when nothing was cut or left out. An unreadable path itself is an error. Emits MCP progress notifications when the caller supplied _meta.progressToken.
 
 - `path` (string, required)
 - `max_depth` (integer, >= 0)
@@ -332,7 +332,7 @@ Breadth-first recursive listing under path. Caps at max_depth (default 4) and ma
 
 #### `recursive_checksum` — read-only · stream (300 s) · stdio + http · *backend*
 
-Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: "too-large"} (file above max_file_bytes), or {path, size, algorithm, error: "<msg>"} (backend refused that one file). Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB. If path names a file instead of a directory the result contains exactly one record.
+Hash every file under path breadth-first. Each record is either {path, size, algorithm, checksum, source} (hashed), {path, size, algorithm, skipped: "too-large"} (file above max_file_bytes), or {path, size, algorithm, error: "<msg>"} (backend refused that one file), or {path, folder: true, algorithm, error} (a folder that could not be listed: the files below it are missing). complete is true only when every file was hashed and nothing was cut; an unreadable path itself is an error. Emits one progress notification per hashed file; a notifications/cancelled lands within one chunk of the current file. algorithm is one of sha256 / sha1 / md5 / sha512. Defaults: max_files=500, max_depth=10, max_file_bytes=1 GiB. If path names a file instead of a directory the result contains exactly one record.
 
 - `path` (string, required)
 - `algorithm` (string, one of `md5`, `sha1`, `sha256`, `sha512`)
@@ -349,7 +349,7 @@ Render a thumbnail of an image file. Returns MCP image content (base64 + mimeTyp
 
 #### `grep` — read-only · walk (60 s) · stdio + http · *backend*
 
-Regex search inside file contents under a root path. Recurses up to max_depth (default 2); skips files larger than 4 MiB. Returns up to max_matches (default 100, ceiling 500) {path, line_no, line}. Cooperates with notifications/cancelled.
+Regex search inside file contents under a root path. Recurses up to max_depth (default 2); skips files larger than 4 MiB. Returns {matches: up to max_matches (default 100, ceiling 500) {path, line_no, line}, files_scanned, truncated, unreadable: [{path, error}] (folders and files that could not be read), complete}. No match with complete=false is no answer. An unreadable path itself is an error. Cooperates with notifications/cancelled.
 
 - `pattern` (string, required)
 - `max_depth` (integer, >= 0)
@@ -814,7 +814,7 @@ Copy or move files and folders between backends, optionally resumable (mutating)
 
 #### `transfer_copy` — mutating · long (1800 s) · stdio + http
 
-Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error}]}. Progress per file; cancellable.
+Copy a file or a folder tree from one backend to another (or within one). Local paths are confined to the MCP root, remote ones are not. Existing destination files are skipped unless overwrite; symlinks are skipped; missing destination folders are created. resumable=true copies each file in 4 MiB segments with a local manifest: a cancelled or failed run continues where it stopped when called again with the same arguments. Returns {src, dst, copied, truncated, complete, entries: [{src, dst, size, action (copied|skipped|error), reason, bytes, resumed_segments, error, folder}]}. Every part left out has a record: reason exists, too-large, symlink, unsafe-name, outside-root or max-depth (also sets truncated); a folder that could not be listed is an error with folder=true. complete is true only when every file was copied or already existed. Progress per file; cancellable.
 
 Needs: `--mcp-tools transfer` `--mcp-write` `--mcp-root DIR`.
 

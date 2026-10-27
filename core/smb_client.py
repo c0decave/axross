@@ -408,7 +408,8 @@ class SmbSession(SessionLifecycle):
         try:
             smbclient.listdir(self._prefix, **self._kw)
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("SMB liveness check of %s failed: %s", self._prefix, exc)
             return False
 
     def close(self) -> None:
@@ -574,7 +575,8 @@ class SmbSession(SessionLifecycle):
     def _exists_quietly(self, path: str) -> bool:
         try:
             return bool(smbclient.path.exists(self._unc(path), **self._kw))
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - "not there" is the caller's safe answer
+            log.debug("SMB exists(%s) failed, taken as missing: %s", path, exc)
             return False
 
     def open_read(self, path: str) -> IO[bytes]:

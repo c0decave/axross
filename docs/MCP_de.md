@@ -140,9 +140,9 @@ siehe §9.
 | `read_file(path, max_bytes=, encoding=)` | Base64-kodierter Inhalt; standardmäßig auf 4 MiB gekappt. `encoding="text"` liefert `text` (UTF-8, `replaced=true`, wenn nicht dekodierbare Bytes ersetzt wurden) — für Modelle, die kein Base64 dekodieren können. |
 | `checksum(path, algorithm=)`  | `sha256` (Default), `sha1`, `md5` oder `sha512`. Nutzt den nativen Hash des Backends nur, wenn er vom angefragten Algorithmus ist, sonst Streaming durch hashlib (sendet Progress). |
 | `search(needle, ext, min_size, max_size)` | Offline-Metadaten-Index, auf die aktive Backend-ID und die MCP-Root beschränkt. |
-| `walk(path, max_depth, max_entries)`      | Begrenzte rekursive Listung; sendet `notifications/progress`. |
-| `recursive_checksum(path, algorithm, max_files, max_depth, max_file_bytes)` | Hasht jede Datei unter einem Pfad (Dateien über 1 GiB per Default übersprungen); ein Progress-Frame pro gehashter Datei. |
-| `grep(pattern, path, max_depth, max_matches)` | Regex-Suche in Datei-Inhalten. Dateien >4 MiB übersprungen, max. 500 Treffer; sendet Progress. |
+| `walk(path, max_depth, max_entries)`      | Begrenzte rekursive Listung; sendet `notifications/progress`. Ordner, die sich nicht listen ließen, stehen in `unreadable`; `complete` ist dann false. |
+| `recursive_checksum(path, algorithm, max_files, max_depth, max_file_bytes)` | Hasht jede Datei unter einem Pfad (Dateien über 1 GiB per Default übersprungen); ein Progress-Frame pro gehashter Datei. Ein nicht listbarer Ordner ist ein `error`-Eintrag mit `folder: true`; `complete` sagt, ob jede Datei gehasht wurde. |
+| `grep(pattern, path, max_depth, max_matches)` | Regex-Suche in Datei-Inhalten. Dateien >4 MiB übersprungen, max. 500 Treffer; sendet Progress. Nicht lesbare Ordner und Dateien stehen in `unreadable`; kein Treffer bei `complete: false` ist keine Antwort. |
 | `list_versions(path)` | Metadaten pro Version — wo das Backend es unterstützt.              |
 | `open_version_read(path, version_id, max_bytes=)` | Base64-Inhalt einer bestimmten Version.         |
 | `preview(path, edge=256)` | Thumbnail eines Bildes — als MCP **image content** mit korrektem mimeType. |

@@ -46,6 +46,8 @@ from ui.analysis_dock import DOCK_TITLE as ANALYSIS_DOCK_TITLE
 from ui.bookmark_edit_dialog import BookmarkEditDialog
 from ui.close_corner import add_close_corner
 from ui.disconnected_pane import KIND_PANE, KIND_TERMINAL, DisconnectedPanePlaceholder
+from ui.dock_fit import SESSION_KEY as DOCK_FIT_SESSION_KEY
+from ui.dock_fit import DockFit
 from ui.file_pane import FilePaneWidget
 from ui.layout_utils import (
     equal_split_sizes,
@@ -437,6 +439,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
 
         _auth_prompt.install()
         self._setup_status_bar()
+        # The right column reaches the bottom edge; docks of a column that
+        # do not fit its height are tabbed together (ui.dock_fit).
+        self._apply_dock_corners()
+        self._dock_fit = DockFit(self)
         # Arm the recurring-job tick. Failure here must never stop the
         # window from opening — a broken schedule file should cost the
         # user their schedule, not their file manager.
@@ -1348,6 +1354,19 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # entry (with its F12 shortcut) shows up alongside the
         # Transfer / Terminal / Log dock toggles.
         self._populate_dock_view_menu()
+
+    def _apply_dock_corners(self) -> None:
+        """The right column takes the bottom-right corner: it reaches the
+        window's bottom edge, and the bottom area (Transfers, Terminal,
+        ...) is as wide as the panes and the left column. The bottom-left
+        corner stays with the bottom area: the left column holds the
+        Bookmarks alone (a list that scrolls), so it has no docks to stack,
+        while the bottom area's tables and terminal lines are better off
+        wide - between both columns it would be squeezed from two sides.
+        restoreState sets the corners a saved state carries, so this runs
+        again after it."""
+        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
 
     def _setup_transfer_dock(self) -> None:
         self._transfer_dock = TransferDock(self._transfer_manager, self)
@@ -5088,6 +5107,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                 # layout (which docks are open, where, and how large).
                 "geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
                 "dock_state": bytes(self.saveState().toBase64()).decode("ascii"),
+                # The tabs axross made itself, which come apart with room.
+                DOCK_FIT_SESSION_KEY: self._dock_fit.session_state(),
             }
         )
         workspaces = self._serialize_workspaces()
@@ -5331,6 +5352,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         dock_state = _decode_window_state(win.get("dock_state"))
         if dock_state is not None and not self.restoreState(QByteArray(dock_state)):
             log.info("Session restore: the saved dock layout was not usable")
+        # A dock state carries the corners; one of an older axross gave the
+        # bottom area both bottom corners.
+        self._apply_dock_corners()
+        self._dock_fit.load_session_state(win.get(DOCK_FIT_SESSION_KEY))
         # A saved layout carries its toolbar rows; they follow this width.
         self._fit_toolbars()
         # The same reading as at the start (ui.window_prefs). A missing

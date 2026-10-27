@@ -893,7 +893,7 @@
     "pip"
    ],
    "via": "Qt 6",
-   "version": "7.1.2",
+   "version": "7.1.5",
    "note": "the build reports \"libavcodec license: LGPL version 2.1 or later\"",
    "match": {
     "paths": [

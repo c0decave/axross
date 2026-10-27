@@ -90,7 +90,13 @@ def next_run_at(job: Job, *, now: datetime) -> datetime | None:
         return None
     if job.last_run_at is None:
         return now
-    return job.last_run_at + timedelta(seconds=job.interval_s)
+    try:
+        return job.last_run_at + timedelta(seconds=job.interval_s)
+    except OverflowError:
+        # Past the calendar (a hand-edited interval of 10**15 s, or a last
+        # run near datetime.max): never due, rather than an exception on
+        # every tick and in the Scheduler window.
+        return None
 
 
 def due_jobs(jobs: list[Job], *, now: datetime) -> list[Job]:
@@ -175,7 +181,10 @@ class JobStore:
                         kind=str(row["kind"]),
                         target=str(row["target"]),
                         interval_s=int(row["interval_s"]),
-                        enabled=bool(row.get("enabled", True)),
+                        # Only a JSON true switches a job on: a hand-edited
+                        # "false" is truthy and would run a job the user
+                        # switched off. A missing key keeps the old default.
+                        enabled=row.get("enabled", True) is True,
                         last_run_at=_parse_dt(row.get("last_run_at")),
                         last_ok=row.get("last_ok"),
                         last_detail=str(row.get("last_detail", "")),
@@ -187,7 +196,8 @@ class JobStore:
                         details=row.get("details") or {},
                     )
                 )
-            except (KeyError, TypeError, ValueError) as exc:
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: int() of a hand-edited Infinity.
                 log.warning("scheduler: dropping malformed job row: %s", exc)
         return jobs
 
@@ -327,9 +337,17 @@ def _parse_dt(value) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value))
+        parsed = datetime.fromisoformat(str(value))
     except ValueError:
         return None
+    if parsed.tzinfo is not None:
+        # axross keeps naive local times (datetime.now()); a hand-edited
+        # "...Z" compared with them raised TypeError on every tick.
+        try:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        except (OverflowError, ValueError):
+            return None
+    return parsed
 
 
 __all__ = [

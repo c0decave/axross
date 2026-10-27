@@ -106,17 +106,25 @@ PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
   legt den Workspace in ein eigenes Fenster — etwa auf einen anderen
   Bildschirm. Schließt man das Fenster, kommt der Workspace als Tab
   zurück.
-- **Pane verschieben:** **Workspace → Move Pane to Workspace** schickt
-  das aktive Pane in einen anderen (oder neuen) Workspace; oder den
-  Pane-Header auf ein Pane eines anderen Workspace oder Fensters ziehen.
-  File-Panes und Terminal-Panes lassen sich gleich ziehen (ein
-  Terminal-Pane auch über seinen ⇄-Button); hält man ein gezogenes Pane
+- **Pane in einen anderen Workspace schicken:** Rechtsklick auf das Pane
+  → **Send to Workspace** - in der Liste eines File-Panes (auf einer
+  Datei oder auf der leeren Fläche, am Ende des Menüs), auf dem Header
+  eines Panes oder im Terminal - und einen Workspace oder **New
+  Workspace** wählen. Die Workspaces sind nummeriert, wie ihre Tabs
+  stehen (**1: Workspace 1**, **2: Logs**; ein abgelöster trägt
+  *(window)*), und bei 1 bis 9 wählt die Ziffer den Eintrag, solange das
+  Menü offen ist. **Workspace → Send Pane to Workspace** tut dasselbe für
+  das aktive Pane; oder den Pane-Header auf ein Pane eines anderen
+  Workspace oder Fensters ziehen. File-Panes und Terminal-Panes lassen
+  sich gleich ziehen (ein Terminal-Pane auch über seinen ⇄-Button); ein
+  Workspace, dessen letztes Pane geht, schließt; hält man ein gezogenes Pane
   eine halbe Sekunde über einen Workspace-Tab, öffnet sich dieser Tab —
   so erreicht ein Pane auch einen Workspace im Hintergrund.
 - **Extension-Panels** (Media Player, Drives Overview, Markdown Preview,
   …) sind auf allen Workspaces, bis man eines auf einen Workspace legt:
-  der ⇄-Button in seiner Titelleiste (oder ein Rechtsklick darauf) bietet
-  jeden Workspace, **New Workspace** und **All Workspaces**, und
+  der ⇄-Button in seiner Titelleiste (oder ein Rechtsklick darauf, *Send
+  to Workspace*) bietet jeden Workspace (der, auf dem es liegt, mit
+  Haken), **New Workspace** und **All Workspaces**, und
   **Workspace → Add Extension Panel** (auch im Rechtsklick-Menü des Tabs)
   holt ein Panel in einen Workspace. Dort ist es ein Pane: es erscheint
   nur mit seinem Workspace, geht mit, wenn der Workspace abgelöst wird,
@@ -146,7 +154,8 @@ Beim Beenden speichert axross das Layout in `session.json`; der
 nächste Start baut es automatisch wieder auf:
 
 - den Splitter-Baum mit seinen Größen, die Window-Geometry, das
-  Dock-Layout (welche Docks offen sind und wo) und das Theme;
+  Dock-Layout (welche Docks offen sind und wo, und welche Tabs axross
+  selbst gemacht hat) und das Theme;
 - lokale Panes auf ihren Ordnern — ein inzwischen gelöschter Ordner
   öffnet stattdessen den Home-Ordner, ohne Dialog;
 - lokale Terminal-Panes als frische Shell an derselben Stelle, im
@@ -170,6 +179,34 @@ Default-Layout mit einem Pane. Eine fehlende, unlesbare oder ungültige
 im Log. **File > Restore Last Session** (**Strg+Shift+R**) baut das
 gespeicherte Layout weiterhin auf Wunsch auf, und dort verbinden
 Remote-Panes.
+
+### Docks: die rechte Spalte und automatische Tabs
+
+- Die rechte Dock-Spalte (Analysis, Agent, abgelöste Konversationen,
+  Extension-Panels wie der Media Player) reicht bis zur Unterkante des
+  Fensters; der untere Bereich (Transfers, Terminal, Log, Console,
+  Scripts) ist so breit wie die Panes und die Bookmarks-Spalte. Die
+  Bookmarks-Spalte endet über dem unteren Bereich, so bleiben dessen
+  Tabellen und Terminal-Zeilen breit.
+- Brauchen die Docks einer Spalte mehr Höhe, als die Spalte hat - jedes
+  einen brauchbaren Teil seines Inhalts (200 px, oder alles, wenn es
+  weniger braucht), nicht nur seine Titelleiste -, werden benachbarte
+  Docks zu Tabs zusammengelegt, bis sie passen; die Tabs stehen unten
+  an der Gruppe. Nichts überlappt, auch wenn ein Window Manager das
+  Fenster kleiner hält (Tiling, maximiert).
+- Ist wieder Platz (größeres Fenster, ein Dock geschlossen, gefloatet
+  oder weggezogen), stehen die Docks, die axross getabbt hat, wieder
+  untereinander, wo sie waren. Docks, die du selbst getabbt hast,
+  bleiben Tabs, und ein Dock, das du aus einer automatischen Tab-Gruppe
+  ziehst, wird dafür nicht wieder getabbt - nur wenn die Spalte nicht
+  einmal die Titelleisten der Docks fassen könnte.
+- Solange eine Maustaste gedrückt ist (ein Separator oder ein Dock wird
+  gezogen), bewegt sich nichts; geprüft wird, wenn das Resize zur Ruhe
+  gekommen ist. Panels, die auf einem Workspace liegen, sind dort Panes
+  und gehören zu keiner Spalte.
+- Welche Tabs axross gemacht hat, steht mit dem Dock-Layout in
+  `session.json`; nach einem Neustart gehen sie bei genug Platz wieder
+  auseinander.
 
 ## Transfers
 
@@ -425,9 +462,16 @@ eines floating Panels dockt es wieder an.
   Playlist den Platz) und eine animierte Visualisierung: Spektrum,
   gespiegeltes Spektrum, radiales Spektrum, Oszilloskop, Stereo-VU-
   Meter, Linien-Spektrum (logarithmische Frequenzachse), Waterfall
-  (Spektrogramm), Polar-Spektrum, Stereo-Scope (Goniometer: L gegen R)
-  oder ein Starfield, das mit dem Bass schneller wird - ein Klick darauf
-  wechselt zur nächsten. Ihr Rechtsklick-Menü listet jede
+  (Spektrogramm), Polar-Spektrum, Stereo-Scope (Goniometer: L gegen R),
+  ein Starfield, das mit dem Bass schneller wird, *LED equalizer*
+  (Blöcke mit fallendem Peak-Block), *Particle columns* (Punkte, aus
+  denen im Beat Funken aufsteigen), *Wave ribbon* (ein Band aus Linien,
+  das sich mit dem Beat dreht), *Ridgelines* (die History des Spektrums
+  in der Tiefe unter einer gestreiften Sonne), *Spectrum terrain* (die
+  History als Wireframe-Landschaft), *3D ring* (Balken auf einem
+  gekippten Ring), *Kaleidoscope* (gespiegelte Blüten aus Bass, Mitten
+  und Höhen) oder *Bell curves* (eine Glockenkurve je Band) - ein Klick
+  darauf wechselt zur nächsten. Ihr Rechtsklick-Menü listet jede
   Visualisierung und jedes Farbschema (Classic, Fire, Ice, Neon, Mono,
   *Follow the theme*, *Custom*), die Anzahl der Balken und das
   Frame-Rate-Limit; *Visualizer Settings…* (auch *Extensions → Media
@@ -445,6 +489,31 @@ eines floating Panels dockt es wieder an.
   weiter, und auf das Panel gezogene Dateien landen weiterhin in der
   Playlist. Visualisierung, ihre Farben und Optionen, eingeklappter
   Equalizer und eingeklappte Playlist kommen beim nächsten Start wieder.
+- **Bluetooth** (mitgelieferte Extension, *Extensions → Manage
+  Extensions…*) — ein Panel, um Lautsprecher, Kopfhörer und andere
+  Bluetooth-Geräte über BlueZ (`bluetoothd`) am System-D-Bus zu
+  verbinden; es startet kein Programm. Es zeigt den Adapter (bei
+  mehreren: auswählen) mit dem Schalter *Powered*, und *Scan* listet, was
+  in Reichweite ist: Name, Adresse, Typ (Lautsprecher, Headset, Telefon,
+  Tastatur …), Signalstärke in dBm während des Scans, Akkustand, wo das
+  Gerät ihn meldet, und Connected / Paired / Trusted. Ein Scan endet nach
+  2 Minuten von selbst. Für das gewählte Gerät: *Pair* (*Cancel Pairing*,
+  solange es läuft), *Trust* / *Untrust* (ein Trusted-Gerät darf sich
+  selbst wieder verbinden), *Connect*, *Disconnect*, *Remove* (nach einer
+  Rückfrage). Bei Lautsprechern und Kopfhörern läuft das Pairing meist
+  ohne Frage; will ein Gerät einen Passkey bestätigt, eine PIN oder einen
+  Passkey, fragt ein Dialog - nichts wird ohne deine Antwort angenommen, Schließen ist
+  ein Nein. *Use as Audio Output* verbindet einen Lautsprecher oder ein
+  Headset bei Bedarf, wartet bis zu 20 s, bis sein Ausgang im Soundserver
+  erscheint, und macht ihn zum Ausgang von *Edit → Settings… → Audio*,
+  dem der Media Player und die anderen Player sofort folgen; erscheint
+  kein Ausgang (das A2DP-Profil fehlt, z. B. weil PipeWire oder
+  PulseAudio ohne Bluetooth-Unterstützung läuft), sagt das Panel es und
+  bietet *Audio Settings…* an. Fehler von BlueZ werden zu Sätzen (Adapter
+  aus, per rfkill blockiert, falsche PIN, Gerät außer Reichweite, Profil
+  nicht verfügbar). Ohne System-D-Bus, ohne laufenden `bluetoothd` oder
+  ohne Adapter sagt das Panel das und bietet nichts weiter an; es merkt,
+  wenn der Dienst startet oder ein Adapter eingesteckt wird. Nur Linux.
 - **SSH-Terminal** — Tab-Dock neben der Transfer-Queue. Lokales PTY
   (`pty.fork()`) und remote-SSH-über-paramiko stehen beide bereit;
   die SSH-Variante reused die bestehende Verbindung.
@@ -504,6 +573,12 @@ Skripte: `axross.metadata`, `axross.remove_metadata`,
   + cleart.
 - Rechtsklick auf einen Transfer für **Cancel**, **Retry**, **Open
   destination folder**.
+- Das Log-Dock filtert nach Level und nach Area: *Areas* neben dem Level
+  ist eine Liste der Logging-Areas zum Anhaken (eine Area nimmt ihre
+  Sub-Areas mit; *Other* ist alles außerhalb, *All Areas* der Default).
+  Beide Filter zeigen die bisher empfangenen Zeilen neu. Was überhaupt
+  geloggt wird, steht in *Edit → Settings… → Logging* (siehe
+  [Logging](#logging)).
 - Das Terminal (Dock und Terminal-Pane) ist ein VT100-/xterm-Screen:
   Carriage Return, Cursor-Bewegungen, Erase, Scroll-Regionen und der
   Alternate Screen funktionieren, also stehen zsh-Prompts,
@@ -684,11 +759,16 @@ ein Modell ganz ohne Antwort, steht das da.
 **Verläufe als eigene Panels.** Rechtsklick auf einen Tab → **Detach as
 Panel** - oder den Tab weit aus der Tab-Leiste ziehen - macht den
 Verlauf zu einem eigenen Panel; **Tools → New Agent Window** (oder ⧉
-neben „+") öffnet einen neuen Verlauf gleich als Panel. Es wandert
+neben „+") öffnet einen neuen Verlauf gleich als Panel. **Send to
+Workspace** im selben Tab-Menü erledigt es in einem Schritt: der Verlauf
+wird abgelöst und auf den gewählten Workspace gelegt, mit **New
+Workspace** allein auf einen neuen, wo er die Hauptansicht ist - per
+Rechtsklick auf dessen Tab → **Detach to Window** bekommt er ein eigenes
+Fenster. Es wandert
 derselbe Verlauf: eine laufende Aufgabe läuft weiter, ihre Rückfragen
 kommen weiterhin, nichts startet neu. Ein solches Panel liegt wie ein
 Extension-Panel: auf **All Workspaces** (im Dock-Bereich des Fensters)
-oder - über den ⇄-Button bzw. Rechtsklick auf seine Titelleiste (*Move
+oder - über den ⇄-Button bzw. Rechtsklick auf seine Titelleiste (*Send
 to Workspace*) oder **Workspace → Add Extension Panel** - auf einem
 Workspace, wo es ein Pane ist: an der Titelleiste ziehen, in der Größe
 ändern, beim Detach des Workspace geht es mit. ⇲ (oder *Attach to Agent
@@ -1111,6 +1191,7 @@ rechts die Seite der gewählten, darüber ein Feld, das eine Einstellung
 | Security | Paranoid Security Mode (bleibt für den nächsten Start; `AXROSS_SECURITY_MODE` im Environment gewinnt), sudo-Passwort merken |
 | Extensions | Welche Extensions eingeschaltet sind |
 | Updates | Check for updates at start, Updates automatisch laden, *Check Now*, der letzte Check (siehe [Updates](#updates)) |
+| Logging | Das Gesamt-Level (DEBUG, INFO, WARNING, ERROR), ein Level je Area (Inherit, ein Level oder Off; Third-Party-Libraries WARNING), Größe und Rotation des Logfiles, *Log to terminal (stderr)*, wiederholte Messages zusammenfassen, *Reset to Defaults* (siehe [Logging](#logging)) |
 
 Die Seite **Analysis (sift)** schreibt `~/.config/axross/analysis.json`;
 das offene Analysis-Dock nutzt eine gespeicherte Änderung sofort und
@@ -1138,6 +1219,43 @@ geänderte Seite und speichern gar nichts, solange eine ein Problem hat
 (diese Seite wird gezeigt, das Problem steht darüber); dann wird jede
 geänderte Seite gespeichert und wirkt sofort. Cancel, Esc und das [x]
 verwerfen, was nicht übernommen wurde.
+
+### Logging
+
+Die Seite **Logging** bestimmt, was ins Log kommt - ohne es
+zuzumüllen. Jeder Teil von axross gehört zu genau einer Area:
+Application, Protocols (ein Eintrag je Familie: SFTP / SSH / SCP / rsync,
+SMB / DFS, FTP / TFTP, WebDAV, Cloud Storage, NFS / iSCSI, Mail und News,
+WinRM / WMI, Datenbanken, Git / SVN, Devices, Legacy-Protokolle,
+Connections und Proxy), Local Files, Transfers, Indexing / Search,
+Analysis, Agent / LLM, MCP (Client und Server), Scripting, Media / Audio /
+Voice, Update, Security, Terminal, Extensions, User Interface und
+Third-Party Libraries (paramiko, smbprotocol, urllib3 und requests, die
+Cloud-SDKs, Pillow, asyncio, ...). Eine Area steht auf *Inherit* (das
+Level der Area darüber, ganz oben das Gesamt-Level), DEBUG, INFO, WARNING,
+ERROR oder *Off*. Das Gesamt-Level ist INFO; Third-Party-Libraries stehen
+auf WARNING, DEBUG für SMB zeigt also die SMB-Schritte von axross, nicht
+jedes Paket der Library. Eine Area auf DEBUG verfolgt ein Problem dort,
+während der Rest auf INFO bleibt - ihre Debug-Zeilen entstehen gar nicht
+erst, solange die Area leiser steht.
+
+Das Logfile ist `~/.local/state/axross/logs/axross.log` (nur für dich
+lesbar); es rotiert bei 5 MiB und behält 3 rotierte Dateien - beides wird
+auf der Seite eingestellt (1-100 MiB, 1-20 Dateien). *Log to terminal
+(stderr)* schreibt dieselben Zeilen ins Terminal, aus dem axross gestartet
+wurde. *Collapse repeated messages* (an, 10 s): eine Message, die einer vor
+weniger als dem Fenster geschriebenen gleicht (gleiche Area, Level, Text
+und Fehler), wird gezählt statt geschrieben, die Zahl folgt als eine
+Zeile, `Last message repeated 999 more times in 10.0 s: ...` - ein Timer,
+der alle 10 ms scheitert, gibt zwei Zeilen je Fenster, nicht hundert pro
+Sekunde. *Reset to Defaults* zeigt die Defaults; OK oder Apply speichert
+sie. Jede Änderung wirkt sofort und steht in
+`~/.config/axross/logging.json`.
+
+`--debug` auf der Kommandozeile loggt jede axross-Area für diesen Lauf auf
+DEBUG und schreibt ins Terminal; `--verbose` hebt jede Area auf mindestens
+INFO, ebenfalls mit Terminal. Third-Party-Libraries behalten dabei ihr
+Level, und die Seite sagt, solange ein solches Flag gilt.
 
 *Tools → Network & Proxy…, LLM Profiles…, Agent Settings…, MCP Servers…, Metadata
 Settings…* und *Extensions → Manage Extensions…* öffnen das Settings-
@@ -1239,7 +1357,11 @@ Environment. Der Check beim Start läuft nicht mit
   sonst `/dev/shm`) statt auf die Platte: nichts landet auf der Platte, aber
   es kostet RAM, daher standardmäßig aus. Ein im Environment gesetztes
   `TMPDIR` gewinnt immer.
-- `~/.local/state/axross/logs/axross.log` — rotierendes Logfile (5 MB, 3 Backups).
+- `~/.config/axross/logging.json` — die Logging-Settings: Gesamt-Level, Level je Area,
+  Größe und Rotation des Logfiles, Terminal, Zusammenfassen wiederholter Messages
+  (`0o600`).
+- `~/.local/state/axross/logs/axross.log` — rotierendes Logfile (5 MiB, 3 rotierte
+  Dateien, sofern *Edit → Settings… → Logging* nichts anderes sagt; `0o600`).
 
 ## Wo es weitergeht
 

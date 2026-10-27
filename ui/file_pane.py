@@ -139,6 +139,8 @@ CONTEXT_COMMANDS: dict[str, tuple[str | None, str | None]] = {
     "fuse-unmount": (None, None),
     # agent
     "send-to-agent": ("bot", None),
+    # the pane itself
+    "send-to-workspace": (None, None),
 }
 
 
@@ -3030,7 +3032,9 @@ class FilePaneWidget(QWidget):
     def _build_base_context_menu(self) -> QMenu:
         """The pane's own right-click entries, in groups split by separators:
         open/view the selection, clipboard/edit, transfer, protect, remove,
-        create here, info/analysis, this folder, tags, agent. Each entry shows the
+        create here, info/analysis, this folder, tags, agent, the pane
+        (Send to Workspace - on an item and on the empty area alike, one
+        submenu at the end). Each entry shows the
         icon its command has in the toolbar or a dock and the key the pane or
         the window reacts to (:data:`CONTEXT_COMMANDS`); the underlined
         letter (``&``) picks it while the menu is open."""
@@ -3230,6 +3234,14 @@ class FilePaneWidget(QWidget):
         # -- agent
         group()
         self._add_agent_action(menu)
+
+        # -- the pane itself: Send to Workspace ▸ (none off a workspace)
+        from ui.workspaces import add_send_to_workspace_menu
+
+        group()
+        send = add_send_to_workspace_menu(self, menu)
+        if send is not None:
+            decorate_command(send.menuAction(), "send-to-workspace")
         if menu.actions() and menu.actions()[-1].isSeparator():
             menu.removeAction(menu.actions()[-1])
         return menu
@@ -4894,7 +4906,8 @@ class FilePaneWidget(QWidget):
             from core import elevated_io as E
 
             return E._is_local_backend(self._backend) and E.is_pkexec_available()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - no menu entry rather than a broken menu
+            log.debug("Open as root… left out: %s", exc)
             return False
 
     def _open_as_root(self, full_path: str) -> None:

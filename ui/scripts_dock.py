@@ -50,6 +50,7 @@ from PyQt6.QtWidgets import (
 from core import script_runner as SR
 from core import scripting, security_mode
 from core.i18n import tr
+from ui.dock_frame import BOTTOM_DOCK_HINT_PX, framed
 from ui.script_editor import CodeEditor
 
 log = logging.getLogger(__name__)
@@ -333,7 +334,10 @@ class ScriptsDock(QDockWidget):
         splitter.setStretchFactor(1, 4)
         splitter.setSizes([200, 800])
         layout.addWidget(splitter, 1)
-        self.setWidget(container)
+        # In a frame that scrolls when the bottom area is low, and that asks
+        # for no more height than the tab in front of the bottom group: Qt
+        # opens the group at its tallest tab's hint (ui.dock_frame).
+        self.setWidget(framed(container, self, max_hint_height=BOTTOM_DOCK_HINT_PX))
 
         self._show_nothing()
         self.refresh()

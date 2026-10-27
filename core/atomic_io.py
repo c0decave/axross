@@ -152,6 +152,18 @@ def _link_destination(backend, link: str, target: str) -> str:
     return os.path.join(parent, target)
 
 
+def _is_absent(backend, path: str, exc: OSError) -> bool:
+    """Whether the stat failure *exc* means *path* is not there. RamFS
+    and some shell backends raise a plain OSError for a missing path, so
+    anything but FileNotFoundError asks exists(), which says False only
+    for "not found" (and raises otherwise)."""
+    if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
+        return True
+    if isinstance(exc, PermissionError) or not hasattr(backend, "exists"):
+        return False
+    return not backend.exists(path)
+
+
 def _resolve_destination(backend, path: str) -> tuple[str, int | None] | None:
     """The file a save to *path* replaces, and its permission bits.
 
@@ -173,8 +185,15 @@ def _resolve_destination(backend, path: str) -> tuple[str, int | None] | None:
     for _hop in range(MAX_LINK_HOPS + 1):
         try:
             info = backend.stat(current)
-        except OSError:
-            return current, None
+        except OSError as exc:
+            if _is_absent(backend, current, exc):
+                return current, None
+            # A stat that failed is no "new file": the temp file would get
+            # the default mode (a 0600 secret came back 0644) and replace a
+            # link with a regular file. Nothing is written yet.
+            raise OSError(
+                f"cannot read the mode of {current} before saving it: {exc}"
+            ) from exc
         # ``is not True``: FileItem.is_link is a bool; anything else
         # (a stand-in object) is no link to follow.
         if getattr(info, "is_link", False) is not True:

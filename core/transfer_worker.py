@@ -461,6 +461,8 @@ class TransferWorker(QObject):
         job.status = TransferStatus.ACTIVE
         self.job_started.emit(job.job_id)
         self._record_journal_phase(job, "worker_start")
+        log.debug("Transfer started: %s -> %s (%s, %d bytes%s)", job.source_path, job.dest_path,
+                  job.direction.name.lower(), job.total_bytes, ", move" if job.move else "")
 
         speed_samples: deque[tuple[float, int]] = deque()
         last_progress_time = 0.0

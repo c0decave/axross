@@ -957,7 +957,27 @@ class RsyncSession(SessionLifecycle):
 
         Rsync does not support server-side rename. We download, re-upload
         under the new name, then delete the original.
+
+        An existing destination folder is refused (IsADirectoryError), and
+        so is a folder over a file (FileExistsError): the upload put a file
+        INTO the folder as ``payload`` and merged a folder into it,
+        replacing namesakes, before the source was deleted. A file over a
+        file is replaced, as rename does elsewhere. A destination that
+        cannot be checked raises: unknown is not "free".
         """
+        src_is_dir = self.is_dir(src)
+        try:
+            dst_item = self.stat(dst)
+        except FileNotFoundError:
+            dst_item = None
+        if dst_item is not None and dst_item.is_dir:
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot rename {src} -> {dst}: the destination is a folder", dst
+            )
+        if dst_item is not None and src_is_dir:
+            raise FileExistsError(
+                errno.EEXIST, f"Cannot rename the folder {src} over the file {dst}", dst
+            )
         tmpdir = tempfile.mkdtemp()
         try:
             local_path = os.path.join(tmpdir, "payload")
@@ -965,7 +985,7 @@ class RsyncSession(SessionLifecycle):
             dst_url = self._build_url(dst)
 
             flags = self._archive_flags()
-            if self.is_dir(src):
+            if src_is_dir:
                 # Copy entire directory tree
                 self._run_rsync(
                     [*flags, src_url + "/", local_path + "/"],

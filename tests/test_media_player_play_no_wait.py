@@ -217,7 +217,10 @@ def test_sad_an_unreadable_file_still_fails_after_a_slow_start(tmp_path, slow_st
 # --- edge --------------------------------------------------------------------
 
 
-def test_edge_a_seek_does_not_wait_either(tmp_path, slow_start):
+def test_edge_a_seek_does_not_wait_either(tmp_path, slow_start, monkeypatch):
+    # No memory of the audio played: the seek back starts the decoder again
+    # (with it, a seek this short comes from memory - test_media_player_seek_memory.py).
+    monkeypatch.setattr(MP, "HISTORY_SECONDS", 0)
     sink = Sink()
     engine = MP.EqEngine(sink_factory=lambda fmt: sink)
     try:

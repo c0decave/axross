@@ -20,7 +20,7 @@ from typing import IO
 
 from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
-from core.local_fs import entry_stat
+from core.local_fs import copy_file_onto, entry_stat
 from core.path_policy import confined_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
@@ -338,7 +338,7 @@ class NfsSession(SessionLifecycle):
 
     def copy(self, src: str, dst: str) -> None:
         """Server-side copy over the mounted FS (kernel-buffered)."""
-        shutil.copy2(self._full_path(src), self._full_path(dst))
+        copy_file_onto(self._full_path(src), self._full_path(dst))
 
     # ------------------------------------------------------------------
     # NFS-specific verbs (API_GAPS round 2)

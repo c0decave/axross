@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import IO, TYPE_CHECKING
 
 from core.backend import SessionLifecycle
+from core.exec_util import shell_path
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -1134,7 +1135,7 @@ class _SpooledWriter:
             data = self._buf.read()
         finally:
             self._buf.close()
-        qpath = shlex.quote(self._remote_path)
+        qpath = shell_path(self._remote_path)
 
         if self._caps.transfer_method == "base64":
             self._upload_base64(data, qpath)
@@ -1419,7 +1420,8 @@ class TelnetSession(SessionLifecycle):
         try:
             _, code = self._shell.execute("echo ok", timeout=5.0)
             return code == 0
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("Telnet liveness check failed: %s", exc)
             return False
 
     def list_dir(self, path: str) -> list[FileItem]:
@@ -1427,7 +1429,7 @@ class TelnetSession(SessionLifecycle):
         try:
             from core.exec_util import ls_dir_operand
 
-            output = self._exec(f"ls -la {shlex.quote(ls_dir_operand(path))}")
+            output = self._exec(f"ls -la {shell_path(ls_dir_operand(path))}")
             return _parse_ls_la(output)
         except OSError as exc:
             # Stripped IoT / busybox / restricted-shell fallback:
@@ -1448,7 +1450,7 @@ class TelnetSession(SessionLifecycle):
         per shell-glob default, so we do a second probe with
         ``echo .* *`` and de-duplicate.
         """
-        qpath = shlex.quote(path)
+        qpath = shell_path(path)
         output = self._exec(
             f"cd {qpath} && (echo *; echo .*); cd - >/dev/null",
             timeout=CMD_TIMEOUT,
@@ -1474,7 +1476,7 @@ class TelnetSession(SessionLifecycle):
 
     def stat(self, path: str) -> FileItem:
         path = self.normalize(path)
-        qpath = shlex.quote(path)
+        qpath = shell_path(path)
         if self._caps.has_stat_gnu:
             output = self._exec(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
             return _parse_stat_gnu(output)
@@ -1515,7 +1517,7 @@ class TelnetSession(SessionLifecycle):
         return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
-        self._exec(f"mkdir -p {shlex.quote(self.normalize(path))}")
+        self._exec(f"mkdir -p {shell_path(self.normalize(path))}")
 
     def remove(self, path: str, recursive: bool = False) -> None:
         self._exec(remove_command(self.normalize(path), recursive=recursive))
@@ -1525,7 +1527,7 @@ class TelnetSession(SessionLifecycle):
 
     def open_read(self, path: str) -> IO[bytes]:
         path = self.normalize(path)
-        qpath = shlex.quote(path)
+        qpath = shell_path(path)
         shell = self._ensure_connected()
 
         if self._caps.transfer_method == "base64":
@@ -1637,12 +1639,12 @@ class TelnetSession(SessionLifecycle):
     def chmod(self, path: str, mode: int) -> None:
         if not self._caps.has_chmod:
             raise OSError("chmod not available on remote system")
-        self._exec(f"chmod {oct(mode)[2:]} {shlex.quote(self.normalize(path))}")
+        self._exec(f"chmod {oct(mode)[2:]} {shell_path(self.normalize(path))}")
 
     def readlink(self, path: str) -> str:
         if not self._caps.has_readlink:
             raise OSError("readlink not available on remote system")
-        output = self._exec(f"readlink {shlex.quote(self.normalize(path))}")
+        output = self._exec(f"readlink {shell_path(self.normalize(path))}")
         result = output.strip()
         if not result:
             raise OSError(f"Not a symlink: {path}")
@@ -1672,7 +1674,7 @@ class TelnetSession(SessionLifecycle):
         if not tool:
             return ""
         path = self.normalize(path)
-        output, code = self._exec_raw(f"{tool} {shlex.quote(path)} 2>/dev/null")
+        output, code = self._exec_raw(f"{tool} {shell_path(path)} 2>/dev/null")
         if code != 0 or not output:
             return ""
         from core.exec_util import digest_from_sum_output
@@ -1733,13 +1735,13 @@ class TelnetSession(SessionLifecycle):
             return (0, 0, 0)
         path = self.normalize(path)
         # Try df -B1 (GNU) first
-        output, code = self._exec_raw(f"df -B1 {shlex.quote(path)} 2>/dev/null")
+        output, code = self._exec_raw(f"df -B1 {shell_path(path)} 2>/dev/null")
         if code == 0:
             result = _parse_df(output)
             if result != (0, 0, 0):
                 return result
         # Fallback: df -k (POSIX) → multiply by 1024
-        output, code = self._exec_raw(f"df -k {shlex.quote(path)}")
+        output, code = self._exec_raw(f"df -k {shell_path(path)}")
         if code == 0:
             total, used, free = _parse_df(output)
             return (total * 1024, used * 1024, free * 1024)

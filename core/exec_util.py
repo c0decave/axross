@@ -62,6 +62,20 @@ def digest_from_sum_output(output: str, algorithm: str) -> str:
     return ""
 
 
+def shell_path(path: str) -> str:
+    """*path* quoted as an operand of a remote shell command.
+
+    A relative path that starts with ``-`` gets ``./`` in front first:
+    ``ls -ld -R`` listed the current folder recursively, ``cat -`` read
+    stdin, ``readlink -f`` lost its operand. Not every command on every
+    box (toybox, busybox, old Unix ``test``) honours ``--``; every one
+    reads ``./-R`` as a name. Absolute paths are never touched.
+    """
+    if path.startswith("-"):
+        path = "./" + path
+    return shlex.quote(path)
+
+
 def ls_dir_operand(path: str) -> str:
     """*path* as the operand of an ``ls -la`` that lists a folder.
 

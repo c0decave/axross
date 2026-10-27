@@ -502,8 +502,8 @@ def test_e2e_detach_a_running_task_move_it_to_a_workspace_and_attach_it_back(mw,
     assert panel is not None and tab.busy()
     assert win.dockWidgetArea(panel) == Qt.DockWidgetArea.RightDockWidgetArea
     assert win.extension_panel_workspace(panel) is None and panel.isVisible()
-    # Moved like an extension panel: the title bar's Move to Workspace menu.
-    menu_action(panel.titleBarWidget().move_menu, "B").trigger()
+    # Moved like an extension panel: the title bar's Send to Workspace menu.
+    menu_action(panel.titleBarWidget().move_menu, "2: B").trigger()
     pump()
     assert in_layout(panel) and win.extension_panel_workspace(panel) is b
     assert win.current_workspace() is b and panel.isVisible()

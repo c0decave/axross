@@ -227,3 +227,70 @@ def test_edge_a_proc_stat_that_vanishes_while_read_counts_as_alive(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", flaky)
     assert EX._process_alive(os.getppid(), None) is True
+
+
+# --- extensions.json that is not UTF-8 -------------------------------------------------
+#
+# Found by a mutation sweep of every hand-editable store: an extensions.json
+# that is not UTF-8 (saved in Latin-1 by an editor, a damaged disk block)
+# raised UnicodeDecodeError out of _read_settings - read_text() raises it,
+# and only OSError was caught there. The main window reads the paused ids
+# while it builds its ExtensionHost, so axross did not start.
+
+_NOT_UTF8 = b'{"enabled": ["user:caf\xe9"], "paused": []}'
+
+
+def _write_not_utf8() -> Path:
+    path = EX.settings_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_NOT_UTF8)
+    return path
+
+
+def test_happy_a_utf8_settings_file_with_a_non_ascii_id_is_read():
+    path = EX.settings_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"enabled": ["user:café"]}', encoding="utf-8")
+    assert EX.enabled_ids() == {"user:café"}
+
+
+def test_sad_a_settings_file_that_is_no_utf8_reads_as_unreadable(caplog):
+    _write_not_utf8()
+    with caplog.at_level(logging.WARNING, logger="core.extensions"):
+        assert EX._read_settings() == ({}, False)
+        assert EX.enabled_ids() == set()
+        assert EX.paused_ids() == set()
+        assert EX.suspended_ids() == set()
+    assert "extensions.json" in caplog.text
+
+
+def test_edge_a_save_over_a_settings_file_that_is_no_utf8_keeps_it_aside():
+    path = _write_not_utf8()
+    EX.set_enabled("user:hello", True)
+    assert EX.enabled_ids() == {"user:hello"}
+    kept = list(path.parent.glob("extensions.json.unreadable-*"))
+    assert len(kept) == 1 and kept[0].read_bytes() == _NOT_UTF8
+
+
+def test_e2e_the_main_window_starts_on_a_settings_file_that_is_no_utf8():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    _write_not_utf8()
+    from ui.main_window import MainWindow
+
+    win = MainWindow()
+    try:
+        win._reconnect_timer.stop()
+        win.show()
+        app.processEvents()
+        assert win.extension_host is not None
+        assert not win.extension_host.is_paused("user:café")
+    finally:
+        win.close()
+        win.deleteLater()
+        app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()

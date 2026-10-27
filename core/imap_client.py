@@ -909,7 +909,8 @@ class ImapSession(SessionLifecycle):
         try:
             self._imap.noop()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("IMAP liveness check failed: %s", exc)
             return False
 
     def close(self) -> None:

@@ -1014,7 +1014,8 @@ class FtpSession(SessionLifecycle):
         try:
             self._ftp.voidcmd("NOOP")
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("FTP liveness check of %s failed: %s", getattr(self, "_host", "?"), exc)
             return False
 
     @serialized
@@ -1792,7 +1793,8 @@ class FtpSession(SessionLifecycle):
                 resp = ftp.sendcmd(f"{cmd_text} {path}")
             except error_perm:
                 continue
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - best effort: try the next command
+                log.debug("FTP %s of %s failed: %s", cmd, path, exc)
                 continue
             # Typical response: "213 0-12345 abc123deadbeef..."
             parts = resp.split()

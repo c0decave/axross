@@ -104,10 +104,14 @@ def ticks(vis, n: int) -> int:
 
 
 @pytest.mark.parametrize("mode", ["spectrum", "mirror", "radial", "line", "polar",
-                                  "scope", "vu", "lissajous"])
+                                  "scope", "vu", "lissajous", "led", "particles", "ribbon",
+                                  "ridges", "terrain", "ring", "kaleidoscope", "bells"])
 def test_happy_a_still_picture_is_not_painted_again(mode) -> None:
     """Paused or stopped the engine hands out the same samples: once the
-    face has settled, ticks paint nothing."""
+    face has settled, ticks paint nothing - the ridges and the terrain once
+    their history holds the same row throughout, the particle columns once
+    their sparks have died out, the ribbon and the kaleidoscope because only
+    an onset turns them."""
     vis = make(noise(), mode)
     try:
         ticks(vis, 600)  # settled: the peaks have fallen onto the levels
@@ -116,7 +120,9 @@ def test_happy_a_still_picture_is_not_painted_again(mode) -> None:
         vis.close()
 
 
-@pytest.mark.parametrize("mode", ["spectrum", "scope", "lissajous", "vu"])
+@pytest.mark.parametrize("mode", ["spectrum", "scope", "lissajous", "vu", "led", "particles",
+                                  "ribbon", "ridges", "terrain", "ring", "kaleidoscope",
+                                  "bells"])
 def test_happy_new_samples_are_painted_at_once(mode) -> None:
     vis = make(noise(1), mode)
     try:

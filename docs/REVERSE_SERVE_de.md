@@ -101,6 +101,16 @@ gehärteter S3-Cluster**.
 
 ## Was implementiert ist
 
+Ein stat oder Listing, das fehlschlägt, wird nie als „nicht da“
+beantwortet: 404, `NoSuchKey` und `NoSuchBucket` heißen, der Pfad fehlt
+wirklich; eine Verweigerung ist 403 (`AccessDenied`), jeder andere Fehler
+500 (`InternalError`). Ein Ordner, der sich nicht listen lässt, lässt
+PROPFIND bzw. ListObjects scheitern, statt leer zu erscheinen oder seine
+Keys auszulassen - Sync-Clients (rclone, `aws s3 sync --delete`) halten
+eine leere oder kürzere Antwort für „gelöscht“ und entfernen ihre Kopie.
+Ein WebDAV-`COPY` auf einen existierenden Ordner wird abgelehnt (409),
+nie hineinkopiert.
+
 ### S3
 
 | Verb | Status |

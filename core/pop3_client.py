@@ -291,7 +291,8 @@ class Pop3Session(SessionLifecycle):
             # NOOP exists in POP3 — sends "NOOP\r\n", expects "+OK".
             self._pop.noop()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("POP3 liveness check failed: %s", exc)
             return False
 
     @serialized

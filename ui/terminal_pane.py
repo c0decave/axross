@@ -37,6 +37,27 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _send_to_workspace_hook(pane: QWidget):
+    """The terminal screen's context_menu_hook: a separator and Send to
+    Workspace ▸ for *pane*, held weakly (the terminal is the pane's child,
+    a strong reference would tie them in a cycle)."""
+    import weakref
+
+    from ui.workspaces import add_send_to_workspace_menu
+
+    ref = weakref.ref(pane)
+
+    def hook(menu) -> None:
+        target = ref()
+        if target is None or sip.isdeleted(target):
+            return
+        menu.addSeparator()
+        if add_send_to_workspace_menu(target, menu) is None:
+            menu.removeAction(menu.actions()[-1])  # no lone separator at the end
+
+    return hook
+
+
 class TerminalPaneWidget(QWidget):
     """Terminal session embedded as a pane in the main splitter."""
 
@@ -169,10 +190,10 @@ class TerminalPaneWidget(QWidget):
         self._btn_bookmark.clicked.connect(lambda _checked=False: self.bookmark_requested.emit())
         header.addWidget(self._btn_bookmark)
 
-        # Move to Workspace ▸ (ui/workspaces.py): filled by the window.
+        # Send to Workspace ▸ (ui/workspaces.py): filled by the window.
         self._btn_workspace = QPushButton("\u21c4")  # ⇄
         self._btn_workspace.setFixedSize(22, 22)
-        self._btn_workspace.setToolTip(tr("Move to Workspace"))
+        self._btn_workspace.setToolTip(tr("Send to Workspace"))
         self._btn_workspace.setMenu(self.workspace_menu())
         header.addWidget(self._btn_workspace)
 
@@ -213,6 +234,9 @@ class TerminalPaneWidget(QWidget):
             theme=theme_name or DEFAULT_TERMINAL_THEME,
         )
         self._terminal.data_ready.connect(self._on_input)
+        # The screen's right-click menu ends with Send to Workspace ▸; a
+        # weak reference: the terminal is this pane's child.
+        self._terminal.context_menu_hook = _send_to_workspace_hook(self)
         self._terminal.grid_resized.connect(self._on_grid_resized)
         inner_layout.addWidget(self._terminal, stretch=1)
 

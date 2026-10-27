@@ -104,6 +104,15 @@ gateway, not a hardened S3 cluster**.
 
 ## What's implemented
 
+A stat or a listing that fails is never answered as "not there": 404,
+`NoSuchKey` and `NoSuchBucket` mean the path really is missing; a refusal
+is 403 (`AccessDenied`), any other failure 500 (`InternalError`). A
+folder that cannot be listed fails the PROPFIND or the ListObjects call
+instead of showing up empty or leaving its keys out - sync clients
+(rclone, `aws s3 sync --delete`) take an empty or shorter answer as
+"deleted" and remove their copy. A WebDAV `COPY` onto an existing folder
+is refused (409), never copied into it.
+
 ### S3
 
 | Verb | Status |

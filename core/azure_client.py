@@ -393,7 +393,8 @@ class AzureBlobSession(SessionLifecycle):
         try:
             self._container.get_container_properties()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("Azure Blob liveness check of %s failed: %s", self._container_name, exc)
             return False
 
     # -- lifecycle -----------------------------------------------------------
@@ -662,7 +663,19 @@ class AzureBlobSession(SessionLifecycle):
         src_key = self._to_key(src)
         dst_key = self._to_key(dst)
 
-        if self.is_dir(src):
+        src_is_dir = self.is_dir(src)
+        # Copy + delete onto an existing folder merged into it (namesakes
+        # replaced, the source deleted) or put a file beside it that hid it.
+        if self.is_dir(dst):
+            raise IsADirectoryError(
+                errno.EISDIR, f"Cannot rename {src} -> {dst}: the destination is a folder", dst
+            )
+        if src_is_dir and self.exists(dst):
+            raise FileExistsError(
+                errno.EEXIST, f"Cannot rename the folder {src} over the file {dst}", dst
+            )
+
+        if src_is_dir:
             kind = self._blob_at(src_key, src)
             if kind == "file":
                 # Moving the folder tree would leave the file behind and
@@ -1166,7 +1179,8 @@ class AzureFilesSession(SessionLifecycle):
         try:
             self._share.get_share_properties()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - any failure means not connected
+            log.debug("Azure Files liveness check of %s failed: %s", self._share_name, exc)
             return False
 
     # -- lifecycle -----------------------------------------------------------
