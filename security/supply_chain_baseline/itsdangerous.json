@@ -1,0 +1,66 @@
+{
+ "name": "itsdangerous",
+ "versions": {
+  "2.2.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|itsdangerous/serializer.py|3e67700032ea912c"
+   ],
+   "archives": {
+    "itsdangerous-2.2.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "itsdangerous-2.2.0.dist-info/LICENSE.txt": "63af09891b6be8ad1a4252ed43af0f4efba7fc948e228367bed7f3c5ae0b09d7",
+      "itsdangerous-2.2.0.dist-info/METADATA": "d2b934fb56708a1b94e439f0255c0f5a8108e3258ec827b18a1dc9c991db9611",
+      "itsdangerous-2.2.0.dist-info/RECORD": "0c6f1788e80eb81751477f96881d391bd3babbba9e5a18705bb9aef6bfd78d5c",
+      "itsdangerous-2.2.0.dist-info/WHEEL": "1196c6921ec87b83e865f450f08d19b8ff5592537f4ef719e83484e546abe33e",
+      "itsdangerous/__init__.py": "e122bbe6c09edbdc5b460404d5942d3079ca52e65801fddb4a964eadf7f52006",
+      "itsdangerous/_json.py": "c0f4069a07b6c99f77dbc107285ea069d19ec866022502b1b54fa22ca13a5270",
+      "itsdangerous/encoding.py": "c304f3e6aff7ccb71a01dba793afef4a84adc06a9859edf4ed997f53ceda4453",
+      "itsdangerous/exc.py": "46bddec68d0c44511c3d996dc1e7322b5e955756c4d8af7f175f9dfa58dc527e",
+      "itsdangerous/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "itsdangerous/serializer.py": "3e67700032ea912c902d9d2338a0200ec016e24fc7d13940ef5122df3d02e5a2",
+      "itsdangerous/signer.py": "60ed0257b341bc703a8f9e3d4441c91548d4a23c36a47ab0714a509d4ef23584",
+      "itsdangerous/timed.py": "e91bc332a36e9863317f4f8796969974df4f51042646fad01a994a871ba2bd4b",
+      "itsdangerous/url_safe.py": "6b3e1ee5f5e2fefb3e61b5a3f186709f8c2254a7de0fef8610a453e547aee0fe"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "de4177103e0410d95edcaebc7d45a737e2e08d787093ed7960b00906300674c9",
+     "native": {},
+     "pth": {},
+     "sha256": "c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef"
+    }
+   },
+   "name": "itsdangerous",
+   "provenance": {
+    "itsdangerous-2.2.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "maintainer_email": "Pallets <contact@palletsprojects.com>",
+    "project_urls": {
+     "Changes": "https://itsdangerous.palletsprojects.com/changes/",
+     "Chat": "https://discord.gg/pallets",
+     "Documentation": "https://itsdangerous.palletsprojects.com/",
+     "Donate": "https://palletsprojects.com/donate",
+     "Source": "https://github.com/pallets/itsdangerous/"
+    },
+    "summary": "Safely pass data to untrusted environments and back."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|itsdangerous/serializer.py|3e67700032ea912c"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read itsdangerous/serializer.py"
+    ]
+   },
+   "version": "2.2.0"
+  }
+ }
+}

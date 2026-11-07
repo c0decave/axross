@@ -111,7 +111,10 @@ def test_sad_a_file_instead_of_a_folder_is_no_snapshot(tmp_path):
     assert _watcher(LocalFS(), tmp_path / "plain")._snapshot() is None
 
 
-def test_edge_an_entry_that_cannot_be_statted_is_left_out_like_before(tricky):
+def test_edge_an_entry_that_cannot_be_statted_is_kept_as_list_dir_keeps_it(tricky):
+    """list_dir lists an entry whose lstat fails (a placeholder, never
+    dropped: a recursive delete or move would not see it); the fast
+    snapshot must see the same, or every poll reports a change."""
     fs = LocalFS()
     real_stat = os.DirEntry.stat
 
@@ -131,6 +134,9 @@ def test_edge_an_entry_that_cannot_be_statted_is_left_out_like_before(tricky):
         def is_dir(self, follow_symlinks=True):
             return self._e.is_dir(follow_symlinks=follow_symlinks)
 
+        def is_symlink(self):
+            return self._e.is_symlink()
+
     real_scandir = os.scandir
 
     class Scan:
@@ -146,7 +152,7 @@ def test_edge_an_entry_that_cannot_be_statted_is_left_out_like_before(tricky):
     with mock.patch("os.scandir", Scan):
         fast = _watcher(fs, tricky)._snapshot()
         former = _former(fs, str(tricky))
-    assert "empty" not in fast.entries
+    assert "empty" in fast.entries
     assert fast.entries == former.entries
 
 
@@ -190,12 +196,17 @@ def test_edge_another_backend_is_listed_as_before():
     assert set(snap.entries) == {"x"}
 
 
-def _cost_ms(snapshot, rounds: int = 3) -> float:
-    best = 1e9
+def _costs_ms(*snapshots, rounds: int = 5) -> list[float]:
+    """The best CPU time of each of *snapshots*, measured in turns (a, b,
+    a, b, ...): on a busy host the CPU time of the same work moved up to 5x
+    from one moment to the next, and measuring all of one, then all of the
+    other, compared two different moments (the negative control failed)."""
+    best = [1e9] * len(snapshots)
     for _ in range(rounds):
-        start = time.thread_time()
-        snapshot()
-        best = min(best, (time.thread_time() - start) * 1000)
+        for i, snapshot in enumerate(snapshots):
+            start = time.thread_time()
+            snapshot()
+            best[i] = min(best[i], (time.thread_time() - start) * 1000)
     return best
 
 
@@ -211,14 +222,12 @@ def many(tmp_path):
 def test_perf_happy_a_poll_of_5000_entries_costs_well_under_the_former(many):
     fs = LocalFS()
     w = _watcher(fs, many)
-    new = _cost_ms(w._snapshot)
-    old = _cost_ms(lambda: _former(fs, str(many)))
+    new, old = _costs_ms(w._snapshot, lambda: _former(fs, str(many)))
     assert new < old * 0.65, (new, old)
 
 
 def test_perf_sad_the_comparison_catches_a_poll_as_slow_as_before(many):
     """Negative control: the former poll against itself is not cheaper."""
     fs = LocalFS()
-    again = _cost_ms(lambda: _former(fs, str(many)))
-    old = _cost_ms(lambda: _former(fs, str(many)))
+    again, old = _costs_ms(lambda: _former(fs, str(many)), lambda: _former(fs, str(many)))
     assert not again < old * 0.65, (again, old)

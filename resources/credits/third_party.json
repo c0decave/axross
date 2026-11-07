@@ -344,6 +344,144 @@
    ]
   },
   {
+   "id": "bumble",
+   "name": "Bumble",
+   "kind": "python",
+   "purpose": "Drives a USB Bluetooth stick directly, without BlueZ (Bluetooth panel)",
+   "license": "Apache-2.0",
+   "url": "https://github.com/google/bumble",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "bumble"
+   ],
+   "extras": [
+    "bluetooth-raw"
+   ],
+   "match": {
+    "modules": [
+     "bumble"
+    ]
+   }
+  },
+  {
+   "id": "matrix-nio",
+   "name": "matrix-nio",
+   "kind": "python",
+   "purpose": "Matrix client with end-to-end encryption (Matrix panel)",
+   "license": "ISC",
+   "url": "https://github.com/matrix-nio/matrix-nio",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "matrix-nio"
+   ],
+   "extras": [
+    "chat"
+   ],
+   "match": {
+    "modules": [
+     "nio"
+    ]
+   }
+  },
+  {
+   "id": "vodozemac",
+   "name": "vodozemac",
+   "kind": "python",
+   "purpose": "Olm and Megolm end-to-end encryption of Matrix (used by matrix-nio)",
+   "license": "MIT AND Apache-2.0",
+   "url": "https://github.com/matrix-nio/vodozemac-python",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "vodozemac"
+   ],
+   "extras": [
+    "chat"
+   ],
+   "match": {
+    "modules": [
+     "vodozemac"
+    ]
+   }
+  },
+  {
+   "id": "slixmpp",
+   "name": "Slixmpp",
+   "kind": "python",
+   "purpose": "XMPP client library (XMPP panel)",
+   "license": "MIT",
+   "url": "https://codeberg.org/poezio/slixmpp",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "slixmpp"
+   ],
+   "extras": [
+    "chat"
+   ],
+   "match": {
+    "modules": [
+     "slixmpp"
+    ]
+   }
+  },
+  {
+   "id": "omemo",
+   "name": "python-omemo",
+   "kind": "python",
+   "purpose": "OMEMO end-to-end encryption session manager (XMPP panel)",
+   "license": "MIT",
+   "url": "https://github.com/Syndace/python-omemo",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "omemo"
+   ],
+   "extras": [
+    "chat"
+   ],
+   "match": {
+    "modules": [
+     "omemo"
+    ]
+   }
+  },
+  {
+   "id": "twomemo",
+   "name": "python-twomemo",
+   "kind": "python",
+   "purpose": "OMEMO 2 (urn:xmpp:omemo:2) backend",
+   "license": "MIT",
+   "url": "https://github.com/Syndace/python-twomemo",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "twomemo"
+   ],
+   "extras": [
+    "chat"
+   ],
+   "match": {
+    "modules": [
+     "twomemo"
+    ]
+   }
+  },
+  {
    "id": "bzip2",
    "name": "bzip2",
    "kind": "library",
@@ -551,7 +689,7 @@
    "extras": [
     "voice"
    ],
-   "version": "4.8.4",
+   "version": "4.8.3",
    "group": "voice",
    "match": {
     "modules": [
@@ -1482,6 +1620,27 @@
    }
   },
   {
+   "id": "importlib-resources",
+   "name": "importlib_resources",
+   "kind": "python",
+   "purpose": "Used by libusb-package: Read resources from Python packages",
+   "license": "Apache-2.0",
+   "url": "https://github.com/python/importlib_resources",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "importlib-resources"
+   ],
+   "via": "libusb-package",
+   "match": {
+    "modules": [
+     "importlib_resources"
+    ]
+   }
+  },
+  {
    "id": "inflate64",
    "name": "inflate64",
    "kind": "python",
@@ -2063,6 +2222,66 @@
    "match": {
     "libraries": [
      "libunistring"
+    ]
+   }
+  },
+  {
+   "id": "libusb",
+   "name": "libusb",
+   "kind": "library",
+   "purpose": "USB access of the Bluetooth stick used directly (in libusb-package)",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/libusb/libusb",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "via": "libusb-package",
+   "match": {
+    "libraries": [
+     "libusb-1.0"
+    ]
+   }
+  },
+  {
+   "id": "libusb-package",
+   "name": "libusb-package",
+   "kind": "python",
+   "purpose": "Used by Bumble: libusb as a Python package",
+   "license": "Apache-2.0",
+   "url": "https://github.com/pyocd/libusb-package",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "libusb-package"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "libusb_package"
+    ]
+   }
+  },
+  {
+   "id": "libusb1",
+   "name": "python-libusb1",
+   "kind": "python",
+   "purpose": "Used by Bumble: libusb from Python",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://github.com/vpelletier/python-libusb1",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "libusb1"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "usb1"
     ]
    }
   },
@@ -2797,6 +3016,27 @@
    "note": "each voice's dataset terms are in its MODEL_CARD (Thorsten CC0; Kerstin, Ryan and Lessac as stated there)"
   },
   {
+   "id": "platformdirs",
+   "name": "platformdirs",
+   "kind": "python",
+   "purpose": "Used by Bumble: platform-specific data folders",
+   "license": "MIT",
+   "url": "https://github.com/tox-dev/platformdirs",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "platformdirs"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "platformdirs"
+    ]
+   }
+  },
+  {
    "id": "podman",
    "name": "Podman",
    "kind": "program",
@@ -2817,6 +3057,27 @@
    "ships": [
     "host"
    ]
+  },
+  {
+   "id": "prompt-toolkit",
+   "name": "prompt_toolkit",
+   "kind": "python",
+   "purpose": "Used by Bumble: interactive command lines",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/prompt-toolkit/python-prompt-toolkit",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "prompt-toolkit"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "prompt_toolkit"
+    ]
+   }
   },
   {
    "id": "protobuf",
@@ -3063,6 +3324,27 @@
    }
   },
   {
+   "id": "pyee",
+   "name": "pyee",
+   "kind": "python",
+   "purpose": "Used by Bumble: event emitters",
+   "license": "MIT",
+   "url": "https://github.com/jfhbrook/pyee",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyee"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "pyee"
+    ]
+   }
+  },
+  {
    "id": "pygments",
    "name": "Pygments",
    "kind": "python",
@@ -3287,6 +3569,48 @@
    }
   },
   {
+   "id": "pyserial",
+   "name": "pySerial",
+   "kind": "python",
+   "purpose": "Used by Bumble: serial-port transports",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pyserial/pyserial",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyserial"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "serial"
+    ]
+   }
+  },
+  {
+   "id": "pyserial-asyncio",
+   "name": "pyserial-asyncio",
+   "kind": "python",
+   "purpose": "Used by Bumble: serial ports with asyncio",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pyserial/pyserial-asyncio",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyserial-asyncio"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "serial_asyncio"
+    ]
+   }
+  },
+  {
    "id": "pysnmp",
    "name": "pysnmp",
    "kind": "python",
@@ -3386,6 +3710,27 @@
     "container"
    ],
    "note": "built on Debian; each Debian package's licence is in /usr/share/doc/<package>/copyright inside the image"
+  },
+  {
+   "id": "pyusb",
+   "name": "PyUSB",
+   "kind": "python",
+   "purpose": "Used by Bumble: USB access",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/pyusb/pyusb",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "pyusb"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "usb"
+    ]
+   }
   },
   {
    "id": "pywinpty",
@@ -4266,6 +4611,48 @@
    "match": {
     "modules": [
      "watchdog"
+    ]
+   }
+  },
+  {
+   "id": "wcwidth",
+   "name": "wcwidth",
+   "kind": "python",
+   "purpose": "Used by prompt_toolkit: terminal width of characters",
+   "license": "MIT",
+   "url": "https://github.com/jquast/wcwidth",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "wcwidth"
+   ],
+   "via": "prompt_toolkit",
+   "match": {
+    "modules": [
+     "wcwidth"
+    ]
+   }
+  },
+  {
+   "id": "websockets",
+   "name": "websockets",
+   "kind": "python",
+   "purpose": "Used by Bumble: WebSocket transports",
+   "license": "BSD-3-Clause",
+   "url": "https://github.com/python-websockets/websockets",
+   "ships": [
+    "axross-full",
+    "pip-extra"
+   ],
+   "pypi": [
+    "websockets"
+   ],
+   "via": "Bumble",
+   "match": {
+    "modules": [
+     "websockets"
     ]
    }
   },

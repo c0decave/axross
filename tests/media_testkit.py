@@ -1,4 +1,5 @@
-"""Media files for the media-viewer tests, generated on the spot.
+"""Media files for the media-viewer tests, generated on the spot, and what
+this Qt can show (QtPdf, a Qt Multimedia backend) for the tests that need it.
 
 Images come from Pillow, PDFs from QPdfWriter (or by hand for the encrypted
 one), the video is a raw YUV4MPEG2 clip FFmpeg plays without a codec. No
@@ -13,7 +14,52 @@ import struct
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from models.file_item import FileItem
+
+# -- what this Qt can do -----------------------------------------------------------
+
+
+def qtpdf_missing() -> str:
+    """Why QtPdf cannot be loaded here, "" when it can. PyQt6's 6.12 wheels
+    ship no QtPdf, and a QtPdf without libatomic on the host does not load
+    either: the viewer then offers no PDFs and a PDF opens in the hex editor
+    (tests/test_media_viewer_without_qtpdf.py)."""
+    try:
+        import PyQt6.QtPdf  # noqa: F401
+        import PyQt6.QtPdfWidgets  # noqa: F401
+    except ImportError as exc:
+        return str(exc)
+    return ""
+
+
+#: A test that shows a real PDF: it needs QtPdf.
+requires_qtpdf = pytest.mark.skipif(
+    bool(qtpdf_missing()), reason=f"QtPdf cannot be loaded here: {qtpdf_missing()}"
+)
+
+
+def multimedia_backend_here() -> bool:
+    """True when Qt Multimedia has a backend here (its FFmpeg plugin loads).
+    Without one ("No QtMultimedia backends found": the plugin missing, or a
+    library it needs such as libXrandr) QMediaPlayer is not available and
+    only Qt's own WAV reader decodes; QAudioDecoder.isSupported() says True
+    all the same, the list of audio codecs Qt decodes is empty. The Media
+    Player builds no engine there (tests/test_media_player_no_decoder.py)."""
+    try:
+        from PyQt6.QtMultimedia import QMediaFormat
+    except ImportError:
+        return False
+    return bool(QMediaFormat().supportedAudioCodecs(QMediaFormat.ConversionMode.Decode))
+
+
+def need_multimedia_backend() -> None:
+    """Skip the calling test where Qt Multimedia has no backend. Asked when
+    the test runs, not at import: the question starts Qt's backend."""
+    if not multimedia_backend_here():
+        pytest.skip("Qt Multimedia has no backend here (its FFmpeg plugin is missing "
+                    "or cannot load)")
 
 
 def write_image(path: Path, size=(40, 30), color=(200, 30, 30), fmt: str | None = None) -> Path:

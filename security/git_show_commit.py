@@ -311,6 +311,9 @@ def commit_diff(root: Path, rev: str) -> str:
             "git", "-c", "core.quotePath=false",
             "-C", str(root),
             "show", "--format=",
+            # every change as text: a binary file, or one marked -diff or
+            # with a textconv in .gitattributes, would show no lines to scan
+            "--text", "--no-ext-diff", "--no-textconv",
             "--end-of-options", rev,
         ],
         capture_output=True,

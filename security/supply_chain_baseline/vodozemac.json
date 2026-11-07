@@ -1,0 +1,98 @@
+{
+ "name": "vodozemac",
+ "versions": {
+  "0.10.0": {
+   "accepted_findings": [],
+   "archives": {
+    "vodozemac-0.10.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "vodozemac-0.10.0.dist-info/METADATA": "db86e7660b63206ce44274f3f5d4ab82eab0a6f8be6db9f7705bb2c51cdd9028",
+      "vodozemac-0.10.0.dist-info/RECORD": "dc1a4dd7c0259ebbe0d7eb47a2ec2e58d676f7c4b5d745d33e6b7b16191cee18",
+      "vodozemac-0.10.0.dist-info/WHEEL": "c5e3da21766d0e72af45ff0d32b3b67a77ca97b6891d3f9fe3274b05a38b67c1",
+      "vodozemac-0.10.0.dist-info/licenses/LICENSE": "b5b9a507d9ddf69b47ed07bc0919897d14b5c374648177fe5f88242959199e24",
+      "vodozemac-0.10.0.dist-info/sboms/vodozemac-python.cyclonedx.json": "16fcbf58292b22f5cc3e1e09c1b22571cec3579c99d001cfb07c51049334b3d7",
+      "vodozemac/__init__.py": "66a76fafd36f5fd434b9a4dcc03d6b235d22bc1bdcb34e2589ae3d634c2bbe47",
+      "vodozemac/__init__.pyi": "3865883234d1749fe5ab517e9dbe9b0e0009ab980800802ff4d66da0af37957c",
+      "vodozemac/py.typed": "36a9e7f1c95b82ffb99743e0c5c4ce95d83c9a430aac59f84ef3cbfab6145068",
+      "vodozemac/vodozemac.cpython-312-x86_64-linux-gnu.so": "18469a87fb00cfb57f7c3779906c98fe6b2a8a451ab9f03b831688fb30a49f52"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "1eeeeb18e4ec5ac1e2ebcc356628a501d5da742fa1a640807a2d18e1395742fb",
+     "native": {
+      "vodozemac/vodozemac.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "937a3b9d8fae1c9c7cc5bcf1f78212a8a0e28362f719790f6b95bc909e84b37c"
+    }
+   },
+   "name": "vodozemac",
+   "provenance": {
+    "vodozemac-0.10.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": null
+   },
+   "pypi": {
+    "home_page": "https://github.com/matrix-nio/vodozemac-python",
+    "project_urls": {
+     "Homepage": "https://github.com/matrix-nio/vodozemac-python",
+     "repository": "https://github.com/matrix-nio/vodozemac-python"
+    },
+    "summary": "Python bindings for vodozemac"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {
+     "18469a87fb00cfb57f7c3779906c98fe6b2a8a451ab9f03b831688fb30a49f52": {
+      "capabilities": [
+       "compiled with rust",
+       "contain loop",
+       "create or open file",
+       "decrypt data using AES via x86 extensions",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using AES via x86 extensions",
+       "encrypt data using Curve25519",
+       "encrypt data using RC4 PRGA",
+       "encrypt data using Salsa20 or ChaCha",
+       "execute syscall",
+       "hash data using SHA256",
+       "hash data using SHA512",
+       "hash data using murmur3",
+       "hash data using sha256 via x86 extensions",
+       "map or unmap memory on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "reference Base64 string",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "vodozemac/vodozemac.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://docs.rs/getrandom#nodejs-es-module-supportErrorinternal_codedescriptionunknown_code",
+        "https://spec.matrix.org/v1.11/client-server-api/#backup-algorithm-mmegolm_backupv1curve25519-aes-sha2"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.10.0"
+  }
+ }
+}

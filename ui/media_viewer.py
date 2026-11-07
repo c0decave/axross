@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import logging
 import threading
+import weakref
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from PyQt6 import sip
 from PyQt6.QtCore import (
     QAbstractListModel,
     QModelIndex,
@@ -91,10 +93,12 @@ from core import media_load as ML
 from core import multimedia_probe as MPROBE
 from core.i18n import tr
 from core.multimedia_env import prime_notify_lookups
+from core.thread_relay import GuiCall
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.media_viewer")
 
@@ -109,6 +113,10 @@ PREPARED_KEPT = 4
 
 
 _video_ok: bool | None = None
+#: Why a video cannot play where Qt Multimedia imports but has no backend
+#: (core.multimedia_probe.ProbeResult.decoding).
+NO_VIDEO_BACKEND = ("Qt Multimedia has no backend here that can play video "
+                    "(its FFmpeg plugin is missing or cannot be loaded)")
 
 
 _pdf_ok: bool | None = None
@@ -160,6 +168,78 @@ class MediaViewOptions:
 # ---------------------------------------------------------------------------
 
 
+class _RunnerState:
+    """What the workers share with their TaskRunner: plain Python, so a
+    worker never calls into the runner's Qt object, which may be gone."""
+
+    def __init__(self, max_pending: int) -> None:
+        self.cond = threading.Condition()
+        self.queue: deque = deque()
+        self.active: set = set()
+        self.running = 0
+        self.generation = 0
+        self.cancel = threading.Event()
+        self.stopped = False
+        self.max_pending = max(1, max_pending)
+
+    def reset(self) -> None:
+        with self.cond:
+            self.generation += 1
+            self.queue.clear()
+            self.active.clear()
+            self.cancel.set()
+            self.cancel = threading.Event()
+
+    def stop(self) -> None:
+        self.reset()
+        with self.cond:
+            self.stopped = True
+            self.cond.notify_all()
+
+
+#: How often an idle worker checks that its runner still exists.
+_IDLE_CHECK_SECONDS = 2.0
+
+
+def _runner_gone(runner: weakref.ref) -> bool:
+    """True once the runner was deleted without shutdown() (its window closed
+    and collected). Read from the worker: only the wrapper's deleted flag, no
+    call into Qt - and nothing hooked on ``destroyed`` (core/thread_relay.py)."""
+    obj = runner()
+    return obj is None or sip.isdeleted(obj)
+
+
+def _work(state: _RunnerState, deliver: GuiCall, runner: weakref.ref) -> None:
+    while True:
+        with state.cond:
+            while not state.queue and not state.stopped:
+                if not state.cond.wait(_IDLE_CHECK_SECONDS) and _runner_gone(runner):
+                    state.stopped = True
+            if state.stopped:
+                return
+            gen, key, fn = state.queue.pop()  # newest first
+            cancel = state.cancel
+            state.running += 1
+        value, error = None, None
+        try:
+            value = fn(cancel)
+        except Exception as exc:  # noqa: BLE001 - handed to the GUI thread
+            error = exc
+        if _runner_gone(runner):
+            state.stop()
+        with state.cond:
+            state.running -= 1
+            current = gen == state.generation and not state.stopped
+            if current:
+                state.active.discard(key)
+        if current:
+            # Never self.<signal>.emit() here: the runner may be being deleted
+            # in the GUI thread right now (core/thread_relay.py).
+            deliver(gen, key, value, error)
+        else:
+            _release(value)
+
+
 class TaskRunner(QObject):
     """A few worker threads over a newest-first queue.
 
@@ -168,24 +248,19 @@ class TaskRunner(QObject):
     ``max_pending`` requests - the oldest are dropped, since a tile that
     scrolled away long ago is no longer worth the read. :meth:`reset` drops
     the queue, tells running work to stop and discards its results.
+    :meth:`shutdown` ends the workers; so does deleting the runner.
     """
 
     finished = pyqtSignal(object, object, object)
-    _done = pyqtSignal(int, object, object, object)
 
     def __init__(self, workers: int = 2, max_pending: int = 256, parent: QObject | None = None):
         super().__init__(parent)
-        self._cond = threading.Condition()
-        self._queue: deque = deque()
-        self._active: set = set()
-        self._running = 0
-        self._generation = 0
-        self._cancel = threading.Event()
-        self._stopped = False
-        self._max_pending = max(1, max_pending)
-        self._done.connect(self._deliver)
+        self._state = _RunnerState(max_pending)
+        deliver = GuiCall(self._deliver)
+        me = weakref.ref(self)
         self._threads = [
-            threading.Thread(target=self._work, name="media-task", daemon=True)
+            threading.Thread(target=_work, args=(self._state, deliver, me),
+                             name="media-task", daemon=True)
             for _ in range(max(1, workers))
         ]
         for t in self._threads:
@@ -194,70 +269,35 @@ class TaskRunner(QObject):
     def submit(self, key, fn: Callable[[threading.Event], Any]) -> bool:
         """Queue *fn* under *key*; ``False`` when *key* is already queued or
         running, or the runner is shut down."""
-        with self._cond:
-            if self._stopped or key in self._active:
+        s = self._state
+        with s.cond:
+            if s.stopped or key in s.active:
                 return False
-            self._queue.append((self._generation, key, fn))
-            self._active.add(key)
-            while len(self._queue) > self._max_pending:
-                _gen, old_key, _fn = self._queue.popleft()
-                self._active.discard(old_key)
-            self._cond.notify()
+            s.queue.append((s.generation, key, fn))
+            s.active.add(key)
+            while len(s.queue) > s.max_pending:
+                _gen, old_key, _fn = s.queue.popleft()
+                s.active.discard(old_key)
+            s.cond.notify()
             return True
 
     def active(self, key) -> bool:
-        with self._cond:
-            return key in self._active
+        with self._state.cond:
+            return key in self._state.active
 
     def running_count(self) -> int:
-        with self._cond:
-            return self._running
+        with self._state.cond:
+            return self._state.running
 
     def reset(self) -> None:
-        with self._cond:
-            self._generation += 1
-            self._queue.clear()
-            self._active.clear()
-            self._cancel.set()
-            self._cancel = threading.Event()
+        self._state.reset()
 
     def shutdown(self) -> None:
-        self.reset()
-        with self._cond:
-            self._stopped = True
-            self._cond.notify_all()
-
-    def _work(self) -> None:
-        while True:
-            with self._cond:
-                while not self._queue and not self._stopped:
-                    self._cond.wait()
-                if self._stopped:
-                    return
-                gen, key, fn = self._queue.pop()  # newest first
-                cancel = self._cancel
-                self._running += 1
-            value, error = None, None
-            try:
-                value = fn(cancel)
-            except Exception as exc:  # noqa: BLE001 - handed to the GUI thread
-                error = exc
-            with self._cond:
-                self._running -= 1
-                current = gen == self._generation and not self._stopped
-                if current:
-                    self._active.discard(key)
-            if not current:
-                _release(value)
-                continue
-            try:
-                self._done.emit(gen, key, value, error)
-            except RuntimeError:  # the owner is gone
-                _release(value)
-                return
+        self._state.stop()
 
     def _deliver(self, gen: int, key, value, error) -> None:
-        if gen != self._generation or self._stopped:
+        s = self._state
+        if gen != s.generation or s.stopped:
             _release(value)
             return
         self.finished.emit(key, value, error)
@@ -288,6 +328,7 @@ class MediaViewOptionsDialog(QDialog):
         defaults: MediaViewOptions | None = None,
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "media-view")
         d = defaults or MediaViewOptions(
             kinds=frozenset(
                 {MC.IMAGE}
@@ -316,7 +357,10 @@ class MediaViewOptionsDialog(QDialog):
         if not pdf_supported():
             self.pdf_box.setChecked(False)
             self.pdf_box.setEnabled(False)
-            self.pdf_box.setToolTip(tr("PDF viewing needs QtPdf, which cannot be loaded here"))
+            tip = tr("PDF viewing needs QtPdf, which cannot be loaded here")
+            if ML.qtpdf_install_hint():
+                tip += "\n" + tr("With PyQt6 6.12 or newer it is the separate package PyQt6-Pdf.")
+            self.pdf_box.setToolTip(tip)
         if not video_supported():
             self.video_box.setChecked(False)
             self.video_box.setEnabled(False)
@@ -515,7 +559,10 @@ class MediaListModel(QAbstractListModel):
         if role == Qt.ItemDataRole.ToolTipRole:
             text = f"{item.path}\n{item.size:,} bytes"
             reason = self._failed.get(item.path)
-            return f"{text}\n{reason}" if reason else text
+            from ui.plain_text import plain_tooltip
+
+            # a path (and a decoder's reason) is never ours: shown as text
+            return plain_tooltip(f"{text}\n{reason}" if reason else text)
         if role == self.ItemRole:
             return item
         return None
@@ -883,8 +930,8 @@ class MediaViewer(QWidget):
         chosen one is not connected."""
         from PyQt6.QtMultimedia import QMediaDevices
 
-        self._audio.setDevice(AR.output_device() or QMediaDevices.defaultAudioOutput())
-        self._audio.setVolume(AR.output_gain())
+        self._audio.setDevice(AR.source_device("preview") or QMediaDevices.defaultAudioOutput())
+        self._audio.setVolume(AR.source_gain("preview"))
 
     def _audio_settings_saved(self, _saved) -> None:
         """Take the saved output device and volume (at the start and when
@@ -1123,12 +1170,16 @@ class MediaViewer(QWidget):
                 self._probe_wait = (self.current_index, entry)
                 MPROBE.probe_async(self._multimedia_checked, context=self)
                 return
-            if not result.ok:
+            if not result.ok or not result.decoding:
+                # Without a backend QMediaPlayer is "not available": a video
+                # stayed a black player that reported no error and never
+                # ended, and a slideshow stopped on it for good.
                 item = self.current_item()
                 self.mode = "placeholder"
                 self._show_placeholder(
                     tr("Cannot play {name}").format(name=item.name if item else "")
-                    + "\n\n" + MPROBE.unavailable_text(result)
+                    + "\n\n" + (MPROBE.unavailable_text(result) if not result.ok
+                                  else tr(NO_VIDEO_BACKEND))
                 )
                 self._arm_slideshow()
                 return
@@ -1420,6 +1471,7 @@ class MediaViewerDialog(QDialog):
         source_pane=None,
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "media-view")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         VW.allow_maximize(self)
         self._backend = backend

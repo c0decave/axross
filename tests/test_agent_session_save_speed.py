@@ -50,7 +50,32 @@ def test_happy_the_file_is_the_same_text_as_before(tmp_path):
     assert back.transcript == session.transcript and back.messages == session.messages
 
 
-@pytest.mark.skipif(json.encoder.c_make_encoder is None, reason="no C JSON encoder here")
+def _c_encoder_indents() -> bool:
+    """Whether json.dumps(..., indent=...) runs on the C encoder here. Python
+    3.11 has a C encoder but leaves every indented dump to the pure-Python one
+    (json/encoder.py: ``c_make_encoder is not None and self.indent is None``);
+    newer Pythons encode indented output in C as well."""
+    import json.encoder as E
+
+    if E.c_make_encoder is None:
+        return False
+    original = E._make_iterencode
+
+    def python_encoder(*_a, **_k):
+        raise LookupError
+
+    E._make_iterencode = python_encoder
+    try:
+        json.dumps({"a": [1]}, indent=1)
+    except LookupError:
+        return False
+    finally:
+        E._make_iterencode = original
+    return True
+
+
+@pytest.mark.skipif(not _c_encoder_indents(),
+                    reason="this Python's C JSON encoder does not do indented output")
 def test_happy_saving_does_not_stream_through_the_python_encoder(tmp_path, monkeypatch):
     import json.encoder as E
 

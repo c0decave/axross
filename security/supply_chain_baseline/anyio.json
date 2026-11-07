@@ -1,0 +1,146 @@
+{
+ "name": "anyio",
+ "versions": {
+  "4.15.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|anyio/_core/_sockets.py|0bc6fedf0e47f67d",
+    "yara|capability_filesystem_read|anyio/_backends/_asyncio.py|56acbb3b5ca6984a",
+    "yara|capability_filesystem_read|anyio/_core/_fileio.py|abef9fb7d87963f1",
+    "yara|capability_filesystem_read|anyio/_core/_tempfile.py|220a0108568f86b1",
+    "yara|capability_filesystem_read|anyio/streams/tls.py|7ea2e6c6f50b14ef",
+    "yara|capability_filesystem_write_executable|anyio/_core/_fileio.py|abef9fb7d87963f1",
+    "yara|capability_network_outbound|anyio/_backends/_trio.py|1acf17cd7d08781b",
+    "yara|capability_network_outbound|anyio/_core/_fileio.py|abef9fb7d87963f1",
+    "yara|capability_process_schedule|anyio/_backends/_asyncio.py|56acbb3b5ca6984a",
+    "yara|capability_process_spawn|anyio/_core/_subprocesses.py|4cc06e18d20bcfee",
+    "yara|capability_process_spawn|anyio/abc/_subprocesses.py|083a94d69d07b814",
+    "yara|capability_process_spawn|anyio/to_interpreter.py|0139e84fa91e8bdc"
+   ],
+   "archives": {
+    "anyio-4.15.1-py3-none-any.whl": {
+     "entry_points": [
+      "anyio = anyio.pytest_plugin"
+     ],
+     "files": {
+      "anyio-4.15.1.dist-info/METADATA": "043aecb571af7189e8a6c528f5d8e32545f1b2cdfaaf761d51e6d5b67ea3ca81",
+      "anyio-4.15.1.dist-info/RECORD": "f4042bec513d826bf50bbb4a6f09805f50d5e7968a337d9bcad375e17db309c9",
+      "anyio-4.15.1.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "anyio-4.15.1.dist-info/entry_points.txt": "fdde98bbaba269998d7b40b2768c22ac4f429a0ef350bda0d3cb50a684b742f7",
+      "anyio-4.15.1.dist-info/licenses/LICENSE": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0",
+      "anyio-4.15.1.dist-info/top_level.txt": "420952322597f3fe5da685401081dd118cefa8531d4985a60a3ead630d884e44",
+      "anyio/__init__.py": "39fae86118c8530fc9163d19c21d4901a6a331083856ab6802dd17a0e1c34701",
+      "anyio/_backends/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "anyio/_backends/_asyncio.py": "56acbb3b5ca6984a714e23f37a14ae042553ce21802cd57e05bb0845a297b20e",
+      "anyio/_backends/_trio.py": "1acf17cd7d08781be37bc20466d266a4dca52825000a12afec8fd8662df09668",
+      "anyio/_core/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "anyio/_core/_asyncio_selector_thread.py": "d8f77114cddcb34d8aa7a052a696ef9914fbabb6acade4d6e45801c44b1f941a",
+      "anyio/_core/_concurrency_utils.py": "92f45732b9c3aa041306465cf9fdbbf7e9419d933861b493a17aa19c05027d27",
+      "anyio/_core/_contextmanagers.py": "6089c109a6e211e4be51a3ff25dc5ad426850bbd444cf5bc1d94c720cf11b1cf",
+      "anyio/_core/_eventloop.py": "0726547890fd6a531f7324ec791a392334ced0896d12e97f1b2abd8aa4a3a839",
+      "anyio/_core/_exceptions.py": "0786612e40504f8b48eaf4a1bf8f8626e8b8f76209b282034f0d454091249802",
+      "anyio/_core/_fileio.py": "abef9fb7d87963f1512f38409e862b5dfded3ae67c67220dd80f6609f31b6517",
+      "anyio/_core/_futures.py": "610ab9ba19c29ca40c403eb6b4e2dfcc49bb7545d8dc6428ac9747ea085f8084",
+      "anyio/_core/_resources.py": "2dde5db827bd37080f7c8ec420e87708c201610eebaba65011aec2152d2ef447",
+      "anyio/_core/_signals.py": "9a34c107685328d3d1954d088678a379079da563861110e23234a5250b05aee8",
+      "anyio/_core/_sockets.py": "0bc6fedf0e47f67d05a3883b5fc589be4d26e821a1e8d540005b627811872b78",
+      "anyio/_core/_streams.py": "15ccc5c08803a6790ad1b3835895cca6c50961dbc00f4e24694686cc953c0cad",
+      "anyio/_core/_subprocesses.py": "4cc06e18d20bcfee3bc39b7dbdac89d46a42a434fa2f1b0ca212431427b02117",
+      "anyio/_core/_synchronization.py": "820b1def840f77ce3a7da0361d0793d3b38d4391d0d52efc832f26bc1dea0abc",
+      "anyio/_core/_tasks.py": "27676133f26adc6aec7e0fde9cd5a9473d92c5f335e6e2edfa911fbe842adee0",
+      "anyio/_core/_tempfile.py": "220a0108568f86b16fb05f4a1dc09cae70919fe52a31fc345917520d68310222",
+      "anyio/_core/_testing.py": "651b9c2e1e64aa188558024c31b77cc99eae22fcf4aeadd6c0bef695da2cc405",
+      "anyio/_core/_typedattr.py": "82df43ce7f882f4416d786873c30fc3c0b6af7915828d36ea47c9fdfbc5918f4",
+      "anyio/_lazyimport.py": "2c28e761a9c87d813d1be0effc4b2a34b0ee551a693627166630937d2f7eb095",
+      "anyio/abc/__init__.py": "5c856f088d9cea8c9a39ca977bde24dabcd4e7fb3bf99367971193937e07e13d",
+      "anyio/abc/_eventloop.py": "d3e530801df9d6b928702b7c9b77e34e670dc761719f9da7528ba31b90f332f5",
+      "anyio/abc/_resources.py": "86b6f42d75201d2a778bc1ba5bc249721773297820d66d13f8beee7579afdb2d",
+      "anyio/abc/_sockets.py": "8d05a73d7ee20c80f2bf2bd591bb858637b3c38a08d96820cdb5ba565dbe7aab",
+      "anyio/abc/_streams.py": "20c78e3cfbad15745bc9e02eb715751c97bb154419629daa2ab249a4fd430afd",
+      "anyio/abc/_subprocesses.py": "083a94d69d07b814b4a57533056fe16df86285325133aee7fffeea666a0f53ce",
+      "anyio/abc/_tasks.py": "1c13e94fbd9a3b2d1bc0c0310422a69d7b11df6f30098463626de2695c367d0a",
+      "anyio/abc/_testing.py": "03d63c4400a520f9f503468d1c137c628691cbf30a3a96c51846d31c05e007a5",
+      "anyio/from_thread.py": "89965b7dc3724a2e3001cc75fdcc40404e09d18642f3ca9130862a43a485f6c7",
+      "anyio/functools.py": "4f8252f085eafb1d52d0b6e8da8c05f25f5fcdad8aca93b5e3b40b7b2cf8723b",
+      "anyio/itertools.py": "4d2eff5026b663772082d68b9561db8cec9fe9084f7d051d3ddb8d5be75d5d31",
+      "anyio/lowlevel.py": "4325a4bdf7ad6c21f498792abf5cb11b039a899edfcb18696641d63973d5e495",
+      "anyio/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "anyio/pytest_plugin.py": "a0b5f23acb6f4595b75556ea20e0e166c3ede234b3d941a1e3861e1b69c95f1d",
+      "anyio/streams/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "anyio/streams/buffered.py": "bbb8420fc48dad81dcbad1ba2b9c048b2d45f3cfa98b3823bc414cdb62aad82c",
+      "anyio/streams/file.py": "ea3ba32369be409213aaa2856a6aeea57fc336c53bcb6173de898b67138bb98d",
+      "anyio/streams/memory.py": "ae9c4dcc331a83d3c23b29c1a8deb82b2b807c03c1e35bc5c913fe369a3e944d",
+      "anyio/streams/stapled.py": "509d9182dd0d526335568bd134ea19a2273deb495c6c38dbdef85f660ddbfd9d",
+      "anyio/streams/text.py": "05c540189c35551bed22a9effa8d116f4a701fba7cbf096f976d711eae76d9a8",
+      "anyio/streams/tls.py": "7ea2e6c6f50b14ef6bbf11b2277dd53eb38837b1377a2535abdd019262a2810f",
+      "anyio/to_interpreter.py": "0139e84fa91e8bdc0399066d5d30374ac63808aed72abf136b8ff1e62ea96d3c",
+      "anyio/to_process.py": "a7a9fc8f49eb789525d4312447ff4f2fa291a0ab4da85c4e4539fca9906f9fde",
+      "anyio/to_thread.py": "f0c3d5aeb42af2db46bd5db571277af2b32da396e1c49d3e8bd0aea576a0e46b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "425cb1bdc9a7f4f982df097706b70c2510f77c1775ed9da8b7a45c4fd4312d4a",
+     "native": {},
+     "pth": {},
+     "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101"
+    }
+   },
+   "name": "anyio",
+   "provenance": {
+    "anyio-4.15.1-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "agronholm/anyio",
+     "workflow": "publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Alex Gr\u00f6nholm <alex.gronholm@nextday.fi>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://anyio.readthedocs.io/en/stable/versionhistory.html",
+     "Documentation": "https://anyio.readthedocs.io/en/latest/",
+     "Issue tracker": "https://github.com/agronholm/anyio/issues",
+     "Source code": "https://github.com/agronholm/anyio"
+    },
+    "summary": "High-level concurrency and networking framework on top of asyncio or Trio"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable, network_outbound, process_schedule, process_spawn; attestation verifies (agronholm/anyio)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|anyio/_core/_sockets.py|0bc6fedf0e47f67d",
+     "yara|capability_filesystem_read|anyio/_backends/_asyncio.py|56acbb3b5ca6984a",
+     "yara|capability_filesystem_read|anyio/_core/_fileio.py|abef9fb7d87963f1",
+     "yara|capability_filesystem_read|anyio/_core/_tempfile.py|220a0108568f86b1",
+     "yara|capability_filesystem_read|anyio/streams/tls.py|7ea2e6c6f50b14ef",
+     "yara|capability_filesystem_write_executable|anyio/_core/_fileio.py|abef9fb7d87963f1",
+     "yara|capability_network_outbound|anyio/_backends/_trio.py|1acf17cd7d08781b",
+     "yara|capability_network_outbound|anyio/_core/_fileio.py|abef9fb7d87963f1",
+     "yara|capability_process_schedule|anyio/_backends/_asyncio.py|56acbb3b5ca6984a",
+     "yara|capability_process_spawn|anyio/_core/_subprocesses.py|4cc06e18d20bcfee",
+     "yara|capability_process_spawn|anyio/abc/_subprocesses.py|083a94d69d07b814",
+     "yara|capability_process_spawn|anyio/to_interpreter.py|0139e84fa91e8bdc"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete anyio/_core/_sockets.py",
+     "capability_filesystem_read:capability_filesystem_read anyio/_backends/_asyncio.py",
+     "capability_filesystem_read:capability_filesystem_read anyio/_core/_fileio.py",
+     "capability_filesystem_read:capability_filesystem_read anyio/_core/_tempfile.py",
+     "capability_filesystem_read:capability_filesystem_read anyio/streams/tls.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable anyio/_core/_fileio.py",
+     "capability_network_outbound:capability_network_outbound anyio/_backends/_trio.py",
+     "capability_network_outbound:capability_network_outbound anyio/_core/_fileio.py",
+     "capability_process_schedule:capability_process_schedule anyio/_backends/_asyncio.py",
+     "capability_process_spawn:capability_process_spawn anyio/_core/_subprocesses.py",
+     "capability_process_spawn:capability_process_spawn anyio/abc/_subprocesses.py",
+     "capability_process_spawn:capability_process_spawn anyio/to_interpreter.py"
+    ]
+   },
+   "version": "4.15.1"
+  }
+ }
+}

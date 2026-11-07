@@ -28,6 +28,7 @@ from core.open_limits import DEFAULT_MAX_OPEN_MB, max_open_bytes
 # Default cap, kept for importers; text above the user's open-size limit
 # (core.open_limits) is hex-dumped instead.
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 MAX_TEXT_RENDER = DEFAULT_MAX_OPEN_MB * 1024 * 1024
 
@@ -76,6 +77,7 @@ class ElevatedViewerDialog(QDialog):
 
     def __init__(self, path: str, data: bytes, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "shield")
         self._path = path
         self._data = data
         # Text rendering is gated on size too — see _is_text_renderable.

@@ -1,0 +1,65 @@
+{
+ "name": "rarfile",
+ "versions": {
+  "4.5": {
+   "accepted_findings": [
+    "hidden-process|rarfile.py|df44880607e79bbd",
+    "yara|capability_filesystem_delete|rarfile.py|a5fdfd883a55e903",
+    "yara|capability_filesystem_read|rarfile.py|a5fdfd883a55e903",
+    "yara|capability_filesystem_write_executable|rarfile.py|a5fdfd883a55e903"
+   ],
+   "archives": {
+    "rarfile-4.5-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "rarfile-4.5.dist-info/METADATA": "07fa8bf389799afa721f81a15bc04c34b9f1bab2335ba7856ac09e1f9052d9ac",
+      "rarfile-4.5.dist-info/RECORD": "9f5d9bad0d2546d95eb19d53baac7a2575fb961560f1501ee240928884870800",
+      "rarfile-4.5.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "rarfile-4.5.dist-info/licenses/LICENSE": "351350167805c294c7b3e170081ce1265445c46fbeb3e999e13b616c90c64a20",
+      "rarfile-4.5.dist-info/top_level.txt": "c4926930c95b3758e2853a7ab6631205d6f89ab9887043a9d6bb1bfbda0fc644",
+      "rarfile.py": "a5fdfd883a55e9038cf9ee96a08f2dad548ac53fba74d4cf49e157a7c2ab8879"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f1dc6c8db8de6eeaa1b942a5a0796085f3da9173fc89cd2411b374401de5ab7f",
+     "native": {},
+     "pth": {},
+     "sha256": "c74341f4b9a3a3ebb35ef396d59daf059eb028f34995a7162950a41d97b84de9"
+    }
+   },
+   "name": "rarfile",
+   "provenance": {
+    "rarfile-4.5-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Marko Kreen",
+    "author_email": "markokr@gmail.com",
+    "home_page": "https://github.com/markokr/rarfile",
+    "license": "ISC",
+    "project_urls": {
+     "Homepage": "https://github.com/markokr/rarfile"
+    },
+    "summary": "RAR archive reader for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 medium findings (capability patterns) seen; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|rarfile.py|a5fdfd883a55e903",
+     "yara|capability_filesystem_read|rarfile.py|a5fdfd883a55e903",
+     "yara|capability_filesystem_write_executable|rarfile.py|a5fdfd883a55e903"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete rarfile.py",
+     "capability_filesystem_read:capability_filesystem_read rarfile.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable rarfile.py"
+    ]
+   },
+   "version": "4.5"
+  }
+ }
+}

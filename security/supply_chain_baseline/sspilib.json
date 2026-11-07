@@ -1,0 +1,334 @@
+{
+ "name": "sspilib",
+ "versions": {
+  "0.6.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|sspilib/_credential.py|a34cae7223b97ffd"
+   ],
+   "archives": {
+    "sspilib-0.6.0-cp311-abi3-manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "sspilib-0.6.0.dist-info/METADATA": "a1359ca61f55b1740f23e37bda168ea793c85f2f557a9d8e18ce18a52d73a29c",
+      "sspilib-0.6.0.dist-info/RECORD": "afcc0dd7f76865df70e29f4204b6dde9e92d735a7fd0f81fd8b5664d5db1d9a0",
+      "sspilib-0.6.0.dist-info/WHEEL": "f62860a13e61f852afa8c97804de1d83cf1cbf841c84496cdcba69ae5f8df844",
+      "sspilib-0.6.0.dist-info/licenses/LICENSE": "4519a99726d7527fa1cefcbdf7d05b85606c4b59fb60a8b29e0a8da1d6a96e0c",
+      "sspilib-0.6.0.dist-info/top_level.txt": "aa885dba905cb3356d467303b0aea7d85f83f82c3ecfb34b352edeea6207e363",
+      "sspilib.libs/libsspi-5b84e48f.so": "7e63836d8b2c76c8c339a8101fb1a9ceb9007838a1ca12099f33826a43c99671",
+      "sspilib/__init__.py": "5ae08f92ba2fa161c826e89287421ae9d292c952fa54d0ee5b0e38276cdfe94a",
+      "sspilib/_credential.py": "a34cae7223b97ffd617c3a96d0b2fada2e22ede1d130fda88402ef33daf09cc9",
+      "sspilib/_filetime.py": "af72a3c101b4952ae716a792ae15358f403ecffef1358c37f5f13890c6e27884",
+      "sspilib/_sec_context.py": "1bdde0cd02313ca39498636a6733b64eb3953e8d8e8236ad2da2284a61e0c8af",
+      "sspilib/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sspilib/raw/__init__.py": "1b955d58c1227b110c78e98841b6c79f6598f7b0f5cbbe7de2f721f47030d753",
+      "sspilib/raw/_context_attributes.abi3.so": "1dc5105d0ac270f6fe458617b187a92570019eadeb5827fd16836a61a2f36a49",
+      "sspilib/raw/_context_attributes.pyi": "dabe1c1d2924769717bce3de118d20e8957bea1399f0acb43bceae5c08c7f68a",
+      "sspilib/raw/_credential.abi3.so": "4db94e8bd4c80f50ff0cdfd848758c182c2ede34fdf985e2be9ac09199c372a1",
+      "sspilib/raw/_credential.pyi": "b19109249f093ad64a31eeaa071954536a7f02aea51fe2cc5d6f678201938925",
+      "sspilib/raw/_credential_attributes.abi3.so": "37ea19312de59c8e6f8c7ddfc76cd0b257d054b83ed7dd20b9fc4ddd6d9c6399",
+      "sspilib/raw/_credential_attributes.pyi": "ee9724bff8fc1f94eb3afc96dcdca0c4413867f2d0d35809d7f6865f710d556a",
+      "sspilib/raw/_message.abi3.so": "3f77a55bc3e5a85213bdba30306090eb2a0b868e9142202843cc50833b8d67e4",
+      "sspilib/raw/_message.pyi": "792836e8bfb5f018012d0b6780b6ed4575cecd54f3aa2eefe27c5caedf2ebd69",
+      "sspilib/raw/_ntstatus.abi3.so": "afa7047b909277db5685ff918b716c6b0dd2f9e5c4dd0d10b2f6fde975fd162b",
+      "sspilib/raw/_ntstatus.pyi": "d4fa9a5f63653959da0c4301d81462c2364c8ee40c81066e6517d8be8e209e67",
+      "sspilib/raw/_security_buffer.abi3.so": "4c8d4ac07f55b3b41641a93daf96a10468be5a3487527a601aca022e9f24fe0a",
+      "sspilib/raw/_security_buffer.pyi": "348bf0ec3d5e01ad07d379f29d9c00ec7b35e72c603baceaa2ae7e664e65ee1d",
+      "sspilib/raw/_security_context.abi3.so": "1171d51840407c2f5546542abef9852203208819529f7b2e59251a842c95fc6f",
+      "sspilib/raw/_security_context.pyi": "c984691a78eabde66fdf51b986f59d581d0b875fb93999b66743bef07885c9f5",
+      "sspilib/raw/_security_package.abi3.so": "f2839ed2de566f8403e41a2ec776142afce1c713bcc748adf38edab39f63bad9",
+      "sspilib/raw/_security_package.pyi": "e6abdba7fdc02a7d6df62a9c5ac274b82d57741a6be670f9349423adad55d1a7",
+      "sspilib/raw/_text.abi3.so": "1083fe01d2c140bb19f54a33c59e5b44d26808c1c722b5ed3cc67207f34c845c",
+      "sspilib/raw/_winerror.py": "38d2a93ccd3d83bd71ebc47eca55ee71cb8e4934df138e91dfb238e061b74d6e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ea60ec7d733c8c3be86ba1463427295dc462002b7fe6e2579545ab45af484912",
+     "native": {
+      "sspilib.libs/libsspi-5b84e48f.so": "elf",
+      "sspilib/raw/_context_attributes.abi3.so": "elf",
+      "sspilib/raw/_credential.abi3.so": "elf",
+      "sspilib/raw/_credential_attributes.abi3.so": "elf",
+      "sspilib/raw/_message.abi3.so": "elf",
+      "sspilib/raw/_ntstatus.abi3.so": "elf",
+      "sspilib/raw/_security_buffer.abi3.so": "elf",
+      "sspilib/raw/_security_context.abi3.so": "elf",
+      "sspilib/raw/_security_package.abi3.so": "elf",
+      "sspilib/raw/_text.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "737adc3b14c2079480bcd10139fbab0b2ad683a24a6046ef69d9c769f4672c0a"
+    }
+   },
+   "name": "sspilib",
+   "provenance": {
+    "sspilib-0.6.0-cp311-abi3-manylinux_2_28_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "jborean93/sspilib",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Jordan Borean <jborean93@gmail.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "homepage": "https://github.com/jborean93/sspilib"
+    },
+    "summary": "SSPI API bindings for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "libsspi bundles MIT Kerberos / GSSAPI (SSPI on Linux): its network imports are Kerberos's; '4.3.2.26' is an OID fragment. Full capa (22 MB): the night scan. Content review only."
+   },
+   "scans": {
+    "capa": {
+     "1083fe01d2c140bb19f54a33c59e5b44d26808c1c722b5ed3cc67207f34c845c": {
+      "capabilities": [
+       "contain loop",
+       "contain obfuscated stackstrings"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_text.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "1171d51840407c2f5546542abef9852203208819529f7b2e59251a842c95fc6f": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_security_context.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "1dc5105d0ac270f6fe458617b187a92570019eadeb5827fd16836a61a2f36a49": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_context_attributes.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "37ea19312de59c8e6f8c7ddfc76cd0b257d054b83ed7dd20b9fc4ddd6d9c6399": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_credential_attributes.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "3f77a55bc3e5a85213bdba30306090eb2a0b868e9142202843cc50833b8d67e4": {
+      "capabilities": [
+       "contain loop",
+       "decrypt data via SSPI",
+       "encrypt data via SSPI"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_message.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "4c8d4ac07f55b3b41641a93daf96a10468be5a3487527a601aca022e9f24fe0a": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_security_buffer.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "4db94e8bd4c80f50ff0cdfd848758c182c2ede34fdf985e2be9ac09199c372a1": {
+      "capabilities": [
+       "authenticate HMAC",
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_credential.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "7e63836d8b2c76c8c339a8101fb1a9ceb9007838a1ca12099f33826a43c99671": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "sspilib.libs/libsspi-5b84e48f.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "listen",
+         "recv",
+         "recvfrom",
+         "send",
+         "sendto",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [
+        "4.3.2.26"
+       ],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libz.so.1"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://InvalidStatusCodeinvalid",
+        "https://docs.rs/getrandom#nodejs-es-module-supportErrorinternal_codedescriptionunknown_code",
+        "https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eofUnspecifiedTLS_NULL_WITH_NULL_NULLTLS_PSK_WITH_AES_128_GCM_SHA256TLS_PSK_WITH_AES_256_GCM_SHA384TLS_EMPTY_RENEGOTIATION_INFO_SCSVTLS13_AE"
+       ]
+      }
+     },
+     "afa7047b909277db5685ff918b716c6b0dd2f9e5c4dd0d10b2f6fde975fd162b": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_ntstatus.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     },
+     "f2839ed2de566f8403e41a2ec776142afce1c713bcc748adf38edab39f63bad9": {
+      "capabilities": [
+       "contain loop",
+       "encode data using Base64"
+      ],
+      "note": "",
+      "path": "sspilib/raw/_security_package.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsspi-5b84e48f.so"
+       ],
+       "rpath": [
+        "$ORIGIN/../../sspilib.libs"
+       ],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|sspilib/_credential.py|a34cae7223b97ffd"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read sspilib/_credential.py"
+    ]
+   },
+   "version": "0.6.0"
+  }
+ }
+}

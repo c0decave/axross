@@ -57,7 +57,7 @@ Lines / branches: coverage of the feature's main modules together. Tests: test f
 | WebDAV (`backend-webdav`) | 1 | 86.0 % | 78.3 % | 16 | 110 / 49 / 57 | `fake-server`, `lab` |
 | S3-compatible (`backend-s3`) | 1 | 76.4 % | 72.3 % | 22 | 118 / 60 / 63 | `fake-server`, `lab` |
 | Rsync (`backend-rsync`) | 1 | 81.8 % | 73.8 % | 14 | 78 / 34 / 19 | `fake-server`, `lab` |
-| NFS / iSCSI (mount wrappers) (`backend-nfs-iscsi`) | 3 | 74.0 % | 65.0 % | 13 | 63 / 26 / 14 | `lab` |
+| NFS / iSCSI (mount wrappers; NFSv3 client of its own for chosen sender information) (`backend-nfs-iscsi`) | 6 | not measured yet | not measured yet | 15 | - | `fake-server`, `lab` |
 | Azure Blob / Azure Files (`backend-azure`) | 1 | 77.8 % | 76.6 % | 16 | 56 / 57 / 35 | `fake-server`, `lab` |
 | OneDrive / SharePoint / Google Drive / Dropbox (`backend-cloud`) | 3 | 84.0 % | 77.9 % | 27 | 94 / 104 / 70 | `fake-server` |
 | IMAP / POP3 / Exchange (EWS) (`backend-mail`) | 3 | 81.3 % | 77.2 % | 33 | 164 / 110 / 66 | `fake-server`, `lab` |
@@ -160,9 +160,13 @@ Lines / branches: coverage of the feature's main modules together. Tests: test f
 
 | Feature | Modules | Lines | Branches | Test files | happy / sad / edge | E2E |
 |---|---:|---:|---:|---:|---|---|
+| Chat panels: IRC (TLS, SASL, channels), Matrix and XMPP (end-to-end encrypted, device verification) (`chat`) | 9 | not measured yet | not measured yet | 2 | - | `ui` |
+| Mail: analysis, projects, mail docks (agents per mailbox), SMTP and drafts (`mail-analysis`) | 12 | not measured yet | not measured yet | 7 | - | `fake-server`, `ui` |
+| Arcade: Byte Chase, Tilt Maze, Rockfall, Trail Runner (`arcade`) | 15 | not measured yet | not measured yet | 7 | - | `ui` |
 | Bluetooth panel: scan, pair, connect, audio output (`bluetooth`) | 2 | 89.3 % | 77.4 % | 3 | 39 / 27 / 19 | `ui` |
 | Extensions host, manager and small bundled extensions (`extensions`) | 11 | 87.3 % | 77.4 % | 38 | 314 / 177 / 221 | `ui` |
 | Self-update (`self-update`) | 3 | 91.0 % | 83.0 % | 8 | 56 / 73 / 41 | `ui` |
+| Packs: units an axross-base adds from its release (`packs`) | 3 | not measured yet | not measured yet | 2 | - | `ui` |
 | Proxy, PAC, TLS verification (`proxy`) | 7 | 91.4 % | 84.4 % | 33 | 474 / 237 / 81 | `fake-server` |
 | Security modes, production tarpit, redacted logs, log dock (`security`) | 6 | 95.6 % | 90.3 % | 44 | 369 / 312 / 227 | `ui` |
 | Logging per area: Settings > Logging, repeat collapse, Log dock area filter (`logging`) | 3 | 97.9 % | 94.4 % | 6 | 39 / 20 / 28 | `ui` |
@@ -199,6 +203,7 @@ Lines / branches: coverage of the feature's main modules together. Tests: test f
 - `backend-nfs-iscsi`:
   - `tests/test_protocols.py::TestNfs::test_nfs_write_read_cycle` (lab)
   - `tests/test_protocols.py::TestIscsi::test_iscsi_write_read_cycle` (lab)
+  - `tests/test_nfs_user_client.py::test_happy_every_call_carries_the_profile_s_sender_information` (fake-server)
 - `backend-azure`:
   - `tests/test_azure_files_rename_target.py::AzureFilesRenameTargetTest::test_happy_file_rename_in_the_share_root` (fake-server)
   - `tests/test_protocols.py::TestAzureBlob::test_azure_blob_write_read_cycle` (lab)
@@ -208,6 +213,12 @@ Lines / branches: coverage of the feature's main modules together. Tests: test f
   - `tests/test_pop3_stat.py::Pop3StatTest::test_happy_stat_reports_the_message_size` (fake-server)
   - `tests/test_imap_connection_state.py::ImapConnectionStateTest::test_happy_select_once_per_connection` (fake-server)
   - `tests/test_protocols.py::TestImap::test_imap_write_read_cycle` (lab)
+- `arcade`:
+  - `tests/test_arcade_window.py::test_happy_every_game_starts_ticks_paints_and_steers` (ui)
+- `mail-analysis`:
+  - `tests/test_mail_dock.py::test_happy_a_run_reads_new_mail_and_saves_a_reply_draft` (fake-server)
+  - `tests/test_mail_send.py::test_happy_a_message_goes_out_with_bcc_only_in_the_envelope` (fake-server)
+  - `tests/test_mail_docks_ui.py::test_happy_a_waiting_mail_is_sent_only_after_the_click` (ui)
 - `backend-news`:
   - `tests/test_nntp_binary_articles.py::NntpBinaryArticleTest::test_happy_ascii_article_with_dot_stuffing` (fake-server)
   - `tests/test_gopher_recursive_fetch.py::RecursiveFetchNamingTest::test_happy_info_lines_are_not_fetched_as_files` (fake-server)
@@ -359,6 +370,8 @@ Lines / branches: coverage of the feature's main modules together. Tests: test f
   - `tests/test_backup_repos_extension.py::test_e2e_the_repository_dialog_opens_with_the_chains` (ui)
 - `self-update`:
   - `tests/test_self_update_ui.py::test_happy_e2e_notice_download_install_restart` (ui)
+- `packs`:
+  - `tests/test_packs.py::test_happy_the_packs_dialog_lists_adds_and_removes` (ui)
 - `proxy`:
   - `tests/test_proxy_tunnel.py::LocalTunnelTest::test_bytes_flow_through_the_proxy_to_the_requested_target` (fake-server)
 - `security`:

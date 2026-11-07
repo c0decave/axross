@@ -198,7 +198,7 @@ def _entry(raw, index: int) -> Entry:
     if unknown:
         raise DataError(f"{where}: unknown field(s) {sorted(unknown)}")
     entry_id = _text(raw, "id", where, required=True)
-    if not _ID.match(entry_id):
+    if not _ID.fullmatch(entry_id):
         raise DataError(f"{where}: field 'id' must be lower-case letters, digits and '-'")
     kind = _text(raw, "kind", where, required=True)
     if kind not in KINDS:

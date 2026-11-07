@@ -1,0 +1,72 @@
+{
+ "name": "aiofiles",
+ "versions": {
+  "25.1.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|aiofiles/base.py|f9fbe1e353e789cb"
+   ],
+   "archives": {
+    "aiofiles-25.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "aiofiles-25.1.0.dist-info/METADATA": "6b96b99073158a00ddb012a514834b48c3ec5f732ce059ffcde700481759a8b5",
+      "aiofiles-25.1.0.dist-info/RECORD": "0a9e603e9cb003a54a2755fb9f799a8d710b5799dcc1edc0c5c4d7c1d974d67f",
+      "aiofiles-25.1.0.dist-info/WHEEL": "aad0b0a12256807936d52d4a6f88a1773236ae527564a688bab4e3fe780e8724",
+      "aiofiles-25.1.0.dist-info/licenses/LICENSE": "cb5e8e7e5f4a3988e1063c142c60dc2df75605f4c46515e776e3aca6df976e14",
+      "aiofiles-25.1.0.dist-info/licenses/NOTICE": "104c58d1d450bd6474c09d8b64bc0182733a60ac3d8c253e334cde8294520ff1",
+      "aiofiles/__init__.py": "0d8a94c1a93a315a2c0636c0b20c849c514ff87519086e61ed7e28c287b2607c",
+      "aiofiles/base.py": "f9fbe1e353e789cb5364bddc83df07a0de21ea375e6e2e5decc7e1f35cce04e7",
+      "aiofiles/os.py": "b25279a14347556d71595bae216422623c37d27dcbe3c1fba17e0226f0ffd5de",
+      "aiofiles/ospath.py": "73e2aac38c0c099f9846df0995e6faf7b70037025033daaec7a96af7bf78f42f",
+      "aiofiles/tempfile/__init__.py": "b70a02eef690f898c5ce1d816ddfb7fa8d21984c47dc260952641cba257065f8",
+      "aiofiles/tempfile/temptypes.py": "dff86573a97daf9c268a7a357c3aede13a45957e082a847920ffdb058555b878",
+      "aiofiles/threadpool/__init__.py": "fbae545119b3507b064d7533d13011752cf25c87e4085b5b7330102c43e911c5",
+      "aiofiles/threadpool/binary.py": "869fa49bd54246ed0c2f3ff000451f6c2cfb38bef1b67f621806b069ba67a795",
+      "aiofiles/threadpool/text.py": "7cd9a9c363c4923d0165295d8a925702066a5462f100b71f38c8ae0d0e7811ab",
+      "aiofiles/threadpool/utils.py": "56d209f4a12b6dc213f7f633e15e2b660344523047ddc018c7329004ca44ce29"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2a3f6e7983f10fe1d252e7fd27256813d91e66167c7f07bbcea8ba753d2080f5",
+     "native": {},
+     "pth": {},
+     "sha256": "abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695"
+    }
+   },
+   "name": "aiofiles",
+   "provenance": {
+    "aiofiles-25.1.0-py3-none-any.whl": {
+     "environment": "release-pypi",
+     "kind": "GitHub",
+     "repository": "Tinche/aiofiles",
+     "workflow": "pypi-package.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Tin Tvrtkovic <tinchester@gmail.com>",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/Tinche/aiofiles/issues",
+     "Changelog": "https://github.com/Tinche/aiofiles#history",
+     "Repository": "https://github.com/Tinche/aiofiles"
+    },
+    "summary": "File support for asyncio."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; attestation verifies (Tinche/aiofiles)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|aiofiles/base.py|f9fbe1e353e789cb"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read aiofiles/base.py"
+    ]
+   },
+   "version": "25.1.0"
+  }
+ }
+}

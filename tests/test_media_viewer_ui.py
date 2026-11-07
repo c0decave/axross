@@ -27,6 +27,8 @@ from core.media_collect import IMAGE, PDF, VIDEO, MediaItem  # noqa: E402
 from tests.media_testkit import (  # noqa: E402
     MemoryBackend,
     encrypted_pdf_bytes,
+    need_multimedia_backend,
+    requires_qtpdf,
     video_bytes,
     write_image,
     write_pdf,
@@ -166,9 +168,89 @@ def test_edge_runner_prefers_the_newest_request_and_bounds_the_queue():
     runner.shutdown()
 
 
+def test_edge_a_runner_deleted_mid_task_ends_its_workers_and_drops_the_result():
+    """A viewer closed (or collected) while a tile loads: the worker finishes
+    after the runner's Qt object is gone. It must not emit on that object
+    (a use-after-free in the GUI thread - a segfault seen in the suite): the
+    result is released and the worker ends."""
+    from PyQt6 import sip
+
+    runner = MV.TaskRunner(workers=1)
+    threads = list(runner._threads)
+    gate = threading.Event()
+    released = threading.Event()
+
+    class Value:
+        def release(self):
+            released.set()
+
+    def slow(cancel):
+        gate.wait(5)
+        return Value()
+
+    runner.submit("tile", slow)
+    assert wait_until(lambda: runner.running_count() == 1)
+    sip.delete(runner)
+    gate.set()
+    assert released.wait(5)
+    for t in threads:
+        t.join(5)
+        assert not t.is_alive()
+
+
+_DELETE_WHILE_EMITTING = """
+import os, sys, time
+sys.path.insert(0, os.getcwd())
+from PyQt6 import sip
+from PyQt6.QtWidgets import QApplication
+app = QApplication.instance() or QApplication([])
+from ui import media_viewer as MV
+end = time.monotonic() + 3
+rounds = 0
+while time.monotonic() < end:
+    r = MV.TaskRunner(workers=4)
+    for i in range(400):
+        r.submit(i, lambda cancel: b"x" * 64)
+    app.processEvents()
+    sip.delete(r)
+    app.processEvents()
+    rounds += 1
+print("rounds", rounds)
+"""
+
+
+def test_sad_deleting_runners_while_their_workers_deliver_does_not_crash():
+    """Before the shared relay, the workers emitted on the runner itself:
+    deleting runners while results were on their way crashed this loop with
+    a segfault within 3 s every time (5 of 5 runs)."""
+    import subprocess
+
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    run = subprocess.run([sys.executable, "-c", _DELETE_WHILE_EMITTING],
+                         cwd=Path(__file__).resolve().parent.parent, env=env,
+                         capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, (run.returncode, run.stderr[-2000:])
+    assert int(run.stdout.split()[-1]) > 0
+
+
+def test_edge_two_runners_each_get_only_their_own_results():
+    a, b = MV.TaskRunner(workers=1), MV.TaskRunner(workers=1)
+    got_a, got_b = [], []
+    a.finished.connect(lambda key, value, error: got_a.append(key))
+    b.finished.connect(lambda key, value, error: got_b.append(key))
+    a.submit("from-a", lambda cancel: 1)
+    b.submit("from-b", lambda cancel: 2)
+    assert wait_until(lambda: got_a and got_b)
+    wait_until(lambda: False, timeout=0.1)
+    assert (got_a, got_b) == (["from-a"], ["from-b"])
+    a.shutdown()
+    b.shutdown()
+
+
 # -- options dialog -----------------------------------------------------------------
 
 
+@requires_qtpdf
 def test_happy_options_dialog_defaults_and_result():
     dlg = MV.MediaViewOptionsDialog()
     opts = dlg.options()
@@ -191,7 +273,7 @@ def test_sad_options_dialog_cannot_be_accepted_without_a_type():
     for box in (dlg.image_box, dlg.pdf_box, dlg.video_box):
         box.setChecked(False)
     assert not ok.isEnabled()
-    dlg.pdf_box.setChecked(True)
+    dlg.image_box.setChecked(True)  # always offered: PDF needs QtPdf, video Qt Multimedia
     assert ok.isEnabled()
 
 
@@ -209,6 +291,7 @@ def test_edge_options_dialog_depth_only_with_recursion_and_video_when_supported(
 # -- dialog: scan and overview ---------------------------------------------------------
 
 
+@requires_qtpdf
 def test_happy_overview_lists_the_folder_and_makes_thumbnails_off_the_gui_thread(
     folder, monkeypatch
 ):
@@ -467,6 +550,7 @@ def test_sad_huge_image_shows_a_size_placeholder(tmp_path):
     viewer.shutdown()
 
 
+@requires_qtpdf
 def test_sad_encrypted_pdf_shows_a_placeholder(tmp_path):
     locked = tmp_path / "locked.pdf"
     locked.write_bytes(encrypted_pdf_bytes())
@@ -477,6 +561,7 @@ def test_sad_encrypted_pdf_shows_a_placeholder(tmp_path):
     viewer.shutdown()
 
 
+@requires_qtpdf
 def test_happy_item_keys_leave_a_pdf_page_keys_turn_its_pages(tmp_path):
     """Operator item 35: next / previous always take the next FILE; the
     pages of a document have their own control and keys."""
@@ -515,6 +600,7 @@ def test_happy_item_keys_leave_a_pdf_page_keys_turn_its_pages(tmp_path):
     viewer.shutdown()
 
 
+@requires_qtpdf
 def test_sad_page_keys_stop_at_the_ends_and_do_nothing_on_an_image(tmp_path):
     pdf = _item(write_pdf(tmp_path / "doc.pdf", pages=2), PDF)
     img = _item(write_image(tmp_path / "z.png"), IMAGE)
@@ -536,6 +622,7 @@ def test_sad_page_keys_stop_at_the_ends_and_do_nothing_on_an_image(tmp_path):
     viewer.shutdown()
 
 
+@requires_qtpdf
 def test_edge_a_one_page_pdf_shows_no_page_control(tmp_path):
     pdf = _item(write_pdf(tmp_path / "one.pdf", pages=1), PDF)
     viewer = _viewer(LocalFS(), [pdf])
@@ -545,6 +632,7 @@ def test_edge_a_one_page_pdf_shows_no_page_control(tmp_path):
     viewer.shutdown()
 
 
+@requires_qtpdf
 def test_edge_the_slideshow_never_turns_pages(tmp_path):
     """Among other items the slideshow moves files only; a document opened
     alone is test_happy_a_document_opened_alone_is_read_as_a_slideshow."""
@@ -607,6 +695,7 @@ def test_sad_remote_item_over_the_limit_shows_a_placeholder_without_download(tmp
     viewer.shutdown()
 
 
+@requires_qtpdf
 def test_happy_remote_items_are_shown_and_their_copies_removed(tmp_path):
     png = write_image(tmp_path / "src.png", size=(30, 30)).read_bytes()
     pdf = write_pdf(tmp_path / "src.pdf", pages=1).read_bytes()
@@ -628,6 +717,7 @@ def test_happy_remote_items_are_shown_and_their_copies_removed(tmp_path):
 def test_happy_video_plays_and_the_slideshow_moves_on_at_its_end(tmp_path):
     if not MV.video_supported():
         pytest.skip("QtMultimedia not available")
+    need_multimedia_backend()
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(video_bytes(frames=3))
     img = _item(write_image(tmp_path / "z.png"), IMAGE)
@@ -649,6 +739,36 @@ def test_sad_broken_video_shows_a_placeholder(tmp_path):
     viewer.shutdown()
 
 
+def test_sad_a_video_without_a_qt_multimedia_backend_says_why_and_the_slideshow_moves_on(
+    tmp_path, monkeypatch
+):
+    """Found on a host whose Qt Multimedia imports but has no backend (its
+    FFmpeg plugin could not load: libXrandr missing): QMediaPlayer is "not
+    available", so a video stayed a black, silent player that reported no
+    error and never ended - a slideshow stopped on it for good. The probe
+    knew (ProbeResult.decoding, which the Media Player already heeds); now
+    the viewer shows why and the slideshow moves on, without a player."""
+    if not MV.video_supported():
+        pytest.skip("QtMultimedia not available")
+    from core import multimedia_probe as MPROBE
+
+    monkeypatch.setattr(MPROBE, "cached", lambda: MPROBE.ProbeResult(ok=True, decoding=False))
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(video_bytes(frames=3))
+    img = _item(write_image(tmp_path / "z.png"), IMAGE)
+    viewer = _viewer(LocalFS(), [_item(clip, VIDEO), img])
+    viewer.start_slideshow()
+    assert wait_until(lambda: viewer.mode == "placeholder")
+    text = viewer.placeholder_text()
+    assert "Cannot play clip.mp4" in text and MV.NO_VIDEO_BACKEND in text, text
+    assert viewer._player is None  # nothing that could not play was built
+    assert viewer.slideshow_timer.isActive()
+    viewer.slideshow_timer.timeout.emit()
+    assert viewer.current_index == 1
+    viewer.shutdown()
+
+
+@requires_qtpdf
 def test_edge_up_down_stay_with_the_view_unless_an_item_has_pages(tmp_path):
     """Up / Down are page keys only for an item with pages; elsewhere they
     go on to the base class (and from there to the parent), as before."""
@@ -677,6 +797,7 @@ def test_edge_up_down_stay_with_the_view_unless_an_item_has_pages(tmp_path):
     viewer.shutdown()
 
 
+@requires_qtpdf
 def test_happy_a_document_opened_alone_is_read_as_a_slideshow(tmp_path):
     """A PDF opened on its own (the only item) is being read: its slideshow
     turns the pages and starts over at the last one."""

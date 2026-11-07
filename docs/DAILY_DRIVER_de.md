@@ -19,7 +19,13 @@ aufbauen.
 
 ## Production Tarpit
 
-Profil als production markieren:
+Profil als production markieren: in **Connect to Server** (der
+Connection-Manager, Strg+Shift+N, oder beim Bearbeiten eines Profils)
+in der Gruppe Connection **Produktion (destruktive Operationen mit
+Countdown bestätigen)** ankreuzen (englische Oberfläche: *Production
+(confirm destructive operations with a countdown)*) - es steht dort für
+jedes Protokoll und
+wird mit dem Profil gespeichert. Oder in Python:
 
 ```python
 >>> from core.profiles import ConnectionProfile, ProfileManager

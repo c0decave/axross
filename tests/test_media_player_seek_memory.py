@@ -33,13 +33,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 np = pytest.importorskip("numpy")
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtCore import QEventLoop, Qt, QTimer  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import extensions as EX  # noqa: E402
+from tests.media_testkit import need_multimedia_backend  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 RATE = 44100
@@ -429,6 +430,7 @@ def test_edge_a_seek_back_while_paused_stays_paused_then_plays_from_there(tmp_pa
 def test_edge_a_new_sound_card_rate_refills_the_memory_in_that_rate(tmp_path):
     """Another rate starts the decoder again: what the memory held counted
     in the old rate is gone, a seek back lands exactly in the new one."""
+    need_multimedia_backend()
     seconds = 10.0
     rates = [RATE]
     sink = ThrottledSink()

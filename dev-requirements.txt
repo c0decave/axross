@@ -7,14 +7,26 @@
 #   pip install -e ".[all]" && pip install -r dev-requirements.txt
 
 # ── testing ───────────────────────────────────────────────────
-pytest>=8.0
+# 9.0.3: no shared /tmp/pytest-of-<user> directory another local user can
+# take over (CVE-2025-71176).
+pytest>=9.0.3
 coverage>=7.4
 
 # ── linting / formatting ──────────────────────────────────────
 ruff>=0.5
+# tests/test_ci_workflow.py and tests/test_codacy_config.py read the
+# workflow files. 6.0.2: no known advisories.
+PyYAML>=6.0.2
 
 # ── packaging ─────────────────────────────────────────────────
 build>=1.2
+# tests/test_sdist_manifest.py builds the sdist with --no-isolation, so with
+# this environment's setuptools: pyproject's build-system floor (PEP 639
+# license). A Python 3.11 venv starts with setuptools 65 or 66. 84.1: the
+# sdist MANIFEST.in matching and wheel-install path advisories of 77-84.0
+# (GHSA-h35f-9h28-mq5c, GHSA-xmj3-9gf7-h52w, GHSA-5rjg-fvgr-3xxf) are fixed.
+setuptools>=84.1.0
+wheel>=0.46.2
 twine>=5.1
 # twine's requests pulls these in; osv-scanner v2 resolves this file and
 # picked releases with advisories (certifi PYSEC-2026-4320, idna
@@ -26,7 +38,7 @@ tomli>=2.0; python_version < "3.11"
 # ── deps some tests exercise directly ─────────────────────────
 # cryptography is ALSO used at runtime by core.encrypted_overlay
 # and the mTLS tests generate throw-away CA/client certs with it.
-cryptography>=42.0
+cryptography>=50.0.0
 # jsonschema is an optional MCP validation dep — stdio/HTTP
 # transports work without it; with it installed the MCP server
 # validates tool arguments against each tool's input schema.

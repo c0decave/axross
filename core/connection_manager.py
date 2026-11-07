@@ -320,6 +320,13 @@ def _warn_unsupported_proxy(profile: "ConnectionProfile") -> None:
         )
 
 
+
+def _own_id(name: str) -> int:
+    """This process's effective UID / GID for NFS AUTH_SYS; 65534 (nobody)
+    where the platform has none (Windows)."""
+    fn = getattr(os, name, None)
+    return fn() if fn is not None else 65534
+
 class ConnectionManager:
     """Manages backend sessions keyed by endpoint and network settings.
 
@@ -383,6 +390,13 @@ class ConnectionManager:
             str(profile.rsync_preserve_metadata),
             profile.nfs_export,
             str(profile.nfs_version),
+            str(profile.nfs_minor),
+            profile.nfs_machine_name,
+            str(profile.nfs_uid),
+            str(profile.nfs_gid),
+            profile.nfs_gids,
+            str(profile.nfs_privileged_port),
+            profile.nfs_client_id,
             profile.azure_container,
             profile.azure_share,
             profile.azure_account_name,
@@ -395,6 +409,8 @@ class ConnectionManager:
             profile.sharepoint_site_url,
             profile.iscsi_target_iqn,
             profile.iscsi_mount_point,
+            profile.iscsi_initiator_name,
+            profile.iscsi_initiator_interface,
             str(profile.imap_ssl),
             str(profile.pop3_ssl),
             profile.tftp_filelist,
@@ -725,6 +741,28 @@ class ConnectionManager:
                 **proxy_kw,
             )
 
+        if proto == "nfs" and profile.nfs_sender_chosen():
+            # The profile says what the client sends about itself: axross's
+            # own NFSv3 client (the kernel would send the host's name and
+            # this process's IDs).
+            import socket as _socket
+
+            from core.nfs_user_client import NfsUserSession
+
+            return NfsUserSession(
+                host=profile.host,
+                export_path=profile.nfs_export,
+                port=profile.port or 2049,
+                machine_name=profile.nfs_machine_name or _socket.gethostname(),
+                uid=profile.nfs_uid if profile.nfs_uid >= 0 else _own_id("geteuid"),
+                gid=profile.nfs_gid if profile.nfs_gid >= 0 else _own_id("getegid"),
+                gids=profile.nfs_gids,
+                version=("4.1" if profile.nfs_minor else "4") if profile.nfs_version == 4 else "3",
+                client_id=profile.nfs_client_id,
+                privileged_port=profile.nfs_privileged_port,
+                **proxy_kw,
+            )
+
         if proto == "nfs":
             cls = load_backend_class("nfs")
             return cls(
@@ -732,6 +770,7 @@ class ConnectionManager:
                 export_path=profile.nfs_export,
                 port=profile.port,
                 version=profile.nfs_version,
+                minor=profile.nfs_minor if profile.nfs_version == 4 else 0,
                 **proxy_kw,
             )
 
@@ -795,6 +834,8 @@ class ConnectionManager:
                 username=profile.username,
                 password=password,
                 mount_point=profile.iscsi_mount_point,
+                initiator_name=profile.iscsi_initiator_name,
+                initiator_interface=profile.iscsi_initiator_interface,
                 **proxy_kw,
             )
             if not session.connected:
@@ -1078,8 +1119,19 @@ class ConnectionManager:
         del self._retired[id(session)]
         return session
 
-    def disconnect_all(self) -> None:
-        """Disconnect all sessions."""
+    #: Seconds disconnect_all waits for every session together.
+    DISCONNECT_ALL_SECONDS = 5.0
+
+    def disconnect_all(self, timeout: float | None = None) -> None:
+        """Disconnect all sessions - each on a thread of its own, waited for
+        together up to *timeout* (DISCONNECT_ALL_SECONDS): one after the
+        other, a dead link held the quit for its whole timeout, and every
+        further session for its own. One that is still at it then ends
+        with the process (a daemon thread)."""
+        import threading
+        import time
+
+        timeout = self.DISCONNECT_ALL_SECONDS if timeout is None else timeout
         with self._lock:
             sessions = list(self._sessions.items())
             retired = [record[0] for record in self._retired.values()]
@@ -1087,14 +1139,29 @@ class ConnectionManager:
             self._ref_counts.clear()
             self._held.clear()
             self._retired.clear()
-        for session in retired:
-            self._close_unheld(session)
-        for key, session in sessions:
+        def close(key, session, retired_one: bool) -> None:
             try:
-                self._unenroll_health(key)
-                self._disconnect_session(session)
-            except Exception as e:
-                log.error("Error disconnecting %s: %s", key[:4], e)
+                if retired_one:
+                    self._close_unheld(session)
+                else:
+                    self._unenroll_health(key)
+                    self._disconnect_session(session)
+            except Exception as e:  # noqa: BLE001 - the others still go
+                log.error("Error disconnecting %s: %s", (key or "")[:4], e)
+
+        threads = [threading.Thread(target=close, args=(None, s_, True), daemon=True,
+                                    name="disconnect") for s_ in retired]
+        threads += [threading.Thread(target=close, args=(key, s_, False), daemon=True,
+                                     name="disconnect") for key, s_ in sessions]
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + max(0.0, timeout)
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        left = sum(1 for t in threads if t.is_alive())
+        if left:
+            log.warning("%d session(s) still disconnecting after %.0f s; left to the exit",
+                        left, timeout)
         log.info("All sessions disconnected")
 
     @staticmethod

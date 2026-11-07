@@ -1,0 +1,103 @@
+{
+ "name": "py7zr",
+ "versions": {
+  "1.1.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|py7zr/py7zr.py|ec99a7c221ddd30d",
+    "yara|capability_filesystem_read|py7zr/archiveinfo.py|b62bbe8428681106",
+    "yara|capability_filesystem_read|py7zr/compressor.py|196b1751e6257435",
+    "yara|capability_filesystem_read|py7zr/io.py|0432e82f8e9a7ec2",
+    "yara|capability_filesystem_read|py7zr/py7zr.py|ec99a7c221ddd30d",
+    "yara|capability_filesystem_write_executable|py7zr/py7zr.py|ec99a7c221ddd30d",
+    "yara|capability_network_outbound|py7zr/py7zr.py|ec99a7c221ddd30d",
+    "yara|capability_process_spawn|py7zr/win32compat.py|71f37b8bd22c6ec8"
+   ],
+   "archives": {
+    "py7zr-1.1.4-py3-none-any.whl": {
+     "entry_points": [
+      "py7zr = py7zr.__main__:main"
+     ],
+     "files": {
+      "py7zr-1.1.4.dist-info/METADATA": "5bfa0e2590e6f54520fe15df14bbd8a1d34c69e5553a7070c2e50aeb6c5f6a16",
+      "py7zr-1.1.4.dist-info/RECORD": "82f10ca1f4a2ad3b66ef13374a39d0f33a8c31feadac859481d76884d39a4097",
+      "py7zr-1.1.4.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "py7zr-1.1.4.dist-info/entry_points.txt": "0d7a9c46d5e7d24ee71319b2e08dedd69bb0122c52d48bd988afffc550a6da15",
+      "py7zr-1.1.4.dist-info/licenses/LICENSE": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "py7zr-1.1.4.dist-info/top_level.txt": "5ea096d5a84a55284b2d5b18131d393e3d82ab366d60ee7a0fc793897f2f96cb",
+      "py7zr/__init__.py": "ce757e028d82a7d7b78efacd44bb4ff8950f53246ceb6fdb57f415c3b7bde183",
+      "py7zr/__main__.py": "1662903acbad5392ec0a12f594451cb1a33321f2643ecaefef2456f537eaaac7",
+      "py7zr/archiveinfo.py": "b62bbe8428681106db10e916665c02a69ef1756659b8ae27feade764c1dc1872",
+      "py7zr/callbacks.py": "f3d2ad29a8d0e174f89433e6f33e39d1be7133c747f5a6e5b57ae9ee9b64c298",
+      "py7zr/cli.py": "6d4227c75ff9562e8ac6f6833bdad01b2635f41304b5f46c343dd88bd9cc767a",
+      "py7zr/compressor.py": "196b1751e6257435155e59aadfd70dc6117ef637db97fc0c5bb4b62af68b491d",
+      "py7zr/exceptions.py": "464cee10faa042bf78d765269102e805011c135eaf7a151d4e9ef976073cb4b5",
+      "py7zr/helpers.py": "d37928ff11326ce7426eb089a308933f790008a49ea8264e634d640312824ada",
+      "py7zr/io.py": "0432e82f8e9a7ec2bfe22bba1b67ac5b55cd0f0c93a8aabd8d76b5d0795d2c4e",
+      "py7zr/member.py": "575417a6cdf06b2cc19a53e72545e52570eb5a566c1d11ec132d1c27efeb3757",
+      "py7zr/properties.py": "9bd53c956a5a761f2c93cc4e08762c259428a9fabaa0723a8e2321ad0bea92fe",
+      "py7zr/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "py7zr/py7zr.py": "ec99a7c221ddd30dd1fc1223ac23aac2558cadb8b19e6750f6fe3574057c5d7f",
+      "py7zr/version.py": "5f15e1bbcf909ee0fd840f00874597e6b829b7f0f0390980c1c2be16da678324",
+      "py7zr/win32compat.py": "71f37b8bd22c6ec8a56eb4097c48fa3f608b27890e160fd49669214fefdea05b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c28c2f2b1350520d7740702b81a8ee424157b5e6bce738cebeee8d8f412d4f32",
+     "native": {},
+     "pth": {},
+     "sha256": "f6f868a457a6bd485b78d26e619045718bcd0b7720a6bf97d5fe86a1523423e8"
+    }
+   },
+   "name": "py7zr",
+   "provenance": {
+    "py7zr-1.1.4-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "miurahr/py7zr",
+     "workflow": "publish-to-pypi.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Hiroshi Miura <miurahr@linux.com>",
+    "license_expression": "LGPL-2.1-or-later",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/miurahr/py7zr/issues",
+     "Changelog": "https://py7zr.readthedocs.io/en/latest/Changelog.html",
+     "Documentation": "https://py7zr.readthedocs.io/en/stable/",
+     "Homepage": "https://py7zr.readthedocs.io/",
+     "Source": "https://github.com/miurahr/py7zr"
+    },
+    "summary": "Pure python 7-zip library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable, network_outbound, process_spawn; attestation verifies (miurahr/py7zr)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|py7zr/py7zr.py|ec99a7c221ddd30d",
+     "yara|capability_filesystem_read|py7zr/archiveinfo.py|b62bbe8428681106",
+     "yara|capability_filesystem_read|py7zr/compressor.py|196b1751e6257435",
+     "yara|capability_filesystem_read|py7zr/io.py|0432e82f8e9a7ec2",
+     "yara|capability_filesystem_read|py7zr/py7zr.py|ec99a7c221ddd30d",
+     "yara|capability_filesystem_write_executable|py7zr/py7zr.py|ec99a7c221ddd30d",
+     "yara|capability_network_outbound|py7zr/py7zr.py|ec99a7c221ddd30d",
+     "yara|capability_process_spawn|py7zr/win32compat.py|71f37b8bd22c6ec8"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete py7zr/py7zr.py",
+     "capability_filesystem_read:capability_filesystem_read py7zr/archiveinfo.py",
+     "capability_filesystem_read:capability_filesystem_read py7zr/compressor.py",
+     "capability_filesystem_read:capability_filesystem_read py7zr/io.py",
+     "capability_filesystem_read:capability_filesystem_read py7zr/py7zr.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable py7zr/py7zr.py",
+     "capability_network_outbound:capability_network_outbound py7zr/py7zr.py",
+     "capability_process_spawn:capability_process_spawn py7zr/win32compat.py"
+    ]
+   },
+   "version": "1.1.4"
+  }
+ }
+}

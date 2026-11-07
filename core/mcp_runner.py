@@ -292,7 +292,7 @@ def container_flag_problems(argv) -> list[str]:
         flag, _, value = arg.partition("=")
         bad = flag in _FORBIDDEN
         if flag == "--volume":
-            bad = not _VOLUME.match(value)
+            bad = not _VOLUME.fullmatch(value)
         elif flag == "--security-opt":
             bad = value != "no-new-privileges"
         elif flag in ("--network", "--net"):

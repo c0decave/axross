@@ -6,8 +6,9 @@ switched on in Agent Settings > MCP Sources (core.agent_settings
 
 ==============  ==========================================================
 ``builtin``     the shipped catalog, ``resources/mcp/catalog.json``:
-                images of Docker's curated ``mcp/*`` namespace, pinned
-                by digest - works offline
+                images pinned by digest (only those
+                :func:`builtin_image_allowed` names) and npm/PyPI
+                packages pinned to a version - works offline
 ``dockerhub``   Docker Hub's curated ``mcp`` namespace, searched live
                 (``hub.docker.com/v2/repositories/mcp/?name=``)
 ``mcpregistry`` the official MCP Registry
@@ -102,6 +103,12 @@ MCP_REGISTRY = "https://registry.modelcontextprotocol.io"
 HUB_URL = "https://raw.githubusercontent.com/c0decave/axross-mcp-hub/main/catalog.json"
 #: The only images the hub may name (normalized, with the trailing "/").
 HUB_IMAGE_PREFIX = "ghcr.io/c0decave/"
+#: Where the shipped catalog's images may come from (normalized): an image
+#: directly under one of these namespaces (Docker's curated ``mcp``) ...
+BUILTIN_IMAGE_NAMESPACES = ("docker.io/mcp/",)
+#: ... or one of these images by its exact name: a vendor's own image that
+#: is published elsewhere (GitHub's MCP server; ``mcp/github`` is archived).
+BUILTIN_IMAGES = ("ghcr.io/github/github-mcp-server",)
 NPM_REGISTRY = "https://registry.npmjs.org"
 PYPI = "https://pypi.org"
 
@@ -225,14 +232,14 @@ def split_image(ref: str) -> tuple[str, str, str]:
     colon = name.rfind(":")
     if colon > slash:
         name, tag = name[:colon], name[colon + 1 :]
-    if digest and not _DIGEST.match(digest):
+    if digest and not _DIGEST.fullmatch(digest):
         raise ValueError("not a sha256 digest")
-    if tag and not _TAG.match(tag):
+    if tag and not _TAG.fullmatch(tag):
         raise ValueError("not a valid tag")
-    if not (_IMAGE.match(name) or _IMAGE_SHORT.match(name)):
+    if not (_IMAGE.fullmatch(name) or _IMAGE_SHORT.fullmatch(name)):
         raise ValueError("not a valid image name")
     name = normalize_image(name)
-    if not _IMAGE.match(name) or len(name) > 255:
+    if not _IMAGE.fullmatch(name) or len(name) > 255:
         raise ValueError("not a valid image name")
     return name, tag, digest
 
@@ -359,7 +366,7 @@ def _env_specs(raw) -> tuple[EnvSpec, ...]:
         raise _EntryError("environment: a list of at most %d variables" % MAX_ENV)
     out: list[EnvSpec] = []
     for item in raw:
-        if not isinstance(item, dict) or not _ENV_NAME.match(str(item.get("name") or "")):
+        if not isinstance(item, dict) or not _ENV_NAME.fullmatch(str(item.get("name") or "")):
             raise _EntryError("environment: a variable needs a name of letters, digits and _")
         default = item.get("default", "")
         try:
@@ -382,7 +389,7 @@ def _mount_specs(raw) -> tuple[MountSpec, ...]:
     for item in raw:
         target = item.get("target") if isinstance(item, dict) else None
         if (
-            not isinstance(target, str) or len(target) > 200 or not _TARGET.match(target)
+            not isinstance(target, str) or len(target) > 200 or not _TARGET.fullmatch(target)
             or any(part in (".", "..") for part in target.split("/"))
         ):
             raise _EntryError("mount: a target needs an absolute path of letters, digits, . _ -")
@@ -449,10 +456,10 @@ def parse_entry(raw, *, source: str, require_digest: bool = True) -> CatalogEntr
     if not isinstance(raw, dict):
         raise _EntryError("not an object")
     name = raw.get("name")
-    if not isinstance(name, str) or not _SERVER_NAME.match(name):
+    if not isinstance(name, str) or not _SERVER_NAME.fullmatch(name):
         raise _EntryError("name: 1-32 letters, digits, '-' or '_'")
     entry_id = raw.get("id", name)
-    if not isinstance(entry_id, str) or not _ID.match(entry_id):
+    if not isinstance(entry_id, str) or not _ID.fullmatch(entry_id):
         raise _EntryError("id: letters, digits and . _ / @ : + -")
     kind = raw.get("kind")
     if kind not in KINDS:
@@ -481,10 +488,10 @@ def parse_entry(raw, *, source: str, require_digest: bool = True) -> CatalogEntr
             raise _EntryError(f"image: {exc}") from None
         tag = raw.get("tag", tag or "latest")
         digest = raw.get("digest", digest)
-        if not isinstance(tag, str) or not _TAG.match(tag):
+        if not isinstance(tag, str) or not _TAG.fullmatch(tag):
             raise _EntryError("tag: letters, digits, . _ -")
         if digest or require_digest:
-            if not isinstance(digest, str) or not _DIGEST.match(digest):
+            if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
                 raise _EntryError("digest: sha256:<64 hex digits> (an image is pinned)")
         values.update(identifier=identifier, tag=tag, digest=digest or "")
     elif kind in ("npm", "pypi"):
@@ -560,8 +567,33 @@ def builtin_path() -> Path:
     return Path(__file__).resolve().parent.parent / "resources" / "mcp" / "catalog.json"
 
 
+def builtin_image_allowed(identifier: str) -> bool:
+    """Whether the shipped catalog may name the image *identifier* (normalized,
+    without tag or digest): one path segment below a namespace of
+    :data:`BUILTIN_IMAGE_NAMESPACES`, or exactly one of :data:`BUILTIN_IMAGES`."""
+    if not isinstance(identifier, str):
+        return False
+    if identifier in BUILTIN_IMAGES:
+        return True
+    for namespace in BUILTIN_IMAGE_NAMESPACES:
+        rest = identifier[len(namespace):] if identifier.startswith(namespace) else ""
+        if rest and "/" not in rest:
+            return True
+    return False
+
+
 def load_builtin() -> tuple[list[CatalogEntry], list[str]]:
-    return load_catalog_file(builtin_path(), source="builtin")
+    """The shipped catalog; an image from anywhere but the allowed places
+    (:func:`builtin_image_allowed`) is skipped with a warning."""
+    entries, warnings = load_catalog_file(builtin_path(), source="builtin")
+    kept = []
+    for entry in entries:
+        if entry.kind == "oci" and not builtin_image_allowed(entry.identifier):
+            warnings.append(f"{entry.id}: {entry.identifier} is not an image the built-in "
+                            "catalog may name")
+            continue
+        kept.append(entry)
+    return kept, warnings
 
 
 # -- http --------------------------------------------------------------------------------
@@ -789,7 +821,7 @@ class DockerHubSource(Source):
         return entries, []
 
     def _entry(self, raw) -> CatalogEntry | None:
-        if not isinstance(raw, dict) or not _HUB_REPO.match(str(raw.get("name") or "")):
+        if not isinstance(raw, dict) or not _HUB_REPO.fullmatch(str(raw.get("name") or "")):
             return None
         if raw.get("is_private") is True:
             return None
@@ -843,7 +875,7 @@ class DockerHubSource(Source):
                f"{urllib.parse.quote(entry.tag or 'latest')}")
         data = self._get_json(url, allow_http=self._allow_http)
         digest = data.get("digest") if isinstance(data, dict) else None
-        if not isinstance(digest, str) or not _DIGEST.match(digest):
+        if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
             raise CatalogError(f"Docker Hub names no digest for {entry.image_ref}")
         return dataclasses.replace(entry, digest=digest)
 
@@ -912,7 +944,7 @@ def _package_entry(package: dict, values: dict) -> dict:
         if kind == "oci":
             image, tag, digest = split_image(identifier if isinstance(identifier, str) else "")
             version = package.get("version")
-            if not tag and isinstance(version, str) and _TAG.match(version):
+            if not tag and isinstance(version, str) and _TAG.fullmatch(version):
                 tag = version
             values.update(identifier=image, tag=tag or "latest", digest=digest)
         else:
@@ -941,7 +973,7 @@ def _package_entry(package: dict, values: dict) -> dict:
         name = arg.get("name") if arg.get("type") == "named" else None
         label = clean_text(name or arg.get("valueHint") or arg.get("description") or "?", 60)
         if name is not None and (not isinstance(name, str)
-                                 or not re.match(r"^--?[A-Za-z0-9][A-Za-z0-9_-]*$", name)):
+                                 or not re.fullmatch(r"^--?[A-Za-z0-9][A-Za-z0-9_-]*$", name)):
             notes.append(f"An argument with an odd name ({label}) is left out.")
             continue
         usable = (isinstance(value, str) and bool(value) and "{" not in value
@@ -956,7 +988,7 @@ def _package_entry(package: dict, values: dict) -> dict:
         if not isinstance(var, dict):
             continue
         name = var.get("name")
-        if not isinstance(name, str) or not _ENV_NAME.match(name):
+        if not isinstance(name, str) or not _ENV_NAME.fullmatch(name):
             notes.append(f"An environment variable with an odd name "
                          f"({clean_text(name, 40)}) is left out.")
             continue

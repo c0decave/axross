@@ -1,0 +1,95 @@
+{
+ "name": "rpds-py",
+ "versions": {
+  "2026.9.1": {
+   "accepted_findings": [],
+   "archives": {
+    "rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "rpds/__init__.py": "c373205d6ee5a530880b0d0a5dbc36d105f9ef7fe46ec12758878cb0202e82f3",
+      "rpds/__init__.pyi": "6a6ef1ea831afe9bbf92fd4d96896a25b3ebebf52f0afa32c462ab0c648c2849",
+      "rpds/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rpds/rpds.cpython-312-x86_64-linux-gnu.so": "1e3c483ab69b4b0637cbcbf0a7e3989e350f8195388724ce4f7d8efe4b6fe05e",
+      "rpds_py-2026.9.1.dist-info/METADATA": "5d72dca2e387c8d2b4180b68ee87c15b64751e059100a6db58891ec9995445c3",
+      "rpds_py-2026.9.1.dist-info/RECORD": "b1dcdf1550728e97d06cdd4ad186afa2d4c45a740ed4f975ea30eeec6492dcd5",
+      "rpds_py-2026.9.1.dist-info/WHEEL": "71d661618d9b707f61ac372a0d51047692f4339b639a602bfa5c14ab5e4211d6",
+      "rpds_py-2026.9.1.dist-info/licenses/LICENSE": "314e4e91be3baa93c0fb4bccc9e4e97cd643eb839b065af921782c2175fe9909",
+      "rpds_py-2026.9.1.dist-info/sboms/rpds-py.cyclonedx.json": "0c8885a9d45f3c9280aeb1e06701077036748b22bd6e3a4201fe09e6b73f99b5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e5c1226b9cb9d4a8bdc8bfa62292c46091896afbb77b329dd626fbd953b8e22d",
+     "native": {
+      "rpds/rpds.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "addeda51556dac7c1a2f14cda62db8b621cd12afba3091d03a96c72932387eab"
+    }
+   },
+   "name": "rpds-py",
+   "provenance": {
+    "rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "crate-py/rpds",
+     "workflow": "CI.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Julian Berman <Julian+rpds@GrayVines.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Documentation": "https://rpds.readthedocs.io/",
+     "Funding": "https://github.com/sponsors/Julian",
+     "Homepage": "https://github.com/crate-py/rpds",
+     "Issues": "https://github.com/crate-py/rpds/issues/",
+     "Source": "https://github.com/crate-py/rpds",
+     "Tidelift": "https://tidelift.com/subscription/pkg/pypi-rpds-py?utm_source=pypi-rpds-py&utm_medium=referral&utm_campaign=pypi-link",
+     "Upstream": "https://github.com/orium/rpds"
+    },
+    "summary": "Python bindings to Rust's persistent data structures (rpds)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (crate-py/rpds)."
+   },
+   "scans": {
+    "capa": {
+     "1e3c483ab69b4b0637cbcbf0a7e3989e350f8195388724ce4f7d8efe4b6fe05e": {
+      "capabilities": [
+       "compiled with rust",
+       "contain loop",
+       "encode data using Base64",
+       "encode data using XOR",
+       "execute syscall",
+       "map or unmap memory on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "rpds/rpds.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "2026.9.1"
+  }
+ }
+}

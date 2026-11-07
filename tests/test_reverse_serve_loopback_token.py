@@ -101,7 +101,7 @@ def test_happy_a_loopback_s3_server_gets_a_token(root, servers):
 @pytest.mark.parametrize(
     "headers",
     [
-        {"Authorization": "Bearer wrong-token-wrong-token-wrong"},
+        {"Authorization": "Bearer fake-token-wrong-token-wrong"},
         _basic("any", "wrong"),
         {"Authorization": "Basic %%%not-base64%%%"},
         {"Authorization": "Basic " + base64.b64encode(b"no-colon").decode()},

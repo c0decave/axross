@@ -1,0 +1,96 @@
+{
+ "name": "referencing",
+ "versions": {
+  "0.37.0": {
+   "accepted_findings": [
+    "rot13-or-reversed|referencing/tests/test_retrieval.py|fa25424110196da9",
+    "yara|capability_network_outbound|referencing/_core.py|d923c67da4efcc0d",
+    "yara|capability_network_outbound|referencing/jsonschema.py|8d767ab7ac7da13b",
+    "yara|capability_network_outbound|referencing/tests/test_core.py|79aa74080688db7b",
+    "yara|capability_network_outbound|referencing/tests/test_jsonschema.py|e109e35163803009",
+    "yara|capability_network_outbound|referencing/tests/test_referencing_suite.py|c03eaf78c7cbb14b",
+    "yara|capability_network_outbound|referencing/typing.py|5a351b9d9ea33c07"
+   ],
+   "archives": {
+    "referencing-0.37.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "referencing-0.37.0.dist-info/METADATA": "c93b00e6ab1524fd60848376604c189a114374776475c25a31d57be47b29de6a",
+      "referencing-0.37.0.dist-info/RECORD": "4cff26d74dfce1cd571ccbee5f58e2dabf748bbe7de1fcc8e4ff487b3a1711f1",
+      "referencing-0.37.0.dist-info/WHEEL": "aad0b0a12256807936d52d4a6f88a1773236ae527564a688bab4e3fe780e8724",
+      "referencing-0.37.0.dist-info/licenses/COPYING": "42dcd63495f87b4eb7c7757afa379bb55a53f94afd7a5f657d9adf57236e515c",
+      "referencing/__init__.py": "e4864a5da007fc55b20894646939f55dca6d2df83d72f78b6fdbb99d853124ab",
+      "referencing/_attrs.py": "6e04fe28c84354b786b56c4cfd218a61e2da6411734f691454574090e7178bc8",
+      "referencing/_attrs.pyi": "836c17f9a2c4a9002f594facd2a20dd8e30602a8ce03447bd91fee49f7cef3f3",
+      "referencing/_core.py": "d923c67da4efcc0dec46a6e3ff8476c02fbe7e25e8942515a4b14b249eb3759f",
+      "referencing/exceptions.py": "cc581a120e9688a793e7c310b8a36c8060e71ecce9dba738a11782eac17d8073",
+      "referencing/jsonschema.py": "8d767ab7ac7da13bd31cc202d2d4726858d6e6bdaa78739b62ebbb52149f2b74",
+      "referencing/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "referencing/retrieval.py": "727f4478075a6936e7303742e094488621295c38df95174708e2c5af0d5984b0",
+      "referencing/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "referencing/tests/test_core.py": "79aa74080688db7be33086d5c848fddaa2dd769de21c7dc0c42e7908a50de0b5",
+      "referencing/tests/test_exceptions.py": "ede39d1f2a1b5ccb7bfa1e409e71fbbbc8b0dae1cf687ed4e01b3d2612e08d6a",
+      "referencing/tests/test_jsonschema.py": "e109e35163803009f9c9e03c66d95d264848e78bf02962560742c3ccd771e717",
+      "referencing/tests/test_referencing_suite.py": "c03eaf78c7cbb14bb4b3830b8e6ee94bc720e1c21f2fb14c044367824ef7cc22",
+      "referencing/tests/test_retrieval.py": "bdc6e77c0e13a957aa5335b4ef7c0efa72dea9522fd2b41958d5afd33f649b8f",
+      "referencing/typing.py": "5a351b9d9ea33c0777d5c9c214069e588544373c87b47749c8e95e96fd4663bd"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "639e51a3bc9f8d6ecb3a39e0ce00c5272e71b54f996238b0d80cb1dd29d6d7bd",
+     "native": {},
+     "pth": {},
+     "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231"
+    }
+   },
+   "name": "referencing",
+   "provenance": {
+    "referencing-0.37.0-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "python-jsonschema/referencing",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Julian Berman <Julian+referencing@GrayVines.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://referencing.readthedocs.io/en/stable/changes/",
+     "Documentation": "https://referencing.readthedocs.io/",
+     "Funding": "https://github.com/sponsors/Julian",
+     "Homepage": "https://github.com/python-jsonschema/referencing",
+     "Issues": "https://github.com/python-jsonschema/referencing/issues/",
+     "Source": "https://github.com/python-jsonschema/referencing",
+     "Tidelift": "https://tidelift.com/subscription/pkg/pypi-referencing?utm_source=pypi-referencing&utm_medium=referral&utm_campaign=pypi-link"
+    },
+    "summary": "JSON Referencing + Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 medium findings (capability patterns) seen; capabilities: network_outbound; attestation verifies (python-jsonschema/referencing)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_outbound|referencing/_core.py|d923c67da4efcc0d",
+     "yara|capability_network_outbound|referencing/jsonschema.py|8d767ab7ac7da13b",
+     "yara|capability_network_outbound|referencing/tests/test_core.py|79aa74080688db7b",
+     "yara|capability_network_outbound|referencing/tests/test_jsonschema.py|e109e35163803009",
+     "yara|capability_network_outbound|referencing/tests/test_referencing_suite.py|c03eaf78c7cbb14b",
+     "yara|capability_network_outbound|referencing/typing.py|5a351b9d9ea33c07"
+    ],
+    "yara": [
+     "capability_network_outbound:capability_network_outbound referencing/_core.py",
+     "capability_network_outbound:capability_network_outbound referencing/jsonschema.py",
+     "capability_network_outbound:capability_network_outbound referencing/tests/test_core.py",
+     "capability_network_outbound:capability_network_outbound referencing/tests/test_jsonschema.py",
+     "capability_network_outbound:capability_network_outbound referencing/tests/test_referencing_suite.py",
+     "capability_network_outbound:capability_network_outbound referencing/typing.py"
+    ]
+   },
+   "version": "0.37.0"
+  }
+ }
+}

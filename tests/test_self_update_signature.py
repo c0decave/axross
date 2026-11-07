@@ -44,6 +44,8 @@ NEW_BYTES = b"\x7fELF new axross binary " * 3000
 EVIL_BYTES = b"\x7fELF evil axross binary" * 3000
 #: The release key the operator published (raw 32 bytes, base64).
 RELEASE_KEY = "rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68="
+#: The key it rotates to (pinned from 0.15.176 on, beside the first one).
+NEXT_RELEASE_KEY = "INHsCyIzJ305W1+SvRkrEMuaO7puYtlgnhP72N6+mcw="
 OTHER_KEY = Ed25519PrivateKey.generate()
 
 
@@ -116,8 +118,8 @@ SUMS_BYTES = b"%s  axross-full\n" % hashlib.sha256(NEW_BYTES).hexdigest().encode
 
 
 def test_happy_the_pinned_key_is_the_published_release_key():
-    assert SU.TRUSTED_KEYS == (RELEASE_KEY,)
-    assert len(base64.b64decode(SU.TRUSTED_KEYS[0], validate=True)) == 32
+    assert SU.TRUSTED_KEYS == (RELEASE_KEY, NEXT_RELEASE_KEY)
+    assert all(len(base64.b64decode(k, validate=True)) == 32 for k in SU.TRUSTED_KEYS)
     assert SU.SIG_NAME == "SHA256SUMS.sig" and SU.SIG_BYTES == 64
 
 
@@ -229,7 +231,7 @@ def test_happy_e2e_signed_release_updates(trusted, fake, binary):
 
 
 def test_sad_e2e_the_real_release_key_refuses_a_test_signed_release(fake, binary):
-    assert SU.TRUSTED_KEYS == (RELEASE_KEY,)  # nothing patched
+    assert SU.TRUSTED_KEYS == (RELEASE_KEY, NEXT_RELEASE_KEY)  # nothing patched
     with pytest.raises(SU.SignatureError, match="does not verify"):
         update(fake, binary)
     assert_refused_untouched(fake, binary)

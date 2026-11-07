@@ -527,6 +527,16 @@ CONTAINER_MIME = {
     "vhdx": "application/x-vhdx-disk",
     "ewf": "application/octet-stream",
 }
+#: Container MIME type -> the suffixes that name it. Qt's own MIME database,
+#: the one it falls back to where no shared-mime-info is installed (Windows,
+#: macOS, a bare Linux), gives .vmdk another type and .vhd to VHDL source.
+CONTAINER_SUFFIXES = {
+    "application/x-qemu-disk": (".qcow2", ".qcow"),
+    "application/x-vdi-disk": (".vdi",),
+    "application/x-vmdk-disk": (".vmdk",),
+    "application/x-vhd-disk": (".vhd",),
+    "application/x-vhdx-disk": (".vhdx",),
+}
 RAW_DISK_MIME = "application/x-raw-disk-image"
 #: MIME types that name a disk image (core.file_type, Qt's database).
 DISK_IMAGE_MIMES = frozenset(
@@ -536,6 +546,15 @@ DISK_IMAGE_MIMES = frozenset(
        "application/x-virtualbox-vmdk", "application/x-virtualbox-vhd",
        "application/x-virtualbox-vhdx", "application/x-apple-diskimage"}
 )
+
+
+def named_as_container(mime: str, name: str) -> bool:
+    """Whether *name* carries a suffix of the container *mime*
+    (detect_container's) - a correctly named one, whatever the MIME
+    database calls that suffix."""
+    base = os.path.basename(name).lower()
+    return any(base.endswith(s) and len(base) > len(s)
+               for s in CONTAINER_SUFFIXES.get(mime, ()))
 
 
 def detect_container(head: bytes) -> tuple[str, str]:

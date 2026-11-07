@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import cas as CAS  # noqa: E402
 from core import trash as T  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
+from tests.markup_probe import shown  # noqa: E402
 
 BID = "LocalFS:Local"
 
@@ -91,7 +92,7 @@ class _Base(unittest.TestCase):
             group = tree.topLevelItem(i)
             for j in range(group.childCount()):
                 child = group.child(j)
-                if child.toolTip(COL_NAME) == str(path):
+                if shown(child.toolTip(COL_NAME)) == str(path):
                     return child
         raise AssertionError(f"no row for {path}")
 
@@ -122,7 +123,7 @@ class RowTest(_Base):
         row = self._row(self._dialog(), a)
         self.assertEqual(row.text(COL_NAME), "quarterly-report-final-v2.pdf")
         self.assertEqual(row.text(COL_FOLDER), str(self.tree))
-        self.assertEqual(row.toolTip(COL_FOLDER), str(a))
+        self.assertEqual(shown(row.toolTip(COL_FOLDER)), str(a))
 
     def test_long_text_is_elided_in_the_middle_not_at_the_end(self) -> None:
         from PyQt6.QtCore import Qt
@@ -316,6 +317,54 @@ class DeleteFlowTest(_Base):
         self.assertTrue(self._wait(lambda: not dlg._job.running))
         self.assertEqual(self.ask.call_count, 1)  # the same confirmation as the button
         self.assertFalse(a.exists())
+
+
+# --------------------------------------------------------------------------
+# An empty index offers nothing to act on
+# --------------------------------------------------------------------------
+
+
+class EmptyIndexTest(_Base):
+    """Reported: with an empty index every button was enabled, "Copy list"
+    said "1 row(s) copied" of an empty table and "Mark All" said "0
+    duplicate(s) marked — 0 B"."""
+
+    def _buttons(self, dlg) -> dict:
+        return {
+            "mark": dlg._mark_all_btn, "keep": dlg._keep_btn, "url": dlg._copy_btn,
+            "trash": dlg._delete_btn, "list": dlg._export_btn,
+        }
+
+    def test_sad_an_empty_index_disables_what_has_nothing_to_act_on(self) -> None:
+        dlg = self._dialog(rebuild=False)
+        enabled = {name: b.isEnabled() for name, b in self._buttons(dlg).items()}
+        self.assertEqual(enabled, dict.fromkeys(enabled, False))
+        self.assertTrue(dlg._refresh_btn.isEnabled())
+        self.assertNotIn("(s)", dlg._status.text())
+
+    def test_sad_copy_list_and_mark_all_on_nothing_say_so_plainly(self) -> None:
+        dlg = self._dialog(rebuild=False)
+        dlg._export()
+        self.assertEqual(dlg._status.text(), "No duplicate groups to copy")
+        dlg._mark_all_duplicates()
+        self.assertEqual(dlg._status.text(), "No duplicates to mark")
+
+    def test_happy_groups_enable_the_buttons_a_selection_the_rest(self) -> None:
+        self._write("a.txt")
+        self._write("b.txt")
+        dlg = self._dialog()
+        buttons = self._buttons(dlg)
+        self.assertTrue(buttons["mark"].isEnabled())
+        self.assertTrue(buttons["keep"].isEnabled())
+        self.assertTrue(buttons["list"].isEnabled())
+        self.assertFalse(buttons["trash"].isEnabled())  # nothing selected yet
+        dlg._mark_all_duplicates()
+        self.assertTrue(buttons["trash"].isEnabled())
+        self.assertRegex(dlg._status.text(), r"^1 duplicate marked — ")
+        dlg._tree.setCurrentItem(self._row(dlg, self.tree / "b.txt"))
+        self.assertTrue(buttons["url"].isEnabled())
+        dlg._export()
+        self.assertEqual(dlg._status.text(), "2 rows copied to the clipboard")
 
 
 if __name__ == "__main__":

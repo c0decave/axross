@@ -149,6 +149,24 @@ def test_sad_a_server_that_cannot_start_is_reported_and_the_agent_goes_on(fake, 
     assert notes and "gone" in notes[0]
 
 
+def test_sad_a_sandboxed_server_without_an_engine_is_reported_and_the_others_start(
+    pool, monkeypatch
+):
+    """Found on a machine with none of bubblewrap, podman or docker: a server
+    in a sandbox profile on "auto" let the sandbox's AgentError out of the
+    pool, so the servers after it never started and the agent lost every
+    MCP tool of the run under a notice that named no server. Now it is that
+    server's error line, it never runs unsandboxed, and the others start."""
+    monkeypatch.setattr(SB, "available", lambda engine: False)
+    settings = AGS.AgentSettings()  # its default sandbox profiles are on "auto"
+    boxed = C.McpServerConfig(name="boxed", command=(sys.executable, "-c", "pass"),
+                              sandbox="Lax")
+    tools, errors = pool.tools([boxed, pool.config()], wrap_for=settings.mcp_wrap)
+    assert {"fake__look", "fake__change"} <= {t.name for t in tools}
+    assert len(errors) == 1 and errors[0].startswith("boxed: "), errors
+    assert "bubblewrap, podman or docker" in errors[0] and "none is installed" in errors[0]
+
+
 def test_edge_a_server_tool_error_reaches_the_model(fake, tmp_path, pool):
     server = fake({"tool_calls": [_call("fake__change", {})]}, {"content": "done"})
     result = A.Agent(

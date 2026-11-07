@@ -542,7 +542,9 @@ def parse_overview_date(s: str) -> datetime:
 
     try:
         result = parsedate_to_datetime(s)
-    except (TypeError, ValueError, AttributeError, IndexError):
+    except (TypeError, ValueError, AttributeError, IndexError, OverflowError):
+        # OverflowError: a field past a C int ("4294967296:00:00") reaches
+        # the datetime constructor as is.
         return datetime.fromtimestamp(0)
     if result is None:
         return datetime.fromtimestamp(0)

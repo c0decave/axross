@@ -18,7 +18,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -45,13 +45,27 @@ from PyQt6.QtWidgets import (
 from core import remote_sweep as RS
 from core.i18n import tr
 from core.net_helpers import TargetError, parse_targets
+from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
 #: More hosts than this and the run asks first.
 ASK_ABOVE_HOSTS = 256
 _HIT_COLUMNS = ("UNC", "Size", "Modified", "Owner")
+
+
+def _when(mtime, fmt: str | None) -> str:
+    """A hit's modification time as text; "" for none, or for one no date
+    holds (a server's FILETIME "never" is the year 30828)."""
+    if not mtime:
+        return ""
+    try:
+        stamp = datetime.fromtimestamp(mtime)
+    except (ValueError, OverflowError, OSError, TypeError):
+        return ""
+    return stamp.strftime(fmt) if fmt else stamp.isoformat(timespec="seconds")
 
 
 @dataclass(frozen=True)
@@ -64,17 +78,10 @@ class Login:
     port: int
 
 
-class _Bridge(QObject):
-    """Carries the sweep's callbacks from its thread to the dialog."""
-
-    hit = pyqtSignal(object)
-    status = pyqtSignal(str, str, str)
-    finished = pyqtSignal(object, str)  # SweepResult or None, error text
-
-
 class NetworkSearchDialog(QDialog):
     def __init__(self, parent=None, *, sweep_fn=None, open_hit=None, analyse_hit=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "globe")
         self.setWindowTitle(tr("Find on Network Hosts (SMB)"))
         self.resize(1000, 640)
         self._sweep = sweep_fn or RS.sweep
@@ -85,10 +92,6 @@ class NetworkSearchDialog(QDialog):
         self._login: Login | None = None
         self._hits: list[RS.SweepHit] = []
         self._host_rows: dict[str, int] = {}
-        self._bridge = _Bridge(self)
-        self._bridge.hit.connect(self._on_hit)
-        self._bridge.status.connect(self._on_status)
-        self._bridge.finished.connect(self._on_finished)
         self._build()
         add_close_corner(self)
 
@@ -245,17 +248,22 @@ class NetworkSearchDialog(QDialog):
         self._login = Login(config.username, config.password, config.domain, config.port)
         self._reset_tables(hosts)
         self._cancel = threading.Event()
-        cancel, bridge, sweep = self._cancel, self._bridge, self._sweep
+        cancel, sweep = self._cancel, self._sweep
+        # The sweep reports through these, not through signals of a child
+        # object: the window can be deleted with the main window (at quit)
+        # while a sweep still runs (core/thread_relay.py).
+        on_hit, on_status = GuiCall(self._on_hit), GuiCall(self._on_status)
+        finished = GuiCall(self._on_finished)
 
         def work() -> None:
             try:
-                result = sweep(config, on_hit=bridge.hit.emit, on_status=bridge.status.emit, cancel=cancel)
-                bridge.finished.emit(result, "")
+                result = sweep(config, on_hit=on_hit, on_status=on_status, cancel=cancel)
+                finished(result, "")
             except Exception as exc:  # noqa: BLE001 - shown to the user, never raised in a thread
                 text = str(exc) or type(exc).__name__
                 if config.password:
                     text = text.replace(config.password, "***")
-                bridge.finished.emit(None, text)
+                finished(None, text)
 
         self.start_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -292,7 +300,7 @@ class NetworkSearchDialog(QDialog):
         unc.setData(Qt.ItemDataRole.UserRole, len(self._hits) - 1)
         size = QTableWidgetItem()
         size.setData(Qt.ItemDataRole.DisplayRole, hit.size)
-        when = datetime.fromtimestamp(hit.mtime).strftime("%Y-%m-%d %H:%M") if hit.mtime else ""
+        when = _when(hit.mtime, "%Y-%m-%d %H:%M")
         for col, item in enumerate((unc, size, QTableWidgetItem(when), QTableWidgetItem(hit.owner_sid))):
             table.setItem(row, col, item)
         table.setSortingEnabled(True)
@@ -368,7 +376,7 @@ class NetworkSearchDialog(QDialog):
             writer = csv.writer(fh)
             writer.writerow(list(_HIT_COLUMNS))
             for hit in self._hits:
-                when = datetime.fromtimestamp(hit.mtime).isoformat(timespec="seconds") if hit.mtime else ""
+                when = _when(hit.mtime, None)
                 writer.writerow([hit.unc, hit.size, when, hit.owner_sid])
 
     def _export_clicked(self) -> None:

@@ -22,7 +22,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 from core import voice_models as VM
 from core import voice_settings as VS
 from core.i18n import tr
+from core.thread_relay import GuiCall
 
 LANGUAGE_LABELS = {"auto": "Follow the answer", "de": "German", "en": "English"}
 VOICE_TAB_LABELS = {"de": "German", "en": "English"}
@@ -90,11 +91,6 @@ def _megabytes(model: VM.VoiceModel) -> int:
     return round(model.size / (1 << 20))
 
 
-class _DownloadBridge(QObject):
-    progress = pyqtSignal(str, object, object)  # model id, bytes done, total
-    finished = pyqtSignal(str, str)  # model id, error ("" = done)
-
-
 def _download(model, progress, cancel):
     """The download Help > Features… uses (pinned, SHA-256 checked)."""
     return VM.download(model, progress=progress, cancel=cancel)
@@ -127,9 +123,6 @@ class VoicePage(QWidget):
         self._preview_lang = ""
         self._download_cancel: threading.Event | None = None
         self._download_lang = ""
-        self._downloads = _DownloadBridge(self)  # gone with the page: late signals too
-        self._downloads.progress.connect(self._on_download_progress)
-        self._downloads.finished.connect(self._on_download_finished)
         #: voice id -> how it speaks, as the page shows it (saved or not).
         self._tuning: dict[str, dict[str, float]] = {}
         form = QFormLayout(self)
@@ -195,10 +188,14 @@ class VoicePage(QWidget):
         listen.setToolTip(tr("Speak a sample with the values below, saved or not; click "
                              "again to stop"))
         listen.clicked.connect(lambda _c=False, lg=lang: self._toggle_listen(lg))
-        for widget in (combo, state, download, listen):
+        for widget in (combo, download, listen):
             top.addWidget(widget)
         top.addStretch(1)
         layout.addLayout(top)
+        # On its own line: beside the voice and the buttons it made
+        # Settings > Voice scroll sideways.
+        state.setWordWrap(True)
+        layout.addWidget(state)
         values = QFormLayout()
         self.sliders[lang], self.slider_labels[lang], self.reset_buttons[lang] = {}, {}, {}
         for name, limits in VS.TUNING.items():
@@ -291,15 +288,18 @@ class VoicePage(QWidget):
         model = VM.model(self._voice(lang))
         cancel = self._download_cancel = threading.Event()
         self._download_lang = lang
-        bridge, downloader = self._downloads, self._downloader
+        downloader = self._downloader
+        # Not signals of this page: Settings is deleted as soon as it closes,
+        # while a cancelled download still reports (core/thread_relay.py).
+        progress = GuiCall(self._on_download_progress)
+        finished = GuiCall(self._on_download_finished)
         for each in self.voice_combos:
             self._show_state(each)
         self.voice_messages[lang].setText(tr("Downloading {name}…").format(name=model.title))
 
         def work() -> None:
             try:
-                downloader(model, lambda done, total: bridge.progress.emit(model.id, done, total),
-                           cancel)
+                downloader(model, lambda done, total: progress(model.id, done, total), cancel)
                 error = ""
             except VM.DownloadCancelled:
                 error = tr("cancelled")
@@ -307,10 +307,7 @@ class VoicePage(QWidget):
                 error = str(exc) or tr("failed")
             except Exception as exc:  # noqa: BLE001 - shown on the page
                 error = f"{type(exc).__name__}: {exc}"
-            try:
-                bridge.finished.emit(model.id, error)
-            except RuntimeError:  # the page is gone
-                pass
+            finished(model.id, error)
 
         threading.Thread(target=work, name="axross-voice-download", daemon=True).start()
 

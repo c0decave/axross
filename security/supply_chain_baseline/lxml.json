@@ -1,0 +1,446 @@
+{
+ "name": "lxml",
+ "versions": {
+  "6.1.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|lxml/ElementInclude.py|3d22de645bc26bbe",
+    "yara|capability_filesystem_read|lxml/html/_diffcommand.py|933ffb10ff4f9985",
+    "yara|capability_filesystem_read|lxml/html/_difflib.py|e36558d7ecd70138"
+   ],
+   "archives": {
+    "lxml-6.1.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "lxml-6.1.3.dist-info/METADATA": "aad89f8107bc74045b86c9b7f7c0984196102520dd7faed5e4e45693b7c315ef",
+      "lxml-6.1.3.dist-info/RECORD": "426dd93d08385e69ef9f5b9aae01c0411938c5c9e773a3ee3c4759ff0bc5ca50",
+      "lxml-6.1.3.dist-info/WHEEL": "1fe26894683c1fdfa102306a92539238acc4adbebebc8e3c4b15b7123746138e",
+      "lxml-6.1.3.dist-info/licenses/LICENSE.txt": "8fc2b568133516e46845d2147917adeee1648e70ae9ab5ed6c5417afef4ce855",
+      "lxml-6.1.3.dist-info/licenses/LICENSES.txt": "388fa99f3bde4447cd5a4cbb114037be026854db6cfe89e112691c1d8abdcf3c",
+      "lxml-6.1.3.dist-info/top_level.txt": "3630fdf3cc2a68aab9d769ec84d74bb7eb83c6c8e4a78061e759ba37e76152b9",
+      "lxml/ElementInclude.py": "3d22de645bc26bbe961c9ba53cbc5c65726d088dbee1d2b60ada8f46260e0108",
+      "lxml/__init__.py": "3d3a1a4be7ccd41ee912994fcd60ea4cced118a686bc4db9c3f07f90739fa6da",
+      "lxml/_elementpath.cpython-312-x86_64-linux-gnu.so": "e8a52708cbdfa09d3f858ed74b4a761539735999aef8a718803d662ba8aea999",
+      "lxml/_elementpath.py": "6fcd213379dd0244ed457eafe78cdadcb92402a09c774ef4d016cc3d91e74c15",
+      "lxml/apihelpers.pxi": "829051192d986a136f2dfb506b1ce37f23e644097b3abbb4d945a9d83824b3b2",
+      "lxml/builder.cpython-312-x86_64-linux-gnu.so": "8377081fccfbe9797799493bebb4467f6770ade369f26d19499acf0d6ef4b278",
+      "lxml/builder.py": "b0bee2293f0d5d59a93bfa76a769c74e34a18d93863052e017381b854165ebc8",
+      "lxml/classlookup.pxi": "784a435dfb05cc5b374b7a817d150ebb666aa8f1168b954a9168a70ad99089b4",
+      "lxml/cleanup.pxi": "64d1296efeeac7f2023f3b3184268c50708e7e2ce73a867fbb78e56171c0ba1e",
+      "lxml/cssselect.py": "ff065d5fe07da7931e2180019843486115849305f05feee33bc0e47fed6b5195",
+      "lxml/debug.pxi": "29372947cfac95462f9883db137e46a070cd4dbfa08d312f0fb6f0e8b96d3387",
+      "lxml/docloader.pxi": "7dca1577f9b04c56618c8b42bff4dfc17a6055e93b265bc539b49f471995aacd",
+      "lxml/doctestcompare.py": "e341039e4c2972f5bceaa35af3af7dd0e5c5e36c5d1daa2c499a2206c1239335",
+      "lxml/dtd.pxi": "2002a4980e19a02ebcb2a016713aa84bc8c419870f42b54c099827e222c1624a",
+      "lxml/etree.cpython-312-x86_64-linux-gnu.so": "00d49ed9e7ce56d52c3e39f43995996e8fb09302181ee735b731e8d865ef5f25",
+      "lxml/etree.h": "713ea629cfb37a5317c9598224a61a264a9a3e969e2c3604e4d4fc961cfe6a9f",
+      "lxml/etree.pyx": "4e9b8f8af3a7c870ba25d45bc92f869e0b1be3526c1c0eecfb0d572106433ce9",
+      "lxml/etree_api.h": "482bcc7f0b411dcff7c32dac18b7cfcf197452e1d86e530be331f9f150061984",
+      "lxml/extensions.pxi": "b1ac71735999c80f167702082fdd01e2541bdf9d63f3e1bbb6d2cf23993ef07c",
+      "lxml/html/ElementSoup.py": "b3f74ba1b2ccb8a9f60e17b147e8835dd66b3058354632f2d5f787b08799329c",
+      "lxml/html/__init__.py": "082e5676cbd2a6d661afd319c9ad6ab0be892956ef89876b1ce857ac68663918",
+      "lxml/html/_diffcommand.py": "933ffb10ff4f9985ae7339597068b0ef8feb1b47932af43696b3b4ae48b09581",
+      "lxml/html/_difflib.cpython-312-x86_64-linux-gnu.so": "921c79c63cb9281124781b03dca913525602d1a626fcbc59e8f7cb797203f6f4",
+      "lxml/html/_difflib.py": "e36558d7ecd70138d5bf27cdf284067ac8d05054a8ee29da80b8bc6468d52f94",
+      "lxml/html/_html5builder.py": "34b693f84bfe681809a5e425fba65b24284b64ae4657ece70e41ce243e55402e",
+      "lxml/html/_setmixin.py": "f0814838b995cf41be5f3b03dad0849121563be7603c11e0bc7b9f0bc9e2ebbb",
+      "lxml/html/builder.py": "533debe6e8ae09da0dd143daee78282ccc0069d54886c9731af9513c68a063f3",
+      "lxml/html/clean.py": "594d0a7d70328c3167da88c4ed3d5d7e4e1c97f15db81bb965b1524dcf54a7fa",
+      "lxml/html/defs.py": "eb3e81d70b3fda5f73830dc32fb30beb6c300587ba9b9ade269ea6dee4caa6d4",
+      "lxml/html/diff.cpython-312-x86_64-linux-gnu.so": "8f21087f6691dbd72ce70afebfab7fcf6732ce03e3ef7eda0f15650b93286ab8",
+      "lxml/html/diff.py": "65ad01cbec9e6254048d4bbb9bbc4a076f3c90a8b2f15052e604f444f39a158d",
+      "lxml/html/formfill.py": "ba6824d016e4008d56eaaf66bac15b2fe7039c8fda6a9d8db0b049aa4d149952",
+      "lxml/html/html5parser.py": "767c82e1ca87c72c23652ce4d26bb62fb4c74d98f1860e32178a67723bac6bfc",
+      "lxml/html/soupparser.py": "c68f15bcd78e11bf920a1b972ca09110287c27b1c18892c4f6c01b12c9285144",
+      "lxml/html/usedoctest.py": "b4f966573e0a2b5191295e4324badd54409eaac4fd3e50f34aaa93a1d562e6cd",
+      "lxml/includes/__init__.pxd": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lxml/includes/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lxml/includes/c14n.pxd": "0c141c389d1cfd84b6e39a2131bf1f9ae102d64172bf52eb358ffc31ffacc998",
+      "lxml/includes/config.pxd": "1fa32b97c22ddb5873448da1ccc21df56e3c42a918624a0b4f876788b366753c",
+      "lxml/includes/dtdvalid.pxd": "36fd0eca48d87a1bf694ef998fefaaea34b74c00bf76f4153d280f32eb1ed4d3",
+      "lxml/includes/etree_defs.h": "87f52325398d52a3f228d36b581f61c66b7abf8085efff375d563c74e7f1a96d",
+      "lxml/includes/etreepublic.pxd": "067e1ddc99163ea5e9bad5ea23e789d3198faf03453d37c309aedac608c1ec53",
+      "lxml/includes/extlibs/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lxml/includes/extlibs/libcharset.h": "180d05ba6adb348e150c6973ab795fe422da0b05e09f8ba7c369746ed1901702",
+      "lxml/includes/extlibs/localcharset.h": "67f01a81a41eab468313b34fb153aa11fe273b829c529e3a820a3877438d20e4",
+      "lxml/includes/extlibs/zconf.h": "0718a11beb3295b345fb29a63b44b654b282d82c4cd0513f6225587f2b29b8bb",
+      "lxml/includes/extlibs/zlib.h": "818667d6ab6a37fe7469cb06a7f0cb2c2cb2f2c948a03e5accf1a4a74bf3020a",
+      "lxml/includes/htmlparser.pxd": "f6e01290fe5d53b384da508e2d3fb3d9ed35a926c5969e1e860c1da2cb45fea9",
+      "lxml/includes/libexslt/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lxml/includes/libexslt/exslt.h": "7925b9b4c2407b049400d2ea93b00612253c6f605b08d4726ae1e77b3ee72925",
+      "lxml/includes/libexslt/exsltconfig.h": "407c7311b465bff87451206fa6bd19ae5d0cbb395cef5542aef811ea5aa72c46",
+      "lxml/includes/libexslt/exsltexports.h": "d499bd2935e6d8551424867a57af94c39e721b404c50b5f7fe0a32c437762cbf",
+      "lxml/includes/libxml/HTMLparser.h": "b14e311aa8febc1b44bf39710378413d625ba227ef91ce05d61ca72979ac9779",
+      "lxml/includes/libxml/HTMLtree.h": "43b5012856d0f1fc7877f74c9e647a6b2f0999f3a1a291640e9d81eb76242c35",
+      "lxml/includes/libxml/SAX.h": "4859c6dbb105ad819407d1c32ffc52206070127b39a65d3bac0a575938456453",
+      "lxml/includes/libxml/SAX2.h": "45f14fe68de57be460f1b9c0d865bb2fb2fdfe97d70acdd389e38372fd434d66",
+      "lxml/includes/libxml/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lxml/includes/libxml/c14n.h": "052057c3a9c866eb42f265af6d1acb2e6a168f0df046dfa733ddef8d718c0a6f",
+      "lxml/includes/libxml/catalog.h": "1fdb2c4c26818ed0ea73e019a8293547b87c176883f6ccea2e32721e969ccd78",
+      "lxml/includes/libxml/chvalid.h": "4d971c78da7a0b0d10958c08a8af46c7262a2f9522023a50ca3b7fcab6464d01",
+      "lxml/includes/libxml/debugXML.h": "5d744d237f60256edb1910b84b313869df9227dd3a06c506cf70303ad90ab92e",
+      "lxml/includes/libxml/dict.h": "4b079a3c632d4d37f88dee9d35322813371f12fa6c013f7f3e147b142d0afab4",
+      "lxml/includes/libxml/encoding.h": "85a2fbadab70c36c242044469adc14a94d816d355ee76159154ecc9ab3a9b0f9",
+      "lxml/includes/libxml/entities.h": "2c438203cdbafb47fc761449cc2ff686f515b121fb94a423ade6bd8524dd05ba",
+      "lxml/includes/libxml/globals.h": "347f33c912397172491a9e64d9a2f13a6fab7891063855fa2d83fcd860574656",
+      "lxml/includes/libxml/hash.h": "2882290182817c6514df27568467a15327ee6ae673fcfb348326a66f3428feb7",
+      "lxml/includes/libxml/list.h": "a21ee224d41a8d103f707b0d93d09c14f624696dac99fe09fcca5e74f3e30b89",
+      "lxml/includes/libxml/nanoftp.h": "db63c1b56849b9e60b16fc2e92de28168a1172dff1240f3785b96e1d104d5d43",
+      "lxml/includes/libxml/nanohttp.h": "6cb6f362303200a98fdc2a2630e3c7e97694226bba6cd004485d47ad5b51bded",
+      "lxml/includes/libxml/parser.h": "52aefe71ee7951402cbe8e27e8288194d4299a8c1ec2f5a13ac42d806335510f",
+      "lxml/includes/libxml/parserInternals.h": "f3f5abe94811ce6f01467d513cbc72064c3a05a800743bd5a8c03f7b5f35fc42",
+      "lxml/includes/libxml/relaxng.h": "55767be2be588dad3a2aaca97411dcf27783c0fc50d9a32bb161d2751b79a22e",
+      "lxml/includes/libxml/schemasInternals.h": "57c338227df37f6e045f9e58b7875c7f1c29ecda471985622a72cac2dcab3c9e",
+      "lxml/includes/libxml/schematron.h": "f0484f0e1bed94cc65f5ed02e6b49b12bb8ebf3252e410bf38e15babd4576676",
+      "lxml/includes/libxml/threads.h": "993dc280ae255caefe3439d43855ea62e08ae9fc98ef44b706c1c5f939d3e399",
+      "lxml/includes/libxml/tree.h": "cd344bb7a879c7a029c9e5e0b3dd02290652025da12a6edbe4dc6d3ca5101401",
+      "lxml/includes/libxml/uri.h": "27db5e24799ee73f3cddce2dc05e6822611863e137c52be17521a9c9156dbc88",
+      "lxml/includes/libxml/valid.h": "072eb521b3ef93f78bbb1edaf31d2639a972ee872515a48668513c6f6c597141",
+      "lxml/includes/libxml/xinclude.h": "2b72398e1c36cc0323dba2ee44d65cd79070bf6244da15b1c159f84c2aafd9be",
+      "lxml/includes/libxml/xlink.h": "4d52ce9084ab70a0de968f67fd7214c8f892b4361af0dc6e176773ef46811422",
+      "lxml/includes/libxml/xmlIO.h": "16f6ee3184f2d7e4b93d271a6c4d37c33d2858a7fadbaa665ef38f64db8b9bec",
+      "lxml/includes/libxml/xmlautomata.h": "ed27376203f3d592012821cf4b1b39a00c09119590d514f6932530f39a54b665",
+      "lxml/includes/libxml/xmlerror.h": "98c7e5b4cc54cdaea489205f3f641f9d8dd494c3ffac45ca7d7d30aee04b9780",
+      "lxml/includes/libxml/xmlexports.h": "23257700c79055b3a5d30923967357e01f16519fb918d2909b165cebe99a5945",
+      "lxml/includes/libxml/xmlmemory.h": "9bbc06bd5331373662b8e028def923c5a556b2d73c6902f36faa1b6e33ec79b1",
+      "lxml/includes/libxml/xmlmodule.h": "1115075260dd6519a1e8d8cb616529b1ee75acb591f2a3633c73ad7609a52c5d",
+      "lxml/includes/libxml/xmlreader.h": "0401e29e548e4d75f70c46b1f419e268820f0172722c67f3ca6f51fb6ecb09c5",
+      "lxml/includes/libxml/xmlregexp.h": "feae82d57472f034b791298b6c42a9be42907224e08d326019cff3510ea6db63",
+      "lxml/includes/libxml/xmlsave.h": "cdc110afdb0ee42b05ae7a0e2ec86176ca8c12bf24e0078585b918c8d7cef45b",
+      "lxml/includes/libxml/xmlschemas.h": "e407cb9d851c7e6c47473834755a5d1e283efb8ba2d7e5c3c038292860ca0a25",
+      "lxml/includes/libxml/xmlschemastypes.h": "318c251a6a0a028de51d169a2a09c25e22e63d3f4a463771c8227b4c4c99ea33",
+      "lxml/includes/libxml/xmlstring.h": "7793e9ab13f5235b1f982507bd526d8e80bd87b84b1dc000439a24fd1b5fe742",
+      "lxml/includes/libxml/xmlunicode.h": "f2cab7c045b6022c930ae73765c78e12471eee57eb23b5679117f011081cea95",
+      "lxml/includes/libxml/xmlversion.h": "a15a5a13fc5bb6d69e64d14a4ae49f70b39c796cfb2d080a3fbd59d66b1764da",
+      "lxml/includes/libxml/xmlwriter.h": "04453060d2b1df1ca60c4f6f7a992c10aef256af525d89b5776a509f394fcbdd",
+      "lxml/includes/libxml/xpath.h": "090bfa5ffa5186e5e8095a6aa035d807b15fbac2caec0b8fc4236283084d6000",
+      "lxml/includes/libxml/xpathInternals.h": "99cf41e6d7697ecb32cff34f533c30e9d2ae582b41c9b0620512644dee001385",
+      "lxml/includes/libxml/xpointer.h": "0c0c4cb1f3e9d9249981716b3dbc4103ce11c133117f7e5083f2c16d4ccf4210",
+      "lxml/includes/libxslt/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lxml/includes/libxslt/attributes.h": "a8ac337c67fbafcf5eb0b0bae6cf7a898256440facf84cecb36fd5e8c9a8d619",
+      "lxml/includes/libxslt/documents.h": "9018a1807e69a91bc56a5866fdf3851ed2531614e905c9baf35c93e5dc60c1fc",
+      "lxml/includes/libxslt/extensions.h": "5b950cc89a943ffd73b7ab176749a07348002300c9ad9f208c1ca1cab5aabddf",
+      "lxml/includes/libxslt/extra.h": "e97dd6bb735d3edae5ab3f8aa28edd07eadc7279ecce2ea3df3839f7d8130728",
+      "lxml/includes/libxslt/functions.h": "7dce02663fbd29e047ccef7e59653f6cdaa6684640cf79fb34dc02948057935e",
+      "lxml/includes/libxslt/imports.h": "d7c9088e81aa7455d1eb709edd9b73c6c4e2615dd718aa5c8586a43143c3b942",
+      "lxml/includes/libxslt/keys.h": "d7abf6e55125b92ee3621820ea0605c15c6018c9fed5cb67961856593e117016",
+      "lxml/includes/libxslt/namespaces.h": "5687d29f62a49fe6b927244a0a66378cfa7b6a6432de7d3dbf3cb429442de2ad",
+      "lxml/includes/libxslt/numbersInternals.h": "120e60619e69de1d3f7b9c3223ad52fb413afc0ad5273bf4cabeb78fa054d9f7",
+      "lxml/includes/libxslt/pattern.h": "b49f813dfb3d51882264c3284196e18a3de0ef1569a58abb4ebacebb6e5e47b4",
+      "lxml/includes/libxslt/preproc.h": "0ff2e311d1e1b1dc819c402f7e59f0160a11e211946fbda480485792498f46cc",
+      "lxml/includes/libxslt/security.h": "7d40f5732fd6c45093bd334017458e408538a7908d5a7d4b1c5c9925df85c795",
+      "lxml/includes/libxslt/templates.h": "6e7b7a26aba2e8a539a4d51d30d3db419919e5df954d6a82d1330690e955a08a",
+      "lxml/includes/libxslt/transform.h": "2024fb99e515d0e4c0c76ed668a56b2a3f9a52647d2d2a5335a38025dd944ad8",
+      "lxml/includes/libxslt/variables.h": "7100203dee1009c2b6b8a6d683b233fbda5e33dc561a6ee6dccea3426d2c8c80",
+      "lxml/includes/libxslt/xslt.h": "c26171d90df53ddf08ab6a61010a58f49dd041ab5bf255a0de0001b6a285804c",
+      "lxml/includes/libxslt/xsltInternals.h": "d846c42989a7619ab41e31a750c025a6a9ea649bab457ce396093926cd5661a6",
+      "lxml/includes/libxslt/xsltconfig.h": "715e6c71d44aeb198e1de3a0dce0b0ea105f710fe7aed36cfed29e7d7ebbdf4e",
+      "lxml/includes/libxslt/xsltexports.h": "d7e96e1fed1b0888010252805e157e76a1c17f038040d0da9a261bc489537f49",
+      "lxml/includes/libxslt/xsltlocale.h": "a69c4612625f648260c1143308cd3fefba7d58d7a4116ab536b75866b425e081",
+      "lxml/includes/libxslt/xsltutils.h": "d5e82e62047dfa378d395941524b476e86aaf952d7e895eb68ef344df6c044a3",
+      "lxml/includes/lxml-version.h": "d2b66a90c0892c41137b07a36ca7b877b8db8544c38384c8207de21ffd3cb4ad",
+      "lxml/includes/relaxng.pxd": "1f31e543a98271ffed8ff259f4d015253540bfc49c0a413c21fab5e72ddb4b47",
+      "lxml/includes/schematron.pxd": "1e86fbc61f8af8c2aaa7b5a21bcb6131a81fe44910ce681f8b876cd0417dd490",
+      "lxml/includes/tree.pxd": "5c0a73311cbf2d2a82b50f8e4d2faf3525bb093fce5acb726df213d87f382ec0",
+      "lxml/includes/uri.pxd": "def397c3a01b48fc4033dba8ef54f5aa77f1fb077d7b35cb0d0b56b1bdb35f42",
+      "lxml/includes/xinclude.pxd": "0ae3bf5d9341e84d892b5a975d69f5d403eb8c5415e6403a48cc9befb5999f40",
+      "lxml/includes/xmlerror.pxd": "390a9acb2b645743628003dbb1008272f9b2ee5b917b45e1573a537732633f78",
+      "lxml/includes/xmlparser.pxd": "408e2c84308ba62e70d93ac2a1fac6be81cbaed91ffb184db63094d0f05fd154",
+      "lxml/includes/xmlschema.pxd": "38b64f776583272a29897249ca8f9d032c981da79260588c008e2da888aff889",
+      "lxml/includes/xpath.pxd": "7bcf996146d11bb37598711302592727f42a02d78ea2cad82d18291fe3ac4e48",
+      "lxml/includes/xslt.pxd": "e32977a4ebbba40becc794dcf96e08582a01f3082d49247ad872358eabba8e4a",
+      "lxml/isoschematron/__init__.py": "b9ab9ead878a4e55850894aa89e207845e65eab615da6c9e109d0899dd4bcd17",
+      "lxml/isoschematron/resources/rng/iso-schematron.rng": "56c5b13f28b78958890c36e3249c34c169041e42ebcfdce8080f3324ba2bf4de",
+      "lxml/isoschematron/resources/xsl/RNG2Schtrn.xsl": "39b79bb01f16b7e777b8803f539354f394e99d0dcfc4f5f7f1374e02aa2c31a7",
+      "lxml/isoschematron/resources/xsl/XSD2Schtrn.xsl": "430791ac820cfb315c820f7c19703609a59f21b8151345ca11e6127efbfaec0d",
+      "lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_abstract_expand.xsl": "c5267f124abf23eeb6669884e40a98607c055bfaa1f39e73b7d578feceeb6e46",
+      "lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_dsdl_include.xsl": "c78d9027e771435c1a3f3c9db02a109e9d978f5e72e779d6e373bb06ea034479",
+      "lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_schematron_message.xsl": "4ebf419ceea9ce3556c21a897e6d74525bc0cbde4481f482cf688c96b5464fa4",
+      "lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_schematron_skeleton_for_xslt1.xsl": "b9ef2affcf17e1efe3b098b3a37d4644d07136177190413d7d8db4a2ad08ab09",
+      "lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_svrl_for_xslt1.xsl": "04101db154a2e730337867a9b8dea04b5b1a408343a884d72a99669a3e1d4d68",
+      "lxml/isoschematron/resources/xsl/iso-schematron-xslt1/readme.txt": "3862e216cc2e2c9116e443d828e7a86aeb8224512d55aea3cb3044d4e70923df",
+      "lxml/iterparse.pxi": "ac446727d0f40af9fced80cc4aaf15f3cd03295d96b615ece415d2498d816a3e",
+      "lxml/lxml.etree.h": "713ea629cfb37a5317c9598224a61a264a9a3e969e2c3604e4d4fc961cfe6a9f",
+      "lxml/lxml.etree_api.h": "04d3b125c8dbacce21fc2244904210609b52b47c91a9563e0d84ea48d4a16ad8",
+      "lxml/nsclasses.pxi": "e69ccd06106d96a39b3dd4e12fd408191b350f18f5aa7af43f25ee4c2511a938",
+      "lxml/objectify.cpython-312-x86_64-linux-gnu.so": "092a5a67e93adf8c722879824b60030dceb0ab54daf1521d6e5f0aa6223f5be2",
+      "lxml/objectify.pyx": "1fad182fbaa8c2be9af1502af4bf626c77770675c0251e88c7908c61d64c01e3",
+      "lxml/objectpath.pxi": "b394cd1b6f846da59628b140897df4dc1f79ccafd48bc6aeb01fffdd0bc5146c",
+      "lxml/parser.pxi": "ab6ffae82fb181aeab314f04f08718a55f47fbc303b0aea92ecec4ba0c90a9b7",
+      "lxml/parsertarget.pxi": "bf53e277145a1b9822c177130e4a4123b3c3166b19b8e70ad32f4b76441a63c3",
+      "lxml/proxy.pxi": "2e7aaa499554b09e4c9ee56b858acbc0c6c0296bafd5e3a7f9762c96eb7a08b3",
+      "lxml/public-api.pxi": "c953ee655d8bc0de4a8bbde60fce55f619d45f13ace5531e14c2ed40c35fd109",
+      "lxml/pyclasslookup.py": "80b0f51ccd87b484d86221b38c439ec12c1b07b5e4571fcd66ffeab82b7bf4e7",
+      "lxml/readonlytree.pxi": "9f63118f3f351000d6057271d268a8b0df0f2788b9cb782e4094ff45917aa8a8",
+      "lxml/relaxng.pxi": "dce43e7d93333fe285e6f33a1d3a334fff5e7b72740c99e98fd45c1c2f0ba0cc",
+      "lxml/sax.cpython-312-x86_64-linux-gnu.so": "177d801de2271de1bd6dc6b3d24e4c3dc72ef3b1fe096369bacb8204c81941b3",
+      "lxml/sax.py": "e6bc849ce30831e2e92de97e3c5a6cccc1eaf7d996366b271ab32f2d6226d543",
+      "lxml/saxparser.pxi": "c95ebb1560fad037e6162ee16d5fde2f224832eed7d8c39f5768385fdf62511e",
+      "lxml/schematron.pxi": "176387299525e7bf9bc8193fc16b4f4e71d9d5fc258f416dc06dd5b86b46f946",
+      "lxml/serializer.pxi": "8885df79c8451dfbc5b36b1393bc0c232dec0c9c6668c3db34edf79a42cb0541",
+      "lxml/usedoctest.py": "a9181929055c019725fb33740085d52673ac113517cf69cf5e4c6ececd651a09",
+      "lxml/xinclude.pxi": "ede06b23f38ae3b9a6ac74348b16e2c5123ca4aa90d67c24315f8e98a515943e",
+      "lxml/xmlerror.pxi": "30042ff7635716868c3b34fc59e78cd0bdd8ca4b05a28e3cb69cf72991d3a9c6",
+      "lxml/xmlid.pxi": "e737fda11e9bb02b5abc688e9a294dc87a98c201bf6e7ac869b49dd92511b66d",
+      "lxml/xmlschema.pxi": "9ae98da079e2e52dc140fb5c98e1d177ad4a45a556bb878e89edb041e0747ba1",
+      "lxml/xpath.pxi": "6aa5b6e15f35edd531a6ce069dcf21ed39b74159484cabf1539ffd5a02542058",
+      "lxml/xslt.pxi": "92c368de192bcd860a788733f2b4782e6f2cfe0d1717ea729cf4dd0b36081d10",
+      "lxml/xsltext.pxi": "4c89838803e501ecc2d3b3fb458d4df580a103b02e2851fe1b9de15dd7a5f727"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "974f65036d917b6ad702c4d94ffa1f5dfb2bbafaf912d5bdb289e18ceea56ad1",
+     "native": {
+      "lxml/_elementpath.cpython-312-x86_64-linux-gnu.so": "elf",
+      "lxml/builder.cpython-312-x86_64-linux-gnu.so": "elf",
+      "lxml/etree.cpython-312-x86_64-linux-gnu.so": "elf",
+      "lxml/html/_difflib.cpython-312-x86_64-linux-gnu.so": "elf",
+      "lxml/html/diff.cpython-312-x86_64-linux-gnu.so": "elf",
+      "lxml/objectify.cpython-312-x86_64-linux-gnu.so": "elf",
+      "lxml/sax.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "379f8a75cf6eb7eef0af074b55f49ab73b868388a98de14646abcdfa4564bb11"
+    }
+   },
+   "name": "lxml",
+   "provenance": {
+    "lxml-6.1.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+   },
+   "pypi": {
+    "author": "lxml dev team",
+    "author_email": "lxml@lxml.de",
+    "home_page": "https://lxml.de/",
+    "license": "BSD-3-Clause",
+    "maintainer": "lxml dev team",
+    "maintainer_email": "lxml@lxml.de",
+    "project_urls": {
+     "Bug Tracker": "https://bugs.launchpad.net/lxml",
+     "Homepage": "https://lxml.de/",
+     "Source": "https://github.com/lxml/lxml"
+    },
+    "summary": "Powerful and Pythonic XML processing library combining libxml2/libxslt with the ElementTree API."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; 7 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {
+     "00d49ed9e7ce56d52c3e39f43995996e8fb09302181ee735b731e8d865ef5f25": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "lxml/etree.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://exslt.org/common",
+        "http://exslt.org/dates-and-times",
+        "http://exslt.org/dates-and-times}date:",
+        "http://exslt.org/dates-and-times}time:",
+        "http://exslt.org/dynamic",
+        "http://exslt.org/functions",
+        "http://exslt.org/math",
+        "http://exslt.org/sets",
+        "http://exslt.org/strings",
+        "http://icl.com/saxon",
+        "http://other/ns}*')",
+        "http://purl.oclc.org/dsdl/schematron",
+        "http://relaxng.org/ns/structure/1.0",
+        "http://relaxng.org/ns/structure/1.0\"",
+        "http://schema.org/Movie\")",
+        "http://some/ns}attrname',",
+        "http://some/ns}tagname',",
+        "http://some/other/ns}*'",
+        "http://www.ascc.net/xml/schematron",
+        "http://www.ascc.net/xml/schematron\"",
+        "http://www.jclark.com/xt",
+        "http://www.oasis-open.org/committees/entity/release/1.0/catalog.dtd",
+        "http://www.w3.org/1999/XSL/Transform",
+        "http://www.w3.org/1999/xhtml",
+        "http://www.w3.org/1999/xhtml\"",
+        "http://www.w3.org/2000/xmlns",
+        "http://www.w3.org/2000/xmlns/",
+        "http://www.w3.org/2001/XInclude",
+        "http://www.w3.org/2001/XMLSchema",
+        "http://www.w3.org/2001/XMLSchema-datatypes",
+        "http://www.w3.org/2001/XMLSchema-instance",
+        "http://www.w3.org/2003/XInclude",
+        "http://www.w3.org/TR/1999/REC-html401-19991224/frameset.dtd",
+        "http://www.w3.org/TR/1999/REC-html401-19991224/loose.dtd",
+        "http://www.w3.org/TR/1999/REC-html401-19991224/strict.dtd",
+        "http://www.w3.org/TR/REC-html40/loose.dtd",
+        "http://www.w3.org/TR/html4/frameset.dtd",
+        "http://www.w3.org/TR/html4/loose.dtd",
+        "http://www.w3.org/TR/html4/strict.dtd",
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd",
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd",
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd",
+        "http://www.w3.org/XML/1998/namespace",
+        "http://xmlsoft.org/XSLT/",
+        "http://xmlsoft.org/XSLT/namespace",
+        "https://lxml.de/element_classes.html"
+       ]
+      }
+     },
+     "092a5a67e93adf8c722879824b60030dceb0ab54daf1521d6e5f0aa6223f5be2": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "lxml/objectify.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://codespeak.net/lxml/objectify/pytype}pytype\"",
+        "http://relaxng.org/ns/structure/1.0",
+        "http://relaxng.org/ns/structure/1.0\"",
+        "http://www.oasis-open.org/committees/entity/release/1.0/catalog.dtd",
+        "http://www.w3.org/1999/xhtml",
+        "http://www.w3.org/1999/xhtml\"",
+        "http://www.w3.org/2000/xmlns",
+        "http://www.w3.org/2000/xmlns/",
+        "http://www.w3.org/2001/XInclude",
+        "http://www.w3.org/2001/XMLSchema",
+        "http://www.w3.org/2001/XMLSchema-datatypes",
+        "http://www.w3.org/2001/XMLSchema-instance",
+        "http://www.w3.org/2003/XInclude",
+        "http://www.w3.org/TR/REC-html40/loose.dtd",
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd",
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd",
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd",
+        "http://www.w3.org/XML/1998/namespace"
+       ]
+      }
+     },
+     "177d801de2271de1bd6dc6b3d24e4c3dc72ef3b1fe096369bacb8204c81941b3": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "lxml/sax.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://lxml.de/sax.html"
+       ]
+      }
+     },
+     "8377081fccfbe9797799493bebb4467f6770ade369f26d19499acf0d6ef4b278": {
+      "capabilities": [
+       "contain loop",
+       "encode data using Base64"
+      ],
+      "note": "",
+      "path": "lxml/builder.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://my.ns/\")",
+        "http://my.ns/\",",
+        "http://my.ns/\"/>",
+        "http://my.ns/'})",
+        "http://www.python.org"
+       ]
+      }
+     },
+     "8f21087f6691dbd72ce70afebfab7fcf6732ce03e3ef7eda0f15650b93286ab8": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "lxml/html/diff.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "921c79c63cb9281124781b03dca913525602d1a626fcbc59e8f7cb797203f6f4": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "lxml/html/_difflib.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e8a52708cbdfa09d3f858ed74b4a761539735999aef8a718803d662ba8aea999": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "lxml/_elementpath.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|lxml/ElementInclude.py|3d22de645bc26bbe",
+     "yara|capability_filesystem_read|lxml/html/_diffcommand.py|933ffb10ff4f9985",
+     "yara|capability_filesystem_read|lxml/html/_difflib.py|e36558d7ecd70138"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read lxml/ElementInclude.py",
+     "capability_filesystem_read:capability_filesystem_read lxml/html/_diffcommand.py",
+     "capability_filesystem_read:capability_filesystem_read lxml/html/_difflib.py"
+    ]
+   },
+   "version": "6.1.3"
+  }
+ }
+}

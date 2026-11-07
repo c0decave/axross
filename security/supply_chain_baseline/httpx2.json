@@ -1,0 +1,126 @@
+{
+ "name": "httpx2",
+ "versions": {
+  "2.16.0": {
+   "accepted_findings": [
+    "secret-paths|httpx2/_auth.py|5e6ccaea24667f5a",
+    "yara|capability_filesystem_read|httpx2/_auth.py|5543b7cc97cadc61",
+    "yara|capability_filesystem_read|httpx2/_client.py|a4380f9842a38896",
+    "yara|capability_filesystem_read|httpx2/_content.py|b0da7d2156a2d758",
+    "yara|capability_filesystem_read|httpx2/_main.py|253fd57513b31e92",
+    "yara|capability_filesystem_read|httpx2/_models.py|20d9385574ee765d",
+    "yara|capability_filesystem_read|httpx2/_multipart.py|92c80825aac02ef3",
+    "yara|capability_filesystem_read|httpx2/_transports/base.py|298e730556dd1ba8",
+    "yara|capability_filesystem_read|httpx2/_transports/mock.py|dcb668c0dfd85db5",
+    "yara|capability_filesystem_read|httpx2/_transports/wsgi.py|479500a44ff15ef9",
+    "yara|capability_filesystem_read|httpx2/websockets/_api.py|a4d76c60e9a1a9ea",
+    "yara|capability_network_outbound|httpx2/_cookies.py|94c8afc6c6721cce",
+    "yara|capability_network_outbound|httpx2/_models.py|20d9385574ee765d"
+   ],
+   "archives": {
+    "httpx2-2.16.0-py3-none-any.whl": {
+     "entry_points": [
+      "httpx2 = httpx2._main:main"
+     ],
+     "files": {
+      "httpx2-2.16.0.dist-info/METADATA": "192f20046200ff50911a7278c21dfbee1e1a4c6fa7943227afe9231d28defc3f",
+      "httpx2-2.16.0.dist-info/RECORD": "15002b282fba0c822608640a675e1ea659233fe747cae7d6dae1bc07fc77eac6",
+      "httpx2-2.16.0.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
+      "httpx2-2.16.0.dist-info/entry_points.txt": "dee899a2b4509500053681da0f1b8cb2691d8eddeb5139ae073f35b4b5c57506",
+      "httpx2-2.16.0.dist-info/licenses/LICENSE.md": "7e7d6dbaf7fe160d39fd6e84fd02c33cab96bcbea34d36998d545bceb4a19c30",
+      "httpx2/__init__.py": "05f8f2a866892611e9e4db160eb43b189523aabd73197368a95def6f9794a33a",
+      "httpx2/__version__.py": "5d6283371e1364d24692e3babefd7a46f7d5f2585d81d3086d0f01b74711e144",
+      "httpx2/_alias.py": "12f9fa4b7056ba0cdde578030183ac41fe39fed010a6069ee0927a53a9f4d81c",
+      "httpx2/_api.py": "221bcc2dac9207bfa910447697fa826d20e34e61b6f2154f5c824931d887cded",
+      "httpx2/_auth.py": "5543b7cc97cadc618ea7776742a62b02ee8b922a7e0e92b69aeb453e655b8e30",
+      "httpx2/_client.py": "a4380f9842a38896430618673ccef66486a5cdbd6653987d581b869c72df9b53",
+      "httpx2/_config.py": "0c02410f19895f81a6942aad344d4bd5d804af9b019a8f2dbcb727e3c476a130",
+      "httpx2/_content.py": "b0da7d2156a2d758173bfe0fe5491af17aab4ff03c01be71920465283e31798d",
+      "httpx2/_cookies.py": "94c8afc6c6721cce730491e29ba5953c9e5004a7805bbf691e1e630ed4e5e7fd",
+      "httpx2/_decoders.py": "0b8efd1921d42d3fb1173dd1af94f0674b949f68a1fda7dece7ed0720a087c00",
+      "httpx2/_exceptions.py": "ebd4cf6601ef4e49235753f4cb90d254e983931c0246c2a109f85dfea4d36957",
+      "httpx2/_main.py": "253fd57513b31e92acf0334122f5d95c5da362bea3c68d0d57293514ae9f7f90",
+      "httpx2/_models.py": "20d9385574ee765de3188df87c924a9275267c5fddc3336ea9eac288fa3d4fa9",
+      "httpx2/_multipart.py": "92c80825aac02ef3bb11c80399ce34197e86c953ba5c6d1f6accde8577516938",
+      "httpx2/_sse.py": "219d4b7fa36b82865aec53f9fa7fd584a864d1e1181643d9b4e0bc8392694029",
+      "httpx2/_status_codes.py": "d025a9b83d5dc3c3d8aedf5fedea59d1b6594049e6a9efb3e852bf23321e875e",
+      "httpx2/_transports/__init__.py": "7bae70f57e1130af4eff443a90faa95ebd628de11fe9bf716e5e0a7eb0180c22",
+      "httpx2/_transports/asgi.py": "3d67b882dc3c97636a2b956eb01e2ea6bb3a978e9f2787b02d7f055043a8cee9",
+      "httpx2/_transports/base.py": "298e730556dd1ba81edac13e8f464ac89d42d4b5816551d09ce83405d43a89d1",
+      "httpx2/_transports/default.py": "8fc43a2882d471aff751366a7f28e91c5e31831a4b29aa3bb4e66931a2148e97",
+      "httpx2/_transports/mock.py": "dcb668c0dfd85db5decc0d8fe03e20dbd6c27a64e24f91abf14fef06fc6d831b",
+      "httpx2/_transports/wsgi.py": "479500a44ff15ef97707028c82890de62ad789719115b3abb537622971440642",
+      "httpx2/_types.py": "a55113363051d8ea16b3dfac63bb514c040cf2c671f3e90dc19e038d97046195",
+      "httpx2/_urlparse.py": "5fefeb2c3b02f5030819cd455ebf435514d8b0b2c1fd239d6823ad176f834480",
+      "httpx2/_urls.py": "b76c19382b96b663fcbc79f0ab684b84b67f836637e8add2329534bbfdc9f026",
+      "httpx2/_utils.py": "fb69ef1953ef61f2716573d4f916d05f119acc82dd469e6425424af7c985e51e",
+      "httpx2/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "httpx2/websockets/__init__.py": "2bae9dd997339741306b47b2d10d844f1e6eb73547ea7e46e89db6991dc66d5d",
+      "httpx2/websockets/_api.py": "a4d76c60e9a1a9eab993cfc3aed5cafb0e500c070a12ad45370801585de3d067",
+      "httpx2/websockets/_exceptions.py": "6e99c15fd7c37645a1f63296aaa5c0710fe3b083c3452bb351ec71cff44fcea0",
+      "httpx2/websockets/_ping.py": "33a5e66daa74d7e95d9757a37a39a48c96c180ad6e9418fefe8694a0a722aab3",
+      "httpx2/websockets/_transport.py": "a46b49720cb9f158bddb8e9b8f9eb2afef34aaaa5f524e856a930577ccf0d8bb"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "425f7a735b2b02cfc1259dac243a4ca56a9f84c21eeb665631a00b19a07211d0",
+     "native": {},
+     "pth": {},
+     "sha256": "fd2c5d7909e8d86fe92d53020c310ca0e4e431b838c207c5754b9bbf0308d49a"
+    }
+   },
+   "name": "httpx2",
+   "provenance": {
+    "httpx2-2.16.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Tom Christie <tom@tomchristie.com>",
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "\"Pydantic Services Inc.\" <engineering@pydantic.dev>",
+    "project_urls": {
+     "Changelog": "https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md",
+     "Homepage": "https://github.com/pydantic/httpx2",
+     "Source": "https://github.com/pydantic/httpx2"
+    },
+    "summary": "The next generation HTTP client."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 medium findings (capability patterns) seen; capabilities: filesystem_read, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|httpx2/_auth.py|5543b7cc97cadc61",
+     "yara|capability_filesystem_read|httpx2/_client.py|a4380f9842a38896",
+     "yara|capability_filesystem_read|httpx2/_content.py|b0da7d2156a2d758",
+     "yara|capability_filesystem_read|httpx2/_main.py|253fd57513b31e92",
+     "yara|capability_filesystem_read|httpx2/_models.py|20d9385574ee765d",
+     "yara|capability_filesystem_read|httpx2/_multipart.py|92c80825aac02ef3",
+     "yara|capability_filesystem_read|httpx2/_transports/base.py|298e730556dd1ba8",
+     "yara|capability_filesystem_read|httpx2/_transports/mock.py|dcb668c0dfd85db5",
+     "yara|capability_filesystem_read|httpx2/_transports/wsgi.py|479500a44ff15ef9",
+     "yara|capability_filesystem_read|httpx2/websockets/_api.py|a4d76c60e9a1a9ea",
+     "yara|capability_network_outbound|httpx2/_cookies.py|94c8afc6c6721cce",
+     "yara|capability_network_outbound|httpx2/_models.py|20d9385574ee765d"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read httpx2/_auth.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_client.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_content.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_main.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_models.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_multipart.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_transports/base.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_transports/mock.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/_transports/wsgi.py",
+     "capability_filesystem_read:capability_filesystem_read httpx2/websockets/_api.py",
+     "capability_network_outbound:capability_network_outbound httpx2/_cookies.py",
+     "capability_network_outbound:capability_network_outbound httpx2/_models.py"
+    ]
+   },
+   "version": "2.16.0"
+  }
+ }
+}

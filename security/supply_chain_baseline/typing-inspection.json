@@ -1,0 +1,67 @@
+{
+ "name": "typing-inspection",
+ "versions": {
+  "0.4.4": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|typing_inspection/typing_objects.py|a778d6290d51581c"
+   ],
+   "archives": {
+    "typing_inspection-0.4.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "typing_inspection-0.4.4.dist-info/METADATA": "bad3d9e6342ef6750cf5128ec942327b8bebdce0b6e4d6f67cb15b27ae5118da",
+      "typing_inspection-0.4.4.dist-info/RECORD": "9bb32e43a7b1ef8c82b8f855089cecfea282157ab49728812a464e41200fee6a",
+      "typing_inspection-0.4.4.dist-info/WHEEL": "ccec20e2307acd7da453dd7437e70c6b08e2bc3ead3bc3445af135da37b56d59",
+      "typing_inspection-0.4.4.dist-info/licenses/LICENSE": "804b59b25f2c31bd278f9202a19ae49a3945aa2664387e2d0a128c7cacc61ec3",
+      "typing_inspection/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "typing_inspection/introspection.py": "5888c45bd627da692d9527699e3f549adf35651596b1656772310e12181b4396",
+      "typing_inspection/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "typing_inspection/typing_objects.py": "a778d6290d51581c9c9a23e0263af2a4604c76def5c4d40a7cd1a375b0046ff6",
+      "typing_inspection/typing_objects.pyi": "3bd24dd92d0270d31d64fd40abc1ef8693f5322aab9a78aeb3c5b62f992f84be"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "da18f720761dbfa7409a53c2de0326e97c7314393f0dc1742df8dd5e71efc774",
+     "native": {},
+     "pth": {},
+     "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+    }
+   },
+   "name": "typing-inspection",
+   "provenance": {
+    "typing_inspection-0.4.4-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "pydantic/typing-inspection",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Victorien Plot <contact@vctrn.dev>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://github.com/pydantic/typing-inspection/blob/main/HISTORY.md",
+     "Documentation": "https://pydantic.github.io/typing-inspection/dev/",
+     "Homepage": "https://github.com/pydantic/typing-inspection",
+     "Source": "https://github.com/pydantic/typing-inspection"
+    },
+    "summary": "Runtime typing introspection tools"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; attestation verifies (pydantic/typing-inspection)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|typing_inspection/typing_objects.py|a778d6290d51581c"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn typing_inspection/typing_objects.py"
+    ]
+   },
+   "version": "0.4.4"
+  }
+ }
+}

@@ -1,0 +1,97 @@
+{
+ "name": "pywin32-ctypes",
+ "versions": {
+  "0.2.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|win32ctypes/tests/test_win32api.py|f1bf99be30231e15",
+    "yara|capability_filesystem_read|win32ctypes/tests/test_win32cred.py|48cfff3a3e8b34fc",
+    "yara|capability_filesystem_write_executable|win32ctypes/core/cffi/_util.py|ab0735c2415daf28"
+   ],
+   "archives": {
+    "pywin32_ctypes-0.2.3-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pywin32_ctypes-0.2.3.dist-info/LICENSE.txt": "dfa83b3e2709adfcdb838d9ad55823ca674abb780e60563d9dd9544ccbf785e9",
+      "pywin32_ctypes-0.2.3.dist-info/METADATA": "1e3767d3faff4d5b9c347160883831098d1f25acf4306b02c9acdcc6bfb5883b",
+      "pywin32_ctypes-0.2.3.dist-info/RECORD": "a7466d033aa07ca2bd27a806017af8b3167fe9c9c85972ea09da18f25108bfaf",
+      "pywin32_ctypes-0.2.3.dist-info/WHEEL": "3aa464174798e461ecb0ca2b16395b4c8ab4ef6be91e917ad1f21003a952f710",
+      "pywin32_ctypes-0.2.3.dist-info/top_level.txt": "43aedaaf40bc821b075abf7aac9f2203498b0b16d840bc5e4b97c798c383c349",
+      "win32ctypes/__init__.py": "1264bb8935a6d1d414a2bb4c8d3039244598207db90140546833e1a6915f4c7a",
+      "win32ctypes/core/__init__.py": "a9b760dd3bc8c29fc265de271d4846897130d5b4ca5f1247a90b7ee3ae3b7354",
+      "win32ctypes/core/_winerrors.py": "a79dabbf9bef0c630d891bef4ff9e9217584b173e854332da26fa09ada399343",
+      "win32ctypes/core/cffi/__init__.py": "33af13e1fadc85c5b11c56598439bb17d3ace186cf5f8454b4a05ba0f4ecbbbd",
+      "win32ctypes/core/cffi/_authentication.py": "a11c608a0677981fc94d7147225259c566366f7e4f9d0683bc46f3a89371a73b",
+      "win32ctypes/core/cffi/_common.py": "b4abd24830626252f582abe0d455ff4472d361aa0d58eecb27ad5defc095c9fe",
+      "win32ctypes/core/cffi/_dll.py": "1881b196affa858f8e882734a4098f70635abfeabaf2376d31da13482814b7ae",
+      "win32ctypes/core/cffi/_nl_support.py": "145c45e177001765bf7cfbe9c2bad3a40eb5958311874deac05de417d76f164c",
+      "win32ctypes/core/cffi/_resource.py": "18004fa544cdd7a4225e55ea6128e4c3b92925463e0d91317cc55673c701465a",
+      "win32ctypes/core/cffi/_system_information.py": "6bf591c988be17d05fdbdf65bcd31bfd911ce33c48a0bd3654c8fee63fdd90cf",
+      "win32ctypes/core/cffi/_time.py": "c845139bb4c8c7f77631ed6f38556cb9b391ffc5e6b286fa7bcd27e9d8fdc182",
+      "win32ctypes/core/cffi/_util.py": "ab0735c2415daf286f38f65fd56ee7599324b92da8f06b8fa50336fac4020d46",
+      "win32ctypes/core/compat.py": "5cf48e680c5003874b9f49275cef707dead06fa229555039e8029af795b93245",
+      "win32ctypes/core/ctypes/__init__.py": "1de3548dd3f4063e521de6ff71532a0996b4d015131c3f04d43a85ab4c296859",
+      "win32ctypes/core/ctypes/_authentication.py": "bdc35b7abf0afcc5160e0ce2793895e305445a5d70c1305ebe730aa5fe920d33",
+      "win32ctypes/core/ctypes/_common.py": "c4fc941ab36eb111873c972cb51e2fc4f2625c3ef908ea2f016a3412c097eeba",
+      "win32ctypes/core/ctypes/_dll.py": "99f121695ecd6e9f29a24d318343ba1a16ac13aa1238ec5be1c80a3dedfc1538",
+      "win32ctypes/core/ctypes/_nl_support.py": "493e983f3a4256ad49aa25d5c44a142d44d1165feb063305ff5a8f366b0baa55",
+      "win32ctypes/core/ctypes/_resource.py": "633981bdfd3819dd2958bb748b670841899a05c056e17d90bbefac6e4e37df50",
+      "win32ctypes/core/ctypes/_system_information.py": "4c3ae57533f82d3ace3867ba5152ca74592b470138dbc05655313618f34754ca",
+      "win32ctypes/core/ctypes/_time.py": "d176163226a179cc21d958022dd7e81f116ac3e6ee7d7e3f442036b2be024b12",
+      "win32ctypes/core/ctypes/_util.py": "61be61286a5b7e71df657eb1e28633728e622e0e8084c4dae8e09e2c77fcfa0a",
+      "win32ctypes/pywin32/__init__.py": "5b1e66a9879ec1eaa8503707101ceb80334b44fc9ed92a1693533052c0c39125",
+      "win32ctypes/pywin32/pywintypes.py": "9293a633d949f30dc120fd13ee3ede7f3c61ae80fb632a7b126f343bcab506b4",
+      "win32ctypes/pywin32/win32api.py": "359ddd509f5b74c3c1847f3d1036f7b3f8a39631515afcb6bc5c2b3ba6c9b80f",
+      "win32ctypes/pywin32/win32cred.py": "66048bbbb354e640103fc6ba4a51d7b5f4d22ee7c0776e2e3bc828be3d62da40",
+      "win32ctypes/pywintypes.py": "c15c3ad51e4c25fa1fea113149a238451ddc9f11198e825aac21fcd0db4f9ebf",
+      "win32ctypes/tests/__init__.py": "b2be9464f8651a8098e479bba44b7c34acd728ff5822e88839b8be1ced812e22",
+      "win32ctypes/tests/test_backends.py": "423968e860b61c791c4b7d709e6bcb8e76b652d0b29b6ab04758d659caa8fc46",
+      "win32ctypes/tests/test_win32api.py": "f1bf99be30231e150ee5a0aa28cdab611ff8529ad27eff0014d292a366f982b0",
+      "win32ctypes/tests/test_win32cred.py": "48cfff3a3e8b34fce664839667004ade71ef491356e8d93a00ef2493d891f5b1",
+      "win32ctypes/version.py": "a3849c3ecc7779b13da57f9f179e58e0d67013e819975a6eb52e9a136a5356d2",
+      "win32ctypes/win32api.py": "8842072ffa492076ae4a4297280cf40a943eb60f6547d609ceb57af230158ead",
+      "win32ctypes/win32cred.py": "34d5d5737fb80a8b74c71c0999317363d07a1fa6045fa7a0416fa46e658591ff"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "6f1a0be8f579d78712d6b87661a2073748d6050a16cd1ee2d17ba29a1d5e7fc7",
+     "native": {},
+     "pth": {},
+     "sha256": "8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8"
+    }
+   },
+   "name": "pywin32-ctypes",
+   "provenance": {
+    "pywin32_ctypes-0.2.3-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Enthought Inc.",
+    "author_email": "info@enthough.com",
+    "home_page": "https://github.com/enthought/pywin32-ctypes",
+    "license": "BSD-3-Clause",
+    "project_urls": {
+     "Homepage": "https://github.com/enthought/pywin32-ctypes"
+    },
+    "summary": "A (partial) reimplementation of pywin32 using ctypes/cffi"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|win32ctypes/tests/test_win32api.py|f1bf99be30231e15",
+     "yara|capability_filesystem_read|win32ctypes/tests/test_win32cred.py|48cfff3a3e8b34fc",
+     "yara|capability_filesystem_write_executable|win32ctypes/core/cffi/_util.py|ab0735c2415daf28"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete win32ctypes/tests/test_win32api.py",
+     "capability_filesystem_read:capability_filesystem_read win32ctypes/tests/test_win32cred.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable win32ctypes/core/cffi/_util.py"
+    ]
+   },
+   "version": "0.2.3"
+  }
+ }
+}

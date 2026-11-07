@@ -29,12 +29,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 np = pytest.importorskip("numpy")
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtCore import QEventLoop, QTimer  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import extensions as EX  # noqa: E402
+from tests.media_testkit import need_multimedia_backend  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 RATE = 44100
@@ -176,6 +177,7 @@ def test_happy_a_far_seek_back_beyond_the_memory_does_not_wait_either(tmp_path, 
 def test_sad_a_stalled_audio_thread_still_bounds_the_queue(tmp_path, waits, monkeypatch):
     """The audio thread takes nothing from the queue for a while: the
     decoder stops at the bound and goes on after."""
+    need_multimedia_backend()
     monkeypatch.setattr(MP, "HISTORY_SECONDS", 1)
     stalled = [False]
     real_drain = MP.EqEngine._drain
@@ -213,6 +215,7 @@ def test_sad_a_stalled_audio_thread_still_bounds_the_queue(tmp_path, waits, monk
 
 def test_edge_after_the_target_the_decoder_waits_for_the_sound_card_again(tmp_path):
     """Past the target only MAX_AHEAD_SECONDS are decoded ahead, as ever."""
+    need_multimedia_backend()
     engine, sink, _before = far_seek(tmp_path, 20_000)
     try:
         frames = hold(engine, sink)
@@ -228,6 +231,7 @@ def test_edge_after_the_target_the_decoder_waits_for_the_sound_card_again(tmp_pa
 
 
 def test_edge_the_decoder_counts_its_frames_per_run(tmp_path):
+    need_multimedia_backend()
     engine, sink, _before = far_seek(tmp_path, 10_000, seconds=20.0)
     try:
         assert engine._decoder_frames >= 10 * RATE

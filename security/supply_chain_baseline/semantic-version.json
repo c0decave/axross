@@ -1,0 +1,54 @@
+{
+ "name": "semantic-version",
+ "versions": {
+  "2.10.0": {
+   "accepted_findings": [],
+   "archives": {
+    "semantic_version-2.10.0-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "semantic_version-2.10.0.dist-info/LICENSE": "a85e7ef2fbc670d26781ed6844cd31a7e8ada65d21328f75a0b02402faae37ea",
+      "semantic_version-2.10.0.dist-info/METADATA": "7414d469a569046b6a246bfb1f105aab1b7abfdc32a95253f15432ea30159aa6",
+      "semantic_version-2.10.0.dist-info/RECORD": "bb3f4fa49fb2180ac8149fa7514c33d4d1276474b59af98df384140eb1fffb2e",
+      "semantic_version-2.10.0.dist-info/WHEEL": "67e9f2629c2b712ab17ddbb1e4c6e7fc3439db988fec9d831b72601af398c934",
+      "semantic_version-2.10.0.dist-info/top_level.txt": "f16345a85eb0f6c8305863a023106aeb91d0eb36a4384eed09a18acf48a74252",
+      "semantic_version/__init__.py": "e9fe5cfae05dc73672c8c98a41b8a3710150fe49bda42cf90b96165d6d41d38f",
+      "semantic_version/base.py": "5ae2dda8883883dcebbb162cacf82873cb9a4630fcaf01baa275864f0ca57104",
+      "semantic_version/django_fields.py": "72da8d1c8acad81c21a8491771405b46f4c63bbc1955d254d6e6fe313caa0add"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2235f13027f5302e3376baf3d21a4caa242a15e445a96b59c3234e5b7ac85dd0",
+     "native": {},
+     "pth": {},
+     "sha256": "de78a3b8e0feda74cabc54aab2da702113e33ac9d9eb9d2389bcf1f58b7d9177"
+    }
+   },
+   "name": "semantic-version",
+   "provenance": {
+    "semantic_version-2.10.0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Rapha\u00ebl Barrois",
+    "author_email": "raphael.barrois+semver@polytechnique.org",
+    "home_page": "https://github.com/rbarrois/python-semanticversion",
+    "license": "BSD",
+    "project_urls": {
+     "Homepage": "https://github.com/rbarrois/python-semanticversion"
+    },
+    "summary": "A library implementing the 'SemVer' scheme."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.10.0"
+  }
+ }
+}

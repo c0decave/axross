@@ -1,0 +1,82 @@
+{
+ "name": "inflate64",
+ "versions": {
+  "1.0.4": {
+   "accepted_findings": [],
+   "archives": {
+    "inflate64-1.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "inflate64-1.0.4.dist-info/METADATA": "13e11072df128a4006ffc486edade23db2f483587de9dda9de84f9a46dc0ba9e",
+      "inflate64-1.0.4.dist-info/RECORD": "c511c8579c330eb60c260ff749acce1c491c8e7a857b744ad5aff3ddea13eba7",
+      "inflate64-1.0.4.dist-info/WHEEL": "0f1467590cfe2a9f7ee1ae217431ec4afd0a502dc7eec37d35b79fdfef118d75",
+      "inflate64-1.0.4.dist-info/licenses/COPYING": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "inflate64-1.0.4.dist-info/top_level.txt": "af382abc4cb41c7229c5ab90e318e63b996a31b5db6c6cff74469595aed221ca",
+      "inflate64/__init__.py": "7616a7db3a614c28c973741814b66aa02a88ca1b7ca928604c898e76d9f9e550",
+      "inflate64/_inflate64.cpython-312-x86_64-linux-gnu.so": "ac7d61d6e84618143384624da534661131babca1c0cf73c4f67104ec2d9ce572",
+      "inflate64/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "bc52851b70272507706a8a8fac58d3011ca37fb2402550a982fdf1da1e9a279c",
+     "native": {
+      "inflate64/_inflate64.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "62d1aac3aba094ae42e27ce7581b414c90f218248be0953b6aeb11a127225e5d"
+    }
+   },
+   "name": "inflate64",
+   "provenance": {
+    "inflate64-1.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "miurahr/inflate64",
+     "workflow": "publish-to-pypi.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Hiroshi Miura <miurahr@linux.com>",
+    "license": "LGPL-2.1-or-later",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/miurahr/inflate64/issues",
+     "Changelog": "https://inflate64.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://inflate64.readthedocs.io/en/stable/",
+     "Homepage": "https://inflate64.readthedocs.io/",
+     "Source": "https://github.com/miurahr/inflate64"
+    },
+    "summary": "deflate64 compression/decompression library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (miurahr/inflate64)."
+   },
+   "scans": {
+    "capa": {
+     "ac7d61d6e84618143384624da534661131babca1c0cf73c4f67104ec2d9ce572": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "inflate64/_inflate64.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.0.4"
+  }
+ }
+}

@@ -27,28 +27,21 @@ SIZES = (3 * GiB, 5 * GiB, 2**31 - 1, 0, -1)
 #: Signals that carry int arguments, reviewed: none of them is a size, an
 #: offset or a byte count (tokens, rows, levels, modes, ids, grid cells).
 REVIEWED_INT_SIGNALS = {
-    "ui/log_dock.py:log_record",
     "ui/permissions_dialog.py:mode_changed",
-    "ui/llm_settings_dialog.py:done",
     "ui/agent_dock.py:recall",
-    "ui/agent_dock.py:checked",  # a connection check's token: a change counter
     "core/bluetooth.py:agent_cancelled",  # a pairing question's token: a counter
+    "core/bluetooth_link.py:attempting",  # a reconnect attempt number, 1 to 5
     "ui/agent_panels.py:detach_requested",  # the index of the tab dragged out
     "ui/terminal_widget.py:grid_resized",
     "ui/analysis_dock.py:finished",
     "ui/analysis_dock.py:event",
     "ui/analysis_dock.py:started",
     "ui/analysis_dock.py:listed",
-    "ui/analysis_settings_page.py:cache_cleared",  # how many cache entries Clear Cache removed
     "ui/cas_history_dialog.py:show_duplicates_requested",
-    "ui/media_viewer.py:_done",
     "ui/media_viewer.py:open_requested",
     "ui/media_viewer.py:index_changed",
-    "ui/code_editor.py:_lexed",  # lexing generation, one step per edit
-    # speech generation (one step per Stop) and the sample rate in Hz
-    "ui/voice.py:audio",
-    "ui/voice.py:spoken",
-    "ui/voice.py:heard",
+    "core/chat.py:room_list_batch",  # the room list request's id: a counter
+    "core/chat.py:room_list_done",  # the room list request's id: a counter
 }
 
 

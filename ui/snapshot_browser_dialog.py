@@ -26,7 +26,6 @@ from datetime import datetime
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -42,6 +41,7 @@ from PyQt6.QtWidgets import (
 from core import snapshot_browser as SB
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.snapshot_browser_dialog")
 
@@ -80,6 +80,7 @@ class SnapshotBrowserDialog(QDialog):
 
     def __init__(self, backend, path: str, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "history")
         self._backend = backend
         self._path = path
         backend_name = getattr(backend, "name", type(backend).__name__)
@@ -91,6 +92,10 @@ class SnapshotBrowserDialog(QDialog):
         self._job = ScanJob(self, formatter=lambda st: f"Copying… {_format_size(st['scanned'])}")
         self._job.finished.connect(self._on_job_finished)
         self._job_ctx: dict = {}
+        # The list of versions comes from the server (list_versions): asked
+        # on a worker, the dialog shows at once and fills when it answers.
+        self._list_job = ScanJob(self)
+        self._list_job.finished.connect(self._on_listed)
         self._build_ui()
         self._reload()
 
@@ -147,12 +152,28 @@ class SnapshotBrowserDialog(QDialog):
     # Data
     # ------------------------------------------------------------------
     def _reload(self) -> None:
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            self._entries = SB.browse(self._backend, self._path)
-        finally:
-            QApplication.restoreOverrideCursor()
+        """Ask the server for the versions (off the GUI thread: it held the
+        window - and the dialog did not open - until the server answered)."""
+        backend, path = self._backend, self._path
+        self._info.setText(f"{self._path}  —  listing versions…")
+        self._save_btn.setEnabled(False)
+        self._restore_btn.setEnabled(False)
+        self._list_job.start(lambda _cancelled, _report: SB.browse(backend, path), replace=True)
 
+    @property
+    def listing(self) -> bool:
+        """The versions are still being asked for."""
+        return self._list_job.running
+
+    def _on_listed(self, kind: str, value, cancelled: bool) -> None:
+        if cancelled:
+            return
+        if kind == "error":
+            self._entries = []
+            self._table.setRowCount(0)
+            self._info.setText(f"{self._path}  —  could not list the versions: {value}")
+            return
+        self._entries = value
         self._table.setRowCount(0)
         for e in self._entries:
             row = self._table.rowCount()
@@ -173,8 +194,8 @@ class SnapshotBrowserDialog(QDialog):
             f"{self._path}  —  {len(self._entries)} version{'' if len(self._entries) == 1 else 's'}"
         )
         has_entries = bool(self._entries)
-        self._save_btn.setEnabled(has_entries)
-        self._restore_btn.setEnabled(has_entries)
+        self._save_btn.setEnabled(has_entries and not self._job.running)
+        self._restore_btn.setEnabled(has_entries and not self._job.running)
 
     def _selected_entry(self):
         rows = {idx.row() for idx in self._table.selectedIndexes()}
@@ -276,10 +297,12 @@ class SnapshotBrowserDialog(QDialog):
     def reject(self) -> None:
         # Esc, Close and the window's own close stop a running copy.
         self._job.abandon()
+        self._list_job.abandon()
         super().reject()
 
     def closeEvent(self, event) -> None:
         self._job.abandon()
+        self._list_job.abandon()
         super().closeEvent(event)
 
     def _restore_selected(self) -> None:

@@ -42,8 +42,10 @@ from PyQt6.QtWidgets import (
 )
 
 from core import metadata_index as MX
+from core.i18n import format_count, tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.metadata_search_dialog")
 
@@ -81,6 +83,7 @@ class MetadataSearchDialog(QDialog):
 
     def __init__(self, active_pane=None, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "find-index")
         self._active_pane = active_pane
         self.setWindowTitle("Find in Index")
         self.resize(880, 560)
@@ -243,12 +246,14 @@ class MetadataSearchDialog(QDialog):
         bid = _backend_id_for(backend)
         if self._job.running and not self._job.cancelling:
             return  # an index run is already going
+        where = getattr(backend, "name", "") or type(backend).__name__
         reply = QMessageBox.question(
             self,
-            "Index Pane",
-            f"Walk and index every entry under\n{path}\n"
-            f"on backend [{bid}]?\n\nDepth- and entry-capped per "
-            "core.metadata_index defaults.",
+            tr("Index Folder"),
+            tr("Add every file and folder in\n{path}\n({where}) to the search index?\n\n"
+               "Subfolders are included, up to {depth} levels deep and {entries} entries "
+               "in all.").format(path=path, where=where, depth=MX.MAX_WALK_DEPTH,
+                                 entries=format_count(MX.MAX_WALK_ENTRIES)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -264,16 +269,20 @@ class MetadataSearchDialog(QDialog):
         self._index_btn.setEnabled(self._active_pane is not None)
         path = self._index_root
         if kind == "error":
-            QMessageBox.warning(self, "Index", f"Indexing failed:\n{value}")
+            QMessageBox.warning(self, tr("Index Folder"),
+                                tr("Indexing failed:\n{error}").format(error=value))
             return
         indexed, removed = value if isinstance(value, tuple) else (value, 0)
         if cancelled:
-            text = f"Cancelled — {indexed} entries indexed so far under {path}."
+            text = tr_n(indexed, "Cancelled — {n} entry indexed so far under {path}.",
+                        "Cancelled — {n} entries indexed so far under {path}.", path=path)
         else:
-            text = f"Indexed {indexed} entries under {path}."
+            text = tr_n(indexed, "Indexed {n} entry under {path}.",
+                        "Indexed {n} entries under {path}.", path=path)
             if removed:
-                text += f"\nRemoved {removed} that no longer exist."
-        QMessageBox.information(self, "Index", text)
+                text += "\n" + tr_n(removed, "Removed {n} entry that no longer exists.",
+                                     "Removed {n} entries that no longer exist.")
+        QMessageBox.information(self, tr("Index Folder"), text)
         self._update_status()
 
     def reject(self) -> None:
@@ -290,12 +299,12 @@ class MetadataSearchDialog(QDialog):
             total = MX.row_count()
         except Exception:
             total = 0
+        in_index = tr_n(total, "{n} entry in index", "{n} entries in index")
         if found is None:
-            self._status.setText(f"{total} entries in index")
+            self._status.setText(in_index)
         else:
             self._status.setText(
-                f"{found} match{'es' if found != 1 else ''}  ·  {total} entries in index"
-            )
+                tr_n(found, "{n} match", "{n} matches") + "  ·  " + in_index)
 
     def _on_row_activated(self) -> None:
         row = self._table.currentRow()

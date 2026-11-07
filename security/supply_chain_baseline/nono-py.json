@@ -1,0 +1,154 @@
+{
+ "name": "nono-py",
+ "versions": {
+  "0.16.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|nono_py/audit.py|0ece9d06290b41eb",
+    "yara|capability_process_spawn|nono_py/_nono_py.pyi|197debf28c3b75e9",
+    "yara|capability_process_spawn|nono_py/limited.py|8e179b39ce97547e"
+   ],
+   "archives": {
+    "nono_py-0.16.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "nono_py-0.16.0.dist-info/METADATA": "a28231e9ce2d8770b3ca59b64e34cc72578d6f76ec34ab73e4e8405e1e06fe2d",
+      "nono_py-0.16.0.dist-info/RECORD": "21007f834b175147ebde1143956b4932144825298663efb70f5f2b4bf56ef206",
+      "nono_py-0.16.0.dist-info/WHEEL": "c5e3da21766d0e72af45ff0d32b3b67a77ca97b6891d3f9fe3274b05a38b67c1",
+      "nono_py-0.16.0.dist-info/licenses/LICENSE": "365353b3cc1ba27b7ee685795a512468ca970fb56313597fd83a24abe555c5c4",
+      "nono_py-0.16.0.dist-info/sboms/nono-py.cyclonedx.json": "e97868d9e6fca8a5ab1ee58757bb08588cef57f0361d989ec2eb6a0dc0a522ba",
+      "nono_py/__init__.py": "e85a965ba79760376e6d1065378519e2f63cdb8ab5119cecfcc8318baab93f22",
+      "nono_py/_nono_py.cpython-312-x86_64-linux-gnu.so": "b3e49dca609328321e22db3e14e8d3c000244fbbb5d7753da5df89c5df65ad50",
+      "nono_py/_nono_py.pyi": "197debf28c3b75e9533d022af1b5150b401c968c91108fd51581709ea082a72b",
+      "nono_py/audit.py": "0ece9d06290b41eb22b44ec34e26d5ff15a2d381c8bafd8a325735b774d75a4c",
+      "nono_py/limited.py": "8e179b39ce97547e718e6002d36d60d50b9c0230d566fe2f488b85bbac6f5b75",
+      "nono_py/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f6f6004e1fc6fabe1946a97ad5b414636ca3fdae3fbad3a5f8e21313468e5f59",
+     "native": {
+      "nono_py/_nono_py.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "4318699ee01f34cf47662f8cd0afb4fc023a81512ee961034cebb49b95fbf8af"
+    }
+   },
+   "name": "nono-py",
+   "provenance": {
+    "nono_py-0.16.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "nolabs-ai/nono-py",
+     "workflow": "auto-release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Luke Hinds <luke@nolabs.ai>, Aleksy Siek <aleksy@nolabs.ai>, connrg <conor@nolabs.ai>",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "Changelog": "https://github.com/nolabs-ai/nono-py/releases",
+     "Documentation": "https://docs.nono.sh",
+     "Homepage": "https://github.com/nolabs-ai/nono-py",
+     "Issues": "https://github.com/nolabs-ai/nono-py/issues",
+     "Repository": "https://github.com/nolabs-ai/nono-py"
+    },
+    "summary": "Python bindings for nono capability-based sandboxing"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "nono (nono.sh), a capability-based sandbox for agents, required by guarddog to sandbox its own scans. Its Rust module's network / process imports and strings (cloud metadata addresses 169.254.169.254 / 169.254.170.2, 1Password / Bitwarden / keyring schemes, auth.openai.com, claude.ai) are its credential-injection proxy and metadata blocking. The gate never imports guarddog, so it never runs here. Scanner venv only. Attestation verifies (nolabs-ai/nono-py, auto-release.yml). Full capa (32 MB): the night scan."
+   },
+   "scans": {
+    "capa": {
+     "b3e49dca609328321e22db3e14e8d3c000244fbbb5d7753da5df89c5df65ad50": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "nono_py/_nono_py.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "prctl"
+        ],
+        "dynamic-code": [
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "accept4",
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "listen",
+         "recv",
+         "send",
+         "sendmsg",
+         "socket"
+        ],
+        "process": [
+         "execve",
+         "execvp",
+         "fork",
+         "posix_spawnp"
+        ]
+       },
+       "error": "",
+       "ipv4": [
+        "127.0.0.1",
+        "169.254.169.254",
+        "169.254.170.2"
+       ],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://127.0.0.1",
+        "http://169.254.169.254http",
+        "http://169.254.170.2appending",
+        "http://localhost",
+        "http://nono",
+        "http://tonicLibraryRemotebuffer",
+        "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd\">",
+        "https://InvalidStatusCodeinvalid",
+        "https://auth.openai.com",
+        "https://bitwarden.com/help/cli/1Password",
+        "https://claude.ai",
+        "https://developer.1password.com/docs/cli/op://env://file://go-keyring-base64:keyring://allowed",
+        "https://docs.rs/getrandom#nodejs-es-module-supportErrorinternal_codedescriptionunknown_code",
+        "https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eofech",
+        "https://example.com",
+        "https://github.com/smithy-lang/smithy-rs/discussions/3281",
+        "https://github.com/smithy-lang/smithy-rs/discussions/4197.",
+        "https://github.com/smithy-lang/smithy-rs/issues.at",
+        "https://oidc-fips.FIPS",
+        "https://portal.sso-fips.FIPS",
+        "https://portal.sso.FIPS",
+        "https://smithy-lang.github.io/smithy-rs/design/client/detailed_error_explanations.htmlis_proxied",
+        "https://sts-fips.FIPS",
+        "https://sts.amazonaws.comsigningNamestssigningRegionGuaranteed"
+       ]
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|nono_py/audit.py|0ece9d06290b41eb",
+     "yara|capability_process_spawn|nono_py/_nono_py.pyi|197debf28c3b75e9",
+     "yara|capability_process_spawn|nono_py/limited.py|8e179b39ce97547e"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read nono_py/audit.py",
+     "capability_process_spawn:capability_process_spawn nono_py/_nono_py.pyi",
+     "capability_process_spawn:capability_process_spawn nono_py/limited.py"
+    ]
+   },
+   "version": "0.16.0"
+  }
+ }
+}

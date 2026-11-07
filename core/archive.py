@@ -49,6 +49,7 @@ extract the same archive without clobbering earlier extractions.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import logging
 import os
 import shutil
@@ -63,13 +64,35 @@ from typing import Callable
 log = logging.getLogger(__name__)
 
 
-try:  # pragma: no cover — optional dep
-    import py7zr  # type: ignore[import-not-found]
+def _installed(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):  # pragma: no cover - a broken install
+        return False
 
-    SEVEN_Z_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    py7zr = None  # type: ignore[assignment]
-    SEVEN_Z_AVAILABLE = False
+
+# py7zr is imported at its first use, not with this module: it pulls in
+# Cryptodome, cffi and pycparser - about 70 % of this module's import time,
+# paid on the GUI thread at the first double-click on any file and the
+# first Find Files (core.file_search imports this module).
+SEVEN_Z_AVAILABLE = _installed("py7zr")
+py7zr = None  # the module once _seven_zip() has imported it
+
+
+def _seven_zip(what: str):
+    """The py7zr module, imported now if not yet; UnsafeArchive naming
+    *what* (\"7z listing\") when it cannot be imported."""
+    global py7zr, SEVEN_Z_AVAILABLE
+    if py7zr is None:
+        try:
+            import py7zr as module  # type: ignore[import-not-found]
+        except ImportError as exc:
+            SEVEN_Z_AVAILABLE = False
+            raise UnsafeArchive(
+                f"{what} requires py7zr — install with: pip install py7zr",
+            ) from exc
+        py7zr = module
+    return py7zr
 
 
 try:  # pragma: no cover — optional dep
@@ -328,12 +351,13 @@ def auto_suffix_dir(parent: str, base: str) -> str:
 
     Pure path math — does not create the directory.
     """
+    # lexists: a dangling symlink is a taken name too (exists() says no).
     candidate = os.path.join(parent, base)
-    if not os.path.exists(candidate):
+    if not os.path.lexists(candidate):
         return candidate
     for i in range(1, 1000):
         candidate = os.path.join(parent, f"{base}-{i}")
-        if not os.path.exists(candidate):
+        if not os.path.lexists(candidate):
             return candidate
     raise OSError(
         f"auto_suffix_dir: exhausted 999 suffix candidates under "
@@ -747,7 +771,8 @@ def _extract_7z(
         raise UnsafeArchive(
             "7z extraction requires py7zr — install with: pip install py7zr",
         )
-    with py7zr.SevenZipFile(archive_path, mode="r") as sz:  # type: ignore[misc]
+    seven_zip = _seven_zip("7z extraction")
+    with seven_zip.SevenZipFile(archive_path, mode="r") as sz:
         # py7zr.list() returns FileInfo objects with uncompressed
         # sizes but no compressed size per entry; cap on count +
         # total bytes.
@@ -790,7 +815,7 @@ def _extract_7z(
             progress(0, len(entries), "")
     # py7zr needs its own fresh open for extraction — the sz.list()
     # above advanced internal state.
-    with py7zr.SevenZipFile(archive_path, mode="r") as sz:  # type: ignore[misc]
+    with seven_zip.SevenZipFile(archive_path, mode="r") as sz:
         sz.extract(path=target, targets=safe_targets)
     files_written = sum(1 for e in entries if not getattr(e, "is_directory", False))
     if progress is not None:
@@ -1257,8 +1282,9 @@ def _list_7z(p: str) -> list[ArchiveEntry]:
         raise UnsafeArchive(
             "7z listing requires py7zr — install with: pip install py7zr",
         )
+    seven_zip = _seven_zip("7z listing")
     out: list[ArchiveEntry] = []
-    with py7zr.SevenZipFile(p, mode="r") as sz:  # type: ignore[misc]
+    with seven_zip.SevenZipFile(p, mode="r") as sz:
         for fi in sz.list():
             size = int(getattr(fi, "uncompressed", 0) or 0)
             out.append(

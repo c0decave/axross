@@ -126,14 +126,16 @@ _TOOL_ICONS = {
         '<line x1="9" y1="9" x2="15" y2="15"/>'
         '<line x1="15" y1="9" x2="9" y2="15"/>',
     ),
-    # "close every panel in this dock area" — the single-close glyph
-    # with a second panel stacked behind it, so the two buttons read as
-    # one-vs-many at a glance instead of relying on the tooltip.
+    # "close every panel in this dock area" — a smaller X on the front
+    # of a stack of three panels, so the two buttons read as one-vs-many
+    # at a glance instead of relying on the tooltip (with one panel
+    # behind, at 16 px the two looked the same).
     "close-all-panes": _svg(
-        '<path d="M3 16V5a2 2 0 0 1 2-2h11"/>'
-        '<rect x="7" y="7" width="14" height="14" rx="2"/>'
-        '<line x1="11" y1="11" x2="17" y2="17"/>'
-        '<line x1="17" y1="11" x2="11" y2="17"/>',
+        '<path d="M2 12V4a2 2 0 0 1 2-2h8"/>'
+        '<path d="M5.5 15.5V7.5a2 2 0 0 1 2-2h8"/>'
+        '<rect x="9" y="9" width="12" height="12" rx="2"/>'
+        '<line x1="12.5" y1="12.5" x2="17.5" y2="17.5"/>'
+        '<line x1="17.5" y1="12.5" x2="12.5" y2="17.5"/>',
     ),
     "toggle-layout": _svg(
         # h/v swap arrows
@@ -163,6 +165,8 @@ _TOOL_ICONS = {
         '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
     ),
     # Window corner, left of the [x]: maximize (corners out), restore (corners in).
+    # Left of those: put the window into the dock bar (ui.window_dock_bar).
+    "window-dock": _svg('<line x1="5" y1="18" x2="19" y2="18"/>'),
     "window-maximize": _svg(
         '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3'
         'm0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
@@ -295,6 +299,90 @@ _TOOL_ICONS = {
                 '<line x1="8" y1="23" x2="16" y2="23"/>'),
     "speaker": _svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>'
                     '<path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>'),
+    # Windows and panels of their own (set_window_icon): each shows what it
+    # stands for - in its title bar, the task bar and the docked-windows bar.
+    "bluetooth": _svg('<polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/>'),
+    "chat": _svg(
+        '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9'
+        'L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5'
+        'a8.48 8.48 0 0 1 8 8v.5z"/>'
+        '<line x1="8.5" y1="11.5" x2="8.51" y2="11.5"/><line x1="12" y1="11.5" x2="12.01" y2="11.5"/>'
+        '<line x1="15.5" y1="11.5" x2="15.51" y2="11.5"/>',
+    ),
+    # A channel sign beside list lines: the chat panel's public channel /
+    # room list (ui/chat_rooms.py).
+    "chat-rooms": _svg(
+        '<path d="M4.5 9h6M4 14h6M6.5 5.5l-1 12M9.5 5.5l-1 12"/>'
+        '<path d="M14 7h7M14 12h7M14 17h7"/>',
+    ),
+    "mail": _svg(
+        '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>'
+        '<polyline points="22 6 12 13 2 6"/>',
+    ),
+    "mail-project": _svg(
+        '<path d="M3 4h12a1 1 0 0 1 1 1v4"/><path d="M11 15H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1"/>'
+        '<polyline points="16 5 9 10 2 5"/>'
+        '<circle cx="16.5" cy="15.5" r="4"/><line x1="22" y1="21" x2="19.4" y2="18.4"/>',
+    ),
+    "log": _svg(
+        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+        '<polyline points="14 2 14 8 20 8"/>'
+        '<line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>'
+        '<line x1="8" y1="9" x2="10" y2="9"/>',
+    ),
+    "system-info": _svg(
+        '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>'
+        '<line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/>'
+        '<line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/>'
+        '<line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="15" x2="23" y2="15"/>'
+        '<line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="15" x2="4" y2="15"/>',
+    ),
+    "stats": _svg(
+        '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>'
+        '<line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="22" x2="21" y2="22"/>',
+    ),
+    "history": _svg(
+        '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'
+        '<polyline points="12 7 12 12 15 14"/>',
+    ),
+    "clock": _svg('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
+    "heatmap": _svg(
+        '<rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/>'
+        '<rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/>'
+        '<rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/>'
+        '<rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/>'
+        '<rect x="17" y="17" width="4" height="4"/>',
+    ),
+    "forensics": _svg(
+        '<circle cx="10" cy="10" r="7"/><line x1="21" y1="21" x2="15" y2="15"/>'
+        '<line x1="10" y1="6" x2="10" y2="14"/><line x1="6" y1="10" x2="14" y2="10"/>',
+    ),
+    "markdown": _svg(
+        '<rect x="2" y="5" width="20" height="14" rx="2"/>'
+        '<polyline points="6 15 6 9 9 12 12 9 12 15"/>'
+        '<line x1="17" y1="9" x2="17" y2="15"/><polyline points="15 13 17 15 19 13"/>',
+    ),
+    "workspace": _svg(
+        '<rect x="3" y="3" width="18" height="18" rx="2"/>'
+        '<line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>',
+    ),
+    "mixer": _svg(
+        '<line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/>'
+        '<line x1="18" y1="3" x2="18" y2="21"/>'
+        '<rect x="3.5" y="12" width="5" height="3" rx="1"/><rect x="9.5" y="6" width="5" height="3" rx="1"/>'
+        '<rect x="15.5" y="15" width="5" height="3" rx="1"/>',
+    ),
+    "keyboard": _svg(
+        '<rect x="2" y="6" width="20" height="12" rx="2"/>'
+        '<line x1="6" y1="10" x2="6.01" y2="10"/><line x1="10" y1="10" x2="10.01" y2="10"/>'
+        '<line x1="14" y1="10" x2="14.01" y2="10"/><line x1="18" y1="10" x2="18.01" y2="10"/>'
+        '<line x1="7" y1="14" x2="17" y2="14"/>',
+    ),
+    "hex": _svg(
+        '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 '
+        '1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>'
+        '<line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/>',
+    ),
 }
 
 _BOOKMARK_ICONS = {
@@ -636,7 +724,43 @@ _THEME_ICONS = {
     ),
 }
 
-ICONS: dict[str, str] = {**_TOOL_ICONS, **_BOOKMARK_ICONS, **_EMOJI_ICONS, **_THEME_ICONS}
+# How a connection is protected (core.conn_security, ui/security_badge.py):
+# one drawing per level, so the badge reads without its colour too
+# (monochrome, a theme tint). Not offered in the bookmark picker.
+_LOCK_BODY = '<rect x="5" y="11" width="14" height="10" rx="2"/>'
+_SHIELD = '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'
+_SECURITY_ICONS = {
+    # an open padlock: cleartext
+    "sec-cleartext": _svg(_LOCK_BODY, '<path d="M8 11V7a4 4 0 0 1 7.75-1.4"/>'),
+    # a seal with a check mark and ribbons: signed, not encrypted
+    "sec-signed": _svg('<circle cx="12" cy="9" r="6"/><path d="M9.5 9l1.8 1.8L14.8 7.3"/>'
+                       '<path d="M8.6 14l-1.6 8 5-2.8 5 2.8-1.6-8"/>'),
+    # a closed padlock beside an exclamation mark: TLS with a weakness
+    "sec-tls-weak": _svg('<rect x="2" y="11" width="13" height="10" rx="2"/>'
+                         '<path d="M5 11V7.5a3.5 3.5 0 0 1 7 0V11"/>',
+                         '<path d="M20 4v11"/><path d="M20 19.5v.01"/>'),
+    # a closed padlock with its keyhole: TLS
+    "sec-tls": _svg(_LOCK_BODY, '<path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+                    '<circle cx="12" cy="15.5" r="1"/><path d="M12 16.5v1.5"/>'),
+    # a closed padlock with hidden characters: encrypted by the protocol (SSH, SMB3)
+    "sec-encrypted": _svg(_LOCK_BODY, '<path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+                          '<path d="M8.5 16h.01M12 16h.01M15.5 16h.01"/>'),
+    # a shield with a check mark: end-to-end, keys verified
+    "sec-e2e": _svg(_SHIELD, '<path d="M9 11.5l2 2 4-4"/>'),
+    # a shield with a question mark: end-to-end, not every key verified
+    "sec-e2e-unverified": _svg(_SHIELD, '<path d="M10 9a2 2 0 1 1 2.8 1.8c-.5.3-.8.7-.8 1.2v.5"/>'
+                               '<path d="M12 15.5v.01"/>'),
+    # a shield with a cross: end-to-end, could not be decrypted
+    "sec-e2e-failed": _svg(_SHIELD, '<path d="M9.5 8.5l5 5M14.5 8.5l-5 5"/>'),
+    # a computer without a wire: local, no network
+    "sec-local": _svg('<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/>'),
+    # a padlock with a question mark: not known
+    "sec-unknown": _svg(_LOCK_BODY, '<path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+                        '<path d="M10.6 14.6a1.5 1.5 0 1 1 2.1 1.4c-.4.2-.7.5-.7.9"/><path d="M12 19v.01"/>'),
+}
+
+ICONS: dict[str, str] = {**_TOOL_ICONS, **_BOOKMARK_ICONS, **_EMOJI_ICONS, **_THEME_ICONS,
+                         **_SECURITY_ICONS}
 
 
 # --------------------------------------------------------------------------
@@ -655,6 +779,24 @@ _ICON_COLORS: dict[str, str | None] = {
     "pin": "#e67e22",
     "mic": "#e74c3c",
     "speaker": "#3498db",
+    # Windows and panels of their own.
+    "bluetooth": "#3b82f6",  # Bluetooth blue
+    "chat": "#26a69a",  # teal speech bubble
+    "chat-rooms": "#26a69a",  # teal as the chat: its channel list
+    "mail": "#e17055",  # terracotta envelope, apart from the blue inbox
+    "mail-project": "#d9822b",  # amber: the envelope under the magnifier
+    "log": "#5d9cec",  # steel blue page
+    "system-info": "#27ae60",  # green chip
+    "stats": "#fd9644",  # orange bars
+    "history": "#a55eea",  # violet: back in time
+    "clock": "#f39c12",  # amber
+    "heatmap": "#e84393",  # magenta grid
+    "forensics": "#e55039",  # red magnifier
+    "markdown": "#74b9ff",  # light blue
+    "workspace": "#00bcd4",  # cyan, as the pane splits
+    "hex": "#8e7cc3",  # muted violet
+    "keyboard": "#7a8ca5",  # blue-grey keys
+    "mixer": "#ff9f43",  # orange faders, apart from the magenta settings sliders
     # Tool verbs — semantically coloured too (original V1 left them
     # as ``None`` for theme-match; user wanted colour across the
     # whole surface). Values picked to stay distinguishable without
@@ -668,7 +810,8 @@ _ICON_COLORS: dict[str, str | None] = {
     "split-h": "#00bcd4",  # cyan
     "split-v": "#00bcd4",  # cyan
     "close-pane": "#e74c3c",  # red
-    "close-all-panes": "#e74c3c",  # red — same verb, wider scope
+    # Orange, not the single close's red: side by side the two read apart.
+    "close-all-panes": "#e67e22",
     "toggle-layout": "#e67e22",  # orange rotate
     "equalize": "#9b59b6",  # violet
     "extract-pane": "#9b59b6",  # violet
@@ -700,6 +843,7 @@ _ICON_COLORS: dict[str, str | None] = {
     "drives": "#4b9ce2",  # sky blue
     "features": "#00a8a8",  # teal
     "x": "#95a5a6",  # neutral grey close cross
+    "window-dock": "#95a5a6",
     "window-maximize": "#95a5a6",  # same grey as the [x] beside it
     "window-restore": "#95a5a6",
     # Markers — warm accents.
@@ -735,6 +879,17 @@ _ICON_COLORS: dict[str, str | None] = {
     "lock": "#27ae60",  # green
     "key": "#f1c40f",  # yellow
     "shield": "#2980b9",  # blue
+    # How a connection is protected (red: readable, amber: weak, green: safe).
+    "sec-cleartext": "#e74c3c",
+    "sec-signed": "#e67e22",
+    "sec-tls-weak": "#f39c12",
+    "sec-tls": "#27ae60",
+    "sec-encrypted": "#16a085",
+    "sec-e2e": "#1e8449",
+    "sec-e2e-unverified": "#ca6f1e",
+    "sec-e2e-failed": "#c0392b",
+    "sec-local": "#5d9cec",
+    "sec-unknown": "#95a5a6",
     # Work tools.
     "terminal": "#2ecc71",  # green
     "tools": "#7f8c8d",  # grey
@@ -933,6 +1088,40 @@ def icon(name: str, size: int = 32, color: str | None = None) -> QIcon:
     return _render_icon(name, size, _valid_color(color))
 
 
+#: The property that names a window's own icon (set_window_icon), so a theme
+#: or colour switch can draw it again.
+WINDOW_ICON_PROPERTY = "axWindowIcon"
+#: Window icons are drawn this large: the task bar and window switchers
+#: scale them down, never up.
+WINDOW_ICON_SIZE = 64
+
+
+def set_window_icon(widget, name: str) -> None:
+    """Give *widget* (a window, dialog or dock) the icon of what it stands
+    for: in its title bar, the task bar, the docked-windows bar and on a
+    floating dock. The axross icon (QApplication.windowIcon) is left only
+    to a window that has none of its own."""
+    widget.setProperty(WINDOW_ICON_PROPERTY, name)
+    widget.setWindowIcon(_render_icon(name, WINDOW_ICON_SIZE, None))
+
+
+def refresh_window_icons() -> int:
+    """Draw every window icon set by :func:`set_window_icon` again (after a
+    theme, tint or monochrome switch). Returns how many it redrew."""
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return 0
+    count = 0
+    for widget in app.allWidgets():
+        name = widget.property(WINDOW_ICON_PROPERTY)
+        if name:
+            widget.setWindowIcon(_render_icon(str(name), WINDOW_ICON_SIZE, None))
+            count += 1
+    return count
+
+
 def available_icons() -> list[str]:
     """All icon names in canonical display order: tool icons first
     (for toolbar consistency), then bookmark icons (for the edit
@@ -971,7 +1160,9 @@ __all__ = [
     "has_icon",
     "icon",
     "is_monochrome",
+    "refresh_window_icons",
     "set_monochrome",
     "set_tint",
+    "set_window_icon",
     "stroke_colour",
 ]

@@ -26,6 +26,7 @@ from core import desktop_open
 from core import extensions as EX
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 _COLUMNS = ("On", "Name", "Version", "Source", "Description", "Status")
 
@@ -197,6 +198,7 @@ class ExtensionsDialog(_ExtensionsForm, QDialog):
 
     def __init__(self, host, parent=None) -> None:
         QDialog.__init__(self, parent)
+        set_window_icon(self, "extensions")
         self.setWindowTitle(tr("Extensions"))
         self.resize(860, 420)
         layout = QVBoxLayout(self)

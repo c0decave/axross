@@ -283,8 +283,7 @@ def bench(args) -> dict:
             on_event(event)
             handled.setdefault(str(event.get("type")), []).append(time.perf_counter() - started)
 
-        tab._bridge.event.disconnect()
-        tab._bridge.event.connect(timed)
+        tab._on_event = timed  # the agent thread's events reach it in the GUI thread
         saves: list[float] = []
         save = store.save
 

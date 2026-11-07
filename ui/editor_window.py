@@ -40,6 +40,7 @@ from core.i18n import tr
 from core.text_document import TextDocument
 from ui.code_editor import TEXT_ONLY, CodeEditor, language_for
 from ui.scan_job import ScanJob
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -254,6 +255,7 @@ class EditorWindow(QMainWindow):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "edit")
         # Files being read in the background: (backend, path, job).
         self._loads: list[tuple[object, str, ScanJob]] = []
         self.setWindowTitle(tr("Editor") + " — axross")
@@ -286,19 +288,12 @@ class EditorWindow(QMainWindow):
         self._add_corner()
 
     def _add_corner(self) -> None:
-        """Maximize and [x] at the right end of the menu bar, as every
-        editor dialog has them (ui/close_corner.py): on a window manager
-        without title-bar buttons this window had no visible close control.
-        The [x] is close(), so unsaved tabs ask as always."""
-        from ui.close_corner import make_close_corner, make_maximize_corner
+        """The menu bar is the title bar: the name and ``_ [] x`` at its right
+        end, as every window has them (ui/close_corner.py). The [x] is
+        close(), so unsaved tabs ask as always."""
+        from ui.close_corner import add_title_bar
 
-        corner = QWidget(self.menuBar())
-        row = QHBoxLayout(corner)
-        row.setContentsMargins(0, 0, 4, 0)
-        row.setSpacing(0)
-        row.addWidget(make_maximize_corner(self))
-        row.addWidget(make_close_corner(self, self.close))
-        self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
+        add_title_bar(self)
 
     # -- menus ---------------------------------------------------------------------------
 
@@ -532,14 +527,28 @@ class EditorWindow(QMainWindow):
 
     # -- saving --------------------------------------------------------------------------
 
+    def rebind_backend(self, old, new) -> int:
+        """Tabs opened through the session *old* (dropped, then replaced by
+        an automatic reconnect) save through *new* from now on - not the
+        dead one, where every Save failed with "Not connected". How many."""
+        moved = 0
+        for tab in self._tabs():
+            if tab.backend is old:
+                tab.backend = new
+                if getattr(tab.document, "backend", None) is old:
+                    tab.document.backend = new
+                moved += 1
+        return moved
+
     def save_tab(self, tab: EditorTab) -> bool:
         if tab.read_only:
             self.statusBar().showMessage(tr("{name} is open read-only").format(name=tab.name), 4000)
             return False
         if tab.untitled:
             return self.save_as(tab)
+        blocks = tab.blocks()  # the text, read here: the widget is the GUI thread's
         try:
-            result = tab.document.save(tab.blocks())
+            result = self._io(tab, lambda: tab.document.save(blocks))
             if result == "conflict":
                 answer = QMessageBox.question(
                     self, tr("File Changed"),
@@ -550,18 +559,21 @@ class EditorWindow(QMainWindow):
                 )
                 if answer != QMessageBox.StandardButton.Yes:
                     return False
-                tab.document.save(tab.blocks(), force=True)
+                self._io(tab, lambda: tab.document.save(blocks, force=True))
         except UnicodeEncodeError as exc:
             QMessageBox.critical(self, tr("Save"), tr(
                 "The text holds characters {encoding} cannot store; nothing was written. Choose "
                 "another encoding (Format > Encoding).\n{error}").format(
                 encoding=tab.document.encoding_name, error=exc))
             return False
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - any failure is "not saved", never "saved"
+            # (an OSError, or a library error of a backend: escaping, it
+            # left Save-on-close accepted and the tab's edits were lost)
+            log.warning("Saving %s failed", tab.path, exc_info=not isinstance(exc, OSError))
             QMessageBox.critical(self, tr("Save"), tr("Cannot save {path}:\n{error}").format(
                 path=tab.path, error=exc))
             return False
-        tab.editor.document().setModified(False)
+        self._mark_saved(tab, blocks)
         self._update_title(tab)
         self._update_status()
         self.statusBar().showMessage(tr("Saved {name}").format(name=tab.name), 3000)
@@ -590,9 +602,12 @@ class EditorWindow(QMainWindow):
                 "{path} is open in another tab. Close that tab first, or save under another "
                 "name.").format(path=path))
             return False
+        def look() -> tuple[bool, bool]:
+            there = backend.exists(path)
+            return there, bool(there and backend.is_dir(path))
+
         try:
-            exists = backend.exists(path)
-            folder = exists and backend.is_dir(path)
+            exists, folder = self._io(tab, look, "Checking")
         except OSError as exc:
             # Unknown is not "free": writing now could replace a file the
             # user was never asked about.
@@ -609,8 +624,9 @@ class EditorWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return False
+        blocks = tab.blocks()
         try:
-            tab.document.save_as(backend, path, tab.blocks())
+            self._io(tab, lambda: tab.document.save_as(backend, path, blocks))
         except UnicodeEncodeError as exc:
             QMessageBox.critical(self, tr("Save"), tr(
                 "The text holds characters {encoding} cannot store; nothing was written. Choose "
@@ -622,11 +638,13 @@ class EditorWindow(QMainWindow):
                 path=path, error=exc))
             return False
         tab.backend, tab.path = backend, path
+        # Before the language changes: highlighting anew counts as a change
+        # of the document (its revision), not of the text.
+        self._mark_saved(tab, blocks)
         # The language follows the new name, unless the name says nothing.
         language = language_for(posixpath.basename(path.replace("\\", "/")), "")
         if language != TEXT_ONLY:
             tab.editor.set_language(language)
-        tab.editor.document().setModified(False)
         self._update_title(tab)
         self._update_status()
         self.statusBar().showMessage(tr("Saved {name}").format(name=tab.name), 3000)
@@ -657,6 +675,28 @@ class EditorWindow(QMainWindow):
             path = tab.backend.join(tab.backend.parent(tab.path), path)
         return tab.backend, path
 
+    @staticmethod
+    def _mark_saved(tab: EditorTab, written: list[str]) -> None:
+        """The tab is unmodified - unless its text is no longer the text
+        that was written (*written*): a change that reached it while the
+        file was being written is not in the file. Compared as text, not
+        by the document's revision: highlighting anew counts as a
+        revision too, and a save during it stayed "modified"."""
+        if tab.blocks() == written:
+            tab.editor.document().setModified(False)
+
+    def _io(self, tab: EditorTab, fn, verb: str = "Writing"):
+        """*fn()* - a read or write of *tab*'s file - off the GUI thread
+        (ui.off_gui): the window keeps painting while a server answers,
+        keys and clicks wait until the file is written. Save still
+        answers True / False, which closing a tab depends on."""
+        from ui.off_gui import run_off_gui
+
+        return run_off_gui(
+            fn, text=tr(verb + " {name}…").format(name=tab.name),
+            status=lambda text: self.statusBar().showMessage(text) if text
+            else self.statusBar().clearMessage())
+
     def save_current(self) -> bool:
         tab = self.current_tab()
         return self.save_tab(tab) if tab is not None else False
@@ -674,7 +714,7 @@ class EditorWindow(QMainWindow):
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         try:
-            text = tab.document.load()
+            text = self._io(tab, tab.document.load, "Reading")
         except OSError as exc:
             QMessageBox.warning(self, tr("Reload"), str(exc))
             return

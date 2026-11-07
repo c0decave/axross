@@ -617,6 +617,59 @@ def test_sad_raw_html_is_shown_as_text_not_run(counter):
     assert counter.hits == []
 
 
+@pytest.mark.parametrize("dialect", ["MarkdownDialectCommonMark", "MarkdownDialectGitHub"])
+def test_sad_raw_html_is_text_even_when_the_flags_allow_html(counter, monkeypatch, dialect):
+    """NOTES_MARKDOWN | X can lose every bit on Python 3.11 (the enum's
+    Flag mask): CommonMark *with* raw HTML. The notes' ``<`` are escaped
+    before Qt parses them, so with HTML enabled it is still text."""
+    from PyQt6.QtGui import QTextDocument
+
+    import ui.update_ui as U
+
+    monkeypatch.setattr(U, "NOTES_MARKDOWN", getattr(QTextDocument.MarkdownFeature, dialect))
+    view = notes_view(f"<b>not bold</b> <img src='{counter.url}/x.png'>\n\n"
+                      "<script>alert(1)</script>\n\n<div>block</div>\n\n"
+                      "\\<i>escaped\\</i> \\\\<u>u</u>\n\n## Still here\n")
+    pump(0.3)
+    text = view.toPlainText()
+    assert "<b>not bold</b>" in text and "<script>alert(1)</script>" in text
+    assert "<div>block</div>" in text and "Still here" in text
+    assert "<i>escaped</i>" in text and "\\<u>u</u>" in text
+    html = view.document().toHtml()
+    assert "<img" not in html and "<script" not in html and "<div>" not in html
+    assert all(f.fontWeight() < QFont.Weight.Bold for t, f, _ in fragments(view)
+               if "not bold" in t)
+    assert counter.hits == []
+
+
+def test_edge_code_keeps_its_angle_brackets_and_no_mark_is_left():
+    """A backslash is literal in code: the one added there is taken out."""
+    view = notes_view("Run `axross-<version>.tar.gz` and `a\\<b`\n\n"
+                      "```\n<b>fenced</b>\n```\n\n    <u>indented</u>\n\nPyQt6<6.12\n")
+    text = view.toPlainText()
+    assert "axross-<version>.tar.gz" in text and "a\\<b" in text
+    assert "<b>fenced</b>" in text and "<u>indented</u>" in text and "PyQt6<6.12" in text
+    assert "\u2060" not in text and "\\<version" not in text
+
+
+def test_edge_the_notes_are_github_markdown_and_no_html_on_every_python():
+    """Python 3.11's enum gave MarkdownDialectGitHub | MarkdownNoHTML the
+    value 0 (every member of the Flag has several bits, and its mask came
+    from one-bit members only): the notes were CommonMark with raw HTML,
+    and a <script> block swallowed the rest of them."""
+    from PyQt6.QtGui import QTextDocument
+
+    from ui.update_ui import NOTES_MARKDOWN
+
+    feature = QTextDocument.MarkdownFeature
+    assert NOTES_MARKDOWN.value == (feature.MarkdownDialectGitHub.value
+                                    | feature.MarkdownNoHTML.value)
+    view = notes_view("| a | b |\n|---|---|\n| 1 | 2 |\n\n<i>x</i> ~~gone~~\n")
+    html = view.document().toHtml()
+    assert "<table" in html and "line-through" in html
+    assert "<i>x</i>" in view.toPlainText()
+
+
 @pytest.mark.parametrize("href", ["javascript:alert(1)", "file:///etc/passwd", "ftp://host/x",
                                   "data:text/html,hi", "#section", "relative/page",
                                   "https:///no-host"])

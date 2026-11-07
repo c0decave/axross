@@ -11,15 +11,20 @@ connection itself. Measured with podman 6.1.4 / pasta 2026_10_02: the
 container reached the forwarded port and nothing else (another loopback
 port, 1.1.1.1:443, pypi's address: refused; plain pasta: both reachable).
 
-The server must honour ``HTTPS_PROXY`` (Python's httpx/requests, npm and
-pip do; Node's built-in fetch does not): a server that ignores it has no
+The server must honour ``HTTPS_PROXY`` with CONNECT (Python's
+httpx/requests, Go's net/http, npm and pip do; Node's built-in fetch only
+with ``NODE_USE_ENV_PROXY=1``, Node 24; axios before its tunnelling agent
+sends a plain GET, which is refused): a server that ignores it has no
 route at all and fails closed.
 
 Refused, with a reason in the answer: a host or port not on the list, a
 request other than CONNECT, a request head over :data:`MAX_HEAD` bytes or
 slower than *head_timeout*, an allowed name that resolves to a loopback,
-link-local, multicast or unspecified address (it could reach the host's
-own services), more than *max_connections* tunnels at once.
+link-local, multicast, unspecified or private address (it could reach the
+host's own services, through loopback or the host's LAN address, or the
+LAN; an IPv4-mapped IPv6 address counts as its IPv4 address), more than
+*max_connections* tunnels at once. A private address the user put on the
+list as an address is reached.
 """
 
 from __future__ import annotations
@@ -47,19 +52,37 @@ IDLE_TIMEOUT = 300.0
 MAX_CONNECTIONS = 64
 
 
-def _refused_address(address: str) -> str:
-    """Why *address* may not be connected to ("" = it may)."""
+def _refused_address(address: str, *, named: bool = True) -> str:
+    """Why *address* may not be connected to ("" = it may).
+
+    An IPv4 address written as IPv6 (``::ffff:127.0.0.1``) is judged as
+    the IPv4 address it reaches. *named*: *address* is what an allowed
+    host NAME resolved to - its owner's DNS chose it, so a private or
+    shared address (the LAN, the host's own LAN address, a container
+    bridge) is refused too; an allowed address the user typed may be one."""
     try:
         ip = ipaddress.ip_address(address.split("%", 1)[0])
     except ValueError:
         return "not an address"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
     if ip.is_loopback:
         return "a loopback address"
     if ip.is_link_local:
         return "a link-local address"
     if ip.is_multicast or ip.is_unspecified or ip.is_reserved:
         return "not a host address"
+    if named and not ip.is_global:
+        return "a private address"
     return ""
+
+
+def _is_address(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
 
 
 class EgressProxy:
@@ -206,8 +229,9 @@ class EgressProxy:
             return None, f"cannot resolve {host}: {exc}"
         last = "no address"
         refused = ""
+        named = not _is_address(host)
         for family, kind, proto, _canon, address in infos:
-            why = _refused_address(address[0])
+            why = _refused_address(address[0], named=named)
             if why and not (self._allow_loopback and why == "a loopback address"):
                 refused = f"resolves to {why} ({address[0]})"
                 continue

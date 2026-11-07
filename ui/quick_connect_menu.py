@@ -19,11 +19,14 @@ one included, so the right button is taken off the menu's own handling.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMenu
+
+log = logging.getLogger(__name__)
 
 PROFILE_MENU_LABELS = ("Connect", "Connect in Background", "Edit Config…")
 DELETE_LABEL = "Delete Connection Config…"
@@ -48,10 +51,21 @@ class QuickConnectMenu(QMenu):
         self._on_edit = on_edit
         self._on_delete = on_delete
         self._profiles: dict[QAction, object] = {}
+        self.setToolTipsVisible(True)
 
     def add_profile(self, label: str, profile) -> QAction:
         """An entry that connects to *profile* on a left click."""
         action = self.addAction(label)
+        # how the connection is protected: its own icon, details on hover
+        try:
+            from core.conn_security import from_profile
+            from ui.security_badge import security_icon, tooltip_lines
+
+            info = from_profile(profile)
+            action.setIcon(security_icon(info))
+            action.setToolTip("\n".join(tooltip_lines(info)))
+        except Exception:  # noqa: BLE001 - a badge must never cost the entry
+            log.debug("no security badge for %s", label, exc_info=True)
         self._profiles[action] = profile
         action.triggered.connect(lambda _checked=False, p=profile: self._on_connect(p))
         return action

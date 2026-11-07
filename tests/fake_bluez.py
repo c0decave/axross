@@ -13,11 +13,18 @@ What it serves, modelled on BlueZ 5:
 * ``/`` - org.freedesktop.DBus.ObjectManager (GetManagedObjects,
   InterfacesAdded, InterfacesRemoved);
 * ``/org/bluez`` - org.bluez.AgentManager1;
-* ``/org/bluez/hciN`` - org.bluez.Adapter1 (StartDiscovery,
-  StopDiscovery, RemoveDevice, Powered through Properties.Set);
+* ``/org/bluez/hciN`` - org.bluez.Adapter1 (SetDiscoveryFilter with
+  BlueZ's type checks, StartDiscovery revealing only the devices the
+  filter lets through, StopDiscovery, RemoveDevice, Powered through
+  Properties.Set);
 * ``/org/bluez/hciN/dev_XX_..`` - org.bluez.Device1 (Pair, Connect,
-  Disconnect, CancelPairing, Trusted through Properties.Set) and
+  Disconnect, ConnectProfile, DisconnectProfile, CancelPairing, Trusted
+  through Properties.Set) and
   org.bluez.Battery1;
+* ``.../dev_XX_../serviceNNNN[/charNNNN]`` - org.bluez.GattService1 and
+  org.bluez.GattCharacteristic1 (ReadValue, StartNotify, StopNotify) of
+  a device given ``gatt``: they appear when it connects (then
+  ServicesResolved) and go when it disconnects, as with BlueZ;
 * org.freedesktop.DBus.Properties (Get, GetAll, Set, PropertiesChanged)
   on all of them.
 
@@ -50,6 +57,8 @@ PROPS = "org.freedesktop.DBus.Properties"
 ADAPTER = "org.bluez.Adapter1"
 DEVICE = "org.bluez.Device1"
 BATTERY = "org.bluez.Battery1"
+GATT_SERVICE = "org.bluez.GattService1"
+GATT_CHAR = "org.bluez.GattCharacteristic1"
 AGENT_MANAGER = "org.bluez.AgentManager1"
 AGENT = "org.bluez.Agent1"
 CONTROL = "org.axross.test.FakeBluez"
@@ -63,8 +72,11 @@ TYPES = {
     DEVICE: {"Address": "s", "AddressType": "s", "Name": "s", "Alias": "s", "Icon": "s",
              "Class": "u", "Appearance": "q", "Paired": "b", "Bonded": "b", "Trusted": "b",
              "Blocked": "b", "Connected": "b", "ServicesResolved": "b", "LegacyPairing": "b",
-             "RSSI": "n", "TxPower": "n", "UUIDs": "as", "Adapter": "o"},
+             "RSSI": "n", "TxPower": "n", "UUIDs": "as", "Adapter": "o",
+             "ManufacturerData": "a{qv}", "ServiceData": "a{sv}", "AdvertisingFlags": "ay"},
     BATTERY: {"Percentage": "y", "Source": "s"},
+    GATT_SERVICE: {"UUID": "s", "Primary": "b", "Device": "o"},
+    GATT_CHAR: {"UUID": "s", "Service": "o", "Flags": "as", "Value": "ay", "Notifying": "b"},
 }
 #: Properties a client may set, per interface.
 WRITABLE = {ADAPTER: {"Powered", "Discoverable", "Alias", "Pairable"},
@@ -88,6 +100,11 @@ class FakeBluez:
         self.adapter_behaviour: dict[str, dict] = {}
         #: device paths that appear only while discovering
         self.hidden: dict[str, dict] = {}
+        #: discovery filter by sender: {"Transport", "RSSI", "DuplicateData"}
+        self.filters: dict[str, dict] = {}
+        #: adapter path -> the senders whose discovery runs there. BlueZ keeps
+        #: one discovery per D-Bus client; "Discovering" is true while any runs.
+        self.discovery: dict[str, set[str]] = {}
         #: agent path by sender
         self.agents: dict[str, tuple[str, str]] = {}
         self.calls: list[dict] = []
@@ -122,6 +139,12 @@ class FakeBluez:
     @staticmethod
     def variant(interface: str, name: str, value):
         sig = TYPES.get(interface, {}).get(name, "s")
+        if sig == "a{qv}":  # JSON: {"76": [bytes]} -> {0x004c: <ay>}
+            value = {int(k): ("ay", bytes(v)) for k, v in value.items()}
+        elif sig == "a{sv}":
+            value = {str(k): ("ay", bytes(v)) for k, v in value.items()}
+        elif sig == "ay":
+            value = bytes(value)
         return (sig, value)
 
     def wire(self, interface: str, props: dict) -> dict:
@@ -250,9 +273,18 @@ class FakeBluez:
             if mode == "hang":
                 return
             self.reply(msg)
+            if not raw:
+                # as in BlueZ: the links go down first (Connected false while the adapter
+                # still says Powered), then discovery ends, then Powered goes false
+                for dev_path in [p for p in self.objects if p.startswith(path + "/dev_")
+                                 and DEVICE in self.objects[p]]:
+                    if self.objects[dev_path][DEVICE].get("Connected"):
+                        self.remove_gatt(dev_path)
+                        self.set_props(dev_path, DEVICE, {"Connected": False,
+                                                          "ServicesResolved": False})
+                self.discovery.pop(path, None)
+                self.discovery_ended(path)
             self.set_props(path, ADAPTER, {"Powered": raw, "PowerState": "on" if raw else "off"})
-            if not raw and self.objects[path][ADAPTER].get("Discovering"):
-                self.set_props(path, ADAPTER, {"Discovering": False})
             return
         self.reply(msg)
         self.set_props(path, interface, {name: raw})
@@ -286,6 +318,27 @@ class FakeBluez:
 
     # -- Adapter1 -------------------------------------------------------------------------
 
+    @staticmethod
+    def radios(interfaces: dict) -> set[str]:
+        """What a device answers to: "le" for a random address or
+        advertising data, "bredr" for a Class of Device (and by default)."""
+        props = interfaces.get(DEVICE, {})
+        out = set()
+        if props.get("AddressType") == "random" or {"Appearance", "ManufacturerData",
+                                                     "ServiceData", "TxPower"} & props.keys():
+            out.add("le")
+        if "Class" in props or not out:
+            out.add("bredr")
+        return out
+
+    def passes(self, sender: str, interfaces: dict) -> bool:
+        flt = self.filters.get(sender, {})
+        transport = flt.get("Transport", "auto")
+        if transport != "auto" and transport not in self.radios(interfaces):
+            return False
+        rssi = interfaces.get(DEVICE, {}).get("RSSI")
+        return "RSSI" not in flt or rssi is None or rssi >= flt["RSSI"]
+
     def on_org_bluez_Adapter1_StartDiscovery(self, msg, path, sender):
         adapter = self.objects[path][ADAPTER]
         mode = self.adapter_behaviour.get(path, {}).get("discovery", "ok")
@@ -295,39 +348,86 @@ class FakeBluez:
         if mode.startswith("error:"):
             self.error(msg, *_error_parts(mode))
             return
-        if adapter.get("Discovering"):
-            self.error(msg, "org.bluez.Error.InProgress", "Operation already in progress")
-            return
-        self.reply(msg)
-        self.set_props(path, ADAPTER, {"Discovering": True})
-        for dev_path, interfaces in list(self.hidden.items()):
-            if dev_path.startswith(path + "/"):
-                del self.hidden[dev_path]
-                self.later(0.05, lambda p=dev_path, i=interfaces: self.add_object(p, i))
+        self.start_scan(msg, path, sender)
     on_org_bluez_Adapter1_StartDiscovery.signature = ""
 
+    def start_scan(self, msg, path: str, sender: str) -> None:
+        senders = self.discovery.setdefault(path, set())
+        if sender in senders:
+            if msg is not None:
+                self.error(msg, "org.bluez.Error.InProgress", "Operation already in progress")
+            return
+        senders.add(sender)
+        if msg is not None:
+            self.reply(msg)
+        self.set_props(path, ADAPTER, {"Discovering": True})
+        for dev_path, interfaces in list(self.hidden.items()):
+            if dev_path.startswith(path + "/") and self.passes(sender, interfaces):
+                del self.hidden[dev_path]
+                self.later(0.05, lambda p=dev_path, i=interfaces: self.add_object(p, i))
+
     def on_org_bluez_Adapter1_StopDiscovery(self, msg, path, sender):
-        if not self.objects[path][ADAPTER].get("Discovering"):
+        # only the client's own discovery: another program's scan is no reason
+        if sender not in self.discovery.get(path, ()):
             self.error(msg, "org.bluez.Error.Failed", "No discovery started")
             return
         self.reply(msg)
+        self.stop_scan(path, sender)
+    on_org_bluez_Adapter1_StopDiscovery.signature = ""
+
+    def stop_scan(self, path: str, sender: str) -> None:
+        senders = self.discovery.get(path, set())
+        senders.discard(sender)
+        if not senders:
+            self.discovery.pop(path, None)
+            self.discovery_ended(path)
+
+    def discovery_ended(self, path: str) -> None:
+        """The last discovery on *path* ended: "Discovering" goes false and,
+        as in BlueZ, every device's RSSI and TxPower are invalidated (its
+        advertising data stays)."""
         self.set_props(path, ADAPTER, {"Discovering": False})
         for dev_path, interfaces in self.objects.items():
             device = interfaces.get(DEVICE)
-            if device is not None and dev_path.startswith(path + "/") and "RSSI" in device:
-                del device["RSSI"]
-                self.changed(dev_path, DEVICE, {}, ["RSSI"])
-    on_org_bluez_Adapter1_StopDiscovery.signature = ""
+            if device is None or not dev_path.startswith(path + "/"):
+                continue
+            gone = [name for name in ("RSSI", "TxPower") if name in device]
+            for name in gone:
+                del device[name]
+            if gone:
+                self.changed(dev_path, DEVICE, {}, gone)
 
     def on_org_bluez_Adapter1_RemoveDevice(self, msg, path, sender, device):
         if device not in self.objects or not device.startswith(path + "/"):
             self.error(msg, "org.bluez.Error.DoesNotExist", "Does Not Exist")
             return
+        self.remove_gatt(device)
         self.remove_object(device)  # BlueZ unregisters the object before it replies
         self.reply(msg)
     on_org_bluez_Adapter1_RemoveDevice.signature = "o"
 
+    #: SetDiscoveryFilter's keys and the type BlueZ insists on for each.
+    FILTER_TYPES = {"Transport": "s", "RSSI": "n", "Pathloss": "q", "DuplicateData": "b",
+                    "Discoverable": "b", "Pattern": "s", "UUIDs": "as"}
+
     def on_org_bluez_Adapter1_SetDiscoveryFilter(self, msg, path, sender, flt):
+        mode = self.adapter_behaviour.get(path, {}).get("filter", "ok")
+        if mode.startswith("error:"):
+            self.error(msg, *_error_parts(mode))
+            return
+        parsed = {}
+        for key, (sig, value) in flt.items():
+            if self.FILTER_TYPES.get(key) != sig:
+                self.error(msg, "org.bluez.Error.InvalidArguments", f"Invalid {key} ({sig})")
+                return
+            parsed[key] = value
+        if parsed.get("Transport", "auto") not in ("auto", "bredr", "le"):
+            self.error(msg, "org.bluez.Error.InvalidArguments", "Invalid Transport")
+            return
+        if "RSSI" in parsed and "Pathloss" in parsed:
+            self.error(msg, "org.bluez.Error.InvalidArguments", "RSSI and Pathloss together")
+            return
+        self.filters[sender] = parsed
         self.reply(msg)
     on_org_bluez_Adapter1_SetDiscoveryFilter.signature = "a{sv}"
 
@@ -351,6 +451,7 @@ class FakeBluez:
             return
         if mode == "hang":
             how["pairing"] = True
+            how["pending_pair"] = msg  # CancelPairing answers it, as BlueZ does
             return
         if mode.startswith("error:"):
             self.error(msg, *_error_parts(mode))
@@ -435,6 +536,9 @@ class FakeBluez:
             self.error(msg, "org.bluez.Error.DoesNotExist", "Does Not Exist")
             return
         self.reply(msg)
+        pending = how.pop("pending_pair", None)
+        if pending is not None:
+            self.error(pending, "org.bluez.Error.AuthenticationCanceled", "Authentication Canceled")
     on_org_bluez_Device1_CancelPairing.signature = ""
 
     def on_org_bluez_Device1_Connect(self, msg, path, sender):
@@ -457,7 +561,9 @@ class FakeBluez:
                 self.error(msg, "org.bluez.Error.Failed", "device went away")
                 return
             self.reply(msg)
-            self.set_props(path, DEVICE, {"Connected": True, "ServicesResolved": True})
+            self.set_props(path, DEVICE, {"Connected": True})
+            self.add_gatt(path)
+            self.set_props(path, DEVICE, {"ServicesResolved": True})
 
         self.later(float(how.get("delay", 0.05)), connected)
     on_org_bluez_Device1_Connect.signature = ""
@@ -467,8 +573,111 @@ class FakeBluez:
             self.error(msg, "org.bluez.Error.NotConnected", "Not Connected")
             return
         self.reply(msg)
-        self.set_props(path, DEVICE, {"Connected": False, "ServicesResolved": False})
+        self.set_props(path, DEVICE, {"ServicesResolved": False})
+        self.remove_gatt(path)
+        self.set_props(path, DEVICE, {"Connected": False})
     on_org_bluez_Device1_Disconnect.signature = ""
+
+    def on_org_bluez_Device1_ConnectProfile(self, msg, path, sender, uuid):
+        device = self.objects[path][DEVICE]
+        how = self.behaviour.get(path, {})
+        if not self._powered(path):
+            self.error(msg, "org.bluez.Error.NotReady", "Resource Not Ready")
+            return
+        if uuid.lower() not in [u.lower() for u in device.get("UUIDs", [])]:
+            self.error(msg, "org.bluez.Error.Failed", "br-connection-profile-unavailable")
+            return
+        mode = how.get("profile", "ok")
+        if mode.startswith("error:"):
+            self.error(msg, *_error_parts(mode))
+            return
+        profiles = how.setdefault("profiles", [])
+        if uuid.lower() in profiles:
+            self.error(msg, "org.bluez.Error.AlreadyConnected", "Already Connected")
+            return
+        profiles.append(uuid.lower())
+        self.reply(msg)
+        self.set_props(path, DEVICE, {"Connected": True, "ServicesResolved": True})
+    on_org_bluez_Device1_ConnectProfile.signature = "s"
+
+    def on_org_bluez_Device1_DisconnectProfile(self, msg, path, sender, uuid):
+        profiles = self.behaviour.setdefault(path, {}).setdefault("profiles", [])
+        if uuid.lower() not in profiles:
+            self.error(msg, "org.bluez.Error.NotConnected", "Not Connected")
+            return
+        profiles.remove(uuid.lower())
+        self.reply(msg)
+        if not profiles:
+            self.set_props(path, DEVICE, {"Connected": False, "ServicesResolved": False})
+    on_org_bluez_Device1_DisconnectProfile.signature = "s"
+
+    # -- GATT ---------------------------------------------------------------------------
+
+    def gatt_paths(self, device: str) -> list[str]:
+        return sorted(p for p in self.objects if p.startswith(device + "/"))
+
+    def add_gatt(self, device: str) -> None:
+        """The device's ``gatt`` behaviour as GattService1 / GattCharacteristic1
+        objects: ``[{"uuid", "primary", "chars": [{"uuid", "flags", "value"}]}]``."""
+        if self.gatt_paths(device):
+            return
+        handle = 1
+        for service in self.behaviour.get(device, {}).get("gatt", []):
+            svc = f"{device}/service{handle:04x}"
+            handle += 1
+            self.add_object(svc, {GATT_SERVICE: {"UUID": service["uuid"],
+                                                 "Primary": service.get("primary", True),
+                                                 "Device": device}})
+            for char in service.get("chars", []):
+                props = {"UUID": char["uuid"], "Service": svc,
+                         "Flags": list(char.get("flags", ["read"])), "Notifying": False}
+                if "cached" in char:  # a value BlueZ has from an earlier read
+                    props["Value"] = list(char["cached"])
+                self.add_object(f"{svc}/char{handle:04x}", {GATT_CHAR: props})
+                handle += 1
+
+    def remove_gatt(self, device: str) -> None:
+        for path in reversed(self.gatt_paths(device)):
+            self.remove_object(path)
+
+    def char_spec(self, path: str) -> dict:
+        """The behaviour entry of the characteristic at *path*."""
+        props = self.objects[path][GATT_CHAR]
+        device = self.objects[props["Service"]][GATT_SERVICE]["Device"]
+        for service in self.behaviour.get(device, {}).get("gatt", []):
+            if service["uuid"] == self.objects[props["Service"]][GATT_SERVICE]["UUID"]:
+                for char in service.get("chars", []):
+                    if char["uuid"] == props["UUID"]:
+                        return char
+        return {}
+
+    def on_org_bluez_GattCharacteristic1_ReadValue(self, msg, path, sender, options):
+        props = self.objects[path].get(GATT_CHAR)
+        spec = self.char_spec(path)
+        if props is None or "read" not in props["Flags"]:
+            self.error(msg, "org.bluez.Error.NotPermitted", "Read not permitted")
+            return
+        if spec.get("read", "ok").startswith("error:"):
+            self.error(msg, *_error_parts(spec["read"]))
+            return
+        value = bytes(spec.get("value", []))
+        self.reply(msg, "ay", (value,))
+        props["Value"] = list(value)  # BlueZ caches it, without a signal for a read
+    on_org_bluez_GattCharacteristic1_ReadValue.signature = "a{sv}"
+
+    def on_org_bluez_GattCharacteristic1_StartNotify(self, msg, path, sender):
+        props = self.objects[path][GATT_CHAR]
+        if not {"notify", "indicate"} & set(props["Flags"]):
+            self.error(msg, "org.bluez.Error.NotSupported", "Operation is not supported")
+            return
+        self.reply(msg)
+        self.set_props(path, GATT_CHAR, {"Notifying": True})
+    on_org_bluez_GattCharacteristic1_StartNotify.signature = ""
+
+    def on_org_bluez_GattCharacteristic1_StopNotify(self, msg, path, sender):
+        self.reply(msg)
+        self.set_props(path, GATT_CHAR, {"Notifying": False})
+    on_org_bluez_GattCharacteristic1_StopNotify.signature = ""
 
     # -- the test's control -------------------------------------------------------------
 
@@ -480,11 +689,14 @@ class FakeBluez:
         """One test command:
 
         * ``add_adapter`` name, props
-        * ``add_device`` adapter, address, props, behaviour, battery, on_scan
+        * ``add_device`` adapter, address, props, behaviour, battery, on_scan, gatt
+        * ``notify`` path, value (a notifying characteristic's new value);
+          ``gatt`` path (the device's GATT object paths)
         * ``remove`` path; ``set`` path, iface, props
         * ``battery`` path, percentage (None removes Battery1)
         * ``behave`` path, behaviour; ``adapter_behave`` path, behaviour
-        * ``calls`` (and ``clear_calls``), ``agents``, ``objects``, ``quit``
+        * ``other_scan`` path, on - another program's discovery on the adapter
+        * ``calls`` (and ``clear_calls``), ``agents``, ``filters``, ``objects``, ``quit``
         """
         op = cmd["op"]
         if op == "add_adapter":
@@ -512,12 +724,17 @@ class FakeBluez:
             if cmd.get("battery") is not None:
                 interfaces[BATTERY] = {"Percentage": int(cmd["battery"])}
             self.behaviour[path] = dict(cmd.get("behaviour", {}))
+            if cmd.get("gatt"):
+                self.behaviour[path]["gatt"] = cmd["gatt"]
             if cmd.get("on_scan"):
                 self.hidden[path] = interfaces
             else:
                 self.add_object(path, interfaces)
+                if props.get("Connected"):
+                    self.add_gatt(path)
             return path
-        if op == "remove":
+        if op == "remove":  # BlueZ unregisters a device's GATT objects with it
+            self.remove_gatt(cmd["path"])
             self.remove_object(cmd["path"])
             return True
         if op == "set":
@@ -535,6 +752,20 @@ class FakeBluez:
                 self.emit("/", OM, "InterfacesAdded", "oa{sa{sv}}",
                           (path, {BATTERY: self.wire(BATTERY, self.objects[path][BATTERY])}))
             return True
+        if op == "notify":  # a notification: the characteristic's new value
+            path = cmd["path"]
+            if self.objects[path][GATT_CHAR].get("Notifying"):
+                self.set_props(path, GATT_CHAR, {"Value": list(cmd["value"])})
+            return True
+        if op == "gatt":
+            return self.gatt_paths(cmd["path"])
+        if op == "other_scan":  # another program starts or stops its own discovery
+            path = cmd["path"]
+            if cmd.get("on", True):
+                self.start_scan(None, path, ":other.program")
+            else:
+                self.stop_scan(path, ":other.program")
+            return sorted(self.discovery.get(path, ()))
         if op == "behave":
             self.behaviour.setdefault(cmd["path"], {}).update(cmd["behaviour"])
             return True
@@ -548,6 +779,8 @@ class FakeBluez:
             return True
         if op == "agents":
             return {k: list(v) for k, v in self.agents.items()}
+        if op == "filters":
+            return self.filters
         if op == "objects":
             return self.objects
         if op == "quit":

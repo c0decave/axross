@@ -36,6 +36,7 @@ from core import trash as T
 from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.trash_browser")
 
@@ -53,6 +54,7 @@ class TrashBrowserDialog(QDialog):
 
     def __init__(self, backend, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "trash")
         self._backend = backend
         self.setWindowTitle(f"Trash — {getattr(backend, 'name', type(backend).__name__)}")
         self.resize(720, 420)

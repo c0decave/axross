@@ -1,0 +1,60 @@
+{
+ "name": "colorama",
+ "versions": {
+  "0.4.6": {
+   "accepted_findings": [],
+   "archives": {
+    "colorama-0.4.6-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "colorama-0.4.6.dist-info/METADATA": "7baed29eb50c3b29bdb33ff84e3177bf1bc05784f7685ecdcaa4471c7dd810cc",
+      "colorama-0.4.6.dist-info/RECORD": "5156db21eb0064401fda26ed846fc594cb4de0dd25d220bdeb28cb7532539547",
+      "colorama-0.4.6.dist-info/WHEEL": "71d705e056ddd053edc3610c20ec07fb7ad239351d4c278e49744c0f588b51bf",
+      "colorama-0.4.6.dist-info/licenses/LICENSE.txt": "cac35c02686e5d04a5a7140bfb3b36e73aed496656e891102e428886d7930318",
+      "colorama/__init__.py": "c1e3d0038536d2d2a060047248b102d38eee70d5fe83ca512e9601ba21e52dbf",
+      "colorama/ansi.py": "4e8a7811e12e69074159db5e28c11c18e4de29e175f50f96a3febf0a3e643b34",
+      "colorama/ansitowin32.py": "bcf3586b73996f18dbb85c9a568d139a19b2d4567594a3160a74fba1d5e922d9",
+      "colorama/initialise.py": "fa1227cbce82957a37f62c61e624827d421ad9ffe1fdb80a4435bb82ab3e28b5",
+      "colorama/tests/__init__.py": "32480f004cc641df91ab4c343d95d25f62da7515a150409c8ac258f254ab9b84",
+      "colorama/tests/ansi_test.py": "15e5620eb50834865caf9d393c0c6f5380235f3d5ab048802ecf465cc87045a1",
+      "colorama/tests/ansitowin32_test.py": "44dec0221309e44a83b186828d5a3ea38bbc2730c3e2e9096e67af58a4bbd2b6",
+      "colorama/tests/initialise_test.py": "05b3f2f977f21f027accaa33b903af36f419cecc7dbdd6ffd1b6179fb86c0537",
+      "colorama/tests/isatty_test.py": "3e0dba2d1a6fd3240307901cfacc605571bb86c035358bdaa45800a597d8cd98",
+      "colorama/tests/utils.py": "d48211ca51b7f73e7e773ab4f51fe782e7f1c8f67182574d6ebc4ac541b018a1",
+      "colorama/tests/winterm_test.py": "aa85853c48f29b9826d91b8cc297f7a4e8acddae6bfcf259142ccadb9e092fc0",
+      "colorama/win32.py": "61038ac0c4f0b4605bb18e1d2f91d84efc1378ff70210adae4cbcf35d769c59b",
+      "colorama/winterm.py": "5c24050c78cf8ba00760d759c32d2d034d87f89878f09a7e1ef0a378b78ba775"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "75c02431a097e9eed2014bb4c99c7822172ac6722a3f127cca44907845ae5833",
+     "native": {},
+     "pth": {},
+     "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"
+    }
+   },
+   "name": "colorama",
+   "provenance": {
+    "colorama-0.4.6-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Jonathan Hartley <tartley@tartley.com>",
+    "project_urls": {
+     "Homepage": "https://github.com/tartley/colorama"
+    },
+    "summary": "Cross-platform colored terminal text."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.4.6"
+  }
+ }
+}

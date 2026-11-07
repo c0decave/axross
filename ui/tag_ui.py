@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 from core import tags as T
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 DOT = 8
 #: Room between dots, and between the name and the first dot / the last dot
@@ -148,6 +149,7 @@ class TaggedFilesDialog(QDialog):
 
     def __init__(self, parent=None, *, go_to=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "tag")
         self.setWindowTitle(tr("Tagged Files"))
         self.resize(820, 480)
         self._go_to = go_to

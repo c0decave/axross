@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -261,8 +262,12 @@ class PermissionsWidget(QWidget):
             return None
 
         new_mode = self.full_mode()
+        from ui.off_gui import run_off_gui
+
+        backend, path = self._backend, self._file_path
         try:
-            self._backend.chmod(self._file_path, new_mode)
+            # Off the GUI thread: a chmod on a server is a round trip.
+            run_off_gui(lambda: backend.chmod(path, new_mode))
         except OSError as exc:
             log.error("chmod failed for %s: %s", self._file_path, exc)
             return str(exc)
@@ -281,6 +286,7 @@ class PermissionsDialog(QDialog):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
+        set_window_icon(self, "lock")
         self.setWindowTitle(f"Permissions: {item.name}")
         self.setMinimumWidth(350)
 

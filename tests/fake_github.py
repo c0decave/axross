@@ -104,13 +104,17 @@ class FakeRelease:
     #: The bytes the signature covers instead of the SHA256SUMS served (a
     #: release whose SHA256SUMS was rewritten after it was signed).
     signed_sums: bytes | None = None
+    #: The "# axross-release" line SHA256SUMS starts with (None: this
+    #: release's version; "": no such line - an old or replayed SHA256SUMS).
+    release_line: str | None = None
 
     @property
     def tag(self) -> str:
         return f"v{self.version}"
 
     def sums_text(self) -> str:
-        lines = []
+        named = self.version if self.release_line is None else self.release_line
+        lines = [f"# axross-release {named}"] if named else []
         for name, data in self.files.items():
             digest = self.sums_override.get(name)
             if digest == "":

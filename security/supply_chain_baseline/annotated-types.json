@@ -1,0 +1,53 @@
+{
+ "name": "annotated-types",
+ "versions": {
+  "0.8.0": {
+   "accepted_findings": [],
+   "archives": {
+    "annotated_types-0.8.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "annotated_types-0.8.0.dist-info/METADATA": "614985b278f601b8ef863f82783b991cc3ada4b89f592eb71c7c48c5f2ef2298",
+      "annotated_types-0.8.0.dist-info/RECORD": "114b36a7ba292e2b78ecd901d104c3fade4699ccfb684a5d9179749cbaeaeaaa",
+      "annotated_types-0.8.0.dist-info/WHEEL": "942926c567d0b1273d09f20295879abd37507845f6b683eab9f87d808df91100",
+      "annotated_types-0.8.0.dist-info/licenses/LICENSE": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d",
+      "annotated_types/__init__.py": "a7104a4d439b27a9f74fc0be236b9ba1b7831e6044026802a205abc1298a9bc8",
+      "annotated_types/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "annotated_types/test_cases.py": "d867472acb57b81ce97f78972828e6bc5669ca4db33fd1e6f645c6183846068e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "981b16c0bf0a04f0cdb8061fa466c95d69bddd0a2e3d75387861afc4e7cf8195",
+     "native": {},
+     "pth": {},
+     "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+    }
+   },
+   "name": "annotated-types",
+   "provenance": {
+    "annotated_types-0.8.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Adrian Garcia Badaracco <1755071+adriangb@users.noreply.github.com>, Samuel Colvin <s@muelcolvin.com>, Zac Hatfield-Dodds <zac@zhd.dev>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://github.com/annotated-types/annotated-types/releases",
+     "Homepage": "https://github.com/annotated-types/annotated-types",
+     "Source": "https://github.com/annotated-types/annotated-types"
+    },
+    "summary": "Reusable constraint types to use with typing.Annotated"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.8.0"
+  }
+ }
+}

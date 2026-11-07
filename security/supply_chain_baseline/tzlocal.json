@@ -1,0 +1,66 @@
+{
+ "name": "tzlocal",
+ "versions": {
+  "5.4.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|tzlocal/unix.py|68e936f6076c4dac",
+    "yara|capability_process_spawn|tzlocal/unix.py|68e936f6076c4dac"
+   ],
+   "archives": {
+    "tzlocal-5.4.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "tzlocal-5.4.4.dist-info/METADATA": "f6cde6f73645cd3fb9491119e58a845cabc1e761e01afc83c02d8df2ad6191d1",
+      "tzlocal-5.4.4.dist-info/RECORD": "eaae2abee26d53429a5fe6ac77a1c0c8495c134062cee90879f21847e5f2be01",
+      "tzlocal-5.4.4.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "tzlocal-5.4.4.dist-info/licenses/LICENSE.txt": "d99ab209aeb16aad2c25c90ffd83c1a981e290ffff76a420a2ab03e03f041b8c",
+      "tzlocal-5.4.4.dist-info/top_level.txt": "411eaf6563f9db4c1a1139e4a2d0293d03f2561f559e3a183e80151cb2b50eb1",
+      "tzlocal/__init__.py": "a6d7c04d705c6d917d62eaedfd73b1d72bc6044dafebc358b701b84bd567d181",
+      "tzlocal/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tzlocal/unix.py": "68e936f6076c4dac8c9e8a4a76fb6a7cec73f38294ee7dd92d493d03f15bd876",
+      "tzlocal/utils.py": "a2ff1f3f03e3caf5d1a96f56cf1fec9004ec8e207d800ccad42107276508f756",
+      "tzlocal/win32.py": "04f651952a261c509ea8e2c39581deaa13adf3034d4cbde592e9b49b3cfe9e31",
+      "tzlocal/windows_tz.py": "7c6d97de5cb88b7711a1a40477a9dc261a8380fa7eaaf26e9e7456f9f8342649"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e564375a7e962e8c632a593ec4bd30929332d52e609356ac364e831db7a68424",
+     "native": {},
+     "pth": {},
+     "sha256": "aae09f0126a8a86fa736be266eb4a471380d26a0de3bc14844e7821fee3e2a15"
+    }
+   },
+   "name": "tzlocal",
+   "provenance": {
+    "tzlocal-5.4.4-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Lennart Regebro <regebro@gmail.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://github.com/regebro/tzlocal/blob/master/CHANGES.txt",
+     "Issue tracker": "https://github.com/regebro/tzlocal/issues",
+     "Source code": "https://github.com/regebro/tzlocal"
+    },
+    "summary": "tzinfo object for the local timezone"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|tzlocal/unix.py|68e936f6076c4dac",
+     "yara|capability_process_spawn|tzlocal/unix.py|68e936f6076c4dac"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read tzlocal/unix.py",
+     "capability_process_spawn:capability_process_spawn tzlocal/unix.py"
+    ]
+   },
+   "version": "5.4.4"
+  }
+ }
+}

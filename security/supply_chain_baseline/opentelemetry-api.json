@@ -1,0 +1,114 @@
+{
+ "name": "opentelemetry-api",
+ "versions": {
+  "1.45.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
+    "yara|capability_network_download|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
+    "yara|capability_network_outbound|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
+    "yara|capability_process_spawn|opentelemetry/propagators/_envcarrier.py|49632cef601c16bf"
+   ],
+   "archives": {
+    "opentelemetry_api-1.45.1-py3-none-any.whl": {
+     "entry_points": [
+      "contextvars_context = opentelemetry.context.contextvars_context:ContextVarsRuntimeContext",
+      "api = opentelemetry.environment_variables",
+      "default_meter_provider = opentelemetry.metrics:NoOpMeterProvider",
+      "baggage = opentelemetry.baggage.propagation:W3CBaggagePropagator",
+      "tracecontext = opentelemetry.trace.propagation.tracecontext:TraceContextTextMapPropagator",
+      "default_tracer_provider = opentelemetry.trace:NoOpTracerProvider"
+     ],
+     "files": {
+      "opentelemetry/_logs/__init__.py": "ca88fc404db00814569f310bde3dc4a1d4bee8d362defd37272938b4d81fe8f2",
+      "opentelemetry/_logs/_internal/__init__.py": "8edbf0bf6cc20f78124d5847e19f9fa73b87b1a2ad3b21f6646324607758dce7",
+      "opentelemetry/_logs/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/_logs/severity/__init__.py": "19b1b0ae360372e249cf15c3000e265420cbeaad6101d1843e4ce28be4292f9b",
+      "opentelemetry/attributes/__init__.py": "40e46fdd33828a889da31e539add39b3b5528a569834f6a5aa85d6c1c4d48f57",
+      "opentelemetry/attributes/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/baggage/__init__.py": "4cea8c0bdf6848885e2b17e357c75ce9cf9279a3e710169ad5886210b8838f5b",
+      "opentelemetry/baggage/propagation/__init__.py": "bedd2aa3f83fb41eea84f66b1a11067f4162c94d1236b643ef4d620c75eb524b",
+      "opentelemetry/baggage/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/context/__init__.py": "a979c3f42ea14c0e8309f29e9cf9b2f94af7ff63e963e8d3211e7ad1cc8b0ec6",
+      "opentelemetry/context/context.py": "f946dab972b3e22fffeb48faeeb047a9331b2b0c69df4b75acbd49b7eddb93bb",
+      "opentelemetry/context/contextvars_context.py": "58e4df8b71ce6ff35c8312eb1788e244cd5366419ad80eae4aa230a070bf769b",
+      "opentelemetry/context/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/environment_variables/__init__.py": "c230482b03d87e723c5cd090dc9f34e08e81095ead4f132f972ea02c5fc232df",
+      "opentelemetry/environment_variables/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/metrics/__init__.py": "8aa01f0db8c21cf7b25f084c81f0f592861f4f87fb311d94464b0127e0023317",
+      "opentelemetry/metrics/_internal/__init__.py": "3c9fff182aeb63d9f3cbcd391388a610be6c17b232dbe63cf081bd15e179fc17",
+      "opentelemetry/metrics/_internal/instrument.py": "6ecfac691b9727bc80f9f60184e4bb70c39547dea6336ce095bab2c7c8f6fb23",
+      "opentelemetry/metrics/_internal/observation.py": "f3c25f875fae07faef0ed96c9d97f163485a96f1709dcc6c5b79f085c97b6f56",
+      "opentelemetry/metrics/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/propagate/__init__.py": "0deefc2095253a3513bd00702a746d3b74bc1efc89c973b1f5efec75e8a0c3eb",
+      "opentelemetry/propagate/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/propagators/_envcarrier.py": "49632cef601c16bff022b4722ffb595fbb8bb774c56a265bbf8ca7e935976ca6",
+      "opentelemetry/propagators/composite.py": "6b460146d4aea10f4411e28f8cb307b07875c179acc04554ea51954effa58bcd",
+      "opentelemetry/propagators/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/propagators/textmap.py": "d9cd853b30d309fdb7d80d88d9ac729e3927bfa011b384713be5bb627cdc6e33",
+      "opentelemetry/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/trace/__init__.py": "395e280f8dc25cb5ffa8fdea946b00d3c76423c76ee239bdccaecad151317f78",
+      "opentelemetry/trace/propagation/__init__.py": "7f064ececa407f1a421113a4a7f82b73bec72a95ca6f1a7013940db0bbb2495d",
+      "opentelemetry/trace/propagation/tracecontext.py": "ac6fbcf1610a51ebf9d9161e42e9e98d4e22a50552c57bb37596a62963e00776",
+      "opentelemetry/trace/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/trace/span.py": "67886d3802f7d87adcc6bc26d790ecef0b1fb89b1aed3e28f7c6d73b0b739e38",
+      "opentelemetry/trace/status.py": "a7e825e751ecb11fb09e7004d325bfc02d3cc327eb3edb04599108699a00e014",
+      "opentelemetry/util/_decorator.py": "b6816ab8de35b9e58199d965b728e1d119e8da06e11967f36d0e5b351cccf7c4",
+      "opentelemetry/util/_importlib_metadata.py": "ee33ffb4ff606bfd50f69fc0546450b6c9f12545569f75c92f34e260e478bfc2",
+      "opentelemetry/util/_once.py": "11211cea9c3c780219d84315d99284a5bc9fcc5e385261a1916e36aa78ae6ba8",
+      "opentelemetry/util/_providers.py": "96102aede9bf1699efd22e2663d22c82633e15c93feaf586aee6637aaececab8",
+      "opentelemetry/util/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry/util/re.py": "5b3d01e8241ee9a693ef0eafd88a008ae567acabcb157835bbf66f6ef2a0d83d",
+      "opentelemetry/util/types.py": "ab652ee21c742044ce0d8f62e0ebc0f23d1be0ccfbb119ef94324c688a0aa2e6",
+      "opentelemetry/version/__init__.py": "5b0fe18ed3a8b5e373d3b94fa2738797d281f95f9d1af58ea3a768e1732c162c",
+      "opentelemetry/version/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opentelemetry_api-1.45.1.dist-info/METADATA": "5bc71e90cb421be92a43bf5ad5b0f25dccfa2a24ddceaa2877779879962a4c9e",
+      "opentelemetry_api-1.45.1.dist-info/RECORD": "d9c5826874e25e35714a30f21b8283ac7b336c902b17d2d65aec180a61223d8b",
+      "opentelemetry_api-1.45.1.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
+      "opentelemetry_api-1.45.1.dist-info/entry_points.txt": "7713ead1845b4034b097c42447e23d037f2b6db7ca406e61dae3458e9bd4e95e",
+      "opentelemetry_api-1.45.1.dist-info/licenses/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "4cf85926aee28b0fb679b3011060dc0ea0f4c87d58d1164d1b9e608e3905e5ae",
+     "native": {},
+     "pth": {},
+     "sha256": "b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb"
+    }
+   },
+   "name": "opentelemetry-api",
+   "provenance": {
+    "opentelemetry_api-1.45.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "OpenTelemetry Authors <cncf-opentelemetry-contributors@lists.cncf.io>",
+    "license_expression": "Apache-2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/open-telemetry/opentelemetry-python/tree/main/opentelemetry-api",
+     "Repository": "https://github.com/open-telemetry/opentelemetry-python"
+    },
+    "summary": "OpenTelemetry Python API"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_download, network_outbound, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
+     "yara|capability_network_download|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
+     "yara|capability_network_outbound|opentelemetry/metrics/_internal/__init__.py|3c9fff182aeb63d9",
+     "yara|capability_process_spawn|opentelemetry/propagators/_envcarrier.py|49632cef601c16bf"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read opentelemetry/metrics/_internal/__init__.py",
+     "capability_network_download:capability_network_download opentelemetry/metrics/_internal/__init__.py",
+     "capability_network_outbound:capability_network_outbound opentelemetry/metrics/_internal/__init__.py",
+     "capability_process_spawn:capability_process_spawn opentelemetry/propagators/_envcarrier.py"
+    ]
+   },
+   "version": "1.45.1"
+  }
+ }
+}

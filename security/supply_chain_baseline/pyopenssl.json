@@ -1,0 +1,64 @@
+{
+ "name": "pyopenssl",
+ "versions": {
+  "26.4.0": {
+   "accepted_findings": [],
+   "archives": {
+    "pyopenssl-26.4.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "OpenSSL/SSL.py": "5d6bf8774eb8fd5f03e558a4663dd25d52dacd539069c76b8d8f8d4d55a82871",
+      "OpenSSL/__init__.py": "e3a10dad09802de19b9c8a0e78569adf1122686726a183dad7a0df769ea1322a",
+      "OpenSSL/_util.py": "8b9b3442fdbdf00c2683d061a1cfe5084b1f0581356a774fd4fd40884c38d6ec",
+      "OpenSSL/crypto.py": "3917cbd0336a0440680742eef261d7eb7e13d02cc1c19e460a926f75e8e4ecbf",
+      "OpenSSL/debug.py": "bc297bedfd8cb255284d14aef5fa8fe432fff432bf4520bb269bb4ec8a7d8103",
+      "OpenSSL/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "OpenSSL/rand.py": "b52c5d03de484ce4b6e2b2c223eb44fe19b857cfa2ebc77a9c3185b78bd13903",
+      "OpenSSL/version.py": "750bde7a16a46a00bd427bfeb82e300addbb78eafbdb8c877c6917175c021fc7",
+      "pyopenssl-26.4.0.dist-info/METADATA": "caa9a9adf6c7307dc4ba4ec8379e9c2c9c194873ec562ef609d6b49fb64e3113",
+      "pyopenssl-26.4.0.dist-info/RECORD": "60fb91c611229f90168677c1e7f7c2e54c63e43e56eda2cff8135ddfda742b7d",
+      "pyopenssl-26.4.0.dist-info/WHEEL": "2b6eb4118ce7cd7b09601406aa623c553c4476265836f0d9c16f5c061f7efcc0",
+      "pyopenssl-26.4.0.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "pyopenssl-26.4.0.dist-info/top_level.txt": "34dc56a92f2128d261d9c5176b545938c5fad9525fc9df14468d53b189d1fcc5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "77cdaf45427bc44947aa8b62eb90b306d7487cc3f11a5b6e49d9eedd2f8f289c",
+     "native": {},
+     "pth": {},
+     "sha256": "f0eb0cb2d581d3ad2b9c489468485e7f2ab6727d08401bcf9d824c3caddf3c1c"
+    }
+   },
+   "name": "pyopenssl",
+   "provenance": {
+    "pyopenssl-26.4.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/pyopenssl",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author": "The pyOpenSSL developers",
+    "author_email": "cryptography-dev@python.org",
+    "home_page": "https://pyopenssl.org/",
+    "license": "Apache License, Version 2.0",
+    "project_urls": {
+     "Homepage": "https://pyopenssl.org/",
+     "Source": "https://github.com/pyca/pyopenssl"
+    },
+    "summary": "Python wrapper module around the OpenSSL library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (pyca/pyopenssl)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "26.4.0"
+  }
+ }
+}

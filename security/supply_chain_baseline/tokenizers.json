@@ -1,0 +1,137 @@
+{
+ "name": "tokenizers",
+ "versions": {
+  "0.23.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|tokenizers/implementations/sentencepiece_unigram.py|d91a087c556988c9",
+    "yara|capability_filesystem_read|tokenizers/tools/visualizer.py|fbcfedafd89b0f97",
+    "yara|lolbas_net|tokenizers-0.23.3.dist-info/METADATA|87032ea29ec14be9",
+    "yara|lolbas_net|tokenizers/implementations/sentencepiece_unigram.py|d91a087c556988c9",
+    "yara|suspicious_network_tools|tokenizers-0.23.3.dist-info/METADATA|87032ea29ec14be9",
+    "yara|suspicious_network_tools|tokenizers/implementations/sentencepiece_unigram.py|d91a087c556988c9"
+   ],
+   "archives": {
+    "tokenizers-0.23.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "tokenizers-0.23.3.dist-info/METADATA": "87032ea29ec14be956ce0f15d164a8f436d6f1adbe19b261d6c179d9184f5cba",
+      "tokenizers-0.23.3.dist-info/RECORD": "19443809a77c280af3fd364322c6cac94cff78e99391038f18eeb23bdb0cb124",
+      "tokenizers-0.23.3.dist-info/WHEEL": "3e005108b72ca995d6499010b85d3f9c55b21a1a1b731b9118eb012029bfe0a9",
+      "tokenizers-0.23.3.dist-info/sboms/tokenizers-python.cyclonedx.json": "6faa23324b2b53b4a8da9b451a675610cc45e1a23e8c5bb0740c080064e1ba0d",
+      "tokenizers/__init__.py": "b1cee924695651af5c3dab98e8c34406ab355a2cc1d633228646c470210e649e",
+      "tokenizers/__init__.pyi": "3eccf555643b88231cbc5c01b3be7ac7b1d613225e31efca050b66cc538163c5",
+      "tokenizers/decoders/__init__.py": "85fc0ce821540ef94c1862f8fb1b1a698cfcd4af4fe6b408e592f950758af18e",
+      "tokenizers/decoders/__init__.pyi": "fa691dbb929b69e20b2d5c5949be74589cbbd4a768500d2549cf57824ccafd00",
+      "tokenizers/implementations/__init__.py": "57302ca65688a3bae5e0014ef0c8aeee283b31f663be89f055b959c34d7347a3",
+      "tokenizers/implementations/base_tokenizer.py": "b20192817decd800a26b6b0401afcb5f3ddcf9dc2bcf2e949619087bd73b6575",
+      "tokenizers/implementations/bert_wordpiece.py": "b0a0ae9b414a3d875280914937c2c37ab541a130d14aacaa49dadc9be96f42a2",
+      "tokenizers/implementations/byte_level_bpe.py": "8817a933fcf5b392b2ef314356b60b7372f96f262b228ba4efe934246b85d74b",
+      "tokenizers/implementations/char_level_bpe.py": "35a83f1c5abc46f72e72a8bc321575fb4c6da11d02ec58c739e70555444beecb",
+      "tokenizers/implementations/sentencepiece_bpe.py": "734f1f29fea2f7613646c2a0b31cbb2f365f617f3e3000874911bc53f239cad6",
+      "tokenizers/implementations/sentencepiece_unigram.py": "d91a087c556988c9093ad382b2433f54278210b59a0bf6cd9ddb3a1afb44d0a4",
+      "tokenizers/models/__init__.py": "d86e49a8152f16b2a2684a45125b95524b414f0f2d942619fb6a3c83b67c72a2",
+      "tokenizers/models/__init__.pyi": "011415d1a3e378f161700493d7b3bfc362ee1c5444593c55ebb937892e5ead7f",
+      "tokenizers/normalizers/__init__.py": "ff4eb0e1ca9122dbde12021d75868b3127209123a4200308cd809eb1be400385",
+      "tokenizers/normalizers/__init__.pyi": "5f61ef0fc379f62956e931a3c413a88f371fd3259c036f33066ed2e8c2733cbc",
+      "tokenizers/pre_tokenizers/__init__.py": "584db71f3ea5c969b8dfe99bac7e57122744e00bf1f0e80bc3e5df3822fa8deb",
+      "tokenizers/pre_tokenizers/__init__.pyi": "82c19e88d926af80b260fe3da83078ad4dbff1b56a96c7cd04f3dce572f3cac5",
+      "tokenizers/processors/__init__.py": "990538dd3ce6c8570467f7900c82d243341bc477d78ec8fd967eed3db6229b3c",
+      "tokenizers/processors/__init__.pyi": "edd3a2717d0a46af29fd136c74e23660e648f5f4c6205d3f7713b967bc61e801",
+      "tokenizers/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tokenizers/tokenizers.abi3.so": "4b1458a379296762a034d3bc89299c0c35b4eefb0577acca922f481b262c65a1",
+      "tokenizers/tokenizers.pyi": "4513d5b876f244394807262b7067d8cc408641c245ce957f4a4478633aa6b64d",
+      "tokenizers/tools/__init__.py": "c46f1c681f4e1c2f1c6c1d354b9bd8575e0767184ee9e59b2de86c6fbd29a62a",
+      "tokenizers/tools/visualizer-styles.css": "cc0c9dab5a06583f10125978f9ec8bf0b970d01d6cb72fe1a48137b58c4bd369",
+      "tokenizers/tools/visualizer.py": "fbcfedafd89b0f9784f4e0ce6a80cacc964906458fb8ff9d9a685adfda85b97e",
+      "tokenizers/trainers/__init__.py": "92179215cac004d76afa167a978f5ea88105c52d2c247913ebdb827fc4a61adf",
+      "tokenizers/trainers/__init__.pyi": "f685a22a44876a08c891539ce0cc1cf3b2d0e3d392131ad932b8cea9dff2c86f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "87278785aaa5d838d5393e1e5cc639b6df43981eeb3822d559af399e920f1fe8",
+     "native": {
+      "tokenizers/tokenizers.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "376851d22bcf9d650a5c3090bb83e6cf9e895fbf0595369fa4cd43c1f69b5f87"
+    }
+   },
+   "name": "tokenizers",
+   "provenance": {
+    "tokenizers-0.23.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "huggingface/tokenizers",
+     "workflow": "python-release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Nicolas Patry <patry.nicolas@protonmail.com>, Anthony Moi <anthony@huggingface.co>",
+    "project_urls": {
+     "Homepage": "https://github.com/huggingface/tokenizers",
+     "Source": "https://github.com/huggingface/tokenizers"
+    }
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Hits read: 'wget https://' in sentencepiece_unigram.py's error message (where to get a model), 'curl https://' in METADATA; the Rust extension's recv is its own. Attestation verifies."
+   },
+   "scans": {
+    "capa": {
+     "4b1458a379296762a034d3bc89299c0c35b4eefb0577acca922f481b262c65a1": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "tokenizers/tokenizers.abi3.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "recv"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1",
+        "libstdc++.so.6"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://github.com/PyO3/pyo3/issues/576typesSimpleNamespacea",
+        "https://www.biorxiv.org/content/10.1101/2023.01.11.523679v1.full)",
+        "https://www.biorxiv.org/content/10.1101/2023.01.11.523679v1.full)\\n\\nArgs:\\n"
+       ]
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|tokenizers/implementations/sentencepiece_unigram.py|d91a087c556988c9",
+     "yara|capability_filesystem_read|tokenizers/tools/visualizer.py|fbcfedafd89b0f97",
+     "yara|lolbas_net|tokenizers-0.23.3.dist-info/METADATA|87032ea29ec14be9",
+     "yara|lolbas_net|tokenizers/implementations/sentencepiece_unigram.py|d91a087c556988c9",
+     "yara|suspicious_network_tools|tokenizers-0.23.3.dist-info/METADATA|87032ea29ec14be9",
+     "yara|suspicious_network_tools|tokenizers/implementations/sentencepiece_unigram.py|d91a087c556988c9"
+    ],
+    "yara": [
+     "axross_backdoor_rules:suspicious_network_tools tokenizers-0.23.3.dist-info/METADATA",
+     "axross_backdoor_rules:suspicious_network_tools tokenizers/implementations/sentencepiece_unigram.py",
+     "capability_filesystem_read:capability_filesystem_read tokenizers/implementations/sentencepiece_unigram.py",
+     "capability_filesystem_read:capability_filesystem_read tokenizers/tools/visualizer.py",
+     "capability_network_lolbas:lolbas_net tokenizers-0.23.3.dist-info/METADATA",
+     "capability_network_lolbas:lolbas_net tokenizers/implementations/sentencepiece_unigram.py"
+    ]
+   },
+   "version": "0.23.3"
+  }
+ }
+}

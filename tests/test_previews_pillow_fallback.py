@@ -1,8 +1,8 @@
 """Tests for the Pillow decode fallback in :mod:`core.previews`.
 
-Qt in this environment has no TIFF plugin
-(``QImageReader.supportedImageFormats()`` lacks ``tiff``), so
-``thumbnail()`` used to raise ``PreviewDecodeFailed`` for ``.tif``/
+Qt without a TIFF plugin
+(``QImageReader.supportedImageFormats()`` lacks ``tiff``) made
+``thumbnail()`` raise ``PreviewDecodeFailed`` for ``.tif``/
 ``.tiff``. Pillow IS installed and can decode those, so ``thumbnail()``
 now falls back to Pillow whenever the Qt ``QImageReader`` path cannot
 decode the image.
@@ -31,6 +31,22 @@ from core.local_fs import LocalFS  # noqa: E402
 @pytest.fixture
 def backend():
     return LocalFS()
+
+
+@pytest.fixture(autouse=True)
+def _qt_reads_no_tiff(monkeypatch):
+    """These tests are about the Pillow fallback: a Qt without a TIFF
+    plugin. A Qt with one (the PyQt6 wheels ship it) decodes the TIFFs
+    itself, so its reader is told it cannot."""
+    import PyQt6.QtGui as QtGui
+
+    class _Reader(QtGui.QImageReader):
+        def canRead(self) -> bool:
+            if self.fileName().lower().endswith((".tif", ".tiff")):
+                return False
+            return super().canRead()
+
+    monkeypatch.setattr(QtGui, "QImageReader", _Reader)
 
 
 # ---------------------------------------------------------------------------

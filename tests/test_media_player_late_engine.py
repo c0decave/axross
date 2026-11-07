@@ -23,7 +23,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtCore import QObject, pyqtSignal  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
@@ -341,7 +341,7 @@ def test_sad_the_extension_notifies_once(monkeypatch, tmp_path):
         def __init__(self):
             self.notes, self.docks = [], []
 
-        def add_dock(self, title, widget):
+        def add_dock(self, title, widget, **_kw):
             self.docks.append(widget)
             return None
 
@@ -502,7 +502,7 @@ def test_happy_the_extension_opens_edit_settings_at_audio(monkeypatch, tmp_path)
         def __init__(self):
             self.docks = []
 
-        def add_dock(self, title, widget):
+        def add_dock(self, title, widget, **_kw):
             self.docks.append(widget)
             return None
 

@@ -444,18 +444,33 @@ def _browse(tmp_path, monkeypatch, fls_text):
     return api.window._forensic_browse_dialog, gui
 
 
+def _one_pass_seconds(model) -> float:
+    """How long one pass over the model's paths takes on this host now - the
+    least any filter has to do (the proxy reads every path once)."""
+    start = time.monotonic()
+    for row in range(model.rowCount()):
+        model.data(model.index(row, 0))
+    return time.monotonic() - start
+
+
 def test_edge_a_listing_at_the_line_cap_opens_and_filters_without_freezing(tmp_path, monkeypatch):
     """200 000 entries (the cap; a Windows image has more files) built
     800 000 table items on the GUI thread (16 s) and each filter keystroke
-    hid rows one by one (97 s) - measured before the fix."""
+    hid rows one by one (97 s) - measured before the fix.
+
+    Measured against one pass over the paths at the same time (about 1 s, the
+    dialog 3-4 s, on a moderately busy host): a fixed 20 s failed on a busy
+    host, where the fixed dialog took up to 80 s."""
     many = "".join(f"r/r {i}:\tdir/file{i}.txt\n" for i in range(1, FT.MAX_FLS_LINES + 1))
     dialog, gui = _browse(tmp_path, monkeypatch, many)
     try:
+        before = _one_pass_seconds(dialog.model)
         start = time.monotonic()
         dialog.filter.setText("file199999")
         filtered = time.monotonic() - start
         assert dialog.visible_entries() == [dialog.entries[199998]]
-        assert sum(gui) + filtered < 20, (gui, filtered)
+        reference = (before + _one_pass_seconds(dialog.model)) / 2
+        assert sum(gui) + filtered < max(20, 10 * reference), (gui, filtered, reference)
     finally:
         dialog.close()
 

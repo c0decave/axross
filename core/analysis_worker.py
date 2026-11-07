@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Callable
 
 from core.secure_storage import ensure_private_dir
-from core.subprocess_env import worker_env
+from core.subprocess_env import clean_child_env, worker_env
 
 log = logging.getLogger(__name__)
 
@@ -198,10 +198,18 @@ class AnalysisWorker:
         cache_dir: str | os.PathLike | None = None,
         *,
         command: list[str] | None = None,
+        sandbox: bool | None = None,
     ) -> None:
+        """*sandbox* (core.analysis_sandbox): None runs the default child in
+        bubblewrap where it can (a given *command* is a test's or caller's
+        own and runs as it is); True or False decides."""
         self._cache_dir = os.fspath(cache_dir) if cache_dir is not None else None
+        self._sandbox = (command is None) if sandbox is None else bool(sandbox)
         self._command = command or worker_argv()
         self._proc: subprocess.Popen | None = None
+        #: (folder, (host, port) | None) the running child was made for.
+        self._signature: tuple | None = None
+        self._relay = None
         self._reader = _LineReader()
         self._call_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -216,7 +224,32 @@ class AnalysisWorker:
         proc = self._proc
         return proc.pid if proc is not None and proc.poll() is None else None
 
-    def _start(self) -> subprocess.Popen:
+    @property
+    def sandboxed(self) -> bool:
+        """Whether analyses run in bubblewrap (asked for and possible here)."""
+        from core import analysis_sandbox as SB
+
+        return self._sandbox and SB.bwrap_usable()
+
+    def _signature_for(self, path: str, llm: dict | None) -> tuple | None:
+        if not self._sandbox:
+            return None
+        from core import analysis_sandbox as SB
+
+        if not SB.bwrap_usable():
+            if not AnalysisWorker._warned_unsandboxed:
+                AnalysisWorker._warned_unsandboxed = True
+                log.warning("sift runs WITHOUT a sandbox: bubblewrap (bwrap) is not installed "
+                            "or cannot create a sandbox here; the analysis can read every "
+                            "file you can and reach the network")
+            return None  # one plain child for every folder, as before
+        return (os.path.dirname(os.path.abspath(path)) or os.sep, SB.llm_host(llm))
+
+    def _start(self, signature: tuple | None = None) -> subprocess.Popen:
+        if signature is not None:
+            proc = self._start_sandboxed(signature)
+            if proc is not None:
+                return proc
         # The frozen child reuses this process's extraction folder and its
         # libraries: the loader variables stay (core.subprocess_env.worker_env).
         env = worker_env()
@@ -244,9 +277,64 @@ class AnalysisWorker:
         log.debug("analysis worker started (pid %s)", proc.pid)
         return proc
 
+    _warned_unsandboxed = False
+
+    def _start_sandboxed(self, signature: tuple) -> subprocess.Popen | None:
+        """The child in bubblewrap for *signature*; None when bubblewrap
+        fails to start - the caller then starts it plainly."""
+        from core import analysis_sandbox as SB
+
+        folder, host = signature
+        env: dict[str, str] = {}
+        if self._cache_dir:
+            # A cache of this folder's own: bound read-write into every
+            # sandbox, one shared cache let a file that exploits a parser
+            # forge the results of any other file ("benign"). Now it reaches
+            # only the entries of the folder it lies in.
+            import hashlib
+
+            own = os.path.join(self._cache_dir, "sandboxed",
+                               hashlib.sha256(os.fsencode(folder)).hexdigest()[:32])
+            try:
+                ensure_private_dir(self._cache_dir)
+                ensure_private_dir(os.path.dirname(own))
+                ensure_private_dir(own)
+                env["AXROSS_SIFT_CACHE"] = own
+            except OSError as exc:
+                log.warning("sift's cache folder %s is not usable: %s", self._cache_dir, exc)
+        relay = None
+        if host is not None:
+            relay = SB.SocketRelay({host})
+            name = f"[{host[0]}]" if ":" in host[0] else host[0]
+            env[SB.ENV_HOSTS] = f"{name}:{host[1]}"
+            env[SB.ENV_SOCKET] = SB.RELAY_SOCKET_INSIDE
+        argv = SB.bwrap_command(self._command, folder=folder,
+                                cache_dir=env.get("AXROSS_SIFT_CACHE"),
+                                relay_dir=relay.folder if relay else None, env=env)
+        try:
+            # bwrap is a host program: it gets the clean environment (the
+            # one inside is set by --clearenv/--setenv above).
+            proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, close_fds=True,
+                                    env=clean_child_env())
+        except OSError as exc:
+            if relay is not None:
+                relay.close()
+            log.warning("sift sandbox could not start (%s); analysing without it", exc)
+            return None
+        self._relay = relay
+        self._reader = _LineReader()
+        log.info("analysis worker started in bubblewrap (pid %s): %s read-only, network %s",
+                 proc.pid, folder, f"{host[0]}:{host[1]} only" if host else "none")
+        return proc
+
     def _kill(self) -> None:
         with self._state_lock:
             proc, self._proc = self._proc, None
+            relay, self._relay = self._relay, None
+            self._signature = None
+        if relay is not None:
+            relay.close()
         if proc is None:
             return
         try:
@@ -324,11 +412,16 @@ class AnalysisWorker:
             started = time.monotonic()
             first_wait = timeout if silence is None else silence
             try:
+                signature = self._signature_for(path, llm)
+                if self._proc is not None and self._signature != signature:
+                    # Another folder or LLM host: the sandbox is made for one.
+                    self._kill()
                 with self._state_lock:
                     if self._closed:  # close() ran after the check above: start nothing
                         raise _Closed
                     if self._proc is None or self._proc.poll() is not None:
-                        self._proc = self._start()
+                        self._proc = self._start(signature)
+                        self._signature = signature
                         first_wait += STARTUP_SECONDS
                     proc = self._proc
                 self._next_id += 1
@@ -561,6 +654,9 @@ def _child_main() -> int:
     os.dup2(2, 1)  # print() and C-level writes to fd 1 go to stderr now
     sys.stdout = sys.stderr
     _limit_resources()
+    from core.analysis_sandbox import install_child_bridge
+
+    install_child_bridge()  # in the sandbox: the LLM host through axross
 
     from sift.cache import SummaryCache
     from sift.llm import build_client
@@ -573,7 +669,7 @@ def _child_main() -> int:
         try:
             request = json.loads(raw)
             request_id = request["id"]
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, RecursionError):
             continue
         started = time.monotonic()
         reply: dict = {"id": request_id}

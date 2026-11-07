@@ -87,7 +87,7 @@ def parse_google_client(text: str) -> tuple[str, str]:
         raise ValueError("the file is too large to be a Google client file")
     try:
         data = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise ValueError("the file is no JSON") from None
     if not isinstance(data, dict):
         raise ValueError("the file is no Google client file")

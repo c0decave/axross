@@ -1,12 +1,45 @@
 include LICENSE NOTICE README.md README_PYPI.md README_de.md README_es.md slideshow.md slideshow_de.md slideshow_es.md INSTALL.md
 include dev-requirements.txt
 include OAUTH_SETUP.md SECURITY.md CONTRIBUTING.md THIRD_PARTY_LICENSES.md
-recursive-include docs *.md
+# docs/: an allow-list, not "recursive-include docs *.md" - that took every
+# Markdown file of the work tree, tracked or not, so an operator's note
+# (a handoff, the backlog, a review report) reached any sdist built from a
+# working copy. A new public document is added here;
+# tests/test_sdist_manifest.py holds the list against the tracked docs.
+include docs/ATTACK-SURFACE.md docs/CRED_ATTACK.md docs/CRED_ATTACK_de.md docs/CRED_ATTACK_es.md
+include docs/DAILY_DRIVER.md docs/DAILY_DRIVER_de.md docs/DAILY_DRIVER_es.md docs/DEVELOPMENT.md
+include docs/EXTENSIONS.md docs/FUZZING.md docs/HANDBUCH.md docs/LLM_GUIDE.md docs/MCP.md
+include docs/MCP_de.md docs/MCP_es.md docs/MULTI_SYSTEM.md docs/MULTI_SYSTEM_de.md
+include docs/MULTI_SYSTEM_es.md docs/OPSEC.md docs/PACKAGING.md docs/PACKS.md docs/PROXY_SUPPORT.md
+include docs/RED_TEAM_NOTES.md docs/REVERSE_SERVE.md docs/REVERSE_SERVE_de.md
+include docs/REVERSE_SERVE_es.md docs/SCRIPTING.md docs/SCRIPTING_REFERENCE.md
+include docs/SCRIPTING_de.md docs/SCRIPTING_es.md docs/SUPPLY_CHAIN_AUDIT.md docs/SUPPLY_CHAIN_GATE.md
+include docs/TEST_COVERAGE_MATRIX.md docs/TRAIL.md docs/TRAIL_de.md docs/TRAIL_es.md docs/USAGE.md
+include docs/USAGE_de.md docs/USAGE_es.md docs/WINDOWS_TESTING.md
+include docs/patterns/PATTERN-001-splitlines-boundary-trust-mismatch.md
 include docs/mcp-tools.json docs/scripting-api.json
 include llms.txt
+# Belt and braces should a glob come back above.
 prune docs/plans
 exclude docs/HANDOFF.md docs/BACKLOG.md docs/SECURITY-REVIEW-2026-10.md
-# setuptools ships every tests/test*.py by default; these are internal-only.
+# The test suite as it runs from a checkout: the tests, their helper
+# modules (tests/*testkit*.py, fakes, fuzz servers), tests/fixtures,
+# tests/integration and the lab files of tests/docker. setuptools adds
+# tests/test*.py on its own; without the rest, collecting the sdist's suite
+# failed in 238 modules. tests/test_sdist_manifest.py collects it.
+graft tests
+prune tests/__pycache__
+global-exclude *.py[cod]
+# What the suite reads besides the package: the build and release scripts
+# (minus the two mirror-excluded ones below), the Dockerfiles and the CI
+# workflows. build/ (the bundle spec and lock) cannot be in an sdist -
+# setuptools prunes its build_base - so its tests skip there
+# (tests/bundle_sources.py).
+include scripts/*.py scripts/*.sh
+exclude scripts/_scrub_rules.py scripts/export-public.py
+include Dockerfile.agent Dockerfile.build Dockerfile.gui Dockerfile.mcp .dockerignore
+include .github/workflows/*.yml
+# These tests are internal-only (the public mirror drops them too).
 exclude tests/test_scrub_rules.py tests/test_export_mirror.py tests/test_public_export.py
 exclude tests/test_docs_public_refs.py
 exclude tests/test_peer_*
@@ -26,3 +59,5 @@ recursive-include resources/wordlists *.txt
 recursive-include resources/voice *.txt
 recursive-include resources/mcp *.json
 recursive-include resources/credits *.json
+recursive-include resources/i18n *.json
+recursive-include resources/chat_servers *.json

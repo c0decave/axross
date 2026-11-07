@@ -1,0 +1,81 @@
+{
+ "name": "pathvalidate",
+ "versions": {
+  "3.3.1": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|pathvalidate/_common.py|14f01aad68e17e10"
+   ],
+   "archives": {
+    "pathvalidate-3.3.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pathvalidate-3.3.1.dist-info/METADATA": "3eec1267d139476942b2c6bf904d2f57271bcd12e45fc42397d1f2620426ae11",
+      "pathvalidate-3.3.1.dist-info/RECORD": "d21ddd63aa98a7a18b11ced8f32ec14ae36a58165eeffc0d34a499af7118c4b4",
+      "pathvalidate-3.3.1.dist-info/WHEEL": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+      "pathvalidate-3.3.1.dist-info/licenses/LICENSE": "130a35b917df1951aefbf366120491d5124045a87ded123f20ded21521f4e3a2",
+      "pathvalidate-3.3.1.dist-info/top_level.txt": "02da22102b2b93ec59927937aee2e2f94c1e5ae5e16ca784183585c0c70afe4b",
+      "pathvalidate/__init__.py": "47cc74c84045ddd7f0a539467b54c967d5e03a63beb4a1a812fa5980d03cdd8b",
+      "pathvalidate/__version__.py": "ae1b2f39b1d80114e1f37485264434831bbd3bf9cbfeecc9e7e6a8aee16f35f0",
+      "pathvalidate/_base.py": "ff9274232fed43a5153ce4f10814f30767b569c4e4ae635dcf4b1cae7def8f91",
+      "pathvalidate/_common.py": "14f01aad68e17e104cdb65d98a2aae6aa5a89d233f92d3a22c3f20796ad9ab07",
+      "pathvalidate/_const.py": "e42fb83cd5513e4f0b5afeb5ef8be651b7285cce098cc720e6ae4b8d08c3cdb4",
+      "pathvalidate/_filename.py": "9a34e604cce738b943d115066fbab53a7bbe5d42e9f914ca182f67ace4a2dcf1",
+      "pathvalidate/_filepath.py": "3ffe2d75144f6aa900c67b86d99de50862b31b1f1bd0a0d8b97c5cbee849b342",
+      "pathvalidate/_ltsv.py": "279beb3cf815a5be76214fc4fa6fb5069e9b605bf49b7751a2c0a3b2364be816",
+      "pathvalidate/_symbol.py": "72f5ecee2905ccce1ecc72ada1b2e1ac7171ac90c911244ab92e9a0ad2c9afb2",
+      "pathvalidate/_types.py": "dc2464c8190cbdc3dc14f8a03be2abd7c67a46018481474b2b5717060f148d67",
+      "pathvalidate/argparse.py": "cffcfb8a76a5f2cc36c0fc058ec304310db347790009d2b5aac22da1c5c57f76",
+      "pathvalidate/click.py": "caf91bcbd9ee96c6a9103ddb8a9503f42eed4b9a40a85e79ac3af2f614516ddc",
+      "pathvalidate/error.py": "1be1708777728c38be3f5b9bb129ddcb72d056a64fd0d3dfb6cea66f0a1f24be",
+      "pathvalidate/handler.py": "5b32bd64ff156c965cf4f65115e1237aa9b513dbe49bb38ddf161931580b6862",
+      "pathvalidate/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "7d0903a0492b74dbe036f83ff9eeb8eb51bd4983c2af1b88846c4406a921be53",
+     "native": {},
+     "pth": {},
+     "sha256": "5263baab691f8e1af96092fa5137ee17df5bdfbd6cff1fcac4d6ef4bc2e1735f"
+    }
+   },
+   "name": "pathvalidate",
+   "provenance": {
+    "pathvalidate-3.3.1-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "thombashi/pathvalidate",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author": "Tsuyoshi Hombashi",
+    "author_email": "tsuyoshi.hombashi@gmail.com",
+    "home_page": "https://github.com/thombashi/pathvalidate",
+    "license": "MIT License",
+    "project_urls": {
+     "Changelog": "https://github.com/thombashi/pathvalidate/blob/master/CHANGELOG.md",
+     "Documentation": "https://pathvalidate.rtfd.io/",
+     "Homepage": "https://github.com/thombashi/pathvalidate",
+     "Source": "https://github.com/thombashi/pathvalidate",
+     "Tracker": "https://github.com/thombashi/pathvalidate/issues"
+    },
+    "summary": "pathvalidate is a Python library to sanitize/validate a string such as filenames/file-paths/etc."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; attestation verifies (thombashi/pathvalidate)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|pathvalidate/_common.py|14f01aad68e17e10"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn pathvalidate/_common.py"
+    ]
+   },
+   "version": "3.3.1"
+  }
+ }
+}

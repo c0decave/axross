@@ -1,0 +1,121 @@
+{
+ "name": "jinja2",
+ "versions": {
+  "3.1.6": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|jinja2/bccache.py|821d2ab3daee9675",
+    "yara|capability_filesystem_read|jinja2/bccache.py|821d2ab3daee9675",
+    "yara|capability_filesystem_read|jinja2/ext.py|e4f1797877e1f265",
+    "yara|capability_filesystem_read|jinja2/loaders.py|c08ae7c63bdc6ea8",
+    "yara|capability_filesystem_write_executable|jinja2/bccache.py|821d2ab3daee9675",
+    "yara|capability_filesystem_write_executable|jinja2/environment.py|f6786b3fb0a1f8d6",
+    "yara|capability_network_outbound|jinja2/ext.py|e4f1797877e1f265",
+    "yara|capability_network_outbound|jinja2/runtime.py|80393e1af76b8895",
+    "yara|capability_process_spawn|jinja2/debug.py|0a71ea0831ddf815",
+    "yara|capability_process_spawn|jinja2/environment.py|f6786b3fb0a1f8d6",
+    "yara|capability_process_spawn|jinja2/nodes.py|9b50eecdcafaaa16"
+   ],
+   "archives": {
+    "jinja2-3.1.6-py3-none-any.whl": {
+     "entry_points": [
+      "jinja2=jinja2.ext:babel_extract[i18n]"
+     ],
+     "files": {
+      "jinja2-3.1.6.dist-info/METADATA": "68c5548fb67c4132a13898d9b31ec50c6bea2abdd915d921f214355c3a6499c8",
+      "jinja2-3.1.6.dist-info/RECORD": "2e9f60b12e1a436c1ac6fdbded6090b6b791eb8d6753935c49941846e05a294d",
+      "jinja2-3.1.6.dist-info/WHEEL": "ff6a3334508b59cf776cae1628708ef9e0d410d0e5a3e76073d714deaa2460ee",
+      "jinja2-3.1.6.dist-info/entry_points.txt": "38bf39818535783f1cb8f9629227c59e05e97818dac65eab209f0a902ff7afe2",
+      "jinja2-3.1.6.dist-info/licenses/LICENSE.txt": "3b49dcee4105eb37bac10faf1be260408fe85d252b8e9df2e0979fc1e094437b",
+      "jinja2/__init__.py": "c717a93bd8bb0c7b2a910ae004476e2ed7e8cf6402b93ebf81b2f85d237585b5",
+      "jinja2/_identifier.py": "ff361cb4d2b346a964fe6bab4cd973ae3bb514524bed56bf223aaa77b8a2da55",
+      "jinja2/async_utils.py": "bcaf8f76cba8ace3275929c4913de25094489139d880ed93e8c9c6c43807239a",
+      "jinja2/bccache.py": "821d2ab3daee9675e8d0f857e634c9cb6507cc8f3016743ade8fefc3b9e1cd18",
+      "jinja2/compiler.py": "f51a42425e57f3c0479652623ec1cf876f791e1d2e029bf0149350baeb542de3",
+      "jinja2/constants.py": "18ca05c9d045fe476969128fa0ce5c97932f8aab9544b57266d7e9e7ed7a8e0d",
+      "jinja2/debug.py": "0a71ea0831ddf81546bed8bff19b13a259d7361037102b18fba9ffda9c14f07c",
+      "jinja2/defaults.py": "6e805c4b0efc87e969db461b697489b2a900236b8dfe60ff4ed0b27697aae705",
+      "jinja2/environment.py": "f6786b3fb0a1f8d6c65f4d30bf2af8cb2fae84d1ead8e09ceb48201ab9e2fdf9",
+      "jinja2/exceptions.py": "8a81de1eb5b009635a5d7d629c798755b96f73885a3bb017b230a9dc67d6bf1d",
+      "jinja2/ext.py": "e4f1797877e1f265c02315c71d1076c576d7a218bca44de71d23b16baeae4bb1",
+      "jinja2/filters.py": "3d0fc481df67f634a0b671906321782b98f69d8c21508ba584f9f28a691dafe9",
+      "jinja2/idtracking.py": "fa5979948a7bde930bdc4ad46222098fbb5d996c5c1ff2250efdf203f862658a",
+      "jinja2/lexer.py": "2d88988a8e9bafe4dea7d9cf72ea565ec3c4b6396ec37a75994fa534155151f9",
+      "jinja2/loaders.py": "c08ae7c63bdc6ea8795705b6f0d4a47e8b620eaf2a342c4839215b1948922c1e",
+      "jinja2/meta.py": "3930cf91a16f5361e0bf1fba6a4cfbd79e05f012166919af25c045bf0a291f0c",
+      "jinja2/nativetypes.py": "ec620600b54981dc8bf34a1925d4146947f04ade6ada549265b5edd1d35ffcce",
+      "jinja2/nodes.py": "9b50eecdcafaaa1648f0943a57226050d8a78c07f96d0ce28d29839ccb2f531f",
+      "jinja2/optimizer.py": "ac99c246543ba59b04126321b100e00bfa4ac831f13f94cf4bacd53c6b2072ef",
+      "jinja2/parser.py": "94b385cb7b0498773921a1074621f5b1056721dda6a14433872789653b5d637d",
+      "jinja2/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jinja2/runtime.py": "80393e1af76b8895ea82c19b1e0adc2933f4629eb33d7ce1ceb2290851f78c05",
+      "jinja2/sandbox.py": "330d9a8ad958d88f256bb15885c5f6606f41b5461c2e70f41a1ddddbd7035ab6",
+      "jinja2/tests.py": "54bb018551675a0f8fc52073d4c8519cd5a03f5a2f5e4de778ed452d031e0bd4",
+      "jinja2/utils.py": "ad1a77a3d7bb64a4b87f2ad645b10bc8b729b8655315c9e8a1a39ad6ac7f1489",
+      "jinja2/visitor.py": "11c9cbd4f2307ffe1154238cc6c44db91f005c76d2d6a7c074c384da780a273e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "caf42d0417cc60c517d1e2572ed7195f8f92fdd963f1560639b6e954540b5b99",
+     "native": {},
+     "pth": {},
+     "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
+    }
+   },
+   "name": "jinja2",
+   "provenance": {
+    "jinja2-3.1.6-py3-none-any.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "pallets/jinja",
+     "workflow": "publish.yaml"
+    }
+   },
+   "pypi": {
+    "maintainer_email": "Pallets <contact@palletsprojects.com>",
+    "project_urls": {
+     "Changes": "https://jinja.palletsprojects.com/changes/",
+     "Chat": "https://discord.gg/pallets",
+     "Documentation": "https://jinja.palletsprojects.com/",
+     "Donate": "https://palletsprojects.com/donate",
+     "Source": "https://github.com/pallets/jinja/"
+    },
+    "summary": "A very fast and expressive template engine."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable, network_outbound, process_spawn; attestation verifies (pallets/jinja)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|jinja2/bccache.py|821d2ab3daee9675",
+     "yara|capability_filesystem_read|jinja2/bccache.py|821d2ab3daee9675",
+     "yara|capability_filesystem_read|jinja2/ext.py|e4f1797877e1f265",
+     "yara|capability_filesystem_read|jinja2/loaders.py|c08ae7c63bdc6ea8",
+     "yara|capability_filesystem_write_executable|jinja2/bccache.py|821d2ab3daee9675",
+     "yara|capability_filesystem_write_executable|jinja2/environment.py|f6786b3fb0a1f8d6",
+     "yara|capability_network_outbound|jinja2/ext.py|e4f1797877e1f265",
+     "yara|capability_network_outbound|jinja2/runtime.py|80393e1af76b8895",
+     "yara|capability_process_spawn|jinja2/debug.py|0a71ea0831ddf815",
+     "yara|capability_process_spawn|jinja2/environment.py|f6786b3fb0a1f8d6",
+     "yara|capability_process_spawn|jinja2/nodes.py|9b50eecdcafaaa16"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete jinja2/bccache.py",
+     "capability_filesystem_read:capability_filesystem_read jinja2/bccache.py",
+     "capability_filesystem_read:capability_filesystem_read jinja2/ext.py",
+     "capability_filesystem_read:capability_filesystem_read jinja2/loaders.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable jinja2/bccache.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable jinja2/environment.py",
+     "capability_network_outbound:capability_network_outbound jinja2/ext.py",
+     "capability_network_outbound:capability_network_outbound jinja2/runtime.py",
+     "capability_process_spawn:capability_process_spawn jinja2/debug.py",
+     "capability_process_spawn:capability_process_spawn jinja2/environment.py",
+     "capability_process_spawn:capability_process_spawn jinja2/nodes.py"
+    ]
+   },
+   "version": "3.1.6"
+  }
+ }
+}

@@ -8,8 +8,9 @@ character went through the state check, ``_print`` and ``_width``. A run of
 printable ASCII (one cell each, nothing to interpret) is now written a row
 at a time, wrapping and scrolling exactly as character by character did.
 
-The reference is the same screen fed one character at a time: a run of one
-character takes the per-character path (``_print``).
+The reference is the same screen fed one character at a time: no run of
+more than one character. tests/test_vt_screen_differential.py compares
+the screen with the parser as it was before the runs and blocks.
 """
 
 from __future__ import annotations

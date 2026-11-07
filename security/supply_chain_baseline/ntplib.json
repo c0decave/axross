@@ -1,0 +1,58 @@
+{
+ "name": "ntplib",
+ "versions": {
+  "0.4.0": {
+   "accepted_findings": [
+    "yara|capability_network_outbound|ntplib.py|02628557c2b6f801"
+   ],
+   "archives": {
+    "ntplib-0.4.0-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "ntplib-0.4.0.dist-info/LICENSE": "e5f22625a0d578fa6e3205be812d060ead2a1cf6b8769053907fc9bdc29442e8",
+      "ntplib-0.4.0.dist-info/METADATA": "19a656d2ac023ebd67bf15eaa722a51ad363782ea495874e2e88736aa495a4f5",
+      "ntplib-0.4.0.dist-info/RECORD": "c391a6e3be4bf85d7759562ee21e432bf158c694abb24d1b17434f04eefaeb8e",
+      "ntplib-0.4.0.dist-info/WHEEL": "9064fbe0b5b245466b2f85602e1ebf835d8879597ff6ef5956169dae05d95046",
+      "ntplib-0.4.0.dist-info/top_level.txt": "5674034e49a9a8344ff09034e77841a5363a1cc478e1c2ed76f58b1e174fffd0",
+      "ntplib.py": "02628557c2b6f801fdef26379cd54e923ca958a01a1f08a2a7eea33b15ccbb39"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "87eccabc7e75e203ec53475e61a89747249704d1e2ef496f708efb2b5f985664",
+     "native": {},
+     "pth": {},
+     "sha256": "8d27375329ed7ff38755f7b6d4658b28edc147cadf40338a63a0da8133469d60"
+    }
+   },
+   "name": "ntplib",
+   "provenance": {
+    "ntplib-0.4.0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Charles-Francois Natali",
+    "author_email": "cf.natali@gmail.com",
+    "home_page": "https://github.com/cf-natali/ntplib",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/cf-natali/ntplib"
+    },
+    "summary": "Python NTP library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_outbound|ntplib.py|02628557c2b6f801"
+    ],
+    "yara": [
+     "capability_network_outbound:capability_network_outbound ntplib.py"
+    ]
+   },
+   "version": "0.4.0"
+  }
+ }
+}

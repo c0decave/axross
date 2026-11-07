@@ -1,0 +1,65 @@
+{
+ "name": "dnfile",
+ "versions": {
+  "0.18.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|dnfile/stream.py|aca58c0ed4c5e13a"
+   ],
+   "archives": {
+    "dnfile-0.18.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "dnfile-0.18.0.dist-info/METADATA": "3275fa74941b0ea43c31264a7b41f980f316467503589272f67fe33b5b721be7",
+      "dnfile-0.18.0.dist-info/RECORD": "99e945e22a70379fb4e06a855bf71775df73ebf1b14821a6056046b01d9429c0",
+      "dnfile-0.18.0.dist-info/WHEEL": "c14c80f0e6ae95195b7f032d990b2f367806af140702f90a72f466762ce5262d",
+      "dnfile-0.18.0.dist-info/licenses/LICENSE": "6bd13c3c732ca65db0009bcef46e1727e06699c79bc0df6b5f9b4f92f941a7d2",
+      "dnfile-0.18.0.dist-info/top_level.txt": "035c7219e284d55c25bf8af4adcf8abadf0a2b8a736a10e52d0b7f9f76af297b",
+      "dnfile/__init__.py": "9d1460cd8e5b5f05abd37c68193a1d465ae9094dc3a9abb2a7891e067a7d34e3",
+      "dnfile/base.py": "cdfe3d228e92f7d38b4ca816a6ab385c422b7bddf777ae90c0a1bbfe2b2d5865",
+      "dnfile/codedindex.py": "0b83cefbb65b32e21ab0ddfc09d6cdd3278f52243bdd18ae2691f8ba64a0d88f",
+      "dnfile/enums.py": "8197bc2576c5ec059f6e010e49e5c651f138a771bd08034d4e0f17943cfd615c",
+      "dnfile/errors.py": "a28c3d59911afd579ee849aaca7f42eeaef4c91deb0007b38f905bd059051f28",
+      "dnfile/mdtable.py": "534fd7dfeac2ba5f7649f0104a9289eb3543a15ad0f8795f51591e70c88c303b",
+      "dnfile/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "dnfile/resource.py": "13891e0df8695d9abc8e0a7a996a271a0d0061d6d3b5dd7d6ee2aa858858ce97",
+      "dnfile/stream.py": "aca58c0ed4c5e13a390dcd6cfdf997b5486be0dbba8bc78f989e2f7405509648",
+      "dnfile/utils.py": "606b3b69983542d49dd35d041da57033620e364b64cca32f92915040e97fd4f6"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "d76f24ddffe6e3d44597652fa8523e7d567554add70f93afa3c4b102f78ee55c",
+     "native": {},
+     "pth": {},
+     "sha256": "7579fe2d6bb1d854aa154929c309fbf34e70b622053a043a51d42f079fad1772"
+    }
+   },
+   "name": "dnfile",
+   "provenance": {
+    "dnfile-0.18.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "MalwareFrank",
+    "license": "MIT License",
+    "project_urls": {
+     "repository": "https://github.com/malwarefrank/dnfile"
+    },
+    "summary": "Parse .NET executable files."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|dnfile/stream.py|aca58c0ed4c5e13a"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read dnfile/stream.py"
+    ]
+   },
+   "version": "0.18.0"
+  }
+ }
+}

@@ -403,7 +403,7 @@ def _server(raw, *, name: str, client: str, origin: str,
         if not isinstance(raw_env, dict) or len(raw_env) > MAX_ENV:
             raise _Refused(f"env: an object of at most {MAX_ENV} variables")
         for var, value in raw_env.items():
-            if not isinstance(var, str) or not _ENV_NAME.match(var):
+            if not isinstance(var, str) or not _ENV_NAME.fullmatch(var):
                 raise _Refused("env: names of letters, digits and _")
             if not isinstance(value, str) or len(value) > MAX_TEXT \
                     or any(c in value for c in "\n\r\x00"):
@@ -606,7 +606,7 @@ def _podman_servers(podman, out: list, warnings: list) -> None:
         if not isinstance(image, dict) or not isinstance(image.get("Id"), str):
             continue
         ident = image["Id"]
-        if not re.match(r"^[a-f0-9]{64}$", ident):
+        if not re.fullmatch(r"^[a-f0-9]{64}$", ident):
             continue
         labels = image.get("Labels") if isinstance(image.get("Labels"), dict) else {}
         names = [n for n in image.get("Names") or () if isinstance(n, str)]

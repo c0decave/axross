@@ -1,0 +1,71 @@
+{
+ "name": "altgraph",
+ "versions": {
+  "0.17.5": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|altgraph/Dot.py|80a129e92bbf0a83"
+   ],
+   "archives": {
+    "altgraph-0.17.5-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "altgraph-0.17.5.dist-info/LICENSE": "6c194d6db0c64d45535d10c95142b9b0cda7b7dcc7f1ddee302b3d536f3dbe46",
+      "altgraph-0.17.5.dist-info/METADATA": "dc60641dba229a3aef09f764f562c38d908b930c92615af2e626af31d6ff19b5",
+      "altgraph-0.17.5.dist-info/RECORD": "f0d9f813b84710662cc315b16ac9c506969ad93e052ba98395aaadbdd0e27b9d",
+      "altgraph-0.17.5.dist-info/WHEEL": "89896fe5f5f7e7b3d0c914f6a3ab70d5b37e61c2851472aa07f2f01cee703fe8",
+      "altgraph-0.17.5.dist-info/top_level.txt": "1c405e4567f922d54f73b63d856ee11a5acb5d98cfa0be1bcba08084157f0700",
+      "altgraph-0.17.5.dist-info/zip-safe": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "altgraph/Dot.py": "80a129e92bbf0a8396418b791c856cffb30160ad4110e84a5f444b00003ebd0b",
+      "altgraph/Graph.py": "e9be9f4872c0e504aa3039d21c83bbfd626705821dab72b906df158a944e0f08",
+      "altgraph/GraphAlgo.py": "52ef5a4e348a5a2dfc890fdef59af00a7cd0688d565850e127a91f9aed23c400",
+      "altgraph/GraphStat.py": "2cac9ae012972791998b9fac358535eda3814cbc6a9ffb5581b8b0e2c5866085",
+      "altgraph/GraphUtil.py": "d53e0325cd9b267e84214fc2b789b4a222a55d6917bea71713c0862f62bd7a7f",
+      "altgraph/ObjectGraph.py": "a3b7cf26dc811202525c09148f3be3df907e14e638b8acdf2c6a92bd38adc7c7",
+      "altgraph/__init__.py": "1a5bb6a040bd534a192c310825eb9d8a0d7a8a7c13bd28832b0f00bf5eff68d1"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b530547ed6fd33246cd14bc963f975219eb22b9214461294e0471f9ea331a76d",
+     "native": {},
+     "pth": {},
+     "sha256": "f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597"
+    }
+   },
+   "name": "altgraph",
+   "provenance": {
+    "altgraph-0.17.5-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Ronald Oussoren",
+    "author_email": "ronaldoussoren@mac.com",
+    "home_page": "https://altgraph.readthedocs.io",
+    "license": "MIT",
+    "maintainer": "Ronald Oussoren",
+    "maintainer_email": "ronaldoussoren@mac.com",
+    "project_urls": {
+     "Documentation": "https://altgraph.readthedocs.io/en/latest/",
+     "Download": "http://pypi.python.org/pypi/altgraph",
+     "Homepage": "https://altgraph.readthedocs.io",
+     "Issue tracker": "https://github.com/ronaldoussoren/altgraph/issues",
+     "Repository": "https://github.com/ronaldoussoren/altgraph"
+    },
+    "summary": "Python graph (network) package"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|altgraph/Dot.py|80a129e92bbf0a83"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn altgraph/Dot.py"
+    ]
+   },
+   "version": "0.17.5"
+  }
+ }
+}

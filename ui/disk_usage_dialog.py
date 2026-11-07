@@ -35,9 +35,11 @@ from PyQt6.QtWidgets import (
 )
 
 from core.dashboard import DashboardSnapshot, HostRow
+from core.i18n import tr, tr_n
 from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
 from ui.thread_lifetime import detach_running_thread
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +137,7 @@ class DiskUsageDialog(QDialog):
 
     def __init__(self, backends, parent: QWidget | None = None, *, snapshot_fn=None):
         super().__init__(parent)
+        set_window_icon(self, "disk-usage")
         self._backends = list(backends)
         self._snapshot_fn = snapshot_fn or _default_snapshot
         self._rows: list[HostRow] = []
@@ -201,9 +204,9 @@ class DiskUsageDialog(QDialog):
             self._status.setText("No open connections to measure.")
         else:
             unmeasured = sum(1 for r in self._rows if usage_percent(r) is None)
-            text = f"{len(self._rows)} connection(s)"
+            text = tr_n(len(self._rows), "{n} connection", "{n} connections")
             if unmeasured:
-                text += f", {unmeasured} without capacity reporting"
+                text += tr(", {n} without capacity reporting").format(n=unmeasured)
             self._status.setText(text)
         self._refresh_btn.setEnabled(True)
         self._stop_thread()

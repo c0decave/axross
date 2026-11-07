@@ -1,0 +1,54 @@
+{
+ "name": "requests-ntlm",
+ "versions": {
+  "1.3.0": {
+   "accepted_findings": [],
+   "archives": {
+    "requests_ntlm-1.3.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "requests_ntlm-1.3.0.dist-info/LICENSE": "8092e0a70b1778af7b23fe6a3314746dac7196947cd1e6eb83779895862b3600",
+      "requests_ntlm-1.3.0.dist-info/METADATA": "c071ddc7059526d1505e8563446423fefdc7058ea7c68a05c9312a3981d8f9ae",
+      "requests_ntlm-1.3.0.dist-info/RECORD": "51c6067465349513ee7982996901f2e160ae114218e39b257a320f4c3fa3b04f",
+      "requests_ntlm-1.3.0.dist-info/WHEEL": "189eedfe4581172c1b6a02b97a8f48a14c0b5baa3239e4ca990fbd8871553714",
+      "requests_ntlm-1.3.0.dist-info/top_level.txt": "5b8465d18e5777cf7d319ce5f38a351c1ce59734b5a3914212fceec55c6c4c00",
+      "requests_ntlm/__init__.py": "f75108d8e7ded5cab0b29806d3a1996b80743ba4332b561a853d81da21195534",
+      "requests_ntlm/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requests_ntlm/requests_ntlm.py": "983150c706f20371a7071592ff2f27f11bc23a73fbbbddfa988e6cbe8c90f325"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "98202bcb67a2b0a6298545fbd4791ac0d969be80c36224e1585f4221654fd62a",
+     "native": {},
+     "pth": {},
+     "sha256": "4c7534a7d0e482bb0928531d621be4b2c74ace437e88c5a357ceb7452d25a510"
+    }
+   },
+   "name": "requests-ntlm",
+   "provenance": {
+    "requests_ntlm-1.3.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Ben Toews",
+    "author_email": "mastahyeti@gmail.com",
+    "home_page": "https://github.com/requests/requests-ntlm",
+    "license": "ISC",
+    "project_urls": {
+     "Homepage": "https://github.com/requests/requests-ntlm"
+    },
+    "summary": "This package allows for HTTP NTLM authentication using the requests library."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.3.0"
+  }
+ }
+}

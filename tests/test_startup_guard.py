@@ -75,6 +75,39 @@ def test_happy_a_window_that_never_shows_is_reported_with_every_stack(tmp_path):
     assert "--safe-mode" in message
 
 
+def test_edge_fired_means_the_report_is_written_not_begun(tmp_path):
+    """``fired`` turned True before the report was written: a test that
+    waited for it and then read stderr, or closed crash.log, found an empty
+    message or "The stacks could not be written" on a busy host. The report
+    is held up here (the extension lookup comes first) to make that window
+    wide: ``fired`` stays False until stacks and message are out."""
+    path, handle = _crash(tmp_path)
+    err = io.StringIO()
+    looking, release = threading.Event(), threading.Event()
+
+    def slow_activation():
+        looking.set()
+        release.wait(5.0)
+        return ("user:sleeper", "Sleeper", 1.0)
+
+    dog = SG.StartupWatchdog(0.05, crash_file=handle, crash_path=path, stderr=err,
+                             activation=slow_activation)
+    dog.start()
+    try:
+        assert looking.wait(5.0)
+        assert not dog.fired
+        release.set()
+        assert SG.wait_for(lambda: dog.fired, 5.0)
+        message = err.getvalue()
+    finally:
+        release.set()
+        dog.window_shown()
+        handle.close()
+    assert '"Sleeper" (user:sleeper)' in message and "--safe-mode" in message
+    assert str(path) in message
+    assert "startup watchdog" in path.read_text()
+
+
 def test_happy_a_window_shown_in_time_cancels_everything(tmp_path):
     path, handle = _crash(tmp_path)
     err = io.StringIO()

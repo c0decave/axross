@@ -33,6 +33,7 @@ from core import previews as P
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.image_viewer")
 
@@ -66,6 +67,7 @@ class ImageViewerDialog(QDialog):
         source_pane=None,
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "image")
         self._backend = backend
         self._pane = source_pane if source_pane is not None else VFA.owning_pane(parent)
         self._siblings = siblings or [path]
@@ -73,6 +75,10 @@ class ImageViewerDialog(QDialog):
         self._zoom = 1.0
         self._rotation = 0
         self._original: QImage | None = None
+        # A decode is being waited for (_load_current); a load asked for
+        # meanwhile follows it.
+        self._loading = False
+        self._reload_pending = False
 
         self.setWindowTitle("Image Viewer")
         VW.allow_maximize(self)
@@ -215,18 +221,42 @@ class ImageViewerDialog(QDialog):
     # Loading
     # ------------------------------------------------------------------
     def _load_current(self) -> None:
+        if self._loading:
+            # Called again while a decode is waited for (a confirmed move,
+            # removed metadata): the newest wish is loaded when it is done.
+            self._reload_pending = True
+            return
         path = self._siblings[self._idx]
         self.metadata_panel.set_target(self._backend, path)
         # Decode through core.previews so MAX_INPUT_SIZE / MAX_DIMENSION
-        # gates apply. Trick: we want the full-res image, not a
-        # thumbnail, so we set edge huge and disable cache.
+        # gates apply - decode_image, the full-window decode: the thumbnail
+        # path it used before encoded the picture as a PNG to decode it
+        # again (11.8 s of a 14 s open for a 4000x3000 photo), and capped it
+        # at 2048 px. Off the GUI thread (ui.off_gui): a QImage may be made
+        # on a worker; each open and each Prev / Next held the window.
+        from ui.off_gui import run_off_gui
+
+        backend = self._backend
+        self._loading = True
         try:
-            result = P.thumbnail(
-                self._backend,
-                path,
-                edge=4096,
-                use_cache=False,
-            )
+            img = run_off_gui(lambda: P.decode_image(backend, path))
+        except Exception as exc:  # noqa: BLE001 - handled below, once it is known whether it counts
+            img, failure = None, exc
+        else:
+            failure = None
+        finally:
+            self._loading = False
+        if self._reload_pending or not self._siblings or \
+                self._siblings[min(self._idx, len(self._siblings) - 1)] != path:
+            # What was decoded is no longer what is to be shown.
+            self._reload_pending = False
+            if self._siblings:
+                self._idx = min(self._idx, len(self._siblings) - 1)
+                self._load_current()
+            return
+        try:
+            if failure is not None:
+                raise failure
         except P.PreviewTooLarge as exc:
             QMessageBox.warning(
                 self,
@@ -251,10 +281,9 @@ class ImageViewerDialog(QDialog):
             )
             self.reject()
             return
-        # previews returns PNG bytes; QImage decodes from those.
-        img = QImage.fromData(result.data, "PNG")
-        if img.isNull():
-            QMessageBox.warning(self, "Decode Failed", "QImage rejected PNG")
+        if img is None or img.isNull():
+            QMessageBox.warning(self, "Decode Failed",
+                                f"{path}\n\nThe picture could not be decoded.")
             self.reject()
             return
         self._original = img

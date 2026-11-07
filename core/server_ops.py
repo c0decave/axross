@@ -271,11 +271,36 @@ def _restore_direct_destination(backend, dst: str, snapshot) -> None:
         finally:
             _discard_or_close_writer(wf, completed=completed)
     except Exception:
+        kept = _keep_snapshot_locally(dst, snapshot)
         log.error(
-            "stream copy: failed to restore destination after write error: %s",
+            "stream copy: failed to restore destination after write error: %s%s",
             dst,
+            f" - its previous content is kept in {kept}" if kept else "",
             exc_info=True,
         )
+
+
+def _keep_snapshot_locally(dst: str, snapshot) -> str | None:
+    """The destination's old bytes, which could not be written back (the
+    connection that failed the write is gone): to a private local file,
+    not dropped with the snapshot. Its path, or None."""
+    import tempfile
+
+    try:
+        base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local",
+                                                                "state")
+        folder = os.path.join(base, "axross", "kept")
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        name = os.path.basename(dst.replace("\\", "/").rstrip("/")) or "file"
+        fd, path = tempfile.mkstemp(dir=folder, prefix=f"{name}.", suffix=".previous")
+        with os.fdopen(fd, "wb") as out:
+            snapshot.seek(0)
+            for chunk in iter(lambda: snapshot.read(1024 * 1024), b""):
+                out.write(chunk)
+        return path
+    except Exception:  # noqa: BLE001 - logged by the caller's message
+        log.debug("could not keep the snapshot of %s", dst, exc_info=True)
+        return None
 
 
 def _remove_direct_partial_destination(backend, dst: str) -> None:

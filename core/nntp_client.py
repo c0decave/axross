@@ -295,7 +295,7 @@ class NntpSession(SessionLifecycle):
                 modified=datetime.fromtimestamp(0),
                 permissions=0o555,
             )
-        m = _MSG_PATH_RE.match(path)
+        m = _MSG_PATH_RE.fullmatch(path)
         if not m:
             # Articles are addressed by number only: nothing can be here.
             raise FileNotFoundError(
@@ -364,7 +364,7 @@ class NntpSession(SessionLifecycle):
 
     @serialized
     def open_read(self, path: str) -> IO[bytes]:
-        m = _MSG_PATH_RE.match(self.normalize(path))
+        m = _MSG_PATH_RE.fullmatch(self.normalize(path))
         if not m:
             raise OSError(f"NNTP read({path}): not a group/article path")
         group = m.group("group")

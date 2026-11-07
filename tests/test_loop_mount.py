@@ -284,7 +284,7 @@ def test_e2e_the_helper_script_runs_with_hostile_names(tmp_path, mount_rc):
     )
     lines = log.read_text().splitlines()
     assert lines[0] == f"losetup|--find --show --read-only --offset 1048576 --sizelimit 4096 -- {image}"
-    assert lines[1] == f"mount|-o ro -- /dev/loop42 {point}"
+    assert lines[1] == f"mount|-o ro,nosuid,nodev -- /dev/loop42 {point}"
     assert not (tmp_path / "pwned").exists() and not os.path.exists("pwned")
     if mount_rc == 0:
         assert proc.returncode == 0 and proc.stdout.strip() == "/dev/loop42"

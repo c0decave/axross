@@ -22,7 +22,7 @@ import logging
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -39,6 +40,7 @@ from PyQt6.QtWidgets import (
 
 from core import analysis_settings as AS
 from core.i18n import tr
+from core.thread_relay import GuiCall
 
 log = logging.getLogger(__name__)
 
@@ -60,9 +62,6 @@ def _muted(text: str) -> QLabel:
 
 class AnalysisPage(QWidget):
     """The Analysis (sift) page (see the module docstring)."""
-
-    #: (number of results removed, error text) from the Clear Cache thread.
-    cache_cleared = pyqtSignal(int, str)
 
     def __init__(self, parent: QWidget | None = None, *, window=None,
                  path: Path | None = None) -> None:
@@ -152,9 +151,15 @@ class AnalysisPage(QWidget):
         self.cache_check.setToolTip(tr("A file analysed again with the same settings is "
                                        "answered from the cache"))
         cache_form.addRow(self.cache_check)
-        self.cache_location = QLabel(str(AS.cache_dir()))
-        self.cache_location.setTextFormat(Qt.TextFormat.PlainText)
-        self.cache_location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # A read-only field, not a label: a label is as wide as the path at
+        # least (a path has no space to wrap at), and a long home folder
+        # made Settings > Analysis scroll sideways. The field scrolls in
+        # itself, and the path can still be selected and copied.
+        self.cache_location = QLineEdit(str(AS.cache_dir()))
+        self.cache_location.setReadOnly(True)
+        self.cache_location.setFrame(False)
+        self.cache_location.setToolTip(str(AS.cache_dir()))
+        self.cache_location.setCursorPosition(0)
         cache_form.addRow(tr("Folder"), self.cache_location)
         self.clear_button = QPushButton(tr("Clear Cache"))
         self.clear_button.setToolTip(tr("Remove sift's results from the cache folder"))
@@ -168,7 +173,6 @@ class AnalysisPage(QWidget):
         layout.addWidget(cache_box)
         layout.addStretch(1)
 
-        self.cache_cleared.connect(self._cache_cleared)
         self._fill_profiles(self._stored_profile_names())
         self.load(self._settings)
         for widget in (run_box, sift_box, cache_box):
@@ -276,16 +280,21 @@ class AnalysisPage(QWidget):
         self.clear_button.setEnabled(False)
         self.cache_label.setText(tr("Clearing…"))
         folder = AS.cache_dir()
+        # Not a signal of this page: Settings is deleted as soon as it closes,
+        # maybe while the worker reports (core/thread_relay.py). The dock's
+        # session results are forgotten through the window, page or not.
+        cleared = GuiCall(self._cache_cleared)
+        clear = getattr(self._window, "clear_analysis_session", None)
+        forget = GuiCall(clear) if isinstance(getattr(clear, "__self__", None), QObject) else None
 
         def work() -> None:
             try:
                 count, error = AS.clear_cache(folder), ""
             except Exception as exc:  # noqa: BLE001 - shown on the page
                 count, error = 0, f"{type(exc).__name__}: {exc}"
-            try:
-                self.cache_cleared.emit(count, error)
-            except RuntimeError:  # the page is gone
-                pass
+            cleared(count, error)
+            if forget is not None and not error:
+                forget()
 
         threading.Thread(target=work, name="axross-sift-cache-clear", daemon=True).start()
 
@@ -297,9 +306,6 @@ class AnalysisPage(QWidget):
                 error=error))
             return
         self.cache_label.setText(tr("Removed {n} cached result(s).").format(n=count))
-        clear = getattr(self._window, "clear_analysis_session", None)
-        if callable(clear):
-            clear()
 
     def _show_features(self, _link: str = "") -> None:
         show = getattr(self._window, "_show_features", None)

@@ -249,16 +249,21 @@ def test_edge_install_from_catalog_opens_the_catalog_on_the_missing_category(env
     assert "fetch" in tab.profile_notes.text()
     links = tab.profile_link_targets()
     assert "server:fetch" in links
-    dialog = tab.profile_notes_link("server:fetch")
+    opened = [tab.profile_notes_link("server:fetch")]
     try:
-        assert dialog.search_edit.text() == "fetch"
-        dialog = tab.profile_notes_link("category:" + RE)
+        assert opened[0].search_edit.text() == "fetch"
+        opened[0].reject()
+        opened.append(tab.profile_notes_link("category:" + RE))
+        dialog = opened[-1]
         assert dialog.category_combo.currentData() == RE  # even before results arrive
         assert _wait(lambda: not dialog.busy() and dialog.status_label.text())
         assert dialog.category_combo.currentData() == RE  # a hub category, not in builtin
         assert dialog.entries() == []
     finally:
-        dialog.reject()
+        # Both catalogs: the first one, left open, was still the active modal
+        # widget for whatever test ran next in this process.
+        for dialog in opened:
+            dialog.reject()
 
 
 def test_edge_a_server_installed_from_the_notes_is_ticked_in_the_tab(env, monkeypatch):

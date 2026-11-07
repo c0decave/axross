@@ -1,0 +1,74 @@
+{
+ "name": "libusb1",
+ "versions": {
+  "3.4.0": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|usb1/__pyinstaller/test_libusb1_packaging.py|caabd0d0d5d6db59",
+    "yara|capability_process_spawn|usb1/_libusb1.py|66f56b3d0e3def7a"
+   ],
+   "archives": {
+    "libusb1-3.4.0-py3-none-any.whl": {
+     "entry_points": [
+      "hook-dirs = usb1.__pyinstaller:get_hook_dirs",
+      "tests = usb1.__pyinstaller:get_PyInstaller_tests"
+     ],
+     "files": {
+      "libusb1-3.4.0.dist-info/METADATA": "0147c1e42ad291a3f1e38873818dd1564be3b1f8c0e7e42d95dda368874c8812",
+      "libusb1-3.4.0.dist-info/RECORD": "aa90763e4eaec0f781f77b428560a4634ee4266406a51b5d581a69776d64267f",
+      "libusb1-3.4.0.dist-info/WHEEL": "95353a07a7887d8a224094d935cf9fc9a47a0692fa7a14f3537c466319f69fc9",
+      "libusb1-3.4.0.dist-info/entry_points.txt": "5e16140f99717ffc5ae1aa108a30a2470905567fddfd9f2318adbebe5548241f",
+      "libusb1-3.4.0.dist-info/licenses/COPYING": "ab15fd526bd8dd18a9e77ebc139656bf4d33e97fc7238cd11bf60e2b9b8666c6",
+      "libusb1-3.4.0.dist-info/licenses/COPYING.LESSER": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "libusb1-3.4.0.dist-info/top_level.txt": "8ceeabd1176e1a70991dd4ba804202a85e8680b3c352ded9439342a92fb5cdc0",
+      "libusb1.py": "b6cedb78f1adbdf988884f92597d4b83ed66f53f2ddf9147ac9a82c4b39fd197",
+      "usb1/__init__.py": "6bce8e3c2d5df0ec106868b6c57d6389512c2d00a5ae38c1f860c823d9e61a68",
+      "usb1/__pyinstaller/__init__.py": "0efafc9e306b4a68166ada52d779e0496dcaca06730c5855cf228cd71540c96b",
+      "usb1/__pyinstaller/hook-usb1.py": "6ea0e1092ac66c46856e50806fe88b21c1fa26d7a36ec3505f899ed5d90b6102",
+      "usb1/__pyinstaller/test_libusb1_packaging.py": "caabd0d0d5d6db594c4db373fc8ec3109d04c29744a73bd5dfb4fc73890346b6",
+      "usb1/_libusb1.py": "66f56b3d0e3def7a342a552ac723d917f0289cbde69cf2d0ef5ad8eb025f4779",
+      "usb1/_version.py": "46db4fd14ebc560d9079656848ba43a2b7f07c033b2d603dc12851c9e66d32ea",
+      "usb1/libusb1.py": "c3bd9ae6ccd7fb3660b0d4f8d332b9d87e30d84562320d1c6fe44ffd3014225a",
+      "usb1/testUSB1.py": "bbdfeca33977890cf0848d15e78193918a545cb86f4afb66b958f184492b471c"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "39f61bc34f25c832a9b799dd4d4f077ef4dbb7ed9904f78cf0053c4e27f35bc2",
+     "native": {},
+     "pth": {},
+     "sha256": "e83d034e44c3efe1c4599c6281d34bca50a38c12cab3b7b6217d583161a01ffd"
+    }
+   },
+   "name": "libusb1",
+   "provenance": {
+    "libusb1-3.4.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Vincent Pelletier",
+    "author_email": "plr.vincent@gmail.com",
+    "home_page": "https://github.com/vpelletier/python-libusb1",
+    "license_expression": "LGPL-2.1-or-later",
+    "project_urls": {
+     "Homepage": "https://github.com/vpelletier/python-libusb1"
+    },
+    "summary": "Pure-python wrapper for libusb-1.0"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|usb1/__pyinstaller/test_libusb1_packaging.py|caabd0d0d5d6db59",
+     "yara|capability_process_spawn|usb1/_libusb1.py|66f56b3d0e3def7a"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn usb1/__pyinstaller/test_libusb1_packaging.py",
+     "capability_process_spawn:capability_process_spawn usb1/_libusb1.py"
+    ]
+   },
+   "version": "3.4.0"
+  }
+ }
+}

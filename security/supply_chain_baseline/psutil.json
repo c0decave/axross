@@ -1,0 +1,136 @@
+{
+ "name": "psutil",
+ "versions": {
+  "7.2.2": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|psutil/_common.py|1bbce9fd97e6f543",
+    "yara|capability_filesystem_read|psutil/_psbsd.py|c1a8314a9640649c",
+    "yara|capability_filesystem_read|psutil/_pslinux.py|a8a09bab87848075",
+    "yara|capability_network_outbound|psutil/_common.py|1bbce9fd97e6f543",
+    "yara|capability_process_spawn|psutil/__init__.py|d138a5786b163b56",
+    "yara|capability_process_spawn|psutil/_psaix.py|afe4038d5e145455",
+    "yara|capability_process_spawn|psutil/_pssunos.py|cc348442008a54cb",
+    "yara|threat_process_memory|psutil/__init__.py|d138a5786b163b56",
+    "yara|threat_process_memory|psutil/_pslinux.py|a8a09bab87848075",
+    "yara|threat_process_memory|psutil/_pswindows.py|580ad391de734c11",
+    "yara|threat_runtime_enumeration|psutil/__init__.py|d138a5786b163b56"
+   ],
+   "archives": {
+    "psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "psutil-7.2.2.dist-info/LICENSE": "b89c063b3786e28e0c0a38f1931db61fed35e69dd2a2966fbecffee0f46c8d10",
+      "psutil-7.2.2.dist-info/METADATA": "525f8ba78523cf7bc3759d62a105e7c57fd679ea702402b9449fb0746aa0217f",
+      "psutil-7.2.2.dist-info/RECORD": "f7b381c717acbef3e492800accf25193bc41fad041338741d95f25a768fbc4d0",
+      "psutil-7.2.2.dist-info/WHEEL": "aca9cca3026cd7b9774535accd80fde13f5a55cf32141be943e4575a4e8835cd",
+      "psutil-7.2.2.dist-info/top_level.txt": "8023619f9ef0ce4b038d20084a680c2746a25f342e964d062616f6f81032620c",
+      "psutil/__init__.py": "d138a5786b163b56ba86ea0b2d5589dfca37e1bcdf8de1057fe1e933d6ab808a",
+      "psutil/_common.py": "1bbce9fd97e6f5439a0d385f28401f527c5a9d978d9d062593d7ef6fe215fc75",
+      "psutil/_ntuples.py": "9b8e8b938abae2786a515f686f4d8132218be897eb6b459b9324ed17d88a31c7",
+      "psutil/_psaix.py": "afe4038d5e1454559f17dac9e6c2c56ad8cf873d43880f6503e8549cc06a18ec",
+      "psutil/_psbsd.py": "c1a8314a9640649c99197ff261dbeec1f0080175e4a3f6b5cb370a39332deb94",
+      "psutil/_pslinux.py": "a8a09bab87848075b691c46112b00692745785a8c9d5a2c87037ae124b469749",
+      "psutil/_psosx.py": "89f0ea0e9c1fe38f224b612792bf31d07c8880d79281806e5379c00514f6b3f2",
+      "psutil/_psposix.py": "288887b58f5939e3b00e021f6e7b490c2f7f4852804a359918ab7d9c6fb39839",
+      "psutil/_pssunos.py": "cc348442008a54cb6054299b2ecae0d9a123c07bb4ba1f8e14b319487f83cee5",
+      "psutil/_psutil_linux.abi3.so": "8085c743a77f6059be6d18d54317ccce2e715425bb5f15aa8835770463d6b9fd",
+      "psutil/_pswindows.py": "580ad391de734c113682200ee9f4245e34737f5e26af0a73a4e8c9b4458de220"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e60d32d96e19abbc0e1b8a3e09f3778ec739d4f5146785107e1210faf21faeb5",
+     "native": {
+      "psutil/_psutil_linux.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9"
+    }
+   },
+   "name": "psutil",
+   "provenance": {
+    "psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl": null
+   },
+   "pypi": {
+    "author": "Giampaolo Rodola",
+    "author_email": "g.rodola@gmail.com",
+    "home_page": "https://github.com/giampaolo/psutil",
+    "license": "BSD-3-Clause",
+    "project_urls": {
+     "Homepage": "https://github.com/giampaolo/psutil"
+    },
+    "summary": "Cross-platform lib for process and system monitoring."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Hits read: process enumeration and memory info are psutil's purpose; the native module's socket import lists connections (net_connections). Content review only."
+   },
+   "scans": {
+    "capa": {
+     "8085c743a77f6059be6d18d54317ccce2e715425bb5f15aa8835770463d6b9fd": {
+      "capabilities": [
+       "contain loop",
+       "execute syscall",
+       "get networking interfaces",
+       "get system information on Linux",
+       "link function at runtime on Linux",
+       "query environment variable",
+       "resolve DNS",
+       "terminate process",
+       "terminate process via kill",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "psutil/_psutil_linux.abi3.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ],
+        "network": [
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|psutil/_common.py|1bbce9fd97e6f543",
+     "yara|capability_filesystem_read|psutil/_psbsd.py|c1a8314a9640649c",
+     "yara|capability_filesystem_read|psutil/_pslinux.py|a8a09bab87848075",
+     "yara|capability_network_outbound|psutil/_common.py|1bbce9fd97e6f543",
+     "yara|capability_process_spawn|psutil/__init__.py|d138a5786b163b56",
+     "yara|capability_process_spawn|psutil/_psaix.py|afe4038d5e145455",
+     "yara|capability_process_spawn|psutil/_pssunos.py|cc348442008a54cb",
+     "yara|threat_process_memory|psutil/__init__.py|d138a5786b163b56",
+     "yara|threat_process_memory|psutil/_pslinux.py|a8a09bab87848075",
+     "yara|threat_process_memory|psutil/_pswindows.py|580ad391de734c11",
+     "yara|threat_runtime_enumeration|psutil/__init__.py|d138a5786b163b56"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read psutil/_common.py",
+     "capability_filesystem_read:capability_filesystem_read psutil/_psbsd.py",
+     "capability_filesystem_read:capability_filesystem_read psutil/_pslinux.py",
+     "capability_network_outbound:capability_network_outbound psutil/_common.py",
+     "capability_process_spawn:capability_process_spawn psutil/__init__.py",
+     "capability_process_spawn:capability_process_spawn psutil/_psaix.py",
+     "capability_process_spawn:capability_process_spawn psutil/_pssunos.py",
+     "threat_process_memory:threat_process_memory psutil/__init__.py",
+     "threat_process_memory:threat_process_memory psutil/_pslinux.py",
+     "threat_process_memory:threat_process_memory psutil/_pswindows.py",
+     "threat_runtime_enumeration:threat_runtime_enumeration psutil/__init__.py"
+    ]
+   },
+   "version": "7.2.2"
+  }
+ }
+}

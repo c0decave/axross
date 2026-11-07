@@ -33,6 +33,7 @@ from PyQt6.QtCore import QCoreApplication, QEvent, QObject, pyqtSignal  # noqa: 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import multimedia_env as ME  # noqa: E402
+from tests.optional_deps import needs_qt_multimedia  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
 
@@ -89,6 +90,7 @@ def test_sad_a_deleted_or_missing_object_is_ignored():
     ME.prime_notify_lookups(None)
 
 
+@needs_qt_multimedia
 def test_edge_a_real_qaudiooutput_is_primed():
     from PyQt6.QtMultimedia import QAudioOutput
 
@@ -110,6 +112,7 @@ def _media_player_module():
     return module
 
 
+@needs_qt_multimedia
 def test_e2e_the_qmediaplayer_engine_primes_its_player_and_output():
     MP = _media_player_module()
     engine = MP.SimpleEngine()
@@ -120,6 +123,7 @@ def test_e2e_the_qmediaplayer_engine_primes_its_player_and_output():
         engine.deleteLater()
 
 
+@needs_qt_multimedia
 def test_e2e_the_equalizer_engine_primes_its_decoder_and_sink():
     pytest.importorskip("numpy")
     MP = _media_player_module()
@@ -132,6 +136,7 @@ def test_e2e_the_equalizer_engine_primes_its_decoder_and_sink():
         engine.deleteLater()
 
 
+@needs_qt_multimedia
 def test_e2e_the_equalizer_engine_primes_what_its_threads_make(tmp_path):
     """The decoder, the timers, the sound card's QAudioSink and the
     objects that run work in the Media Player's own threads are made there,
@@ -166,6 +171,7 @@ def test_e2e_the_equalizer_engine_primes_what_its_threads_make(tmp_path):
         engine.close()
 
 
+@needs_qt_multimedia
 def test_e2e_the_media_preview_primes_its_player_and_output():
     from core.local_fs import LocalFS
     from ui import media_viewer as MV

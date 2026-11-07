@@ -152,16 +152,22 @@ class JobStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
 
-    def load(self) -> list[Job]:
+    def load(self, *, strict: bool = False) -> list[Job]:
+        """The stored jobs; [] when there are none or the file cannot be
+        read. *strict* (before a save): a file that exists but cannot be
+        read (permissions, I/O) is an OSError - saving over it would
+        replace every job with the few the caller knows."""
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return []
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
             log.warning("scheduler: ignoring unreadable job store %s: %s", self.path, exc)
             self._set_aside()
             return []
         except OSError as exc:
+            if strict:
+                raise
             log.warning("scheduler: ignoring unreadable job store %s: %s", self.path, exc)
             return []
         if not isinstance(raw, list):
@@ -223,7 +229,7 @@ class JobStore:
         recording a run, the Scheduler dialog) goes through here, so none
         writes back a list that is older than the file."""
         with locked_store_update(self.path):
-            jobs = change(self.load())
+            jobs = change(self.load(strict=True))
             self.save(jobs)
             return jobs
 

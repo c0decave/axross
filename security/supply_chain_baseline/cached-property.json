@@ -1,0 +1,53 @@
+{
+ "name": "cached-property",
+ "versions": {
+  "2.0.1": {
+   "accepted_findings": [],
+   "archives": {
+    "cached_property-2.0.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "cached_property-2.0.1.dist-info/AUTHORS.md": "775a784279e2a8e83e1e9f396e3f4518990a470b6f265e699f58617d1f57e714",
+      "cached_property-2.0.1.dist-info/LICENSE": "ba4756c8039b25b66e3c456cc5bf635aa528cf459b97ee1499d06684ccd89b9a",
+      "cached_property-2.0.1.dist-info/METADATA": "c6737747795563d6580ae14e1f1e6d68ced54dccfb4e70dbd07060c5afd864fb",
+      "cached_property-2.0.1.dist-info/RECORD": "d508f31d7afe5ccf84e98447474c5caa5bb41bc901c328f3628f42ed169300d2",
+      "cached_property-2.0.1.dist-info/WHEEL": "39531ce547ee010892a6580ed3f59d5bbbd754602df4775deaab4de07a2d7720",
+      "cached_property-2.0.1.dist-info/top_level.txt": "3ecb7ddd74367a78653d57c22297382afdfc7fa257118ba48bdea193287ed491",
+      "cached_property.py": "9af1e4ac7cf6e924aa8b918effee560a64586ddc65eefbd9a2a59e56c38de084"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "cd9297a79284f82e73ff51741fdb4385b48538da67d9de24654f342e603b7b3a",
+     "native": {},
+     "pth": {},
+     "sha256": "f617d70ab1100b7bcf6e42228f9ddcb78c676ffa167278d9f730d1c2fba69ccb"
+    }
+   },
+   "name": "cached-property",
+   "provenance": {
+    "cached_property-2.0.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Daniel Roy Greenfeld",
+    "author_email": "daniel@feldroy.com",
+    "home_page": "https://github.com/pydanny/cached-property",
+    "license": "BSD",
+    "project_urls": {
+     "Homepage": "https://github.com/pydanny/cached-property"
+    },
+    "summary": "A decorator for caching properties in classes."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.0.1"
+  }
+ }
+}

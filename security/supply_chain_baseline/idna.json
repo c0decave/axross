@@ -1,0 +1,75 @@
+{
+ "name": "idna",
+ "versions": {
+  "3.20": {
+   "accepted_findings": [
+    "yara|threat_runtime_obfuscation_unicode|idna/uts46data.py|770e849bfa156c71"
+   ],
+   "archives": {
+    "idna-3.20-py3-none-any.whl": {
+     "entry_points": [
+      "idna=idna.cli:main"
+     ],
+     "files": {
+      "idna-3.20.dist-info/METADATA": "dbd8c14c1e4ca1e0c9824a6dbc7cbbf78884f38eb52d91148cd3025f671e4b85",
+      "idna-3.20.dist-info/RECORD": "8e2670b3fc1bbf1e2cf99050b062fda50203881e43420bbc6772dad2cde2d548",
+      "idna-3.20.dist-info/WHEEL": "96a37c8d7b7f425a05386731f644adbd66ebca17c45e8236176cfe614466df9d",
+      "idna-3.20.dist-info/entry_points.txt": "ec7de718e1daa778e72c4e5eeeaed8c2bf55abc6b107b5888f9f82ff8376be1c",
+      "idna-3.20.dist-info/licenses/LICENSE.md": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
+      "idna/__init__.py": "8514c3ed53136a3596ebdf512fa487bbdd7da5a99adcaed82e0363d2c306d3af",
+      "idna/__main__.py": "e0930aeba5a3e2e2d94ca6c5fac4f72c0c4eb2be9bba283becf98e909091471c",
+      "idna/cli.py": "2e01972a25e67afdfba5d824013c01e808893916539c0db33f72f37c42b8896a",
+      "idna/codec.py": "7dff4247d75e6e265cbea1261f10d122ba9299a371429cfa018e091ec0b7602d",
+      "idna/compat.py": "4ff7995ce52dd1be5381ae7a70fc9b42ef420982b41532b599d88f6fdea76bc0",
+      "idna/core.py": "3dd4c3ffee4ff223207fac65f3812a1e6895ae8ad1e7a6ed60115768f3551520",
+      "idna/idnadata.py": "23a9a8c1d15de9c634d0bf213d779810f485083fe1b0f7e09044ad04a69cc7eb",
+      "idna/intranges.py": "838f6c70b4a4a89b4084b98e3836bb8551eb8928e66fad2d893b04a287097412",
+      "idna/package_data.py": "ae759534a3c582a00ac856cfca464a39ee8251d393208d8af06b605bc20e02a9",
+      "idna/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "idna/uts46data.py": "770e849bfa156c71828a89440a57fe9aea70735f103ae4616ee4f682e13d6c00"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "206b3cee10ef35fde4162c54899f10300003dee322c8f1b9e2538e74122f597a",
+     "native": {},
+     "pth": {},
+     "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+    }
+   },
+   "name": "idna",
+   "provenance": {
+    "idna-3.20-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "kjd/idna",
+     "workflow": "deploy.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Kim Davies <kim+pypi@gumleaf.org>",
+    "license_expression": "BSD-3-Clause",
+    "project_urls": {
+     "Changelog": "https://github.com/kjd/idna/blob/master/HISTORY.md",
+     "Issue tracker": "https://github.com/kjd/idna/issues",
+     "Source": "https://github.com/kjd/idna"
+    },
+    "summary": "Internationalized Domain Names in Applications (IDNA)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One hit: Greek letters in the UTS46 mapping table (uts46data.py). Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|threat_runtime_obfuscation_unicode|idna/uts46data.py|770e849bfa156c71"
+    ],
+    "yara": [
+     "threat_runtime_obfuscation_unicode:threat_runtime_obfuscation_unicode idna/uts46data.py"
+    ]
+   },
+   "version": "3.20"
+  }
+ }
+}

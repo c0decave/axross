@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import deque
+from functools import lru_cache
 
 #: Lines kept above the screen.
 DEFAULT_SCROLLBACK = 5000
@@ -49,11 +50,21 @@ _GROUND, _ESC, _ESC_INTER, _CSI, _STRING, _STRING_ESC = range(6)
 #: restores) or edit the screen (J K X P @ L M): they end a pending wrap.
 _ENDS_PENDING_WRAP = frozenset("ABCDEFG`HfdaruJKXP@LM")
 
-#: Two or more printable ASCII characters: one cell each, nothing to
-#: interpret - written a row at a time (VTScreen._print_run).
-_ASCII_RUN = re.compile(r"[\x20-\x7e]{2,}")
+#: Printable ASCII characters: one cell each, nothing to interpret -
+#: written a row at a time (VTScreen._print_run).
+_ASCII_RUN = re.compile(r"[\x20-\x7e]+")
+#: Lines of printable ASCII, each ended by CR LF: what ``cat``, ``ls`` or
+#: ``yes`` send - written a block at a time (VTScreen._print_lines).
+_ASCII_LINES = re.compile(r"(?:[\x20-\x7e]*\r\n)+")
+#: What follows CSI up to its final byte: parameters and intermediates.
+_CSI_PARAMS = re.compile(r"[\x20-\x3f]*")
+#: The end of an OSC / DCS / PM / APC string: BEL, or the ESC of ESC \.
+_STRING_END = re.compile(r"[\x07\x1b]")
+#: CSI parameters made of decimal numbers and ";" only - the usual kind.
+_PLAIN_PARAMS = re.compile(r"[0-9;]*")
 
 
+@lru_cache(maxsize=4096)
 def _width(ch: str) -> int:
     """Columns *ch* takes: 0 for combining marks, 2 for wide, else 1."""
     if unicodedata.combining(ch):
@@ -174,46 +185,98 @@ class VTScreen:
 
     def feed(self, text: str) -> None:
         """Interpret *text* (decoded output of the host)."""
+        # What a flood of output is made of - a run of plain text, CR, LF,
+        # a CSI sequence, an OSC string - is taken in one step here; each
+        # changes the screen exactly as one character at a time would.
         i, end = 0, len(text)
         while i < end:
-            ch = text[i]
-            i += 1
             state = self._state
             if state == _GROUND:
-                code = ord(ch)
-                if code >= 0x20 and code != 0x7F and not 0x80 <= code <= 0x9F:
-                    # Followed by more plain text: the run goes in whole.
-                    if code < 0x7F and i < end and " " <= text[i] <= "~":
-                        run = _ASCII_RUN.match(text, i - 1)
-                        self._print_run(run.group())
-                        i = run.end()
+                ch = text[i]
+                # At the start of the bottom row of the shell's screen whole
+                # lines of plain text go in as a block.
+                if (
+                    not self._col
+                    and self._row == self._bottom == self.rows - 1
+                    and not self._top
+                    and self._main is None
+                    and not self._wrap_pending
+                    and (" " <= ch <= "~" or ch == "\r")
+                ):
+                    lines = _ASCII_LINES.match(text, i)
+                    if lines:
+                        self._print_lines(lines.group())
+                        i = lines.end()
                         continue
-                    self._print(ch)
+                if " " <= ch <= "~":
+                    j = _ASCII_RUN.match(text, i).end()
+                    col = self._col
+                    if col + (j - i) < self.cols and not self._wrap_pending:
+                        # Fits on the row: no wrap, no scroll, just the cells.
+                        self._grid[self._row][col:col + j - i] = text[i:j]
+                        self._col = col + j - i
+                    else:
+                        self._print_run(text[i:j])
+                    i = j
+                    continue
+                i += 1
+                if ch == "\r":
+                    self._col = 0
+                    self._wrap_pending = False
+                elif ch == "\n":
+                    self._linefeed()
                 elif ch == "\x1b":
                     self._state = _ESC
                 else:
-                    self._control(ch)
+                    code = ord(ch)
+                    if code >= 0x20 and code != 0x7F and not 0x80 <= code <= 0x9F:
+                        self._print(ch)
+                    else:
+                        self._control(ch)
+            elif state == _CSI:
+                # Parameters and intermediates (the first 4 * _MAX_PARAMS are
+                # kept), then the final byte; a control character aborts.
+                j = _CSI_PARAMS.match(text, i).end()
+                if j > i:
+                    if len(self._params) < 4 * _MAX_PARAMS:
+                        self._params = (self._params + text[i:j])[:4 * _MAX_PARAMS]
+                    i = j
+                    if i == end:
+                        break
+                ch = text[i]
+                i += 1
+                self._state = _GROUND
+                if "@" <= ch <= "~":
+                    self._csi(ch, self._params)
             elif state == _ESC:
-                self._escape(ch)
+                self._escape(text[i])
+                i += 1
             elif state == _ESC_INTER:
                 # ESC ( B, ESC % G, ...: one final byte after the intermediates.
-                if not 0x20 <= ord(ch) <= 0x2F:
+                if not 0x20 <= ord(text[i]) <= 0x2F:
                     self._state = _GROUND
-            elif state == _CSI:
-                self._csi_char(ch)
+                i += 1
             elif state == _STRING:
-                if ch == "\x07":
+                # Dropped up to BEL or ESC; the character past _MAX_STRING
+                # ends it as well.
+                found = _STRING_END.search(text, i)
+                stop = found.start() if found else end
+                room = _MAX_STRING - self._string_len
+                if stop - i > room:
+                    self._string_len += room + 1
                     self._state = _GROUND
-                elif ch == "\x1b":
-                    self._state = _STRING_ESC
-                else:
-                    self._string_len += 1
-                    if self._string_len > _MAX_STRING:
-                        self._state = _GROUND
+                    i += room + 1
+                    continue
+                self._string_len += stop - i
+                i = stop
+                if i < end:
+                    self._state = _GROUND if text[i] == "\x07" else _STRING_ESC
+                    i += 1
             else:  # _STRING_ESC: ESC \ ends the string, anything else too
                 self._state = _GROUND
-                if ch != "\\":
-                    self.feed(ch)
+                if text[i] == "\\":
+                    i += 1
+                # Else that character is read again, on the ground.
 
     def _control(self, ch: str) -> None:
         if ch == "\r":
@@ -255,17 +318,6 @@ class VTScreen:
         elif ch == "c":
             self._reset()
         # ESC = / ESC > (keypad modes) and the rest: ignored.
-
-    def _csi_char(self, ch: str) -> None:
-        code = ord(ch)
-        if 0x30 <= code <= 0x3F or 0x20 <= code <= 0x2F:  # parameters, intermediates
-            if len(self._params) < 4 * _MAX_PARAMS:
-                self._params += ch
-            return
-        self._state = _GROUND
-        if 0x40 <= code <= 0x7E:
-            self._csi(ch, self._params)
-        # A control character inside a CSI aborts it.
 
     # -- printing --------------------------------------------------------------
 
@@ -317,6 +369,36 @@ class VTScreen:
                 line[cols - 1] = run[-1]  # each further character overwrites the last cell
                 return
 
+    def _print_lines(self, block: str) -> None:
+        """``_print_run``, CR and LF of every line of *block* (printable
+        ASCII, each line ended by CR LF) from the start of the bottom row
+        of the shell's screen, the scroll region the whole screen: a line
+        fills one row or wraps into more, each row scrolls the top one into
+        the scrollback. Only the rows still on the screen at the end are
+        made; the rows that pass through go to the scrollback as text."""
+        cols, rows, grid = self.cols, self.rows, self._grid
+        lines = block.split("\r\n")
+        del lines[-1]  # after the last CR LF
+        if max(map(len, lines)) > cols:
+            if self._autowrap:  # a row each cols characters ("" is one row too)
+                lines = [line[k:k + cols] for line in lines
+                         for k in range(0, len(line), cols) or (0,)]
+            else:  # each character past the row overwrites its last cell
+                lines = [line if len(line) <= cols else line[:cols - 1] + line[-1]
+                         for line in lines]
+        count = len(lines)
+        first = lines[0]
+        grid[-1][:len(first)] = first  # over what the bottom row holds
+        # What leaves the screen: its own rows, then the rows after the first.
+        passing = max(1, count - rows + 1)  # lines[1:passing] leave as well
+        if self.scrollback.maxlen:
+            self.scrollback.extend("".join(row).rstrip() for row in grid[:count])
+            self.scrollback.extend(line.rstrip() for line in lines[1:passing])
+        self.scrolled_total += count
+        grid[:] = (grid[count:]
+                   + [list(line.ljust(cols)) for line in lines[passing:]]
+                   + [[" "] * cols])
+
     def _push_scrollback(self, line: list[str]) -> None:
         if self.scrollback.maxlen:
             self.scrollback.append("".join(line).rstrip())
@@ -338,10 +420,18 @@ class VTScreen:
 
     def _linefeed(self) -> None:
         self._wrap_pending = False
-        if self._row == self._bottom:
-            self._scroll_up()
-        elif self._row < self.rows - 1:
-            self._row += 1
+        row = self._row
+        if row == self._bottom:
+            # _scroll_up(1) - a step of every line of an output flood - inline.
+            grid, top = self._grid, self._top
+            line = grid.pop(top)
+            if top == 0 and self._main is None:
+                if self.scrollback.maxlen:
+                    self.scrollback.append("".join(line).rstrip())
+                self.scrolled_total += 1
+            grid.insert(row, [" "] * self.cols)
+        elif row < self.rows - 1:
+            self._row = row + 1
 
     def _reverse_index(self) -> None:
         self._wrap_pending = False
@@ -353,13 +443,19 @@ class VTScreen:
     # -- CSI -------------------------------------------------------------------
 
     def _csi(self, final: str, raw: str) -> None:
+        if final == "m":
+            return  # SGR: the widget shows text, not colours; no wrap ends
         private = raw[:1] in ("?", ">", "=", "<")
         body = raw[1:] if private else raw
-        body = "".join(c for c in body if c.isdigit() or c in ";:")
-        params: list[int] = []
-        for part in body.split(";")[:_MAX_PARAMS]:
-            part = part.split(":")[0]
-            params.append(min(int(part), 99999) if part.isdigit() else 0)
+        if _PLAIN_PARAMS.fullmatch(body):  # the usual "12;40"
+            params = [min(int(part), 99999) if part else 0
+                      for part in body.split(";")[:_MAX_PARAMS]]
+        else:
+            body = "".join(c for c in body if c.isdigit() or c in ";:")
+            params = []
+            for part in body.split(";")[:_MAX_PARAMS]:
+                part = part.split(":")[0]
+                params.append(min(int(part), 99999) if part.isdigit() else 0)
 
         def arg(i: int = 0, default: int = 1) -> int:
             value = params[i] if i < len(params) else 0
@@ -449,7 +545,7 @@ class VTScreen:
                 self._replies += f"\x1b[{self._row + 1};{self._col + 1}R".encode()
             elif arg(0, 0) == 5:
                 self._replies += b"\x1b[0n"
-        # m (SGR) and everything else: accepted, nothing to change.
+        # Everything else: accepted, nothing to change.
 
     def _private_mode(self, mode: int, on: bool) -> None:
         if mode in (1049, 1047, 47):

@@ -20,6 +20,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from tests.off_gui_wait import _drain_op  # noqa: E402
 from tests.test_pane_stale_targets import _Base  # noqa: E402
 
 
@@ -51,6 +52,7 @@ class CreateDuringFolderLoadTest(_Base):
         self.pane._table.setFocus()
         with mock.patch("PyQt6.QtWidgets.QInputDialog.getText", return_value=("new", True)):
             self.press(Qt.Key.Key_F7)
+            _drain_op(self.pane)
         self.assertTrue((self.root / "new").is_dir())
 
     def test_sad_f7_finishing_after_a_folder_change_creates_where_it_was_asked(self) -> None:
@@ -59,6 +61,7 @@ class CreateDuringFolderLoadTest(_Base):
         self.pane._table.setFocus()
         with self.get_text(("new", True)):
             self.press(Qt.Key.Key_F7)
+            _drain_op(self.pane)
         self.assertTrue((self.root / "new").is_dir())
         self.assertFalse((self.root / "b" / "new").exists())
 
@@ -71,6 +74,7 @@ class CreateDuringFolderLoadTest(_Base):
             "ui.file_pane.QMessageBox.warning"
         ) as warning:
             self.press(Qt.Key.Key_F7)
+            _drain_op(self.pane)
         warning.assert_called_once()
         self.assertEqual((self.root / "exists.txt").read_text(), "root exists")
         self.assertFalse((self.root / "b" / "exists.txt").exists())
@@ -80,6 +84,7 @@ class CreateDuringFolderLoadTest(_Base):
     def test_sad_new_file_lands_in_the_folder_it_was_asked_in(self) -> None:
         with self.get_text(("new.txt", True)):
             self.pane._create_empty_file()
+            _drain_op(self.pane)
         self.assertEqual((self.root / "new.txt").read_bytes(), b"")
         self.assertFalse((self.root / "b" / "new.txt").exists())
 
@@ -121,6 +126,7 @@ class CreateDuringFolderLoadTest(_Base):
     def test_edge_cancelled_dialog_creates_nothing_anywhere(self) -> None:
         with self.get_text(("", False)):
             self.pane._create_folder()
+            _drain_op(self.pane)
         before_root = sorted(p.name for p in self.root.iterdir())
         self.assertNotIn("", before_root)
         self.assertEqual(sorted(p.name for p in (self.root / "b").iterdir()), ["top.txt"])

@@ -1,0 +1,72 @@
+{
+ "name": "python-whois",
+ "versions": {
+  "0.9.6": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|whois/__init__.py|9aec17efdf4c2375",
+    "yara|capability_network_outbound|whois/__init__.py|9aec17efdf4c2375",
+    "yara|capability_network_outbound|whois/whois.py|b08307ecdc425e77",
+    "yara|capability_process_spawn|whois/__init__.py|9aec17efdf4c2375"
+   ],
+   "archives": {
+    "python_whois-0.9.6-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "python_whois-0.9.6.dist-info/METADATA": "533a075cc4083790b8608bfec5ad94ad653c7559800421699b1d2f3f43483520",
+      "python_whois-0.9.6.dist-info/RECORD": "f1c3b4be55d259c296a7d46ca3d41ef8a640f702cac98638bc4ad9b198587991",
+      "python_whois-0.9.6.dist-info/WHEEL": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+      "python_whois-0.9.6.dist-info/licenses/LICENSE.txt": "f9c4c77baa3828004ee54b8a4f2db2e88ed44a6237a493965bf551fac0fcb62d",
+      "python_whois-0.9.6.dist-info/top_level.txt": "c8268f33ed8eb1ce7a9989d1278d52d5758d6fdf78dd9e25a99d25734a405f79",
+      "whois/__init__.py": "9aec17efdf4c2375316396f4e1c5913899290e92f2ffe0e7ba6618254f9739b9",
+      "whois/data/public_suffix_list.dat": "603d1bd1919a2c20aaac863095b00a0aa22c7a146387468e15690045edc0b8d4",
+      "whois/exceptions.py": "f62a7500586cb408d7739fb25857c0c689766e3137625befdcdafaf808ced1db",
+      "whois/parser.py": "81c2fb38d0210a6a6880cbdd2fb73fcaac6bd1f0904c4cd4efae9c035f1ab479",
+      "whois/time_zones.py": "b9a953be0be84a451a2ed42cd9e06405cde655eed31ca3fdfa259e337b14877d",
+      "whois/whois.py": "b08307ecdc425e775c34d962f86adaf872f4b1a3fc15c4e9047f59f2da461ba1"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "83fb12e071aedab0ba1483b8c0ac17653a09125329d14adeca0bdbf40eec32e4",
+     "native": {},
+     "pth": {},
+     "sha256": "153261941a4d238b1278a4ca9b5b5e0590ed3b4d0c534ba111c4434d5d339410"
+    }
+   },
+   "name": "python-whois",
+   "provenance": {
+    "python_whois-0.9.6-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Richard Penman",
+    "author_email": "richard.penman@gmail.com",
+    "home_page": "https://github.com/richardpenman/whois",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/richardpenman/whois"
+    },
+    "summary": "Whois querying and parsing of domain registration information."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|whois/__init__.py|9aec17efdf4c2375",
+     "yara|capability_network_outbound|whois/__init__.py|9aec17efdf4c2375",
+     "yara|capability_network_outbound|whois/whois.py|b08307ecdc425e77",
+     "yara|capability_process_spawn|whois/__init__.py|9aec17efdf4c2375"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read whois/__init__.py",
+     "capability_network_outbound:capability_network_outbound whois/__init__.py",
+     "capability_network_outbound:capability_network_outbound whois/whois.py",
+     "capability_process_spawn:capability_process_spawn whois/__init__.py"
+    ]
+   },
+   "version": "0.9.6"
+  }
+ }
+}

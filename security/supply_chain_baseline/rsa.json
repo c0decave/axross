@@ -1,0 +1,85 @@
+{
+ "name": "rsa",
+ "versions": {
+  "4.9.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|rsa/cli.py|2b8b424e035a6358",
+    "yara|capability_filesystem_read|rsa/pkcs1.py|89150555e31fff94",
+    "yara|capability_filesystem_read|rsa/util.py|0c2dbb0fa2d1e44f"
+   ],
+   "archives": {
+    "rsa-4.9.1-py3-none-any.whl": {
+     "entry_points": [
+      "pyrsa-decrypt=rsa.cli:decrypt",
+      "pyrsa-encrypt=rsa.cli:encrypt",
+      "pyrsa-keygen=rsa.cli:keygen",
+      "pyrsa-priv2pub=rsa.util:private_to_public",
+      "pyrsa-sign=rsa.cli:sign",
+      "pyrsa-verify=rsa.cli:verify"
+     ],
+     "files": {
+      "rsa-4.9.1.dist-info/LICENSE": "073f28b7d389c8fe74f607e17c27f81eaa5ace69edc43a884f23f41b41c5c726",
+      "rsa-4.9.1.dist-info/METADATA": "76535f48720f61b729ad435a5cb748fe1db6d0c946ed66b99336e33e3aa97789",
+      "rsa-4.9.1.dist-info/RECORD": "f432bdbb9c86cb768bf4143b0dce29d1c13b8f0f99422b42326d6569077941ae",
+      "rsa-4.9.1.dist-info/WHEEL": "7c6200f60c7843193628329e34909b384c12ae62ed8d60b0cc1cf7e751b2acf4",
+      "rsa-4.9.1.dist-info/entry_points.txt": "a749d5b1ece63d28e6e71e060cc0f86bd4ac85cf6e91d7f0d649263a6a5a02ed",
+      "rsa/__init__.py": "17f1d8b23026e1f34c932e7a54de81ada6b21f8c26590ba1b9db9cfe225d1b56",
+      "rsa/asn1.py": "7d93e81dd555fbc11165a70633a59ada95b6977177d4782119fa93f6a21fb3d6",
+      "rsa/cli.py": "2b8b424e035a63587c1fd73d5154624a07b2bc7b328ba3319208fc9b9e5b9ef2",
+      "rsa/common.py": "c3452e5791cdbe4142e2c04c8cc0cef094d4242a17bec2f372826b02eab32e90",
+      "rsa/core.py": "c808f42e0d86d07371b1aeb11cc23e445f8e708944ec61f3a018163bbff6cf98",
+      "rsa/key.py": "3204a50847969c444e2ebaff143092aaf0befc26d66dd8e591c3b8920878b23c",
+      "rsa/parallel.py": "969f259f99c4c399966c1afdca87a0bc711c6b06d1f7a19592008a8f03c761b9",
+      "rsa/pem.py": "ede66de14f629b484bb8231038031a3c78b615ec7143e6bb1555f2cdb252fc73",
+      "rsa/pkcs1.py": "89150555e31fff94306473ff0ae77231a0db0fe461cc32b08e0a22b0c3a7b1b1",
+      "rsa/pkcs1_v2.py": "a58db687e1091d5ee369e78d8ea8e57a7d026cc825f943fb77d0ac41c787a5e9",
+      "rsa/prime.py": "385a55205dc98d7cde3167587861275edd45cb77189c7432b2d725b60a5fa11d",
+      "rsa/py.typed": "6f37766bc73c4e91e250cc49cf5a5477b77d2ca168ef5c35371a46d5f47bdc90",
+      "rsa/randnum.py": "db797680e518f55bfd7faee677fd7ab4036b6c10e950fedd5b512e0dd124954b",
+      "rsa/transform.py": "9f8e033eb3b50992e029762d2644e4be1c32153708b7586b6c3fe333429106ed",
+      "rsa/util.py": "0c2dbb0fa2d1e44f6938fbf1330953035638e88af1df4621e605b7b42ca9e371"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "6148c1890e2218dc38fe5939fd789de59837281d69ca6c5d678aee1c6063e2eb",
+     "native": {},
+     "pth": {},
+     "sha256": "68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762"
+    }
+   },
+   "name": "rsa",
+   "provenance": {
+    "rsa-4.9.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Sybren A. St\u00fcvel",
+    "author_email": "sybren@stuvel.eu",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "Homepage": "https://stuvel.eu/rsa",
+     "Repository": "https://github.com/sybrenstuvel/python-rsa"
+    },
+    "summary": "Pure-Python RSA implementation"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|rsa/cli.py|2b8b424e035a6358",
+     "yara|capability_filesystem_read|rsa/pkcs1.py|89150555e31fff94",
+     "yara|capability_filesystem_read|rsa/util.py|0c2dbb0fa2d1e44f"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read rsa/cli.py",
+     "capability_filesystem_read:capability_filesystem_read rsa/pkcs1.py",
+     "capability_filesystem_read:capability_filesystem_read rsa/util.py"
+    ]
+   },
+   "version": "4.9.1"
+  }
+ }
+}

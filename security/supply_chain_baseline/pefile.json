@@ -1,0 +1,73 @@
+{
+ "name": "pefile",
+ "versions": {
+  "2024.8.26": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|peutils.py|09c314f4b955575d",
+    "yara|capability_network_download|peutils.py|09c314f4b955575d",
+    "yara|capability_network_outbound|peutils.py|09c314f4b955575d",
+    "yara|capability_process_spawn|pefile.py|0d0eb68f0f169182"
+   ],
+   "archives": {
+    "pefile-2024.8.26-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "ordlookup/__init__.py": "fe7e3869702abb571846d74bc34ea4966e8f75a6603530fe3f9e03c982d736a7",
+      "ordlookup/oleaut32.py": "d3199a7ea2f1ef42a93cb8b20acc752de67789671cb4248584e2b43f441e5aaf",
+      "ordlookup/ws2_32.py": "0879ce2fee63d738838f61332e69a149d463c177649c78935295d7f335604810",
+      "ordlookup/wsock32.py": "f029bc58669eae582a7087c630fd8be8f9f5aa2df6f7cecaa13f8f1e1199ed17",
+      "pefile-2024.8.26.dist-info/LICENSE": "b44409c067c6da52bfb54bb6624fb11a7b52157c3a13ae1400232f8196e86ad3",
+      "pefile-2024.8.26.dist-info/METADATA": "8ad83a5f8659e8da6eeaabf2dafa0eebb8c05832a3def16a5db4dd0d52e72474",
+      "pefile-2024.8.26.dist-info/RECORD": "8bbfd2bb82f780f2c1dea0d29a987916773d8ab196b5b24a02a9989b48b923ff",
+      "pefile-2024.8.26.dist-info/WHEEL": "678a585ea47fad307b3963436053a6d6a464d115fa1853f6a3c2e0bcfe39dc79",
+      "pefile-2024.8.26.dist-info/top_level.txt": "7bf125792b9950e40a7171c92ecdac49e1a4c46e0e6608542dc09cfefea441ba",
+      "pefile.py": "0d0eb68f0f169182613dc64b3ab50b20855508c1c1d2faafe8fccf23edb6a345",
+      "peutils.py": "09c314f4b955575d7c0cd3d86bd555ffadbd931112b1e2a922c6eac5f5fb4d54"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c94b68a784a52858e6ab59e01504a43a6f2a525bb02c59d9685925a80ecd80bd",
+     "native": {},
+     "pth": {},
+     "sha256": "76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f"
+    }
+   },
+   "name": "pefile",
+   "provenance": {
+    "pefile-2024.8.26-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Ero Carrera",
+    "author_email": "ero.carrera@gmail.com",
+    "home_page": "https://github.com/erocarrera/pefile",
+    "license": "MIT",
+    "project_urls": {
+     "Download": "https://github.com/erocarrera/pefile/releases/download/v2024.8.26/pefile-2024.8.26.tar.gz",
+     "Homepage": "https://github.com/erocarrera/pefile"
+    },
+    "summary": "Python PE parsing module"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_download, network_outbound, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|peutils.py|09c314f4b955575d",
+     "yara|capability_network_download|peutils.py|09c314f4b955575d",
+     "yara|capability_network_outbound|peutils.py|09c314f4b955575d",
+     "yara|capability_process_spawn|pefile.py|0d0eb68f0f169182"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read peutils.py",
+     "capability_network_download:capability_network_download peutils.py",
+     "capability_network_outbound:capability_network_outbound peutils.py",
+     "capability_process_spawn:capability_process_spawn pefile.py"
+    ]
+   },
+   "version": "2024.8.26"
+  }
+ }
+}

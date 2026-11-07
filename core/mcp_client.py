@@ -125,7 +125,7 @@ class McpServerConfig:
 
     def problems(self) -> list[str]:
         out = []
-        if not _NAME.match(self.name or ""):
+        if not _NAME.fullmatch(self.name or ""):
             out.append("a name of 1-32 letters, digits, '-' or '_'")
         if self.transport not in TRANSPORTS:
             out.append("transport stdio or http")
@@ -249,7 +249,7 @@ class McpServerConfig:
         secret_env = data.get("secret_env")
         if isinstance(secret_env, list):
             out.secret_env = tuple(dict.fromkeys(
-                v for v in secret_env if isinstance(v, str) and _ENV_NAME.match(v)))
+                v for v in secret_env if isinstance(v, str) and _ENV_NAME.fullmatch(v)))
         egress = data.get("egress")
         if isinstance(egress, list):
             out.egress = _egress_entries(egress)
@@ -410,7 +410,7 @@ class _Stdio:
                 break
             try:
                 message = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if not isinstance(message, dict):
                 continue
@@ -555,7 +555,7 @@ class _Http:
             return _from_events(body.decode("utf-8", "replace"), message.get("id")), {}
         try:
             reply = json.loads(body)
-        except ValueError:
+        except (ValueError, RecursionError):
             raise McpClientError(f"{host} did not answer JSON") from None
         return (reply if isinstance(reply, dict) else None), {}
 
@@ -596,7 +596,7 @@ def _from_events(text: str, ident) -> dict | None:
         elif not line and data:
             try:
                 message = json.loads("\n".join(data))
-            except ValueError:
+            except (ValueError, RecursionError):
                 message = None
             data = []
             if isinstance(message, dict) and message.get("id") == ident and "method" not in message:
@@ -692,7 +692,7 @@ def _env_file(config: McpServerConfig, secrets: dict, proxy_port: int | None) ->
         values["NO_PROXY"] = values["no_proxy"] = ""
     lines = []
     for name, value in values.items():
-        if not _ENV_NAME.match(str(name)):
+        if not _ENV_NAME.fullmatch(str(name)):
             raise McpClientError(f"{name!r} is not an environment variable name")
         if not isinstance(value, str) or any(c in value for c in "\n\r\x00"):
             raise McpClientError(f"the value of {name} must be a single line")

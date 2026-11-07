@@ -2457,7 +2457,7 @@ class GDriveAppendTruncateGuardTests(unittest.TestCase):
         sess.normalize = lambda p: p
         sess.parent = lambda p: "/"
         sess._resolve_path = mock.MagicMock(
-            side_effect=lambda p: "parent-id" if p == "/" else "existing-id"
+            side_effect=lambda p, **_kw: "parent-id" if p == "/" else "existing-id"
         )
 
         # Stub _SpooledWriter so we don't actually exercise the Drive

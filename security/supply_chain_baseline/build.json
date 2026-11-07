@@ -1,0 +1,95 @@
+{
+ "name": "build",
+ "versions": {
+  "1.2.2": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|build/__main__.py|a6fce563afabf155",
+    "yara|capability_filesystem_delete|build/env.py|9437b71dfa8daf80",
+    "yara|capability_filesystem_read|build/_builder.py|676b831d9c62978d",
+    "yara|capability_process_spawn|build/__main__.py|a6fce563afabf155",
+    "yara|capability_process_spawn|build/_builder.py|676b831d9c62978d",
+    "yara|capability_process_spawn|build/_ctx.py|404073418613d81b",
+    "yara|capability_process_spawn|build/_exceptions.py|971118af8d9e1bec",
+    "yara|capability_process_spawn|build/env.py|9437b71dfa8daf80"
+   ],
+   "archives": {
+    "build-1.2.2-py3-none-any.whl": {
+     "entry_points": [
+      "pyproject-build=build.__main__:entrypoint",
+      "build=build.__main__:entrypoint"
+     ],
+     "files": {
+      "build-1.2.2.dist-info/LICENSE": "aaf9a29ca5907971ccf07de025375db34539a8d5eeebce20b46099805722106f",
+      "build-1.2.2.dist-info/METADATA": "09ffea0379cad2c517d2245c7e37d1a0e14998c4dd42bf716d58a7ef40683d7c",
+      "build-1.2.2.dist-info/RECORD": "bab5e3bc37866d87a5c84a36ee970ad9957988512a5eb8bfc143fcd8a5b722d0",
+      "build-1.2.2.dist-info/WHEEL": "1196c6921ec87b83e865f450f08d19b8ff5592537f4ef719e83484e546abe33e",
+      "build-1.2.2.dist-info/entry_points.txt": "3186db33a24662e6e02234e070ba4d219a5cd0f59b8bd991016ed586d733952f",
+      "build/__init__.py": "57e92cc94355f4d6adef910b5c63099c858ab6f30e53d65485dfe9c1ed211406",
+      "build/__main__.py": "a6fce563afabf155c7483de1ed28003484e5e6f0d5d5931d10fc7c9ff2f2b2e0",
+      "build/_builder.py": "676b831d9c62978dc72df859e8a29cdea8dde5936225f2b566ee968092c94c0e",
+      "build/_compat/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "build/_compat/importlib.py": "99d518627e5c89abc143acc513eda08450e8b4a642e10b9f6ca3323e0e61dd62",
+      "build/_compat/tarfile.py": "f3eb039db1bef666793ac99254f02bc44e8a23a74f7b4c17db27f87ad0d2ab19",
+      "build/_compat/tomllib.py": "253faaf5f06efef3ade1f3d62a1d9b20abdf928eb7df3ffbe05fd33ff635edcb",
+      "build/_ctx.py": "404073418613d81bb28f478791328843718adcb115eab102fb68918ae538b13f",
+      "build/_exceptions.py": "971118af8d9e1bec207cb6dc321964b3871cd2ef8fdf330cf2c6d6ada20dc08e",
+      "build/_types.py": "89fdbe23fd05d47196861b9f66a662043bc077f9e208c48a687026587508b1e8",
+      "build/_util.py": "0f8c45c680383d3dbbc5a96ff5afb97e50ad66064734568aa6220cd97a5d33db",
+      "build/env.py": "9437b71dfa8daf8048f66305b06629e186c5fc82721417ceef839fb45f352a63",
+      "build/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "build/util.py": "8811cfa54d76f28dc46f174539348eddae0d92d3bd0e74d6889a1705e76a9aed"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "9cbfe08add83c5c137a8882f4cbc4ce8fbb0da078170ddc334a5d34cfaecf43b",
+     "native": {},
+     "pth": {},
+     "sha256": "277ccc71619d98afdd841a0e96ac9fe1593b823af481d3b0cea748e8894e0613"
+    }
+   },
+   "name": "build",
+   "provenance": {
+    "build-1.2.2-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Filipe La\u00edns <lains@riseup.net>, Bern\u00e1t G\u00e1bor <gaborjbernat@gmail.com>, layday <layday@protonmail.com>, Henry Schreiner <henryschreineriii@gmail.com>",
+    "project_urls": {
+     "changelog": "https://build.pypa.io/en/stable/changelog.html",
+     "homepage": "https://build.pypa.io",
+     "issues": "https://github.com/pypa/build/issues",
+     "source": "https://github.com/pypa/build"
+    },
+    "summary": "A simple, correct Python build frontend"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|build/__main__.py|a6fce563afabf155",
+     "yara|capability_filesystem_delete|build/env.py|9437b71dfa8daf80",
+     "yara|capability_filesystem_read|build/_builder.py|676b831d9c62978d",
+     "yara|capability_process_spawn|build/__main__.py|a6fce563afabf155",
+     "yara|capability_process_spawn|build/_builder.py|676b831d9c62978d",
+     "yara|capability_process_spawn|build/_ctx.py|404073418613d81b",
+     "yara|capability_process_spawn|build/_exceptions.py|971118af8d9e1bec",
+     "yara|capability_process_spawn|build/env.py|9437b71dfa8daf80"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete build/__main__.py",
+     "capability_filesystem_delete:capability_filesystem_delete build/env.py",
+     "capability_filesystem_read:capability_filesystem_read build/_builder.py",
+     "capability_process_spawn:capability_process_spawn build/__main__.py",
+     "capability_process_spawn:capability_process_spawn build/_builder.py",
+     "capability_process_spawn:capability_process_spawn build/_ctx.py",
+     "capability_process_spawn:capability_process_spawn build/_exceptions.py",
+     "capability_process_spawn:capability_process_spawn build/env.py"
+    ]
+   },
+   "version": "1.2.2"
+  }
+ }
+}

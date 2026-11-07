@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from models.file_item import FileItem
 
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ class PropertiesDialog(QDialog):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
+        set_window_icon(self, "metadata")
         self._backend = backend
         self._file_path = file_path
 

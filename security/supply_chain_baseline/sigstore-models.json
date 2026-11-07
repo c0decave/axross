@@ -1,0 +1,70 @@
+{
+ "name": "sigstore-models",
+ "versions": {
+  "0.0.6": {
+   "accepted_findings": [],
+   "archives": {
+    "sigstore_models-0.0.6-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "sigstore_models-0.0.6.dist-info/METADATA": "0292e8e8b9ccf597a52220a8d3ba5997b527f850fe3d52392deb022c42173f3b",
+      "sigstore_models-0.0.6.dist-info/RECORD": "2fa1188068619c5afa461910f24f71b4be0c1581e36a58d0c829b96c07984b37",
+      "sigstore_models-0.0.6.dist-info/WHEEL": "de2778a3ae0ebd19bd75492787798c24d71fa1344ad3cb9ae5c53a0c5c95cbee",
+      "sigstore_models-0.0.6.dist-info/licenses/LICENSE": "860e3d7a86b84e6a7012c7a635fc64df475cebc6cce34dfeb73a5982ec58176c",
+      "sigstore_models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore_models/_core.py": "d18d67db13280cc610019611cde9c1a7fe89ec98eb23e3944e781369a8ecb90d",
+      "sigstore_models/bundle/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore_models/bundle/v1/__init__.py": "94b0d5a49de33b4d4322319d61e56c623b63f61d594fd4b8002143309bb86100",
+      "sigstore_models/common/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore_models/common/v1/__init__.py": "770096e93583e11ae6fa4d8bd94588a83784b9331301e3e0e1510570fcfb160a",
+      "sigstore_models/intoto.py": "a784e130d4909159db91cf820731d13440204038993aa05edfde7983176a3502",
+      "sigstore_models/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore_models/rekor/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore_models/rekor/v1/__init__.py": "40e269c0c36d6e9d83b3d1c441f40712c9b6f595313c33d5a9b080760bdcb371",
+      "sigstore_models/rekor/v2/__init__.py": "bba38bf31b52d3f92d7ba5dda0cc18011f3fc5ada63d6ef92a4f39a0362a3ec8",
+      "sigstore_models/rekor/v2/dsse.py": "a47fe1c9955c7c6b8d07a7e506392dae1996cdf5a1b9c42a38599e847ba4d441",
+      "sigstore_models/rekor/v2/entry.py": "ddd0e1fb3b440262a7e35963765fa274a55f2975f057290b8bf88aedd9cc1a01",
+      "sigstore_models/rekor/v2/hashedrekord.py": "cec42677fac3c4f55fef7e3dcfddbcdb8e1bdd4ee67b0f4ef139cca1f140d44c",
+      "sigstore_models/rekor/v2/verifier.py": "4ce38a6a9122d17b911003a51703a2105c94b16a465164dc9cb61d610c2d9194",
+      "sigstore_models/trustroot/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore_models/trustroot/v1/__init__.py": "b7992a896f005ddcf18a9c1b279e86324ec48d7ad9babb69cb1ea9fc00550ce8"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "927281e9ed374085db9ad9b38591e147b4e4837b5c631a25c5b5f6aa9cd069ef",
+     "native": {},
+     "pth": {},
+     "sha256": "5201a68f4d7d0f8bec1e2f4378eb646b084c52609a4e31db8c385095fff68b2e"
+    }
+   },
+   "name": "sigstore-models",
+   "provenance": {
+    "sigstore_models-0.0.6-py3-none-any.whl": {
+     "environment": "pypi.org",
+     "kind": "GitHub",
+     "repository": "astral-sh/sigstore-models",
+     "workflow": "publish.yml"
+    }
+   },
+   "pypi": {
+    "author": "William Woodruff",
+    "author_email": "William Woodruff <william@astral.sh>",
+    "project_urls": {
+     "Repository": "https://github.com/astral-sh/sigstore-models"
+    },
+    "summary": "Pydantic based models for Sigstore's protobuf specifications"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (astral-sh/sigstore-models)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.0.6"
+  }
+ }
+}

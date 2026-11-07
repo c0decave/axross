@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 #: Largest guide file read from docs/ (the real ones are ~10 KB).
 MAX_GUIDE_BYTES = 1024 * 1024
@@ -261,6 +262,7 @@ class ScriptingGuideDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None, *, language: str | None = None):
         super().__init__(parent)
+        set_window_icon(self, "scripts")
         self.setWindowTitle(tr("Scripting Guide") + " — axross")
         self.resize(820, 680)
 

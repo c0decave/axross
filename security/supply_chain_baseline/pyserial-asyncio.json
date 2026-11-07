@@ -1,0 +1,57 @@
+{
+ "name": "pyserial-asyncio",
+ "versions": {
+  "0.6": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|serial_asyncio/__init__.py|eccfebf6ddb2b149"
+   ],
+   "archives": {
+    "pyserial_asyncio-0.6-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pyserial_asyncio-0.6.dist-info/LICENSE.txt": "64f3e548f0300d43c5af90b667150a9c57a4307c0f75fe741f76d0419905224a",
+      "pyserial_asyncio-0.6.dist-info/METADATA": "ccd2c02214ff804e20dceb2157e4beff37d5bc6c7fbeac8b01ebb5732691dfe2",
+      "pyserial_asyncio-0.6.dist-info/RECORD": "6c7dfc87f91f3d51548b67dfb2f14774dedd273d2d0294cd1600cd9799f9258b",
+      "pyserial_asyncio-0.6.dist-info/WHEEL": "7b0c04b9e8a8d42d977874ef4f5ee7f1d6542603afc82582b7459534b0a53fda",
+      "pyserial_asyncio-0.6.dist-info/top_level.txt": "624bd5c4f6831ae3a5df70d56501b634043b18e815e3b5b06fef83e7fc6910b1",
+      "serial_asyncio/__init__.py": "eccfebf6ddb2b1498f216c308c4c53089d90d557273cbebd59a702befbe67364"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b56a2f5533c5efa513a9953299c261ce3d6b6580c2e8ea7760ecb412dba7131f",
+     "native": {},
+     "pth": {},
+     "sha256": "de9337922619421b62b9b1a84048634b3ac520e1d690a674ed246a2af7ce1fc5"
+    }
+   },
+   "name": "pyserial-asyncio",
+   "provenance": {
+    "pyserial_asyncio-0.6-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "pySerial-team",
+    "home_page": "https://github.com/pyserial/pyserial-asyncio",
+    "license": "BSD",
+    "project_urls": {
+     "Homepage": "https://github.com/pyserial/pyserial-asyncio"
+    },
+    "summary": "Python Serial Port Extension - Asynchronous I/O support"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|serial_asyncio/__init__.py|eccfebf6ddb2b149"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read serial_asyncio/__init__.py"
+    ]
+   },
+   "version": "0.6"
+  }
+ }
+}

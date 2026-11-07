@@ -1,0 +1,79 @@
+{
+ "name": "tenacity",
+ "versions": {
+  "9.2.1": {
+   "accepted_findings": [
+    "yara|capability_network_download|tenacity/wait.py|fab8c53ae00dda64",
+    "yara|capability_network_outbound|tenacity/wait.py|fab8c53ae00dda64"
+   ],
+   "archives": {
+    "tenacity-9.2.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "tenacity-9.2.1.dist-info/METADATA": "1d30f0b4cd3cf1ad585400f9ea9c424e64c630ea63e57209a1f16fce72e68eb7",
+      "tenacity-9.2.1.dist-info/RECORD": "39af8e130aeb346261dc36c8af9cc5c6fbb8a9c56622b9add6cbe443c4335bcf",
+      "tenacity-9.2.1.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
+      "tenacity-9.2.1.dist-info/licenses/LICENSE": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+      "tenacity/__init__.py": "9c050f8f59801a5bfb5a1738dd75d4ee544f368481e068268571c266e2b96577",
+      "tenacity/_utils.py": "6ecccb8012d314f5000d75a5a01a1e3257ab1a3d727a21b457e2c922fbe3e79e",
+      "tenacity/_version.py": "77736d849eed3214e16a785532634d1f854367fcdd73c6f7d2803fb940312d1e",
+      "tenacity/after.py": "7ba2aec841d36f880c998f6f2030695db2f4d9bd0ec858273a7b3443a3b429fa",
+      "tenacity/asyncio/__init__.py": "40cfb868e1a035bb3c0d890502585b9f0265cf1c3d07dc62b9cd7007c2fc93cf",
+      "tenacity/asyncio/retry.py": "af1d7dc2e951639ad9981ca724b9e484a800d7546d0777edfc2787be6e27310a",
+      "tenacity/before.py": "7db2c269be3697181f9ed6267a5b58052d58f615fd18a61e02972cbb3dbcc32e",
+      "tenacity/before_sleep.py": "4679592140a66a2692b2e070ac0e9076c6cc6093effe073bada55497ac1e2f5f",
+      "tenacity/nap.py": "3cf785c410dd6d4cbf5de5be03e8e9b2a61ef4bb7709c230afe4eff95629be6c",
+      "tenacity/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tenacity/retry.py": "04b41b9a78df02c9143a0199ac5437656f680f42a644edde1b7bfad471925e77",
+      "tenacity/stop.py": "bd4b852e18e886fc271da51760c39fe49ff4174f916f07f3565c280f4f2d2c71",
+      "tenacity/tornadoweb.py": "84e90c180d40ed1e96b29c7607bef40b9f9e840f823c3e883a4d32c8efdfa91d",
+      "tenacity/wait.py": "fab8c53ae00dda64008a70c03654f22e059f3d697c3c8a6029513910fa7179fc"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2fd6643326a28b05362f79aaa249847efa1eba2fafac605a886a89abb0f3bbb5",
+     "native": {},
+     "pth": {},
+     "sha256": "9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e"
+    }
+   },
+   "name": "tenacity",
+   "provenance": {
+    "tenacity-9.2.1-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "jd/tenacity",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Julien Danjou <julien@danjou.info>",
+    "license_expression": "Apache-2.0",
+    "project_urls": {
+     "Changelog": "https://tenacity.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://tenacity.readthedocs.io",
+     "Homepage": "https://github.com/jd/tenacity",
+     "Issues": "https://github.com/jd/tenacity/issues",
+     "Source": "https://github.com/jd/tenacity"
+    },
+    "summary": "Retry code until it succeeds"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_download, network_outbound; attestation verifies (jd/tenacity)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_download|tenacity/wait.py|fab8c53ae00dda64",
+     "yara|capability_network_outbound|tenacity/wait.py|fab8c53ae00dda64"
+    ],
+    "yara": [
+     "capability_network_download:capability_network_download tenacity/wait.py",
+     "capability_network_outbound:capability_network_outbound tenacity/wait.py"
+    ]
+   },
+   "version": "9.2.1"
+  }
+ }
+}

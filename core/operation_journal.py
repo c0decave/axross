@@ -70,7 +70,7 @@ class JournalEvent:
 #: the user's own file (mode 0600), and a path ``redact_text`` had
 #: rewritten ("Basic Course" -> "Basic <redacted>") made undo restore a
 #: trashed file under the rewritten name. Only URL credentials go.
-_PATH_FIELDS = frozenset({"source", "dest", "path", "output", "temp"})
+_PATH_FIELDS = frozenset({"source", "dest", "path", "output", "temp", "trash_root"})
 
 
 def _redact_event(value: Any, key: str | None = None) -> Any:
@@ -243,7 +243,7 @@ def read_recent(limit: int = 200, *, journal_path: Path | None = None) -> list[d
     for line in lines[-count:]:
         try:
             item = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(item, dict):
             out.append(item)

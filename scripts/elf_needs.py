@@ -188,10 +188,36 @@ _LIB_DIRS = ("/lib64", "/usr/lib64", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-l
              "/lib", "/usr/lib")
 
 
+def _in_root(root: str, path: str, hops: int = 16) -> str | None:
+    """*path* (absolute, as the target sees it) inside *root*, its symlinks
+    followed within *root* (an absolute link target is the target's, not
+    this machine's); the regular file it is, or None."""
+    for _ in range(hops):
+        here = os.path.join(root, path.lstrip("/"))
+        if os.path.islink(here):
+            link = os.readlink(here)
+            path = link if link.startswith("/") else \
+                os.path.normpath(os.path.join(os.path.dirname(path), link))
+            continue
+        return here if os.path.isfile(here) else None
+    return None
+
+
 def host_library(soname: str) -> str | None:
     """The file this machine's loader uses for *soname* (ldconfig's cache,
-    x86-64 entries first, then the usual directories); ``None`` if none."""
+    x86-64 entries first, then the usual directories); ``None`` if none.
+    With ``AXROSS_TARGET_ROOT`` set (scripts/build_dist.sh: the unpacked
+    packages of the target system), only that root's library directories
+    count: the check is against the target, not the build machine."""
     import subprocess
+
+    target = os.environ.get("AXROSS_TARGET_ROOT", "")
+    if target:
+        for d in _LIB_DIRS:
+            p = _in_root(target, os.path.join(d, soname))
+            if p is not None:
+                return p
+        return None
 
     try:
         out = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, timeout=30,

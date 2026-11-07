@@ -1,0 +1,106 @@
+{
+ "name": "yarl",
+ "versions": {
+  "1.25.1": {
+   "accepted_findings": [
+    "yara|capability_network_outbound|yarl/_parse.py|966b4640e8fb7175"
+   ],
+   "archives": {
+    "yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "yarl-1.25.1.dist-info/METADATA": "fd6baa258a11c4d7e7008272a69180d4d34aa04a6a5afda36ac5e55aa0aa4f41",
+      "yarl-1.25.1.dist-info/RECORD": "b9bae5f388bfbd9dc154aaee9fa5f9c268a756e558726d3b46f3b13feb2d503c",
+      "yarl-1.25.1.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "yarl-1.25.1.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "yarl-1.25.1.dist-info/licenses/NOTICE": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838",
+      "yarl-1.25.1.dist-info/top_level.txt": "bdfdd226e421fa4ed8b6fb14ad5fce3cead3f4aaa7d023a593b20f63286d1a44",
+      "yarl/__init__.py": "87d51a4c308a11572f243d21ca8834625eba25bd7d6d4c1e07d17ee87f7276e7",
+      "yarl/_parse.py": "966b4640e8fb7175f022160528b8959056f41d9e579a0476a05e0cfa4384d25a",
+      "yarl/_path.py": "034149532959cb39a54f46b75033816caf84cd95c2018b90401bc6f5e002f61b",
+      "yarl/_query.py": "e6e769cfda6ecb46eb79f079d2558fbaedf04dd6c481763f325a865f3b9789e1",
+      "yarl/_quoters.py": "5f30729a84ea7b78b098b8ba099ec61592d44a35947796b81d98a62bf7219196",
+      "yarl/_quoting.py": "c8a22a153cc5cd62d56f4f31cb50d2c4a363170a387fea0b973c53b8ac02e7b3",
+      "yarl/_quoting_c.cpython-312-x86_64-linux-gnu.so": "deae0fb92793730e5b3924f267c03225360f0756e4cbb3971c5a048010b3245e",
+      "yarl/_quoting_c.pyx": "ba945a5c0adc152921ef02c4c2b7776acdc80a55b74d3498f16999d6c7cf62af",
+      "yarl/_quoting_py.py": "372f7a62a6a1973c1699bdbb148f217f9d350cabb9188adcdb5154b8396b96f3",
+      "yarl/_url.py": "ff63bc9a8e46ef2df05711b4333e0755ebdbc2f0458d87332e3f3686f1062ca7",
+      "yarl/py.typed": "6b2e4e30ee3be4f95c67f15bba7f666875bb63a3014e4d145cbe33b47c7722e8"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "de0e6fe457302e12a417bc31729cb697206625c3a090cd548691eaa0272a6b0c",
+     "native": {
+      "yarl/_quoting_c.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "c6f117789d22dce188e5754e8bc65b7e6ebf8cb73963b9fa761f672a5883769d"
+    }
+   },
+   "name": "yarl",
+   "provenance": {
+    "yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/yarl",
+     "workflow": "ci-cd.yml"
+    }
+   },
+   "pypi": {
+    "author": "Andrew Svetlov",
+    "author_email": "andrew.svetlov@gmail.com",
+    "home_page": "https://github.com/aio-libs/yarl",
+    "license": "Apache-2.0",
+    "maintainer": "aiohttp team <team@aiohttp.org>",
+    "maintainer_email": "team@aiohttp.org",
+    "project_urls": {
+     "CI: GitHub Workflows": "https://github.com/aio-libs/yarl/actions?query=branch:master",
+     "Chat: Matrix": "https://matrix.to/#/#aio-libs:matrix.org",
+     "Chat: Matrix Space": "https://matrix.to/#/#aio-libs-space:matrix.org",
+     "Code of Conduct": "https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+     "Coverage: codecov": "https://codecov.io/github/aio-libs/yarl",
+     "Docs: Changelog": "https://yarl.aio-libs.org/en/latest/changes/",
+     "Docs: RTD": "https://yarl.aio-libs.org",
+     "GitHub: issues": "https://github.com/aio-libs/yarl/issues",
+     "GitHub: repo": "https://github.com/aio-libs/yarl",
+     "Homepage": "https://github.com/aio-libs/yarl"
+    },
+    "summary": "Yet another URL library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_outbound; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (aio-libs/yarl)."
+   },
+   "scans": {
+    "capa": {
+     "deae0fb92793730e5b3924f267c03225360f0756e4cbb3971c5a048010b3245e": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "yarl/_quoting_c.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_network_outbound|yarl/_parse.py|966b4640e8fb7175"
+    ],
+    "yara": [
+     "capability_network_outbound:capability_network_outbound yarl/_parse.py"
+    ]
+   },
+   "version": "1.25.1"
+  }
+ }
+}

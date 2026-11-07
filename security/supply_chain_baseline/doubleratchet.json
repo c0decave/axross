@@ -1,0 +1,78 @@
+{
+ "name": "doubleratchet",
+ "versions": {
+  "1.3.0": {
+   "accepted_findings": [],
+   "archives": {
+    "doubleratchet-1.3.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "doubleratchet-1.3.0.dist-info/METADATA": "d7405fc8c947211295264b1bfe162df69ad491f3d87ebaf20867c7220f315b20",
+      "doubleratchet-1.3.0.dist-info/RECORD": "452bfbad372844eef2bdd6fb6383be574fdc6ea755dfda96a17cb98c0940e82a",
+      "doubleratchet-1.3.0.dist-info/WHEEL": "c14c80f0e6ae95195b7f032d990b2f367806af140702f90a72f466762ce5262d",
+      "doubleratchet-1.3.0.dist-info/licenses/LICENSE": "32bcc74db2e8d577be4c5367053ab10538889befd30d745271ae11c6e9ac42ee",
+      "doubleratchet-1.3.0.dist-info/top_level.txt": "c70998d3fc97020afa7ca1e9306c044487709ea64bfda66ce052d87f55a8b389",
+      "doubleratchet/__init__.py": "cd4067398c04b4ab9ab3bf63a25cefb44da540938644ebef94f6b3473d9149bb",
+      "doubleratchet/aead.py": "f2aae0a64e354bb061e9016ff4d864967b62221534ba0e119edf950c768e6e95",
+      "doubleratchet/diffie_hellman_ratchet.py": "723a13495bc5f2bdaedf686c374d8abd6a4df46fa95231479cb06221d68649ff",
+      "doubleratchet/double_ratchet.py": "71bcd85d2188bae982353ffc0a7e1cfac09319887bb64f9fdd73647c96342541",
+      "doubleratchet/kdf.py": "85ebe72576dd49926fd8c679615a4e19c43931b53c474857a62b77aadce589d8",
+      "doubleratchet/kdf_chain.py": "a2124ef7575e9b2b67d5f8dde1e390f9ce8dd914d4f4b2b546e8db79f7a72b71",
+      "doubleratchet/migrations.py": "4621be6ce656f3f0a83843afa8dbd8b317ee6bfb8bd62335fa41b3091a410f0b",
+      "doubleratchet/models.py": "121da178ccd89581e32b7afa62c102b9ebcbf9576a6f1046bce505b703cd404b",
+      "doubleratchet/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "doubleratchet/recommended/__init__.py": "6814e1d23803694c01cadc5951dbd6df34b7245533cb0f6fe57fd7eb28818f71",
+      "doubleratchet/recommended/aead_aes_hmac.py": "b402d1b0581cb8cb2406fa52ef91634607b2cb1a7aab9054d52295389e2cc1de",
+      "doubleratchet/recommended/crypto_provider.py": "3fca94294cc5346a55cab7b0fd4b9ccc02ca23bed1a31029af4173e5fa7fcdd6",
+      "doubleratchet/recommended/crypto_provider_cryptography.py": "9145350d0a655072852cdab460c792eadd7b49cfdea725e91bba1762f38cb604",
+      "doubleratchet/recommended/crypto_provider_impl.py": "bbb6cb5a51c0991a8ebbf9e136b28e3858f353cab674f9d3fe8e308f78caf9dc",
+      "doubleratchet/recommended/diffie_hellman_ratchet_curve25519.py": "20fa6e137542daa5bbb3f5e6b907f04c3781d8afd7d11fb2d4214cd29dc13ac3",
+      "doubleratchet/recommended/diffie_hellman_ratchet_curve448.py": "d1a3d20d52e1d4ea2e79f44d2c71c32305ff23e794da7a67979fac6e885ea8bb",
+      "doubleratchet/recommended/kdf_hkdf.py": "56fad22e863f1e04f1034460d0026341af19eeecc416d3384b030d5d9f44d6d2",
+      "doubleratchet/recommended/kdf_separate_hmacs.py": "e48f1e9babd5521037cfb13302d1a0e601a340f6b38f46c8ecb1e82d12aa39d4",
+      "doubleratchet/symmetric_key_ratchet.py": "b4f9e8ac83fc8df990e86b12ec0c5ef32f7eb9c8c154d18be90ee53b02f7280c",
+      "doubleratchet/types.py": "b7897f4d1a23577c5e99337d7548f7aee0d954500deb6124919de611de645735",
+      "doubleratchet/version.py": "129e56f9d4c10790fe36604defe008d6a63a5b29bdf8249981e7e6a2a5f75b59"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f7ec918025b6a464a16a6434c87beeaea0098af348479487e2f93832ac0368d7",
+     "native": {},
+     "pth": {},
+     "sha256": "a869c81aa175abd9d7cfcf0069a0fa1261116b2ff2684c1ac95a1b83b875b18d"
+    }
+   },
+   "name": "doubleratchet",
+   "provenance": {
+    "doubleratchet-1.3.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "Syndace/python-doubleratchet",
+     "workflow": "test-and-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "license_expression": "MIT",
+    "maintainer_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "project_urls": {
+     "Changelog": "https://github.com/Syndace/python-doubleratchet/blob/main/CHANGELOG.md",
+     "Documentation": "https://python-doubleratchet.readthedocs.io/",
+     "Issues": "https://github.com/Syndace/python-doubleratchet/issues",
+     "Repository": "https://github.com/Syndace/python-doubleratchet"
+    },
+    "summary": "A Python implementation of the Double Ratchet algorithm."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (Syndace/python-doubleratchet)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.3.0"
+  }
+ }
+}

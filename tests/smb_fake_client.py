@@ -57,6 +57,7 @@ class FakeSmbClient:
         self.content = b"hello"
         self.fail: BaseException | None = None
         self.links: set[str] = set()  # UNC paths that are symlinks
+        self.junctions: set[str] = set()  # UNC paths that are junctions (reparse points)
         self.listings: dict[str, list] = {}  # per-directory entries (default: entries)
         self.calls: list[tuple[str, str]] = []  # (operation, UNC path)
         self.path = types.SimpleNamespace(
@@ -79,6 +80,12 @@ class FakeSmbClient:
     def stat(self, unc, **_kw):
         self._maybe_fail()
         return self.stat_value
+
+    def lstat(self, unc, **_kw):
+        self._maybe_fail()
+        result = StatResult(0o40755, 0, 0)
+        result.st_file_attributes = 0x410 if unc in self.junctions else 0x10
+        return result
 
     def _isdir(self, unc, **_kw):
         self._maybe_fail()

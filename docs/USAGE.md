@@ -34,6 +34,14 @@ profile in Quick Connect (or on the profile list of the Connection
 Manager) offers *Delete Connection Config…*: after a question the
 profile goes, with its stored password.
 
+- **How a connection is protected.** An icon next to every connection -
+  the pane's header, the workspace tab (its weakest connection), bookmarks,
+  Quick Connect - shows cleartext, signed only, TLS (with a weakness), SSH
+  encrypted or end-to-end; its tooltip says exactly what, and whether that
+  was negotiated on the live connection or only configured (FTP cleartext,
+  FTPS TLS 1.3 with a verified certificate, SMB 3.1.1 encrypted or signing
+  only, WebDAV http vs https, NFS AUTH_SYS cleartext ...).
+
 - **Missing features.** *Help > Features…* lists every optional
   feature - connections, file analysis and archives, external tools
   such as ripgrep, rsync or the forensic and VirtualBox extensions'
@@ -67,6 +75,11 @@ profile goes, with its stored password.
   button reports which stage fails, and each pane shows its route.
   Backends that cannot be proxied fail closed instead of going direct.
   See [PROXY_SUPPORT.md](PROXY_SUPPORT.md).
+- **Production servers.** *Production (confirm destructive operations
+  with a countdown)* in the Connection group of Connect to Server marks
+  the profile: the first delete, move, rename or overwrite on it in a
+  pane waits a few seconds with a countdown that Cancel or Esc stops.
+  See [DAILY_DRIVER.md](DAILY_DRIVER.md#production-tarpit).
 - **OpSec overrides.** Profile fields control SSH keepalive, SMB
   workstation name, Telnet NAWS, rsync metadata stripping. See
   [OPSEC.md](OPSEC.md) for the threat model.
@@ -119,7 +132,8 @@ PgUp** switch them, and each one keeps its own source and target pane.
   hold a dragged pane over a workspace tab for half a second and that
   tab opens, so a pane reaches a workspace in the background.
 - **Extension panels** (Media Player, Drives Overview, Markdown Preview,
-  …) are on all workspaces until you put one on a workspace: the ⇄
+  …) and the **Agent** dock are on all workspaces until you put one on a
+  workspace: the ⇄
   button in its title bar (or a right click on the title bar, *Send to
   Workspace*) offers every workspace (the one it is on ticked), **New
   Workspace** and **All Workspaces**, and
@@ -132,6 +146,19 @@ PgUp** switch them, and each one keeps its own source and target pane.
   **Extensions** menu puts it back. Closing the workspace parks its
   panels on All Workspaces (hidden, with their state); switching the
   extension off takes its panels out and switching it on puts them back.
+- **Show Only on Workspace** keeps a dock a dock but ties it to one
+  workspace - any dock: the Agent, Log, Transfers, Terminal, Console,
+  Scripts, Bookmarks and Analysis docks as well as the extension panels
+  in the dock area (Media Player, Bluetooth …). The pin in its title
+  bar (or a right click on the title bar) offers **All Workspaces**,
+  every workspace and **New Workspace**; the pin is lit while the dock is
+  bound and its tooltip names the workspace. A bound dock keeps its
+  place but shows only while its workspace is the one in the window (a
+  detached workspace: while it is the current one); opening it on
+  another workspace (View → Panels, its toolbar button) brings its
+  workspace to the front. Closed on its own workspace it stays closed;
+  closing the workspace puts it back on all of them. The binding comes
+  back on the next start.
 - **Close Workspace** closes it with its panes (it asks first); the
   last pane of a workspace closing closes the workspace. One workspace
   always stays.
@@ -228,7 +255,10 @@ cut is cleared once its move is queued.
 
 Every cross-pane copy or move enters the transfer queue. The dock
 at the bottom shows progress, throughput, and ETA. Transfers run on
-worker threads and survive a refused dialog or a closed pane.
+worker threads and survive a refused dialog or a closed pane. Quitting
+axross while transfers run or wait asks first (quitting cancels them);
+a folder that cannot be read during the walk becomes a failed row in the
+list, and a walk that stops part-way says how much was queued.
 
 - **Atomic semantics.** Every write goes to a hidden sibling temp
   file (`.<name>.part-<job>-<fingerprint>`) and is renamed into place
@@ -297,7 +327,7 @@ native protocol doesn't support them.
 | New Hardlink… | Right-click | Same shape; cross-device hardlinks surface as `OSError(EXDEV)`. |
 | Find in Index | `Ctrl+Shift+F` | Search the offline metadata index by name / ext / size. |
 | Find in This Folder… | Right-click (also on empty space) | Find Files with this folder (or the selected one) ticked — see *Find Files*. |
-| Duplicate Finder | View menu | Group rows by content hash, copy `ax-cas://…` URLs; move selected copies to the axross trash after a live re-check that a genuine other copy survives. |
+| Duplicate Finder | View menu | Groups indexed files by content hash, largest waste first: each group shows the space it would free, the status line the total. Empty files and groups that are only hard links of one file are hidden unless *Empty files* / *Hard links* is ticked. *Filter* (text, or patterns like `*.jpg *.png`; `Ctrl+F`), *At least* (a size) and *Sort* (space to reclaim, size, copies, name, folder) narrow the list; the copies of a group stay in survivor order (the first is kept). *Rebuild from Active Pane…* hashes the folder in the background with counts, bytes and *Cancel*: unchanged files are not hashed again, files gone since the last scan leave the index, and the report names files that could not be read, folders that could not be listed and FIFOs, sockets or devices that were skipped (never read: that could hang). A backend without a content checksum (SMB, plain FTP, WebDAV with ETags only) has its files read instead — only those that share their size with another file, and only as far as their first 64 KiB match; an ETag never counts as a hash. *Mark All Duplicates (keep first)* keeps the oldest copy; *Mark, Keeping…* (also in the right-click menu) keeps the newest copy, the shortest path or a copy inside a folder, or marks the copies inside a folder; a hard link of a kept copy is never marked, and hard links do not count as space to reclaim. *Move Selected to Trash…* (`Del`) moves the marked copies to the axross trash after a live re-check that a genuine other copy survives. `Enter` opens the containing folder, the line under the list shows the current row in full (exact size, hash, hard links), and `ax-cas://…` URLs can be copied. Thousands of groups appear a chunk at a time while the window stays usable. |
 | View Media… / View Selected Media… | Right-click, View menu | Images, PDFs and videos of the folder (optionally recursive) or the selection as overview grid, click-through viewer or slideshow — see *Editors and viewers*. |
 | Show / Remove / Export Metadata… | Right-click | EXIF / GPS / XMP / IPTC, Office properties, PDF info, audio / video tags of the selection — or of the whole folder when nothing is selected (subfolders optional) — see *File metadata*. |
 | Calculate Size (N dirs) | Right-click on folders | Total size, file and folder count of each selected folder, walked in the background through the connection (*Cancel* in the status line); the result table sorts, and the sizes show in the pane's Size column until the folder is reloaded. **Hidden files count**: dotfiles, hidden folders and entries a backend flags hidden are summed like every other entry — as `du` does — whether or not the pane shows them. A link counts with its own size and is never followed; a folder that cannot be read is named in the result and skipped. |
@@ -490,9 +520,15 @@ archives, is axross' own Find Files (`core.file_search`,
 
 ## Editors and viewers
 
-Every viewer, editor and dialog has two buttons in its top-right corner:
-[x] closes it, the one left of it maximizes it over the whole screen and
-restores the size it had before. `Ctrl+M` does the same, and so does
+Every viewer, editor, dialog and extra window has its own title bar: its
+icon and name, then `_` (put it into the dock bar), the maximize button
+and [x]. The window manager draws none of its own (the window is
+frameless): a drag on the title bar moves the window, a double-click
+maximizes or restores it, and the thin edges resize it. *Settings >
+Appearance > axross's own title bars* switches back to the window
+manager's title bar and buttons, for open windows at once.
+[x] closes the window, the button left of it maximizes it over the whole
+screen and restores the size it had before. `Ctrl+M` does the same, and so does
 the title bar's Maximize button. In a dialog, a left drag on the rest of
 that top row moves the dialog, and a left drag on a floating panel's
 title bar moves the panel - also where the window manager draws no title
@@ -562,8 +598,10 @@ bar docks it again.
   side panel, with *Remove metadata* — in the image viewer too.
 - **Media Player** (bundled extension, *Extensions → Manage
   Extensions…*) — a dock that plays MP3, WAV, Ogg Vorbis, FLAC, Opus,
-  AAC and more. Add tracks with right-click → *Play in Media Player*,
-  *Add…*, or by dropping files and folders from a file pane or the
+  AAC and more - and internet radio: *URL…* adds a stream by its
+  http / https address (a radio station's .m3u playlist names them too;
+  a stream has no position to seek to). Add tracks with right-click →
+  *Play in Media Player*, *Add…*, or by dropping files and folders from a file pane or the
   desktop onto the playlist (folders add their audio files sorted, at
   most 2000, 6 levels deep, links to folders followed once; .m4b,
   .wv, .webm and other formats the engine plays count; what gives no
@@ -574,10 +612,10 @@ bar docks it again.
   title) keeps playing. Seek with the position slider (click or drag,
   `1:23 / 4:56`). ⏮ restarts the track after 3 s, else goes back;
   shuffle plays every track once per round, repeat is off / all /
-  one. An unplayable track is marked and skipped. *Load…* / *Save…*
-  read and write M3U / M3U8 playlists (UTF-8, relative paths for
+  one. An unplayable track is marked and skipped. *M3U* → *Load Playlist…* /
+  *Save Playlist…* read and write M3U / M3U8 playlists (UTF-8, relative paths for
   tracks under the playlist's folder, `#EXTINF` titles and lengths;
-  URLs, missing or non-audio entries are skipped, files over 1 MiB
+  http / https streams are kept, other URLs, missing or non-audio entries are skipped, files over 1 MiB
   or with NUL bytes are refused; temporary copies of remote tracks
   are not saved). The list, the current track and position, volume,
   mute, shuffle and repeat come back on the next start
@@ -592,7 +630,15 @@ bar docks it again.
   remove the selected rows, Left / Right seek 5 s (with Shift 30 s),
   Ctrl+Left / Ctrl+Right previous / next, M mute, + / - volume. With
   numpy: 10-band equalizer with presets (the arrow left of *Equalizer*
-  folds the band sliders away and gives the playlist the room) and an
+  folds the band sliders away and gives the playlist the room; it is
+  axross's one equalizer - the Agent's voice goes through it too, it is
+  kept in `audio.json` and comes back on the next start). The **…**
+  button right of the volume: *Output* plays the Media Player on its own
+  device (*Same as the output*, or e.g. the headset while the voice stays
+  on the speakers - its channel of the Audio Mixer), *Sleep Timer* pauses
+  after 15 to 90 minutes, fading out over the last 8 seconds, or at the
+  end of the track (the time left shows next to the volume), and *Audio
+  Mixer…* opens the mixer. There is also an
   animated visualization: spectrum, mirrored spectrum, radial spectrum,
   oscilloscope, stereo VU meter, line spectrum (log frequency axis),
   waterfall (spectrogram), polar spectrum, stereo scope (goniometer: L
@@ -620,14 +666,77 @@ bar docks it again.
   and files dropped onto the panel still land in the playlist. The
   visualization, its colours and options and the folded equalizer and
   playlist come back on the next start.
+- **Chat** (bundled extensions IRC, Matrix and XMPP, *Extensions → Manage
+  Extensions…*) — the account editor offers known public servers in an
+  editable list (type your own any time): a snapshot ships with axross,
+  *Refresh list* fetches the public directories (irssi's network list,
+  joinmatrix.org, the XMPP Providers list) through the proxy and caches
+  them. When connected, *Channel List* / *Room Directory* / *Group Chats*
+  opens the server's public channels on the right - filter, sort,
+  double-click joins (IRC LIST in batches, at most 100 000 channels). A lock
+  next to every account and conversation shows how it is protected: TLS to
+  the server, end-to-end encrypted (all keys verified or not) or cleartext.
 - **Bluetooth** (bundled extension, *Extensions → Manage
   Extensions…*) — a panel to connect speakers, headphones and other
   Bluetooth devices through BlueZ (`bluetoothd`) on the system D-Bus; no
   program is started. It shows the adapter (several: pick one) with a
   *Powered* switch, and *Scan* lists what is in range: name, address,
-  type (speaker, headset, phone, keyboard …), signal strength in dBm
-  while scanning, battery where the device reports it, and Connected /
-  Paired / Trusted. A scan stops by itself after 2 minutes. For the
+  type (speaker, headset, phone, keyboard, watch, tag, sensor …), radio
+  (Classic, BLE or both), signal strength in dBm while scanning, the
+  vendor a BLE device advertises, battery where the device reports it,
+  when it was last heard (*now*, *12 s ago*) and Connected / Paired /
+  Trusted. **Add Device…** adds a new device in one go: it switches the
+  adapter on when you say so, scans while open, lists the new devices
+  nearby (named ones first, strongest signal on top, *Show unnamed* for
+  beacons) and *Add* pairs, trusts and connects the chosen one and - for
+  a speaker or headset with *Use as audio output* ticked - makes it
+  axross's output, each step ticked off or failing with the reason;
+  *Cancel* stops a pairing, closing stops the scan it started. Next to
+  *Scan* you pick what a scan looks for - *Classic +
+  BLE*, *Classic only* (speakers, phones, keyboards) or *BLE only*
+  (watches, trackers, sensors) - and the weakest signal it lists (*-70
+  dBm or stronger* keeps to the devices nearby); a running scan keeps
+  its choice. The row below filters the list without a new scan: words
+  matched against name, address, type, vendor and services, *All
+  radios* / *Classic* / *BLE*, and *Named only* (hides the nameless
+  beacons and trackers a BLE scan finds by the dozen). A device's
+  tooltip names its services. *Details…* (or a double-click) opens
+  everything BlueZ knows of a device - address and its type, kind,
+  radio, vendor, class and appearance, signal and transmit power,
+  battery, when it was last heard, its state and the raw advertising
+  data - and, on *Services*, the services and profiles it offers. For a
+  BLE device that is connected (*Connect* is right there) it maps the
+  GATT services BlueZ resolved with their characteristics: *Read* or
+  *Read All* fetches their values, *Watch* shows each new value of one
+  that notifies (a heart rate, a sensor) until *Stop Watching* or the
+  dialog closes. Known values are decoded (device name, battery level,
+  appearance, heart rate, temperature, humidity, pressure), others show
+  as text or hex. The *Map* tab next to *List* draws the devices nearby
+  around this computer at their estimated distance - from the signal
+  and, where a device advertises it, its transmit power, smoothed over
+  the last readings; rings mark 1, 3, 10 and 30 m. Bluetooth tells no
+  direction, so a device's angle is only its fixed place on the map.
+  Colour is the radio (Classic, BLE, both), a filled dot a paired
+  device, a ring a connected one; the nearest named devices are labelled,
+  hovering shows any device's signal and distance, a click selects it in
+  the list and a double-click opens its details (whose *Signal history*
+  graphs the last readings). The filter row applies to the map too. A
+  distance is a rough guess - walls and bodies easily halve or double
+  it. *Test…* (or the details' *Connection* tab) has the connection
+  options and tests: connect or disconnect one profile on its own (*Audio
+  playback (A2DP)*, *Headset with microphone (HFP)*, *Media controls*,
+  HID, PAN, serial port - those the device offers); *Reconnect
+  automatically when the connection drops* (axross connects it again
+  after 2, 5, 15, 30 and 60 s while it runs; a disconnect you ask for is
+  not a drop; kept in `~/.config/axross/bluetooth.json`); *Test
+  Connection* - connects if needed and reports, each timed: the
+  connection, the services resolving, the round trip of a few GATT reads
+  (BLE) and, for a speaker or headset, its audio output appearing; for a
+  speaker or headset *Play Test Sound* (two short tones on the device's
+  own output, whatever axross's output is) and *Test Microphone* (a
+  level meter for 5 s - a headset's microphone exists only in its
+  headset profile, the panel says which to connect). A scan stops by
+  itself after 2 minutes. For the
   selected device: *Pair* (*Cancel Pairing* while it runs), *Trust* /
   *Untrust* (a trusted device may reconnect by itself), *Connect*,
   *Disconnect*, *Remove* (after a confirmation). Speakers and headphones
@@ -645,6 +754,63 @@ bar docks it again.
   D-Bus, without a running `bluetoothd` or without an adapter the panel
   says so and offers nothing else; it notices when the service starts
   or an adapter is plugged in. Linux only.
+- **Audio Mixer** (bundled extension, **Tools → Audio Mixer** offers to
+  switch it on) — every sound setting in one panel. *axross*: the master
+  volume with its mute and output device, and a channel per source —
+  Media Player, Agent voice, media preview — with its own volume, mute
+  and output (*Same as the output* or a device of its own: the voice on
+  the headset, the music on the speakers). *Equalizer*: axross's one
+  10-band equalizer with presets (the Media Player's equalizer row shows
+  the same setting, the Agent's voice goes through it; numpy is needed to
+  hear it). *System*: the sound server through `pactl` (PipeWire or
+  PulseAudio) — outputs and inputs with volume (up to 150 %), mute and
+  *Default*, the programs playing and recording with their volume and
+  the device they use (choose another to move them; axross's own streams
+  are marked), and each card's profile (a Bluetooth headset: A2DP for
+  music, the headset profile for its microphone). Without `pactl` or a
+  sound server the tab says why and offers *Try Again*. Everything is
+  saved in `audio.json` like **Edit → Settings… → Audio** (which keeps
+  the backend, the input device and the tests) and running players
+  follow at once.
+- **System Information** (bundled extension, **Tools → System
+  Information…** offers to switch it on; then also *Extensions → System
+  Information…*) — a window with everything about the computer axross
+  runs on. *Overview*: the computer's name, maker, model and OS with its
+  key figures (CPU threads, memory, storage, displays), and tiles with
+  rings for CPU load, memory, swap, the root file system and the battery
+  (charge and health), the hottest temperatures on a colour scale
+  (green up to 60 °C, amber, orange from 80 °C or the sensor's own high
+  mark, red from 90 °C or critical), graphics with the connected
+  displays and the network interfaces with their live throughput; CPU
+  and memory have a sparkline of the last two minutes. A click on a tile
+  opens its page. The list on the left has a page each for *CPU*
+  (use per logical CPU, P- and E-cores, frequencies, caches, instruction
+  set features as chips, the kernel's view of the CPU vulnerabilities),
+  *Memory* (in use, cache and free as one bar, swap), *Storage* (a bar
+  per disk with its partitions, mount points and use; disks and file
+  systems as tables), *Graphics & Displays* (adapters, outputs with the
+  monitor's name, resolution, refresh rate and size from its EDID, a
+  sketch of the screens), *Network* (interfaces with kind, state, speed
+  or Wi-Fi signal, driver and traffic; Bluetooth adapters; radio
+  switches), *Audio* (sound cards, codecs, PCM devices), *USB &
+  Peripherals* (the USB tree and the input devices), *PCI* (the PCI
+  tree, names from `pci.ids`), *Battery & Power*, *Sensors*
+  (temperatures, fans, voltages), *System & OS* (maker, model, firmware,
+  Secure Boot, kernel, desktop, versions) and *Virtualisation* (bare
+  metal, a virtual machine or a container, with what gave it away).
+  Everything is read from `/proc` and `/sys` without root and without
+  starting a program (on Windows and macOS less: what Python and the
+  optional psutil tell); every source has a deadline, and a section that
+  cannot be read says why - the others are not held up. The search field
+  (`/`) filters all pages at once and the list counts the hits per page.
+  *Copy Section*, *Copy All* and *Save Report…* (text or JSON) export
+  what is gathered; *JSON Export* saves everything as a JSON file or
+  copies everything / the page shown as JSON (every value, table and raw
+  reading). Serial numbers, MAC and IP addresses and UUIDs are
+  hidden on screen and in every copy until *Show identifiers* is ticked -
+  such reports get pasted in public. Live values are read once a second
+  while the window is on screen, never while it is hidden; *Refresh*
+  gathers everything again. The window keeps its size.
 - **SSH terminal** — tabbed dock next to the transfer queue. Local
   PTY (`pty.fork()`) and remote SSH-over-paramiko are both
   available; the SSH variant reuses the existing connection rather
@@ -726,8 +892,10 @@ Scripts: `axross.metadata`, `axross.remove_metadata`,
 
 ## Scripting & embedded REPL
 
-Axross ships a curated Python surface (``axross.*``) covering every
-backend, plus 9 result-type classes for network helpers. Same
+Axross ships a curated Python surface (``axross.*``) of 122 public
+names: 111 functions covering every backend, plus 11 classes (the
+result types of the network, grep and archive helpers, and
+NonInteractiveError). Same
 source of truth across all three entry points:
 
 - **Console dock** (View menu) — embedded REPL with multi-line
@@ -1035,6 +1203,14 @@ per extension with agent tools. Always there: `ask_user` (the agent
 asks you something) and `update_plan` (a checklist above the task
 field).
 
+**Never changed by the agent**, whatever its root and access: axross's
+own settings and data (`~/.config/axross`, `~/.local/share/axross`,
+`~/.local/state/axross` - its rights, its MCP servers), shell start files
+(`~/.bashrc`, `~/.profile`, `~/.zshrc`, …), `~/.config/autostart`,
+`~/.config/systemd`, `~/.ssh` and `~/.gnupg`: changed, each would run
+code or widen the agent's rights without a question. A folder holding one
+of them is not deleted or moved either.
+
 **Files read-only** (in the tab's top row, and for every tab in Agent
 Settings > Access): the agent reads files but changes none - no
 writing, deleting or moving, no remote commands (a command can change
@@ -1168,6 +1344,14 @@ bubblewrap, podman or docker. A sandbox profile has a level:
 | high | allowed hosts only | as set | read-only |
 | paranoid | only the LLM | read-only | read-only |
 
+*lax* with bubblewrap reaches the internet through a network namespace
+of its own when passt's `pasta` is installed; without it the sandbox
+shares the host's network - its abstract sockets (the X server, D-Bus)
+too - and the log says so. An MCP server found in a project's
+`.mcp.json` (or another client's settings) that runs a program asks
+before it is switched on, naming the whole command and the file it came
+from.
+
 The model's requests, the API key and the consent stay outside: the
 sandbox has no network of its own, axross sends for it. Allowed hosts
 (`host:port`) are reached through axross and checked on every
@@ -1199,9 +1383,15 @@ Servers). **Add from Catalog…** searches the *MCP sources* and installs a
 server into **rootless podman**; nothing of it runs on the host:
 
 - **Sources** (Agent Settings → MCP Sources, each switchable): the
-  built-in catalog (official reference servers from Docker's curated
-  `mcp/*` namespace plus two security servers, pinned by digest, works
-  offline), Docker Hub's `mcp` namespace, the official MCP Registry
+  built-in catalog (works offline: the MCP reference servers fetch,
+  filesystem, git, memory, sequentialthinking, time and everything; the
+  vendors' own servers for GitHub - read-only, repositories, issues and
+  pull requests - Playwright, MarkItDown and Brave Search; DuckDuckGo
+  search; three security servers, vuln-nist, shodan and rea. Images are
+  pinned by digest and taken only from Docker's curated `mcp/*` namespace
+  and GitHub's own `ghcr.io/github/github-mcp-server`; npm and PyPI
+  packages are pinned to an exact version), Docker Hub's `mcp`
+  namespace, the official MCP Registry
   (`registry.modelcontextprotocol.io`), and catalog files or `https://`
   URLs of your own. *Check* reads one and names what it holds or why it
   is refused (wrong schema, larger than 1 MiB, not JSON, an entry
@@ -1228,7 +1418,7 @@ server into **rootless podman**; nothing of it runs on the host:
 - **Install**: an image is pulled by digest (Docker Hub's tag digest is
   looked up first; others are pinned to the digest podman reports). An
   npm or pypi package is installed in a container of a pinned
-  `node:22-slim` / `python:3.13-slim` image (`npm --ignore-scripts`,
+  `node:24-slim` / `python:3.13-slim` image (`npm --ignore-scripts`,
   `pip --only-binary=:all:`) whose only network is the package registry,
   then committed as `localhost/axross-mcp:<name>-<version>` - never npx,
   uvx, npm or pip on the host. A remote (Streamable HTTP, https) server
@@ -1240,10 +1430,11 @@ server into **rootless podman**; nothing of it runs on the host:
   noexec `/tmp`, process and memory limits. Network **None** by default;
   **Allowlist** reaches only the `host:port` entries given, through a
   proxy in axross (for programs that honour `HTTPS_PROXY`; others get no
-  route at all); **Full** any host. Folders only as you choose them,
-  read-only unless *Writable* is ticked. Environment values and secrets
-  (kept in the keyring) reach the container through a pipe, never on
-  the command line or in a file.
+  route at all - Node's own `fetch` only with `NODE_USE_ENV_PROXY=1`,
+  which the Brave Search entry sets); **Full** any host. Folders only as
+  you choose them, read-only unless *Writable* is ticked. Environment
+  values and secrets (kept in the keyring) reach the container through a
+  pipe, never on the command line or in a file.
 - **Uninstall** removes the server and, on Save, its image by ID
   (`podman rmi`, never forced: an image in use, tagged otherwise or there
   before the install stays). **Check for Update** shows a newer digest
@@ -1370,6 +1561,54 @@ before it hears a recording). Answers are spoken by a local Piper voice.
   microphone is off in the paranoid security mode; audio and transcripts
   stay in memory.
 
+## Mail docks and mail projects
+
+**Tools → Mail Docks…** sets up agents that each watch one mailbox (a saved IMAP,
+POP3 or Exchange profile and a folder). Every dock has its own panel: what it watches,
+when it runs next, its log, *Run Now*, *Pause*, *Settings…*. Its settings: the interval,
+the **instructions** it follows on every run (for example "read new mail, analyse it,
+draft a reply" or "analyse every mail and report suspicious ones to the Security dock"),
+the LLM profile, the **sandbox** profile (the model and the agent loop run in it; the
+mailbox's credentials never do), the **send policy** and the SMTP server.
+
+- *Never send - drafts only*: replies are saved in the mailbox's Drafts (IMAP APPEND
+  with \Draft; POP3: in the dock's drafts folder).
+- *Ask me before each mail*: a mail the agent wants to send waits in the panel with
+  *Send* / *Don't Send* (declined after 30 minutes without an answer).
+- *Answer the sender without asking*: a reply to the sender of the mail answered (and
+  to the *allowed recipients*, addresses or `@domain`) goes out at once; anyone else
+  still waits for your yes.
+
+A dock's agent has only the mail tools - `mail_list_new`, `mail_list`, `mail_read`,
+`mail_analyse`, `mail_draft`, `mail_send`, `dock_report` - and no file writes. Mail
+content is marked as untrusted in every tool result; a mail cannot add recipients or
+change the policy. `dock_report` leaves a note for another dock (*Reports to* limits
+which); the other dock reads it at its next run, which a note alone starts. A run with
+no new mail and no notes asks the model nothing. SMTP: STARTTLS or TLS with the
+certificate checked, plain only to this machine; the password is kept in the keyring.
+
+**Tools → Mail Project…** imports `.eml` and Outlook `.msg` files, Outlook data files
+(`.pst`, `.ost` - Unicode files incl. Outlook 2013's; every message rebuilt as `.eml`
+with its original transport headers, `core/pst.py`), mbox files, Maildir and other
+folders (recursively) or a mailbox profile's folder into a project folder and
+analyses every message offline (`core/mail_analyse.py`): the Received chain with its
+delays, SPF / DKIM / DMARC as the receiving servers recorded them, a From name that
+shows another address, Reply-To and DKIM domains that differ, links whose text names
+another place than they lead to (IP addresses, shorteners, non-ASCII names), and
+attachments - programs and scripts, Office files with macros, double extensions, a
+right-to-left override in the name, content that is not what the name claims. The
+messages are listed by a suspicion score; the *Message* tab shows the mail itself with
+its HTML made safe (no scripts, styles, frames or forms, no image or anything else
+loaded, every link with its real destination beside it, and a link opens only after you
+saw where it goes). *Check SPF / DKIM / DMARC in DNS* (off by default - the lookups
+show which domains you look at) adds live checks: SPF evaluated for the sending
+server's address, every DKIM signature verified against the published key, the DMARC
+policy and its alignment (`core/mail_dns.py`); a mail dock has the same switch for its
+`mail_analyse`. *Ask the Agent…* opens an Agent tab on the
+project folder with files read-only and an analyst's prompt. The folder holds each
+message as imported (`messages/<sha256>`), its report (`reports/<sha256>.json`),
+`index.sqlite`, `index.csv` and `PROJECT.md`.
+
 ## Settings
 
 **Edit → Settings…** (**Ctrl+,**; on macOS in the application menu) holds
@@ -1461,9 +1700,21 @@ on their page. *View → Show Hidden Files* (**Ctrl+H**), *View → Theme* and
 
 ## Updates
 
-The one-file binaries (`axross-full`, `axross-slim`, the macOS and Windows
-`axross-slim`) update themselves from the GitHub releases of
-`c0decave/axross`:
+The one-file binaries (`axross-full`, `axross-slim`, `axross-base`, the macOS
+and Windows `axross-slim`) update themselves from the GitHub releases of
+`c0decave/axross` - each to exactly its own build (flavour and, on Linux, the
+glibc variant it was built for).
+
+**axross-base and packs.** `axross-base` holds the core only; every pip
+extra, every bundled extension and the feature groups are *units* it adds
+from its own release: *Help → Features… → Packs…* lists them with their
+download size, *Add* fetches the unit's wheels (from the release, else the
+same file from PyPI), checks the release's signature, the pack manifest and
+every wheel's SHA-256 before anything is unpacked, and *Remove* deletes what
+no other installed unit needs; changes apply at the next start. An update of
+the binary brings the installed units along - the new release's, checked the
+same way - before the new binary is fetched (docs/PACKS.md).
+
 
 - **Check at start.** Once per start, about two seconds after the window
   is shown, axross asks GitHub's API for the latest release - one https
@@ -1548,6 +1799,10 @@ environment or in the paranoid security mode; *Check Now* still works.
   (`/run/user/$UID`, else `/dev/shm`) instead of the disk: nothing lands
   on disk, but it takes RAM, so it is off by default. A `TMPDIR` set in
   the environment always wins.
+- A configuration file that is not valid JSON (a hand-edit gone wrong)
+  is never written over: axross keeps it as `NAME.unreadable-<time>-<id>`
+  next to it and starts that file afresh; one it cannot read at all
+  (permissions) is not written.
 - `~/.config/axross/logging.json` — the Logging settings: the overall level, the level
   of each area, the log file's size and rotated files, the terminal, the collapse of
   repeated messages (`0o600`).

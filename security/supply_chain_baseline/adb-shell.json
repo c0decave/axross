@@ -1,0 +1,129 @@
+{
+ "name": "adb-shell",
+ "versions": {
+  "0.4.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/adb_device.py|db4c186d262e3d1e",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/adb_device_async.py|ac05f4d08352f7f0",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/keygen.py|6f39018bca1d7398",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/sign_cryptography.py|26ad769c7a5f669b",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/sign_pycryptodome.py|a9c965ddcf385862",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/sign_pythonrsa.py|a575d1eec4a37397",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/transport/tcp_transport_async.py|5ed9e31269b114a8",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/setup.py|8ece5e1c51a50862",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/tests/test_sign_cryptography.py|ed373e7f71ad16dd",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/tests/test_sign_pycryptodome.py|cdac8c55956842ee",
+    "yara|capability_filesystem_read|adb_shell-0.4.4/tests/test_sign_pythonrsa.py|a2595753d1c6aeb2",
+    "yara|capability_process_spawn|adb_shell-0.4.4/adb_shell/transport/usb_transport.py|9e44574efce78706"
+   ],
+   "archives": {
+    "adb_shell-0.4.4.tar.gz": {
+     "entry_points": [],
+     "files": {
+      "adb_shell-0.4.4/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "adb_shell-0.4.4/MANIFEST.in": "ff7157a19d43c458aae5102117bdab1eb614ea7fde5fbeaa75d71988150c82c3",
+      "adb_shell-0.4.4/PKG-INFO": "47cbaa7f9493a5580b05a12dcccea6756f51827e037b2909373501c2901c72ce",
+      "adb_shell-0.4.4/README.rst": "721942f28d16cf9d8d3a7500fc31f9626cd9dca3520d2594c7a55a2aca8461de",
+      "adb_shell-0.4.4/adb_shell.egg-info/PKG-INFO": "2fd279122b293ccdf30ca95476f9d824ef4654eea5230bfa4ce0b822a10e0b94",
+      "adb_shell-0.4.4/adb_shell.egg-info/SOURCES.txt": "e70c32d86303646a7538dd18ddd2640afb917a3445c842622fe6bd9f4832b693",
+      "adb_shell-0.4.4/adb_shell.egg-info/dependency_links.txt": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "adb_shell-0.4.4/adb_shell.egg-info/requires.txt": "1a737978d3524137e5c9d053ee8f6b7abfaa92555f0e349bed0db632c6c6c928",
+      "adb_shell-0.4.4/adb_shell.egg-info/top_level.txt": "e5005a434ef0f999a1711f7c68f19414afcd56d5d28f8198ad806efa877ea735",
+      "adb_shell-0.4.4/adb_shell/__init__.py": "53525af7140814f2f3fee9d365605bd20e752d95b373aaff7756e3a70d7d7bb3",
+      "adb_shell-0.4.4/adb_shell/adb_device.py": "db4c186d262e3d1e5b136368266c553731531c39fb403fbbed7d7d6605ce06a3",
+      "adb_shell-0.4.4/adb_shell/adb_device_async.py": "ac05f4d08352f7f08b7dd86e80e8f72d2cd7c6d6b33c93d5ce59331435fb1990",
+      "adb_shell-0.4.4/adb_shell/adb_message.py": "410f9524b8c2351b2537f3a270f07d067b00946738f01700603aaec2c8857c7b",
+      "adb_shell-0.4.4/adb_shell/auth/__init__.py": "a2b4d96c0c18cb6fb022239ad94502cfc12e22972d8112154c65e5f576fef62b",
+      "adb_shell-0.4.4/adb_shell/auth/keygen.py": "6f39018bca1d7398df75713ba96d2e5704cae8f9a44905c03f89f80ddea54c3f",
+      "adb_shell-0.4.4/adb_shell/auth/sign_cryptography.py": "26ad769c7a5f669b5b62aa6feaca0b00e4e71579012135b25f982077b2c07d8a",
+      "adb_shell-0.4.4/adb_shell/auth/sign_pycryptodome.py": "a9c965ddcf38586210e5e60788b1fc558652114c721889fee808e1924fb16820",
+      "adb_shell-0.4.4/adb_shell/auth/sign_pythonrsa.py": "a575d1eec4a37397f06a9970b3d6ada85703847b04278251b771fad8bce8e7c5",
+      "adb_shell-0.4.4/adb_shell/constants.py": "4aaf539c2bd4a509ea4be4a75525f24af09af6fb9a0319cda56dde38984430a5",
+      "adb_shell-0.4.4/adb_shell/exceptions.py": "76078845dce5b42be7269ebcd54d351ef137fa4eeeaeb3cbccdd8b0d9fe9d6f8",
+      "adb_shell-0.4.4/adb_shell/hidden_helpers.py": "73bbfef0a7b7efee4e89cdf4dab7f5c6181c18a6a2fed8f9950f76f67c7e8845",
+      "adb_shell-0.4.4/adb_shell/transport/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adb_shell-0.4.4/adb_shell/transport/base_transport.py": "e92942de6b15e17bc0c8d4eb309698ca0d1d9d570e2434cfb41be3aeaea390bc",
+      "adb_shell-0.4.4/adb_shell/transport/base_transport_async.py": "ef491933d9afad64c8f6268b41545f128ff47d9f550823eed5f7a7bd27b25e6c",
+      "adb_shell-0.4.4/adb_shell/transport/tcp_transport.py": "47cb67491f2bdcbd8fcaa140f295508ba4cd074bc62c200601ba37da029452eb",
+      "adb_shell-0.4.4/adb_shell/transport/tcp_transport_async.py": "5ed9e31269b114a8f14306c58b2403fe033902ebc6c21396a2b9351a61d6398a",
+      "adb_shell-0.4.4/adb_shell/transport/usb_transport.py": "9e44574efce787069c4eba649ba7cd5d68c68c5bc9d6a7b7fae2b7d799f190dd",
+      "adb_shell-0.4.4/setup.cfg": "1c473cbaee8da5fc46e7f0158794af5cea4414c34a3cf3f180c2001f5e38bd3e",
+      "adb_shell-0.4.4/setup.py": "8ece5e1c51a508624081758744e971ee210b273802ecb5166360bd6ec3732681",
+      "adb_shell-0.4.4/tests/test_adb_device.py": "b794576fe95d6ae7a1af211fb44f71f62fc3e95b3296129f21536f0108315e71",
+      "adb_shell-0.4.4/tests/test_adb_device_async.py": "331ec1f59863f2ee16067e1560f97c1e39db790b9a8cc90d477da3b6e2dce0ef",
+      "adb_shell-0.4.4/tests/test_adb_message.py": "1a3d7125b6d3c63b51e804763438f7042cf377c0658f90ba9395e2ef22ac4634",
+      "adb_shell-0.4.4/tests/test_exceptions.py": "66d6c2cffdc5b062f1bd6e2fbf0ef6838744e4211b6c1056b084d15257d1fa87",
+      "adb_shell-0.4.4/tests/test_hidden_helpers.py": "62842a30c1c33ebf3b709c12e439cd56dc8f077f780d9872cbbb49260dfa02ab",
+      "adb_shell-0.4.4/tests/test_keygen.py": "e6df70ae50314463aee24e8db79b5b94535302c8dea1542b1fd4067025a5a439",
+      "adb_shell-0.4.4/tests/test_sign_cryptography.py": "ed373e7f71ad16dd73b8532e5894fb76a3dccf1678172da2c1ecd962273022f5",
+      "adb_shell-0.4.4/tests/test_sign_pycryptodome.py": "cdac8c55956842eeac3a05f93b988c7ddabcb8b13c69145470b5d0991f79bb8c",
+      "adb_shell-0.4.4/tests/test_sign_pythonrsa.py": "a2595753d1c6aeb225bd70c7a7e4d94276c24f2034a0abdd067a42d7f27fd6aa",
+      "adb_shell-0.4.4/tests/test_tcp_transport.py": "e9793724151f259fe95922583196eca67f94e6db6918a8b8ad85458c78f83703",
+      "adb_shell-0.4.4/tests/test_tcp_transport_async.py": "fee56cef650a84965d518485eb2a92c37a810f7d6066a02d9c183c38724d46f7",
+      "adb_shell-0.4.4/tests/test_usb_importerror.py": "55cd74d201e2d448921d18fb36ae7682273c5a39b381a3641aa5235cf13a0cc7",
+      "adb_shell-0.4.4/tests/test_usb_transport.py": "79b5b3b81674979820c2189247bbd447292986e9ca286b42abff5710c649aa74"
+     },
+     "hooks": [
+      "adb_shell-0.4.4/setup.cfg",
+      "adb_shell-0.4.4/setup.py"
+     ],
+     "kind": "sdist",
+     "manifest": "c8a9345b40b847a6e25526885f14524ab70473b0aac930a3900ab6a62df6248e",
+     "native": {},
+     "pth": {},
+     "sha256": "04c305f30a2ca25d5c54b3cd6ce9bb64c36e5f07967b23b3fb6aaecc851b90b6"
+    }
+   },
+   "name": "adb-shell",
+   "provenance": {
+    "adb_shell-0.4.4.tar.gz": null
+   },
+   "pypi": {
+    "author": "Jeff Irion",
+    "author_email": "jefflirion@users.noreply.github.com",
+    "home_page": "https://github.com/JeffLIrion/adb_shell",
+    "project_urls": {
+     "Homepage": "https://github.com/JeffLIrion/adb_shell"
+    },
+    "summary": "A Python implementation of ADB with shell and FileSync functionality."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "sdist; setup.py is a plain setup() call (name, version, packages, requirements) - no network, no subprocess, no cmdclass. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/adb_device.py|db4c186d262e3d1e",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/adb_device_async.py|ac05f4d08352f7f0",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/keygen.py|6f39018bca1d7398",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/sign_cryptography.py|26ad769c7a5f669b",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/sign_pycryptodome.py|a9c965ddcf385862",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/auth/sign_pythonrsa.py|a575d1eec4a37397",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/adb_shell/transport/tcp_transport_async.py|5ed9e31269b114a8",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/setup.py|8ece5e1c51a50862",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/tests/test_sign_cryptography.py|ed373e7f71ad16dd",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/tests/test_sign_pycryptodome.py|cdac8c55956842ee",
+     "yara|capability_filesystem_read|adb_shell-0.4.4/tests/test_sign_pythonrsa.py|a2595753d1c6aeb2",
+     "yara|capability_process_spawn|adb_shell-0.4.4/adb_shell/transport/usb_transport.py|9e44574efce78706"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/adb_shell/adb_device.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/adb_shell/adb_device_async.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/adb_shell/auth/keygen.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/adb_shell/auth/sign_cryptography.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/adb_shell/auth/sign_pycryptodome.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/adb_shell/auth/sign_pythonrsa.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/adb_shell/transport/tcp_transport_async.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/setup.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/tests/test_sign_cryptography.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/tests/test_sign_pycryptodome.py",
+     "capability_filesystem_read:capability_filesystem_read adb_shell-0.4.4/tests/test_sign_pythonrsa.py",
+     "capability_process_spawn:capability_process_spawn adb_shell-0.4.4/adb_shell/transport/usb_transport.py"
+    ]
+   },
+   "version": "0.4.4"
+  }
+ }
+}

@@ -1,0 +1,52 @@
+{
+ "name": "unpaddedbase64",
+ "versions": {
+  "2.1.0": {
+   "accepted_findings": [],
+   "archives": {
+    "unpaddedbase64-2.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "unpaddedbase64-2.1.0.dist-info/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "unpaddedbase64-2.1.0.dist-info/METADATA": "100e11db93afd37208b7b5cfe63d28e61f14de713dc978ee77434f3167912eae",
+      "unpaddedbase64-2.1.0.dist-info/RECORD": "7b5c9c9c7510d07585bdc5279608ef0e328404d1328ea99ed8e78e0fdf6a28a0",
+      "unpaddedbase64-2.1.0.dist-info/WHEEL": "4abb673c655331e616b6d96cf719d6034d5e521099dee7c57495186f5277afe5",
+      "unpaddedbase64/__init__.py": "48f9a38411b94c30f4acaa0c5345ceed46c943323c975fbc531f5357cb1ae070",
+      "unpaddedbase64/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "4cbd355093880392535ac9f34873958be7ecaf3acccfa68d782a6a98e58b277a",
+     "native": {},
+     "pth": {},
+     "sha256": "485eff129c30175d2cd6f0cd8d2310dff51e666f7f36175f738d75dfdbd0b1c6"
+    }
+   },
+   "name": "unpaddedbase64",
+   "provenance": {
+    "unpaddedbase64-2.1.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "The Matrix.org Foundation C.I.C.",
+    "home_page": "https://github.com/matrix-org/python-unpaddedbase64",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/matrix-org/python-unpaddedbase64",
+     "Issue Tracker": "https://github.com/matrix-org/python-unpaddedbase64/issues"
+    },
+    "summary": "Encode and decode Base64 without \"=\" padding"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.1.0"
+  }
+ }
+}

@@ -1,0 +1,85 @@
+{
+ "name": "platformdirs",
+ "versions": {
+  "4.13.5": {
+   "accepted_findings": [
+    "yara|capability_filesystem_write_executable|platformdirs/unix.py|8c48bddcb10f6364",
+    "yara|capability_network_outbound|platformdirs/testing.py|81b5ff223069e8b7",
+    "yara|capability_network_outbound|platformdirs/windows.py|b3f0988145e20494"
+   ],
+   "archives": {
+    "platformdirs-4.13.5-py3-none-any.whl": {
+     "entry_points": [
+      "platformdirs = platformdirs.pytest_plugin"
+     ],
+     "files": {
+      "platformdirs-4.13.5.dist-info/METADATA": "b42a0ee84bde8921b95c6c1e84e7675d34e67c5a61170ebcf7b44e394b64a768",
+      "platformdirs-4.13.5.dist-info/RECORD": "05568782f9ea835b00508e1ddd114b08b5dabdd5b2f2d5e6b9959585e69e9ea0",
+      "platformdirs-4.13.5.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
+      "platformdirs-4.13.5.dist-info/entry_points.txt": "f0cdfdd23e07a4ae6c2b825603300890a78beb670e83e20a058f29bbabaaea65",
+      "platformdirs-4.13.5.dist-info/licenses/LICENSE": "29e0fd62e929850e86eb28c3fdccf0cefdf4fa94879011cffb3d0d4bed6d4db6",
+      "platformdirs/__init__.py": "3d249a2b0495667a946d3a8a9d9015846e69316dcc127cf59a6063745e66b3f1",
+      "platformdirs/__main__.py": "ee1add07cd6b0351220b791800b9c2cc2ffc4c5b57f3707663f4eb6a468d1daf",
+      "platformdirs/_xdg.py": "a7557be0182207f622a34a5ddbded09424f12ecbaa3039c7e21831f75e17785b",
+      "platformdirs/android.py": "35417459ef5c7e3a07a5284ed8272c0f237e698b10d71fa9d503b059103da169",
+      "platformdirs/api.py": "5f5b7a834a43b7d848aaba96f406f2fe4f344ee62333f70a5d7adc437f841924",
+      "platformdirs/ios.py": "9ad2eb2ab20f7029ae19788765341a02adcc67f783ddb0ef489f9524ac6e27fa",
+      "platformdirs/macos.py": "445fcf4dd28c3e3feca88737c27c19c646927e94b3bbffd007c2e1d15794e10d",
+      "platformdirs/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "platformdirs/pytest_plugin.py": "909672c61917b3284cc0c4369a3a8d284049782c3fb26ecbe058bb2a42c68e2c",
+      "platformdirs/testing.py": "81b5ff223069e8b7da558cf484161099206b10d2ebed71f95884db255dcf18a7",
+      "platformdirs/unix.py": "8c48bddcb10f63642711a96e499ac40aed9d1782e5dc45114efe8e68248e621a",
+      "platformdirs/version.py": "bc098b68b55d8d3cf8423490e06f99b23977ba9404f998bd8befc07593d9cd2a",
+      "platformdirs/windows.py": "b3f0988145e204940b7d79640041d6bcb584f5d59611abe3a78f4d0f5d4159cc"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ed06b74742c6645bcdd554ca83d6390d82260e04bf7c603d400c0f4c2be873af",
+     "native": {},
+     "pth": {},
+     "sha256": "53d3ec4280b815c1e0b02edad7f9ee8fda1ba9c0865dd9c2e6e63849ce82fc1e"
+    }
+   },
+   "name": "platformdirs",
+   "provenance": {
+    "platformdirs-4.13.5-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "tox-dev/platformdirs",
+     "workflow": "release.yaml"
+    }
+   },
+   "pypi": {
+    "license_expression": "MIT",
+    "maintainer_email": "Bern\u00e1t G\u00e1bor <gaborjbernat@gmail.com>, Julian Berman <Julian@GrayVines.com>, Ofek Lev <oss@ofek.dev>, Ronny Pfannschmidt <opensource@ronnypfannschmidt.de>",
+    "project_urls": {
+     "Changelog": "https://platformdirs.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://platformdirs.readthedocs.io",
+     "Homepage": "https://github.com/tox-dev/platformdirs",
+     "Source": "https://github.com/tox-dev/platformdirs",
+     "Tracker": "https://github.com/tox-dev/platformdirs/issues"
+    },
+    "summary": "A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_write_executable, network_outbound; attestation verifies (tox-dev/platformdirs)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_write_executable|platformdirs/unix.py|8c48bddcb10f6364",
+     "yara|capability_network_outbound|platformdirs/testing.py|81b5ff223069e8b7",
+     "yara|capability_network_outbound|platformdirs/windows.py|b3f0988145e20494"
+    ],
+    "yara": [
+     "capability_filesystem_write_executable:capability_filesystem_write_executable platformdirs/unix.py",
+     "capability_network_outbound:capability_network_outbound platformdirs/testing.py",
+     "capability_network_outbound:capability_network_outbound platformdirs/windows.py"
+    ]
+   },
+   "version": "4.13.5"
+  }
+ }
+}

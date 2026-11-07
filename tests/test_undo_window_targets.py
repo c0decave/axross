@@ -102,7 +102,10 @@ class _WindowBase(unittest.TestCase):
     def transfers_idle(self) -> bool:
         from core.transfer_worker import TransferStatus
 
-        jobs = list(self.win._transfer_manager._jobs.values())
+        manager = self.win._transfer_manager
+        if manager._walks:  # a folder still being walked (0.14.173): its jobs are to come
+            return False
+        jobs = list(manager._jobs.values())
         return all(
             j.status not in (TransferStatus.PENDING, TransferStatus.ACTIVE) for j in jobs
         )
@@ -121,6 +124,8 @@ class _WindowBase(unittest.TestCase):
                 mock.patch("ui.main_window.QMessageBox.information") as info, \
                 mock.patch("ui.main_window.QMessageBox.warning") as warn:
             self.win._undo_last_operation()
+            # Finding and carrying out the entry run on a worker (0.14.161).
+            self.assertTrue(self.wait_for(lambda: not getattr(self.win, "_undo_busy", False)))
             self.assertTrue(self.wait_for(self.transfers_idle))
             # The debounced refresh and the transfer engine settle.
             self.wait_for(lambda: False, timeout=0.3)

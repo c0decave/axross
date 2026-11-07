@@ -1,0 +1,65 @@
+{
+ "name": "pysocks",
+ "versions": {
+  "1.7.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|socks.py|c4e627dbbb7d206a",
+    "yara|capability_filesystem_read|sockshandler.py|d926068fea70b759",
+    "yara|capability_network_outbound|socks.py|c4e627dbbb7d206a"
+   ],
+   "archives": {
+    "PySocks-1.7.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "PySocks-1.7.1.dist-info/LICENSE": "7027e214e014eb78b7adcc1ceda5aca713a79fc4f6a0c52c9da5b3e707e6ffe9",
+      "PySocks-1.7.1.dist-info/METADATA": "cdb40c8b38cf38e3f80e1122117db85d78cdad8b88c45f54194a4dd2e14307a6",
+      "PySocks-1.7.1.dist-info/RECORD": "0eaa75554a867b149aa13affe2d3d9def2e99d9b647ed309d1640abfa915dc81",
+      "PySocks-1.7.1.dist-info/WHEEL": "b7f329029bf7f3afbc3d5b6cd91eb0b1389f7489f4bdb5034d5bfad486ea142f",
+      "PySocks-1.7.1.dist-info/top_level.txt": "4ca48e21f0850682bd118f050586d8a82dcf59ddfef86d79a61f67f3e4073c39",
+      "socks.py": "c4e627dbbb7d206adb4c1cd6b1452e3dad1806ea6582253293390e0795798856",
+      "sockshandler.py": "d926068fea70b7592380ba19026c9e6845c27990d64667d54bf406ea412b1ad6"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a3e32de031781512883b622df80d07d740f29ad1140014cdd5888608ddead3a2",
+     "native": {},
+     "pth": {},
+     "sha256": "2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5"
+    }
+   },
+   "name": "pysocks",
+   "provenance": {
+    "PySocks-1.7.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Anorov",
+    "author_email": "anorov.vorona@gmail.com",
+    "home_page": "https://github.com/Anorov/PySocks",
+    "license": "BSD",
+    "project_urls": {
+     "Homepage": "https://github.com/Anorov/PySocks"
+    },
+    "summary": "A Python SOCKS client module. See https://github.com/Anorov/PySocks for more information."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|socks.py|c4e627dbbb7d206a",
+     "yara|capability_filesystem_read|sockshandler.py|d926068fea70b759",
+     "yara|capability_network_outbound|socks.py|c4e627dbbb7d206a"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read socks.py",
+     "capability_filesystem_read:capability_filesystem_read sockshandler.py",
+     "capability_network_outbound:capability_network_outbound socks.py"
+    ]
+   },
+   "version": "1.7.1"
+  }
+ }
+}

@@ -33,6 +33,20 @@ class TransferModel(QAbstractTableModel):
             bottom_right = self.index(idx, len(COLUMNS) - 1)
             self.dataChanged.emit(top_left, bottom_right)
 
+    def update_jobs(self, job_ids) -> None:
+        """:meth:`update_job` for many: one dataChanged per run of adjacent
+        rows (unknown ids are ignored)."""
+        rows = sorted({self._job_index[j] for j in job_ids if j in self._job_index})
+        last = len(COLUMNS) - 1
+        start = previous = None
+        for row in rows + [None]:
+            if row is not None and previous is not None and row == previous + 1:
+                previous = row
+                continue
+            if start is not None:
+                self.dataChanged.emit(self.index(start, 0), self.index(previous, last))
+            start = previous = row
+
     def clear_finished(self) -> None:
         self.beginResetModel()
         self._jobs = [
@@ -42,6 +56,25 @@ class TransferModel(QAbstractTableModel):
         ]
         self._job_index = {j.job_id: i for i, j in enumerate(self._jobs)}
         self.endResetModel()
+
+    def remove_jobs(self, job_ids) -> None:
+        """Remove the rows of *job_ids* (unknown ids are ignored), one
+        contiguous range at a time from the bottom: selection and scroll
+        position stay where they were, unlike a reset."""
+        rows = sorted({self._job_index[j] for j in job_ids if j in self._job_index})
+        if not rows:
+            return
+        ranges: list[list[int]] = []
+        for row in rows:
+            if ranges and row == ranges[-1][1] + 1:
+                ranges[-1][1] = row
+            else:
+                ranges.append([row, row])
+        for first, last in reversed(ranges):
+            self.beginRemoveRows(QModelIndex(), first, last)
+            del self._jobs[first:last + 1]
+            self.endRemoveRows()
+        self._job_index = {j.job_id: i for i, j in enumerate(self._jobs)}
 
     def get_job(self, row: int) -> TransferJob | None:
         if 0 <= row < len(self._jobs):

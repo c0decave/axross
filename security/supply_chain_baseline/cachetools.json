@@ -1,0 +1,74 @@
+{
+ "name": "cachetools",
+ "versions": {
+  "7.2.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|cachetools/__init__.py|c9a28b2cafe876de",
+    "yara|capability_process_schedule|cachetools/__init__.py|c9a28b2cafe876de"
+   ],
+   "archives": {
+    "cachetools-7.2.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "cachetools-7.2.4.dist-info/METADATA": "d2de15ff2b21ed0b261a818b929e4b0f8244d836c7e7d125b5be1c2dd46277ef",
+      "cachetools-7.2.4.dist-info/RECORD": "dd2e13c273c5f3fa82e82dbeaa24a3dd429b901887aa52122d82ca0cc4a2745e",
+      "cachetools-7.2.4.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "cachetools-7.2.4.dist-info/licenses/LICENSE": "28c000b52b0ee27138a68ef778227e4057046e86b65f62f1cacb99b0cc49e0d2",
+      "cachetools-7.2.4.dist-info/top_level.txt": "6a2d851fbf131b0a017028157e8a9bce4e48402b670ee91d4ace332ae54fbc3b",
+      "cachetools/__init__.py": "c9a28b2cafe876de585901d75278355771cb47e408fed4d598a9a6b8b7127622",
+      "cachetools/__init__.pyi": "9c8fbb208f385d42c3775648e43c17ebb74d54053b8248bdb1379efa772792a3",
+      "cachetools/_cached.py": "f5c72f55adea90b993e76f08823dc433cfcf239028258ece91a678d41cd3af54",
+      "cachetools/_cachedmethod.py": "fab3db052680d7b779e5ccbf3a91247419e40eed95c438a2fbb527f43a9f9978",
+      "cachetools/_descriptor.py": "95f60d49c8bc8ce870c337cdf019038ce5e092393dc4e4ce3688cfa3478d9e8c",
+      "cachetools/func.py": "87724e4fc82303fd5172cc9fd03c7aaf6a767c6c477f3cb74a245fc45ebf7816",
+      "cachetools/func.pyi": "52237fae3e6e3f4c7103087eca0a9f49ebdc1297c459e2267639a6b9f50e1258",
+      "cachetools/keys.py": "9550bd6914744c2fc6fd211dfb83cdae2d6206b1a1bfcf052d017cb23b39b49e",
+      "cachetools/keys.pyi": "594a1166a9c399a375b6095ee1b38408f44b7d7c8b7b57685caab85b4598a24c",
+      "cachetools/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c1ad16473ca4d4626c03493d6cd7c770c803143fe613bb5bef0540f311bfdce8",
+     "native": {},
+     "pth": {},
+     "sha256": "4cfbebf3eec4040d2073b19c460511ad47eef7b852dbf9a0d385099b4dafa31e"
+    }
+   },
+   "name": "cachetools",
+   "provenance": {
+    "cachetools-7.2.4-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Thomas Kemmer <tkemmer@computer.org>",
+    "license_expression": "MIT",
+    "maintainer_email": "Thomas Kemmer <tkemmer@computer.org>",
+    "project_urls": {
+     "Changelog": "https://github.com/tkem/cachetools/blob/master/CHANGELOG.rst",
+     "Documentation": "https://cachetools.readthedocs.io/en/stable/",
+     "Homepage": "https://github.com/tkem/cachetools/",
+     "Issues": "https://github.com/tkem/cachetools/issues",
+     "Repository": "https://github.com/tkem/cachetools/",
+     "Source": "https://github.com/tkem/cachetools/"
+    },
+    "summary": "Extensible memoizing collections and decorators"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, process_schedule; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|cachetools/__init__.py|c9a28b2cafe876de",
+     "yara|capability_process_schedule|cachetools/__init__.py|c9a28b2cafe876de"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete cachetools/__init__.py",
+     "capability_process_schedule:capability_process_schedule cachetools/__init__.py"
+    ]
+   },
+   "version": "7.2.4"
+  }
+ }
+}

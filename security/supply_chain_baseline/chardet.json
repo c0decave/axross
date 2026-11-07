@@ -1,0 +1,427 @@
+{
+ "name": "chardet",
+ "versions": {
+  "7.7.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|chardet/cli.py|3419cf524d9fb54e",
+    "yara|capability_network_outbound|chardet/evaluation.py|804a12f658a100c7",
+    "yara|capability_network_outbound|chardet/registry.py|8ebbcae8b9157394"
+   ],
+   "archives": {
+    "chardet-7.7.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [
+      "chardetect = chardet.cli:main"
+     ],
+     "files": {
+      "650fdafa2468af73c11f__mypyc.cpython-312-x86_64-linux-gnu.so": "fbaf369fbb0f55f9cbfd641e1e796ebf24c9b927e79e35dd34906f9be3d171e6",
+      "chardet-7.7.0.dist-info/METADATA": "1989d603002276a861d8c4f996bbd83dcad728458cafe0c9252abae1c467891c",
+      "chardet-7.7.0.dist-info/RECORD": "f1c4a59fcb8cf1dba2066814c975ad5157d83313076fde621a9c96f92959a85a",
+      "chardet-7.7.0.dist-info/WHEEL": "329c3fbb4bd07832765ea2cdb093dcc3507328762f09362f13b8acd9d0337772",
+      "chardet-7.7.0.dist-info/entry_points.txt": "06649487a25f140e56652a507e3ffbe9772e8300a13315cc6e9e4e942f525da4",
+      "chardet-7.7.0.dist-info/licenses/LICENSE": "0d4cf67e7a26e9957b8948e7dfc0e380e61b427a94b061e618889aba89bb9616",
+      "chardet/__init__.py": "6c712baeef201b7b086b21109276b6ef25bd8b9354efb237771daaac6c1928de",
+      "chardet/__main__.py": "ad1228c76fe1c88612441fe146c1a05e361ecc301247f4a456d3d7300a71ed40",
+      "chardet/_kernel.cpython-312-x86_64-linux-gnu.so": "5d36480cea65910d3d5392c412597f65c1745749e0af9bc8ca17f2ea535a8e50",
+      "chardet/_kernel.py": "8637c04aaf03353bdd44d8a83254a70b55bdf973f990c7f3e24b297bfdd822d8",
+      "chardet/_utils.py": "35091efd0d91e60a2c0338530aff1e811f20f6735295ba8a05cf5eb59a9a53e9",
+      "chardet/_version.py": "e9702368a9680697d805579728d066402afd7e43e3482973dbb04c1d69c411c2",
+      "chardet/cli.py": "3419cf524d9fb54e1b927e47cc3ea3b731b7247b379d4ece4ee1452e9bd85add",
+      "chardet/detector.py": "18a6441af78af8258c8d2b9a79e9e5501bd9c30d76608a14fe015fed7346fa0e",
+      "chardet/enums.py": "e9977429f18ca1bb0b1302c9edca55332103c191167acb1f6997f71b2b322036",
+      "chardet/equivalences.py": "2702a0ac3b50e485cdeb416d91253e2fc6176db8e97c662f6944e2fdf049dd0b",
+      "chardet/evaluation.py": "804a12f658a100c72e2a18f584370a6201b1ff419e184ebc4a9d36b08e27b1d5",
+      "chardet/models/__init__.cpython-312-x86_64-linux-gnu.so": "a415a1255e4d5a1bda6dcdcb344ec019f6e180d54868a56ecc4da7b8a8f3a574",
+      "chardet/models/__init__.py": "70feebdb7a9a12119b41cbf007f85448b79d354f73385d743de5a87a2a8af7e6",
+      "chardet/models/_format.cpython-312-x86_64-linux-gnu.so": "890b4c81c006854c38528a7b5816fee3e5d53e721ac20bd71840547d33f60366",
+      "chardet/models/_format.py": "0628cfc923f1f991d2dc2baa1426e577a748e53d5dce20b4c42966ad73063370",
+      "chardet/models/confusion.bin": "1c853cd04b400bd2d3772fcaddc4466b32d32db703a7aa415df5a20810bf9ecb",
+      "chardet/models/idf.bin": "37c51eea179643870b8ff5e441655ee8f21c68d4d94618df3371055d16c12f3d",
+      "chardet/models/langnorm.bin": "0d633eb028b7f7847f9840974799b2247a9d2fc2ea66e7846bd04ab59850a417",
+      "chardet/models/models.bin": "47371a8ad8422dc67df2f46db6e9a8e67551d6f5472d7d0c957655759e4922f0",
+      "chardet/models/rowmax.bin": "9a966228520b7e424525cd56bd11ea41038c29e0c375545d32d82375943b3e39",
+      "chardet/models/training_metadata.yaml": "d003b85bd1fe3658c0ce10d9554a9cd4919ca34a4b89ee2237d40af7b9148566",
+      "chardet/output_names.py": "b61dd4eba977b04e07e152bff321ba9503c830362925eaf5e12d0ea8c45635de",
+      "chardet/pipeline/__init__.py": "b52368ba9ac0baff0dcc314cd1eabf75ef91e31f9f387f249f9842777cdb8fd0",
+      "chardet/pipeline/ascii.cpython-312-x86_64-linux-gnu.so": "e52538a81e9499ab34bbe046c82f4355eecc261cc39b6feb056bc5908b15e8a7",
+      "chardet/pipeline/ascii.py": "3e12c19ee6b9cb0fb533359d76f77b8d453413b6cdaecfd2a8d26d5ef999a101",
+      "chardet/pipeline/binary.py": "59c9ebc540e84e6683bad29036324f556075e8db7494efb3ab4b0666f4eea6c6",
+      "chardet/pipeline/bom.py": "ac8fbaffa183a69b54b31bca90f853bc522e1a883eec81740acde625bb57e5b8",
+      "chardet/pipeline/confusion.cpython-312-x86_64-linux-gnu.so": "afa9ed1f42f9020c684d67c40d8ced834a7f03480b8c621dd2423a3c63d8c357",
+      "chardet/pipeline/confusion.py": "0f174152c1b748d0b1f8faf8d7cd7ba112fbeb750038f8ecf8d038c928d624d7",
+      "chardet/pipeline/escape.cpython-312-x86_64-linux-gnu.so": "bf486157af0f539c8359b99864235afb83ef28010b9275ec8720bbaf943b4466",
+      "chardet/pipeline/escape.py": "5c5ffb11a23bf95d22c2052e91238691a234f709d64781fd03bb58fbb0979ef9",
+      "chardet/pipeline/language.cpython-312-x86_64-linux-gnu.so": "18945069ae4ddfd8a3e8ca13d98db25bacc07157b84def5dc68e066d5ccf1b7a",
+      "chardet/pipeline/language.py": "53aec49242bef29a9c1f87825431464303ef88266dbf1edef9daa8366f6f9a96",
+      "chardet/pipeline/magic.cpython-312-x86_64-linux-gnu.so": "72d2f80026b3d46c02aecedfc1f5a09d988aa69f6c159f6f1f555da58739cfaa",
+      "chardet/pipeline/magic.py": "2c869a727c941f2860d556ae357aaa0de81b995a81b5966d0c63b4a879c1cc19",
+      "chardet/pipeline/markup.cpython-312-x86_64-linux-gnu.so": "4e0307fdf981f53b5ebb9b134fd2ffdd69271f358962f23e537b58e764dd0fb0",
+      "chardet/pipeline/markup.py": "fba35dcec4604111b556bc1795a8ccc1df6918527eb143076b74751ccbb7a1ed",
+      "chardet/pipeline/orchestrator.cpython-312-x86_64-linux-gnu.so": "0ab2e748cb93b6512e14038f5f51ced1499b3bf86dd39673e8139bf191d4b13c",
+      "chardet/pipeline/orchestrator.py": "6a789f1def4efa8ca8fb6e997305d870480d70117d0d4a63d1b2613a3aef10a5",
+      "chardet/pipeline/postprocess.cpython-312-x86_64-linux-gnu.so": "d6c8a542a44333a9c285934bd2588794f9c651cf1992d56e685a9ad2d87674f5",
+      "chardet/pipeline/postprocess.py": "7a9cf166bc41388a554ca93f6c5aeb248a90b47a0dd2dba774e2d3c533e258a4",
+      "chardet/pipeline/statistical.cpython-312-x86_64-linux-gnu.so": "806abfe584e34302908ad16608b95470497c380c4a6c726cf664abcd76da73c0",
+      "chardet/pipeline/statistical.py": "450ea102bfc5a24a84d6e3ad28b0b8f768effeaab44a212f00071088277fb832",
+      "chardet/pipeline/structural.cpython-312-x86_64-linux-gnu.so": "1ea68e3051c8712ba8020b398dec861be016831a316a4a868a23a4e6c9f6c09a",
+      "chardet/pipeline/structural.py": "7cae7b85320678f0716eea609c93049346eadabc9d343ce8418362e4d004900c",
+      "chardet/pipeline/utf1632.cpython-312-x86_64-linux-gnu.so": "4ac2e24323633eb60e12111319bd03a65a48519d7b5486961a9bd103146d8584",
+      "chardet/pipeline/utf1632.py": "371cbd0b7c9a901735be29ff356d200414cce0e707745f0d8e56775b3db57568",
+      "chardet/pipeline/utf8.cpython-312-x86_64-linux-gnu.so": "433396d28a4807db1362e314fc7f851b623f20b94cffcef47c0a1fa04e531ab0",
+      "chardet/pipeline/utf8.py": "e45c8eeaa22358cb764668fed8996cf92b2574c15ae14eabe438330c8d8ae247",
+      "chardet/pipeline/validity.cpython-312-x86_64-linux-gnu.so": "b006cec09220daafdd3a6b6b1d0298878edd6652b12c822aa4520d247b22061c",
+      "chardet/pipeline/validity.py": "04e3fcfdc55a1a2e32cad1f820a09043384c12d0d50b02282987b14929a11271",
+      "chardet/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "chardet/registry.py": "8ebbcae8b9157394f148c77501a5c97b6bbf34788f36d4a14fb0596abcc5f3a0",
+      "chardet/universaldetector.py": "abb4efc1d0a1555aed20946bd6ef68a2390c11d38b8d1f6a87146cf4ee71ea63"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "1a3c9438c7957f6c4a5d745aa2c310984ee4f8a80bc562e7719e173d581ade0b",
+     "native": {
+      "650fdafa2468af73c11f__mypyc.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/_kernel.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/models/__init__.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/models/_format.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/ascii.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/confusion.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/escape.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/language.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/magic.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/markup.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/orchestrator.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/postprocess.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/statistical.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/structural.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/utf1632.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/utf8.cpython-312-x86_64-linux-gnu.so": "elf",
+      "chardet/pipeline/validity.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "feb66c96264e3e6a9ff0c7318ce0028800b6c18ad07c8000d2404a108d1ef767"
+    }
+   },
+   "name": "chardet",
+   "provenance": {
+    "chardet-7.7.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "chardet/chardet",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Dan Blanchard <dan.blanchard@gmail.com>",
+    "license_expression": "0BSD",
+    "maintainer": "Ian Cordasco",
+    "maintainer_email": "Dan Blanchard <dan.blanchard@gmail.com>",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/chardet/chardet/issues",
+     "Changelog": "https://chardet.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://chardet.readthedocs.io",
+     "Homepage": "https://github.com/chardet/chardet",
+     "Repository": "https://github.com/chardet/chardet"
+    },
+    "summary": "Universal character encoding detector"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound; 17 native binaries profiled, none with network/process imports or addresses; attestation verifies (chardet/chardet)."
+   },
+   "scans": {
+    "capa": {
+     "0ab2e748cb93b6512e14038f5f51ced1499b3bf86dd39673e8139bf191d4b13c": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/orchestrator.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "18945069ae4ddfd8a3e8ca13d98db25bacc07157b84def5dc68e066d5ccf1b7a": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/language.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "1ea68e3051c8712ba8020b398dec861be016831a316a4a868a23a4e6c9f6c09a": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/structural.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "433396d28a4807db1362e314fc7f851b623f20b94cffcef47c0a1fa04e531ab0": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/utf8.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4ac2e24323633eb60e12111319bd03a65a48519d7b5486961a9bd103146d8584": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/utf1632.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4e0307fdf981f53b5ebb9b134fd2ffdd69271f358962f23e537b58e764dd0fb0": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/markup.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "5d36480cea65910d3d5392c412597f65c1745749e0af9bc8ca17f2ea535a8e50": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "chardet/_kernel.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "72d2f80026b3d46c02aecedfc1f5a09d988aa69f6c159f6f1f555da58739cfaa": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/magic.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "806abfe584e34302908ad16608b95470497c380c4a6c726cf664abcd76da73c0": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/statistical.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "890b4c81c006854c38528a7b5816fee3e5d53e721ac20bd71840547d33f60366": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/models/_format.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a415a1255e4d5a1bda6dcdcb344ec019f6e180d54868a56ecc4da7b8a8f3a574": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/models/__init__.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "afa9ed1f42f9020c684d67c40d8ced834a7f03480b8c621dd2423a3c63d8c357": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/confusion.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b006cec09220daafdd3a6b6b1d0298878edd6652b12c822aa4520d247b22061c": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/validity.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bf486157af0f539c8359b99864235afb83ef28010b9275ec8720bbaf943b4466": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/escape.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d6c8a542a44333a9c285934bd2588794f9c651cf1992d56e685a9ad2d87674f5": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/postprocess.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e52538a81e9499ab34bbe046c82f4355eecc261cc39b6feb056bc5908b15e8a7": {
+      "capabilities": [],
+      "note": "",
+      "path": "chardet/pipeline/ascii.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "fbaf369fbb0f55f9cbfd641e1e796ebf24c9b927e79e35dd34906f9be3d171e6": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "reference Base64 string",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "650fdafa2468af73c11f__mypyc.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|chardet/cli.py|3419cf524d9fb54e",
+     "yara|capability_network_outbound|chardet/evaluation.py|804a12f658a100c7",
+     "yara|capability_network_outbound|chardet/registry.py|8ebbcae8b9157394"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read chardet/cli.py",
+     "capability_network_outbound:capability_network_outbound chardet/evaluation.py",
+     "capability_network_outbound:capability_network_outbound chardet/registry.py"
+    ]
+   },
+   "version": "7.7.0"
+  }
+ }
+}

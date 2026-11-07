@@ -28,6 +28,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from tests.off_gui_wait import _drain_op  # noqa: E402
 from tests.test_pane_async_navigation import SlowFS  # noqa: E402
 
 
@@ -230,6 +231,7 @@ class ModalDialogTest(_Base):
             "PyQt6.QtWidgets.QInputDialog.getText", return_value=("renamed.txt", True)
         ):
             self.press(Qt.Key.Key_F2)
+            _drain_op(self.pane)
         self.assertTrue((self.root / "renamed.txt").exists())
         self.assertFalse((self.root / "top.txt").exists())
 
@@ -243,6 +245,7 @@ class ModalDialogTest(_Base):
             side_effect=self.finish_load_then(gate, ("renamed.txt", True)),
         ):
             self.press(Qt.Key.Key_F2)
+            _drain_op(self.pane)
         self.assertEqual((self.root / "renamed.txt").read_text(), "root copy")
         self.assertEqual((self.root / "b" / "top.txt").read_text(), "b copy")
         self.assertFalse((self.root / "b" / "renamed.txt").exists())
@@ -257,6 +260,7 @@ class ModalDialogTest(_Base):
             side_effect=self.finish_load_then(gate, ("exists.txt", True)),
         ), mock.patch("ui.file_pane.QMessageBox.warning") as warning:
             self.press(Qt.Key.Key_F2)
+            _drain_op(self.pane)
         warning.assert_called_once()
         self.assertEqual((self.root / "exists.txt").read_text(), "root exists")
         self.assertEqual((self.root / "top.txt").read_text(), "root copy")

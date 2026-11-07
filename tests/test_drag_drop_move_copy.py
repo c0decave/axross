@@ -128,7 +128,12 @@ class _Panes(unittest.TestCase):
 
         view = pane._table
         if name is None:
-            return QPoint(10, view.viewport().height() - 3)
+            # Below every row where there is room; else on "." - this folder,
+            # the same target (a short pane: "." and ".." take two rows).
+            last = view.visualRect(view.model().index(view.model().rowCount() - 1, 0))
+            if last.bottom() + 4 < view.viewport().height():
+                return QPoint(10, view.viewport().height() - 3)
+            name = "."
         row = self.row_of(pane, name)
         self.assertIsNotNone(row, name)
         return view.visualRect(view.model().index(row, 0)).center()

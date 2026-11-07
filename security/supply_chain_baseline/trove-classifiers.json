@@ -1,0 +1,60 @@
+{
+ "name": "trove-classifiers",
+ "versions": {
+  "2026.9.21.13": {
+   "accepted_findings": [],
+   "archives": {
+    "trove_classifiers-2026.9.21.13-py3-none-any.whl": {
+     "entry_points": [
+      "trove-classifiers = trove_classifiers.__main__:cli"
+     ],
+     "files": {
+      "trove_classifiers-2026.9.21.13.dist-info/METADATA": "ca7e96493232b21f92aeccf456b2e01f1d4dbcaa8e17a9e1b5e6f03c6eb7461f",
+      "trove_classifiers-2026.9.21.13.dist-info/RECORD": "8aa75df1c8b71b055cb1cd36c8e49c4d886dc5af5d571d08ed6c2e8c48ae247b",
+      "trove_classifiers-2026.9.21.13.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "trove_classifiers-2026.9.21.13.dist-info/entry_points.txt": "6dff8b3f2eb367c24540153968f3428c9ad8786bd116e219ecdb43211e97fc32",
+      "trove_classifiers-2026.9.21.13.dist-info/licenses/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "trove_classifiers-2026.9.21.13.dist-info/top_level.txt": "fd3bd7bff29905475c9493e0fb4ac09a94cc8100ed04e8cad2cd76c95fa15917",
+      "trove_classifiers/__init__.py": "d305cc4cc3a6d96cb4b181fa6a6912e9d1d3c63d5c8d02d9db0a26a5c4716057",
+      "trove_classifiers/__main__.py": "e1ea5b022575ec6e6bd86f283f63b8a2ba96e55fbd32f576a7023b9e26f94856",
+      "trove_classifiers/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "d5969c3d021579fc2bf0d1a5ec8ee14e6ac20de430f92762ad5c5c4e26a70c1a",
+     "native": {},
+     "pth": {},
+     "sha256": "8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17"
+    }
+   },
+   "name": "trove-classifiers",
+   "provenance": {
+    "trove_classifiers-2026.9.21.13-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "pypa/trove-classifiers",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author": "The PyPI Admins",
+    "author_email": "admin@pypi.org",
+    "home_page": "https://github.com/pypa/trove-classifiers",
+    "project_urls": {
+     "Homepage": "https://github.com/pypa/trove-classifiers"
+    },
+    "summary": "Canonical source for classifiers on PyPI (pypi.org)."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (pypa/trove-classifiers)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2026.9.21.13"
+  }
+ }
+}

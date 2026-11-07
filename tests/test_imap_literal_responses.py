@@ -18,6 +18,7 @@ Driven against the scripted IMAP server on 127.0.0.1.
 
 from __future__ import annotations
 
+import io
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,3 +135,32 @@ def test_edge_a_utf8_subject_literal_decodes():
     )
     with _fetch_server(fetch, b"1") as srv:
         assert [i.name for i in _session(srv).list_dir("/INBOX")] == ["1_Grüße.eml"]
+
+
+def _reader(data: bytes) -> IC._IMAP4:
+    imap = IC._IMAP4.__new__(IC._IMAP4)
+    imap.file = io.BufferedReader(io.BytesIO(data))
+    return imap
+
+
+def test_sad_a_literal_announcing_more_than_memory_holds_is_refused():
+    """imaplib read a literal with one file.read() of the announced size,
+    and Python 3.11.2 allocates that at once: a
+    server's {99999999999} raised MemoryError out of list_dir / open_read.
+    Now it is over the command's byte budget and refused before anything
+    is read or allocated (tests/test_imap_answer_budget.py)."""
+    with pytest.raises(IC.ImapAnswerTooLarge):
+        _reader(b"abc").read(99_999_999_999)
+
+
+def test_sad_a_literal_shorter_than_announced_reads_what_came():
+    assert _reader(b"abc").read(5) == b"abc"
+
+
+def test_edge_a_literal_longer_than_one_step_is_read_whole():
+    body = bytes(range(256)) * (IC._LITERAL_CHUNK // 256 * 2 + 3)
+    imap = _reader(body + b")\r\n")
+    assert imap.read(len(body)) == body
+    assert imap.read(0) == b"" and imap.readline() == b")\r\n"
+    for cls in (IC._IMAP4_SSL, IC._ProxyIMAP4, IC._ProxyIMAP4_SSL):
+        assert cls.read is IC._IMAP4.read

@@ -187,12 +187,28 @@ def _pdf_error_text(error) -> str:
     }.get(error, f"cannot open PDF ({getattr(error, 'name', error)})")
 
 
+def qtpdf_install_hint() -> str:
+    """Where QtPdf comes from when it is missing, "" if PyQt6 itself should
+    have it. From 6.12 on, PyQt6's wheels carry no QtPdf: Riverbank ships it
+    as the separate package PyQt6-Pdf. Below 6.12 a missing QtPdf is a host
+    library (libatomic), not a package to install."""
+    try:
+        from PyQt6.QtCore import PYQT_VERSION
+    except ImportError:
+        return ""
+    if PYQT_VERSION < 0x060C00:
+        return ""
+    return "with PyQt6 6.12 or newer it is the separate package PyQt6-Pdf"
+
+
 def _open_pdf(path: str):
     try:
         from PyQt6.QtPdf import QPdfDocument
     except ImportError as exc:  # QtPdf needs libatomic from the host
+        hint = qtpdf_install_hint()
         raise MediaUnavailable(
             f"PDF viewing needs QtPdf, which cannot be loaded here ({exc})"
+            + (f"; {hint}" if hint else "")
         ) from exc
 
     doc = QPdfDocument(None)

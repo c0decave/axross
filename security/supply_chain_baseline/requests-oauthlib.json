@@ -1,0 +1,70 @@
+{
+ "name": "requests-oauthlib",
+ "versions": {
+  "2.0.0": {
+   "accepted_findings": [
+    "raw-ip-url|requests_oauthlib/oauth1_session.py|048799a4a9deea28",
+    "raw-ip-url|requests_oauthlib/oauth1_session.py|4b04e138aab69ae6",
+    "raw-ip-url|requests_oauthlib/oauth1_session.py|c3bfad118e086596"
+   ],
+   "archives": {
+    "requests_oauthlib-2.0.0-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "requests_oauthlib-2.0.0.dist-info/LICENSE": "ae01846afad8a8291fe6a08966f3015af9a8ff675d84b981f9793c122f7876e8",
+      "requests_oauthlib-2.0.0.dist-info/METADATA": "7d85ea39c166d9f2326f89cee906331d2c80ed2ddea4d31efc020006b47fcaca",
+      "requests_oauthlib-2.0.0.dist-info/RECORD": "578c9b825e178130130e30679f7af44fc26d3c5688df4788f9d705e162df4f28",
+      "requests_oauthlib-2.0.0.dist-info/WHEEL": "0d96a30f8a702d6b9eef40807dced86b14f5c0b51c88d06f37f4d372f5e996d1",
+      "requests_oauthlib-2.0.0.dist-info/top_level.txt": "bf1d51e360d604eeb887a8aef06728d05d354d54cf597491581695d46c154534",
+      "requests_oauthlib/__init__.py": "721bd888809d722786ad173f7b95ad171697aba4ff7ac9a270bfc12d60de9dde",
+      "requests_oauthlib/compliance_fixes/__init__.py": "7b4a9794bd454db7bb9314cb1664d837d8a914d664b3eb201a262a86bc81a1bc",
+      "requests_oauthlib/compliance_fixes/douban.py": "f514da7d1bb49d6ca2027f6bf39d3608463acafa3371a9d7576a709ca3d424dc",
+      "requests_oauthlib/compliance_fixes/ebay.py": "35153120c29530fd1050bbabf5112eb6cc9922a20ffc0c0e00d8e58e2f598001",
+      "requests_oauthlib/compliance_fixes/facebook.py": "af26e21fcdfd630cf2635dd288603aefa8870814e1de6a8575a9b9b6ac74e352",
+      "requests_oauthlib/compliance_fixes/fitbit.py": "708e0f3e94e75c9a59c35498f8df2872c855da956f7a9ebbf5dfe944824f2268",
+      "requests_oauthlib/compliance_fixes/instagram.py": "604bd758a9a133ac98e24dfbf15da636597854ac8e2646411f47d1bd4e9f0ccd",
+      "requests_oauthlib/compliance_fixes/mailchimp.py": "4951509676ee5d908b78abfa626860f5e48149c1c25d5f773d72c75a150f00dd",
+      "requests_oauthlib/compliance_fixes/plentymarkets.py": "b3b96b4d984835a9222a395b3884937874d25ec364706f307ca704565414328b",
+      "requests_oauthlib/compliance_fixes/slack.py": "e19420d67cb4bd4fa17fc3498cac206448201f6381ecddda27d1addafedc55ce",
+      "requests_oauthlib/compliance_fixes/weibo.py": "4cbf2ebb85cc0ff321f6d5c828c340f134f580e22b6818a94caa17912a51dac3",
+      "requests_oauthlib/oauth1_auth.py": "1775df85538357cd279c210f0c7b9e535826ab18618c64e69c31181ad458c097",
+      "requests_oauthlib/oauth1_session.py": "03a8fb0a043c9f622be009fef14d09f65c9435e63c1f959f7f92393d61f39477",
+      "requests_oauthlib/oauth2_auth.py": "317b3cbc86c13a15e3f4d2e2c3ff89db8939e8bfd7449d2d147fc4329b216149",
+      "requests_oauthlib/oauth2_session.py": "2b85ed769353894e83abc26f12c8fc694a4c75abd6482640b9339cff1859701c"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a39da1f2ed6815a6dd92c7341cdb596b2d78fb0a6cbfd36c1b427927cb87bdc6",
+     "native": {},
+     "pth": {},
+     "sha256": "7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36"
+    }
+   },
+   "name": "requests-oauthlib",
+   "provenance": {
+    "requests_oauthlib-2.0.0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Kenneth Reitz",
+    "author_email": "me@kennethreitz.com",
+    "home_page": "https://github.com/requests/requests-oauthlib",
+    "license": "ISC",
+    "project_urls": {
+     "Homepage": "https://github.com/requests/requests-oauthlib"
+    },
+    "summary": "OAuthlib authentication support for Requests."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 4 medium findings (capability patterns) seen; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.0.0"
+  }
+ }
+}

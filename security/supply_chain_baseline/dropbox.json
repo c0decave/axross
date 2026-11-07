@@ -1,0 +1,115 @@
+{
+ "name": "dropbox",
+ "versions": {
+  "12.2.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|dropbox/file_transfer.py|10cfa74668081e64",
+    "yara|capability_filesystem_read|dropbox/content_hash.py|e790835d3b694daa",
+    "yara|capability_filesystem_read|dropbox/file_transfer.py|10cfa74668081e64",
+    "yara|capability_network_outbound|dropbox/base.py|9bff660af63eb899",
+    "yara|capability_process_schedule|dropbox/base_team.py|12642804b96e7b4c",
+    "yara|capability_process_schedule|dropbox/team_log.py|1c6dc02ce595ed35",
+    "yara|lolbas_net|dropbox/base.py|9bff660af63eb899"
+   ],
+   "archives": {
+    "dropbox-12.2.3-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "dropbox-12.2.3.dist-info/METADATA": "e08e5b00ba2381538e6ea6dcbc24b159ebcb798efa92a066d3d79f61b516e1e7",
+      "dropbox-12.2.3.dist-info/RECORD": "c4fa2e2f93bc61829b2f69b273060381ea6916dcdc34c77ce916a42fd1909abe",
+      "dropbox-12.2.3.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "dropbox-12.2.3.dist-info/licenses/LICENSE": "4bf7cf281a1216fa71fbc3a70c209b5433a78e1b736bc27706f624e79d24f4ca",
+      "dropbox-12.2.3.dist-info/top_level.txt": "ef986947a1808a55af13c1e7bdc61a662fdae019bb811ca77ac84b2bee81bbf7",
+      "dropbox/__init__.py": "fce978189b7d2cfb2daf20f3935428930141a018a21be89dc00d75d8bb938bd7",
+      "dropbox/_http.py": "daf6f2f4b8c7085e9d2f0b389bd241c94b7b5d6dae868e8e751ea2849f0aae4f",
+      "dropbox/_version.py": "aa0fbc05f7e3bbcb1864fdbf24829abed447d95ff27303523686187dced82445",
+      "dropbox/account.py": "87c6dc51ec7a30ae61baa38b386abba32f1b129e1233215e808a4baf763e964f",
+      "dropbox/account_id.py": "dc71b943f7311adffd45543c2982a49f8a5ab9cfdb58f21e0f45bd600a518557",
+      "dropbox/async.py": "a03d414daaaf38ade063e2f36c7e7d00597543f7a0ef9dba38fab4df3c4c4e71",
+      "dropbox/async_.py": "f6d50a9e5b260be0577c83c3caa2439edbc24610384571a3a3f9f8fbe6fcac4c",
+      "dropbox/auth.py": "7fa7cabc892dc252ced89077d9f949cef6e4a8c19923c379b02d25d28039e199",
+      "dropbox/base.py": "9bff660af63eb899c113abd3dc502eb7c2b8286c5fc4dcade66dfbf0b9edbd35",
+      "dropbox/base_team.py": "12642804b96e7b4c05334a3697d249262ed3815a28636f93af22647c37b36ce1",
+      "dropbox/check.py": "903f5a628d081d34d2663ddd4138f0a2b530036a9134951fa79295ef5be016c7",
+      "dropbox/common.py": "467f13f9f4775907026eec5753f7ab3ca17880f5d21aadf3a0e4aa94c2ca11ce",
+      "dropbox/contacts.py": "d8012296878632630aeabf7494b3803061a7ed933b87b7ff5fe2003f54e79afd",
+      "dropbox/content_hash.py": "e790835d3b694daaa961c7853dae1b26ace02c3b2e4002e8d4813560b8355d61",
+      "dropbox/dropbox_client.py": "ef4a8102b5e333778ca2a0bd823e11112ddda2895498906d1bc4b8075b049f42",
+      "dropbox/exceptions.py": "7ee00b3d3021932abc727d81d00d4c4eb3edd5b6643016bb606df8bd07a6f615",
+      "dropbox/file_properties.py": "5fd6a8cf16f7cdf2f486a85cb2be62848588f4dd376ff4248ec8ab4d829e8ccb",
+      "dropbox/file_requests.py": "3143fc5bc20be44ebc3b94e76ab08e28c319609cc5c826248b7fadd0fd485444",
+      "dropbox/file_transfer.py": "10cfa74668081e64049557cf09b30ca539d0a717bcd6ba89be90c481628a6986",
+      "dropbox/files.py": "39d64246525ce8ce52c8228aad669fd51b33942780a7ad54db24d54d945af6e2",
+      "dropbox/oauth.py": "2deaa46c3cc285a1cb4ad74999146bfb5838c0be56d70dd819f77f0bafae261d",
+      "dropbox/openid.py": "b4f463221076338ff73ab4bbdbcda8b1607f9fa3fdea8f892425b4154e7775b8",
+      "dropbox/paper.py": "aececeb23f4da4ac5eada1508f4b4e6b7a991b275cfd435204cdb76e8ee74c7d",
+      "dropbox/riviera.py": "50e5fb5a5b7ef5cb10aaeb0f62a3140538dfd12474b90a7d364f03fbd19dcf74",
+      "dropbox/secondary_emails.py": "186eb780a763ce9f570c5dfd21393154a6fbea0693f09984e259c9db7cba3a1c",
+      "dropbox/seen_state.py": "8b5aef4123128da087719f5a4f9ca43fc0284863267f80beec39916a2eef7123",
+      "dropbox/session.py": "d0bd5d83b0da988c71feb68c49613d34737607c214a124a6b79b7f3e394e0dbe",
+      "dropbox/sharing.py": "280be98c4f3d429510f491cf5b01f0270a378c0b242f78bc01ccacbcf3ff4ab8",
+      "dropbox/stone_base.py": "047e62e87a2ccd340278099e757ef4fb2b2af1da7beec304ff05d5eaf09127bb",
+      "dropbox/stone_serializers.py": "da495628929c454ffa7dd424b7ffbc2a0662c6873bf04170842b82e576283d00",
+      "dropbox/stone_validators.py": "8e5303b5eaa71190751433f23a79f17c9cbcb6dcc06315eed78ac65865ec95e5",
+      "dropbox/team.py": "081d3e5c6708edf2a02f174fca389eec9773c2c7939ec9ce1b361329557620db",
+      "dropbox/team_common.py": "a4ce936b86ebc3659130ea18df588126caca42dc11e9867a965719206701c08c",
+      "dropbox/team_log.py": "1c6dc02ce595ed35319ed6a20ff8a83172d120e6b0c50de8f0551d466509e490",
+      "dropbox/team_policies.py": "4041a71fe7379316eab0e46ce9a6981128df2996082db2f83ee0acb9021ab720",
+      "dropbox/users.py": "202965219ee20489e637338ab14d30332c59c90f393da3c5aac88d5435877080",
+      "dropbox/users_common.py": "b1eb685e8424831990bd2c9346b83607d6e6c32894e0c0447a70f4ea4ba168f3"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "4adb7f1e85b41b7304017a9108276e827e8297115ed216c6fb47c5d1a1433f52",
+     "native": {},
+     "pth": {},
+     "sha256": "b0356df1f2f2021c6147fc1fbf89cf024e602388f77391c57d8068972aa1a1d0"
+    }
+   },
+   "name": "dropbox",
+   "provenance": {
+    "dropbox-12.2.3-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "dropbox/dropbox-sdk-python",
+     "workflow": "pypiupload.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Dropbox <dev-platform@dropbox.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "http://www.dropbox.com/developers",
+     "Source": "https://github.com/dropbox/dropbox-sdk-python"
+    },
+    "summary": "Official Dropbox API Client"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, network_outbound, process_schedule, lolbas_net; attestation verifies (dropbox/dropbox-sdk-python)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|dropbox/file_transfer.py|10cfa74668081e64",
+     "yara|capability_filesystem_read|dropbox/content_hash.py|e790835d3b694daa",
+     "yara|capability_filesystem_read|dropbox/file_transfer.py|10cfa74668081e64",
+     "yara|capability_network_outbound|dropbox/base.py|9bff660af63eb899",
+     "yara|capability_process_schedule|dropbox/base_team.py|12642804b96e7b4c",
+     "yara|capability_process_schedule|dropbox/team_log.py|1c6dc02ce595ed35",
+     "yara|lolbas_net|dropbox/base.py|9bff660af63eb899"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete dropbox/file_transfer.py",
+     "capability_filesystem_read:capability_filesystem_read dropbox/content_hash.py",
+     "capability_filesystem_read:capability_filesystem_read dropbox/file_transfer.py",
+     "capability_network_lolbas:lolbas_net dropbox/base.py",
+     "capability_network_outbound:capability_network_outbound dropbox/base.py",
+     "capability_process_schedule:capability_process_schedule dropbox/base_team.py",
+     "capability_process_schedule:capability_process_schedule dropbox/team_log.py"
+    ]
+   },
+   "version": "12.2.3"
+  }
+ }
+}

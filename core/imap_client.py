@@ -79,7 +79,133 @@ def _internaldate(text: str) -> datetime:
 IMAP_TIMEOUT = 30.0
 
 
-class _ProxyIMAP4(imaplib.IMAP4):
+#: Bytes one read of a literal asks for at a time.
+_LITERAL_CHUNK = 1024 * 1024
+
+#: What one command's answer may total when it carries no message body:
+#: the greeting, LOGIN, LIST, SELECT, SEARCH, STATUS, FETCH of ENVELOPE /
+#: RFC822.SIZE / FLAGS. imaplib refuses a single line over 1,000,000 bytes
+#: already, so a SEARCH of about 120,000 UIDs is the most any one line can
+#: carry; 8 MiB leaves room for eight such lines, for a 100-message ENVELOPE
+#: batch (_list_messages) at 80 KB per envelope - a long recipient list - or
+#: a LIST of some 80,000 mailboxes, and is still nothing to hold in memory.
+_ANSWER_CAP = 8 * 1024 * 1024
+
+#: What the answer to a message FETCH may carry besides the message itself
+#: (the FETCH framing, untagged EXISTS / FLAGS updates in between).
+_BODY_SLACK = 64 * 1024
+
+
+class ImapAnswerTooLarge(OSError):
+    """A server's answer to one command went over its byte budget.
+
+    The connection is dropped when this is raised: the rest of the answer
+    is still on the wire, and the stream is out of step with any command
+    sent after it."""
+
+    def __init__(self, command: str, budget: int, seen: int) -> None:
+        self.command, self.budget, self.seen = command, budget, seen
+        super().__init__(
+            errno.EFBIG,
+            f"the IMAP server's answer to {command} is larger than {_human(budget)} "
+            f"({_human(seen)} announced or read); the connection was dropped",
+        )
+
+
+def _human(n: int) -> str:
+    if n >= 1024 * 1024:
+        return f"{n / (1024 * 1024):.0f} MiB"
+    return f"{n // 1024} KiB" if n >= 1024 else f"{n} bytes"
+
+
+class _LiteralInSteps:
+    """A byte budget per command, and literals read in steps.
+
+    Nothing in imaplib caps an answer: a literal is read as long as the
+    server says, and untagged lines are collected until the tagged one
+    comes. A broken or hostile server that announces a huge literal and
+    then sends gigabytes - or sends untagged lines for ever - filled the
+    memory through list_dir / open_read / the attachment listing.
+
+    Every command now gets a budget (:data:`_ANSWER_CAP`, or what
+    :func:`_expect_large_answer` set for the next command); each byte that
+    read() and readline() take from the server counts against it, and a
+    literal announced larger than what is left is refused before anything
+    of it is read. Over budget the connection is shut and
+    :class:`ImapAnswerTooLarge` (an OSError naming the size) raised.
+
+    The literal is read in :data:`_LITERAL_CHUNK` steps into one bytearray:
+    imaplib's single ``file.read(n)`` makes Python 3.11.2 (Debian 12's)
+    allocate the announced size at once. One whose size lies ends short at
+    EOF or the socket timeout, as with a newer Python."""
+
+    _axross_budget = _ANSWER_CAP
+    _axross_used = 0
+    _axross_command = "the greeting"
+    _axross_next_budget: int | None = None
+
+    def _command(self, name, *args):
+        self._axross_budget = self._axross_next_budget or _ANSWER_CAP
+        self._axross_next_budget = None
+        self._axross_used = 0
+        # "UID FETCH", not "UID"; never an argument (LOGIN's is the user).
+        self._axross_command = f"{name} {args[0]}" if name == "UID" and args else name
+        return super()._command(name, *args)
+
+    def _axross_over(self, seen: int):
+        budget, command = self._axross_budget, self._axross_command
+        log.warning("IMAP: answer to %s over its %d-byte budget (%d); dropping the connection",
+                    command, budget, seen)
+        try:
+            self.shutdown()
+        except Exception:  # noqa: BLE001 - the socket may be gone already
+            pass
+        # Any further command fails at once (imaplib's state check), so
+        # ImapSession._ensure_connected reconnects instead of reading the
+        # rest of this answer as the reply to the next one.
+        self.state = "LOGOUT"
+        raise ImapAnswerTooLarge(command, budget, seen)
+
+    def read(self, size):
+        if self._axross_used + size > self._axross_budget:
+            self._axross_over(self._axross_used + size)
+        buf = bytearray()
+        while len(buf) < size:
+            step = min(size - len(buf), _LITERAL_CHUNK)
+            chunk = self.file.read(step)
+            buf += chunk
+            if len(chunk) < step:
+                break
+        self._axross_used += len(buf)
+        return bytes(buf)
+
+    def readline(self):
+        left = self._axross_budget - self._axross_used
+        line = self.file.readline(min(imaplib._MAXLINE, left) + 1)
+        self._axross_used += len(line)
+        if self._axross_used > self._axross_budget:
+            self._axross_over(self._axross_used)
+        if len(line) > imaplib._MAXLINE:
+            raise self.error("got more than %d bytes" % imaplib._MAXLINE)
+        return line
+
+
+def _expect_large_answer(imap, budget: int) -> None:
+    """Give the NEXT command sent on ``imap`` a budget of ``budget`` bytes
+    (a message FETCH); every later one gets :data:`_ANSWER_CAP` again."""
+    if isinstance(imap, _LiteralInSteps):
+        imap._axross_next_budget = budget
+
+
+class _IMAP4(_LiteralInSteps, imaplib.IMAP4):
+    pass
+
+
+class _IMAP4_SSL(_LiteralInSteps, imaplib.IMAP4_SSL):
+    pass
+
+
+class _ProxyIMAP4(_IMAP4):
     """IMAP4 subclass that builds its TCP socket through a SOCKS /
     HTTP proxy via :func:`core.proxy.create_proxy_socket`.
 
@@ -105,7 +231,7 @@ class _ProxyIMAP4(imaplib.IMAP4):
         )
 
 
-class _ProxyIMAP4_SSL(imaplib.IMAP4_SSL):
+class _ProxyIMAP4_SSL(_IMAP4_SSL):
     """IMAP4_SSL counterpart. Re-uses the proxy socket-builder, then
     wraps the result in TLS via the SSL context imaplib already
     constructs internally."""
@@ -366,6 +492,15 @@ def _decode_header(raw: str | bytes | None) -> str:
     return " ".join(decoded)
 
 
+def _mailbox_arg(name: str) -> str:
+    """*name* as an IMAP mailbox argument: modified UTF-7 in a quoted
+    string (RFC 3501 4.3). Python 3's imaplib quotes nothing, and a bare
+    ``Sent Items`` or ``[Gmail]/Sent Mail`` is a syntax error to Dovecot,
+    Exchange and Gmail."""
+    encoded = _imap_utf7_encode(name).decode("ascii")
+    return '"' + encoded.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _imap_utf7_encode(text: str) -> bytes:
     """Encode a mailbox name using modified UTF-7 (IMAP convention).
 
@@ -490,7 +625,7 @@ class _SpooledWriter:
         else:
             message_bytes = raw_bytes
 
-        mailbox_encoded = _imap_utf7_encode(self._mailbox).decode("ascii")
+        mailbox_encoded = _mailbox_arg(self._mailbox)
         with self._lock:
             typ, data = self._imap.append(mailbox_encoded, None, None, message_bytes)
         if typ != "OK":
@@ -588,6 +723,21 @@ class ImapSession(SessionLifecycle):
 
         self._connect()
 
+
+    def _login(self):
+        """LOGIN - or, for a user name or password beyond ASCII, SASL PLAIN:
+        imaplib's LOGIN encodes as ASCII, and a password with "ä" or "€"
+        raised UnicodeEncodeError at every connect. PLAIN carries UTF-8
+        (RFC 4616). ``(typ, data)`` as imaplib answers."""
+        if (self._username + self._password).isascii():
+            return self._imap.login(self._username, self._password)
+        caps = {str(c).upper() for c in getattr(self._imap, "capabilities", ())}
+        if "AUTH=PLAIN" not in caps:
+            raise ConnectionError("IMAP: the user name or password has characters beyond "
+                                  "ASCII, and the server offers no AUTH=PLAIN to send them")
+        credentials = f"\0{self._username}\0{self._password}".encode("utf-8")
+        return self._imap.authenticate("PLAIN", lambda _challenge: credentials)
+
     def _connect(self) -> None:
         """Establish IMAP connection and authenticate."""
         # ``_proxy`` is set by ``__init__``; defensively tolerate the
@@ -608,7 +758,7 @@ class ImapSession(SessionLifecycle):
                         self._host, self._port, proxy, ssl_context=tls_ctx
                     )
                 else:
-                    self._imap = imaplib.IMAP4_SSL(
+                    self._imap = _IMAP4_SSL(
                         self._host, self._port, ssl_context=tls_ctx, timeout=IMAP_TIMEOUT
                     )
             else:
@@ -624,9 +774,9 @@ class ImapSession(SessionLifecycle):
                 if proxy_active:
                     self._imap = _ProxyIMAP4(self._host, self._port, proxy)
                 else:
-                    self._imap = imaplib.IMAP4(self._host, self._port, timeout=IMAP_TIMEOUT)
+                    self._imap = _IMAP4(self._host, self._port, timeout=IMAP_TIMEOUT)
 
-            typ, data = self._imap.login(self._username, self._password)
+            typ, data = self._login()
             if typ != "OK":
                 raise ConnectionError(f"IMAP LOGIN failed: {data}")
 
@@ -639,6 +789,8 @@ class ImapSession(SessionLifecycle):
                     sep = entry[1].strip()
                     if sep:
                         self._hierarchy_sep = sep
+            except ImapAnswerTooLarge:
+                raise  # the connection is dropped; nothing to go on with
             except Exception as exc:
                 log.debug("Could not detect hierarchy separator: %s", exc)
 
@@ -675,7 +827,7 @@ class ImapSession(SessionLifecycle):
         would silently no-op against an EXAMINE'd mailbox).
         """
         imap = self._ensure_connected()
-        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        encoded = _mailbox_arg(mailbox)
         if (
             self._selected_mailbox == mailbox
             and getattr(self, "_selected_readonly", True) == readonly
@@ -901,6 +1053,19 @@ class ImapSession(SessionLifecycle):
         proto = "IMAPS" if self._use_ssl else "IMAP"
         return f"{self._username}@{self._host} ({proto})"
 
+    def security_info(self):
+        """The negotiated TLS of the IMAP connection for the security badge
+        (None when not connected - the profile tells then)."""
+        from core import conn_security as CS
+
+        sock = getattr(self._imap, "sock", None) if self._imap is not None else None
+        if sock is None:
+            return None
+        if not self._use_ssl:
+            return CS.SecurityInfo(CS.LEVEL_CLEARTEXT, "IMAP without TLS - cleartext - anyone on the "
+                                   "network can read it, the password too", True)
+        return CS.tls_socket(sock, verified=self._verify_tls, what="IMAP")
+
     @property
     @liveness_check
     def connected(self) -> bool:
@@ -1074,11 +1239,30 @@ class ImapSession(SessionLifecycle):
         where = f"/{mailbox}/{uid}"
         self._select_existing(mailbox, where)
         imap = self._ensure_connected()
-        typ, data = imap.uid("FETCH", uid, "(RFC822)")
+        # The whole message is held in memory (and handed on as BytesIO):
+        # the open size limit of the viewers caps it, as it caps a file
+        # opened from any other pane.
+        from core import open_limits
+
+        limit = open_limits.max_open_bytes()
+        too_large = OSError(
+            errno.EFBIG,
+            f"Message UID {uid} in {mailbox!r} is larger than {open_limits.describe_limit()}, "
+            "the open size limit (Edit → Settings… → Files & Panes → Open Size Limit)",
+        )
+        _expect_large_answer(imap, limit + _BODY_SLACK)
+        try:
+            typ, data = imap.uid("FETCH", uid, "(RFC822)")
+        except ImapAnswerTooLarge as exc:
+            self._imap = None
+            self._selected_mailbox = None
+            raise too_large from exc
         if typ != "OK":
             raise OSError(f"Cannot fetch message UID {uid} from {mailbox!r}: {data}")
         for response_part in data:
             if isinstance(response_part, tuple):
+                if len(response_part[1]) > limit:
+                    raise too_large
                 return response_part[1]
         if not any(part for part in data or ()):
             # UID FETCH of a UID that is not there answers OK, no data.
@@ -1187,7 +1371,7 @@ class ImapSession(SessionLifecycle):
         """Create a new mailbox."""
         mailbox = self._virtual_path_to_mailbox(path)
         imap = self._ensure_connected()
-        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        encoded = _mailbox_arg(mailbox)
         typ, data = imap.create(encoded)
         if typ != "OK":
             raise OSError(f"Cannot create mailbox {mailbox!r}: {data}")
@@ -1251,14 +1435,14 @@ class ImapSession(SessionLifecycle):
         prefix = mailbox + self._hierarchy_sep
         if not any(name.startswith(prefix) for name in self._mailbox_names()):
             return False
-        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        encoded = _mailbox_arg(mailbox)
         typ, _ = self._ensure_connected().status(encoded, "(MESSAGES)")
         return typ != "OK"
 
     def _message_count(self, mailbox: str) -> int:
         """Messages in *mailbox* by STATUS; 0 for a name that cannot hold any."""
         imap = self._ensure_connected()
-        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        encoded = _mailbox_arg(mailbox)
         typ, data = imap.status(encoded, "(MESSAGES)")
         if typ != "OK":
             return 0
@@ -1275,7 +1459,7 @@ class ImapSession(SessionLifecycle):
             except Exception:
                 pass
             self._selected_mailbox = None
-        encoded = _imap_utf7_encode(mailbox).decode("ascii")
+        encoded = _mailbox_arg(mailbox)
         return imap.delete(encoded)
 
     def _remove_mailbox_tree(self, mailbox: str, path: str, recursive: bool) -> None:
@@ -1339,8 +1523,8 @@ class ImapSession(SessionLifecycle):
                 except Exception:
                     pass
                 self._selected_mailbox = None
-            old_enc = _imap_utf7_encode(old_name).decode("ascii")
-            new_enc = _imap_utf7_encode(new_name).decode("ascii")
+            old_enc = _mailbox_arg(old_name)
+            new_enc = _mailbox_arg(new_name)
             typ, data = imap.rename(old_enc, new_enc)
             if typ != "OK":
                 raise OSError(f"Cannot rename mailbox {old_name!r} to {new_name!r}: {data}")
@@ -1363,7 +1547,7 @@ class ImapSession(SessionLifecycle):
             self._select_mailbox(src_mailbox, readonly=False)
             imap = self._ensure_connected()
 
-            dst_enc = _imap_utf7_encode(dst_mailbox).decode("ascii")
+            dst_enc = _mailbox_arg(dst_mailbox)
             typ, data = imap.uid("COPY", src_uid, dst_enc)
             if typ != "OK":
                 raise OSError(f"Cannot copy UID {src_uid} to {dst_mailbox!r}: {data}")
@@ -1627,6 +1811,51 @@ class ImapSession(SessionLifecycle):
 
     @_imap_errors_as_oserror
     @serialized
+    def append_message(self, mailbox: str, message: bytes, flags: tuple[str, ...] = ()) -> None:
+        """IMAP APPEND a complete RFC 5322 message with *flags* (e.g.
+        ``("\\Draft",)`` for a draft, ``("\\Seen",)`` for a sent copy)."""
+        if "\r" in mailbox or "\n" in mailbox:
+            raise ValueError("IMAP append: the mailbox must not contain CR/LF")
+        for f in flags:
+            if not f or any(c in f for c in "\r\n ()"):
+                raise ValueError(f"IMAP append: flag {f!r} must be one word")
+        imap = self._ensure_connected()
+        encoded = _mailbox_arg(mailbox)
+        typ, data = imap.append(encoded, "(" + " ".join(flags) + ")" if flags else None, None, message)
+        if typ != "OK":
+            raise OSError(f"IMAP APPEND to {mailbox} failed: {data}")
+
+    @_imap_errors_as_oserror
+    @serialized
+    def special_mailbox(self, use: str) -> str:
+        """The mailbox the server marks with the special-use flag *use*
+        (RFC 6154: ``drafts``, ``sent``, ``junk``, ``trash``, ``archive``),
+        else one with the usual name; '' when there is none."""
+        imap = self._ensure_connected()
+        typ, data = imap.list()
+        if typ != "OK":
+            raise OSError(f"IMAP LIST failed: {data}")
+        names = []
+        for raw in _imap_responses(data):
+            entry = _parse_list_entry(raw)
+            if entry is None:
+                continue
+            name = _imap_utf7_decode(entry[2])
+            if f"\\{use}".lower() in entry[0].lower():
+                return name
+            names.append(name)
+        usual = {"drafts": ("Drafts", "Draft", "Entw\u00fcrfe", "INBOX.Drafts"),
+                 "sent": ("Sent", "Sent Items", "Sent Messages", "Gesendet", "INBOX.Sent"),
+                 "junk": ("Junk", "Spam"), "trash": ("Trash", "Deleted Items", "Papierkorb"),
+                 "archive": ("Archive", "Archiv")}.get(use.lower(), ())
+        for candidate in usual:
+            for name in names:
+                if name.lower() == candidate.lower():
+                    return name
+        return ""
+
+    @_imap_errors_as_oserror
+    @serialized
     def move(self, uid: int, src_mailbox: str, dst_mailbox: str) -> None:
         """Move a message from ``src_mailbox`` to ``dst_mailbox`` by
         UID. Uses the IMAP MOVE extension (RFC 6851) when the server
@@ -1650,7 +1879,7 @@ class ImapSession(SessionLifecycle):
             )
         except Exception:  # noqa: BLE001
             cap_str = ""
-        dst_enc = _imap_utf7_encode(dst_mailbox).decode("ascii")
+        dst_enc = _mailbox_arg(dst_mailbox)
         if "MOVE" in cap_str.upper():
             typ, data = imap.uid("MOVE", str(int(uid)), dst_enc)
             if typ != "OK":

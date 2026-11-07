@@ -303,6 +303,58 @@ def _carry_local_attributes(backend, src: str, dst: str) -> bool:
     return True
 
 
+def _carry_remote_owner(backend, src: str, dst: str) -> bool:
+    """Give the remote temp *dst* the owner and group of *src* (a backend
+    with owner_ids() and chown(): SFTP). False when they differ and cannot
+    be set: renamed over it, the new file would belong to the login (as
+    root over SFTP, www-data's 0640 config.php came back as root:root and
+    the web server could no longer read it)."""
+    if _is_local(backend):
+        return True
+    owner_ids = getattr(backend, "owner_ids", None)
+    chown = getattr(backend, "chown", None)
+    if owner_ids is None or chown is None:
+        return True
+    try:
+        want = owner_ids(src)
+    except OSError:
+        return True  # a new file: nothing to keep
+    try:
+        have = owner_ids(dst)
+    except OSError:
+        have = None
+    if want is None or want == have:
+        return True
+    try:
+        chown(dst, *want)
+    except (OSError, NotImplementedError) as exc:
+        log.debug("atomic_write: cannot give %s the owner of %s: %s", dst, src, exc)
+        return False
+    return True
+
+
+def _write_through(backend, op_id: str, path: str, data: bytes, reason: str) -> None:
+    """Write *data* into the remote file *path* itself (it keeps its owner,
+    group and links) - with its old bytes put back when the write fails."""
+    log.info("atomic_write: writing %s in place: %s", path, reason)
+    with backend.open_read(path) as fh:
+        old = fh.read()
+    try:
+        with backend.open_write(path) as f:
+            f.write(data)
+    except BaseException as exc:
+        try:
+            with backend.open_write(path) as f:
+                f.write(old)
+        except Exception as undo_exc:  # noqa: BLE001 - the original error is raised
+            log.error("atomic_write: could not restore %s after a failed save: %s", path, undo_exc)
+        _finish_journal(op_id, "atomic_write", status="error", dest=path, bytes_total=len(data),
+                        error=str(exc))
+        raise
+    _finish_journal(op_id, "atomic_write", status="done", dest=path, bytes_total=len(data),
+                    bytes_done=len(data), details={"in_place": reason})
+
+
 def _overwrite_local(path: str, data: bytes) -> None:
     """Write *data* into the existing local file *path* (same inode)."""
     with open(path, "r+b") as fh:
@@ -467,6 +519,8 @@ def atomic_write(backend, path: str, data: bytes) -> None:
         if previous_mode is not None and not previous_mode & _OWNER_WRITE:
             _restore_mode(backend, tmp, previous_mode)
         carried = _carry_local_attributes(backend, path, tmp)
+        owned = carried and _carry_remote_owner(backend, path, tmp)
+        carried = carried and owned
         if carried:
             from core.server_ops import _finalize_temp_destination
 
@@ -510,6 +564,9 @@ def atomic_write(backend, path: str, data: bytes) -> None:
             backend.remove(tmp)
         except Exception as cleanup_exc:  # noqa: BLE001
             log.debug("atomic_write: cleanup of %s failed: %s", tmp, cleanup_exc)
+        if not _is_local(backend):
+            _write_through(backend, op_id, path, data, "its owner would not survive a rename")
+            return
         _in_place_journaled(op_id, path, data, "an attribute would not survive a rename")
 
 

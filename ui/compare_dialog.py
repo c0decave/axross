@@ -40,6 +40,7 @@ from core.tree_compare import ComparedEntry, Status, summarize
 from ui.close_corner import add_close_corner
 from ui.format_utils import human_bytes
 from ui.thread_lifetime import detach_running_thread
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ class CompareDialog(QDialog):
 
     def __init__(self, left_pane, right_pane, parent: QWidget | None = None, *, compare_fn=None):
         super().__init__(parent)
+        set_window_icon(self, "compare")
         self._left_pane = left_pane
         self._right_pane = right_pane
         self._compare_fn = compare_fn or self._default_compare
@@ -489,6 +491,9 @@ class CompareDialog(QDialog):
                     "kind": action.kind,
                     "direction": action.direction,
                     "overwrites": action.overwrites,
+                    # "newer wins" decided on the comparison's times: the
+                    # copy re-checks them when it runs
+                    "newer_only": action.overwrites and self._policy is ConflictPolicy.NEWER_WINS,
                     "source": self.absolute_path(src_side, action.rel_path),
                     "dest": self.absolute_path(dst_side, action.rel_path),
                 }

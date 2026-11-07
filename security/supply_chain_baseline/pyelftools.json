@@ -1,0 +1,159 @@
+{
+ "name": "pyelftools",
+ "versions": {
+  "0.33": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|elftools/common/construct_utils.py|9529375fbb5a6662",
+    "yara|capability_filesystem_read|elftools/common/utils.py|3858dfe8156798e3",
+    "yara|capability_filesystem_read|elftools/construct/core.py|86c7c9ef0303beb7",
+    "yara|capability_filesystem_read|elftools/construct/debug.py|491486779e464e0f",
+    "yara|capability_filesystem_read|elftools/construct/lib/bitstream.py|ee8081769bed1d00",
+    "yara|capability_filesystem_read|elftools/construct/lib/container.py|0385a420febf5bac",
+    "yara|capability_filesystem_read|elftools/dwarf/callframe.py|e5aae743714801ee",
+    "yara|capability_filesystem_read|elftools/dwarf/dwarf_expr.py|0c217469f041aa7d",
+    "yara|capability_filesystem_read|elftools/dwarf/dwarf_util.py|4f0af20941ed2da5",
+    "yara|capability_filesystem_read|elftools/elf/elffile.py|2615f5052b79d8f5",
+    "yara|capability_filesystem_read|elftools/elf/hash.py|b8b10cd2c96814fe",
+    "yara|capability_filesystem_read|elftools/elf/notes.py|4c3f1bc337e3a808",
+    "yara|capability_filesystem_read|elftools/elf/sections.py|c90ce9f31e37cb71",
+    "yara|capability_filesystem_read|elftools/elf/segments.py|8b808b2cee797677",
+    "yara|capability_process_spawn|elftools/elf/descriptions.py|4f3e4e597828c1cd",
+    "yara|threat_filesystem_autostart|pyelftools-0.33.data/scripts/readelf.py|7a6d9d6719afe951"
+   ],
+   "archives": {
+    "pyelftools-0.33-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "elftools/__init__.py": "d8a071e9e68576ceab6ed200c5f4718119f7d61ee0fae337a867b095f1d5c5d9",
+      "elftools/common/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "elftools/common/construct_utils.py": "9529375fbb5a6662a482e8ff4b6c1eca486e9011624a3008a55af76b0c581eb6",
+      "elftools/common/exceptions.py": "ce89c2d8b856b6615f5dce6f5b6b6eeba9be278eaac34d1f2f854b23bb25abe1",
+      "elftools/common/utils.py": "3858dfe8156798e35f9502f4031acc2d76dce95dacf78f040719cc0e3934756f",
+      "elftools/construct/__init__.py": "15104eb011a640e4268a9b9221d07201a0360ff0b1c8b49e252ef41fdfbb35de",
+      "elftools/construct/adapters.py": "5745745b25eb849174ee5c3179b9867b03e0471633e9eac8276aa439fe4c8841",
+      "elftools/construct/core.py": "86c7c9ef0303beb7bfe7b310c52e44697cc31b6cec7435eb33168216b70a965f",
+      "elftools/construct/debug.py": "491486779e464e0f4a59cfd429d8e93c577a0f0d9b969847e69400a3c86acb1c",
+      "elftools/construct/lib/__init__.py": "322a9b5b2cbe036a5ccf8e939dcbc3734203073db70fc4f2cb00f0f98ba107cf",
+      "elftools/construct/lib/binary.py": "f18e4161a11bc95732bd01c577cbe98373081afd5b4112b02fec51a0e1df2e11",
+      "elftools/construct/lib/bitstream.py": "ee8081769bed1d00a086399c8749a847c1a48b8d08637506bf7d1229b6e1808a",
+      "elftools/construct/lib/container.py": "0385a420febf5bac714153ceaadd192ff9d09862bc7e17c203bf759aa18b2bb4",
+      "elftools/construct/lib/hex.py": "55f82dc36f273347c08e9e469fd497368241453b7a63e69e167ad6b316e5e2c7",
+      "elftools/construct/macros.py": "0244e84cf4f598ac8da7c3d8f1f09b06112a508e71fb8d381b377f1c0472a4e3",
+      "elftools/dwarf/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "elftools/dwarf/abbrevtable.py": "cbe4a69fb4ced4ae87eb4694818ccf6c49302b8158bb8bb08b6e3864cee7aad4",
+      "elftools/dwarf/aranges.py": "bbfa73cd13e89665b2b808c0c3b6dfc98978316e0f39a9b392768505f6263d36",
+      "elftools/dwarf/callframe.py": "e5aae743714801ee80d5dc4b71c43007a8cb1638ed3cd0bf825dde2b298e70b0",
+      "elftools/dwarf/compileunit.py": "bfff5b0da5a081390b0d0505f18d19ef5c70287b7ebd2fa094671a7139dfdef5",
+      "elftools/dwarf/constants.py": "1b9b0e320c5cb7aa3a0117564431a73ce964d79a3a44ff0b74af7218e96f3f32",
+      "elftools/dwarf/datatype_cpp.py": "d70081e2ee33a2cb7036dec99fa6fb9a2cf310c8d6b273994c2634d0ff254c10",
+      "elftools/dwarf/descriptions.py": "735bc09c8ffec232df46a6c067947a0ec34667377d1fe13f37711e8d3f7befbd",
+      "elftools/dwarf/die.py": "fe9f146dc9236a17b05376afbd1e4df901ad7735454cd699c8ce91277d3c0b8e",
+      "elftools/dwarf/dwarf_expr.py": "0c217469f041aa7deb729b2d343323f05ad5b43e2a81b50fa980e61479f4f97b",
+      "elftools/dwarf/dwarf_util.py": "4f0af20941ed2da56666b3c9fb42600d956c3b147017d1a57b2a3fe95e5ec8b0",
+      "elftools/dwarf/dwarfinfo.py": "d8b16c376f3a3ccf2a41f86105df70e50368d03f973801e684185d315f357207",
+      "elftools/dwarf/enums.py": "1e236370193e698513fafe29cd44afde8f9fc6b64d6dc6d5249bc6abdc8e6bf3",
+      "elftools/dwarf/lineprogram.py": "3e85191a28d2d61539f52569c314101a29a9cbaac7837760ae2bb42e7b72e0f8",
+      "elftools/dwarf/locationlists.py": "9a9ea693f0a84f446e503e64b367702afd1ce81a80940710064b7f7d8fa33267",
+      "elftools/dwarf/namelut.py": "cdb08d65cef4384f04f60d071b27bcdd5a76d7630e60579d85d59766171e6586",
+      "elftools/dwarf/ranges.py": "44cf61af9ffa970646732cc17a1a806eb44a43176a9ca2ae9049e266031d5b65",
+      "elftools/dwarf/structs.py": "6469b6d08f3a2628756ce7966c43fb13cdae74be2e034adc5daa5e9e5091515f",
+      "elftools/dwarf/typeunit.py": "4b133343d9af443bb42302363ea32f0b6c576a93a3c1c28915ff9a47c26214a8",
+      "elftools/ehabi/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "elftools/ehabi/constants.py": "a386df95ebe53338db1cdfe498a06acf8e976007b5fab5c4eed2b8904932caa8",
+      "elftools/ehabi/decoder.py": "ab3bd609bd96582b44e507da614881b477491d3be235cd7d154516697e7c77f4",
+      "elftools/ehabi/ehabiinfo.py": "15a37115fb720208ae0daccd3d32447f0abb553a9ce9b3e6dab47c3f92e2747f",
+      "elftools/ehabi/structs.py": "cf381dc793d59cea78844f424b7a31dbf04513d9d7d318a962f6d25ef60f3e90",
+      "elftools/elf/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "elftools/elf/constants.py": "3a4a262a24a9ed7f796f80b6ddb54c31eba93e78293cb490b577dc8dcbca86b8",
+      "elftools/elf/descriptions.py": "4f3e4e597828c1cdbfbb64e6230ba19c52ed32c978e7153f9ddb4edb7ff0c8cc",
+      "elftools/elf/dynamic.py": "a31f7bd38236df432068feb81356e7245228491111b7e76d501fb5e107eda7ed",
+      "elftools/elf/elffile.py": "2615f5052b79d8f5065f5739920b5f29aafd4831e4915a8983030ebe1cc978cf",
+      "elftools/elf/enums.py": "4d975df4e75de4433cc673dfc7524a9a302792b1d2ec087a649dd24f120dad88",
+      "elftools/elf/gnuversions.py": "0e553e59718df3d74d028aff795d9b44562dc648abfc787d75c27f0486cf8272",
+      "elftools/elf/hash.py": "b8b10cd2c96814febc54bb122ccea5aef3ecf4270954ad661364a9368f2306d5",
+      "elftools/elf/notes.py": "4c3f1bc337e3a808ae118cbebc92844dc1a1af74934659dfa14dd892376ce64a",
+      "elftools/elf/relocation.py": "d9b4a0e47e5297bae9214f6ac40b9e2d779738777c8fe0cd1b31656cc605ed48",
+      "elftools/elf/sections.py": "c90ce9f31e37cb714343256534e25603d2eefb732c0b41f1671ae7027abe4b36",
+      "elftools/elf/segments.py": "8b808b2cee7976775e5ed8788970c2733f5dec859e2c0ef58aadcddcb2eef95a",
+      "elftools/elf/structs.py": "114b209e3b7cdd471ca2875d554781cf4a174acf93c080d38da52c24fb2332be",
+      "elftools/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pyelftools-0.33.data/scripts/readelf.py": "7a6d9d6719afe951db1e94a45a2fccfecf3a95300162055e098f03a6bb37862c",
+      "pyelftools-0.33.dist-info/METADATA": "dbbb739509c795b8b7e700057880a88365218bb1c7216b198a22c97c8aedce62",
+      "pyelftools-0.33.dist-info/RECORD": "77d46c3b3f539ad27f30116d3a9b9bb50cfcfd4507018dddbb0e3f0a73c556da",
+      "pyelftools-0.33.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "pyelftools-0.33.dist-info/licenses/LICENSE": "ae18bf4cb82f92af7547259177bc28bc48e4fc732518bcedfe690226288d3445",
+      "pyelftools-0.33.dist-info/top_level.txt": "227018f51ead87440f7375e64a937cbc56986d74d02acb562326fb1d23101f91"
+     },
+     "hooks": [
+      "pyelftools-0.33.data/scripts/readelf.py"
+     ],
+     "kind": "wheel",
+     "manifest": "bf43b24305b37505fd59b6843d7ddd33420eaf9eb18bc87ab096f62a411680d8",
+     "native": {},
+     "pth": {},
+     "sha256": "f215ad5f47d3f1373a21496a6c9e0707c622840d0622f23ff7ce08678b020036"
+    }
+   },
+   "name": "pyelftools",
+   "provenance": {
+    "pyelftools-0.33-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Eli Bendersky <eliben@gmail.com>",
+    "license": "Public domain",
+    "maintainer_email": "Eli Bendersky <eliben@gmail.com>",
+    "project_urls": {
+     "Homepage": "https://github.com/eliben/pyelftools",
+     "Issues": "https://github.com/eliben/pyelftools/issues",
+     "Repository": "https://github.com/eliben/pyelftools.git"
+    },
+    "summary": "Library for analyzing ELF files and DWARF debugging information"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "readelf.py (an installed example script) writes a profile file when profiled - the 'autostart' hit; the scripts/ entry is the 'hooks' one. Attestation as recorded."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|elftools/common/construct_utils.py|9529375fbb5a6662",
+     "yara|capability_filesystem_read|elftools/common/utils.py|3858dfe8156798e3",
+     "yara|capability_filesystem_read|elftools/construct/core.py|86c7c9ef0303beb7",
+     "yara|capability_filesystem_read|elftools/construct/debug.py|491486779e464e0f",
+     "yara|capability_filesystem_read|elftools/construct/lib/bitstream.py|ee8081769bed1d00",
+     "yara|capability_filesystem_read|elftools/construct/lib/container.py|0385a420febf5bac",
+     "yara|capability_filesystem_read|elftools/dwarf/callframe.py|e5aae743714801ee",
+     "yara|capability_filesystem_read|elftools/dwarf/dwarf_expr.py|0c217469f041aa7d",
+     "yara|capability_filesystem_read|elftools/dwarf/dwarf_util.py|4f0af20941ed2da5",
+     "yara|capability_filesystem_read|elftools/elf/elffile.py|2615f5052b79d8f5",
+     "yara|capability_filesystem_read|elftools/elf/hash.py|b8b10cd2c96814fe",
+     "yara|capability_filesystem_read|elftools/elf/notes.py|4c3f1bc337e3a808",
+     "yara|capability_filesystem_read|elftools/elf/sections.py|c90ce9f31e37cb71",
+     "yara|capability_filesystem_read|elftools/elf/segments.py|8b808b2cee797677",
+     "yara|capability_process_spawn|elftools/elf/descriptions.py|4f3e4e597828c1cd",
+     "yara|threat_filesystem_autostart|pyelftools-0.33.data/scripts/readelf.py|7a6d9d6719afe951"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read elftools/common/construct_utils.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/common/utils.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/construct/core.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/construct/debug.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/construct/lib/bitstream.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/construct/lib/container.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/dwarf/callframe.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/dwarf/dwarf_expr.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/dwarf/dwarf_util.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/elf/elffile.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/elf/hash.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/elf/notes.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/elf/sections.py",
+     "capability_filesystem_read:capability_filesystem_read elftools/elf/segments.py",
+     "capability_process_spawn:capability_process_spawn elftools/elf/descriptions.py",
+     "threat_filesystem_autostart:threat_filesystem_autostart pyelftools-0.33.data/scripts/readelf.py"
+    ]
+   },
+   "version": "0.33"
+  }
+ }
+}

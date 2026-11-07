@@ -1,0 +1,76 @@
+{
+ "name": "email-validator",
+ "versions": {
+  "2.3.0": {
+   "accepted_findings": [
+    "yara|capability_network_outbound|email_validator/__init__.py|837a150467571890",
+    "yara|capability_network_outbound|email_validator/deliverability.py|6488c592058ccf16",
+    "yara|capability_network_outbound|email_validator/validate_email.py|6e6add43d746b75f"
+   ],
+   "archives": {
+    "email_validator-2.3.0-py3-none-any.whl": {
+     "entry_points": [
+      "email_validator = email_validator.__main__:main"
+     ],
+     "files": {
+      "email_validator-2.3.0.dist-info/METADATA": "2a97b81eefcd856bc80b0346f47fa2d800b9a438bf8f9231ae00fe931d5c9fbc",
+      "email_validator-2.3.0.dist-info/RECORD": "c35852b85693322f72df9e4cf02c10bcff3db4fdc0b0d79fe56c7ef3450281df",
+      "email_validator-2.3.0.dist-info/WHEEL": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+      "email_validator-2.3.0.dist-info/entry_points.txt": "cd133fe9b3485121d36cdc79bba3379cad4c020bafaf2adcf612020ba1f2ac18",
+      "email_validator-2.3.0.dist-info/licenses/LICENSE": "672179752e109134a3fb2bdd0780b29fdb7a03974f0f586a13aead5129562d4c",
+      "email_validator-2.3.0.dist-info/top_level.txt": "7d80ce49615991ee3abaded6a9d3802638e19693d801a3b03b022c877b3ca162",
+      "email_validator/__init__.py": "837a150467571890138019d5aade50ee95215ccf50ae63a5e6a592bbf46d5a64",
+      "email_validator/__main__.py": "b9cea2d843022baedc0a0707af96451b92ea077921963991ee534061919250a6",
+      "email_validator/deliverability.py": "6488c592058ccf161ec5a9f02a1ad11cb4e78d632a951e5bd25b4e9e5034bbe1",
+      "email_validator/exceptions.py": "472da3e4532911ef49b61993177cc5e691a059eafe42659cd66d2ccd7019edfa",
+      "email_validator/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "email_validator/rfc_constants.py": "2e15220592c1c3f367f8a1e41fefa7570396165833d9a0ae6ae8fdf194a5fa09",
+      "email_validator/syntax.py": "a6eb9fb247881bafce4566fb7ef45d57f61cce69386e26cd64fb3d4e3584d4ad",
+      "email_validator/types.py": "9af9b037d477945c7d4eff70b56bc3cf17e2b7a9abff9c10998d88d078eea919",
+      "email_validator/validate_email.py": "6e6add43d746b75f8c934af00d1ad7fa5eb16d8850d144b6d03cf8e806ad9e49",
+      "email_validator/version.py": "0a92bc207fdd09403083db6abfbce6f45c5b0459310a7103d4952245eedc7ed5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "d76adbed69236d0cfc895c63b709b90eec8b50f0fa3a3ea8afccff0e5dc3705b",
+     "native": {},
+     "pth": {},
+     "sha256": "80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4"
+    }
+   },
+   "name": "email-validator",
+   "provenance": {
+    "email_validator-2.3.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Joshua Tauberer",
+    "author_email": "jt@occams.info",
+    "home_page": "https://github.com/JoshData/python-email-validator",
+    "license": "Unlicense",
+    "project_urls": {
+     "Homepage": "https://github.com/JoshData/python-email-validator"
+    },
+    "summary": "A robust email address syntax and deliverability validation library."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_outbound|email_validator/__init__.py|837a150467571890",
+     "yara|capability_network_outbound|email_validator/deliverability.py|6488c592058ccf16",
+     "yara|capability_network_outbound|email_validator/validate_email.py|6e6add43d746b75f"
+    ],
+    "yara": [
+     "capability_network_outbound:capability_network_outbound email_validator/__init__.py",
+     "capability_network_outbound:capability_network_outbound email_validator/deliverability.py",
+     "capability_network_outbound:capability_network_outbound email_validator/validate_email.py"
+    ]
+   },
+   "version": "2.3.0"
+  }
+ }
+}

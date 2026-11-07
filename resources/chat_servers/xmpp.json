@@ -1,0 +1,290 @@
+{
+ "format": 1,
+ "protocol": "xmpp",
+ "snapshot_date": "2026-11-05",
+ "sources": [
+  "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+ ],
+ "servers": [
+  {
+   "name": "07f.de",
+   "host": "07f.de",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "5222.de",
+   "host": "5222.de",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "anoxinon.me",
+   "host": "anoxinon.me",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "based.pt",
+   "host": "based.pt",
+   "port": 0,
+   "tls": true,
+   "note": "category B; PT; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "chalec.org",
+   "host": "chalec.org",
+   "port": 0,
+   "tls": true,
+   "note": "category A; FR; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "chapril.org",
+   "host": "chapril.org",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "chat.between-us.online",
+   "host": "chat.between-us.online",
+   "port": 0,
+   "tls": true,
+   "note": "category A; US; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "chatrix.one",
+   "host": "chatrix.one",
+   "port": 0,
+   "tls": true,
+   "note": "category B; CH, BG; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "chatterboxtown.us",
+   "host": "chatterboxtown.us",
+   "port": 0,
+   "tls": true,
+   "note": "category A; US; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "draugr.de",
+   "host": "draugr.de",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "durare.org",
+   "host": "durare.org",
+   "port": 0,
+   "tls": true,
+   "note": "category B; FI; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "gayfr.live",
+   "host": "gayfr.live",
+   "port": 0,
+   "tls": true,
+   "note": "category B; LT, AT; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "hookipa.net",
+   "host": "hookipa.net",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "jabber.fr",
+   "host": "jabber.fr",
+   "port": 0,
+   "tls": true,
+   "note": "category A; FR; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "jabber.hot-chilli.net",
+   "host": "jabber.hot-chilli.net",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "jabber.vg",
+   "host": "jabber.vg",
+   "port": 0,
+   "tls": true,
+   "note": "category A; PE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "jabjab.de",
+   "host": "jabjab.de",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "jix.im",
+   "host": "jix.im",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "lain.rocks",
+   "host": "lain.rocks",
+   "port": 0,
+   "tls": true,
+   "note": "category A; CZ; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "magicbroccoli.de",
+   "host": "magicbroccoli.de",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "monocles.eu",
+   "host": "monocles.eu",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "movim.eu",
+   "host": "movim.eu",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE, FR; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "nixnet.services",
+   "host": "nixnet.services",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "og.im",
+   "host": "og.im",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DK; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "openim.nl",
+   "host": "openim.nl",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "projectsegfau.lt",
+   "host": "projectsegfau.lt",
+   "port": 0,
+   "tls": true,
+   "note": "category A; IN, CH; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "psifactor.pl",
+   "host": "psifactor.pl",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE, PL, NL; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "redlibre.es",
+   "host": "redlibre.es",
+   "port": 0,
+   "tls": true,
+   "note": "category B; ES, FI; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "suchat.org",
+   "host": "suchat.org",
+   "port": 0,
+   "tls": true,
+   "note": "category B; ES, FI; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "woodpeckersnest.space",
+   "host": "woodpeckersnest.space",
+   "port": 0,
+   "tls": true,
+   "note": "category B; DE; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "worlio.com",
+   "host": "worlio.com",
+   "port": 0,
+   "tls": true,
+   "note": "category B; US; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "xmpp.is",
+   "host": "xmpp.is",
+   "port": 0,
+   "tls": true,
+   "note": "category B; RO, US; sign-up on the website",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "xmpp.jp",
+   "host": "xmpp.jp",
+   "port": 0,
+   "tls": true,
+   "note": "category A; JP; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "xmpp.party",
+   "host": "xmpp.party",
+   "port": 0,
+   "tls": true,
+   "note": "category A; US; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  },
+  {
+   "name": "yax.im",
+   "host": "yax.im",
+   "port": 0,
+   "tls": true,
+   "note": "category A; DE; sign-up in the app",
+   "source": "https://raw.githubusercontent.com/KDE/kaidan/master/data/providers.json"
+  }
+ ]
+}

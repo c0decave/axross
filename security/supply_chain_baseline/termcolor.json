@@ -1,0 +1,59 @@
+{
+ "name": "termcolor",
+ "versions": {
+  "3.3.0": {
+   "accepted_findings": [],
+   "archives": {
+    "termcolor-3.3.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "termcolor-3.3.0.dist-info/METADATA": "880aeaba6300677d4ecc022fb63f8adcd57a753b6fd2b5ec17841f722f910196",
+      "termcolor-3.3.0.dist-info/RECORD": "83796ff3d2588efa338e4a157eeab24a2dfc2205b53f2330aa93492aa8f79d5f",
+      "termcolor-3.3.0.dist-info/WHEEL": "58b82a17209f9bf2804afe161f2632d0fde933f9bb2792fd936b2474a2e2ac2f",
+      "termcolor-3.3.0.dist-info/licenses/COPYING.txt": "e79b6bd82962c1330caaa7c42278567b08667777673f8e2371a624d5715d4c0e",
+      "termcolor/__init__.py": "a02a883e9cb096bb819396050c255dee448e76d5e8d051d78c45f09edfcf7341",
+      "termcolor/__main__.py": "ffecdba6efe55b1feff2e7fc303bbef7c34ec00d1067a094716cac2281d84733",
+      "termcolor/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "termcolor/termcolor.py": "baa19a1ef70854cb17619a22e4265a39f938c914a5cdef834b1cbf7f243db48f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "88cb96eb26fd91241c07d06b0f3161da18c7098e7b3a9fa0b2f526325c707249",
+     "native": {},
+     "pth": {},
+     "sha256": "cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5"
+    }
+   },
+   "name": "termcolor",
+   "provenance": {
+    "termcolor-3.3.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "termcolor/termcolor",
+     "workflow": "deploy.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Konstantin Lepa <konstantin.lepa@gmail.com>",
+    "license_expression": "MIT",
+    "maintainer": "Hugo van Kemenade",
+    "project_urls": {
+     "Changelog": "https://github.com/termcolor/termcolor/releases",
+     "Homepage": "https://github.com/termcolor/termcolor",
+     "Source": "https://github.com/termcolor/termcolor"
+    },
+    "summary": "ANSI color formatting for output in terminal"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (termcolor/termcolor)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "3.3.0"
+  }
+ }
+}

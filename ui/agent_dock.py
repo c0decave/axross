@@ -42,13 +42,13 @@ import threading
 import time
 from typing import Callable
 
-from PyQt6.QtCore import QObject, QStringListModel, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6 import sip
+from PyQt6.QtCore import QStringListModel, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QCompleter,
-    QDockWidget,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -68,16 +68,19 @@ from PyQt6.QtWidgets import (
 
 from core import agent as A
 from core import agent_access as X
-from core import agent_profiles as AP
 from core import agent_link as AL
+from core import agent_profiles as AP
 from core import agent_settings as AGS
 from core import llm_profiles as LP
 from core import voice_text as VT
 from core.agent_session import DETACHED_PLACES, AgentSession, SessionStore
-from core.mcp_client import McpClientPool
 from core.i18n import tr
-from ui.agent_panels import AgentPanel, DetachTabBar, alive, weak_call
+from core.mcp_client import McpClientPool
+from core.thread_relay import GuiCall
+from ui.agent_panels import AGENT_DOCK_EXT_ID, AgentPanel, DetachTabBar, alive, weak_call
 from ui.dock_frame import framed
+from ui.extension_panels import ExtensionDock
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -138,22 +141,63 @@ def reasoning_summary(text: str, limit: int = SUMMARY_CHARS) -> str:
 
 
 def _ask_user(parent, question: str) -> str | None:
-    from PyQt6.QtWidgets import QInputDialog
+    from PyQt6.QtWidgets import QDialog, QInputDialog, QLabel
 
-    text, ok = QInputDialog.getMultiLineText(parent, tr("The agent asks"), question)
+    # Not QInputDialog.getMultiLineText(): its label guesses the format, and
+    # the model's question as rich text could carry links or hide words.
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(tr("The agent asks"))
+    dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput)
+    dialog.setLabelText(_visible(question))
+    for label in dialog.findChildren(QLabel):
+        label.setTextFormat(Qt.TextFormat.PlainText)
+    ok = dialog.exec() == QDialog.DialogCode.Accepted
+    text = dialog.textValue()
+    dialog.deleteLater()
     return text if ok else None
 
 
-def _ask_call(parent, name: str, args: dict) -> bool:
+#: Characters that reorder or hide text: bidi overrides, isolates and marks.
+_INVISIBLE = {0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069,
+              0x200E, 0x200F, 0x061C, 0x200B, 0x2060, 0xFEFF}
+
+
+def _visible(text: str) -> str:
+    """*text* with every bidi override, invisible mark and control (but
+    line breaks and tabs) as a \\uXXXX escape: the user approves what runs,
+    and "rm -rf /\u202e..." would otherwise show in another order."""
+    return "".join(
+        f"\\u{ord(c):04x}" if ord(c) in _INVISIBLE or (ord(c) < 32 and c not in "\n\t")
+        or 0x7F <= ord(c) < 0xA0 else c
+        for c in text)
+
+
+#: Characters of the arguments the confirmation shows before Show Details.
+CALL_PREVIEW_CHARS = 600
+
+
+def call_box(parent, name: str, args: dict) -> QMessageBox:
+    """The question whether the model may run *name* with *args*: a
+    preview that says when it is cut, all of the arguments in the details."""
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Question)
     box.setWindowTitle(tr("Allow this action?"))
     box.setTextFormat(Qt.TextFormat.PlainText)  # the arguments come from the model
     box.setText(tr("The model wants to run {tool}.").format(tool=name))
-    box.setDetailedText(json.dumps(args, indent=2, ensure_ascii=False))
-    box.setInformativeText(json.dumps(args, ensure_ascii=False)[:600])
+    box.setDetailedText(_visible(json.dumps(args, indent=2, ensure_ascii=False)))
+    preview = _visible(json.dumps(args, ensure_ascii=False))
+    if len(preview) > CALL_PREVIEW_CHARS:
+        preview = preview[:CALL_PREVIEW_CHARS] + "\n" + tr(
+            "… cut at {shown} of {total} characters - Show Details… shows all of it."
+        ).format(shown=CALL_PREVIEW_CHARS, total=len(preview))
+    box.setInformativeText(preview)
     box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
     box.setDefaultButton(QMessageBox.StandardButton.No)
+    return box
+
+
+def _ask_call(parent, name: str, args: dict) -> bool:
+    box = call_box(parent, name, args)
     try:
         return box.exec() == QMessageBox.StandardButton.Yes
     finally:
@@ -207,26 +251,6 @@ def bypass_allowed(settings: AGS.AgentSettings) -> bool:
     from core.security_mode import is_paranoid
 
     return settings.allow_bypass and not is_paranoid()
-
-
-class _LinkBridge(QObject):
-    """Carries a connection check's result to the GUI thread:
-    ``(tab, token, reachable, detail)``."""
-
-    checked = pyqtSignal(object, int, bool, str)
-    #: core.mcp_detect.DetectResult of a scan.
-    detected = pyqtSignal(object)
-    #: (on_done, detected server, config or None, error): a contained install ended.
-    installed = pyqtSignal(object, object, object, str)
-
-
-class _Bridge(QObject):
-    """Carries the worker thread's events to the GUI thread."""
-
-    event = pyqtSignal(object)
-    finished = pyqtSignal(object, str)
-    confirm = pyqtSignal(str, object, object)
-    ask = pyqtSignal(str, object)
 
 
 class _TaskInput(QPlainTextEdit):
@@ -341,11 +365,15 @@ class AgentTab(QWidget):
         self._open: set[int] = set()
         #: Whether this tab's LLM is reachable: the dock's lamp.
         self.link = AL.LinkTracker()
-        self._bridge = _Bridge()
-        self._bridge.event.connect(self._on_event)
-        self._bridge.finished.connect(self._on_finished)
-        self._bridge.confirm.connect(self._on_confirm)
-        self._bridge.ask.connect(self._on_ask)
+        # The agent's thread reaches the GUI thread through these, not
+        # through signals of a bridge object: the exit clean-up deletes every
+        # Python-owned QObject while an LLM call may still run
+        # (core/thread_relay.py). A question or confirmation for a deleted
+        # tab is dropped; the thread's wait then ends (_tab_gone).
+        self._event_call = GuiCall(self._deliver_event)
+        self._finished_call = GuiCall(self._on_finished)
+        self._confirm_call = GuiCall(self._on_confirm)
+        self._ask_call = GuiCall(self._on_ask)
         self._clock = QTimer(self)
         self._clock.setInterval(1000)
         self._clock.timeout.connect(self._update_status)
@@ -434,6 +462,14 @@ class AgentTab(QWidget):
         self.transcript.setOpenLinks(False)
         self.transcript.setOpenExternalLinks(False)
         self.transcript.anchorClicked.connect(self._on_anchor)
+        # A transcript at its end stays there when its range changes: a kept
+        # tab drawn hidden and shown in a dock narrower than its controls
+        # (the panel's scroll bar takes height from the transcript) opened
+        # with its latest line half below the view.
+        self._transcript_at_end = True
+        bar = self.transcript.verticalScrollBar()
+        bar.valueChanged.connect(self._note_transcript_end)
+        bar.rangeChanged.connect(self._keep_transcript_end)
         layout.addWidget(self.transcript, 1)
         self.status_label = QLabel()
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -1190,9 +1226,9 @@ class AgentTab(QWidget):
         """On the agent's thread: ask on the GUI thread and wait."""
         question = str(args.get("question") or "")[:2000]
         pending = {"done": threading.Event(), "answer": None}
-        self._bridge.ask.emit(question, pending)
+        self._ask_call(question, pending)
         while not pending["done"].wait(0.1):
-            if self._cancel.is_set():
+            if self._cancel.is_set() or self._tab_gone():
                 return "the user stopped the task"
         answer = pending["answer"]
         return answer if isinstance(answer, str) and answer.strip() else "the user did not answer"
@@ -1203,7 +1239,7 @@ class AgentTab(QWidget):
             f"{'☑' if s.get('done') is True else '☐'} {str(s.get('text') or '')[:200]}"
             for s in steps
         ]
-        self._bridge.event.emit({"type": "plan", "steps": lines})
+        self._event_call({"type": "plan", "steps": lines})
         return "the plan is shown to the user"
 
     def _on_ask(self, question: str, pending: object) -> None:
@@ -1259,6 +1295,13 @@ class AgentTab(QWidget):
         if kind:
             entry["kind"] = kind
         self.session.transcript.append(entry)
+
+    def _note_transcript_end(self, value: int) -> None:
+        self._transcript_at_end = value >= self.transcript.verticalScrollBar().maximum()
+
+    def _keep_transcript_end(self, _minimum: int, maximum: int) -> None:
+        if self._transcript_at_end:
+            self.transcript.verticalScrollBar().setValue(maximum)
 
     def _on_anchor(self, url: QUrl) -> None:
         if url.scheme() != THINKING_SCHEME:
@@ -1692,13 +1735,13 @@ class AgentTab(QWidget):
                         self.dock.agent_settings.sandbox_profile(name), self.session_access()
                     ),
                     confirm=self._wait_for_answer,
-                    on_event=self._bridge.event.emit,
+                    on_event=self._event_call,
                     cancel=self._cancel,
                     history=history,
                 )
             else:
                 self._agent = A.Agent(config, confirm=self._wait_for_answer,
-                                      on_event=self._bridge.event.emit, cancel=self._cancel)
+                                      on_event=self._event_call, cancel=self._cancel)
                 if history:
                     # The agent's own system message names the folder of now.
                     self._agent.messages = A.with_system_message(history,
@@ -1731,15 +1774,17 @@ class AgentTab(QWidget):
         self.dock.emit_event(self, {"type": "run_started", "mode": mode,
                                     "sandbox": self.session.sandbox or None})
 
+        finished = self._finished_call
+
         def work() -> None:
             try:
                 result = agent.run(context + sent)
-                self._bridge.finished.emit(result, "")
+                finished(result, "")
             except A.AgentError as exc:
-                self._bridge.finished.emit(None, str(exc))
+                finished(None, str(exc))
             except Exception as exc:  # noqa: BLE001 - the dock must survive anything
                 log.exception("agent run failed")
-                self._bridge.finished.emit(None, f"{type(exc).__name__}: {exc}")
+                finished(None, f"{type(exc).__name__}: {exc}")
 
         self._thread = threading.Thread(target=work, name="axross-agent", daemon=True)
         self._thread.start()
@@ -1784,15 +1829,25 @@ class AgentTab(QWidget):
             return name in EXEC_TOOLS or self.dock.always_ask(name)
         return True
 
+    def _deliver_event(self, event) -> None:
+        # Looked up at each call, so a hook on the instance's _on_event (the
+        # agent bench times the handling) sees every event.
+        self._on_event(event)
+
+    def _tab_gone(self) -> bool:
+        """Read on the agent's thread: the tab was deleted without stop()
+        (at quit), so no question of it is answered any more."""
+        return sip.isdeleted(self)
+
     def _wait_for_answer(self, name: str, args: dict) -> bool:
         """Called on the worker thread: ask on the GUI thread, wait for it."""
         if not self._needs_user(name):
-            self._bridge.event.emit({"type": "auto_approved", "name": name})
+            self._event_call({"type": "auto_approved", "name": name})
             return not self._cancel.is_set()
         pending = {"done": threading.Event(), "yes": False}
-        self._bridge.confirm.emit(name, args, pending)
+        self._confirm_call(name, args, pending)
         while not pending["done"].wait(0.1):
-            if self._cancel.is_set():
+            if self._cancel.is_set() or self._tab_gone():
                 return False
         return bool(pending["yes"]) and not self._cancel.is_set()
 
@@ -1803,7 +1858,8 @@ class AgentTab(QWidget):
             return
         tools = getattr(self._agent, "_tools", {}) if self._agent is not None else {}
         tool = tools.get(name)
-        shown = A._shown(args, tool.schema if tool is not None else {})
+        # Uncut: the user allows what runs, all of it.
+        shown = A._shown(args, tool.schema if tool is not None else {}, cut=False)
         try:
             yes = bool(self.dock.confirm_call(name, shown))
         except Exception:  # noqa: BLE001 - a broken dialog is a No
@@ -1928,8 +1984,12 @@ class AgentTab(QWidget):
         self.changed.emit()
 
 
-class AgentDock(QDockWidget):
-    """The Agent panel: a tab per session, kept across starts."""
+class AgentDock(ExtensionDock):
+    """The Agent panel: a tab per session, kept across starts. An
+    ExtensionDock: in the dock area a panel, and like an extension panel it
+    can be laid out on a workspace as a pane (its title bar's Send to
+    Workspace, Workspace > Add Extension Panel), or shown only on one
+    (ui.dock_bindings)."""
 
     settings_requested = pyqtSignal()
     #: "+" ▸ Edit Agent Profiles…: Agent Settings on its Profiles page.
@@ -1961,7 +2021,8 @@ class AgentDock(QDockWidget):
         mcp_detector: Callable[..., object] | None = None,
         mcp_opener=None,
     ) -> None:
-        super().__init__(tr("Agent"), parent)
+        super().__init__(tr("Agent"), parent, AGENT_DOCK_EXT_ID)
+        set_window_icon(self, "bot")
         self.setObjectName("axAgentDock")
         #: The tab the voice listens and speaks for.
         self.voice_tab: AgentTab | None = None
@@ -2014,10 +2075,13 @@ class AgentDock(QDockWidget):
         self.lamp = LinkLamp(self)
         self.lamp.hide()  # until a title bar shows it, never over the tabs
         self.lamp.clicked.connect(lambda: self.check_link(when="always"))
-        self._link_bridge = _LinkBridge(self)
-        self._link_bridge.checked.connect(self._on_link_checked)
-        self._link_bridge.detected.connect(self._on_detected)
-        self._link_bridge.installed.connect(self._on_installed)
+        # A connection check, an MCP scan and a contained install report
+        # through these, not through signals of a child object: the dock
+        # goes with the window at quit while a check or an install may still
+        # run (core/thread_relay.py).
+        self._link_checked = GuiCall(self._on_link_checked)
+        self._link_detected = GuiCall(self._on_detected)
+        self._link_installed = GuiCall(self._on_installed)
 
         self.tabs = QTabWidget()
         bar = DetachTabBar()
@@ -2765,7 +2829,7 @@ class AgentDock(QDockWidget):
         configured = list(self.agent_settings.mcp_servers)
         folders = [t.root_edit.text().strip() for t in self.all_tabs()
                    if t.root_edit.text().strip()]
-        bridge = self._link_bridge
+        detected = self._link_detected
 
         def work() -> None:
             try:
@@ -2774,10 +2838,7 @@ class AgentDock(QDockWidget):
             except Exception:  # noqa: BLE001 - a scan must end, whatever it meets
                 log.exception("detecting MCP servers failed")
                 return
-            try:
-                bridge.detected.emit(result)
-            except RuntimeError:
-                pass  # the dock is gone
+            detected(result)
 
         threading.Thread(target=work, name="axross-mcp-detect", daemon=True).start()
 
@@ -2802,6 +2863,7 @@ class AgentDock(QDockWidget):
         added). False when nothing was started."""
         from ui.agent_settings_dialog import (
             confirm_detected_install,
+            confirm_detected_program,
             confirm_detected_secrets,
             free_name,
         )
@@ -2817,6 +2879,8 @@ class AgentDock(QDockWidget):
                 return False
             self._install_detected(detected, name, on_done)
             return True
+        if not confirm_detected_program(parent, detected):
+            return False
         if not confirm_detected_secrets(parent, detected):
             return False
         config = self._store_detected(detected, detected.config(name=name, sandbox=sandbox),
@@ -2826,7 +2890,7 @@ class AgentDock(QDockWidget):
 
     def _install_detected(self, detected, name: str, on_done) -> None:
         taken = {s.name for s in self.agent_settings.mcp_servers}
-        opener, bridge = self._mcp_opener, self._link_bridge
+        opener, installed = self._mcp_opener, self._link_installed
         tab = self.current_tab()
         if tab is not None:
             tab._show(tr("axross:"), tr("Installing {name} in a container ({spec})…").format(
@@ -2843,10 +2907,7 @@ class AgentDock(QDockWidget):
             except Exception as exc:  # noqa: BLE001 - reported, never a crash
                 log.exception("installing the detected %s failed", name)
                 config, error = None, type(exc).__name__
-            try:
-                bridge.installed.emit(on_done, detected, config, error)
-            except RuntimeError:
-                pass  # the dock is gone
+            installed(on_done, detected, config, error)
 
         threading.Thread(target=work, name="axross-mcp-contain", daemon=True).start()
 
@@ -2933,7 +2994,7 @@ class AgentDock(QDockWidget):
     def _start_check(self, tab: AgentTab, profile: LP.LLMProfile) -> None:
         token = tab.link.begin_check()
         profile = dataclasses.replace(profile)  # the thread's own copy
-        lookup, bridge = self.key_lookup, self._link_bridge
+        lookup, checked = self.key_lookup, self._link_checked
 
         def work() -> None:
             try:
@@ -2945,10 +3006,7 @@ class AgentDock(QDockWidget):
             except Exception as exc:  # noqa: BLE001 - a check must end, whatever happens
                 log.exception("the LLM connection check failed")
                 ok, detail = False, f"{type(exc).__name__}: {exc}"
-            try:
-                bridge.checked.emit(tab, token, ok, detail)
-            except RuntimeError:
-                pass  # the dock is gone
+            checked(tab, token, ok, detail)
 
         threading.Thread(target=work, name="axross-llm-check", daemon=True).start()
 

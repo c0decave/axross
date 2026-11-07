@@ -1,0 +1,71 @@
+{
+ "name": "omemo",
+ "versions": {
+  "2.1.0": {
+   "accepted_findings": [
+    "browser-data|omemo/session_manager.py|557c7662ad0dd5ff"
+   ],
+   "archives": {
+    "omemo-2.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "omemo-2.1.0.dist-info/METADATA": "89c03125586309192d0e14f282dec14e60927e1f7e03ca63660f116aa439d0d8",
+      "omemo-2.1.0.dist-info/RECORD": "ba62cc2b9e630f703f3ff8c754beb557f2915a7e0c17fde538a7acd6e9cda2b2",
+      "omemo-2.1.0.dist-info/WHEEL": "c14c80f0e6ae95195b7f032d990b2f367806af140702f90a72f466762ce5262d",
+      "omemo-2.1.0.dist-info/licenses/LICENSE": "32bcc74db2e8d577be4c5367053ab10538889befd30d745271ae11c6e9ac42ee",
+      "omemo-2.1.0.dist-info/top_level.txt": "70282e47a7ac356212ccd6a167ef5943095c9a915964ce532ae9c2e1540fd037",
+      "omemo/__init__.py": "070a66bad7c357ecf1004d7f440e669ec24746cdd67c6886ab722fafb1ff0ce2",
+      "omemo/backend.py": "6551cb2b7f6600be8a9ecc2656e3e9447585bda63811523f88922fc6e359a959",
+      "omemo/bundle.py": "1b341d8fef83b526c7beb7829f3ea1fe5632bfdf20d5c9f044dfec88a93fd973",
+      "omemo/cli.py": "0b87abdb467c5a38e6e844204fd5043eed81e0522a7d9fe20ab1c55465ae0d5c",
+      "omemo/identity_key_pair.py": "c23a34d0ad450b99e8851e489d67ea8b5787383342ed02938d7f381a7c523056",
+      "omemo/message.py": "05a6a5da9761b2c0081d206edddd4bd1fc73b5f25b3470406873a39e6f926692",
+      "omemo/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "omemo/session.py": "1af55e8ade6b48e7ba58064ad7d1fa2744ac6638d876f0722ff5db079c7d1fc8",
+      "omemo/session_manager.py": "c33042a18dd10d3145398571bce0768763c01ce053b6ac252a5bbd95f5669b86",
+      "omemo/storage.py": "09f1073bb3ffdc86543d14a40d9111bbaa5b61b0186495034e972cd149d42bb0",
+      "omemo/types.py": "3ed722173087b88034d0f475173d1835fa0afa785484eacc776d6dc3319d5a01",
+      "omemo/version.py": "59636ca2c50f006ebfb88e609653bf1c8b421fd8690d0ccbaed6ea713b7f3dcf"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e09f35414c25a9ae042ecdec575d5d20b39c843bf92f7d8e55d895863fd89cbc",
+     "native": {},
+     "pth": {},
+     "sha256": "8319fae4a9764ff9038504384553862c49011d447353ab1890bf871349c146c0"
+    }
+   },
+   "name": "omemo",
+   "provenance": {
+    "omemo-2.1.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "Syndace/python-omemo",
+     "workflow": "test-and-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "license_expression": "MIT",
+    "maintainer_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "project_urls": {
+     "Changelog": "https://github.com/Syndace/python-omemo/blob/main/CHANGELOG.md",
+     "Documentation": "https://py-omemo.readthedocs.io/",
+     "Issues": "https://github.com/Syndace/python-omemo/issues",
+     "Repository": "https://github.com/Syndace/python-omemo"
+    },
+    "summary": "A Python implementation of the OMEMO Multi-End Message and Object Encryption protocol."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One 'browser-data' hit: the word 'history' in a docstring of session_manager.py. Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.1.0"
+  }
+ }
+}

@@ -1,0 +1,118 @@
+{
+ "name": "brotli",
+ "versions": {
+  "1.2.1": {
+   "accepted_findings": [],
+   "archives": {
+    "brotli-1.2.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "_brotli.cpython-312-x86_64-linux-gnu.so": "37bb23d800e63d8f7ac8f58351678338c96e8aa695241bae3de75c86ef6da88a",
+      "brotli-1.2.1.dist-info/METADATA": "9d45cb1ed6b59c80fedb4aa893fa11c1bc8e9127e6b0bebe58e0adf5a330e6aa",
+      "brotli-1.2.1.dist-info/RECORD": "f066a6e18d0cb8daa1d2f663ace7aae10189d0d18c92df7213d9e657de0d041f",
+      "brotli-1.2.1.dist-info/WHEEL": "d44a8fb90afe80a3aff7a70bc126468f26f515593cdc246586df6940c690cba6",
+      "brotli-1.2.1.dist-info/licenses/LICENSE": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+      "brotli-1.2.1.dist-info/top_level.txt": "82c4b9e07ae13b766f785c5e32b2a8ffba87e129b84db43b8c62d5044a89e0d2",
+      "brotli.py": "813610bf0d74a6998d7b47d912e8892c3896e6eac19cb7b22575e04fc294b63f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fa0f6c9dca2c34168297d48b756a534f829fdfc47e5958c0ba74de3285132e8a",
+     "native": {
+      "_brotli.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "4b9dd0173ca5e01d1eb307d3c184fe8c09bdc168ede560889b1018d216d38c61"
+    }
+   },
+   "name": "brotli",
+   "provenance": {
+    "brotli-1.2.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+   },
+   "pypi": {
+    "author": "The Brotli Authors",
+    "home_page": "https://github.com/google/brotli",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/google/brotli"
+    },
+    "summary": "Python bindings for the Brotli compression library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "A reviewed young release: 1.2.1 fixes GHSA-9v8h-qqgm-4m35 (build/young-release-exceptions.txt). Nothing flagged in the code. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {
+     "37bb23d800e63d8f7ac8f58351678338c96e8aa695241bae3de75c86ef6da88a": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "_brotli.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://.css",
+        "http://.jpg",
+        "http://Descriptionrelatively",
+        "http://UA-Compatible",
+        "http://according",
+        "http://addEventListenerresponsible",
+        "http://applicationslink",
+        "http://ator",
+        "http://cript",
+        "http://dictionaryperceptionrevolutionfoundationpx",
+        "http://encoding",
+        "http://familiar",
+        "http://html4/loose.dtd\">",
+        "http://imEnglish",
+        "http://interested",
+        "http://interpreted",
+        "http://iparticipation",
+        "http://link",
+        "http://mathematicsmargin-top",
+        "http://navigation",
+        "http://option",
+        "http://site",
+        "http://staticsuggested",
+        "http://style",
+        "http://whether",
+        "http://www",
+        "http://www-//W3C//DTD",
+        "http://www.",
+        "http://www./div></div><div",
+        "http://www.C//DTD",
+        "http://www.a",
+        "http://www.css",
+        "http://www.hortcut",
+        "http://www.icon",
+        "http://www.interpretation",
+        "http://www.language",
+        "http://www.style",
+        "http://www.text-decoration",
+        "http://www.w3.org/shortcut",
+        "http://www.wencodeURIComponent",
+        "http://www.years",
+        "https://aIn",
+        "https://was",
+        "https://www.World",
+        "https://www.recent"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.2.1",
+   "young_release": "1.2.1 fixes GHSA-9v8h-qqgm-4m35 / PYSEC-2026-4322 (1.2.0 has it)"
+  }
+ }
+}

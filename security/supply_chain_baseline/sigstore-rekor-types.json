@@ -1,0 +1,70 @@
+{
+ "name": "sigstore-rekor-types",
+ "versions": {
+  "0.0.18": {
+   "accepted_findings": [],
+   "archives": {
+    "sigstore_rekor_types-0.0.18-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "rekor_types/__init__.py": "605548d0f6e0897ef0a291e5dbd69095d4ce9cb3fbd634a4d1ddf6d610c30808",
+      "rekor_types/_internal/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rekor_types/_internal/alpine.py": "5fe47a1d32aa2388a45a20f69f71296654120a8334c735d3bb0fca8989fc2bc6",
+      "rekor_types/_internal/cose.py": "f3c28e7359140921af62a143c24bd86a5fa84fc3e49c908df01838ee773250c9",
+      "rekor_types/_internal/dsse.py": "9364e2e9b2e72f89ef81d4394393dfc1c4d4e188624319a1e7b67515013c3db4",
+      "rekor_types/_internal/hashedrekord.py": "64f500fddad6707f138623da378d2e5e5b1db5a8b6ee8c1189203b8c5a84466f",
+      "rekor_types/_internal/helm.py": "bbe2562016b9c0c5a95226469efa9aedae918472aaadd2938a7658fe294ffe88",
+      "rekor_types/_internal/intoto.py": "cf28a1e378965089bfaf708f668f6d64de07979ccca1e5116d2a6161d689210f",
+      "rekor_types/_internal/jar.py": "8af99758431348d94e74c4a56df55310c22821b595d9d61372de9c4649ae8d79",
+      "rekor_types/_internal/rekord.py": "4d76aded1f354d74fbb306cfb862cc0e9745f18990da1a2c658f0a5d6cea6eea",
+      "rekor_types/_internal/rfc3161.py": "e9db7f9631413f2f45a2b54a7373e04cd6138db82ec5c902b2b1f24e8eaaeee8",
+      "rekor_types/_internal/rpm.py": "a7b577a55cbe1a5cede904f477670f30010f6501b3acf4c7092a3f318862d4ab",
+      "rekor_types/_internal/tuf.py": "a551c94f1707086cc1bfd3c92773e7d73478d8bd88856275c754bf9dd8b12a64",
+      "rekor_types/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore_rekor_types-0.0.18.dist-info/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "sigstore_rekor_types-0.0.18.dist-info/METADATA": "acd103ce32eecfb9ee209d10e68d509e60ec7b8e9b8a0332858f7eeb6f2b17a5",
+      "sigstore_rekor_types-0.0.18.dist-info/RECORD": "9f012e0156c4cc5fa538f67b1d17af60aa639b5caf69b42ab3c7c89580d6e4c0",
+      "sigstore_rekor_types-0.0.18.dist-info/WHEEL": "3d9504c5d7fbd548bfb28ebb417a724ae1ed0a2dfe277c2f1783912ba93f4bc5",
+      "sigstore_rekor_types-0.0.18.dist-info/top_level.txt": "514f8a0c735bd1f117a2ab351fcb510ff1769f4daa193e3066d9a57715dd9bd8"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a7ce3eaf957dc3e9499ce50a4ad7295b657fa6295d18195bfada017cdb9b96b0",
+     "native": {},
+     "pth": {},
+     "sha256": "b62bf38c5b1a62bc0d7fe0ee51a0709e49311d137c7880c329882a8f4b2d1d78"
+    }
+   },
+   "name": "sigstore-rekor-types",
+   "provenance": {
+    "sigstore_rekor_types-0.0.18-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "trailofbits/sigstore-rekor-types",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Trail of Bits <opensource@trailofbits.com>",
+    "license": " Apache License Version 2.0, January 2004 http://www.apache.org/licenses/  TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION  1. Definitions.  \"License\" shall mean the terms and conditions for use, reproduction, and distribution as defined by Sections 1 through 9 of this document.  \"Licensor\" shall mean the copyright owner or entity authorized by the copyright owner that is granting the License.  \"Legal Entity\" shall mean the union of the acting entity and all other entities that control, are controlled by, or are under common control with that entity. For the purposes of this definition, \"control\" means (i) the power, direct or indirect, to cause the direction or management of such entity, whether by contract or otherwise, or (ii) ownership of fifty percent (50%) or more of the outstanding shares, or (iii) beneficial ownership of such entity.  \"You\" (or \"Your\") shall mean an individual or Legal Entity exercising permissions granted by this License.  \"Source\" form shall mean the preferred form for making modifications, including but not limited to software source code, documentation source, and configuration files.  \"Object\" form shall mean any form resulting from mechanical transformation or translation of a Source form, including but not limited to compiled object code, generated documentation, and conversions to other media types.  \"Work\" shall mean the work of authorship, whether in Source or Object form, made available under the License, as indicated by a copyright notice that is included in or attached to the work (an example is provided in the Appendix below).  \"Derivative Works\" shall mean any work, whether in Source or Object form, that is based on (or derived from) the Work and for which the editorial revisions, annotations, elaborations, or other modifications represent, as a whole, an original work of authorship. For the purposes of this License, Derivative Works shall not include works that remain separable from, or merely link (or bind by name) to the interfaces of, the Work and Derivative Works thereof.  \"Contribution\" shall mean any work of authorship, including the original version of the Work and any modifications or additions to that Work or Derivative Works thereof, that is intentionally submitted to Licensor for inclusion in the Work by the copyright owner or by an individual or Legal Entity authorized to submit on behalf of the copyright owner. For the purposes of this definition, \"submitted\" means any form of electronic, verbal, or written communication sent to the Licensor or its representatives, including but not limited to communication on electronic mailing lists, source code control systems, and issue tracking systems that are managed by, or on behalf of, the Licensor for the purpose of discussing and improving the Work, but excluding communication that is conspicuously marked or otherwise designated in writing by the copyright owner as \"Not a Contribution.\"  \"Contributor\" shall mean Licensor and any individual or Legal Entity on behalf of whom a Contribution has been received by Licensor and subsequently incorporated within the Work.  2. Grant of Copyright License. Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.  3. Grant of Patent License. Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable (except as stated in this section) patent license to make, have made, use, offer to sell, sell, import, and otherwise transfer the Work, where such license applies only to those patent claims licensable by such Contributor that are necessarily infringed by their Contribution(s) alone or by combination of their Contribution(s) with the Work to which such Contribution(s) was submitted. If You institute patent litigation against any entity (including a cross-claim or counterclaim in a lawsuit) alleging that the Work or a Contribution incorporated within the Work constitutes direct or contributory patent infringement, then any patent licenses granted to You under this License for that Work shall terminate as of the date such litigation is filed.  4. Redistribution. You may reproduce and distribute copies of the Work or Derivative Works thereof in any medium, with or without modifications, and in Source or Object form, provided that You meet the following conditions:  (a) You must give any other recipients of the Work or Derivative Works a copy of this License; and  (b) You must cause any modified files to carry prominent notices stating that You changed the files; and  (c) You must retain, in the Source form of any Derivative Works that You distribute, all copyright, patent, trademark, and attribution notices from the Source form of the Work, excluding those notices that do not pertain to any part of the Derivative Works; and  (d) If the Work includes a \"NOTICE\" text file as part of its distribution, then any Derivative Works that You distribute must include a readable copy of the attribution notices contained within such NOTICE file, excluding those notices that do not pertain to any part of the Derivative Works, in at least one of the following places: within a NOTICE text file distributed as part of the Derivative Works; within the Source form or documentation, if provided along with the Derivative Works; or, within a display generated by the Derivative Works, if and wherever such third-party notices normally appear. The contents of the NOTICE file are for informational purposes only and do not modify the License. You may add Your own attribution notices within Derivative Works that You distribute, alongside or as an addendum to the NOTICE text from the Work, provided that such additional attribution notices cannot be construed as modifying the License.  You may add Your own copyright statement to Your modifications and may provide additional or different license terms and conditions for use, reproduction, or distribution of Your modifications, or for any such Derivative Works as a whole, provided Your use, reproduction, and distribution of the Work otherwise complies with the conditions stated in this License.  5. Submission of Contributions. Unless You explicitly state otherwise, any Contribution intentionally submitted for inclusion in the Work by You to the Licensor shall be under the terms and conditions of this License, without any additional terms or conditions. Notwithstanding the above, nothing herein shall supersede or modify the terms of any separate license agreement you may have executed with Licensor regarding such Contributions.  6. Trademarks. This License does not grant permission to use the trade names, trademarks, service marks, or product names of the Licensor, except as required for reasonable and customary use in describing the origin of the Work and reproducing the content of the NOTICE file.  7. Disclaimer of Warranty. Unless required by applicable law or agreed to in writing, Licensor provides the Work (and each Contributor provides its Contributions) on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied, including, without limitation, any warranties or conditions of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A PARTICULAR PURPOSE. You are solely responsible for determining the appropriateness of using or redistributing the Work and assume any risks associated with Your exercise of permissions under this License.  8. Limitation of Liability. In no event and under no legal theory, whether in tort (including negligence), contract, or otherwise, unless required by applicable law (such as deliberate and grossly negligent acts) or agreed to in writing, shall any Contributor be liable to You for damages, including any direct, indirect, special, incidental, or consequential damages of any character arising as a result of this License or out of the use or inability to use the Work (including but not limited to damages for loss of goodwill, work stoppage, computer failure or malfunction, or any and all other commercial damages or losses), even if such Contributor has been advised of the possibility of such damages.  9. Accepting Warranty or Additional Liability. While redistributing the Work or Derivative Works thereof, You may choose to offer, and charge a fee for, acceptance of support, warranty, indemnity, or other liability obligations and/or rights consistent with this License. However, in accepting such obligations, You may act only on Your own behalf and on Your sole responsibility, not on behalf of any other Contributor, and only if You agree to indemnify, defend, and hold each Contributor harmless for any liability incurred by, or claims asserted against, such Contributor by reason of your accepting any such warranty or additional liability.  END OF TERMS AND CONDITIONS ",
+    "project_urls": {
+     "Documentation": "https://trailofbits.github.io/sigstore-rekor-types/",
+     "Homepage": "https://pypi.org/project/sigstore-rekor-types",
+     "Issues": "https://github.com/trailofbits/sigstore-rekor-types/issues",
+     "Source": "https://github.com/trailofbits/sigstore-rekor-types"
+    },
+    "summary": "Python models for Rekor's API types"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (trailofbits/sigstore-rekor-types)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.0.18"
+  }
+ }
+}

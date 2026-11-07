@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
-from ui.close_corner import make_close_corner, make_maximize_corner
+from ui.close_corner import add_close_corner
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -41,6 +41,7 @@ from core.text_document import (  # noqa: E402
     _read_capped,
     _split_lines,
 )
+from ui.icon_provider import set_window_icon
 
 
 class TextEditorDialog(QDialog):
@@ -57,6 +58,7 @@ class TextEditorDialog(QDialog):
         read_only: bool = False,
     ):
         super().__init__(parent)
+        set_window_icon(self, "edit")
         self._backend = backend
         self._file_path = file_path
         self._original_content = b""
@@ -98,8 +100,6 @@ class TextEditorDialog(QDialog):
         self._size_label.setProperty("role", "muted")
         info.addStretch()
         info.addWidget(self._size_label)
-        info.addWidget(make_maximize_corner(self))
-        info.addWidget(make_close_corner(self, self._on_close))
         layout.addLayout(info)
 
         # Editor
@@ -147,6 +147,8 @@ class TextEditorDialog(QDialog):
         btn_layout.addWidget(self._btn_close)
 
         layout.addLayout(btn_layout)
+        # The title row: icon, name, _ [] x (the [x] asks about unsaved edits).
+        add_close_corner(self, self._on_close)
 
     def _load_file(self) -> None:
         try:

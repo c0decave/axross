@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 #: (section, keys, description). Keys use QKeySequence's portable text.
 SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
@@ -128,6 +129,7 @@ SHORTCUTS: list[tuple[str, tuple[str, ...], str]] = [
 class ShortcutsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "keyboard")
         from axross._version import __version__
 
         self.setWindowTitle(tr("Keyboard Shortcuts") + f" — axross {__version__}")

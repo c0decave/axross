@@ -1015,24 +1015,41 @@ def _parse_permissions(perm_str: str) -> int:
     return mode
 
 
+_LS_MONTHS = {name: number for number, name in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+_LS_DATE = re.compile(r"([A-Za-z]{3})\s+(\d{1,2})\s+(?:(\d{1,2}):(\d{2})|(\d{4}))")
+
+
 def _parse_ls_date(date_str: str) -> datetime:
     """Parse ls -la date field.
 
-    Formats: 'Mar 16 14:30' (recent) or 'Mar 16  2025' (old).
+    Formats: 'Mar 16 14:30' (recent) or 'Mar 16  2025' (old). The month
+    names are ls's English ones (the remote runs in the C locale), read
+    with a table, not strptime's %b: that follows the local LC_TIME, which
+    Qt sets from the user's locale. Feb 29 without a year is taken in the
+    latest leap year that does not lie in the future.
     """
-    now = datetime.now()
-    for fmt in ("%b %d %H:%M", "%b %d  %Y", "%b %d %Y"):
-        try:
-            dt = datetime.strptime(date_str, fmt)
-            # If no year in format, use current year
-            if dt.year == 1900:
-                dt = dt.replace(year=now.year)
-                # If date is in the future, it's probably last year
-                if dt > now:
-                    dt = dt.replace(year=now.year - 1)
-            return dt
-        except ValueError:
-            continue
+    match = _LS_DATE.fullmatch(date_str.strip())
+    month = _LS_MONTHS.get(match.group(1).lower()) if match else None
+    if match is None or month is None:
+        return datetime.fromtimestamp(0)
+    day = int(match.group(2))
+    try:
+        if match.group(5):
+            return datetime(int(match.group(5)), month, day)
+        hour, minute = int(match.group(3)), int(match.group(4))
+        now = datetime.now()
+        # A date without a year lies within the last ~6 months: this
+        # year, or last year when it would be in the future.
+        for year in range(now.year, now.year - 9, -1):
+            try:
+                dt = datetime(year, month, day, hour, minute)
+            except ValueError:   # Feb 29 outside a leap year
+                continue
+            if dt <= now or year < now.year:
+                return dt
+    except ValueError:
+        pass
     return datetime.fromtimestamp(0)
 
 

@@ -122,7 +122,11 @@ def test_happy_a_remote_folder_gets_the_archive_uploaded(tree, monkeypatch) -> N
 
     monkeypatch.setattr(PK, "_is_local", lambda backend: not isinstance(backend, Remote))
     result = PK.pack(Remote(), str(tree), ["docs"], "up", PK.PackOptions(fmt="zip"))
-    assert uploads == [str(tree / "up.zip")]
+    # uploaded under a hidden part name, then renamed into place: a dropped
+    # connection leaves no truncated up.zip
+    [part] = uploads
+    assert os.path.basename(part).startswith(".up.zip.") and part.endswith(".part")
+    assert result.path == str(tree / "up.zip") and not os.path.exists(part)
     with zipfile.ZipFile(result.path) as zf:
         assert zf.read("docs/a.txt") == b"alpha"
 

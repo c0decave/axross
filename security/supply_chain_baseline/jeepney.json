@@ -1,0 +1,115 @@
+{
+ "name": "jeepney",
+ "versions": {
+  "0.9.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|jeepney/bindgen.py|c8f0c916dfd68caa",
+    "yara|capability_filesystem_read|jeepney/io/asyncio.py|a9f5a2ff5a560974",
+    "yara|capability_filesystem_read|jeepney/io/tests/conftest.py|a3b26b632a5813ed",
+    "yara|capability_filesystem_read|jeepney/io/tests/test_blocking.py|1132e7a22bde9cdf",
+    "yara|capability_filesystem_read|jeepney/io/tests/test_threading.py|4402f0cbe688eb84",
+    "yara|capability_filesystem_read|jeepney/io/tests/test_trio.py|0cf63557f2b6a8b4",
+    "yara|capability_filesystem_read|jeepney/io/threading.py|9b0182365ba7fdb6",
+    "yara|capability_filesystem_read|jeepney/low_level.py|9b8c0663eaae3e7c",
+    "yara|capability_filesystem_read|jeepney/tests/test_bindgen.py|133f7dcebf53215d",
+    "yara|capability_process_spawn|jeepney/tests/test_bindgen.py|133f7dcebf53215d"
+   ],
+   "archives": {
+    "jeepney-0.9.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "jeepney-0.9.0.dist-info/METADATA": "b8e6c353e9aaed0ed0144029556417fda23b64f344e718331907054ba05b8c62",
+      "jeepney-0.9.0.dist-info/RECORD": "0724f017a29b1eee71ca425719628fd9d97206267e245588d5148088672ee438",
+      "jeepney-0.9.0.dist-info/WHEEL": "ff6a3334508b59cf776cae1628708ef9e0d410d0e5a3e76073d714deaa2460ee",
+      "jeepney-0.9.0.dist-info/licenses/LICENSE": "1b22b049b5267d6dfc23a67bf4a84d8ec04b9fdfb1a51d360e42b4342c8b4154",
+      "jeepney/__init__.py": "50b848af8e38b58f353d49041d158d9535e5a916c59aa3136d606c92d2a09a82",
+      "jeepney/auth.py": "656d07317e957f0c76f0ffa336bcd5560127d62a633be289acd276486f745775",
+      "jeepney/bindgen.py": "c8f0c916dfd68caa05529d3cafefeea6caaed0bf119aff2034aafe300e13e1b2",
+      "jeepney/bus.py": "294892af7102cdd6def92f6d34a9ba92f7f7a198b84589c95a46545caeed1369",
+      "jeepney/bus_messages.py": "b9409cff55e5973b61e05f796a08690cb9a5bf91b3d1aaded85a4a83b0ff82a7",
+      "jeepney/fds.py": "658ccdfdcffbae4053d3053b7585264118a3a52cc2bfe0c04c2604925a57c545",
+      "jeepney/io/__init__.py": "8a7248ff553e013ca62dc01562cf8b0f6694c2097eb62856f3ea15154c584600",
+      "jeepney/io/asyncio.py": "a9f5a2ff5a5609748fd4b35169f1c1bafaf11f1e2d5fde9be762816b8b1414c7",
+      "jeepney/io/blocking.py": "23faf0f74218fc47ac0599a47d4aa4ed49e2c95910027833ee3c909b38eeebcd",
+      "jeepney/io/common.py": "97c95b154810981c5fa920be86a1d898f51809514c29b3860759396563ca5dfb",
+      "jeepney/io/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jeepney/io/tests/conftest.py": "a3b26b632a5813ed2334552776c438124e5d358334a1f875b1870855e099323d",
+      "jeepney/io/tests/test_asyncio.py": "249b675f91e24516638ee1880e823c2efcdf6da48d83e963897f79c94bddf719",
+      "jeepney/io/tests/test_blocking.py": "1132e7a22bde9cdf03ce9d09078c0f39bf4f35ba52ba2a1cb8ffc80de351948e",
+      "jeepney/io/tests/test_threading.py": "4402f0cbe688eb84c1a059819d253adc72dcc119d2b4b56d9dec0eb68681977a",
+      "jeepney/io/tests/test_trio.py": "0cf63557f2b6a8b4f2053adbaf165e2d303976671add87b77baa73d3c5316cef",
+      "jeepney/io/tests/utils.py": "8bb549613f9ac5e7f34bc99672fbfef43787101e8b74ff4cf361f71f1e9fc82e",
+      "jeepney/io/threading.py": "9b0182365ba7fdb697f18e1e89e9c218329d643e1229d4ccbc14e4204d0430aa",
+      "jeepney/io/trio.py": "21d64826741c3e354e040f4aa28167d274c1133dc1b810e4cf9eaa2d88464753",
+      "jeepney/low_level.py": "9b8c0663eaae3e7cf29602a505d05c72692e39717f850d606ed4f6e6a3d7d863",
+      "jeepney/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jeepney/tests/secrets_introspect.xml": "f5c7cdb356862ed200ca471056cc9cc08c022e611ea2b2a4163a8908b0249d14",
+      "jeepney/tests/test_auth.py": "11eefdbec79d0b0bdeba4b9d0194f0a984d71d65773d89d7926325d0c04c6441",
+      "jeepney/tests/test_bindgen.py": "133f7dcebf53215de6959747fb603f773e0b6efc42ab358321a7613826db6a87",
+      "jeepney/tests/test_bus.py": "0293b177701c610075e06d57b22146058b50e3148ac39db2f58be63f3ef4d207",
+      "jeepney/tests/test_bus_messages.py": "7a5c12ee8758f510ec8e0f632f8b4dd0eeee0b152a4981ec5928565e7fd63ce4",
+      "jeepney/tests/test_fds.py": "fa0caf4297ec5ed3da2047aa6f086b34f39c2003740ecad0ecc5d9bb89ccbef4",
+      "jeepney/tests/test_low_level.py": "d920bec0a286af4c9f120bacc1f1f30a88d24f0b1895354b3f2bb341b192dcbe",
+      "jeepney/tests/test_wrappers.py": "35263a2db956794da44e82128e98bd60782b77f63a3d5c85c17aa76d8f77ca05",
+      "jeepney/wrappers.py": "e7333fbf58c5a8418349a3e1d1fd3a483c4217a2665958725e37d847a287ba6e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "4470d4c30373dfde49792d30615207ebb58e93fa2b0aaea19f31c073d6935d5b",
+     "native": {},
+     "pth": {},
+     "sha256": "97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683"
+    }
+   },
+   "name": "jeepney",
+   "provenance": {
+    "jeepney-0.9.0-py3-none-any.whl": {
+     "kind": "GitLab",
+     "repository": "takluyver/jeepney"
+    }
+   },
+   "pypi": {
+    "author_email": "Thomas Kluyver <thomas@kluyver.me.uk>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Documentation": "https://jeepney.readthedocs.io/en/latest/",
+     "Source": "https://gitlab.com/takluyver/jeepney"
+    },
+    "summary": "Low-level, pure Python DBus protocol wrapper."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, process_spawn; attestation verifies (takluyver/jeepney)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|jeepney/bindgen.py|c8f0c916dfd68caa",
+     "yara|capability_filesystem_read|jeepney/io/asyncio.py|a9f5a2ff5a560974",
+     "yara|capability_filesystem_read|jeepney/io/tests/conftest.py|a3b26b632a5813ed",
+     "yara|capability_filesystem_read|jeepney/io/tests/test_blocking.py|1132e7a22bde9cdf",
+     "yara|capability_filesystem_read|jeepney/io/tests/test_threading.py|4402f0cbe688eb84",
+     "yara|capability_filesystem_read|jeepney/io/tests/test_trio.py|0cf63557f2b6a8b4",
+     "yara|capability_filesystem_read|jeepney/io/threading.py|9b0182365ba7fdb6",
+     "yara|capability_filesystem_read|jeepney/low_level.py|9b8c0663eaae3e7c",
+     "yara|capability_filesystem_read|jeepney/tests/test_bindgen.py|133f7dcebf53215d",
+     "yara|capability_process_spawn|jeepney/tests/test_bindgen.py|133f7dcebf53215d"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read jeepney/bindgen.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/io/asyncio.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/io/tests/conftest.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/io/tests/test_blocking.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/io/tests/test_threading.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/io/tests/test_trio.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/io/threading.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/low_level.py",
+     "capability_filesystem_read:capability_filesystem_read jeepney/tests/test_bindgen.py",
+     "capability_process_spawn:capability_process_spawn jeepney/tests/test_bindgen.py"
+    ]
+   },
+   "version": "0.9.0"
+  }
+ }
+}

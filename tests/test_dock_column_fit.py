@@ -49,6 +49,8 @@ from PyQt6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
+from tests.font_presence import no_font_reason  # noqa: E402
+
 APP = QApplication.instance() or QApplication([])
 
 RIGHT = Qt.DockWidgetArea.RightDockWidgetArea
@@ -169,7 +171,21 @@ def plain_window(count: int = 4, *, size=(900, 900), min_height: int = 300):
     win.resize(*size)
     win.show()
     pump(0.1)
+    settle_fit(fit)
     return win, docks, fit
+
+
+def settle_fit(fit, timeout: float = 10.0) -> None:
+    """Let the check the show (or a resize) started run: it comes SETTLE_MS
+    (150 ms) later. A test that went on after pump(0.1) met it at a
+    moment that depended on the machine's load - before its first step on
+    an idle machine, in the middle of it on a busy one (a "user" tab that
+    the check had already made automatic, a column in another order)."""
+    end = time.time() + timeout
+    quiet = 0
+    while quiet < 2 and time.time() < end:
+        pump(0.05)
+        quiet = 0 if fit._timer.isActive() else quiet + 1
 
 
 @pytest.fixture
@@ -328,7 +344,9 @@ def test_edge_floating_and_moved_away_docks_are_not_in_the_column(plain):
     holder = QWidget(win)
     docks[2].setParent(holder)  # a panel laid out elsewhere (a workspace)
     pump()
-    names = [d.objectName() for d in fit.column_docks(RIGHT)]
+    # which docks, not their order: column_docks is the window's children,
+    # and the check that tabbed d1 behind d0 at 900 px raised d0
+    names = sorted(d.objectName() for d in fit.column_docks(RIGHT))
     assert names == ["d0", "d1"]
     hold(win, 900, 300)
     fit.fit_now()
@@ -398,7 +416,10 @@ def test_sad_bad_session_entries_are_ignored(plain):
 
 
 def test_happy_session_state_survives_save_and_restore_state(plain):
-    win, docks, fit = plain(4)
+    # tall enough that no check tabs anything before the user does: at
+    # 900 px the check had tabbed d1 behind d0 already (automatic)
+    win, docks, fit = plain(4, size=(900, 1600))
+    assert fit.auto_tabbed() == []
     win.tabifyDockWidget(docks[0], docks[1])  # the user's
     pump()
     hold(win, 900, 470)
@@ -444,9 +465,10 @@ def own_home(tmp_path, monkeypatch):
 
 def make_window(monkeypatch, size=(1600, 980)):
     from core import multimedia_probe
-    from tests.test_media_player_late_engine import OK
     from ui.main_window import MainWindow
 
+    OK = multimedia_probe.ProbeResult(ok=True)  # not the media player's tests:
+    # they need Qt Multimedia, a window does not
     monkeypatch.setattr(multimedia_probe, "probe", lambda *a, **k: OK)
     win = MainWindow()
     win._reconnect_timer.stop()
@@ -725,7 +747,13 @@ def test_edge_the_bottom_area_beside_the_right_column_keeps_a_narrow_window(wind
     width adds to the column's: the Terminal's row of controls (694 px)
     made a window with a right dock at least ~890 px wide. In a scroll
     area like the other panels, the Terminal scrolls instead, and a
-    720 px window with the Analysis dock still fits."""
+    720 px window with the Analysis dock still fits.
+
+    720 px holds for text in a real font (DejaVu Sans to 13 pt measured);
+    without one, the title bars of the left column and the Analysis dock
+    alone take more."""
+    if no_font_reason():
+        pytest.skip(no_font_reason())
     window._analysis_dock.show()
     pump(0.2)
     assert window.minimumSizeHint().width() <= 720, window.minimumSizeHint()
@@ -744,3 +772,39 @@ def test_edge_the_bottom_area_beside_the_right_column_keeps_a_narrow_window(wind
     assert frame is not None and frame.parentWidget() is terminal
     assert frame.content().width() == frame.viewport().width()
     assert not frame.horizontalScrollBar().isVisible()
+
+
+def test_edge_the_log_and_transfers_rows_do_not_widen_the_window(window):
+    """The Log's and the Transfers' rows of controls were their docks'
+    smallest width as well, and they grow with the font: at 11 pt (DejaVu
+    Sans) the Log asked 515 px, so a window with the Analysis dock could
+    not be narrower than 743 px; and beside a wide right column the
+    Transfers' row outgrew the room left of it, which made Qt lay the bottom
+    area under the column (1280x800, a larger font). Like the Terminal,
+    both scroll in a PanelFrame now: a wider row adds nothing to the
+    window's smallest width."""
+    window._analysis_dock.show()
+    pump(0.2)
+    before = window.minimumSizeHint().width()
+    for dock in (window._log_dock, window._transfer_dock):
+        frame = dock.widget()
+        content = frame.content() if hasattr(frame, "content") else frame
+        content.setMinimumWidth(before + 300)  # a row as wide as a large font makes it
+        pump(0.1)
+        assert dock.minimumSizeHint().width() < before, dock.objectName()
+    assert window.minimumSizeHint().width() == before
+
+
+def test_edge_a_dock_gone_for_good_leaves_no_record(plain):
+    """A detached conversation attached back into the Agent dock never
+    comes back as a panel: its automatic tab is forgotten, and one tabbed
+    onto it loses only its anchor."""
+    from ui.dock_fit import _Record
+
+    win, docks, fit = plain(3)
+    fit._records = [_Record("d1", "d0", None, False), _Record("d2", "d1", "d1", False)]
+    fit.forget("d1")
+    assert fit.auto_tabbed() == ["d2"]
+    assert fit._records[0].anchor == "" and fit._records[0].after is None
+    fit.forget("not-there")  # nothing to forget: no error
+    assert fit.auto_tabbed() == ["d2"]

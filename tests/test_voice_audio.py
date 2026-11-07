@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import voice_audio as VA  # noqa: E402
+from tests.optional_deps import need_numpy  # noqa: E402
 
 
 def tone(seconds: float, amplitude: int, rate: int = 16000, freq: float = 440.0) -> bytes:
@@ -140,7 +141,7 @@ def test_sad_resample_with_a_bad_rate_returns_the_input():
 
 def dominant_hz(pcm: bytes, rate: int) -> float:
     """The strongest frequency of *pcm* (FFT peak, parabolic interpolation)."""
-    import numpy as np
+    np = need_numpy()
 
     audio = np.frombuffer(pcm, dtype="<i2").astype(np.float64)
     spectrum = np.abs(np.fft.rfft(audio * np.hanning(len(audio))))
@@ -169,7 +170,9 @@ def test_happy_pitch_shift_keeps_the_loudness():
 
 def test_happy_shifting_up_leaves_no_alias_of_a_tone_above_the_new_nyquist():
     """A 9 kHz tone an octave up is above 11 kHz: it is filtered out, not
-    folded back down into the audible band."""
+    folded back down into the audible band (numpy's FFT does the filtering;
+    without numpy the shift is a plain resampling)."""
+    need_numpy()
     rate = 22050
     pcm = tone(0.5, 12000, rate=rate, freq=9000.0)
     assert VA.rms(VA.pitch_shift(pcm, 12.0)) < 200
@@ -191,7 +194,7 @@ def test_edge_pitch_shift_of_nothing_zero_and_odd_bytes():
 
 
 def test_edge_pitch_shift_of_a_full_scale_square_does_not_wrap_around():
-    import numpy as np
+    np = need_numpy()
 
     square = np.where(np.arange(22050) % 100 < 50, 32767, -32768).astype("<i2").tobytes()
     out = np.frombuffer(VA.pitch_shift(square, -5.0), dtype="<i2")

@@ -21,7 +21,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from tests.test_audio_probe_real import RUNTIME, SERVERS  # noqa: E402
 

@@ -18,6 +18,7 @@ from core.i18n import tr
 from core.transfer_conflicts import ConflictAction, TransferConflict
 from ui.close_corner import add_close_corner
 from ui.format_utils import format_size
+from ui.icon_provider import set_window_icon
 
 
 def _when(mtime: float | None) -> str:
@@ -45,6 +46,7 @@ class TransferConflictDialog(QDialog):
 
     def __init__(self, conflict: TransferConflict, remaining: int = 0, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "copy-right")
         self._choice: tuple[ConflictAction, bool] | None = None
         self.setWindowTitle(tr("File Already Exists"))
         layout = QVBoxLayout(self)

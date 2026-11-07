@@ -1,0 +1,111 @@
+{
+ "name": "sigstore",
+ "versions": {
+  "4.5.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|sigstore/_internal/trust.py|b3986c520f9b64fe",
+    "yara|capability_filesystem_read|sigstore/models.py|36e77d2eeeff512f",
+    "yara|capability_filesystem_read|sigstore/verify/__init__.py|16ec61ff385a0e2b",
+    "yara|threat_runtime_environment_read|sigstore/_cli.py|376adc57a74f8bed"
+   ],
+   "archives": {
+    "sigstore-4.5.1-py3-none-any.whl": {
+     "entry_points": [
+      "sigstore = sigstore._cli:main"
+     ],
+     "files": {
+      "sigstore-4.5.1.dist-info/METADATA": "ffb481b99de8253a9492505a9cd08d80612d98c7aeba607960c3050128da8b2a",
+      "sigstore-4.5.1.dist-info/RECORD": "cfccbcf48c87331cd8ead5003c9925174afeeead90be60a820effcc70e2f91c8",
+      "sigstore-4.5.1.dist-info/WHEEL": "ee1cca5a0f89f08dc1baacb0e6d0628b9cff326015b036175e28ddfd002d359f",
+      "sigstore-4.5.1.dist-info/entry_points.txt": "a7264a63969eef76c4f8396474a5329cee9baefd55b755696141b0a4dabe9fbd",
+      "sigstore-4.5.1.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "sigstore/__init__.py": "e811778257c6850d2842fd4ead3218fb0ec8d64408ecc9463f177b9fe7a55afd",
+      "sigstore/__main__.py": "1c27c380760d788527badabbe3a23f4fd48fac12b2aab7a100c06f4eb35cffd4",
+      "sigstore/_cli.py": "376adc57a74f8bedfcb707bf5f59d42fb8a8e3aff75d9c68ad18d19f7e4a70a1",
+      "sigstore/_internal/__init__.py": "c689e8e08dc91db40d230a1eb5214ea49c8821dda340e7c4267819bc1a304635",
+      "sigstore/_internal/fulcio/__init__.py": "40a796d60e2c42b4b408302ede899a97abce9a3620b7f0dd6ca4731a1ca53bfc",
+      "sigstore/_internal/fulcio/client.py": "d26f389040e48d095d3b37e0ff897c8758d6e1e846c111be9d1bd7ab24fbf7a9",
+      "sigstore/_internal/key_details.py": "12bdce89122e6cc16b7d3c1f5864ab9a5b50f54fdf9135e88a4c9ead83e4b207",
+      "sigstore/_internal/merkle.py": "8ac93c9330f3308b9364e97a1c1e89a2e73a678ca30ffd318a4d1744ca923b79",
+      "sigstore/_internal/oidc/__init__.py": "bb367a7d2312fee782362be99d8510d8cc4134cd4f8f686440100b14961db59e",
+      "sigstore/_internal/oidc/oauth.py": "a443630c214fc36e3c29c2f34e50d04d9caf67c686c25e32fd02d75b1387e036",
+      "sigstore/_internal/rekor/__init__.py": "372f95c91bb27b79ef11f09082a7524ea5bd15dc2202ffdbd48e1c9978de450d",
+      "sigstore/_internal/rekor/checkpoint.py": "b2a53bcd41b0f125a9095bdea36418d32cd7e0696ae19d7d2af9f484e7b6f847",
+      "sigstore/_internal/rekor/client.py": "fa5d871e45bc325212f199cc61b133ff39342f259a5c7aa623b57b650cb9097c",
+      "sigstore/_internal/rekor/client_v2.py": "ddb323e17afb46c6bb74504e1d2db6e423f92d9100209d332c9a417698fdf2f6",
+      "sigstore/_internal/sct.py": "b5d413231c92f4dd17ec9f267b1c4839eb2e53e38cfab7029fb54b10eb9b3f5f",
+      "sigstore/_internal/timestamp.py": "8bd61c3da682bdad28f97284d7e0bbcf973749c28a3c918b0799da419f77c68d",
+      "sigstore/_internal/trust.py": "b3986c520f9b64fede31f243a4f4f757424c12e821cfe785f19726b02ee2021b",
+      "sigstore/_internal/tuf.py": "8396264863c3efb0b46d0f6191da1c0728fbb8280652419171fae28ded247cd8",
+      "sigstore/_store/__init__.py": "cd261a06ef234ae0d66fd5a54d85be1331c5e4e6d4790adafdd6042febb889be",
+      "sigstore/_store/https%3A%2F%2Ftuf-repo-cdn.sigstage.dev/root.json": "353d172f05f9e73b4a647b1a464f16726d929cbfd030cc42bffb86cd742fb61f",
+      "sigstore/_store/https%3A%2F%2Ftuf-repo-cdn.sigstage.dev/signing_config.v0.2.json": "14452cddce0d882c7ee7124653ba03a6684afaca12be9e9561ee198cf46734ad",
+      "sigstore/_store/https%3A%2F%2Ftuf-repo-cdn.sigstage.dev/trusted_root.json": "81f5af777952d2c3955062ad56924c05ca916b5d49f3a0bce945faa475a8b1cc",
+      "sigstore/_store/https%3A%2F%2Ftuf-repo-cdn.sigstore.dev/root.json": "73747011d0857ada15479a16c4cae0f3ed03aac698b523b97e1de314ac9d9ca8",
+      "sigstore/_store/https%3A%2F%2Ftuf-repo-cdn.sigstore.dev/signing_config.v0.2.json": "9711a6d5375706957a4859af31c5866a4474f81f0544f9f4b76c9c4f4c8a539c",
+      "sigstore/_store/https%3A%2F%2Ftuf-repo-cdn.sigstore.dev/trusted_root.json": "6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66",
+      "sigstore/_utils.py": "720eea57786d6696d7d829d2ee2191896c1f485703d845655a2bb57f2748933f",
+      "sigstore/dsse/__init__.py": "355c4592e9023a137ca47d1d4cf23604e8f93be87396ade2f529c20eaa3a94aa",
+      "sigstore/dsse/_predicate.py": "ebd75b19f22341e427dcb11289c9d0ebaf4545b60b91630f7b9d9117770b76e1",
+      "sigstore/errors.py": "aef719105a778124584ac1ff95fca520400a66dcc309d48a357c2018882863de",
+      "sigstore/hashes.py": "be087169743df4512500c54695836f4b19a64c871c1fb0f205c75f5de9c6d247",
+      "sigstore/models.py": "36e77d2eeeff512f761350f9661bea888eb354414f7d9f22eb8f5d7a626f7d10",
+      "sigstore/oidc.py": "11b69e46433842e46e984d76dd73771dba906d52ee21e774ceffbcdb208397b2",
+      "sigstore/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sigstore/sign.py": "ef5febdf3f20a524f59a25e69114752a2daed995f785c49443bbe33696271a77",
+      "sigstore/verify/__init__.py": "16ec61ff385a0e2b939d3e1acb6978d021ffa8bc243bf3cb57629cad14662345",
+      "sigstore/verify/policy.py": "9f7542b048bc0a914edababafcbb68440e1bba62594b68972393d57b866e1422",
+      "sigstore/verify/verifier.py": "b3cef7d53aaa63e238ee29233ae2f7761506e46a400a6cf1779d5ecb98c690db"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e1dffd9ba5debe1fac546b942c780c720da77dd1f353d20eb351e144ee498dac",
+     "native": {},
+     "pth": {},
+     "sha256": "02e000197b34980f1d382741d6f83c2fecbcef7debf7304f36a5253f3c892cd9"
+    }
+   },
+   "name": "sigstore",
+   "provenance": {
+    "sigstore-4.5.1-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "sigstore/sigstore-python",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author": "Sigstore Authors",
+    "author_email": "Sigstore Authors <sigstore-dev@googlegroups.com>",
+    "license_expression": "Apache-2.0",
+    "project_urls": {
+     "Documentation": "https://sigstore.github.io/sigstore-python/",
+     "Homepage": "https://pypi.org/project/sigstore/",
+     "Issues": "https://github.com/sigstore/sigstore-python/issues",
+     "Source": "https://github.com/sigstore/sigstore-python"
+    },
+    "summary": "A tool for signing Python package distributions"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One hit: _cli.py reads SIGSTORE_IDENTITY_TOKEN / SIGSTORE_OIDC_CLIENT_SECRET, its documented settings. Scanner venv only. Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|sigstore/_internal/trust.py|b3986c520f9b64fe",
+     "yara|capability_filesystem_read|sigstore/models.py|36e77d2eeeff512f",
+     "yara|capability_filesystem_read|sigstore/verify/__init__.py|16ec61ff385a0e2b",
+     "yara|threat_runtime_environment_read|sigstore/_cli.py|376adc57a74f8bed"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read sigstore/_internal/trust.py",
+     "capability_filesystem_read:capability_filesystem_read sigstore/models.py",
+     "capability_filesystem_read:capability_filesystem_read sigstore/verify/__init__.py",
+     "threat_runtime_environment_read:threat_runtime_environment_read sigstore/_cli.py"
+    ]
+   },
+   "version": "4.5.1"
+  }
+ }
+}

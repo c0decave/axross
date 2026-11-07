@@ -33,6 +33,7 @@ from core.bookmarks import LOCAL_SHELL, BookmarkGroup, BookmarkManager
 from core.i18n import tr
 from ui.bookmark_sidebar import BookmarkTreeEditing, _BookmarkTree, _count_bookmarks
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -49,12 +50,19 @@ class BookmarkManagerDialog(BookmarkTreeEditing, QDialog):
     bookmark_drop_requested = pyqtSignal(list, str, object, object)
     transfer_drop_requested = pyqtSignal(list, str, object, bool)
 
+    #: the security badge goes into the Connection column, not on the name
+    _badge_in_name = False
+
     def __init__(
-        self, bookmark_manager: BookmarkManager, parent=None, *, terminal_profiles=None
+        self, bookmark_manager: BookmarkManager, parent=None, *, terminal_profiles=None,
+        profile_lookup=None,
     ) -> None:
         QDialog.__init__(self, parent)
+        set_window_icon(self, "bookmark")
         self._manager = bookmark_manager
         self._terminal_profiles = terminal_profiles or (lambda: [])
+        # name -> the connection profile (for the security badge), or None
+        self._profile_lookup = profile_lookup
         self._rebuilding = False
         self.setWindowTitle(tr("Manage Bookmarks"))
         self.resize(820, 480)
@@ -181,6 +189,12 @@ class BookmarkManagerDialog(BookmarkTreeEditing, QDialog):
             item.setText(COL_CONNECTION, node.backend_name)
         for col in (COL_LOCATION, COL_CONNECTION):
             item.setToolTip(col, item.text(col))
+        info = self._bookmark_security(node)
+        if info is not None:
+            from ui.security_badge import security_icon, tooltip_html
+
+            item.setIcon(COL_CONNECTION, security_icon(info))
+            item.setToolTip(COL_CONNECTION, tooltip_html(info, item.text(COL_CONNECTION)))
 
     def _after_change(self) -> None:
         """Rebuild, the same entries still selected, and tell the window."""

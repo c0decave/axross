@@ -215,3 +215,56 @@ def test_edge_close_stops_listening():
     proxy.close()
     with pytest.raises(OSError):
         socket.create_connection(("127.0.0.1", port), timeout=2)
+
+
+# -- an allowed name whose owner points it home ----------------------------------------
+
+
+def _resolving_to(address: str):
+    """A resolver that answers every name with *address* - an allowed
+    host's DNS, set by whoever owns the name."""
+    def resolve(host, port, type=0):  # noqa: A002 - getaddrinfo's keyword
+        if ":" in address:
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 0, "", (address, port, 0, 0))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (address, port))]
+    return resolve
+
+
+def test_sad_a_name_that_resolves_to_ipv4_mapped_loopback_is_refused(echo_server):
+    """``::ffff:127.0.0.1`` is the host's loopback written as IPv6: an
+    AAAA record with it must not reach the host's local services."""
+    proxy = _proxy([f"mcp.vendor.example:{echo_server}"],
+                   resolver=_resolving_to("::ffff:127.0.0.1"))
+    try:
+        sock, head = _ask(proxy.port, f"CONNECT mcp.vendor.example:{echo_server} HTTP/1.1"
+                          "\r\n\r\n".encode())
+        assert head.startswith(b"HTTP/1.1 403") and b"loopback" in head.lower(), head
+        sock.close()
+    finally:
+        proxy.close()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.5", "10.0.0.1", "172.17.0.1", "100.64.0.1",
+                                     "fd00::1", "::ffff:192.168.1.1", "::ffff:169.254.169.254"])
+def test_sad_a_name_that_resolves_into_the_lan_is_refused(address):
+    """An allowed name whose DNS answers with the LAN, a container bridge,
+    the host's own LAN address or the cloud metadata address is refused
+    before any connection is tried."""
+    proxy = _proxy(["mcp.vendor.example:443"], resolver=_resolving_to(address))
+    try:
+        sock, head = _ask(proxy.port, b"CONNECT mcp.vendor.example:443 HTTP/1.1\r\n\r\n")
+        assert head.startswith(b"HTTP/1.1 403"), head
+        sock.close()
+    finally:
+        proxy.close()
+
+
+def test_happy_an_address_the_user_allowed_may_be_private():
+    """A LAN address the user put on the list as an address is theirs to
+    allow; only names are held to public addresses."""
+    assert E._refused_address("192.168.1.5", named=False) == ""
+    assert E._refused_address("192.168.1.5") == "a private address"
+    assert E._refused_address("127.0.0.1", named=False) == "a loopback address"
+    assert E._refused_address("::ffff:127.0.0.1", named=False) == "a loopback address"
+    assert E._refused_address("93.184.215.14") == ""
+    assert E._refused_address("2606:4700::1111") == ""

@@ -33,6 +33,7 @@ from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QDockWidget, QMenu, QWidget
 
 from core import extensions as EX
+from core.thread_relay import GuiCall
 
 log = logging.getLogger(__name__)
 
@@ -110,10 +111,17 @@ class ExtensionAPI:
 
     # -- registering --------------------------------------------------------
     def add_menu_action(
-        self, label: str, callback: Callable[[], Any], *, shortcut: str | None = None
+        self, label: str, callback: Callable[[], Any], *, shortcut: str | None = None,
+        icon: str | None = None,
     ) -> QAction:
-        """An entry in the Extensions menu."""
+        """An entry in the Extensions menu; *icon* names one of
+        ui.icon_provider's icons (the window or panel it opens)."""
         action = QAction(str(label), self._host.window)
+        if icon:
+            from ui.icon_provider import icon as _icon
+
+            action.setIcon(_icon(str(icon)))
+            action.setProperty("axIcon", str(icon))
         if shortcut:
             action.setShortcut(QKeySequence(shortcut))
         action.triggered.connect(lambda _checked=False: self._host.call(self, callback))
@@ -142,7 +150,7 @@ class ExtensionAPI:
         suffixes = tuple(str(e).lower() for e in extensions)
         self._reg.context.append((str(label), callback, applies_to, suffixes))
 
-    def add_dock(self, title: str, widget: QWidget) -> QDockWidget:
+    def add_dock(self, title: str, widget: QWidget, *, icon: str = "extensions") -> QDockWidget:
         """A panel docked on the right, with the title bar of the built-in
         panels (float, [x], close all in this area) and a Send to Workspace
         button; its show/hide entry goes into the Extensions menu, which
@@ -152,7 +160,9 @@ class ExtensionAPI:
         moves it to one, where it is laid out like a pane
         (ui.extension_panels); a panel that was on a workspace when the
         extension was switched off goes back there. The returned dock and
-        *widget* stay the same objects wherever the panel is."""
+        *widget* stay the same objects wherever the panel is. *icon* names
+        the panel's own icon in ui.icon_provider (title bar, menu entry,
+        floating window); the puzzle piece only for a panel without one."""
         from ui.extension_panels import (
             EXTENSION_DOCK_PREFIX,
             ExtensionDock,
@@ -163,16 +173,21 @@ class ExtensionAPI:
         ext_id = self.info.ext_id
         dock = ExtensionDock(str(title), window, ext_id)
         dock.setObjectName(f"{EXTENSION_DOCK_PREFIX}{ext_id}-{len(self._reg.docks)}")
-        bar = ExtensionPanelTitleBar(str(title), dock)
-        bar.enable_pause(
-            lambda paused: self._host.set_paused(ext_id, paused),
-            paused=self._host.is_paused(ext_id),
-        )
+        bar = ExtensionPanelTitleBar(str(title), dock, icon_name=str(icon))
         dock.setTitleBarWidget(bar)
         dock.setWidget(widget)
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         toggle = dock.toggleViewAction()
-        self._host.menu_section().addAction(toggle)
+        from ui.icon_provider import icon as _icon
+
+        toggle.setIcon(_icon(str(icon)))
+        toggle.setProperty("axIcon", str(icon))
+        listed = {entry[1] for entry in getattr(window, "TOOLBAR_EXTENSIONS", ())}
+        if ext_id not in listed:
+            # A tool the window lists itself (Media Player, Folder Treemap,
+            # Drives Overview: toolbar button and menu entry) is not listed
+            # a second time under its panel's title.
+            self._host.menu_section().addAction(toggle)
         self._reg.actions.append(toggle)
         self._reg.docks.append(dock)
         reveal = getattr(window, "reveal_extension_panel", None)
@@ -185,6 +200,8 @@ class ExtensionAPI:
         added = getattr(window, "extension_panel_added", None)
         if callable(added):
             added(dock)
+        if ext_id in self._host._loaded:  # a panel added after activate()
+            self._host._offer_pause(self)
         return dock
 
     def on(self, event: str, callback: Callable[[ExtensionContext], Any]) -> None:
@@ -193,6 +210,8 @@ class ExtensionAPI:
         if event not in EVENTS:
             raise ValueError(f"unknown event {event!r}; known: {', '.join(EVENTS)}")
         self._reg.handlers.setdefault(event, []).append(callback)
+        if self.info.ext_id in self._host._loaded:  # subscribed after activate()
+            self._host._offer_pause(self)
 
     # -- the agent ------------------------------------------------------------
     def add_agent_tool(
@@ -217,7 +236,7 @@ class ExtensionAPI:
         """
         from core.agent import FunctionTool
 
-        if not isinstance(name, str) or not _AGENT_TOOL_NAME.match(name):
+        if not isinstance(name, str) or not _AGENT_TOOL_NAME.fullmatch(name):
             raise ValueError(
                 f"an agent tool name is 1-32 of a-z, 0-9 and _, starting with a letter: {name!r}"
             )
@@ -363,7 +382,6 @@ class ExtensionAPI:
 class ExtensionHost(QObject):
     """Loads the switched-on extensions into *window*."""
 
-    _result = pyqtSignal(object, object, object, object)  # api, callback, value, is_error
     #: An extension added or lost agent tools or topics.
     agent_tools_changed = pyqtSignal()
 
@@ -384,7 +402,10 @@ class ExtensionHost(QObject):
         #: is up; suspensions that could not be saved (still honoured now).
         self._pending_notices: list[EX.ExtensionInfo] = []
         self._unsaved_suspended: set[str] = set()
-        self._result.connect(self._deliver)
+        # run_in_background's threads report through this, not through a
+        # signal of the host: the host goes with the main window (at quit)
+        # while an extension's work may still run (core/thread_relay.py).
+        self._result = GuiCall(self._deliver)
         _ACTIVE_HOST = weakref.ref(self)
 
     # -- state ----------------------------------------------------------------
@@ -465,14 +486,31 @@ class ExtensionHost(QObject):
                 for handler in list(api._reg.handlers.get(event, ())):
                     self.call(api, handler, context)
 
+    def _offer_pause(self, api: ExtensionAPI) -> None:
+        """Pause in the title bars of its panels and "Pause <name>" in the
+        Extensions menu - only for an extension that subscribed to pane
+        events (:meth:`ExtensionAPI.on`). Pausing holds back exactly those;
+        on a panel that follows no folder or selection (the Media Player)
+        the button did nothing, and "Pause Media Player" read as if it
+        stopped the music. Safe to call again: adds what is missing."""
+        if not api._reg.handlers:
+            return
+        ext_id = api.info.ext_id
+        for dock in api._reg.docks:
+            bar = dock.titleBarWidget()
+            if hasattr(bar, "enable_pause") and getattr(bar, "_pause_btn", None) is None:
+                bar.enable_pause(
+                    lambda paused, e=ext_id: self.set_paused(e, paused),
+                    paused=self.is_paused(ext_id),
+                )
+        if api._pause_action is None:
+            self._add_pause_action(api)
+        self._show_paused(ext_id)
+
     def _add_pause_action(self, api: ExtensionAPI) -> None:
-        """A checkable "Pause <name>" in the Extensions menu, for an
-        extension with panels or event handlers - pausing anything else
-        would change nothing."""
+        """A checkable "Pause <name>" in the Extensions menu."""
         from core.i18n import tr
 
-        if not (api._reg.docks or api._reg.handlers):
-            return
         ext_id = api.info.ext_id
         action = QAction(tr("Pause {name}").format(name=api.info.name), self.window)
         action.setCheckable(True)
@@ -656,8 +694,7 @@ class ExtensionHost(QObject):
                 log.warning("Extension %s took %.2f s to activate (more than %g s)",
                             info.ext_id, took, EX.SLOW_ACTIVATE_SECONDS)
         self._loaded[info.ext_id] = (module, api)
-        self._add_pause_action(api)
-        self._show_paused(info.ext_id)
+        self._offer_pause(api)
         log.info("Extension loaded: %s (%s) in %.3f s", info.name, info.ext_id, took)
         if api._reg.agent_tools or api._reg.agent_topics:
             # What activate() registered counts only now that it is loaded.
@@ -745,10 +782,7 @@ class ExtensionHost(QObject):
                 value, failed = work(), False
             except Exception as exc:  # noqa: BLE001 - extension code
                 value, failed = exc, True
-            try:
-                self._result.emit(api, (on_done, on_error), value, failed)
-            except RuntimeError:  # the host is gone
-                pass
+            self._result(api, (on_done, on_error), value, failed)
 
         threading.Thread(target=runner, name=f"ext-{api.info.module_name}", daemon=True).start()
 
@@ -804,7 +838,7 @@ def _exec_source(module_name: str, path: str) -> types.ModuleType:
 
 
 def _applies(ctx: ExtensionContext, applies_to: str, suffixes: tuple[str, ...]) -> bool:
-    items = [i for i in ctx.items if getattr(i, "name", "") != ".."]
+    items = [i for i in ctx.items if getattr(i, "name", "") not in (".", "..")]
     files = [i for i in items if not i.is_dir]
     folders = [i for i in items if i.is_dir]
     if suffixes and files and not all(i.name.lower().endswith(suffixes) for i in files):

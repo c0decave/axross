@@ -1,0 +1,53 @@
+{
+ "name": "rfc8785",
+ "versions": {
+  "0.1.4": {
+   "accepted_findings": [],
+   "archives": {
+    "rfc8785-0.1.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "rfc8785-0.1.4.dist-info/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "rfc8785-0.1.4.dist-info/METADATA": "9dfbf420c8c18077dd7697ec12fe2838b5901683573ae128df2d3403330f7aa9",
+      "rfc8785-0.1.4.dist-info/RECORD": "a6a9131be557aa3e3764604df469eb92d457289548885c7085e58943e7ce8e87",
+      "rfc8785-0.1.4.dist-info/WHEEL": "1196c6921ec87b83e865f450f08d19b8ff5592537f4ef719e83484e546abe33e",
+      "rfc8785/__init__.py": "fa44927afd547caf7547247078bcf28863d1e69caf116d258c532b3f20ffd154",
+      "rfc8785/_impl.py": "c25bc3a046528482d53bee3487b837f31dd9c05f33e8f13288c7aab320932cec",
+      "rfc8785/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "94cfda1332c7427a1ef2b59413d8a07b78f808a341b62275cd114b9ee1ee05b3",
+     "native": {},
+     "pth": {},
+     "sha256": "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48"
+    }
+   },
+   "name": "rfc8785",
+   "provenance": {
+    "rfc8785-0.1.4-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Trail of Bits <opensource@trailofbits.com>",
+    "project_urls": {
+     "Documentation": "https://trailofbits.github.io/rfc8785.py/",
+     "Homepage": "https://pypi.org/project/rfc8785",
+     "Issues": "https://github.com/trailofbits/rfc8785.py/issues",
+     "Source": "https://github.com/trailofbits/rfc8785.py"
+    },
+    "summary": "A pure-Python implementation of RFC 8785 (JSON Canonicalization Scheme)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.1.4"
+  }
+ }
+}

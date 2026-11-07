@@ -1,0 +1,54 @@
+{
+ "name": "mdurl",
+ "versions": {
+  "0.1.2": {
+   "accepted_findings": [],
+   "archives": {
+    "mdurl-0.1.2-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "mdurl-0.1.2.dist-info/LICENSE": "7c605df6e28667a9603118e98274f64a49ce3eed0d26fccce9534a345e0ef955",
+      "mdurl-0.1.2.dist-info/METADATA": "b53b29d48f499367053fda3c81e7ce27d2558380ebbf83e66023b02eb7ddd25d",
+      "mdurl-0.1.2.dist-info/RECORD": "72e8c94bf8f6a74a6a9a113a56ae3e9cade7dcb3ce2591fe60eb161f2948167f",
+      "mdurl-0.1.2.dist-info/WHEEL": "e137ca201ff1bbed386dcda22b3ebfcc5b7e80414410353fdf51c686acce084f",
+      "mdurl/__init__.py": "d6fa44f3d3725e7888459342ff87fa04f9b751be1b3e7b637f2ca12d147ba295",
+      "mdurl/_decode.py": "dd0fe00d0a94fff4ef0dbbbbc7e6fd2e36d5978416cb983fa85c258dcbaf37f6",
+      "mdurl/_encode.py": "82824b505b75878ad564daaa9bdb75e4dc365be6c55d8404cb7691d352265afb",
+      "mdurl/_format.py": "c5972dd2675e3d70341f7900ab18c6b650793bce86df90c060c1a4038e02981e",
+      "mdurl/_parse.py": "7b365290cdbfe0d436671d38eec11d7091bb3584111478992bb63c20d1c5cf06",
+      "mdurl/_url.py": "e6442745037603f1b8b2f2e747365c1b46dfa03f406c1ad80d7a2eb031d9df3d",
+      "mdurl/py.typed": "f0f8f2675695a10a5156fb7bd66bafbaae6a13e8d315990af862c792175e6e67"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "23a4c9ba3e2a8934ecc3799756623e3fff67fe2fd4bd8e373ddf3ef43af5b40a",
+     "native": {},
+     "pth": {},
+     "sha256": "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
+    }
+   },
+   "name": "mdurl",
+   "provenance": {
+    "mdurl-0.1.2-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Taneli Hukkinen <hukkin@users.noreply.github.com>",
+    "project_urls": {
+     "Homepage": "https://github.com/executablebooks/mdurl"
+    },
+    "summary": "Markdown URL utilities"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.1.2"
+  }
+ }
+}

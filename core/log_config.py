@@ -87,6 +87,7 @@ def _int_in(value, bounds: tuple[int, int]) -> bool:
 
 
 _VALIDATORS: dict[str, Callable[[object], bool]] = {
+    "enabled": lambda v: type(v) is bool,
     "level": lambda v: v in LEVELS,
     "file_max_mib": lambda v: _int_in(v, FILE_MIB_RANGE),
     "file_backups": lambda v: _int_in(v, BACKUPS_RANGE),
@@ -98,6 +99,10 @@ _VALIDATORS: dict[str, Callable[[object], bool]] = {
 
 @dataclass
 class LogSettings:
+    #: False writes nothing at all - file, terminal, Log dock - until it is
+    #: switched back on (logging.disable: every call returns at its first
+    #: check). --debug / --verbose keep their run logging.
+    enabled: bool = True
     level: str = "INFO"
     #: area id -> choice, only where it differs from the area's default.
     areas: dict[str, str] = field(default_factory=dict)
@@ -147,7 +152,8 @@ class LogSettings:
         return out
 
     def to_dict(self) -> dict:
-        return {"version": 1, "level": self.level, "areas": dict(sorted(self.areas.items())),
+        return {"version": 1, "enabled": self.enabled, "level": self.level,
+                "areas": dict(sorted(self.areas.items())),
                 "file_max_mib": self.file_max_mib, "file_backups": self.file_backups,
                 "terminal": self.terminal, "collapse_repeats": self.collapse_repeats,
                 "repeat_window": self.repeat_window}
@@ -162,7 +168,7 @@ class LogSettings:
             raw = json.loads(target.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return cls()
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             log.warning("Logging settings %s unreadable, using the defaults: %s", target, exc)
             return cls()
         return cls.from_dict(raw)
@@ -473,6 +479,11 @@ def apply(settings: LogSettings) -> None:
     collapse - without a restart. The --debug / --verbose floor of the run
     stays."""
     global _current
+    silent = not settings.enabled and _floor is None
+    if silent and logging.root.manager.disable < OFF:
+        # The last word before the silence: the file says why it stops.
+        log.warning("Logging switched off in the settings; nothing more is written "
+                    "until it is switched on again")
     with _state_lock:
         _current = settings.copy()
         levels = effective_levels(settings, _floor)
@@ -501,6 +512,7 @@ def apply(settings: LogSettings) -> None:
                 filt.flush()
             filt.enabled = settings.collapse_repeats
             filt.window = float(settings.repeat_window)
+        logging.disable(OFF if silent else logging.NOTSET)
     if log.isEnabledFor(logging.INFO):
         changed = {a: c for a, c in sorted(settings.areas.items())}
         log.info("Logging: overall %s%s, areas %s, file %d MiB x %d, terminal %s, "
@@ -546,6 +558,7 @@ def teardown() -> None:
         for name in _touched:
             logging.getLogger(name).setLevel(logging.NOTSET)
         _touched.clear()
+        logging.disable(logging.NOTSET)
         _current = None
         _floor = None
         _terminal_forced = False

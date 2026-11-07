@@ -246,7 +246,7 @@ def _send_chat(opener, request, profile: LLMProfile) -> dict:
         raise AgentError(f"the LLM server at {profile.host()} answered HTTP {exc.code}") from None
     except (urllib.error.URLError, OSError) as exc:
         raise AgentError(unreachable_text(profile, exc)) from None
-    except ValueError:
+    except (ValueError, RecursionError):
         raise AgentError(f"the LLM server at {profile.host()} did not answer JSON") from None
 
 
@@ -347,7 +347,7 @@ def _model_listing(profile: LLMProfile, api_key: str) -> list[dict]:
         raise AgentError(f"the LLM server at {profile.host()} answered HTTP {exc.code}") from None
     except (urllib.error.URLError, OSError) as exc:
         raise AgentError(unreachable_text(profile, exc)) from None
-    except ValueError:
+    except (ValueError, RecursionError):
         raise AgentError(f"the LLM server at {profile.host()} did not answer JSON") from None
     if not isinstance(data, dict):
         raise AgentError(f"the LLM server at {profile.host()} did not answer a model list")
@@ -536,7 +536,7 @@ def _get_json(profile: LLMProfile, api_key: str, url: str):
         raise AgentError(f"HTTP {exc.code}") from None
     except (urllib.error.URLError, OSError) as exc:
         raise _Unreachable(str(getattr(exc, "reason", exc))) from None
-    except ValueError:
+    except (ValueError, RecursionError):
         raise AgentError("no JSON") from None
 
 
@@ -917,7 +917,7 @@ def _with_valid_arguments(call: dict) -> dict:
     raw = function.get("arguments")
     try:
         parsed = json.loads(raw) if isinstance(raw, str) else raw
-    except ValueError:
+    except (ValueError, RecursionError):
         parsed = None
     function["arguments"] = raw if isinstance(raw, str) and isinstance(parsed, dict) else (
         json.dumps(parsed) if isinstance(parsed, dict) else "{}"
@@ -929,9 +929,10 @@ def _digest(args_text: str) -> str:
     return hashlib.sha256(args_text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
-def _shown(args: dict, schema: dict) -> dict:
+def _shown(args: dict, schema: dict, *, cut: bool = True) -> dict:
     """The arguments as the transcript shows them: secrets masked, long
-    strings cut."""
+    strings cut. *cut* False is for the confirmation: what the user allows
+    must be all of it - a command padded past the cut hid its tail."""
     props = (schema or {}).get("properties") if isinstance(schema, dict) else None
     props = props if isinstance(props, dict) else {}
     out = {}
@@ -939,7 +940,7 @@ def _shown(args: dict, schema: dict) -> dict:
         spec = props.get(key)
         if isinstance(spec, dict) and spec.get("writeOnly"):
             out[key] = "•••"
-        elif isinstance(value, str) and len(value) > _EVENT_ARG_CHARS:
+        elif cut and isinstance(value, str) and len(value) > _EVENT_ARG_CHARS:
             out[key] = value[:_EVENT_ARG_CHARS] + f"… ({len(value)} characters)"
         else:
             out[key] = value
@@ -1172,7 +1173,7 @@ class Agent:
             return name, "unavailable", f"error: the tool {name!r} is not available to you"
         try:
             args = json.loads(raw) if isinstance(raw, str) else raw
-        except ValueError:
+        except (ValueError, RecursionError):
             args = None
         if not isinstance(args, dict):
             reason = (
@@ -1255,14 +1256,15 @@ class Agent:
     def _run_external(self, tool, args: dict, fields: str) -> tuple[str, str, str]:
         """A tool of another MCP server: asked for when it may change
         something, then called directly."""
-        shown = _shown(args, tool.schema)
-        self._on_event({"type": "tool_call", "name": tool.name, "args": shown})
+        self._on_event({"type": "tool_call", "name": tool.name,
+                        "args": _shown(args, tool.schema)})
         if needs_confirmation(tool.name, write=tool.write, group=tool.group):
             allowed = False
             if self._confirm is not None:
                 try:
                     # Masked: the tab cannot look a foreign tool's schema up.
-                    allowed = bool(self._confirm(tool.name, shown))
+                    allowed = bool(self._confirm(tool.name,
+                                                 _shown(args, tool.schema, cut=False)))
                 except Exception as exc:  # noqa: BLE001 - a broken prompt is a "no"
                     log.warning("agent: the confirmation of %s failed: %s", tool.name, exc)
             if not allowed:

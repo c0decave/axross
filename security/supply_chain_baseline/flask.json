@@ -1,0 +1,115 @@
+{
+ "name": "flask",
+ "versions": {
+  "3.1.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|flask/app.py|93bb56f0b1d14a57",
+    "yara|capability_filesystem_read|flask/cli.py|3df87bdbe07196fa",
+    "yara|capability_filesystem_read|flask/config.py|3e2a85d033da9ba1",
+    "yara|capability_filesystem_read|flask/json/provider.py|e62984cd8e478d5d",
+    "yara|capability_process_spawn|flask/cli.py|3df87bdbe07196fa",
+    "yara|capability_process_spawn|flask/config.py|3e2a85d033da9ba1",
+    "yara|capability_process_spawn|flask/ctx.py|a0c7b44d1b12716d",
+    "yara|capability_process_spawn|flask/sansio/scaffold.py|c120125d87454562",
+    "yara|threat_filesystem_read|flask/cli.py|3df87bdbe07196fa"
+   ],
+   "archives": {
+    "flask-3.1.3-py3-none-any.whl": {
+     "entry_points": [
+      "flask=flask.cli:main"
+     ],
+     "files": {
+      "flask-3.1.3.dist-info/METADATA": "aa6760ed6f545704474d70733e4a63a7f1481e376973edc896a13d02a7224c7c",
+      "flask-3.1.3.dist-info/RECORD": "56ef855c59a27daa557a65e49155468447bf0e83c91b46dc874dbed3a8a5687b",
+      "flask-3.1.3.dist-info/WHEEL": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db",
+      "flask-3.1.3.dist-info/entry_points.txt": "6c13fb853392e5fcfdccbb42eec3e87c164094c904bc1c6eecaa92ea5e65bdce",
+      "flask-3.1.3.dist-info/licenses/LICENSE.txt": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea",
+      "flask/__init__.py": "987bc937d4b0b65d510ed8c2a82218c889e22bf499fe5fe1a94ca73b382927da",
+      "flask/__main__.py": "6d8b7d7846a845059d7a3107143f11131f63c5511d669b44085b15ec5e3d2279",
+      "flask/app.py": "93bb56f0b1d14a57548baccab0528aec0c5afd62f8ceed5edb03cdb6122cbbba",
+      "flask/blueprints.py": "a79404da5635f0622d6ddaff44a46967c0e8d7b8343ef4062206644940e15f69",
+      "flask/cli.py": "3df87bdbe07196fa07d101c20ce7351ef5c6ecaab95deb5fdf3ccdcf690d4879",
+      "flask/config.py": "3e2a85d033da9ba1d6d051f8087d61a574c17b7d0d4b38cf10ec2bcf56fa92dd",
+      "flask/ctx.py": "a0c7b44d1b12716d2a75a22a6af56c93c3fdaa212f018e551e7d45020917f279",
+      "flask/debughelpers.py": "3c6203852b56fde7d18e969adf31c8a68fa1b52b49391e35229dce2563d8070a",
+      "flask/globals.py": "5dd419992b4198f22cf2df77b63c7aa4eec19b78286c068e3569057141da19ab",
+      "flask/helpers.py": "ac96607bbfc9dbcf09d5442fe7e90d7f8a046b0df7d8f3fc3535b44112016d71",
+      "flask/json/__init__.py": "84b351f3df296aaa1e7dd78086b69ae70c89cbe6e6441da4d9d578120572d99f",
+      "flask/json/provider.py": "e62984cd8e478d5d87a1456b41b24ba970b330da595df0f46355ea74b5765c10",
+      "flask/json/tag.py": "0e168dc2e20e85db7647be28382f58e19f19a6bc4562245be5d50fe5bcb220dc",
+      "flask/logging.py": "f2c33758c4ee6e2d5c05bd9cfe53e45a937427c74c02aae029160b2e2d5d0952",
+      "flask/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "flask/sansio/README.md": "fb45f5b440a78a59b3d5ca20c7e621370e5dee0b8aec62ababf0c45763b3954d",
+      "flask/sansio/app.py": "c211944500e43748e6852e021ceec343de861a5652d2411390a9009284639785",
+      "flask/sansio/blueprints.py": "4ea7beec4919fad6d67219bc883a027c3f38f1fd3fde72efe8d3637883ef1f03",
+      "flask/sansio/scaffold.py": "c120125d8745456266a9c2f45eaf93ecdf8f0d55128851af8cef643d9839f1b9",
+      "flask/sessions.py": "7b2c11aa6cad4e66275ff102efcf980462684dce570ff951a61406e4b6cdd5dd",
+      "flask/signals.py": "57b94c530c3b0aa809d93854067d4f89ab59b506a73b2b7b399a6ed86648fb7e",
+      "flask/templating.py": "bdb224c18031b1211f0f14080f580a46f05041c19612e5980a71f45cadc4a8e2",
+      "flask/testing.py": "cf30bb5f184158e3fd1faf7b215ff8486ecb8372f36f93d68b210ff77fca4171",
+      "flask/typing.py": "2fe2f9b768ca812d1a3a65618a843fca5a9c8225459c0eb2c4ef912cd86af865",
+      "flask/views.py": "c73271ea826a18495386d12085937b65018cc394c3172b91c5491e73046e0280",
+      "flask/wrappers.py": "8d492fe2655e93622ae21c3177846faab20c6faf41bf43c49438162e6779391a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "861f4f9a6bb9e3fae57d4dbf8c26530dda4be2231c0b33754e1a314f28f7f111",
+     "native": {},
+     "pth": {},
+     "sha256": "f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c"
+    }
+   },
+   "name": "flask",
+   "provenance": {
+    "flask-3.1.3-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "pallets/flask",
+     "workflow": "publish.yaml"
+    }
+   },
+   "pypi": {
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "Pallets <contact@palletsprojects.com>",
+    "project_urls": {
+     "Changes": "https://flask.palletsprojects.com/page/changes/",
+     "Chat": "https://discord.gg/pallets",
+     "Documentation": "https://flask.palletsprojects.com/",
+     "Donate": "https://palletsprojects.com/donate",
+     "Source": "https://github.com/pallets/flask/"
+    },
+    "summary": "A simple framework for building complex web applications."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One hit: cli.py loads '.env' files for 'flask run' (python-dotenv, documented). Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|flask/app.py|93bb56f0b1d14a57",
+     "yara|capability_filesystem_read|flask/cli.py|3df87bdbe07196fa",
+     "yara|capability_filesystem_read|flask/config.py|3e2a85d033da9ba1",
+     "yara|capability_filesystem_read|flask/json/provider.py|e62984cd8e478d5d",
+     "yara|capability_process_spawn|flask/cli.py|3df87bdbe07196fa",
+     "yara|capability_process_spawn|flask/config.py|3e2a85d033da9ba1",
+     "yara|capability_process_spawn|flask/ctx.py|a0c7b44d1b12716d",
+     "yara|capability_process_spawn|flask/sansio/scaffold.py|c120125d87454562",
+     "yara|threat_filesystem_read|flask/cli.py|3df87bdbe07196fa"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read flask/app.py",
+     "capability_filesystem_read:capability_filesystem_read flask/cli.py",
+     "capability_filesystem_read:capability_filesystem_read flask/config.py",
+     "capability_filesystem_read:capability_filesystem_read flask/json/provider.py",
+     "capability_process_spawn:capability_process_spawn flask/cli.py",
+     "capability_process_spawn:capability_process_spawn flask/config.py",
+     "capability_process_spawn:capability_process_spawn flask/ctx.py",
+     "capability_process_spawn:capability_process_spawn flask/sansio/scaffold.py",
+     "threat_filesystem_read:threat_filesystem_read flask/cli.py"
+    ]
+   },
+   "version": "3.1.3"
+  }
+ }
+}

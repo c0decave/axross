@@ -1,0 +1,77 @@
+{
+ "name": "ldapdomaindump",
+ "versions": {
+  "0.10.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|ldapdomaindump/__init__.py|ca437f41b09c3691",
+    "yara|capability_network_outbound|ldapdomaindump/__init__.py|ca437f41b09c3691"
+   ],
+   "archives": {
+    "ldapdomaindump-0.10.0-py3-none-any.whl": {
+     "entry_points": [
+      "ldapdomaindump = ldapdomaindump:main",
+      "ldd2bloodhound = ldapdomaindump.convert:ldd2bloodhound",
+      "ldd2pretty = ldapdomaindump.pretty:main"
+     ],
+     "files": {
+      "ldapdomaindump-0.10.0.data/scripts/ldapdomaindump": "65c135f2e7f45e866e4881fdf20ac914430bddc1e53658d9a580802af42ae2ef",
+      "ldapdomaindump-0.10.0.data/scripts/ldd2bloodhound": "e5b4a1c171391c66aefedeac96c70dfa43c3a75a223dd4f8b1d90f05f84c8f60",
+      "ldapdomaindump-0.10.0.data/scripts/ldd2pretty": "cb14bc8e943e8c5cec1504004bf6d3f88a8df36a0a355477125357d1d61f6f1c",
+      "ldapdomaindump-0.10.0.dist-info/METADATA": "3b5a7199d44bf459fdee59a8b9c659e58ced24e2a62836fd6331b63259e277cf",
+      "ldapdomaindump-0.10.0.dist-info/RECORD": "a3d3dee03f3f636d2d9672d97d84cb1fd5074b9c12aa323913e9cde003132942",
+      "ldapdomaindump-0.10.0.dist-info/WHEEL": "0a6c85234931e5c7443132e238d4116c64308c8a11d5a21807b782010e0a3c9d",
+      "ldapdomaindump-0.10.0.dist-info/entry_points.txt": "39490129b58eb925ed5d3fad32d7ee1c8b758625994099cb6df67c76369b57bd",
+      "ldapdomaindump-0.10.0.dist-info/licenses/LICENSE": "3404c28759e5e2b19a01fb52f6ee492751acca8883f6ddfabcdddfb856084265",
+      "ldapdomaindump-0.10.0.dist-info/top_level.txt": "adb04045bd6c1a556045c7473a8ecd420d226d92ab7ea37dd8d765eb3523fd33",
+      "ldapdomaindump/__init__.py": "ca437f41b09c36918416a652b6a0299b907a6b9e0c9880c192f0b93688604a30",
+      "ldapdomaindump/__main__.py": "b6a9803fa17782de61d0c48af36902a96ad7ce03e4902851a38f89151742165e",
+      "ldapdomaindump/convert.py": "f4eb7280f80fc302f38f04bdac28188521f1542acc5f67569f6e433b25047bfb",
+      "ldapdomaindump/pretty.py": "23cbfc9ce20ea56b8b26d01c18929b6e7bdb5e23441b148f03b0d357763f1771",
+      "ldapdomaindump/style.css": "da2308a327493f9369d2b9b56bf5b1800abca409f3e7049014b355f890f39a7c"
+     },
+     "hooks": [
+      "ldapdomaindump-0.10.0.data/scripts/ldapdomaindump",
+      "ldapdomaindump-0.10.0.data/scripts/ldd2bloodhound",
+      "ldapdomaindump-0.10.0.data/scripts/ldd2pretty"
+     ],
+     "kind": "wheel",
+     "manifest": "5e7affc21e629ee15ab26b00060b39aedfe3492ef1729f973d60458724e9cd8c",
+     "native": {},
+     "pth": {},
+     "sha256": "3797259596df7a5e1fda98388c96b1d94196f5da5551f1af1aaeedda0c9f5a11"
+    }
+   },
+   "name": "ldapdomaindump",
+   "provenance": {
+    "ldapdomaindump-0.10.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Dirk-jan Mollema",
+    "author_email": "Dirk-jan Mollema <dirkjan@dirkjanm.io>",
+    "home_page": "https://github.com/dirkjanm/ldapdomaindump/",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/dirkjanm/ldapdomaindump/"
+    },
+    "summary": "Active Directory information dumper via LDAP"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "sdist; its build files contain no network, subprocess or exec. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|ldapdomaindump/__init__.py|ca437f41b09c3691",
+     "yara|capability_network_outbound|ldapdomaindump/__init__.py|ca437f41b09c3691"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read ldapdomaindump/__init__.py",
+     "capability_network_outbound:capability_network_outbound ldapdomaindump/__init__.py"
+    ]
+   },
+   "version": "0.10.0"
+  }
+ }
+}

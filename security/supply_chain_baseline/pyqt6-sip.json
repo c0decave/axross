@@ -1,0 +1,73 @@
+{
+ "name": "pyqt6-sip",
+ "versions": {
+  "13.13.0": {
+   "accepted_findings": [],
+   "archives": {
+    "pyqt6_sip-13.13.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "PyQt6/sip.cpython-312-x86_64-linux-gnu.so": "7ef4c972f4f70b5303025819dbb4ae3cc4a6767ff9bd53b4da36480a1909332c",
+      "pyqt6_sip-13.13.0.dist-info/METADATA": "db00a90846e1e869a9bf3f73e9eb9d1d14b058872ab9330432cf457bfa0b6ec5",
+      "pyqt6_sip-13.13.0.dist-info/RECORD": "2fdd1b20bddb3cfcd612ff8d5720bfc70bfc98c2430ef6bd6eca16117fbb641b",
+      "pyqt6_sip-13.13.0.dist-info/WHEEL": "c4ded6d408f350ae853e48e461e85413733b55ff08ce8e0b1749b562200efc4e",
+      "pyqt6_sip-13.13.0.dist-info/licenses/LICENSE": "3e6f5b427c36f94ecf86bc01698af7030a1ed6eb3748110d5dbb8d142d804611",
+      "pyqt6_sip-13.13.0.dist-info/top_level.txt": "b8685577efad0bd45ce6f3148070b22522ef2ba420869010bb0fde1a6340871f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e1a42a1953f45952a6a08884ee1ac86395b0f8833d2c90600566566c1f3fce6f",
+     "native": {
+      "PyQt6/sip.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "7429e63fc8279a0508ed5cbc1b33da76c15a61a06a745825e807a3604fbde4f2"
+    }
+   },
+   "name": "pyqt6-sip",
+   "provenance": {
+    "pyqt6_sip-13.13.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl": null
+   },
+   "pypi": {
+    "author": "Phil Thompson",
+    "author_email": "phil@riverbankcomputing.com",
+    "home_page": "https://github.com/Python-SIP/sip",
+    "license": "BSD-2-Clause",
+    "project_urls": {
+     "Homepage": "https://github.com/Python-SIP/sip"
+    },
+    "summary": "The sip module support for PyQt6"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {
+     "7ef4c972f4f70b5303025819dbb4ae3cc4a6767ff9bd53b4da36480a1909332c": {
+      "capabilities": [
+       "contain loop",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "PyQt6/sip.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "13.13.0"
+  }
+ }
+}

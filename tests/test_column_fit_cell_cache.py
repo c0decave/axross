@@ -387,3 +387,42 @@ def test_happy_the_transfers_dock_fits_progress_at_most_every_100_ms():
         assert dock._columns._data_delay_ms == 100
     finally:
         dock.close()
+
+
+def test_sad_a_fitter_whose_state_is_gone_lets_the_events_pass():
+    """Seen in full parallel runs, in whatever test was running then:
+    "'ColumnFitter' object has no attribute '_view'" from eventFilter, twice
+    (the viewport's filter and the view's own, which the cell cache adds).
+    The collector clears an object in a reference cycle before its view is
+    destroyed, and the events of that teardown still reach the filter - an
+    exception inside a Qt virtual, which PyQt6 turns into an abort when no
+    test harness catches it (as tests/test_window_move.py found for the
+    window mover)."""
+    import subprocess
+    import textwrap
+
+    code = textwrap.dedent(f"""
+        import sys
+        sys.path.insert(0, {str(ROOT)!r})
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QStandardItemModel
+        from PyQt6.QtWidgets import QApplication, QTableView
+        app = QApplication([])
+        from ui.column_fit import ColumnFitter
+        view = QTableView()
+        view.setModel(QStandardItemModel(3, 2))
+        fitter = ColumnFitter(view, cache_widths=True)
+        view.show()
+        app.processEvents()
+        fitter.__dict__.clear()
+        for target in (view, view.viewport()):
+            for kind in (QEvent.Type.Resize, QEvent.Type.Show, QEvent.Type.Hide,
+                         QEvent.Type.FontChange, QEvent.Type.StyleChange):
+                QApplication.sendEvent(target, QEvent(kind))
+        print("alive")
+    """)
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode == 0, r.stderr[-800:]
+    assert "alive" in r.stdout

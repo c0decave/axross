@@ -6,6 +6,7 @@ import errno
 import hashlib
 import logging
 import os
+import stat as stat_module
 import string
 import time
 import uuid
@@ -30,6 +31,12 @@ SPEED_WINDOW = 3.0  # Seconds for rolling speed average
 # 1 MiB per read/write: protocols that do one synchronous request per call
 # (SMB via smbclient, ...) paid a round trip per 64 KiB before.
 CHUNK_SIZE = 1024 * 1024
+#: rename / link answers that mean "not this way here": another file system
+#: (EXDEV), no hard links on it (EPERM / ENOTSUP / EOPNOTSUPP on vfat, exFAT,
+#: some FUSE file systems), too many links (EMLINK). The copy takes over.
+_RENAME_FALLBACK_ERRNOS = frozenset(
+    {errno.EXDEV, errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EMLINK}
+)
 # Bytes compared at each end of a partial before a resume appends to it.
 RESUME_VERIFY_WINDOW = 64 * 1024
 
@@ -222,6 +229,49 @@ def _could_match(value, other_backend) -> bool:
     return algo == "sha256" or not _hashes_whole_local_file(other_backend)
 
 
+def _local_stamp(path: str) -> tuple[int, int] | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+class _StreamedHash:
+    """SHA-256 of a local source while it is copied from its first byte:
+    a copy from a local file then reads it once, not twice more for the
+    check (before: one read to copy, one for each side's checksum)."""
+
+    def __init__(self, job: "TransferJob", offset: int) -> None:
+        self._job = job
+        local = offset == 0 and _hashes_whole_local_file(job.source_backend)
+        self._stamp = _local_stamp(job.source_path) if local else None
+        self._hash = hashlib.sha256() if self._stamp is not None else None
+
+    def update(self, chunk: bytes) -> None:
+        if self._hash is not None:
+            self._hash.update(chunk)
+
+    def finish(self) -> None:
+        if self._hash is not None:
+            self._job.streamed_source_checksum = f"sha256:{self._hash.hexdigest()}"
+            self._job.streamed_source_stamp = self._stamp
+
+
+def _streamed_source_checksum(job: "TransferJob") -> str | None:
+    """The hash read while copying, while the source is unchanged since the
+    read began (mtime and size: a rewrite of the same size moves the mtime).
+    Otherwise None, and the source is read again as before."""
+    checksum = getattr(job, "streamed_source_checksum", "")
+    stamp = getattr(job, "streamed_source_stamp", None)
+    if not checksum or stamp is None:
+        return None
+    if _local_stamp(job.source_path) != stamp:
+        log.debug("Source %s changed since it was read; hashing it again", job.source_path)
+        return None
+    return checksum
+
+
 def _native_checksum(backend, path: str, side: str):
     """``backend.checksum(path)``, or None when it fails."""
     try:
@@ -288,6 +338,12 @@ class TransferJob:
     # True when "newer" found a destination at least as new: nothing was
     # written and a move kept its source.
     skipped: bool = False
+    # "sha256:<hex>" of the bytes this run read from a local source, with
+    # the source's (mtime_ns, size) when the read began: the integrity check
+    # takes it instead of reading the whole source again while that stamp
+    # still holds (_StreamedHash).
+    streamed_source_checksum: str = ""
+    streamed_source_stamp: tuple[int, int] | None = None
     # source_fingerprint() of the source when the job was queued; named in
     # the temp file so a later resume can tell whether the source changed.
     source_fingerprint: str = ""
@@ -459,6 +515,7 @@ class TransferWorker(QObject):
 
     def _process_job(self, job: TransferJob) -> None:
         job.status = TransferStatus.ACTIVE
+        job.streamed_source_checksum, job.streamed_source_stamp = "", None
         self.job_started.emit(job.job_id)
         self._record_journal_phase(job, "worker_start")
         log.debug("Transfer started: %s -> %s (%s, %d bytes%s)", job.source_path, job.dest_path,
@@ -497,6 +554,17 @@ class TransferWorker(QObject):
                 self.speed_update.emit(job.job_id, job.speed)
 
         try:
+            renamed = self._move_by_rename(job)
+            if renamed is not None:
+                # One rename on the same file system: no byte copied, nothing
+                # to verify (it is the same file), no source left to remove.
+                job.transferred_bytes = job.total_bytes = renamed
+                self._finish_journal(job, status="done")
+                job.status = TransferStatus.DONE
+                self.progress.emit(job.job_id, renamed, renamed)
+                self.job_finished.emit(job.job_id)
+                log.info("Transfer complete: %s (renamed)", job.filename)
+                return
             # A move compares the source's size after the copy with this, so
             # it never deletes data written to the source meanwhile.
             size_before = self._move_source_size(job)
@@ -575,6 +643,74 @@ class TransferWorker(QObject):
             log.error("Transfer error for %s: %s", job.filename, e)
 
     @staticmethod
+    def _move_by_rename(job: TransferJob) -> int | None:
+        """Move a local file to a folder on the same file system by renaming
+        it, as ``mv`` does: no copy, no hash, the times, mode and owner
+        stay. Returns the size moved, or None when this move needs the copy
+        (another backend, another file system, no hard links there, a
+        resume).
+
+        The rules of the copy hold: ``if_exists`` is checked as the copy
+        checks it, and without "overwrite" the new name is made by
+        ``link()``, which fails rather than replace a file that appeared
+        meanwhile. A source that cannot be removed (no write permission on
+        its folder) leaves everything as it was and fails the job - the copy
+        would have left a second copy behind for the same error.
+        """
+        from core.local_fs import LocalFS
+
+        if not job.move or job.resume:
+            return None
+        src, dst = job.source_backend, job.dest_backend
+        if type(src) is not LocalFS or type(dst) is not LocalFS:
+            return None
+        if job.cancel_event.is_set():
+            raise InterruptedError("Transfer cancelled")
+        from core.storage_identity import same_entry
+
+        if same_entry(src, job.source_path, dst, job.dest_path):
+            raise OSError(f"source and destination are the same: {job.dest_path}")
+        try:
+            st = os.lstat(job.source_path)
+            if os.stat(os.path.dirname(job.dest_path) or ".").st_dev != st.st_dev:
+                return None
+        except OSError:
+            return None  # the copy reports what is wrong
+        if not stat_module.S_ISREG(st.st_mode):
+            # Regular files only: the copy refuses a FIFO or device and follows
+            # a file link to its content - a rename would move them as they are.
+            return None
+        present = TransferWorker._check_existing_destination(job)
+        if job.if_exists == "overwrite" or present:
+            try:
+                os.rename(job.source_path, job.dest_path)
+            except OSError as exc:
+                if exc.errno in _RENAME_FALLBACK_ERRNOS:
+                    return None
+                raise OSError(f"cannot move {job.source_path} to {job.dest_path}: {exc}") from exc
+            return st.st_size
+        try:
+            os.link(job.source_path, job.dest_path, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise FileExistsError(f"{job.dest_path} already exists; not overwritten") from exc
+        except OSError as exc:
+            if exc.errno in _RENAME_FALLBACK_ERRNOS:
+                return None
+            raise OSError(f"cannot move {job.source_path} to {job.dest_path}: {exc}") from exc
+        try:
+            os.unlink(job.source_path)
+        except OSError as exc:
+            try:
+                os.unlink(job.dest_path)
+            except OSError as undo_exc:
+                log.error("Move: could not take back the new name %s: %s",
+                          job.dest_path, undo_exc)
+            raise OSError(
+                f"cannot move {job.source_path}: removing it from its folder failed: {exc}"
+            ) from exc
+        return st.st_size
+
+    @staticmethod
     def _move_source_size(job: TransferJob) -> int | None:
         """The source's size before a move copies it (None for a copy)."""
         if not job.move or job.source_backend is None:
@@ -623,12 +759,13 @@ class TransferWorker(QObject):
         # the whole file) is not computed for a comparison that cannot
         # happen - so the other side goes first when only the source is
         # local.
+        streamed = _streamed_source_checksum(job)
         if _hashes_whole_local_file(src) and not _hashes_whole_local_file(dst):
             dst_cs = _native_checksum(dst, job.dest_path, "Dest")
             if _could_match(dst_cs, src):
-                src_cs = _native_checksum(src, job.source_path, "Source")
+                src_cs = streamed or _native_checksum(src, job.source_path, "Source")
         else:
-            src_cs = _native_checksum(src, job.source_path, "Source")
+            src_cs = streamed or _native_checksum(src, job.source_path, "Source")
             if _could_match(src_cs, dst):
                 dst_cs = _native_checksum(dst, job.dest_path, "Dest")
         # Native fast path: both sides returned non-empty values with
@@ -848,6 +985,7 @@ class TransferWorker(QObject):
         try:
             with source_backend.open_read(job.source_path) as src:
                 dst = dest_backend.open_write(job.dest_path, append=False)
+                streamed = _StreamedHash(job, 0)
                 try:
                     while True:
                         if job.cancel_event.is_set():
@@ -856,9 +994,11 @@ class TransferWorker(QObject):
                         if not chunk:
                             break
                         dst.write(chunk)
+                        streamed.update(chunk)
                         transferred += len(chunk)
                         progress_callback(transferred, job.total_bytes)
                     completed = True
+                    streamed.finish()
                 finally:
                     _discard_or_close_writer(dst, completed=completed)
         except BaseException:
@@ -994,6 +1134,7 @@ class TransferWorker(QObject):
                     mode_set = self._precreate_private_temp(job, temp_path)
                 dst = dest_backend.open_write(temp_path, append=resume_offset > 0)
 
+                streamed = _StreamedHash(job, resume_offset)
                 try:
                     transferred = resume_offset
                     if transferred > 0 and transferred < job.total_bytes:
@@ -1005,8 +1146,10 @@ class TransferWorker(QObject):
                         if not chunk:
                             break
                         dst.write(chunk)
+                        streamed.update(chunk)
                         transferred += len(chunk)
                         progress_callback(transferred, job.total_bytes)
+                    streamed.finish()
                 finally:
                     dst.close()
 

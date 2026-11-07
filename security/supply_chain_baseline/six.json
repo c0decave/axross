@@ -1,0 +1,58 @@
+{
+ "name": "six",
+ "versions": {
+  "1.17.0": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|six.py|c51c91f703d3d4b3"
+   ],
+   "archives": {
+    "six-1.17.0-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "six-1.17.0.dist-info/LICENSE": "4375ba20e2b9c6c4e7cad2940a628fd90e95cc3d50ee92aae755715d8ba1fbd0",
+      "six-1.17.0.dist-info/METADATA": "562042078c2752549f6d8a7c86dbc5dd708088a7be6d80672ec7b07100b72468",
+      "six-1.17.0.dist-info/RECORD": "5067d83422e8d7118fdca18230fc735d9f9afabf72647606bacc7a70d5f6901d",
+      "six-1.17.0.dist-info/WHEEL": "a7178d5f925db427b9f0f51260ff6ea6673b8dd44f82f4f41a6f646f5487955c",
+      "six-1.17.0.dist-info/top_level.txt": "fe2547fe2604b445e70fc9d819062960552f9145bdb043b51986e478a4806a2b",
+      "six.py": "c51c91f703d3d4b3696c923cb5fec213e05e75d9215393befac7f2fa6a3904df"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "9b433cc72544f0ce3dcad6f60b5833ba56c23a4a195ef22b2b97f067a0d3544a",
+     "native": {},
+     "pth": {},
+     "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+    }
+   },
+   "name": "six",
+   "provenance": {
+    "six-1.17.0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Benjamin Peterson",
+    "author_email": "benjamin@python.org",
+    "home_page": "https://github.com/benjaminp/six",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/benjaminp/six"
+    },
+    "summary": "Python 2 and 3 compatibility utilities"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|six.py|c51c91f703d3d4b3"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn six.py"
+    ]
+   },
+   "version": "1.17.0"
+  }
+ }
+}

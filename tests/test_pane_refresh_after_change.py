@@ -16,6 +16,7 @@ import time
 import unittest
 from unittest import mock
 
+from tests.off_gui_wait import _drain_op  # noqa: E402
 from tests.test_pane_async_navigation import _Base
 
 
@@ -37,6 +38,7 @@ class RefreshAfterChangeTest(_Base):
         with mock.patch("PyQt6.QtWidgets.QInputDialog.getText", return_value=("fresh", True)):
             start = time.time()
             self.pane._create_folder()
+            _drain_op(self.pane)
             self.assertLess(time.time() - start, 0.3)
         gate.set()
         self.assertTrue(self.settle())

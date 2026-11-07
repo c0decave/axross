@@ -150,12 +150,33 @@ class RestoreTest(_WindowStateTest):
         RecursionError after the open panes were gone."""
         win = self.make_window()
         panes = list(win._panes)
-        tree: dict = {"type": "pane", "local": True, "path": "/"}
-        for _ in range(5000):
-            tree = {"type": "splitter", "children": [tree]}
-        self.session.write_text(json.dumps({"splitter": tree}))
+        # Written as text: json.dumps itself refuses this depth on Python
+        # 3.11 (its C encoder honours the recursion limit).
+        leaf = json.dumps({"type": "pane", "local": True, "path": "/"})
+        tree = '{"type": "splitter", "children": [' * 5000 + leaf + "]}" * 5000
+        self.session.write_text('{"splitter": ' + tree + "}")
         self.assertEqual(len(self.restore()), 1)
         self.assertEqual(win._panes, panes)
+
+
+class ReadJsonFileTest(unittest.TestCase):
+    def test_sad_a_file_nested_past_the_recursion_limit_is_a_value_error(self) -> None:
+        """Python 3.11's C JSON decoder honours the recursion limit: a
+        session.json some thousand levels deep raised RecursionError past
+        every caller (they catch OSError and ValueError) - out of Restore
+        Last Session, and out of closing the window, which reads the old
+        session first. A Python that decodes it hands back the data."""
+        from ui.main_window import _read_json_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.json"
+            path.write_text("[" * 100_000 + "]" * 100_000)
+            try:
+                data = _read_json_file(path)
+            except ValueError as exc:
+                self.assertIn("nested too deeply", str(exc))
+            else:
+                self.assertIsInstance(data, list)
 
 
 class SessionSaveTest(_WindowStateTest):
@@ -355,16 +376,22 @@ class LayoutOnStartTest(_WindowStateTest):
 
     def test_happy_docks_geometry_and_theme_come_back(self) -> None:
         win = self.start_window()
-        win.resize(720, 720)
-        self.app.processEvents()
         win._transfer_dock.hide()
         win._analysis_dock.show()
         win._apply_theme("hacker")
         self.app.processEvents()
+        # A window is never smaller than its docks and toolbars need, and that
+        # grows with the font: with wider glyphs 720 px was below it, Qt kept
+        # the window wider and the size read back was not the one asked for.
+        hint = win.minimumSizeHint()
+        size = (max(720, hint.width()), max(720, hint.height()))
+        win.resize(*size)
+        self.app.processEvents()
+        self.assertEqual((win.width(), win.height()), size)
         self.close_window()
 
         win = self.start_window()
-        self.assertEqual((win.width(), win.height()), (720, 720))
+        self.assertEqual((win.width(), win.height()), size)
         self.assertTrue(win._transfer_dock.isHidden())
         self.assertFalse(win._analysis_dock.isHidden())
         self.assertEqual(win._current_theme, "hacker")

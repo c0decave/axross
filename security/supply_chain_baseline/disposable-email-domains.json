@@ -1,0 +1,65 @@
+{
+ "name": "disposable-email-domains",
+ "versions": {
+  "0.0.237": {
+   "accepted_findings": [
+    "paste-site|disposable_email_domains/__init__.py|6962d59e99a6b8a7",
+    "yara|threat_network_exfiltration|disposable_email_domains/__init__.py|2a27ec66d66a22f3",
+    "yara|threat_network_outbound_shady_links|disposable_email_domains/__init__.py|2a27ec66d66a22f3"
+   ],
+   "archives": {
+    "disposable_email_domains-0.0.237-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "disposable_email_domains-0.0.237.dist-info/METADATA": "7478f3803c0f408254de2533ddd1bff64ad9b739a9ed605a8eeb8fa03c1e4bf4",
+      "disposable_email_domains-0.0.237.dist-info/RECORD": "3cc9189c25c579223e7e320cea2851a6cd19580f11d10f257d930c3c45093f89",
+      "disposable_email_domains-0.0.237.dist-info/WHEEL": "2b6eb4118ce7cd7b09601406aa623c553c4476265836f0d9c16f5c061f7efcc0",
+      "disposable_email_domains-0.0.237.dist-info/licenses/LICENSE.txt": "dabf9be279e03a172131f49fb39e4fb30e89590f3c744915b783373775af36b5",
+      "disposable_email_domains-0.0.237.dist-info/top_level.txt": "436dede029421aaee14abb78b418eea8de794abd7f7ba630a6d4bcd8f5743efd",
+      "disposable_email_domains/__init__.py": "2a27ec66d66a22f3af330270324dbf78f1bf2a057e2582468d88ba007821177c",
+      "disposable_email_domains/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "323c68aada7300e37fba407bca9db58c7382442f1810bafe144a654a72dd8755",
+     "native": {},
+     "pth": {},
+     "sha256": "d1bde8c216d117e001da3aa0d3f22dce2bbd7044e44e8dfbebc1aca33e0779a7"
+    }
+   },
+   "name": "disposable-email-domains",
+   "provenance": {
+    "disposable_email_domains-0.0.237-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "disposable-email-domains/python-disposable-email-domains",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Dustin Ingram <github@dustingram.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/disposable-email-domains/disposable-email-domains"
+    },
+    "summary": "A set of disposable email domains"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "webhook.site appears as one entry of its list of disposable domains. Scanner venv only (via guarddog), never bundled. Attestation as recorded."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|threat_network_exfiltration|disposable_email_domains/__init__.py|2a27ec66d66a22f3",
+     "yara|threat_network_outbound_shady_links|disposable_email_domains/__init__.py|2a27ec66d66a22f3"
+    ],
+    "yara": [
+     "threat_network_exfiltration:threat_network_exfiltration disposable_email_domains/__init__.py",
+     "threat_network_outbound_shady_links:threat_network_outbound_shady_links disposable_email_domains/__init__.py"
+    ]
+   },
+   "version": "0.0.237"
+  }
+ }
+}

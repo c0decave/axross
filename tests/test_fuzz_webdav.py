@@ -227,7 +227,8 @@ def test_edge_traversal_names_are_dropped_before_download(dav):
         + b"</d:multistatus>"
     )
     items = _session(dav).list_dir("/")
-    assert [i.name for i in drop_unsafe_names(items)] == ["ok.txt"]
+    # The names are the hrefs' segments: a hostile displayname is not one.
+    assert [i.name for i in drop_unsafe_names(items)] == ["x", "y", "z", "ok.txt"]
 
 
 def test_fuzz_propfind_mutants(dav):

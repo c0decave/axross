@@ -49,8 +49,26 @@ def wait_until(predicate, timeout: float = 5.0, step: float = 0.02) -> bool:
     return bool(predicate())
 
 
+def _die_with_parent() -> None:  # pragma: no cover - runs in the child
+    """Linux: the child gets SIGTERM when the test process dies. A worker
+    killed mid-test (the OOM killer, a crash) runs no close(): its
+    dbus-daemon and fake BlueZ lived on for hours, one pair per test."""
+    if sys.platform.startswith("linux"):
+        import ctypes
+        import signal
+
+        try:
+            ctypes.CDLL(None).prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG
+        except (OSError, AttributeError):
+            pass
+
+
 class FakeBluezBus:
-    def __init__(self) -> None:
+    def __init__(self, service: list[str] | None = None, ready_timeout: float = 10) -> None:
+        """*service*: the org.bluez program and its arguments (default
+        tests/fake_bluez.py; tests/bumble_bluez.py usb:N for a real stick)."""
+        self.service = [str(FAKE)] if service is None else [str(a) for a in service]
+        self.ready_timeout = ready_timeout
         daemon = shutil.which("dbus-daemon")
         if daemon is None:
             pytest.skip("dbus-daemon is not installed")
@@ -60,7 +78,8 @@ class FakeBluezBus:
         self.daemon = subprocess.Popen(
             [daemon, "--session", "--nofork", "--nopidfile", "--print-address=1",
              f"--address=unix:dir={self.dir}"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            preexec_fn=_die_with_parent)
         ready, _w, _x = select.select([self.daemon.stdout], [], [], 10)
         if not ready:
             self.close()
@@ -69,18 +88,24 @@ class FakeBluezBus:
         self.fake: subprocess.Popen | None = None
         self._control = None
         self._qt_names: list[str] = []
-        self.start_fake()
+        try:
+            self.start_fake()
+        except BaseException:
+            self.close()  # the daemon too: nobody gets this object to close it
+            raise
 
     # -- the fake service ---------------------------------------------------------------
 
     def start_fake(self) -> None:
         env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS=self.address)
-        self.fake = subprocess.Popen([sys.executable, str(FAKE)], env=env, text=True,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ready, _w, _x = select.select([self.fake.stdout], [], [], 10)
+        self.fake = subprocess.Popen([sys.executable, *self.service], env=env, text=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     preexec_fn=_die_with_parent)
+        ready, _w, _x = select.select([self.fake.stdout], [], [], self.ready_timeout)
         line = self.fake.stdout.readline().strip() if ready else ""
         if line != "ready":
             err = self.fake.stderr.read() if self.fake.poll() is not None else ""
+            self.kill_fake()
             raise RuntimeError(f"the fake BlueZ did not start: {line!r} {err}")
 
     def kill_fake(self) -> None:

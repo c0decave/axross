@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
 import signal
 import subprocess
@@ -39,11 +40,15 @@ pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="reads /proc and opens a pty"
 )
 
-#: The watchdog bound these starts use.
-BOUND = 4.0
+#: The watchdog bound of a start that hangs in an extension. Its report
+#: names the extension only when the start got that far within the bound;
+#: on a busy host (a full parallel run) it had not after 4 s, so such a
+#: start is made again with the next, longer bound (_hung_start).
+HUNG_BOUNDS = (4.0, 15.0, 45.0)
+BOUND = HUNG_BOUNDS[0]
 #: How long the watchdog's message may take after the bound on a busy host
 #: (the interpreter and Qt start first).
-MESSAGE_SECONDS = BOUND + 60.0
+MESSAGE_GRACE = 60.0
 #: How long a start may take to show its window on a busy host.
 READY_SECONDS = 120.0
 
@@ -59,7 +64,11 @@ def activate(api):
 """
 
 
-def _env(home: Path, marker: str, **extra) -> dict:
+def _env(home: Path, marker: str, bound: float | None = BOUND, **extra) -> dict:
+    """The start's environment; *bound* None leaves the watchdog at its
+    default (SG.WATCHDOG_SECONDS), as users get it. A start that must say
+    nothing gets that: on a busy host a start that does not hang took
+    longer than 4 s to show its window, and was reported - rightly."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("AXROSS_")}
     env.update(
         HOME=str(home),
@@ -71,7 +80,8 @@ def _env(home: Path, marker: str, **extra) -> dict:
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         AXROSS_TEST_MARKER=marker,
     )
-    env[SG.WATCHDOG_ENV] = str(BOUND)
+    if bound is not None:
+        env[SG.WATCHDOG_ENV] = str(bound)
     env.update(extra)
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
@@ -143,14 +153,58 @@ def _with_sleeper(home: Path) -> None:
         json.dumps({"enabled": ["user:sleeper"]}))
 
 
-def _start(home: Path, *args: str, **extra) -> tuple[subprocess.Popen, str]:
+def _start(home: Path, *args: str, bound: float | None = BOUND,
+           **extra) -> tuple[subprocess.Popen, str]:
     marker = _new_marker()
     proc = subprocess.Popen(
         [sys.executable, str(ROOT / "main.py"), *args],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=ROOT, env=_env(home, marker, **extra),
+        cwd=ROOT, env=_env(home, marker, bound, **extra),
     )
     return proc, marker
+
+
+def _says_nothing(home: Path, err: bytes) -> None:
+    """A start that does not hang says nothing - unless this host was too
+    busy to show its window within the watchdog's bound at all: then the
+    report was right, the log says when the window came after all (later
+    than the bound), and this check cannot be made here."""
+    if b"has not appeared" not in err:
+        return
+    SG.wait_for(lambda: "appeared after all" in _read_log(home), 30.0)
+    late = re.search(r"The main window appeared after all, after ([0-9.]+) s", _read_log(home))
+    if late and float(late.group(1)) >= SG.WATCHDOG_SECONDS:
+        pytest.skip(f"this host took {late.group(1)} s to show the window, longer than "
+                    f"the watchdog's {SG.WATCHDOG_SECONDS:g} s")
+    raise AssertionError(err[-3000:])
+
+
+def _read_log(home: Path) -> str:
+    try:
+        return (_logs(home) / "axross.log").read_text()
+    except OSError:
+        return ""
+
+
+def _attempt_home(home: Path, attempt: int) -> Path:
+    """A home of its own for each try of a hung start: a try ended after
+    it began activating the sleeper leaves a marker that would suspend the
+    sleeper on the next try (the startup guard)."""
+    if attempt == 0:
+        return home
+    path = home / f"try{attempt}"
+    (path / ".config" / "axross" / "extensions").mkdir(parents=True)
+    return path
+
+
+def _reached_too_late(message: bytes, home: Path) -> bool:
+    """The watchdog fired before the start reached the hung extension: the
+    message does not name it and no thread is in sleeper.py yet."""
+    try:
+        crash = (_logs(home) / "crash.log").read_text()
+    except OSError:
+        crash = ""
+    return b'"Sleeper"' not in message and "sleeper.py" not in crash
 
 
 def _read_until(proc: subprocess.Popen, needle: bytes, seconds: float) -> tuple[bytes, bytes]:
@@ -178,22 +232,22 @@ def _read_until(proc: subprocess.Popen, needle: bytes, seconds: float) -> tuple[
 
 
 def test_happy_e2e_a_normal_start_says_nothing_and_writes_no_stacks(home):
-    proc, _ = _start(home, AXROSS_SMOKE_GUI_MS="0")
+    proc, _ = _start(home, bound=None, AXROSS_SMOKE_GUI_MS="0")
     out, err = proc.communicate(timeout=READY_SECONDS)
     assert proc.returncode == 0, err[-2000:]
     assert b"gui smoke: window shown" in out
-    assert b"has not appeared" not in err
+    _says_nothing(home, err)
     crash = _logs(home) / "crash.log"
     assert SG.CRASH_HEADER not in crash.read_text()
 
 
 def test_happy_e2e_safe_mode_starts_past_a_hung_extension(home):
     _with_sleeper(home)
-    proc, _ = _start(home, "--safe-mode", AXROSS_SMOKE_GUI_MS="0")
+    proc, _ = _start(home, "--safe-mode", bound=None, AXROSS_SMOKE_GUI_MS="0")
     out, err = proc.communicate(timeout=READY_SECONDS)
     assert proc.returncode == 0, err[-2000:]
     assert b"gui smoke: window shown" in out
-    assert b"has not appeared" not in err
+    _says_nothing(home, err)
     log = (_logs(home) / "axross.log").read_text()
     assert "Safe mode: no extension loaded" in log
 
@@ -202,29 +256,38 @@ def test_happy_e2e_safe_mode_starts_past_a_hung_extension(home):
 
 
 def test_sad_e2e_a_hung_extension_is_reported_then_skipped_on_the_next_start(home):
-    _with_sleeper(home)
-    proc, marker = _start(home, AXROSS_SMOKE_GUI_MS="0")
-    started = time.time()
-    out, err = _read_until(proc, b"What you can do", MESSAGE_SECONDS)
-    took = time.time() - started
-    assert b"has not appeared after 4 s" in err, (out[-1000:], err[-3000:])
+    for attempt, bound in enumerate(HUNG_BOUNDS):
+        home_now = _attempt_home(home, attempt)
+        _with_sleeper(home_now)
+        proc, marker = _start(home_now, bound=bound, AXROSS_SMOKE_GUI_MS="0")
+        started = time.time()
+        out, err = _read_until(proc, b"What you can do", bound + MESSAGE_GRACE)
+        took = time.time() - started
+        if bound == HUNG_BOUNDS[-1] or not _reached_too_late(err, home_now):
+            break
+        _kill_all(marker)
+        proc.wait(timeout=10)
+    home = home_now
+    assert f"has not appeared after {bound:g} s".encode() in err, (out[-1000:], err[-3000:])
     assert b'"Sleeper" (user:sleeper)' in err
     assert b"--safe-mode" in err
     assert b"gui smoke: window shown" not in out
-    assert took < MESSAGE_SECONDS
+    assert took < bound + MESSAGE_GRACE
     crash = (_logs(home) / "crash.log").read_text()
     assert SG.CRASH_HEADER in crash
     assert "sleeper.py" in crash  # the hung frame is in the stacks
-    assert "has not appeared" in (_logs(home) / "axross.log").read_text()
+    # The log comes last (after stderr) - wait for it, do not race it.
+    assert SG.wait_for(
+        lambda: "has not appeared" in (_logs(home) / "axross.log").read_text(), 30.0)
     hung_pid = proc.pid
     _kill_all(marker)  # the user ends the hung start
     proc.wait(timeout=10)
 
-    again, _ = _start(home, AXROSS_SMOKE_GUI_MS="0")
+    again, _ = _start(home, bound=None, AXROSS_SMOKE_GUI_MS="0")
     out, err = again.communicate(timeout=READY_SECONDS)
     assert again.returncode == 0, err[-2000:]
     assert b"gui smoke: window shown" in out
-    assert b"has not appeared" not in err
+    _says_nothing(home, err)
     log = (_logs(home) / "axross.log").read_text()
     assert f"Startup guard: process {hung_pid} ended" in log
     settings = json.loads((home / ".config" / "axross" / "extensions.json").read_text())
@@ -232,7 +295,9 @@ def test_sad_e2e_a_hung_extension_is_reported_then_skipped_on_the_next_start(hom
     assert settings["suspended"] == ["user:sleeper"]
 
 
-def test_sad_e2e_a_detached_start_tells_the_terminal(home):
+def _detached_hung_start(home: Path, bound: float) -> tuple[subprocess.Popen, str, bytes]:
+    """A detached start (from a terminal) that hangs in the sleeper: the
+    parent, its marker, and what the terminal showed until the parent ended."""
     import pty
 
     _with_sleeper(home)
@@ -240,12 +305,12 @@ def test_sad_e2e_a_detached_start_tells_the_terminal(home):
     master, slave = pty.openpty()
     proc = subprocess.Popen(
         [sys.executable, str(ROOT / "main.py")],
-        stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=_env(home, marker),
+        stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=_env(home, marker, bound),
     )
     os.close(slave)
     output = b""
     try:
-        end = time.time() + MESSAGE_SECONDS + SG.DETACH_GRACE_SECONDS
+        end = time.time() + bound + MESSAGE_GRACE + SG.DETACH_GRACE_SECONDS
         while time.time() < end and proc.poll() is None:
             ready, _, _ = select.select([master], [], [], 0.1)
             if ready:
@@ -257,14 +322,24 @@ def test_sad_e2e_a_detached_start_tells_the_terminal(home):
             output += os.read(master, 65536)
         except OSError:
             pass
-        assert proc.wait(timeout=5) == 0
-        assert b"has not appeared after 4 s" in output, output[-3000:]
-        assert b'"Sleeper" (user:sleeper)' in output
-        # Not the short-lived Qt Multimedia check (core.multimedia_probe).
-        child = [p for p in _marked(marker) if p != proc.pid and not _is_probe_child(p)]
-        assert child, "the background start should keep running"
     finally:
         os.close(master)
+    return proc, marker, output
+
+
+def test_sad_e2e_a_detached_start_tells_the_terminal(home):
+    for attempt, bound in enumerate(HUNG_BOUNDS):
+        home_now = _attempt_home(home, attempt)
+        proc, marker, output = _detached_hung_start(home_now, bound)
+        if bound == HUNG_BOUNDS[-1] or not _reached_too_late(output, home_now):
+            break
+        _kill_all(marker)
+    assert proc.wait(timeout=5) == 0
+    assert f"has not appeared after {bound:g} s".encode() in output, output[-3000:]
+    assert b'"Sleeper" (user:sleeper)' in output
+    # Not the short-lived Qt Multimedia check (core.multimedia_probe).
+    child = [p for p in _marked(marker) if p != proc.pid and not _is_probe_child(p)]
+    assert child, "the background start should keep running"
 
 
 def test_sad_e2e_a_restored_folder_on_a_dead_mount_does_not_hold_the_window(home, tmp_path):
@@ -305,11 +380,11 @@ def test_sad_e2e_a_restored_folder_on_a_dead_mount_does_not_hold_the_window(home
     proc = subprocess.Popen(
         [sys.executable, str(wrapper)], stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=ROOT,
-        env=_env(home, marker, AXROSS_SMOKE_GUI_MS="2000"),
+        env=_env(home, marker, None, AXROSS_SMOKE_GUI_MS="2000"),
     )
     out, err = _read_until(proc, b"gui smoke: window shown", READY_SECONDS)
     assert b"gui smoke: window shown" in out, err[-3000:]
-    assert b"has not appeared" not in err
+    _says_nothing(home, err)
 
 
 # --- edge ------------------------------------------------------------------
@@ -332,12 +407,14 @@ def test_edge_e2e_the_detached_parent_returns_once_the_window_is_shown(home):
     started = time.time()
     proc = subprocess.Popen(
         [sys.executable, str(ROOT / "main.py")],
-        stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=_env(home, marker),
+        stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=_env(home, marker, None),
     )
     os.close(slave)
     try:
         assert proc.wait(timeout=READY_SECONDS) == 0
         took = time.time() - started
+        if "has not appeared" in _read_log(home):  # the parent stopped waiting
+            _says_nothing(home, b"has not appeared")
         log = (_logs(home) / "axross.log").read_text()
         # it returned because the child's window was up, not on a timer
         assert "Application ready" in log

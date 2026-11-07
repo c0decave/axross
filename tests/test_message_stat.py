@@ -117,6 +117,7 @@ class _SelectingImap:
         self.selects = []
 
     def select(self, mailbox, readonly=True):
+        mailbox = mailbox[1:-1] if mailbox.startswith('"') else mailbox  # sent quoted
         self.selects.append(mailbox)
         if mailbox == "Inbox":
             self.selected = mailbox

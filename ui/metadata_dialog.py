@@ -55,6 +55,7 @@ from core import metadata_tools as MT
 from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.metadata_dialog")
 
@@ -283,6 +284,7 @@ class MetadataDialog(QDialog):
         choice is made per window, never carried over, so a later removal on
         another folder cannot go deep by accident."""
         super().__init__(parent)
+        set_window_icon(self, "metadata")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._backend = backend
         self._targets = list(targets)
@@ -657,6 +659,7 @@ class MetadataDetailsDialog(QDialog):
 
     def __init__(self, report: MT.MetadataReport, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "metadata")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowFlag(Qt.WindowType.Window)
         self.resize(640, 560)
@@ -791,6 +794,7 @@ class MetadataSettingsDialog(_MetadataSettingsForm, QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         QDialog.__init__(self, parent)
+        set_window_icon(self, "metadata")
         self.setWindowTitle(tr("Metadata Settings"))
         layout = QVBoxLayout(self)
         self._build_form(layout)

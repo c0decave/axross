@@ -21,8 +21,9 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 FIRST_PARTY = {"core", "ui", "models", "axross", "resources", "tests", "scripts", "main",
                "examples", "security"}
-#: Import names whose distribution is not installed here or named otherwise.
-KNOWN_NAMES = {"piper": "piper-tts"}
+#: Import names whose distribution is not installed here or named otherwise
+#: (without the distribution installed, its import name is all there is).
+KNOWN_NAMES = {"piper": "piper-tts", "sift": "sift-summarizer"}
 #: Modules that have to work on a plain pip install: base dependencies only.
 ALWAYS_USED = ("ui/code_editor.py", "core/encrypted_overlay.py")
 

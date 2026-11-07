@@ -37,9 +37,11 @@ from PyQt6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
-#: How long a GUI-thread call on the dead path is held before it is let go
-#: (and counted as the failure it is).
-GUI_HOLD_SECONDS = 2.0
+#: How long the first GUI-thread call on the dead path is held before it is
+#: let go (and counted as the failure it is); later ones fail at once. Well
+#: above what a restore takes on a busy host: with 2 s, restoring the layout
+#: and showing the window alone took 2-12 s in full parallel runs.
+GUI_HOLD_SECONDS = 30.0
 
 
 def pump(seconds: float = 0.05) -> None:
@@ -76,8 +78,10 @@ class DeadMount:
                 os.fsdecode(path) if isinstance(path, (bytes, os.PathLike)) else "")
             if text.startswith(self.prefix):
                 if threading.current_thread() is threading.main_thread():
+                    held = not self.gui_calls
                     self.gui_calls.append(text)
-                    self.release.wait(GUI_HOLD_SECONDS)
+                    if held:
+                        self.release.wait(GUI_HOLD_SECONDS)
                     raise OSError(5, "simulated dead mount (GUI thread)", text)
                 self.worker_calls.append(text)
                 self.release.wait()

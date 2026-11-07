@@ -35,6 +35,13 @@ class TrustedResolveTest(unittest.TestCase):
         with open(path, "w") as fh:
             fh.write("x")
         os.chmod(path, 0o755)
+        if os.geteuid() == 0:
+            # Planted by a user: as root the file would be root's own, which
+            # is what a trusted helper is.
+            try:
+                os.chown(path, 65534, 65534)
+            except PermissionError:
+                self.skipTest("root without CAP_CHOWN cannot plant a file another user owns")
         self.assertIsNone(elevated_io._trusted_which("cat", dirs=(d,)))
 
     def test_missing_binary(self) -> None:

@@ -92,7 +92,10 @@ class ProxyRegressionTests(unittest.TestCase):
 class TransferRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.app = QCoreApplication.instance() or QCoreApplication([])
+        from PyQt6.QtWidgets import QApplication
+
+        # QApplication: later widget tests of the same worker need one
+        cls.app = QCoreApplication.instance() or QApplication([])
 
     def test_all_finished_emits_once_after_queue_drains(self) -> None:
         manager = TransferManager()

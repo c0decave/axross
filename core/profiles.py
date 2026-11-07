@@ -236,6 +236,18 @@ class ConnectionProfile:
     # NFS
     nfs_export: str = ""  # e.g. /srv/nfs/share
     nfs_version: int = 3  # NFS version (3 or 4)
+    nfs_minor: int = 0  # with version 4: 0 (NFSv4.0) or 1 (NFSv4.1, sessions)
+    # What the client sends about itself (AUTH_SYS). Any of them set: axross
+    # speaks NFSv3 itself (core.nfs_user_client) instead of mounting through
+    # the kernel, which always sends the host's name and the process's IDs.
+    # Unset (-1 / ""): the host's name, this process's UID and GID, no
+    # extra GIDs.
+    nfs_machine_name: str = ""
+    nfs_uid: int = -1
+    nfs_gid: int = -1
+    nfs_gids: str = ""  # "100, 27"
+    nfs_privileged_port: bool = False  # a source port < 1024 (root only)
+    nfs_client_id: str = ""  # NFSv4: the client id string (SETCLIENTID); "" = axross:<machine name>
 
     # Azure Blob
     azure_container: str = ""
@@ -262,6 +274,10 @@ class ConnectionProfile:
     # iSCSI
     iscsi_target_iqn: str = ""
     iscsi_mount_point: str = ""
+    # What the initiator sends about itself - empty = the system's
+    # /etc/iscsi/initiatorname.iscsi and any interface.
+    iscsi_initiator_name: str = ""
+    iscsi_initiator_interface: str = ""
 
     # IMAP
     imap_ssl: bool = True
@@ -360,6 +376,12 @@ class ConnectionProfile:
         if self.store_proxy_password:
             store_proxy_password(self.name, password)
 
+    def nfs_sender_chosen(self) -> bool:
+        """True when the profile says what the NFS client sends about
+        itself - then axross's own NFSv3 client is used."""
+        return bool(self.nfs_machine_name or self.nfs_uid >= 0 or self.nfs_gid >= 0
+                    or self.nfs_gids.strip() or self.nfs_client_id.strip())
+
     def to_dict(self) -> dict:
         """Serialize to dict — only includes relevant fields per protocol."""
         d: dict = {
@@ -426,7 +448,17 @@ class ConnectionProfile:
 
         elif proto == "nfs":
             d["nfs_export"] = self.nfs_export
+            for key in ("nfs_machine_name", "nfs_gids", "nfs_client_id"):
+                if getattr(self, key):
+                    d[key] = getattr(self, key)
+            for key in ("nfs_uid", "nfs_gid"):
+                if getattr(self, key) >= 0:
+                    d[key] = getattr(self, key)
+            if self.nfs_privileged_port:
+                d["nfs_privileged_port"] = True
             d["nfs_version"] = self.nfs_version
+            if self.nfs_version == 4 and self.nfs_minor:
+                d["nfs_minor"] = self.nfs_minor
 
         elif proto == "azure_blob":
             d["azure_container"] = self.azure_container
@@ -461,6 +493,10 @@ class ConnectionProfile:
             d["iscsi_target_iqn"] = self.iscsi_target_iqn
             if self.iscsi_mount_point:
                 d["iscsi_mount_point"] = self.iscsi_mount_point
+            if self.iscsi_initiator_name:
+                d["iscsi_initiator_name"] = self.iscsi_initiator_name
+            if self.iscsi_initiator_interface:
+                d["iscsi_initiator_interface"] = self.iscsi_initiator_interface
 
         elif proto == "imap":
             d["imap_ssl"] = self.imap_ssl
@@ -589,6 +625,13 @@ class ConnectionProfile:
             # NFS
             nfs_export=_string("nfs_export"),
             nfs_version=_int_in_range("nfs_version", 3, 2, 4),
+            nfs_minor=_int_in_range("nfs_minor", 0, 0, 1),
+            nfs_machine_name=_string("nfs_machine_name"),
+            nfs_uid=_int_in_range("nfs_uid", -1, -1, 0xFFFFFFFF),
+            nfs_gid=_int_in_range("nfs_gid", -1, -1, 0xFFFFFFFF),
+            nfs_gids=_string("nfs_gids"),
+            nfs_privileged_port=_boolean("nfs_privileged_port", False),
+            nfs_client_id=_string("nfs_client_id"),
             # Azure
             azure_container=_string("azure_container"),
             azure_connection_string=_string("azure_connection_string"),
@@ -608,6 +651,8 @@ class ConnectionProfile:
             # iSCSI
             iscsi_target_iqn=_string("iscsi_target_iqn"),
             iscsi_mount_point=_string("iscsi_mount_point"),
+            iscsi_initiator_name=_string("iscsi_initiator_name"),
+            iscsi_initiator_interface=_string("iscsi_initiator_interface"),
             # IMAP
             imap_ssl=_boolean("imap_ssl", True),
             # POP3 (read-only)
@@ -845,7 +890,7 @@ class ProfileManager:
                 suffix=".tmp",
             )
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as tmp:
                     fd = -1  # ownership transferred
                     tmp.write(payload)
                 os.replace(temp_name, PROFILES_FILE)
@@ -868,13 +913,21 @@ class ProfileManager:
                     pass
                 raise
         except OSError as e:
-            log.error("Failed to save profiles: %s", e)
+            from core.json_store import report_save_failure
+
+            report_save_failure("connection profiles", e)
 
     def get(self, name: str) -> ConnectionProfile | None:
         profile = self._profiles.get(name)
         if profile is not None and name in self._secrets_unread:
             self._read_secrets(name, profile)
         return profile
+
+    def peek(self, name: str) -> ConnectionProfile | None:
+        """The profile *name* without reading its secrets from the keyring -
+        for showing it (a bookmark's security badge), never for connecting:
+        its sensitive fields may still be empty."""
+        return self._profiles.get(name)
 
     def _read_secrets(self, name: str, profile: ConnectionProfile) -> None:
         """Fill *profile*'s sensitive fields from the keyring, once. The name

@@ -38,9 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 np = pytest.importorskip("numpy")
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtCore import (  # noqa: E402
+    QEvent,
     QEventLoop,
     QMimeData,
     QObject,
@@ -57,6 +58,7 @@ from PyQt6.QtGui import (  # noqa: E402
     QDragEnterEvent,
     QDropEvent,
     QImage,
+    QMouseEvent,
     QPalette,
 )
 from PyQt6.QtTest import QTest  # noqa: E402
@@ -644,7 +646,13 @@ def test_edge_the_cursor_hides_in_fullscreen_and_comes_back_on_a_move(tmp_path):
         panel.set_fullscreen(True)
         assert wait(lambda: vis.cursor().shape() == Qt.CursorShape.BlankCursor, 3)
         vis.CURSOR_HIDE_MS = 5000  # the move restarts the wait: not again during the check
-        QTest.mouseMove(vis, QPoint(40, 40))
+        assert vis.hasMouseTracking()  # a move without a button reaches it
+        # A move with no button held, as the mouse makes it. (QTest.mouseMove
+        # delivers none on the offscreen platform unless a button is held -
+        # this test passed only while an earlier test left one held.)
+        QApplication.sendEvent(vis, QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(40, 40), vis.mapToGlobal(QPointF(40, 40)),
+            Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
         assert vis.cursor().shape() != Qt.CursorShape.BlankCursor
         panel.set_fullscreen(False)
         assert vis.cursor().shape() != Qt.CursorShape.BlankCursor
@@ -908,13 +916,13 @@ def test_happy_the_extension_menu_opens_the_visualizer_settings(tmp_path, monkey
         def __init__(self):
             self.docks, self.menu = [], {}
 
-        def add_dock(self, title, widget):
+        def add_dock(self, title, widget, **_kw):
             self.docks.append(widget)
 
         def add_context_action(self, label, cb, applies_to="any", extensions=()):
             pass
 
-        def add_menu_action(self, label, cb, shortcut=None):
+        def add_menu_action(self, label, cb, shortcut=None, **_kw):
             self.menu[label] = cb
 
         def run_in_background(self, work, on_done=None, on_error=None):

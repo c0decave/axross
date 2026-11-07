@@ -14,6 +14,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from tests.bundle_sources import require_bundle_sources  # noqa: E402
+
+require_bundle_sources()
+
 import bundle_licenses as BL  # noqa: E402
 
 SPEC = (ROOT / "build" / "axross.spec").read_text(encoding="utf-8")

@@ -1,0 +1,74 @@
+{
+ "name": "fusepy",
+ "versions": {
+  "3.0.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|fusepy-3.0.1/setup.py|f2deb3fd9a6e6082",
+    "yara|capability_filesystem_write_executable|fusepy-3.0.1/fuse.py|7a7b60998bd459d5",
+    "yara|capability_process_spawn|fusepy-3.0.1/fuse.py|7a7b60998bd459d5"
+   ],
+   "archives": {
+    "fusepy-3.0.1.tar.gz": {
+     "entry_points": [],
+     "files": {
+      "fusepy-3.0.1/MANIFEST.in": "544470429b654fc7198448dcdb9b5072d6654ac75841e56a13b33b6ac9dd9d33",
+      "fusepy-3.0.1/PKG-INFO": "feb2fea96c323999ef1c95ccb12fe1f80c2c74333c395aa86457b8c7c521c0ab",
+      "fusepy-3.0.1/README": "7530cb33b8f052a3daa5acd6357e388a1967686dbc55bfb6768724375dc54885",
+      "fusepy-3.0.1/README.rst": "7530cb33b8f052a3daa5acd6357e388a1967686dbc55bfb6768724375dc54885",
+      "fusepy-3.0.1/fuse.py": "7a7b60998bd459d5bbe6fcd8d4886fa4d3784d58bd8209db4f83ebee7299af87",
+      "fusepy-3.0.1/fusepy.egg-info/PKG-INFO": "feb2fea96c323999ef1c95ccb12fe1f80c2c74333c395aa86457b8c7c521c0ab",
+      "fusepy-3.0.1/fusepy.egg-info/SOURCES.txt": "fec7ce57f4f69a590a4f2acc781034805b670729924e82182b47996a049ad231",
+      "fusepy-3.0.1/fusepy.egg-info/dependency_links.txt": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "fusepy-3.0.1/fusepy.egg-info/top_level.txt": "c4dd7cab2c42d9d4996a9a8eff44dc5c35f9e4c60bbb423a5dae62688b01927c",
+      "fusepy-3.0.1/setup.cfg": "1c473cbaee8da5fc46e7f0158794af5cea4414c34a3cf3f180c2001f5e38bd3e",
+      "fusepy-3.0.1/setup.py": "f2deb3fd9a6e6082a421a09e19eefa2da44145d1a001b6cdce9ab56ac9658671"
+     },
+     "hooks": [
+      "fusepy-3.0.1/setup.cfg",
+      "fusepy-3.0.1/setup.py"
+     ],
+     "kind": "sdist",
+     "manifest": "b58839445388015c79793e22d4083893a443bf59468378cb6b0d05fe3d75947e",
+     "native": {},
+     "pth": {},
+     "sha256": "72ff783ec2f43de3ab394e3f7457605bf04c8cf288a2f4068b4cde141d4ee6bd"
+    }
+   },
+   "name": "fusepy",
+   "provenance": {
+    "fusepy-3.0.1.tar.gz": null
+   },
+   "pypi": {
+    "author": "Giorgos Verigakis",
+    "author_email": "verigak@gmail.com",
+    "home_page": "http://github.com/fusepy/fusepy",
+    "license": "ISC",
+    "maintainer": "Terence Honles",
+    "maintainer_email": "terence@honles.com",
+    "project_urls": {
+     "Homepage": "http://github.com/fusepy/fusepy"
+    },
+    "summary": "Simple ctypes bindings for FUSE"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "sdist; setup.py is a plain setup() call. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|fusepy-3.0.1/setup.py|f2deb3fd9a6e6082",
+     "yara|capability_filesystem_write_executable|fusepy-3.0.1/fuse.py|7a7b60998bd459d5",
+     "yara|capability_process_spawn|fusepy-3.0.1/fuse.py|7a7b60998bd459d5"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read fusepy-3.0.1/setup.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable fusepy-3.0.1/fuse.py",
+     "capability_process_spawn:capability_process_spawn fusepy-3.0.1/fuse.py"
+    ]
+   },
+   "version": "3.0.1"
+  }
+ }
+}

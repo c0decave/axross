@@ -1,0 +1,64 @@
+{
+ "name": "pyee",
+ "versions": {
+  "15.0.0": {
+   "accepted_findings": [],
+   "archives": {
+    "pyee-15.0.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pyee-15.0.0.dist-info/METADATA": "f4550b6a1faf8be84a851f2564cb84433a9a4974ecdefe34b9b37a88e954a56e",
+      "pyee-15.0.0.dist-info/RECORD": "aa24174dc2d995939de0fa7b685f0daa48c110ec72b55e0a777cca3a8fea44a8",
+      "pyee-15.0.0.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "pyee-15.0.0.dist-info/licenses/LICENSE": "1ff556ca206b107f10e1c562ae454d3292e0296c3510eb90eb7f114caee32a66",
+      "pyee-15.0.0.dist-info/top_level.txt": "868bf9b972abc68a66ac58878534a0980ce2213f179c6935ab67dd71d4af4448",
+      "pyee/__init__.py": "aa4f9a8ede4618ab005b60bf8751769ed424bbdc65ae0a65ed025aebebad9b81",
+      "pyee/asyncio.py": "cc32de3173a00606b9d6d8a091a8db56ee4088b2e58689e939de06f1eda540e3",
+      "pyee/base.py": "427007af3f4f08a2a3fa90a5f84f8c1fd33576305e0234187dcc70402cac49b0",
+      "pyee/cls.py": "75821cc1fbb36a79fa29beeb2e0cf49a649c22ee9f17409ea28728257627b8d0",
+      "pyee/executor.py": "566a5bb888db751aa0c328b686510fcb94f06b6b7f1ca5e944d50259cef2c3f5",
+      "pyee/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pyee/trio.py": "0e955b93ef5d0acab8298361ef1329f969f4cfa9f6f87a21991e0c8f2ffb5061",
+      "pyee/twisted.py": "8edf2c192330f4ec3bb078354e4f57afd6f70c8241bc837f290439bc6d3e77d3",
+      "pyee/uplift.py": "09835503965e8bcea9562eb8bf4278fa5881eb036a6857ac677f4053aa29e1fc"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "654db86bda74fa9b943c2d1079cbe526b57d8420e7a8fb18edd75bb3e5390a0e",
+     "native": {},
+     "pth": {},
+     "sha256": "ea2264fe4b47e0b2edc5badcd5d1bffcef68b70f9c0224ffb08f76992491da9b"
+    }
+   },
+   "name": "pyee",
+   "provenance": {
+    "pyee-15.0.0-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "jfhbrook/pyee",
+     "workflow": "release.yaml"
+    }
+   },
+   "pypi": {
+    "author_email": "Josh Holbrook <josh.holbrook@gmail.com>",
+    "license": "MIT",
+    "project_urls": {
+     "Documentation": "https://pyee.readthedocs.io",
+     "Repository": "https://github.com/jfhbrook/pyee"
+    },
+    "summary": "A rough port of Node.js's EventEmitter to Python with a few tricks of its own"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (jfhbrook/pyee)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "15.0.0"
+  }
+ }
+}

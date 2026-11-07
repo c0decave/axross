@@ -1,0 +1,68 @@
+{
+ "name": "jmespath",
+ "versions": {
+  "1.1.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|jmespath-1.1.0.data/scripts/jp.py|3c33be32db89ef63"
+   ],
+   "archives": {
+    "jmespath-1.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "jmespath-1.1.0.data/scripts/jp.py": "3c33be32db89ef63e1efceabd80c34e70679ab6d86260b9ebfd1b4c415e8388f",
+      "jmespath-1.1.0.dist-info/LICENSE": "6eefacfa4d71b82d08408c751470ac8d9854538da2142cb27be0287fb13d0ab9",
+      "jmespath-1.1.0.dist-info/METADATA": "81181e9a312f1b87e5be7c8376c57b0e8c962ba524a25a313d43dc2e2d3984f3",
+      "jmespath-1.1.0.dist-info/RECORD": "f0499c002e9d28c7f79833063166a0b43823186cdeea373452352e604b642888",
+      "jmespath-1.1.0.dist-info/WHEEL": "5b287efe76740c9628947367d7f84c6b894ceee0de743fd1195c1b9938f222d9",
+      "jmespath-1.1.0.dist-info/top_level.txt": "beecbfa19d5c92979236b022f092bcfb22063ba6ddb8edeabd6d9c08c4263c7f",
+      "jmespath/__init__.py": "1bdefe3427441afe5dd173812b95de18db16731294a4c114e392e1ef949cd8a3",
+      "jmespath/ast.py": "4a21d133599d40f46dd76476aa442efc4cdb77e8219391cbcb51e5d631c0caff",
+      "jmespath/compat.py": "acc1e9be61b7240c57fe5434c8f2b57612f3fb23ae1326cca9dac4aba45102be",
+      "jmespath/exceptions.py": "e47468b7806fdd209376f87994041d401b2a49d68a8ee4cf4b21a6934f334af0",
+      "jmespath/functions.py": "73d29131314d9ba2a457a23d42f82386264673bb3120bb3e2f79afc47055fe4c",
+      "jmespath/lexer.py": "2c4dfe74cef99f2f51311f265e65a528a453225cfc9e3bd6cfe33edb2e2de560",
+      "jmespath/parser.py": "5630d0379ca349ee467f973d227700e84e18c55473621254697059ada0ec5137",
+      "jmespath/visitor.py": "c38a44cfad82ee5f50b37d003f736638c12be799ee256555fa46fe4211182912"
+     },
+     "hooks": [
+      "jmespath-1.1.0.data/scripts/jp.py"
+     ],
+     "kind": "wheel",
+     "manifest": "56ecfef626cab7d099ddafd7da8a8d644839c21ad9d1a0de106d2d25304dafa3",
+     "native": {},
+     "pth": {},
+     "sha256": "a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64"
+    }
+   },
+   "name": "jmespath",
+   "provenance": {
+    "jmespath-1.1.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "James Saryerwinnie",
+    "author_email": "js@jamesls.com",
+    "home_page": "https://github.com/jmespath/jmespath.py",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/jmespath/jmespath.py"
+    },
+    "summary": "JSON Matching Expressions"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "sdist; its build files contain no network, subprocess or exec. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|jmespath-1.1.0.data/scripts/jp.py|3c33be32db89ef63"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read jmespath-1.1.0.data/scripts/jp.py"
+    ]
+   },
+   "version": "1.1.0"
+  }
+ }
+}

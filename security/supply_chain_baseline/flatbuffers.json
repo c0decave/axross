@@ -1,0 +1,62 @@
+{
+ "name": "flatbuffers",
+ "versions": {
+  "25.12.19": {
+   "accepted_findings": [],
+   "archives": {
+    "flatbuffers-25.12.19-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "flatbuffers-25.12.19.dist-info/METADATA": "9f38239f96faa21522a6aadab6912e1e560708bbe9c9f696a0679c9403fa089e",
+      "flatbuffers-25.12.19.dist-info/RECORD": "749a2f78c1ee1a641d0018db0a00fe9b576f625ac0aaa960054bed4d442786a4",
+      "flatbuffers-25.12.19.dist-info/WHEEL": "24d5a1d459b551dc08415d3be609429f8315b8246cd2ca2d248abe27aadbc425",
+      "flatbuffers-25.12.19.dist-info/top_level.txt": "5175562c0f32b3a1dea93cfaadf29eb28714aba967f992fc9a1642fdcab90447",
+      "flatbuffers/__init__.py": "bc966ba9938e4ca74134c6bf89329403a5891bf73f373286a455ce7b5220b62c",
+      "flatbuffers/_version.py": "b24df5adb6160ec7a827123d610d5f611f8c3314404f2aac9ed28012fec3ee92",
+      "flatbuffers/builder.py": "1eb1b9289f6b6ac8924eb30679ab6449d0ecedf5d5e5fcbff76ec3b206a4a780",
+      "flatbuffers/compat.py": "8a1052a560c248bfaf80b4b266d72ef0b5f7648df0cfd2e1b6a22d6361906608",
+      "flatbuffers/encode.py": "d8eaf79a05910242625a0f868186ac0d4e33207a505375b4e9f9888706f3e6e3",
+      "flatbuffers/flexbuffers.py": "c85f16af82e8f1625bfa98fd34d6886312f0ce51c7c93ae833488ef1fc83c1b5",
+      "flatbuffers/number_types.py": "8a33b441c262bb19507a0a0139e774bfd9b40ddcd36475b1a5305952acec5870",
+      "flatbuffers/packer.py": "2cd5b29bc620151a878dc3de1a9618de29c21961fa5e76e440ab403ed14455ab",
+      "flatbuffers/table.py": "7226139aafc2cc0b98a5bdca0159e5ef933ce2278285f6f22a77be7451f3c305",
+      "flatbuffers/util.py": "991550d55a07a7430930db514d4195cc02f03784ff0be535e2d31b8fdf69cb60"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "691150624123f1cd0b265d09773e0b7a7b4cb1c8c71926669735864f834c5e8f",
+     "native": {},
+     "pth": {},
+     "sha256": "7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4"
+    }
+   },
+   "name": "flatbuffers",
+   "provenance": {
+    "flatbuffers-25.12.19-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Derek Bailey",
+    "author_email": "derekbailey@google.com",
+    "home_page": "https://google.github.io/flatbuffers/",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Documentation": "https://google.github.io/flatbuffers/",
+     "Homepage": "https://google.github.io/flatbuffers/",
+     "Source": "https://github.com/google/flatbuffers"
+    },
+    "summary": "The FlatBuffers serialization format for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "25.12.19"
+  }
+ }
+}

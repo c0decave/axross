@@ -1,0 +1,111 @@
+{
+ "name": "keyring",
+ "versions": {
+  "25.7.0": {
+   "accepted_findings": [
+    "keyring-stores|keyring/backend.py|8dd24850e1567fd8",
+    "keyring-stores|keyring/backend.py|cfc993c585fb4fb5",
+    "yara|capability_filesystem_read|keyring/cli.py|07dd3ce119a5b786",
+    "yara|capability_filesystem_read|keyring/core.py|db310e54a8ad61aa",
+    "yara|capability_process_spawn|keyring/backends/macOS/__init__.py|f8220e36fc2b2456",
+    "yara|capability_process_spawn|keyring/testing/backend.py|1ee084f0d2f5ad73",
+    "yara|capability_process_spawn|keyring/util/platform_.py|961b062966686c4b"
+   ],
+   "archives": {
+    "keyring-25.7.0-py3-none-any.whl": {
+     "entry_points": [
+      "keyring = keyring.cli:main",
+      "keyring = keyring.devpi_client",
+      "KWallet = keyring.backends.kwallet",
+      "SecretService = keyring.backends.SecretService",
+      "Windows = keyring.backends.Windows",
+      "chainer = keyring.backends.chainer",
+      "libsecret = keyring.backends.libsecret",
+      "macOS = keyring.backends.macOS"
+     ],
+     "files": {
+      "keyring-25.7.0.dist-info/METADATA": "bd54de98fede6dc3e1f3cd89b4e37c95d8842a523bdbb9e52ab40edff1837163",
+      "keyring-25.7.0.dist-info/RECORD": "e35734123c4efcece1d6eb559b45ad7bb6e4fe92d152f22645f44396e071aa92",
+      "keyring-25.7.0.dist-info/WHEEL": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+      "keyring-25.7.0.dist-info/entry_points.txt": "f226f273dcc7d924f52436475a54191c450fc7d9156977d5cbccf969fffa3949",
+      "keyring-25.7.0.dist-info/licenses/LICENSE": "5a57cb4db85e2a2dd88c290628908add57e3451449e0a9a71fdfb38776fd759d",
+      "keyring-25.7.0.dist-info/top_level.txt": "a218757647b6f3f35d48d919ea79154b020a90b2533b021f1309d72af6b7a648",
+      "keyring/__init__.py": "e1b93aea1c4eb30e49461cb2e08f54f1cfd55cafa92eeb01f9807e692f3aa2dd",
+      "keyring/__main__.py": "bc1fef392938a4866b91ebc141e1d7cba198bfb35dd3fbe278a7b8e177f58bd8",
+      "keyring/backend.py": "860e6aaa52f2d8afca4a1dac67a04cfe715b8082a31618f3e62270c2c76a207b",
+      "keyring/backend_complete.bash": "2376d10377c647f76eccbac9ca48bde026b1c677a58628976325cbbd49a56de7",
+      "keyring/backend_complete.zsh": "25ef50027d026c5f3ff2cb064a4ae86b81cc7090c1de0db4c8bf178615b9d1f2",
+      "keyring/backends/SecretService.py": "aadf654296bc87aac69e3cd3384f063080c7d9ed89e34448855df27354d74ac7",
+      "keyring/backends/Windows.py": "da98b72d2576442c17acb61e3699485152603cb1f9b8c9f261c481828fba926c",
+      "keyring/backends/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "keyring/backends/chainer.py": "fa185ef9459b0a7d0f0142bed347168c7cff2493507ff3783b21d49fcf7208ec",
+      "keyring/backends/fail.py": "79fe6e3f70dd8f66a9ab6a5ed3c2d723694b82992637452b29998ec79f141c85",
+      "keyring/backends/kwallet.py": "2def9bc1f25537b74d52230b60b13ae9ed07ccce609896695e798b4240e5084a",
+      "keyring/backends/libsecret.py": "816794bde138e30647d23eeddb0d8bfa579832924e1075743aa494882fac1d01",
+      "keyring/backends/macOS/__init__.py": "f8220e36fc2b2456deba3eb4a296c2319c38c16b621b21ee182b21a1c77835d8",
+      "keyring/backends/macOS/api.py": "7a292205a19c602429a83b0d74bcbcc0da01fe714161f638d63ff7f2fb0c2a9a",
+      "keyring/backends/null.py": "1d6f8ebf2821efc51e6cbf8808f4e296608e937ee1e5614fbd594c9cd3fc1250",
+      "keyring/cli.py": "07dd3ce119a5b786ad7d00b0daaba0326a2f550cde16391e2d17fabd335c3132",
+      "keyring/compat/__init__.py": "59758ec49775c1d05dad33632aa8edf233a67c86a17088a90da85ba9d950ea0f",
+      "keyring/compat/properties.py": "253951defec0e4080af7782b2369c85b5b23d1e7d878f816414443b161f0ce3e",
+      "keyring/compat/py312.py": "7ae333e5df75b5b76b1b6264a68a83bb76c18373e3cddde9132595c522b82240",
+      "keyring/completion.py": "3128f4a8fb4b02184df644a4df82d1cc64982214b5f5a1b4e7095897f4471bf4",
+      "keyring/core.py": "db310e54a8ad61aaddbea3c31f33050917c807cd7672e5cb6c8561f6e75bc5cd",
+      "keyring/credentials.py": "3d6154cde0045fd16a8d8a27488493e32e961ea43694a71e2dcbe270a49a8a96",
+      "keyring/devpi_client.py": "229932600b28d011fdb57a6c6772b5523246fce6ed8fa9137e5ae90dab4dce84",
+      "keyring/errors.py": "8621d9c46dded56001303c3cd224f4620eaaadc71a56e554a533452bb8959a76",
+      "keyring/http.py": "b9d1fcdeae4122b7ca626fb800eb9e7d0dc0bdbf89f546e95c162ee3d224fe20",
+      "keyring/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "keyring/testing/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "keyring/testing/backend.py": "1ee084f0d2f5ad7308641ac510b71ed9a3be379a58dd412d40b0ec35d0a0bf20",
+      "keyring/testing/util.py": "3b5e49b1f70b201727b05d4ef0b7e76d691e12e8847dba2fcd0d61f2837b5d40",
+      "keyring/util/__init__.py": "8a5101edccf871697b69c9abb9b185f75e3665e05eaf5985a9a2f453eed45c07",
+      "keyring/util/platform_.py": "961b062966686c4becced34e928b54a0daa21d4849ec6e043427dd0f0a76c150"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "756b38338ebdc67c7ebf56e6e52e6bf2a8c44a1e2d6c96d4a2dc2369557f5e76",
+     "native": {},
+     "pth": {},
+     "sha256": "be4a0b195f149690c166e850609a477c532ddbfbaed96a404d4e43f8d5e2689f"
+    }
+   },
+   "name": "keyring",
+   "provenance": {
+    "keyring-25.7.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Kang Zhang <jobo.zh@gmail.com>",
+    "license_expression": "MIT",
+    "maintainer_email": "\"Jason R. Coombs\" <jaraco@jaraco.com>",
+    "project_urls": {
+     "Source": "https://github.com/jaraco/keyring"
+    },
+    "summary": "Store and access your passwords safely."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 2 medium findings (capability patterns) seen; capabilities: filesystem_read, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|keyring/cli.py|07dd3ce119a5b786",
+     "yara|capability_filesystem_read|keyring/core.py|db310e54a8ad61aa",
+     "yara|capability_process_spawn|keyring/backends/macOS/__init__.py|f8220e36fc2b2456",
+     "yara|capability_process_spawn|keyring/testing/backend.py|1ee084f0d2f5ad73",
+     "yara|capability_process_spawn|keyring/util/platform_.py|961b062966686c4b"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read keyring/cli.py",
+     "capability_filesystem_read:capability_filesystem_read keyring/core.py",
+     "capability_process_spawn:capability_process_spawn keyring/backends/macOS/__init__.py",
+     "capability_process_spawn:capability_process_spawn keyring/testing/backend.py",
+     "capability_process_spawn:capability_process_spawn keyring/util/platform_.py"
+    ]
+   },
+   "version": "25.7.0"
+  }
+ }
+}

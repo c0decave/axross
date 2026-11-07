@@ -21,6 +21,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 
+from PyQt6.QtGui import QPalette  # noqa: E402
 from PyQt6.QtWidgets import (  # noqa: E402
     QCheckBox,
     QRadioButton,
@@ -42,6 +43,11 @@ NON_TEXT_CONTRAST = 3.0
 def window(tmp_path_factory):
     mp = pytest.MonkeyPatch()
     s = isolate(tmp_path_factory.mktemp("ind"), mp)
+    # Light Mode keeps the palette the window found at its start (the
+    # desktop's). In a test run that is the one a window of an earlier test
+    # left on the application - Hacker Mode's black and green, say - so the
+    # platform palette comes back first.
+    APP.setPalette(QPalette())
     win = s.make_window()
     yield win
     s.close_windows()
@@ -77,7 +83,9 @@ def _host(window, cls, checked):
     button = cls("Compact mode " * 4)
     button.setChecked(checked)
     layout.addWidget(button)
-    host.resize(400, 60)
+    # Room right of the label: the background is read at the right edge,
+    # which a label wider than the button (a wider font) covered with text.
+    host.resize(max(400, button.sizeHint().width() + 60), 60)
     host.show()
     APP.processEvents()
     return host, button

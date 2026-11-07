@@ -28,8 +28,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.i18n import tr
 from core.vt_screen import DEFAULT_SCROLLBACK, MAX_ROWS, VTScreen
 from ui.pane_drag import PANE_MIME_TYPE
+from ui.icon_provider import set_window_icon
 
 if TYPE_CHECKING:
     import paramiko
@@ -813,6 +815,12 @@ class SSHTerminalSession:
         self._initial_dir = initial_dir
         self._channel: paramiko.Channel | None = None
         self._running = False
+        # True while start() waits for the server (ui.off_gui): the
+        # session counts as active then - the dock's and the pane's read
+        # timers run during that wait and closed a session they saw
+        # without a channel yet, leaving the new shell orphaned.
+        self._starting = False
+        self._closed_while_starting = False
         # When False, we skip the post-shell history-suppression
         # bytes — useful for users running their own boxes who want
         # bash_history kept normally. The safe default is True (red-
@@ -821,13 +829,40 @@ class SSHTerminalSession:
 
     @property
     def is_active(self) -> bool:
+        if self._starting:
+            return True
         return self._running and self._channel is not None and not self._channel.closed
 
     def start(self) -> None:
-        self._channel = self._transport.open_session()
         rows, cols = self._size
-        self._channel.get_pty(term="xterm", width=cols, height=rows)
-        self._channel.invoke_shell()
+        transport = self._transport
+
+        def open_shell():
+            channel = transport.open_session()
+            try:
+                channel.get_pty(term="xterm", width=cols, height=rows)
+                channel.invoke_shell()
+            except BaseException:
+                channel.close()  # not left open on the server
+                raise
+            return channel
+
+        from ui.off_gui import run_off_gui
+
+        # Three round trips (the channel, the pty, the shell): off the GUI
+        # thread - Start, Open Terminal Here and a restored terminal froze
+        # the window for them, a slow server for its whole timeout.
+        self._starting = True
+        try:
+            channel = run_off_gui(open_shell)
+        finally:
+            self._starting = False
+        if self._channel is None and not self._closed_while_starting:
+            self._channel = channel
+        else:  # closed while it started: the shell is not wanted any more
+            channel.close()
+            self._closed_while_starting = False
+            return
         self._running = True
         # OpSec: suppress shell history right after the shell starts.
         # The very next thing the user types ought not to land in
@@ -883,6 +918,10 @@ class SSHTerminalSession:
 
     def close(self) -> None:
         self._running = False
+        if self._starting:
+            # Stop or a closed tab while the shell is being opened: start()
+            # closes the channel when it arrives.
+            self._closed_while_starting = True
         if self._channel is not None:
             try:
                 self._channel.close()
@@ -1023,7 +1062,8 @@ class TerminalDock(QDockWidget):
     activity = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Terminal", parent)
+        super().__init__(tr("Terminal"), parent)
+        set_window_icon(self, "terminal")
         self.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )

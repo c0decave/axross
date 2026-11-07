@@ -274,13 +274,23 @@ def test_edge_stop_cancels_a_running_search_quickly(tmp_path) -> None:
             (sub / f"f{f}.txt").write_text("needle\n")
     dlg = _dialog(root)
     dlg.contains_edit.setText("needle")
+    # The whole search, as this host runs it now: "quickly" is measured
+    # against it (a fixed 1.5 s failed on a busy host, where the search
+    # itself took several times as long).
+    whole = time.monotonic()
+    QTest.mouseClick(dlg.search_btn, Qt.MouseButton.LeftButton)
+    assert wait_until(lambda: not dlg.is_running, 300), "search did not finish"
+    whole = time.monotonic() - whole
+    assert "3000 found" in dlg.status_label.text()
     QTest.mouseClick(dlg.search_btn, Qt.MouseButton.LeftButton)
     assert wait_until(lambda: dlg.table.rowCount() > 0, 10)
     started = time.monotonic()
     QTest.mouseClick(dlg.stop_btn, Qt.MouseButton.LeftButton)
     assert wait_until(lambda: not dlg.is_running, 5)
-    assert time.monotonic() - started < 1.5
-    assert "cancelled" in dlg.status_label.text().lower()
+    assert time.monotonic() - started < max(1.5, whole / 2), whole
+    status = dlg.status_label.text()
+    assert "cancelled" in status.lower()
+    assert "3000 scanned" not in status  # it stopped, it did not run to its end
     dlg.close()
 
 

@@ -1,0 +1,116 @@
+{
+ "name": "yara-python",
+ "versions": {
+  "4.5.4": {
+   "accepted_findings": [],
+   "archives": {
+    "yara_python-4.5.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "yara.cpython-312-x86_64-linux-gnu.so": "b2bd1fa69b19aea3d80dea6e235eb1a767a060d27f3007839096df74a0e73ee4",
+      "yara_python-4.5.4.dist-info/METADATA": "a4641e9aa524e78599383b046274a40a6586f8251585b276d41bc739a024dc6a",
+      "yara_python-4.5.4.dist-info/RECORD": "a628faccc49294b0e66acc40af41ab73a048f2bda49226769f510fc5afa80e05",
+      "yara_python-4.5.4.dist-info/WHEEL": "692806d05e2b18f66d5748931087f2e9db47aba83aecbcdedee2df934bd69fcf",
+      "yara_python-4.5.4.dist-info/licenses/LICENSE": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+      "yara_python-4.5.4.dist-info/top_level.txt": "8baecdedab9c80c4ac064eb0335414ad41ae55c2862c60e638a23b9361f99463",
+      "yara_python.libs/libcrypto-0ec7d250.so.1.1": "9e60dabfe281b78e463d0f6a0811320a0f9dcc16db927567b9fc54fa14cd4c76"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "0d31d74c10abeae3e7e055116cb6076acfb757d407d09506118e9429b493995a",
+     "native": {
+      "yara.cpython-312-x86_64-linux-gnu.so": "elf",
+      "yara_python.libs/libcrypto-0ec7d250.so.1.1": "elf"
+     },
+     "pth": {},
+     "sha256": "e5eae935b05a9f8dc71df55a79c38f52abd93f8840310fe4e0d75fbd78284f24"
+    }
+   },
+   "name": "yara-python",
+   "provenance": {
+    "yara_python-4.5.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "VirusTotal/yara-python",
+     "workflow": "publish-to-pypi.yml"
+    }
+   },
+   "pypi": {
+    "author": "Victor M. Alvarez",
+    "author_email": "plusvic@gmail.com, vmalvarez@virustotal.com",
+    "home_page": "https://github.com/VirusTotal/yara-python",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/VirusTotal/yara-python"
+    },
+    "summary": "Python interface for YARA"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "The bundled libcrypto's network imports (OpenSSL's BIO layer); no URLs or addresses. Scanner venv only. Content review only."
+   },
+   "scans": {
+    "capa": {
+     "9e60dabfe281b78e463d0f6a0811320a0f9dcc16db927567b9fc54fa14cd4c76": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "yara_python.libs/libcrypto-0ec7d250.so.1.1",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "accept",
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "gethostbyname",
+         "listen",
+         "recvfrom",
+         "sendto",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libdl.so.2",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "b2bd1fa69b19aea3d80dea6e235eb1a767a060d27f3007839096df74a0e73ee4": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "yara.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcrypto-0ec7d250.so.1.1",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/yara_python.libs"
+       ],
+       "urls": [
+        "https://yara.readthedocs.io/en/stable/yarapython.html"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "4.5.4"
+  }
+ }
+}

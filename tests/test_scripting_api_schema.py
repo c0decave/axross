@@ -307,7 +307,10 @@ def test_edge_raises_ignores_reraise_and_variables() -> None:
         except ValueError as exc:
             err = exc
             raise err from None
-        raise
+        try:
+            pass
+        except KeyError:
+            raise  # a re-raise: names no exception of its own
 
     assert axross._raised_exceptions(helper) == ["ValueError"]
 

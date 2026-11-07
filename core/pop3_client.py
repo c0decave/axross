@@ -49,6 +49,12 @@ log = logging.getLogger(__name__)
 # attachments (gigabyte logs); refusing >32 MiB keeps the UI snappy
 # without rejecting any reasonable mail.
 MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+#: LIST / UIDL answers: ~30 bytes a message - room for some 500 000.
+MAX_LISTING_BYTES = 16 * 1024 * 1024
+#: TOP n 0 (the headers the listing shows the subject from).
+MAX_HEADER_BYTES = 1024 * 1024
+#: TOP with body lines (the scripting API): as much as a whole message.
+MAX_TOP_BYTES = MAX_MESSAGE_BYTES
 
 # Reused filename-character allow-list. Mirrors imap_client._sanitize_filename.
 _FILENAME_BAD_CHARS = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
@@ -156,7 +162,7 @@ def _msgno_from_path(path: str) -> int:
     """The message number in *path*. A path that names no message is
     FileNotFoundError: the mailbox is flat and only holds messages, so
     nothing can be there."""
-    m = _MSG_PATH_RE.match(path)
+    m = _MSG_PATH_RE.fullmatch(path)
     if not m:
         raise FileNotFoundError(
             errno.ENOENT, "POP3 path does not look like a message", path
@@ -282,6 +288,19 @@ class Pop3Session(SessionLifecycle):
     def name(self) -> str:
         return f"POP3{'S' if self._use_ssl else ''}: {self._username}@{self._host}:{self._port}"
 
+    def security_info(self):
+        """The negotiated TLS of the POP3 connection for the security badge
+        (None when not connected - the profile tells then)."""
+        from core import conn_security as CS
+
+        sock = getattr(self._pop, "sock", None) if self._pop is not None else None
+        if sock is None:
+            return None
+        if not self._use_ssl:
+            return CS.SecurityInfo(CS.LEVEL_CLEARTEXT, "POP3 without TLS - cleartext - anyone on the "
+                                   "network can read it, the password too", True)
+        return CS.tls_socket(sock, verified=self._verify_tls, what="POP3")
+
     @property
     @liveness_check
     def connected(self) -> bool:
@@ -359,7 +378,7 @@ class Pop3Session(SessionLifecycle):
         pop = self._ensure_connected()
         # LIST returns lines like ``b"1 1234"`` — message-number + octets.
         try:
-            _resp, lines, _octets = pop.list()
+            _resp, lines, _octets = self._long_capped(pop, "list", (), "LIST", MAX_LISTING_BYTES)
         except poplib.error_proto as exc:
             raise OSError(f"POP3 LIST failed: {exc}") from exc
 
@@ -397,7 +416,7 @@ class Pop3Session(SessionLifecycle):
     def _uid_map(self, pop) -> dict[int, str]:
         """``UIDL``: message number -> unique id; {} without UIDL."""
         try:
-            _resp, lines, _octets = pop.uidl()
+            _resp, lines, _octets = self._long_capped(pop, "uidl", (), "UIDL", MAX_LISTING_BYTES)
         except (poplib.error_proto, OSError) as exc:
             log.debug("POP3 UIDL failed: %s", exc)
             return {}
@@ -435,7 +454,7 @@ class Pop3Session(SessionLifecycle):
                         errno.ENOENT, "POP3: the message is no longer in the mailbox", path
                     )
                 return found
-        expected = _MSG_PATH_RE.match(path).group(0).split("_", 1)[1][: -len(".eml")]
+        expected = _MSG_PATH_RE.fullmatch(path).group(0).split("_", 1)[1][: -len(".eml")]
         now = _sanitize_filename(self._fetch_subject(msgno)) or "untitled"
         if now != expected:
             raise OSError(
@@ -449,7 +468,8 @@ class Pop3Session(SessionLifecycle):
         Subject. Failure → empty string (never raises)."""
         try:
             pop = self._ensure_connected()
-            _resp, lines, _octets = pop.top(msgno, 0)
+            _resp, lines, _octets = self._long_capped(pop, "top", (msgno, 0), f"TOP {int(msgno)} 0",
+                                                      MAX_HEADER_BYTES)
             blob = b"\r\n".join(
                 line if isinstance(line, bytes) else line.encode("utf-8", "replace")
                 for line in lines
@@ -493,8 +513,7 @@ class Pop3Session(SessionLifecycle):
             permissions=0o400,
         )
 
-    @staticmethod
-    def _listed_now(pop, msgno: int) -> bool:
+    def _listed_now(self, pop, msgno: int) -> bool:
         """Whether the mailbox listing carries *msgno*.
 
         ``-ERR`` to ``LIST n`` has no standard wording, and a dropped
@@ -502,7 +521,7 @@ class Pop3Session(SessionLifecycle):
         (which leaves out what this session deleted) tells "no such
         message" apart; a listing that fails is an OSError."""
         try:
-            _resp, lines, _octets = pop.list()
+            _resp, lines, _octets = self._long_capped(pop, "list", (), "LIST", MAX_LISTING_BYTES)
         except poplib.error_proto as exc:
             raise OSError(f"POP3 LIST failed: {exc}") from exc
         for raw in lines:
@@ -558,6 +577,35 @@ class Pop3Session(SessionLifecycle):
         if getattr(self, "_listing_generation", -1) != getattr(self, "_generation", 0):
             return 0
         return getattr(self, "_listed", {}).get(msgno, ("", "", 0))[2]
+
+    def _long_capped(self, pop, method: str, args: tuple, command: str, cap: int):
+        """poplib's *method* (list / uidl / top) as ``(resp, lines,
+        octets)``, with *cap* bytes as the most its multi-line answer may
+        hold: poplib's _getlongresp() buffers without a limit, and a server
+        that never ends the answer grows memory until the process dies.
+        Over the cap the connection is dropped (the rest is still on the
+        wire) and OSError raised. A stand-in object without poplib's
+        internals (tests) is simply asked."""
+        if not isinstance(pop, poplib.POP3):
+            return getattr(pop, method)(*args)
+        pop._putcmd(command)
+        resp = pop._getresp()
+        lines: list[bytes] = []
+        octets = 0
+        line, o = pop._getline()
+        while line != b".":
+            if line.startswith(b".."):
+                o -= 1
+                line = line[1:]
+            octets += o
+            if octets > cap:
+                with contextlib.suppress(Exception):
+                    pop.close()
+                self._pop = None
+                raise OSError(f"POP3 {command.split()[0]} answer exceeds {cap} bytes")
+            lines.append(line)
+            line, o = pop._getline()
+        return resp, lines, octets
 
     def _retr_capped(self, pop, msgno: int, cap: int) -> list[bytes]:
         """``RETR msgno`` with the size cap applied while reading.
@@ -669,7 +717,7 @@ class Pop3Session(SessionLifecycle):
             text = resp.decode("ascii", errors="replace") if isinstance(resp, bytes) else str(resp)
             parts = text.split()
             return parts[-1]
-        resp, lines, _ = pop.uidl()
+        resp, lines, _ = self._long_capped(pop, "uidl", (), "UIDL", MAX_LISTING_BYTES)
         out: dict[int, str] = {}
         for line in lines:
             text = line.decode("ascii", errors="replace") if isinstance(line, bytes) else str(line)
@@ -683,7 +731,8 @@ class Pop3Session(SessionLifecycle):
         """``TOP`` — returns headers + first ``n_lines`` of body.
         Useful for triage without pulling whole messages."""
         pop = self._ensure_connected()
-        resp, lines, octets = pop.top(int(msgno), int(n_lines))
+        resp, lines, octets = self._long_capped(pop, "top", (int(msgno), int(n_lines)),
+                                                f"TOP {int(msgno)} {int(n_lines)}", MAX_TOP_BYTES)
         # poplib returns lines as bytes; reassemble with CRLF.
         return b"\r\n".join(line if isinstance(line, bytes) else line.encode() for line in lines)
 

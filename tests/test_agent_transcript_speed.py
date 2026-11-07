@@ -23,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtGui import QTextCursor  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QTextBrowser  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QScrollArea, QTextBrowser  # noqa: E402
 
 import ui.agent_dock as AD  # noqa: E402
 from core.agent_session import AgentSession, SessionStore  # noqa: E402
@@ -231,6 +231,37 @@ def test_edge_a_kept_long_tab_opens_at_its_end(env, monkeypatch):
     bar = tab.transcript.verticalScrollBar()
     assert bar.maximum() > 0
     assert bar.value() == bar.maximum(), "the latest lines are in view"
+
+
+def test_edge_a_kept_long_tab_in_a_narrow_dock_opens_at_its_end(env, monkeypatch):  # noqa: F811
+    """A kept tab is drawn while hidden and scrolled to its end when shown.
+    In a dock narrower than the tab's controls the panel's horizontal scroll
+    bar then took its height from the transcript, which kept its position:
+    the latest line sat half below the view. A transcript at its end stays
+    at its end when its range changes - also on a later resize."""
+    env.fake({"content": "ok"})
+    store = SessionStore(env.store_dir)
+    store.save(AgentSession(title="long", folder=str(env.root), transcript=_transcript(60)))
+    dock = env.dock()
+    tab = dock.current_tab()
+    dock.resize(max(200, tab.minimumSizeHint().width() - 150), 600)
+    dock.show()
+    APP.processEvents()
+    frame = tab.parentWidget()
+    while not isinstance(frame, QScrollArea):
+        frame = frame.parentWidget()
+    assert frame.horizontalScrollBar().isVisible()  # the case of the report
+    bar = tab.transcript.verticalScrollBar()
+    assert bar.maximum() > 0
+    assert bar.value() == bar.maximum(), "the latest lines are in view"
+    dock.resize(dock.width(), 420)
+    APP.processEvents()
+    assert bar.value() == bar.maximum()
+    half = bar.maximum() // 2
+    bar.setValue(half)  # scrolled back by the reader: the view stays there
+    dock.resize(dock.width(), 600)
+    APP.processEvents()
+    assert bar.value() == half < bar.maximum()
 
 
 def test_edge_toggling_the_first_and_the_last_block_keeps_the_view(env, monkeypatch):

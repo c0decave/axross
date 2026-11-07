@@ -12,6 +12,8 @@
   level meter for a few seconds through QAudioSource) and *Record 3 s and
   Play Back* (on the chosen output).
 * **Status** - the probe's answer and *Check Audio Again*.
+* A pointer to the Audio Mixer (Tools > Audio Mixer): per-source volume,
+  mute and output, the equalizer and the system's sound server.
 
 The rule of core.multimedia_probe holds: before the probe answered ok the
 page creates no Qt Multimedia object; its device lists come from the probe's
@@ -217,6 +219,13 @@ class AudioPage(QWidget):
         self.test_label.setWordWrap(True)
         self.test_label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.test_label)
+
+        #: The rest of the sound settings live in the Audio Mixer panel.
+        self.mixer_hint = QLabel(tr(
+            "A volume, mute and output per source (Media Player, Agent voice, media "
+            "preview), the equalizer and the system's sound server: Tools > Audio Mixer."))
+        self.mixer_hint.setWordWrap(True)
+        layout.addWidget(self.mixer_hint)
 
         status_box = QGroupBox(tr("Status"))
         status_layout = QVBoxLayout(status_box)

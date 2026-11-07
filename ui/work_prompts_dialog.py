@@ -32,6 +32,7 @@ from core import agent_topics as AT
 from core.agent_settings import OFFERED_GROUPS
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 _NEED_LABELS = {
     "exec": "Remote commands",
@@ -47,6 +48,7 @@ class WorkPromptsDialog(QDialog):
         """*new* (or a *task* to start from) opens an empty form; otherwise
         the first stored topic is shown."""
         super().__init__(parent)
+        set_window_icon(self, "book")
         self.setWindowTitle(tr("My Topics"))
         self.resize(860, 560)
         self._topics: list[AT.Topic] = AT.load_user_topics()

@@ -1,0 +1,97 @@
+{
+ "name": "peewee",
+ "versions": {
+  "3.19.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|playhouse/sqlite_udf.py|c25df9eb1903291a",
+    "yara|capability_network_outbound|peewee.py|3cf20faaa48aa92c",
+    "yara|capability_process_spawn|peewee.py|3cf20faaa48aa92c"
+   ],
+   "archives": {
+    "peewee-3.19.0-py3-none-any.whl": {
+     "entry_points": [
+      "pwiz = pwiz:main"
+     ],
+     "files": {
+      "peewee-3.19.0.dist-info/METADATA": "d4d1e8cc189458ab14132dc8d874ac4fa3a8e8778cda4b51ba5b58ab96ff112d",
+      "peewee-3.19.0.dist-info/RECORD": "4a774cd350a067ef56898d932f0c90d5c3977b4986bc8f4613c0b9f5e9dee274",
+      "peewee-3.19.0.dist-info/WHEEL": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+      "peewee-3.19.0.dist-info/entry_points.txt": "f50f11c8cea7d6893585dad08d3a55f83e04153474b6746a7ac472bcb4187a14",
+      "peewee-3.19.0.dist-info/licenses/LICENSE": "3740096125b08735a247b8dd08cd82e0ba984d3bebd9221d378576637e5240da",
+      "peewee-3.19.0.dist-info/top_level.txt": "b95ed167ad5b5a6f730eb3d518dac66b2e04e160e89c4aad53634f7b9186516b",
+      "peewee.py": "3cf20faaa48aa92c8cf4dbec7dd934302a671c8f45f8ac089d6176b39a11b180",
+      "playhouse/README.md": "33545a96f99159af15b128752743e3dca85a25455202319c001e11233ab64dbf",
+      "playhouse/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "playhouse/_pysqlite/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "playhouse/_pysqlite/cache.h": "096f86c3cbc02ce24232ac08a169cfabdb97fbb32a4eac7b9834c4a963556955",
+      "playhouse/_pysqlite/connection.h": "79fbad871f38e33d713cacc26ce0ae6942f2e2d85229a45560bc779770ed5f3b",
+      "playhouse/_pysqlite/module.h": "a92adc3dd89889faddb22e3baaf0af482d563b04048f0f35600f36d92127f0c9",
+      "playhouse/_sqlite_ext.c": "835b1b169c25db04bd363b21e3245ca0b5bf336de868da06f513c741bc523ac5",
+      "playhouse/_sqlite_udf.c": "d09379e4588ec3577d5aa7892e39aa1ba8ea508c6cdd47896ee2b652e3e22ae5",
+      "playhouse/apsw_ext.py": "625b4462f47e9d38aa5205efbecb4a823f3275e23b467a4d909d2d179da732da",
+      "playhouse/cockroachdb.py": "675f3754c40a7c116d01c98b4d6b8d84f06dfaaef3a6a875a91d1c377e39558c",
+      "playhouse/dataset.py": "48c8b9cb7df48c05c881c1e3719e51c5c3c07212d8d7e3603c665a67dfabb05f",
+      "playhouse/db_url.py": "859262507e8c2b0843c3cee025be126bc23497d5aa5436c01a93a825f424cb6b",
+      "playhouse/fields.py": "7723bc77797edeeabf5cfee099045574bea4ef4a147c08971a10978c06dac9e6",
+      "playhouse/flask_utils.py": "3aedba855edde4d2f39bede8ab874902bb3555401687cbc3725cae1c336b7d32",
+      "playhouse/hybrid.py": "ad100f04898fdb1eb50e8621e7798b9b824c3e83422cf15377bfd622babafe05",
+      "playhouse/kv.py": "b401bfff3ced8b7cccf7c3d73283f2a54a1b245eb3807fc206adf1d95813c5e5",
+      "playhouse/migrate.py": "fdc3304e8c5c3b422b362e6bccc5b1032112abf2831dfcfe947a86534c0f97b2",
+      "playhouse/mysql_ext.py": "8b65f02b65033d573d30c09fa86932dbbaaa81036f69334971c65f4cd9726001",
+      "playhouse/pool.py": "246b2ef6b61ce57510c0c1ee405cd21fe06436c318f7dc3921588a1b20baa24c",
+      "playhouse/postgres_ext.py": "8facd3865e9ff3a4e6e6eb2b1a6b133c3a5c9723aae7778b81f8033a8e58cb5b",
+      "playhouse/psycopg3_ext.py": "75032edcf4048b535493d6085b0a42fd26d334c94ca1eda68e7f44bdd1b40d6f",
+      "playhouse/reflection.py": "d60127c957e438e1ffe23a2cf48b5c3ae8a5c7ec4230e8b1ba4af303906791dd",
+      "playhouse/shortcuts.py": "341ecf73748064f0f49658e7f50c7ffdb5a4e7a3b6100481f744e744fe54c601",
+      "playhouse/signals.py": "15e1e2ed2c49dd3846d2d55eb3a33fc7f2bec31f774619ac22a912072d182a42",
+      "playhouse/sqlcipher_ext.py": "64ef3337aa4ce3f800fb930bdcfedc9e50a8a7968b536c3d24b15392d3739e45",
+      "playhouse/sqlite_changelog.py": "73715a60d67e6969c3ad9f6d832f56c43441e9af2c16290331a8cecd89987884",
+      "playhouse/sqlite_ext.py": "dec110d0c09128f54dc93c0c697ea6d36779410702e6b1eeff342c055a526fe4",
+      "playhouse/sqlite_udf.py": "c25df9eb1903291abaacd3d9385d923ca9bc518e16d6eee8d711a58aa3de5109",
+      "playhouse/sqliteq.py": "6912c3ed747802e2e65740bda78a1122d6c337cab0553278753c38bec3aa219b",
+      "playhouse/test_utils.py": "000c5f42c5859a83dd6aaf895b5ded5a73db64122253ca8b0567d689080b4370",
+      "pwiz.py": "a1542180c1d3b05471fe01fedf6a265ad2295a335002b5d6107f77d31ad2bb4a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "17eeb154d527e99c8bc02859d2b0ebe42e1bf233399b54c92e68fda6a372840c",
+     "native": {},
+     "pth": {},
+     "sha256": "de220b94766e6008c466e00ce4ba5299b9a832117d9eb36d45d0062f3cfd7417"
+    }
+   },
+   "name": "peewee",
+   "provenance": {
+    "peewee-3.19.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Charles Leifer <coleifer@gmail.com>",
+    "project_urls": {
+     "Changelog": "https://github.com/coleifer/peewee/blob/master/CHANGELOG.md",
+     "Documentation": "https://docs.peewee-orm.com/",
+     "Repository": "https://github.com/coleifer/peewee"
+    },
+    "summary": "a little orm"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|playhouse/sqlite_udf.py|c25df9eb1903291a",
+     "yara|capability_network_outbound|peewee.py|3cf20faaa48aa92c",
+     "yara|capability_process_spawn|peewee.py|3cf20faaa48aa92c"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read playhouse/sqlite_udf.py",
+     "capability_network_outbound:capability_network_outbound peewee.py",
+     "capability_process_spawn:capability_process_spawn peewee.py"
+    ]
+   },
+   "version": "3.19.0"
+  }
+ }
+}

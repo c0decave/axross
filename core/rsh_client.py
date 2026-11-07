@@ -89,7 +89,7 @@ class RshError(OSError):
 
 
 def _validate_path(path: str) -> str:
-    if not _PATH_RE.match(path):
+    if not _PATH_RE.fullmatch(path):
         raise OSError(f"rsh path contains CR / LF / NUL: {path!r}")
     # Refuse paths that start with '-' so they cannot be re-interpreted
     # as flags by the remote tool (``head -c -r`` etc.). Callers should

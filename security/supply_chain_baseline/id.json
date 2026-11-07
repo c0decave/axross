@@ -1,0 +1,72 @@
+{
+ "name": "id",
+ "versions": {
+  "1.6.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|id/_internal/oidc/ambient.py|84f1f0d5de0cf926",
+    "yara|capability_process_spawn|id/_internal/oidc/ambient.py|84f1f0d5de0cf926",
+    "yara|threat_runtime_environment_read|id/_internal/oidc/ambient.py|84f1f0d5de0cf926"
+   ],
+   "archives": {
+    "id-1.6.1-py3-none-any.whl": {
+     "entry_points": [
+      "id=id.__main__:main"
+     ],
+     "files": {
+      "id-1.6.1.dist-info/METADATA": "5df85d87132487ef5ec3f6e7484595df23c6b088b97eb7eff35447d56c7cba24",
+      "id-1.6.1.dist-info/RECORD": "7816baf3b68c6809a5621a7cd2f0af613bd92054de01c9c0064e23621d09c75a",
+      "id-1.6.1.dist-info/WHEEL": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db",
+      "id-1.6.1.dist-info/entry_points.txt": "fcb8b400375c164c0244a0ee68aacc7612d7b17a9d272bec53579e9f52686db4",
+      "id-1.6.1.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "id/__init__.py": "27d051292e93daa9120a26fe6d367a905be2eb7a6bbca43ec123f70a36d227a9",
+      "id/__main__.py": "46e1adefbd8b62be89bc31a9c4ab55817c7b493cff496b937013f504057519cb",
+      "id/_internal/oidc/__init__.py": "dd76147d7c22bfc0b2c1ceb49c2329366cc15f0ccb07bffcff5cc479495013b9",
+      "id/_internal/oidc/ambient.py": "84f1f0d5de0cf92687feb18bcf674b39eeea79b85d3440ce116aa7c868811652",
+      "id/py.typed": "24d09bceac37112b0d5bff85eec828d5b00c74bd447bf7492e6261403096622e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "8c8ad307bf91fd6da6cb9900c6eae477ca7b8ff038102d69bcd9c34df1dad258",
+     "native": {},
+     "pth": {},
+     "sha256": "f5ec41ed2629a508f5d0988eda142e190c9c6da971100612c4de9ad9f9b237ca"
+    }
+   },
+   "name": "id",
+   "provenance": {
+    "id-1.6.1-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "di/id",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "project_urls": {
+     "Homepage": "https://pypi.org/project/id/",
+     "Issues": "https://github.com/di/id/issues",
+     "Source": "https://github.com/di/id"
+    },
+    "summary": "A tool for generating OIDC identities"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "sigstore's identity helper: reads the GitHub Actions / GitLab OIDC token variables to sign in CI (ambient.py). Scanner venv only (pypi-attestations). Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|id/_internal/oidc/ambient.py|84f1f0d5de0cf926",
+     "yara|capability_process_spawn|id/_internal/oidc/ambient.py|84f1f0d5de0cf926",
+     "yara|threat_runtime_environment_read|id/_internal/oidc/ambient.py|84f1f0d5de0cf926"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read id/_internal/oidc/ambient.py",
+     "capability_process_spawn:capability_process_spawn id/_internal/oidc/ambient.py",
+     "threat_runtime_environment_read:threat_runtime_environment_read id/_internal/oidc/ambient.py"
+    ]
+   },
+   "version": "1.6.1"
+  }
+ }
+}

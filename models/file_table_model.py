@@ -14,6 +14,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QBrush, QColor, QFont, QPalette
 from PyQt6.QtWidgets import QApplication
 
+from core.remote_name import sanitize_for_display
 from models.file_item import FileItem
 from ui.format_utils import measured_bytes
 from ui.icon_provider import entry_icon
@@ -45,10 +46,10 @@ _COLUMN_KEY = {
 
 
 def _sort_key(column: int, computed: dict[str, tuple[int, bool]] | None = None):
-    """ ".." first, then directories, then the column value — ascending.
+    """ "." and ".." first, then directories, then the column value — ascending.
     Descending is the same key reversed, which (stable on both sides) is
     exactly what QSortFilterProxyModel did with the former lessThan:
-    files before directories and ".." last. A folder whose size
+    files before directories and ".." / "." last. A folder whose size
     Calculate Size measured (*computed*) sorts by that size."""
     listed = _COLUMN_KEY.get(column, lambda it: 0)
     value = listed
@@ -59,7 +60,7 @@ def _sort_key(column: int, computed: dict[str, tuple[int, bool]] | None = None):
                 return computed[it.name][0]
             return listed(it)
 
-    return lambda it: (it.name != "..", not it.is_dir, value(it))
+    return lambda it: (not it.is_nav, it.name != ".", not it.is_dir, value(it))
 
 
 class FileTableModel(QAbstractTableModel):
@@ -160,9 +161,17 @@ class FileTableModel(QAbstractTableModel):
         palette = QApplication.palette()
         return QBrush(palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text))
 
-    def set_items(self, items: list[FileItem]) -> None:
+    def set_items(self, items: list[FileItem], keep_sizes: bool = False) -> None:
+        """Show *items*. Folder sizes Calculate Size measured go - unless
+        *keep_sizes* (the same folder listed again by itself: after a change
+        the watcher saw, after an operation): then those of folders still
+        there stay - a calculation can take minutes."""
         self.beginResetModel()
-        self._computed = {}
+        if keep_sizes and self._computed:
+            folders = {item.name for item in items if item.is_dir}
+            self._computed = {k: v for k, v in self._computed.items() if k in folders}
+        else:
+            self._computed = {}
         self._listing = list(items)
         self._items = self._sorted(self._listing)
         self.endResetModel()
@@ -227,12 +236,21 @@ class FileTableModel(QAbstractTableModel):
     def display_text(self, item: FileItem, col: int) -> str | None:
         """What column *col* shows for *item* (its DisplayRole)."""
         if col == COL_NAME:
-            return item.name
+            # Shown, not used: a server's name with controls or bidi
+            # overrides ("report\u202efdp.exe" reads as "reportexe.pdf")
+            # shows them as U+FFFD. Every operation still uses item.name.
+            return sanitize_for_display(item.name)
+        if item.is_nav and col in (COL_MODIFIED, COL_PERMS, COL_OWNER):
+            # "." and ".." are the pane's own rows, made without a stat: their
+            # 1970 time and "d---------" were placeholders, not the folder's
+            return ""
         if col == COL_SIZE:
             if item.is_dir and item.name in self._computed:
                 return measured_bytes(*self._computed[item.name])
             return item.size_human
         if col == COL_MODIFIED:
+            if item.stat_error:
+                return "?"
             return item.modified.strftime("%Y-%m-%d %H:%M")
         if col == COL_PERMS:
             return item.mode_str
@@ -264,12 +282,14 @@ class FileTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return self.display_text(item, col)
 
-        if role == Qt.ItemDataRole.ToolTipRole and col == COL_NAME and item.name != "..":
+        if role == Qt.ItemDataRole.ToolTipRole and col == COL_NAME and not item.is_nav:
             # Tooltips are always rendered as rich text: escape the name so
             # markup inside a hostile file name is shown literally, and keep
             # long names on one line (no wrapping in the middle of a name).
             tags = self.tag_lookup(item) if self.tag_lookup is not None else []
             note = f"<br>Tags: {escape(', '.join(tags))}" if tags else ""
+            if item.stat_error:
+                note += f"<br>Attributes unreadable: {escape(item.stat_error)}"
             return f"<p style='white-space:pre'>{escape(item.name)}{note}</p>"
 
         if role == Qt.ItemDataRole.DecorationRole and col == COL_NAME:
@@ -279,7 +299,7 @@ class FileTableModel(QAbstractTableModel):
             role == Qt.ItemDataRole.ForegroundRole
             and self._cut_names
             and item.name in self._cut_names
-            and item.name != ".."
+            and not item.is_nav
         ):
             return self._cut_foreground()
 
@@ -287,7 +307,7 @@ class FileTableModel(QAbstractTableModel):
             role in (Qt.ItemDataRole.FontRole, Qt.ItemDataRole.ForegroundRole)
             and self._highlight_hidden
             and item.is_hidden
-            and item.name != ".."
+            and not item.is_nav
         ):
             if role == Qt.ItemDataRole.FontRole:
                 return _italic()
@@ -410,8 +430,8 @@ class FileSortProxyModel(QSortFilterProxyModel):
         """Whether *item* is shown: the rule, asked for one row."""
         if item is None:
             return False
-        # ".." is always visible
-        if item.name == "..":
+        # "." and ".." are always visible
+        if item.is_nav:
             return True
         # Hidden files filter: dot names and entries the backend flags hidden
         if not self._show_hidden and item.is_hidden:
@@ -431,13 +451,13 @@ class FileSortProxyModel(QSortFilterProxyModel):
         if regex.pattern():
             match = regex.match
             return [
-                item.name == ".."
+                item.is_nav
                 or ((show_hidden or not item.is_hidden) and match(item.name).hasMatch())
                 for item in items
             ]
         if show_hidden:
             return [True] * len(items)
-        return [item.name == ".." or not item.is_hidden for item in items]
+        return [item.is_nav or not item.is_hidden for item in items]
 
     def source_rows(self, count: int) -> list[int]:
         """The source rows of the first *count* rows shown, in order. The
@@ -455,6 +475,23 @@ class FileSortProxyModel(QSortFilterProxyModel):
         ):
             return list(islice(compress(range(len(accepted)), accepted), max(0, count)))
         return [self.mapToSource(self.index(row, 0)).row() for row in range(count)]
+
+    def source_rows_of(self, rows: list[int]) -> list[int]:
+        """The source rows of the shown *rows*, in their order - by index into
+        the accepted rows when they are current (as :meth:`source_rows`),
+        else mapped row by row."""
+        model = self._file_model
+        accepted = self._accepted
+        if (
+            model is not None
+            and accepted is not None
+            and self._accepted_for is model._items
+            and len(accepted) == len(model._items)
+            and self.sortColumn() < 0
+        ):
+            shown = list(compress(range(len(accepted)), accepted))
+            return [shown[row] for row in rows if 0 <= row < len(shown)]
+        return [self.mapToSource(self.index(row, 0)).row() for row in rows]
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
         model = self._file_model

@@ -1,0 +1,112 @@
+{
+ "name": "pyspnego",
+ "versions": {
+  "0.12.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|spnego/_credssp.py|76d19f679e44eacf",
+    "yara|capability_filesystem_delete|spnego/tls.py|06cecb27aa3cd4a5",
+    "yara|capability_filesystem_read|spnego/__main__.py|f803d8eebb054564",
+    "yara|capability_filesystem_read|spnego/_credssp.py|76d19f679e44eacf",
+    "yara|capability_filesystem_read|spnego/_ntlm.py|d2abb8dc3da50292",
+    "yara|capability_filesystem_read|spnego/_ntlm_raw/messages.py|2800ac1f3930363f",
+    "yara|capability_filesystem_read|spnego/_sspi.py|ba532aceda80d367"
+   ],
+   "archives": {
+    "pyspnego-0.12.4-py3-none-any.whl": {
+     "entry_points": [
+      "pyspnego-parse = spnego.__main__:main"
+     ],
+     "files": {
+      "pyspnego-0.12.4.dist-info/METADATA": "74e41521e4334759276a36109e770a2558beb1bdd850b375d8ff46c1fb33801c",
+      "pyspnego-0.12.4.dist-info/RECORD": "df3e116b4989c5e691e849bd7f72c94397acd177d95715d16d07e2194745d200",
+      "pyspnego-0.12.4.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "pyspnego-0.12.4.dist-info/entry_points.txt": "1cf160cca703d73979d7849c2b46368a9c8830fc492d535d057fb9d46160a477",
+      "pyspnego-0.12.4.dist-info/licenses/LICENSE": "286517c93031c343f809f64b38563a783614b762e1367242af6cdd4107335471",
+      "pyspnego-0.12.4.dist-info/top_level.txt": "c0529a7068961d646bc740c1a57e6fae1891726320b72b984bbd96e6b1e3efc4",
+      "spnego/__init__.py": "87a3e4f4e248220d4e696c4f048f2f828551ba8ea4975a056103861ab9504f6d",
+      "spnego/__main__.py": "f803d8eebb0545647390195f3b47f0df5329345c25f80ae59370e93af8ad45ce",
+      "spnego/_asn1.py": "8885fd33d653d561739929dd1566b2164cef45646017e7c1657ff5792ab41e39",
+      "spnego/_context.py": "e556bb0b0636964062b8a79278bdaf2ac913de814e49b9ed0dccdfcaa9ea55b2",
+      "spnego/_credential.py": "ea7597f844f5f3601db5907fb0f80a307ceddbfc9bcfdba88758fdf351919b7e",
+      "spnego/_credssp.py": "76d19f679e44eacfca0412d1f450bf2430332599ed126ef9b457918214dbe8d0",
+      "spnego/_credssp_structures.py": "93099290649ddcde1f746a4cfd4a2ffe78c7192035405b98fff2c31d141a672c",
+      "spnego/_gss.py": "1528464d7c075eee2f583e5df13b39d5ff724641671ace94d857a767015cb1e3",
+      "spnego/_kerberos.py": "3f6c88615146086f2e573aa93ff9270902cd975673a5b5f27bc407016d84109a",
+      "spnego/_negotiate.py": "925f483a60254ae481bb0ed30b12b3391527feb3147d60310450f3b28d418025",
+      "spnego/_ntlm.py": "d2abb8dc3da50292b18ef56179ed2e8c7649ff27ac258f190125f85f6ba2260e",
+      "spnego/_ntlm_raw/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "spnego/_ntlm_raw/crypto.py": "df97f1277ef9cf769d6914dc1c8dc0bf0c31fcfc6fac6515240488b89d7313a3",
+      "spnego/_ntlm_raw/des.py": "db3c018d1299f974325268994d538e0eadbaf77e8dde860581d8d6bf10b74dd5",
+      "spnego/_ntlm_raw/md4.py": "47826d1241d0ffcb56e7856e629908c3e7f42bfe3d425006939d31eb96183d62",
+      "spnego/_ntlm_raw/messages.py": "2800ac1f3930363fc4ce694de73c95714e8356ce5acf1082e3e4080bcfc87dfb",
+      "spnego/_ntlm_raw/security.py": "10d79d612b14894975f2c99c59e2b553c0a0ef9d785d658a77255c50eb6f738b",
+      "spnego/_spnego.py": "a18cdeb329e5be7c4d40bb5e044eff6a07f3fc36fe4bb5357d6f35c1ad7f7d71",
+      "spnego/_sspi.py": "ba532aceda80d367f404b4f0a0eb0d594931f941d184ff5655bc962aff2b8e17",
+      "spnego/_text.py": "6108a112a2f3b5ac5da4570e5eff5414778a50540627993be284b435abea6667",
+      "spnego/_tls_struct.py": "c95a5c8896865083df8060d6309fde841e823c84d7dc1bbdae5d3508ac3936c4",
+      "spnego/_version.py": "3d198c5d2b84df00dc38000b7f467f7e1b118f012c5e227b1437053b73a51d3a",
+      "spnego/auth.py": "539cf658b330695d8be981a92e2f67d3d0368d86a987bcd4cf83a0f052c58f49",
+      "spnego/channel_bindings.py": "539c977813adccfcdf98f71fe3e9f9b37abd7e8e290394e74f14ecf13201fabc",
+      "spnego/exceptions.py": "8dc1ec98556d267f5c48bea190d14d166d562c79aa8004cdae217db92393ceed",
+      "spnego/gss.py": "fa331180821dbd0a16a864f1aa69f2b294e3ede6bfea68211e2f494aa9593fa8",
+      "spnego/iov.py": "5bc58c199e7131810911321102e1832d3c2e8fc9096b8f59f20148d7c23c21d1",
+      "spnego/negotiate.py": "eecddbc1afc9886b073a7ab710dcd1180d1fd248c79a8e92fe2fb4a3e8a4ead9",
+      "spnego/ntlm.py": "3dee58e12ce79289c94e7934e96932a6424090cc8fb0518ad6baf9c35a10d4f5",
+      "spnego/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "spnego/sspi.py": "6ff85f8168a630bc5480834f87028f39c44dc62013d7491a7c4d81920e1d2012",
+      "spnego/tls.py": "06cecb27aa3cd4a5165bbed96b5aa76dd3321ce4f6f9d5facbeaff8b2b5deb9b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fe08dee12fb715352c66a6dafc15ec06892379dd07a807e807ef7b4944fb667f",
+     "native": {},
+     "pth": {},
+     "sha256": "a29a34de1abe9e9b30d9aa1d363f8e49fc159eb7355b1f2ee86ccb3a2ce3bba9"
+    }
+   },
+   "name": "pyspnego",
+   "provenance": {
+    "pyspnego-0.12.4-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "jborean93/pyspnego",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Jordan Borean <jborean93@gmail.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "homepage": "https://github.com/jborean93/pyspnego"
+    },
+    "summary": "Windows Negotiate Authentication Client and Server"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read; attestation verifies (jborean93/pyspnego)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|spnego/_credssp.py|76d19f679e44eacf",
+     "yara|capability_filesystem_delete|spnego/tls.py|06cecb27aa3cd4a5",
+     "yara|capability_filesystem_read|spnego/__main__.py|f803d8eebb054564",
+     "yara|capability_filesystem_read|spnego/_credssp.py|76d19f679e44eacf",
+     "yara|capability_filesystem_read|spnego/_ntlm.py|d2abb8dc3da50292",
+     "yara|capability_filesystem_read|spnego/_ntlm_raw/messages.py|2800ac1f3930363f",
+     "yara|capability_filesystem_read|spnego/_sspi.py|ba532aceda80d367"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete spnego/_credssp.py",
+     "capability_filesystem_delete:capability_filesystem_delete spnego/tls.py",
+     "capability_filesystem_read:capability_filesystem_read spnego/__main__.py",
+     "capability_filesystem_read:capability_filesystem_read spnego/_credssp.py",
+     "capability_filesystem_read:capability_filesystem_read spnego/_ntlm.py",
+     "capability_filesystem_read:capability_filesystem_read spnego/_ntlm_raw/messages.py",
+     "capability_filesystem_read:capability_filesystem_read spnego/_sspi.py"
+    ]
+   },
+   "version": "0.12.4"
+  }
+ }
+}

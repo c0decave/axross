@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from core import cas as CAS
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.cas_history_dialog")
 
@@ -80,6 +81,7 @@ class CasHistoryDialog(QDialog):
         """*backends* maps ``backend_id`` to a connected backend (a list of
         backends is accepted too); a scan can only be re-scanned on one."""
         super().__init__(parent)
+        set_window_icon(self, "duplicates")
         if isinstance(backends, dict):
             self._backends = dict(backends)
         else:
@@ -231,6 +233,11 @@ class CasHistoryDialog(QDialog):
             return
         self._rescan_root = scan.root
         bid, root, algorithm = scan.backend_id, scan.root, scan.algorithm or "sha256"
+        # As the finder's rebuild: files without a native checksum are read
+        # (only those that can have a duplicate), and the stats say what was
+        # left out.
+        stats = CAS.RebuildStats()
+        self._rescan_stats = stats
         self._job.start(
             lambda cancel, progress: CAS.rebuild(
                 backend,
@@ -239,6 +246,8 @@ class CasHistoryDialog(QDialog):
                 algorithm=algorithm,
                 cancel=cancel,
                 progress=progress,
+                read_missing=True,
+                stats=stats,
             )
         )
 
@@ -249,6 +258,17 @@ class CasHistoryDialog(QDialog):
             self._status.setText(f"Cancelled — {value} file(s) indexed under {self._rescan_root}")
         else:
             self._status.setText(f"Indexed {value} file(s) under {self._rescan_root}")
+        stats = getattr(self, "_rescan_stats", None)
+        if kind != "error" and stats is not None:
+            left_out = []
+            if stats.unreadable_count:
+                left_out.append(f"{stats.unreadable_count} could not be read")
+            if stats.unlisted_count:
+                left_out.append(f"{stats.unlisted_count} folder(s) could not be listed")
+            if stats.no_checksum:
+                left_out.append(f"{stats.no_checksum} without a checksum")
+            if left_out:
+                self._status.setText(self._status.text() + " — " + ", ".join(left_out))
         text = self._status.text()
         self.reload()
         if kind != "error":

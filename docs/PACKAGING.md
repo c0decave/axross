@@ -105,8 +105,10 @@ Use API tokens for both PyPI and TestPyPI. Keep credentials in
 
 ### Versioning
 
-The PyPI version is read from `axross/_version.py` via
-`tool.setuptools.dynamic`. Do not duplicate it in `pyproject.toml`.
+The version is read from `axross/_version.py` via
+`tool.setuptools.dynamic`: by the wheel and sdist, by `axross --version`,
+and by `scripts/build_release.sh` for the tarball name. Do not duplicate
+it in `pyproject.toml`.
 
 Before a release, change only:
 
@@ -219,9 +221,17 @@ which:
 2. Adds the standard AppRun entry point.
 3. Packages everything into a single self-mounting ELF.
 
-Fresh hosts without `appimagetool` in PATH get the tool
-auto-downloaded to `build/appimagetool-x86_64.AppImage` on first
-run; subsequent builds reuse the cached copy.
+Fresh hosts without `appimagetool` in PATH (or `APPIMAGETOOL=<path>`)
+get a pinned release of the tool - 1.9.1, not the `continuous` build,
+whose file changes under the same URL - downloaded to
+`build/appimagetool-x86_64.AppImage` by `scripts/fetch_appimagetool.sh`.
+Its SHA-256 is checked after the download and again on every later
+build for the cached copy; a mismatch deletes the download and stops
+the build, and there is no switch to skip the check. To move to a
+newer release, set `APPIMAGETOOL_VERSION` and `APPIMAGETOOL_SHA256` at
+the top of that script (the comment there says where GitHub shows an
+asset's digest) and cross-check the digest with `sha256sum` on the
+downloaded file.
 
 ### macOS binary: the first start
 
@@ -262,6 +272,13 @@ deps the MCP surface needs:
 * `requests` + `defusedxml` — WebDAV (pure-Python, no SDK)
 * `adb-shell` — ADB
 * `py7zr` — 7z extract
+
+Each with pyproject.toml's floor. Of the source tree it carries
+`main.py` and what its MCP path imports or reads: `axross/`, `core/`,
+`models/`, `security/` and `resources/` (no `ui/`).
+`tests/test_docker_images.py` follows the imports of the entry point
+and fails when one of them is not copied, or a floor falls below
+pyproject's.
 
 The resulting image is ~180 MB — much smaller than the GUI
 bundle because Qt is the dominant dep in both. Default
@@ -556,8 +573,9 @@ AXROSS_FROZEN_BINARY=dist/axross-slim .venv/bin/python -m pytest tests/test_froz
 # 6. Sha256 everything
 ( cd dist && sha256sum axross-* ) | tee dist/SHA256SUMS
 
-# 7. Sign SHA256SUMS with the release key (writes dist/SHA256SUMS.sig)
-.venv/bin/python scripts/sign_release.py /path/to/release-key.pem dist/SHA256SUMS
+# 7. Sign SHA256SUMS with the release key (writes dist/SHA256SUMS.sig; --version
+#    adds the first line "# axross-release X.Y.Z" the updater requires)
+.venv/bin/python scripts/sign_release.py --version "$VERSION" /path/to/release-key.pem dist/SHA256SUMS
 
 # 8. Every ELF of the Linux binaries with its version: THIRD_PARTY_LICENSES.md
 #    and the release notes section (fails when a typed credits version disagrees)
@@ -565,6 +583,13 @@ AXROSS_FROZEN_BINARY=dist/axross-slim .venv/bin/python -m pytest tests/test_froz
 .venv/bin/python scripts/native_inventory.py dist/axross-full dist/axross-slim \
     --notes dist/NATIVE-COMPONENTS.md
 ```
+
+The source tarball (`axross-<version>.tar.gz` + `.sha256` + `.sha512`)
+comes from `scripts/build_release.sh --tarball`: the committed files of
+`HEAD`, never untracked ones, and in a private tree the scrubbed mirror
+that `scripts/export-public.py --mirror` writes; see
+[DEVELOPMENT.md](DEVELOPMENT.md#building-a-release-tarball) for its
+identity-terms file.
 
 Checksums go into the release notes, and so does
 `dist/NATIVE-COMPONENTS.md`: every release names the native components
@@ -587,12 +612,26 @@ it is refused by every installed binary, nothing is replaced:
 
 * **Tag** `vX.Y.Z` (numeric, no suffix). Only a higher `X.Y.Z` than the
   running one is offered.
-* **Asset names**, exactly: `axross-full`, `axross-slim` (Linux x86-64),
+* **Asset names**, exactly: `axross-full`, `axross-slim`, `axross-base`
+  (Linux x86-64, glibc 2.34 - the AlmaLinux 9 build), `axross-full-glibc2.36`,
+  `axross-slim-glibc2.36`, `axross-base-glibc2.36` (the Debian 12 build),
   `axross-slim-macos-arm64`, `axross-slim-windows-x64.exe`. A binary picks
   its own: `build/axross.spec` writes the flavour into the bundle as
-  `axross/axross-bundle-flavor.txt` (`full` / `slim`; in the first-party
-  folder, so the bundle gate claims it); a bundle without it is
-  recognised by a file name starting with `axross-full` / `axross-slim`.
+  `axross/axross-bundle-flavor.txt` (`full` / `slim` / `base`) and the
+  variant as `axross/axross-bundle-variant.txt` (`glibc-2.34` / `glibc-2.36`;
+  in the first-party folder, so the bundle gate claims them); a bundle
+  without the variant file is a glibc-2.34 one (every binary before
+  0.15.166), one without the flavour file is recognised by a file name
+  starting with `axross-full` / `axross-slim`.
+* **Packs** (`core/packs.py`, docs/PACKS.md): the
+  contents of `dist/<version>/packs/` - every wheel an axross-base can add
+  and `packs-<version>.json` - as assets of the same release, each with a
+  line in the release's `SHA256SUMS`. The manifest names every unit (a pip
+  extra, a bundled extension, a feature group) with its wheels, their
+  sizes, SHA-256 and PyPI addresses. A base checks the signature of
+  `SHA256SUMS`, the manifest against it and every wheel against both before
+  it unpacks anything; an update of a binary brings its installed units
+  along (the new release's) before the new binary is fetched.
   Platforms without an asset (Linux aarch64, an axross-full on macOS) only
   get the notice with the release page.
 * **`SHA256SUMS`** among the assets of the same release, in `sha256sum`
@@ -604,7 +643,8 @@ it is refused by every installed binary, nothing is replaced:
   `SHA256SUMS` (not base64, nothing normalised - CRLF or a missing final
   newline are signed as they are). The binaries pin the public release
   key, raw 32 bytes in base64, in `core/self_update.py` `TRUSTED_KEYS`
-  (`rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68=`). The signature is
+  (`rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68=`, and from 0.15.176 on also the next key
+  `INHsCyIzJ305W1+SvRkrEMuaO7puYtlgnhP72N6+mcw=`). The signature is
   checked after `SHA256SUMS` and the signature are fetched and before any
   entry of `SHA256SUMS` is read or the binary is fetched. Refused: no
   `SHA256SUMS.sig` asset, one that is larger than 64 bytes (not even
@@ -622,10 +662,19 @@ it is refused by every installed binary, nothing is replaced:
   a key not pinned in `TRUSTED_KEYS` is refused unless `--allow-unpinned`
   is given; the new signature is verified with the derived public key,
   through the updater's own check, before the file is written.
+  **The signature names the version:** `SHA256SUMS` starts with
+  `# axross-release X.Y.Z` (`--version` adds it), and the updater refuses
+  a release whose signed line names no version or another one than its
+  tag - an old release's signed checksums published under a new tag
+  would otherwise install that old, perhaps vulnerable, build.
   **Key rotation:** `TRUSTED_KEYS` is a tuple and any one key verifying
   is enough. Add the new public key in a release signed with the old key,
   sign with the new key only once the binaries in use carry it, then
   drop the old one.
+  **Rotation under way (0.15.176):** 0.15.176 pins both keys and is
+  signed with the first one, so binaries of 0.14.53 and later take it; the
+  release after it is signed with the new key, and a later one drops the
+  first key.
   **Migration:** binaries of 0.14.50 and older do not check signatures;
   they pick their assets by exact name (`axross-full`, `SHA256SUMS`, ...)
   and ignore `SHA256SUMS.sig`, so they keep updating - into a binary

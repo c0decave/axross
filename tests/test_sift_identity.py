@@ -130,6 +130,9 @@ def win(stores, folder):
 def fake(win):
     analyzer = _FakeAnalyzer()
     win._analysis_dock._auto._factory = lambda: analyzer
+    # The fake stands for sift: the dock acts as with the optional sift extra
+    # installed, so a build without it runs these tests the same way.
+    win._analysis_dock._available = lambda: True
     return analyzer
 
 
@@ -415,7 +418,7 @@ def test_edge_e2e_tools_menu_with_nothing_selected_offers_the_folder(win, fake, 
     assert dock.batch_button.text() == f"Analyse the files in {folder.name} with LLM"
 
 
-def test_sad_tools_menu_without_a_pane_says_so(win) -> None:
+def test_sad_tools_menu_without_a_pane_says_so(win, fake) -> None:
     win._active_pane = None
     _tools_entry(win).trigger()
     pump()

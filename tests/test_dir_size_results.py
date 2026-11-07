@@ -379,3 +379,41 @@ def test_sad_sorting_by_a_column_that_does_not_exist_changes_nothing(pane):
     before = [r.name for r in dialog.model.rows()]
     dialog.model.sort(99)
     assert [r.name for r in dialog.model.rows()] == before
+
+
+def _settle(pane) -> None:
+    assert wait_until(lambda: not pane.is_loading)
+    pump()
+
+
+def test_happy_a_refresh_after_an_operation_keeps_the_calculated_sizes(pane, tree):
+    """A calculation can take minutes; a refresh the pane makes by itself
+    must not throw it away. An operation's refresh (here a new file) keeps
+    the sizes of the folders still there."""
+    _calculate(pane, "big", "small")
+    assert _size_cell(pane, "big") == "300 B"
+    (tree / "new.txt").write_text("x")
+    pane.refresh_after_change()
+    _settle(pane)
+    assert _size_cell(pane, "big") == "300 B"
+    assert _size_cell(pane, "small") != ""
+
+
+def test_happy_the_watchers_refresh_keeps_the_sizes_of_the_folders_still_there(pane, tree):
+    import shutil
+
+    _calculate(pane, "big", "small")
+    small = _size_cell(pane, "small")
+    shutil.rmtree(tree / "small")  # another program removes one
+    pane._note_watch_report()
+    pane._on_debounce_fired()  # the watcher's refresh
+    _settle(pane)
+    assert _size_cell(pane, "big") == "300 B"
+    assert small and "small" not in pane._model._computed
+
+
+def test_sad_a_reload_the_user_asks_for_still_clears_the_sizes(pane, tree):
+    _calculate(pane, "big")
+    pane.refresh_async()  # F5, the Refresh button, View > Refresh
+    _settle(pane)
+    assert _size_cell(pane, "big") == ""

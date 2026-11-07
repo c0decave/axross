@@ -1,0 +1,126 @@
+{
+ "name": "brotlicffi",
+ "versions": {
+  "1.2.1.0": {
+   "accepted_findings": [],
+   "archives": {
+    "brotlicffi-1.2.1.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "brotlicffi-1.2.1.0.dist-info/METADATA": "b47c4072a66c9246fc12deb680c70f9a61dd1921f40d0abb3f5ba29c201bca4e",
+      "brotlicffi-1.2.1.0.dist-info/RECORD": "305b45eae2bbb42d68405fa1e29430ca0567e0bd7f84f2653aa03a9dbe7622d8",
+      "brotlicffi-1.2.1.0.dist-info/WHEEL": "85320c0261c27e2bfa8fcfe387b3c7218223c52a3d22e9f1205fe926213da69a",
+      "brotlicffi-1.2.1.0.dist-info/licenses/LICENSE": "f3e9c29e3db36dc305a4be68a8a225f93949852ce2d19b5b0a3c099eee6509c5",
+      "brotlicffi-1.2.1.0.dist-info/top_level.txt": "40db176816f56fb1450e844e80c0681d30f07ec5a26bb757e462d18540cfc973",
+      "brotlicffi/__init__.py": "ad6f09b9a35f8b9fe2d83be9ce85fa46a0c013a5b4a9bd687a67cd7b455833d3",
+      "brotlicffi/_api.py": "5b48ecd6c5e669cd3f2b97e097d867036284024bd86e90348b00d197ff627c2b",
+      "brotlicffi/_brotlicffi.abi3.so": "fb23c54869c2f207dbfa520b74431a9223e80713934bf271c3f9ee5b67dd8649",
+      "brotlicffi/_build.py": "26cf85a2f6f3348b11f0285f5971fc42ea6cec9b939b73d6468de1edc278e251"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f573999e078e9991cece3c69231b24f9d3e35680d28d13144d48bc8c5fd74b42",
+     "native": {
+      "brotlicffi/_brotlicffi.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "0a7281a39de91432e90c27ab9c4f9feb3a9cf33fda3873534c2a88270d9f60a2"
+    }
+   },
+   "name": "brotlicffi",
+   "provenance": {
+    "brotlicffi-1.2.1.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "python-hyper/brotlicffi",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author": "Cory Benfield",
+    "author_email": "cory@lukasa.co.uk",
+    "home_page": "https://github.com/python-hyper/brotlicffi",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/python-hyper/brotlicffi"
+    },
+    "summary": "Python CFFI bindings to the Brotli library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "A reviewed young release: 1.2.1.0 fixes GHSA-9v8h-qqgm-4m35 (young-release-exceptions.txt). Nothing flagged in the code. Attestation verifies."
+   },
+   "scans": {
+    "capa": {
+     "fb23c54869c2f207dbfa520b74431a9223e80713934bf271c3f9ee5b67dd8649": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "brotlicffi/_brotlicffi.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://.css",
+        "http://.jpg",
+        "http://Descriptionrelatively",
+        "http://UA-Compatible",
+        "http://according",
+        "http://addEventListenerresponsible",
+        "http://applicationslink",
+        "http://ator",
+        "http://cript",
+        "http://dictionaryperceptionrevolutionfoundationpx",
+        "http://encoding",
+        "http://familiar",
+        "http://html4/loose.dtd\">",
+        "http://imEnglish",
+        "http://interested",
+        "http://interpreted",
+        "http://iparticipation",
+        "http://link",
+        "http://mathematicsmargin-top",
+        "http://navigation",
+        "http://option",
+        "http://site",
+        "http://staticsuggested",
+        "http://style",
+        "http://whether",
+        "http://www",
+        "http://www-//W3C//DTD",
+        "http://www.",
+        "http://www./div></div><div",
+        "http://www.C//DTD",
+        "http://www.a",
+        "http://www.css",
+        "http://www.hortcut",
+        "http://www.icon",
+        "http://www.interpretation",
+        "http://www.language",
+        "http://www.style",
+        "http://www.text-decoration",
+        "http://www.w3.org/shortcut",
+        "http://www.wencodeURIComponent",
+        "http://www.years",
+        "https://aIn",
+        "https://was",
+        "https://www.World",
+        "https://www.recent"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.2.1.0",
+   "young_release": "1.2.1.0 fixes GHSA-9v8h-qqgm-4m35 / PYSEC-2026-4323"
+  }
+ }
+}

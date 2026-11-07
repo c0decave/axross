@@ -1,0 +1,67 @@
+{
+ "name": "funcy",
+ "versions": {
+  "2.1": {
+   "accepted_findings": [],
+   "archives": {
+    "funcy-2.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "funcy-2.1.dist-info/METADATA": "bb0ca35d720ffbfa5f2ac7af8288081d4256e8a05b05d5c83a74280eb78357ad",
+      "funcy-2.1.dist-info/RECORD": "f0b949d67eeca49fac1db055734c699860c47e6797cda74601d9b0f9cbdd671d",
+      "funcy-2.1.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "funcy-2.1.dist-info/licenses/LICENSE": "dcf5a6e8e22fe9756fbf60446a5ca2e694af6eab3037b6e83543e27ba16d56a3",
+      "funcy-2.1.dist-info/top_level.txt": "7ea9ac661aa8ed28ab497a2e450a1bb81da1fdd95b3dc93b4efe2031de221562",
+      "funcy/__init__.py": "2993c479a7a312a76a30565e50e30492058930081ef83dabf71ec891a6479a8f",
+      "funcy/_inspect.py": "95490944cb3e38a2e6f5af05f759d712ce6e1fb21028a8b5452f4463e167aa9a",
+      "funcy/calc.py": "63b90ba135fbd7d4c2f3fc0b7f5641e9f69d30626a701c33da7f3dc3236eea37",
+      "funcy/colls.py": "7adc67e84df7242c1953b4f99ae8901c5c7578f88b969e79b26adf15d10709ed",
+      "funcy/debug.py": "a4436fdf3ca18a7a49b9b93b3a9689da3bbfb91b738e4f66d429bf6f40fcf0bb",
+      "funcy/decorators.py": "57fe29540df40ecd8a3d9494ee428e382b6d54c3f4e747e0d4c579e9316deab6",
+      "funcy/flow.py": "a1cdf50061d078ee47a5eaf9591db35b1faa7871706f0c74d38b29c4db353a0f",
+      "funcy/funcmakers.py": "fbeb456d7e8cc22c2c3b3cf965329d2a1222fc3b3e6d47aae892aae5245cf953",
+      "funcy/funcolls.py": "7df238435d650138fc3fe06ed4f46485776623f46ef6d4e4ec077ffe5506ceef",
+      "funcy/funcs.py": "82aa2df77c9c5d862ba16e0401d1cffe52c59be53a5cbb883b27a9587d25960d",
+      "funcy/objects.py": "8aa5012dcbae06adb6b03bf11ce647941c2b8926b61c25911d8076b96c2ffd7f",
+      "funcy/primitives.py": "67dd4be73f3063797d0dac6934427aa5030448514134a34a08c6a5c37a96c9df",
+      "funcy/seqs.py": "d514d8cc3e3bf88fa1bd95962ef310d00655d61a720cea08130abe763b56252d",
+      "funcy/strings.py": "20a6e850f4d1305452461a46a06fedf44b7a4b162995771e1938319434085745",
+      "funcy/tree.py": "48df6aec601171de7fa7291c1ccae51f88259271d974c822ffff009f62302a8a",
+      "funcy/types.py": "bf44df1be7a5390e70c1578de1066f78e14c469ad57c1d608e23c0b4d2744ae3"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "674b3ce42ae4648fb520949d883f14da5b546472a5044739b3688b4788b50f2f",
+     "native": {},
+     "pth": {},
+     "sha256": "290794186530c944f7e444d2e28b98f33a55685f2bfb9b7a61dac564decab8f8"
+    }
+   },
+   "name": "funcy",
+   "provenance": {
+    "funcy-2.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Alexander Schepanovski",
+    "author_email": "suor.web@gmail.com",
+    "home_page": "https://github.com/Suor/funcy",
+    "license": "BSD",
+    "project_urls": {
+     "Homepage": "https://github.com/Suor/funcy"
+    },
+    "summary": "A fancy and practical functional tools"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.1"
+  }
+ }
+}

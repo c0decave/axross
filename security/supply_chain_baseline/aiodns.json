@@ -1,0 +1,64 @@
+{
+ "name": "aiodns",
+ "versions": {
+  "4.0.4": {
+   "accepted_findings": [
+    "yara|capability_process_schedule|aiodns/__init__.py|0bc5cf7b16127ec3"
+   ],
+   "archives": {
+    "aiodns-4.0.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "aiodns-4.0.4.dist-info/METADATA": "a551d54fee9818bb0f9077a4dd3e76749c3e262840d718689443afca610f0cbc",
+      "aiodns-4.0.4.dist-info/RECORD": "155faa3ca3be632514c28e44a60f8a093ba939beea6494b83830c70358283fe4",
+      "aiodns-4.0.4.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "aiodns-4.0.4.dist-info/licenses/LICENSE": "3e91cfa76821ab70d22998136d674d20ae888463a7e8a7f377166cfe1ee64feb",
+      "aiodns-4.0.4.dist-info/top_level.txt": "e49da6dcd58fe1d7b31593694281da8fc9afe3bda23dc53315ba10a2a59c11ee",
+      "aiodns/__init__.py": "0bc5cf7b16127ec37eb077fd85399131b1b0803d7cf739ce0feb1dbaa41f90a4",
+      "aiodns/compat.py": "947b1a610f0036f0696fa8aa9e2309a31b8c5d8fc2a7e36619178fbc7e03f757",
+      "aiodns/error.py": "c1864538d721dab4e16fab1d32e2a1fcd51904b2795207b31cfc22adeaa14191",
+      "aiodns/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e0ee8f9013fe06a342b389823dd6cc9af780556c9d9f7306d2ecc6e926450e25",
+     "native": {},
+     "pth": {},
+     "sha256": "c24dd605bac70a1676ce503f967a98483ff163507198557d8e9db16267e6cfd2"
+    }
+   },
+   "name": "aiodns",
+   "provenance": {
+    "aiodns-4.0.4-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/aiodns",
+     "workflow": "release-wheels.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Sa\u00fal Ibarra Corretg\u00e9 <s@saghul.net>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "repository": "https://github.com/aio-libs/aiodns.git"
+    },
+    "summary": "Simple DNS resolver for asyncio"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_schedule; attestation verifies (aio-libs/aiodns)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_schedule|aiodns/__init__.py|0bc5cf7b16127ec3"
+    ],
+    "yara": [
+     "capability_process_schedule:capability_process_schedule aiodns/__init__.py"
+    ]
+   },
+   "version": "4.0.4"
+  }
+ }
+}

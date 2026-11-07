@@ -102,6 +102,10 @@ class RedisFsSession(DbFsBackend):
             except ValueError:
                 database = 0
             use_tls = use_tls or parts.scheme == "rediss"
+        # RESP2, as redis-py 5-7 spoke by default: redis-py 8 opens every
+        # connection with HELLO 3, which a server before Redis 6 (and a
+        # Redis-speaking server or proxy without HELLO) refuses or answers
+        # with something that is not a HELLO map - the connect failed.
         client_kwargs: dict = {}
         if proxy_cfg is not None:
             # A dedicated pool keeps every connection redis-py ever opens
@@ -113,6 +117,7 @@ class RedisFsSession(DbFsBackend):
                 password=password or None,
                 db=int(database),
                 decode_responses=False,
+                protocol=2,
             )
         else:
             client_kwargs.update(
@@ -122,6 +127,7 @@ class RedisFsSession(DbFsBackend):
                 db=int(database),
                 ssl=bool(use_tls),
                 decode_responses=False,
+                protocol=2,
             )
         self._client = redis.Redis(**client_kwargs)
         self._client.ping()

@@ -340,8 +340,8 @@ def test_live_sad_open_with_a_wrong_password_warns_without_the_password(app, set
     warned = []
     try:
         before = len(win._panes)
-        with mock.patch("ui.main_window.QMessageBox.warning",
-                        side_effect=lambda *a, **k: warned.append(a[2])):
+        with mock.patch("ui.main_window.QMessageBox.exec", autospec=True,
+                        side_effect=lambda box: warned.append(box.text())):
             win._open_sweep_hit(SweepHit(LAB_SMB, "testshare", "/readme.txt", 1, 0.0),
                                 Login(LAB_USER, "Wrong-Pass-77", "", 445))
             assert _wait(app, lambda: bool(warned), timeout=20)

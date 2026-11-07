@@ -183,7 +183,12 @@ def test_edge_the_real_qt_tiff_plugin_reads_like_the_builder_saw_it():
     plugin = Path(PyQt6.__file__).parent / "Qt6/plugins/imageformats/libqtiff.so"
     if not plugin.is_file():
         pytest.skip("no Qt TIFF plugin in this PyQt6")
-    assert any(n.startswith("libtiff.so.") for n in E.needed(str(plugin)))
+    needed = E.needed(str(plugin))
+    # Read off a real Qt plugin: it links Qt. Whether it links a libtiff
+    # depends on the Qt build - an older one needs the host's libtiff.so.5,
+    # Qt 6.11.2 and PyQt6 6.12 carry their own (Dockerfile.build).
+    assert {"libQt6Core.so.6", "libQt6Gui.so.6"} <= set(needed), needed
+    assert all(re.fullmatch(r"lib[\w.+-]+\.so(\.\d+)*", n) for n in needed), needed
 
 
 def test_edge_the_spec_drops_what_bundle_options_drops():

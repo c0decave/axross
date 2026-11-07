@@ -67,6 +67,7 @@ from core.archive import (
     strip_archive_extension,
 )
 from core.i18n import tr
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.archive_pane")
 
@@ -366,6 +367,7 @@ class MemberPropertiesDialog(QDialog):
         from ui.close_corner import add_close_corner
 
         super().__init__(parent)
+        set_window_icon(self, "archive")
         self._values = dict(rows)
         self.setWindowTitle(tr("Properties") + f" — {self._values.get('Name', '')}")
         layout = QVBoxLayout(self)
@@ -421,6 +423,8 @@ class ArchivePaneWidget(QWidget):
     extract_selected = pyqtSignal(list)
     extract_to = pyqtSignal()
     open_member = pyqtSignal(str)
+    #: (member, "hex" | "text"): the right-click Open as Hex / Open as Text.
+    open_member_as = pyqtSignal(str, str)
     #: Extract the selected members into a folder the user picks.
     extract_selected_to = pyqtSignal(list)
     #: Back to the archive this nested one was opened from.
@@ -433,7 +437,12 @@ class ArchivePaneWidget(QWidget):
         parent: QWidget | None = None,
         *,
         chain: tuple[str, ...] = (),
+        background: bool = False,
     ) -> None:
+        """*background*: list the archive on a worker - the window's way
+        (a large .tar.gz is read through to its end, minutes on the GUI
+        thread); the tree fills when it is done (:attr:`loading`).
+        Without it the listing is there when the constructor returns."""
         super().__init__(parent)
         self._archive_path = archive_path
         self._on_open_member = on_open_member
@@ -443,8 +452,12 @@ class ArchivePaneWidget(QWidget):
         self._entries: list[ArchiveEntry] = []
         self._properties_dialog: MemberPropertiesDialog | None = None
 
+        self._list_job = None
         self._build_ui()
-        self._load()
+        if background:
+            self._load_in_background()
+        else:
+            self._load()
 
     # -- UI construction --------------------------------------------------
 
@@ -506,36 +519,60 @@ class ArchivePaneWidget(QWidget):
         """List the archive and populate the tree. Any listing failure is
         caught and surfaced via :attr:`load_error` + the status label;
         the widget never raises out of ``__init__``."""
-        basename = self.display_name()
         try:
-            self._entries = list_archive(self._archive_path)
-        except RarUnavailable as exc:
+            entries = list_archive(self._archive_path)
+        except Exception as exc:  # noqa: BLE001 - each kind is reported (_listing_failed)
+            self._listing_failed(exc)
+            return
+        self._show_entries(entries)
+
+    @property
+    def loading(self) -> bool:
+        """A background listing (``background=True``) is still running."""
+        return self._list_job is not None and self._list_job.running
+
+    def _load_in_background(self) -> None:
+        from ui.scan_job import ScanJob
+
+        self._set_empty_model()
+        self._header_label.setText(self.display_name())
+        self._status_label.setText(tr("Reading the archive…"))
+        self._list_job = ScanJob(self)
+        self._list_job.finished.connect(self._on_listed)
+        path = self._archive_path
+        self._list_job.start(lambda _cancelled, _report: list_archive(path))
+
+    def _on_listed(self, kind: str, value, cancelled: bool) -> None:
+        if cancelled:
+            return
+        if kind == "error":
+            self._listing_failed(value)
+        else:
+            self._show_entries(value)
+
+    def _listing_failed(self, exc: BaseException) -> None:
+        basename = self.display_name()
+        if isinstance(exc, RarUnavailable):
             # Missing optional capability — surface the remediation hint
             # verbatim. NOT a hostile archive; show its message, empty tree.
             self.load_error = str(exc)
-            self._set_empty_model()
-            self._header_label.setText(basename)
-            self._status_label.setText(self.load_error)
             log.info("archive listing unavailable for %r: %s", self._archive_path, exc)
-            return
-        except UnsafeArchive as exc:
+        elif isinstance(exc, UnsafeArchive):
             # Refused / hostile archive — show a safe message, no traceback.
             self.load_error = f"Archive rejected: {exc}"
-            self._set_empty_model()
-            self._header_label.setText(basename)
-            self._status_label.setText(self.load_error)
             log.warning("archive refused %r: %s", self._archive_path, exc)
-            return
-        except Exception as exc:  # noqa: BLE001 — last-resort safety net
+        else:
             # Any other failure (corrupt file, OSError, format-library
             # quirk). Never crash the pane; show a generic safe message.
             self.load_error = f"Archive could not be read: {exc}"
-            self._set_empty_model()
-            self._header_label.setText(basename)
-            self._status_label.setText(self.load_error)
             log.warning("archive listing failed %r: %s", self._archive_path, exc)
-            return
+        self._set_empty_model()
+        self._header_label.setText(basename)
+        self._status_label.setText(self.load_error)
 
+    def _show_entries(self, entries) -> None:
+        self._entries = list(entries)
+        basename = self.display_name()
         model = build_archive_tree(self._entries)
         self._tree.setModel(model)
         self._tree.expandToDepth(0)
@@ -547,6 +584,11 @@ class ArchivePaneWidget(QWidget):
             f"{basename} [{fmt}] — {n_files} entries, {_fmt_size(total)}",
         )
         self._status_label.setText("Ready")
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt
+        if self._list_job is not None:
+            self._list_job.abandon()  # the listing goes on alone, its answer is dropped
+        super().closeEvent(event)
 
     def _set_empty_model(self) -> None:
         """Install a header-only empty model so the tree is valid (and
@@ -612,6 +654,8 @@ class ArchivePaneWidget(QWidget):
     #: icon is the one this entry shows, so a command looks the same in both.
     _ICON_OF = {
         "open": "open-text",
+        "open-hex": "open-hex",
+        "open-text": "open-text",
         "open-archive": "preview-archive",
         "extract-selected": "extract",
         "extract-selected-to": "extract",
@@ -621,7 +665,7 @@ class ArchivePaneWidget(QWidget):
     }
 
     def build_context_menu(self) -> QMenu:
-        """Open / Open Archive for one file, Extract Selected (To…) for a
+        """Open / Open Archive and Open as Hex / Text for one file, Extract Selected (To…) for a
         selection, Extract All (To…), and Properties for one row."""
         from ui.file_pane import CONTEXT_COMMANDS
         from ui.icon_provider import icon
@@ -644,6 +688,10 @@ class ArchivePaneWidget(QWidget):
             label = tr("&Open Archive") if nested else tr("&Open")
             entry("open", label, lambda m=member: self._open(m),
                   icon_of="open-archive" if nested else "open")
+            entry("open-hex", tr("Open as &Hex"),
+                  lambda m=member: self.open_member_as.emit(m, "hex"))
+            entry("open-text", tr("Open as T&ext"),
+                  lambda m=member: self.open_member_as.emit(m, "text"))
             menu.addSeparator()
         if items:
             entry("extract-selected", tr("E&xtract Selected"), self._emit_extract_selected)

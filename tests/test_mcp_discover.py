@@ -56,7 +56,7 @@ fetching
 - **[LiteMCP](https://github.com/wong2/litemcp)** - A TypeScript framework
 """
 
-HOSTILE = """## <script>alert(1)</script>Evil ‮Category
+HOSTILE = """## <script>alert(1)</script>Evil \u202eCategory
 
 - [**Script**](javascript:alert(1)) - runs code
 - [**Data**](data:text/html,<b>x</b>) - a data URL
@@ -65,7 +65,7 @@ HOSTILE = """## <script>alert(1)</script>Evil ‮Category
 - [**Userinfo**](https://user@github.com/evil/x) - credentials in the URL
 - [**Port**](https://github.com:8443/evil/x) - another port
 - [**Org page**](https://github.com/orgs/evil) - no repository
-- [**Good ‮name<img src=x onerror=alert(1)>**](https://github.com/good/repo.git) - \
+- [**Good \u202ename<img src=x onerror=alert(1)>**](https://github.com/good/repo.git) - \
 <b>bold</b> text\x1b[31m with [a link](javascript:alert(2)) and ![img](https://x/i.png)
 - [**Twice**](https://github.com/good/repo) - the same repository again
 """
@@ -235,7 +235,7 @@ def test_sad_a_hostile_readme_gives_plain_text_and_only_github_repositories():
     assert [e.repository for e in entries] == ["https://github.com/good/repo"]
     (good,) = entries
     for text in (good.title, good.description, good.category):
-        assert "<" not in text and "‮" not in text and "\x1b" not in text
+        assert "<" not in text and "\u202e" not in text and "\x1b" not in text
         assert "javascript" not in text and "http" not in text
     assert good.title == "Good name"
     assert good.description == "bold text[31m with a link and img"
@@ -249,7 +249,7 @@ def test_sad_a_hostile_readme_gives_plain_text_and_only_github_repositories():
     "https://github.com.evil.example/a/b", "https://user@github.com/a/b",
     "https://github.com:8443/a/b", "https://github.com/orgs/a", "https://github.com/a",
     "https://github.com/-a/b", "https://github.com/a/..", "https://gist.github.com/a/b",
-    "https://github.com/a/b c", "https://github.com/a/b‮", "", None, 5,
+    "https://github.com/a/b c", "https://github.com/a/b\u202e", "", None, 5,
     "https://github.com/" + "a" * 50 + "/b",
 ])
 def test_sad_only_https_github_repositories_are_accepted(url):

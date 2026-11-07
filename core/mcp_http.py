@@ -599,6 +599,17 @@ class _McpHTTPHandler(http.server.BaseHTTPRequestHandler):
     def log_error(self, fmt, *args) -> None:  # noqa: ARG002
         log.warning("mcp-http %s - %s", self.address_string(), fmt % args)
 
+    def send_error(self, code, message=None, explain=None) -> None:
+        # A request line the stdlib cannot parse ("POST /messages HTTP/1.",
+        # "POST0/messages HTTP/1.1") leaves request_version at HTTP/0.9, and
+        # Python 3.11 sent the 400 / 505 as a bare HTML body, no status
+        # line. Only "GET <path>" is an HTTP/0.9 request; every other line
+        # is answered as HTTP/1.0.
+        words = getattr(self, "requestline", "").split()
+        if self.request_version == "HTTP/0.9" and not (len(words) == 2 and words[0] == "GET"):
+            self.request_version = "HTTP/1.0"
+        super().send_error(code, message, explain)
+
     # ------------------------------------------------------------------
     # Routing
     # ------------------------------------------------------------------

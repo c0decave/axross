@@ -222,6 +222,15 @@ def bench_mcp_call(args, work: Path, record) -> None:
                "params": {"name": "stat", "arguments": {"path": str(work)}}}
     for _ in range(5):
         assert "error" not in M._handle_request(request, tools, cancels=M._CancelRegistry())
+    if jsonschema is None:
+        # Optional: without it no schema is checked (the CPU per call is
+        # still worth knowing).
+        calls = args.calls
+        cost = _cpu_ms(lambda: [M._handle_request(request, tools, cancels=M._CancelRegistry())
+                                for _ in range(calls)])
+        record("mcp_call_cpu_ms_per_call", cost / calls)
+        record("mcp_call_schema_checks", 0)
+        return
     checks = [0]
     cls = jsonschema.validators.Draft202012Validator
     check = cls.check_schema.__func__

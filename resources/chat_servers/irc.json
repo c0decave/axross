@@ -1,0 +1,106 @@
+{
+ "format": 1,
+ "protocol": "irc",
+ "snapshot_date": "2026-11-06",
+ "sources": [
+  "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+ ],
+ "servers": [
+  {
+   "name": "DALnet",
+   "host": "irc.dal.net",
+   "port": 6667,
+   "tls": false,
+   "note": "no TLS port listed - plain text",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "EFNet",
+   "host": "ssl.efnet.org",
+   "port": 9999,
+   "tls": true,
+   "note": "irssi's list does not check its certificate",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "EsperNet",
+   "host": "irc.esper.net",
+   "port": 6697,
+   "tls": true,
+   "note": "",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "liberachat",
+   "host": "irc.libera.chat",
+   "port": 6697,
+   "tls": true,
+   "note": "",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "GameSurge",
+   "host": "irc.gamesurge.net",
+   "port": 6667,
+   "tls": false,
+   "note": "no TLS port listed - plain text",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "IRCnet",
+   "host": "ssl.ircnet.ovh",
+   "port": 6697,
+   "tls": true,
+   "note": "",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "IRCSource",
+   "host": "irc.ircsource.net",
+   "port": 6667,
+   "tls": false,
+   "note": "no TLS port listed - plain text",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "NetFuze",
+   "host": "irc.netfuze.net",
+   "port": 6667,
+   "tls": false,
+   "note": "no TLS port listed - plain text",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "OFTC",
+   "host": "irc.oftc.net",
+   "port": 6697,
+   "tls": true,
+   "note": "",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "QuakeNet",
+   "host": "irc.quakenet.org",
+   "port": 6667,
+   "tls": false,
+   "note": "no TLS port listed - plain text",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "Rizon",
+   "host": "irc.rizon.net",
+   "port": 6697,
+   "tls": true,
+   "note": "",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  },
+  {
+   "name": "Undernet",
+   "host": "irc.undernet.org",
+   "port": 6667,
+   "tls": false,
+   "note": "no TLS port listed - plain text",
+   "source": "https://raw.githubusercontent.com/irssi/irssi/master/irssi.conf"
+  }
+ ]
+}

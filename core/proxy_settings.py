@@ -110,7 +110,7 @@ def _read(p: Path) -> tuple[ProxyDefaults, bool]:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return ProxyDefaults(), True
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return ProxyDefaults(), False
     if not isinstance(raw, dict):
         return ProxyDefaults(), False

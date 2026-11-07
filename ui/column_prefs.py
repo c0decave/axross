@@ -76,7 +76,7 @@ def load(path: Path | None = None) -> ColumnPrefs:
     p = path or DEFAULT_PATH
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         log.debug("column_prefs.load(%s) → defaults (%s)", p, exc)
         return ColumnPrefs()
     if not isinstance(raw, dict):

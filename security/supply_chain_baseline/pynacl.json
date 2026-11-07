@@ -1,0 +1,112 @@
+{
+ "name": "pynacl",
+ "versions": {
+  "1.6.2": {
+   "accepted_findings": [],
+   "archives": {
+    "pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "nacl/__init__.py": "087fb534f9ec3855f15ee069c8e9ab5957b0f2d0e22658a15647fdd7ac01e96b",
+      "nacl/_sodium.abi3.so": "1ee652a7b8a74a84061c54880a0f66b032b1b630e77dff4cd243b01ffac922fd",
+      "nacl/bindings/__init__.py": "fc250d01caf65e01d052496ff0706a6fda9d1f354359620d461c61438f0deee5",
+      "nacl/bindings/crypto_aead.py": "5ce670643de7cac3abf38e67d022526bccb2a2596339d71dbc9cd16fc5eb02bc",
+      "nacl/bindings/crypto_box.py": "32f6cdf964eb9779fdc60bb9217b4e5ec97e4a8a6d5e7cb724dcd0f0d109e71d",
+      "nacl/bindings/crypto_core.py": "9301f155177261208b46d9287b50ddf3bbc53b0e62ceaf16ba6c339691b06b91",
+      "nacl/bindings/crypto_generichash.py": "f665f40c6208ce272bfae5eba853359d4e2d8ab6ac6e2c43c1b71d7d5ed6d5f7",
+      "nacl/bindings/crypto_hash.py": "460d6bb04c04ddace1b104fe74d54f038341f55a202402a7d447f162dd293ded",
+      "nacl/bindings/crypto_kx.py": "1b55fc5fb3f5d1d0e104ec6718c1b5aad7065c6cc1201fe1c63414460affa593",
+      "nacl/bindings/crypto_pwhash.py": "495e4a2ff084ce3a07ef08de3be5880ad47e8d8a27a8544a7bc789f29d256196",
+      "nacl/bindings/crypto_scalarmult.py": "fc35fe9acb76b829f38e8e9f3f91d14e786fd410bde41f609897372ffa2bd7a8",
+      "nacl/bindings/crypto_secretbox.py": "abc8fd1bf91d0d408aaaff84a54e168468196dcebe74805b1dca828f725e6b33",
+      "nacl/bindings/crypto_secretstream.py": "774f7b8d2490e586c29e84d943479d207e74bea56534ccea52f818741809133c",
+      "nacl/bindings/crypto_shorthash.py": "3d053b7631d32c319d56cfb0fd3b22be31471e9e442b9936621ea9fbacf44fad",
+      "nacl/bindings/crypto_sign.py": "3f948b91f440ab9963e452db03506e06b283c305b45e30caff1a67f091386aa2",
+      "nacl/bindings/randombytes.py": "b812b75b859c8e09e365d59a9eb5f47e3619a6bf4a1db06034c97daee8be3a37",
+      "nacl/bindings/sodium_core.py": "f58f425fefacabe4da3da4113d1a71f12583492f4f24e8dafc2a9bfb2ab224d4",
+      "nacl/bindings/utils.py": "283c109da75778d31ba840354a6a4dc82568e64f0c89441ad3b40ceba5737d73",
+      "nacl/encoding.py": "a9300f7363174a4761e1ca83558d2b6ba907c95887302984a3fadeedc806939c",
+      "nacl/exceptions.py": "8f954ecc355f348ec3b95965a78028a1e01f99bb77477375d9f9e2b5813b7ea5",
+      "nacl/hash.py": "c2f73e813c5c61663aea3ce38193db2362a8ebc82c402340dc9ab572a168329d",
+      "nacl/hashlib.py": "b8d76856f2baac3819ef06a1e384d16d4e348dc3ecb71bdb52f8cd8edaeb97aa",
+      "nacl/public.py": "dbefb1b43d960beec4960c629a6a787b61e4244292d5327b9683630879a57012",
+      "nacl/pwhash/__init__.py": "5d20d777bc101cd2c41e5d269077d56f994542ca7aca01e485e9fbd7c8740523",
+      "nacl/pwhash/_argon2.py": "8cbd42851f5b8b0621dd14ae73e2c9dbe5b80e554b1e98abf971c65fc7297894",
+      "nacl/pwhash/argon2i.py": "208bc8b8ef6c88a52ee7e5a9cf44868a5b4b42fec3bbf9a2f41504f083512bfe",
+      "nacl/pwhash/argon2id.py": "7994c345cccdd479049f07281df8120bd979d2758b574a206be06c04e59c06f0",
+      "nacl/pwhash/scrypt.py": "663270299d1697cfb71262f8e4b28792e6f470e0e350f86bc5a2d96704aa89e5",
+      "nacl/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "nacl/secret.py": "4f35ef1f06114d733fbd588e2a6e635906a9539a9a093a91d7e8d08ec82ad361",
+      "nacl/signing.py": "d96e50f4d33cd7bd00aefbf5fbd066a3e6591cec5a15275bb3351f1cd188f61d",
+      "nacl/utils.py": "8269530f5c7d64dc331ddf0ba402c7d421ee77e1edbfc7a345bdf2ed3c92f5fd",
+      "pynacl-1.6.2.dist-info/METADATA": "143914f93191bef3bff7ba953dea6a38fb05f7f9e38e2a2e6ae31bd14ba81709",
+      "pynacl-1.6.2.dist-info/RECORD": "1ece48a6eb46db7fa9d1906c990f0ced09248922d5317fff9a4b987c150ed41c",
+      "pynacl-1.6.2.dist-info/WHEEL": "d19c3b2bca6e4942279c7117498f88a4f56e4550d9be88a1584d9e32dc15249d",
+      "pynacl-1.6.2.dist-info/licenses/LICENSE": "d3174ad63e721d4c9dccb8ad4320848992d314369bc46319720b5802c9153fe9",
+      "pynacl-1.6.2.dist-info/licenses/licenses/LICENSE.libsodium.txt": "508a76d186356c0dd807a670ef510964f8724557024796a2c426c6c0e19ab683",
+      "pynacl-1.6.2.dist-info/top_level.txt": "c1f744388fc6d912339b3b0cca1a6a3f5ec7521e8972a8bdf6da3d6872c4b25a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "344595b390781c64a83c3f0d4c13a438c9bcd7ceb4b166339b4a1be12d6e7822",
+     "native": {
+      "nacl/_sodium.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "22de65bb9010a725b0dac248f353bb072969c94fa8d6b1f34b87d7953cf7bbe4"
+    }
+   },
+   "name": "pynacl",
+   "provenance": {
+    "pynacl-1.6.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/pynacl",
+     "workflow": "pypi-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "The PyNaCl developers <cryptography-dev@python.org>",
+    "home_page": "https://github.com/pyca/pynacl/",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/pyca/pynacl/issues",
+     "Documentation": "https://pynacl.readthedocs.io",
+     "Homepage": "https://github.com/pyca/pynacl"
+    },
+    "summary": "Python binding to the Networking and Cryptography (NaCl) library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pyca/pynacl)."
+   },
+   "scans": {
+    "capa": {
+     "1ee652a7b8a74a84061c54880a0f66b032b1b630e77dff4cd243b01ffac922fd": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "nacl/_sodium.abi3.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "mprotect"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.6.2"
+  }
+ }
+}

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable
 
-from core.local_fs import LocalFS
+from core.local_fs import LocalFS, unstattable_item
 from models.watch_tick_state import WatchTickState
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -96,6 +96,11 @@ class Watcher:
         raise NotImplementedError
 
     def _emit(self, event_type: str, path: str, kind: str) -> None:
+        if self._stop_event.is_set():
+            # A poll that was under way when stop() came: its news is about
+            # a folder nobody watches any more (the pane moved on without
+            # waiting for this thread).
+            return
         try:
             self._callback(event_type, path, kind)
         except Exception as exc:
@@ -248,6 +253,8 @@ _local_log = logging.getLogger("core.local_fs")
 #: LocalFS's own listing functions, taken at import: a backend that lists
 #: through exactly these can be polled by _local_snapshot. A subclass or a
 #: test that replaces one of them is listed through it as before.
+#: FileItem's default modification time, as _snapshot_of renders it.
+_EPOCH_ISO = datetime.fromtimestamp(0).isoformat()
 _LOCAL_LISTING = (LocalFS.list_dir, LocalFS._entry_to_item, LocalFS._stat_to_item)
 
 
@@ -261,8 +268,9 @@ def _plain_local(backend) -> bool:
 def _local_snapshot(path: str) -> _Snapshot | None:
     """``_snapshot_of(LocalFS().list_dir(path))`` without the FileItems:
     the same scandir and lstat per entry, the same (size, modification time
-    as LocalFS turns it into a datetime, folder bit), the same entries left
-    out. A full listing per poll kept a pane on a 20,000-entry folder at
+    as LocalFS turns it into a datetime, folder bit), an entry whose lstat
+    fails kept with the placeholder's attributes as there. A full listing
+    per poll kept a pane on a 20,000-entry folder at
     ~8 % of a core (128 ms per poll, 54 ms this way)."""
     entries: dict[str, tuple[int, str, bool]] = {}
     try:
@@ -272,6 +280,9 @@ def _local_snapshot(path: str) -> _Snapshot | None:
                     st = entry.stat(follow_symlinks=False)
                 except OSError as exc:
                     _local_log.warning("Cannot stat %s: %s", entry.path, exc)  # as list_dir
+                    # As list_dir: kept, with the placeholder's attributes.
+                    item = unstattable_item(entry, exc)
+                    entries[entry.name] = (0, _EPOCH_ISO, item.is_dir)
                     continue
                 if not entry.name:
                     continue

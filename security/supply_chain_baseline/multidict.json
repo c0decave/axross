@@ -1,0 +1,111 @@
+{
+ "name": "multidict",
+ "versions": {
+  "7.1.0": {
+   "accepted_findings": [],
+   "archives": {
+    "multidict-7.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "multidict-7.1.0.dist-info/METADATA": "fe2db435bc86c7e62a42cc1f5b0c0650ba4fd1b05a420413f14085f8a3730e62",
+      "multidict-7.1.0.dist-info/RECORD": "a2f56f8e9fc295e82f1039b0153c02dadb2e36061c88fff708862646a2a89d12",
+      "multidict-7.1.0.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "multidict-7.1.0.dist-info/licenses/LICENSE": "2e4be5fc6c4c72a466fcb665d726e049a6891981fe536c4f04b6366749461d23",
+      "multidict-7.1.0.dist-info/top_level.txt": "f9eb83125924e7faa499f209ed68aa09a6f4d999521595b29de8ca839f6a6504",
+      "multidict/__init__.pxd": "df6b17dde2af33466324b6f644e5cdba294dd525b14e5e7012cfcb82b8456665",
+      "multidict/__init__.py": "b0db161badd40fbead5c2b4926de2f83efdd5cad4b49926d13c999adb7d558f2",
+      "multidict/_abc.py": "f162189cb95ab02936b08b27f56c852f2391bc350a81c9e69a05f39158718acc",
+      "multidict/_compat.py": "4dc463092b64da2218d7f0f00cd8fc90da49450f6bb4b8fdd97be4d73d86fda9",
+      "multidict/_multidict.cpython-312-x86_64-linux-gnu.so": "7bf2588d942f4a9784c6676d402b8002f5eaa16b4f120552fc1820ce4699c2d9",
+      "multidict/_multidict_py.py": "20e288d1fd8052fdf0182d303fb4dd7ef1d9b4ba55624d5d7af0b74c49ec5243",
+      "multidict/_testcapi.cpython-312-x86_64-linux-gnu.so": "9c44ee61572f4f298502163bd4c84c4a037f690549c5e278e4773549fc32c994",
+      "multidict/multidict_capi.h": "a54d5779549cee730b3038c6d00466ad1d56e5745e2e31f0f21ac3aa1113b1dd",
+      "multidict/multidict_capi_struct.h": "2af326b8c8f9ed99fba266d599ef5f1a8c04af2de153ce6e771d2e8bacc45fb9",
+      "multidict/py.typed": "7bd6e66c7dd4171b1a6d0ae73453c6f6ac485f3b706dc33a20a0d89ef670a6b6"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "eeea6321404ed077dfc4b1513aff1806f85a4b81c3b5bfc191402258d0ddbcbc",
+     "native": {
+      "multidict/_multidict.cpython-312-x86_64-linux-gnu.so": "elf",
+      "multidict/_testcapi.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "fed6b7705d49dd07e5e0dd5f5c873fc44047e92d714299b13245b5fecac49d01"
+    }
+   },
+   "name": "multidict",
+   "provenance": {
+    "multidict-7.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/multidict",
+     "workflow": "ci-cd.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Andrew Svetlov <andrew.svetlov@gmail.com>",
+    "license_expression": "Apache-2.0",
+    "project_urls": {
+     "CI: GitHub": "https://github.com/aio-libs/multidict/actions",
+     "Chat: Matrix": "https://matrix.to/#/#aio-libs:matrix.org",
+     "Chat: Matrix Space": "https://matrix.to/#/#aio-libs-space:matrix.org",
+     "Code of Conduct": "https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+     "Coverage: codecov": "https://codecov.io/github/aio-libs/multidict",
+     "Docs: Changelog": "https://multidict.aio-libs.org/en/latest/changes/",
+     "Docs: RTD": "https://multidict.aio-libs.org",
+     "GitHub: issues": "https://github.com/aio-libs/multidict/issues",
+     "GitHub: repo": "https://github.com/aio-libs/multidict",
+     "Homepage": "https://github.com/aio-libs/multidict"
+    },
+    "summary": "multidict implementation"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 2 native binaries profiled, none with network/process imports or addresses; attestation verifies (aio-libs/multidict)."
+   },
+   "scans": {
+    "capa": {
+     "7bf2588d942f4a9784c6676d402b8002f5eaa16b4f120552fc1820ce4699c2d9": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "multidict/_multidict.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "9c44ee61572f4f298502163bd4c84c4a037f690549c5e278e4773549fc32c994": {
+      "capabilities": [],
+      "note": "",
+      "path": "multidict/_testcapi.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "7.1.0"
+  }
+ }
+}

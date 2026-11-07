@@ -1,0 +1,71 @@
+{
+ "name": "google-auth-oauthlib",
+ "versions": {
+  "1.5.0": {
+   "accepted_findings": [
+    "yara|capability_network_outbound|google_auth_oauthlib/flow.py|18cd56cf01a624e2",
+    "yara|capability_network_outbound|google_auth_oauthlib/interactive.py|63a1b58482ebf42e"
+   ],
+   "archives": {
+    "google_auth_oauthlib-1.5.0-py3-none-any.whl": {
+     "entry_points": [
+      "google-oauthlib-tool = google_auth_oauthlib.tool.__main__:main [tool]"
+     ],
+     "files": {
+      "google_auth_oauthlib-1.5.0.dist-info/METADATA": "88a6dde13dede5ab91ac37110ca2d338d5e1459bdcf1c9f9d3e9957330454775",
+      "google_auth_oauthlib-1.5.0.dist-info/RECORD": "e43d5dd6f6426c19edd87929f08a727d25a1dca7299f7cdcf797755f0469321a",
+      "google_auth_oauthlib-1.5.0.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "google_auth_oauthlib-1.5.0.dist-info/entry_points.txt": "0cbdc6453a771e0c0bc5d05908f933f68f2c2bd72710d64c9aed3d133028be49",
+      "google_auth_oauthlib-1.5.0.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "google_auth_oauthlib-1.5.0.dist-info/top_level.txt": "ee874ab439df56a1d1de6c51b6ac746f1e95bb48eec3f8043990a4598c828dba",
+      "google_auth_oauthlib/__init__.py": "4d35202a5f85d1e4c1c4199bc03c036c837e2f7dcb983e096cd2b05c4f879e05",
+      "google_auth_oauthlib/flow.py": "18cd56cf01a624e2c3e551ed933d2bf5f5316366308a3b66ac05027019edb828",
+      "google_auth_oauthlib/helpers.py": "1dc9cafc3c61ba13485009f37594624488a0d5ca93ab0217af1d488c1ebcf4c4",
+      "google_auth_oauthlib/interactive.py": "63a1b58482ebf42efc0497fdc6b31b13eb866c6e7aecf34d66c6ba2d87c9d87b",
+      "google_auth_oauthlib/tool/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "google_auth_oauthlib/tool/__main__.py": "d30dcec151127473ecaa58fa17e898254980dbc4f00584c5d89d841ad2f54960"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e8626276bf8e2d3cef035b7ab6ffc804e886947d12b15d4cfbc343ecae33f8be",
+     "native": {},
+     "pth": {},
+     "sha256": "71625fdea21c6c03217eb9ff13741c3096e6d257ebca0ad084dbd6e9f4aa4ef4"
+    }
+   },
+   "name": "google-auth-oauthlib",
+   "provenance": {
+    "google_auth_oauthlib-1.5.0-py3-none-any.whl": {
+     "kind": "Google"
+    }
+   },
+   "pypi": {
+    "author": "Google Cloud Platform",
+    "author_email": "googleapis-packages@google.com",
+    "home_page": "https://github.com/googleapis/google-cloud-python/tree/main/packages/google-auth-oauthlib",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/googleapis/google-cloud-python/tree/main/packages/google-auth-oauthlib"
+    },
+    "summary": "Google Authentication Library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_outbound|google_auth_oauthlib/flow.py|18cd56cf01a624e2",
+     "yara|capability_network_outbound|google_auth_oauthlib/interactive.py|63a1b58482ebf42e"
+    ],
+    "yara": [
+     "capability_network_outbound:capability_network_outbound google_auth_oauthlib/flow.py",
+     "capability_network_outbound:capability_network_outbound google_auth_oauthlib/interactive.py"
+    ]
+   },
+   "version": "1.5.0"
+  }
+ }
+}

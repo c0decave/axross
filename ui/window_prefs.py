@@ -25,6 +25,9 @@ RESTORE_ON_START_KEY = "restore_layout_on_start"
 FONT_SIZE_KEY = "font_size"
 ICON_COLOURS_KEY = "icon_colours"
 ICON_COLOUR_KEY = "icon_colour"
+#: True: axross's own title bars, the windows frameless (ui.title_bar);
+#: False: the window manager's title bars.
+OWN_TITLE_BARS_KEY = "own_title_bars"
 
 #: How icons are coloured (Monochrome icons is its own switch and wins):
 #: "theme" - as the theme chooses (Hacker and Amber draw every icon in their
@@ -58,6 +61,8 @@ class WindowPrefs:
     icon_colours: str = "theme"
     #: ``#rrggbb`` (lower case) for "one", else None.
     icon_colour: str | None = None
+    #: axross's own title bars (frameless windows), or the window manager's.
+    own_title_bars: bool = True
 
 
 def icon_colour_choice(mode: object, colour: object) -> tuple[str, str | None]:
@@ -94,6 +99,7 @@ def parse(window: object) -> WindowPrefs:
         font_size=size if valid_font_size(size) else None,
         icon_colours=icon_mode,
         icon_colour=icon_colour,
+        own_title_bars=window.get(OWN_TITLE_BARS_KEY) is not False,
     )
 
 
@@ -108,6 +114,7 @@ __all__ = [
     "MAX_FONT_SIZE",
     "MIN_FONT_SIZE",
     "MONOCHROME_KEY",
+    "OWN_TITLE_BARS_KEY",
     "RESTORE_ON_START_KEY",
     "SHOW_HIDDEN_KEY",
     "THEME_KEY",

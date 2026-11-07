@@ -34,6 +34,7 @@ from PyQt6.QtCore import Qt
 
 from core import agent_settings as AGS
 from core import mcp_client as MC
+from core.agent import AgentError
 from core.agent_sandbox import DEFAULT_IMAGE, ENGINE_PROGRAMS, RULES, sandbox_command
 from tests import test_settings_matrix as SMX
 from tests import test_settings_matrix_network_llm as NL
@@ -407,6 +408,10 @@ def effect_box_name(ctx, win, value) -> None:
 def effect_box_engine(ctx, win, value) -> None:
     profile = _box(win)
     assert profile.engine == value
+    if not profile.resolved_engine():  # "auto" where no engine is installed: said, never run
+        with pytest.raises(AgentError, match="no sandbox engine is installed"):
+            _argv(ctx, profile, ["true"])
+        return
     argv = _argv(ctx, profile, ["true"])
     program = ENGINE_PROGRAMS[profile.resolved_engine()]
     assert program in argv[:4], argv[:4]  # bwrap runs under prlimit (the level's limits)
@@ -701,12 +706,16 @@ def effect_server_env(ctx, win, value) -> None:
 
 def effect_server_sandbox(ctx, win, value) -> None:
     dock = _dock(win)
-    wrap = dock._mcp_wrap(dock.agent_settings.mcp_servers[0])
+    server = dock.agent_settings.mcp_servers[0]
     if not value:
-        assert wrap is None
+        assert dock._mcp_wrap(server) is None
         return
     profile = dock.agent_settings.sandbox_profile(value)
-    argv = wrap(["mcp-program"])
+    if not profile.resolved_engine():  # "auto" where no engine is installed: never unsandboxed
+        with pytest.raises(MC.McpClientError, match="none is installed"):
+            dock._mcp_wrap(server)
+        return
+    argv = dock._mcp_wrap(server)(["mcp-program"])
     assert ENGINE_PROGRAMS[profile.resolved_engine()] in argv[:4] and "mcp-program" in argv
 
 

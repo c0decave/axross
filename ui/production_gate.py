@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from core.safety_tarpit import DEFAULT_COUNTDOWN_S, arm_fired, profile_label, should_arm
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class ProductionCountdownDialog(QDialog):
         self, label: str, op_desc: str, seconds: float, parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "shield")
         self.setWindowTitle("Production profile")
         self._seconds = max(0.0, float(seconds))
         self._deadline = 0.0

@@ -44,8 +44,10 @@ from core.file_type import BINARY_SIGNATURES
 from core.i18n import tr
 from core.open_limits import describe_limit, max_open_bytes
 from core.redaction import redact_url
-from models.file_item import FileItem
+from core.thread_relay import GuiCall
+from models.file_item import NAV_NAMES, FileItem
 from models.file_table_model import COL_NAME, FileSortProxyModel, FileTableModel
+from ui.column_fit import detach_header_selection
 from ui.pane_drag import PANE_MIME_TYPE, DraggableHeader, PaneDropZones
 from ui.scan_job import ScanJob
 
@@ -201,22 +203,35 @@ def _dialog_item_names(items, limit: int = 5) -> str:
     return shown
 
 
-def open_local_file_in_viewer(parent: QWidget | None, path: str, *, read_only: bool = True) -> None:
-    """Open a LOCAL file at *path* in the most appropriate viewer.
+#: Never handed to the desktop's default application from an archive: a
+#: launcher or script there may run instead of being shown.
+_NO_SYSTEM_APP_EXTENSIONS = frozenset({
+    ".desktop", ".sh", ".bash", ".zsh", ".run", ".bin", ".appimage", ".exe", ".msi",
+    ".bat", ".cmd", ".com", ".ps1", ".vbs", ".jar", ".py", ".pl", ".rb", ".command",
+    ".app", ".deb", ".rpm", ".flatpakref",
+})
 
-    Shared dispatch used by the archive-preview "open member" flow
-    (Task A4): an archive member is extracted to a local temp dir and
-    handed here. Mirrors :meth:`FilePaneWidget._on_double_click`'s
-    viewer selection — image → ImageViewerDialog, binary → hex editor,
-    otherwise text editor — but always against a fresh ``LocalFS``
-    backend and defaulting to read-only (the temp extraction is a
-    throwaway preview, not the user's working copy).
 
-    The binary/text classification reuses ``FilePaneWidget``'s shared
-    extension tables + magic-byte signatures so a member is routed the
-    same way the file table would route it. Any viewer-construction
-    failure is swallowed with a log line — a broken preview must never
-    crash the caller.
+def open_local_file_in_viewer(
+    parent: QWidget | None, path: str, *, read_only: bool = True, view: str | None = None
+) -> str:
+    """Open a LOCAL file at *path* the way the file pane opens a file.
+
+    Used for an archive member extracted to a temp folder. The same order
+    as :meth:`FilePaneWidget._on_double_click` (reported: archive members
+    had no syntax highlighting and a PDF only opened in the hex editor):
+
+    * an image -> the image viewer,
+    * a PDF or a video -> the media viewer, that file alone,
+    * text -> a tab of the window's editor (highlighting, read-only),
+    * any other binary -> the desktop's default application (xdg-open on
+      the extracted copy) when the security mode allows external viewers
+      and it is no launcher or script, else the hex editor.
+
+    *view* ``"hex"`` or ``"text"`` skips the choice (the archive's
+    Hex View / Text View). Returns what was opened (``"image"``,
+    ``"media"``, ``"text"``, ``"hex"``, ``"system"``) or ``""`` when nothing
+    was. A broken preview never crashes the caller.
     """
     import os as _os
 
@@ -228,35 +243,113 @@ def open_local_file_in_viewer(parent: QWidget | None, path: str, *, read_only: b
     # Windows of their own (VW.show_independent): a modal viewer froze the
     # editor and the main window until it was closed.
     owner = VW.owner_window(parent)
+
+    def hex_view() -> str:
+        from ui.hex_editor import HexEditorDialog
+
+        VW.show_independent(
+            HexEditorDialog(backend, path, parent=owner, read_only=read_only, background=True)
+        )
+        return "hex"
+
+    def text_view() -> str:
+        opener = getattr(owner, "open_in_editor", None)
+        if callable(opener):
+            opener(backend, path, read_only=read_only)
+            return "text"
+        from ui.text_editor import TextEditorDialog
+
+        dlg = TextEditorDialog(backend, path, parent=owner, read_only=read_only)
+        if dlg.loaded:
+            VW.show_independent(dlg)
+            return "text"
+        dlg.deleteLater()
+        return ""
+
     try:
+        if view == "hex":
+            return hex_view()
+        if view == "text":
+            return text_view()
         if FilePaneWidget._looks_like_image(name):
-            from core import previews as _PV
+            from ui.image_viewer import ImageViewerDialog
 
-            if _PV._is_local_backend(backend):
-                from ui.image_viewer import ImageViewerDialog
-
-                dlg = ImageViewerDialog(backend, path, siblings=[path], parent=owner)
-                if dlg.loaded:
-                    VW.show_independent(dlg)
-                else:
-                    dlg.deleteLater()
-                return
-        if _classify_local_file_is_binary(backend, path, name):
-            from ui.hex_editor import HexEditorDialog
-
-            VW.show_independent(
-                HexEditorDialog(backend, path, parent=owner, read_only=read_only, background=True)
-            )
-        else:
-            from ui.text_editor import TextEditorDialog
-
-            dlg = TextEditorDialog(backend, path, parent=owner, read_only=read_only)
+            dlg = ImageViewerDialog(backend, path, siblings=[path], parent=owner)
             if dlg.loaded:
                 VW.show_independent(dlg)
-            else:
-                dlg.deleteLater()
+                return "image"
+            dlg.deleteLater()
+            return ""
+        if _open_local_media(owner, path, name):
+            return "media"
+        if not _classify_local_file_is_binary(backend, path, name):
+            return text_view()
+        if _open_with_system_app(path, name):
+            return "system"
+        return hex_view()
     except Exception as exc:  # noqa: BLE001 — a preview must never crash the app
         log.warning("Could not open %s in a viewer: %s", path, exc)
+        return ""
+
+
+def _open_local_media(owner, path: str, name: str) -> bool:
+    """*path* alone in the media viewer when it is a PDF or video the viewer
+    can show here (QtPdf / Qt Multimedia, the security mode)."""
+    import os as _os
+
+    from core import media_collect as MC
+    from core.local_fs import LocalFS
+    from core.security_mode import current_policy
+    from ui import media_viewer as MV
+
+    kind = MC.classify(name)
+    if kind not in (MC.PDF, MC.VIDEO):
+        return False
+    if kind == MC.PDF and not MV.pdf_supported():
+        return False
+    if kind == MC.VIDEO and not MV.video_supported():
+        return False
+    if not current_policy().allow_auto_preview:
+        return False
+    options = MV.MediaViewOptions(kinds=frozenset({kind}), start_mode=MV.START_BROWSE)
+    dialog = MV.MediaViewerDialog(LocalFS(), _os.path.dirname(path), options,
+                                  only_names={name}, parent=owner)
+    dialog.show()
+    dialog.start()
+    return True
+
+
+def _open_with_system_app(path: str, name: str) -> bool:
+    """Hand *path* to the desktop's default application (xdg-open). Not for
+    launchers and scripts, not with the execute bit (cleared first: an
+    extracted member keeps its archive mode), not when the security mode
+    forbids external viewers."""
+    import os as _os
+    import stat as _stat
+    import sys as _sys
+
+    from core.security_mode import current_policy
+
+    if not current_policy().allow_external_viewer:
+        return False
+    if _os.path.splitext(name)[1].lower() in _NO_SYSTEM_APP_EXTENSIONS:
+        return False
+    if _sys.platform.startswith("win") or _sys.platform == "darwin":
+        return False  # xdg-open only; elsewhere the hex editor as before
+    try:
+        mode = _os.lstat(path).st_mode
+        if not _stat.S_ISREG(mode):
+            return False
+        if mode & 0o111:
+            _os.chmod(path, _stat.S_IMODE(mode) & ~0o111)
+    except OSError:
+        return False
+    from core.desktop_open import spawn_opener
+
+    if spawn_opener(path):
+        log.info("Opened %s with the default application", path)
+        return True
+    return False
 
 
 def _classify_local_file_is_binary(backend, path: str, name: str) -> bool:
@@ -463,6 +556,10 @@ class _DragTableView(QTableView):
 
     def __init__(self, pane: FilePaneWidget, parent=None):
         super().__init__(parent or pane)
+        from ui.drag_autoscroll import DragAutoScroll
+
+        #: Scrolls near the top / bottom edge while a drag hovers there.
+        self.drag_scroll = DragAutoScroll(self)
         self._pane = pane
         self._band: QRubberBand | None = None
         self._band_origin: QPoint | None = None
@@ -527,6 +624,10 @@ class _DragTableView(QTableView):
 
     def _start_band(self, pos: QPoint, additive: bool, needs_drag_distance: bool = False) -> None:
         self._band_origin = pos + self._scroll_offset()  # content coordinates
+        # The row the box started on, as a row: a rectangle clipped to the
+        # viewport lost it once the drag scrolled it out of view, and only
+        # the rows on screen were selected.
+        self._band_origin_row = self._row_at_y(pos.y())
         self._band_pending = needs_drag_distance
         self._band_base = QItemSelection(self.selectionModel().selection()) if additive else None
         if self._band is None:
@@ -535,31 +636,41 @@ class _DragTableView(QTableView):
     def _update_band(self, pos: QPoint) -> None:
         viewport = self.viewport()
         # Dragging past the top / bottom edge scrolls the list.
+        bar = self.verticalScrollBar()
         if pos.y() < 0:
-            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - 20)
+            bar.setValue(bar.value() - bar.singleStep())  # a step, not 20 rows
         elif pos.y() > viewport.height():
-            self.verticalScrollBar().setValue(self.verticalScrollBar().value() + 20)
+            bar.setValue(bar.value() + bar.singleStep())
         origin = self._band_origin - self._scroll_offset()
         rect = QRect(origin, pos).normalized().intersected(viewport.rect())
         self._band.setGeometry(rect)
         self._band.show()
-        self._select_rows_in(rect)
+        here = self._row_at_y(min(max(pos.y(), 0), max(viewport.height() - 1, 0)))
+        start = getattr(self, "_band_origin_row", -1)
+        if start < 0 or here < 0:
+            self._select_rows(-1, -1)
+        else:
+            self._select_rows(min(start, here), max(start, here))
 
-    def _select_rows_in(self, rect: QRect) -> None:
+    def _row_at_y(self, y: int) -> int:
+        """The row at viewport height *y*; below the last row the row
+        count (one past the last: empty space selects nothing)."""
+        row = self.rowAt(y)
+        if row < 0 and y >= 0:
+            row = self.model().rowCount()
+        return row
+
+    def _select_rows(self, first: int, last: int) -> None:
         model = self.model()
-        count = model.rowCount()
         selection = QItemSelection()
         if self._band_base is not None:
             selection.merge(self._band_base, QItemSelectionModel.SelectionFlag.Select)
-        first = self.rowAt(rect.top())
-        last = self.rowAt(rect.bottom())
-        if last < 0:
-            last = count - 1
         last_col = model.columnCount() - 1
-        if first >= 0:
+        last = min(last, model.rowCount() - 1)
+        if 0 <= first <= last:
             for row in range(first, last + 1):
-                # ".." is navigation, not something to copy or delete.
-                if model.data(model.index(row, 0)) == "..":
+                # "." and ".." are navigation, not something to copy or delete.
+                if model.data(model.index(row, 0)) in NAV_NAMES:
                     continue
                 selection.select(model.index(row, 0), model.index(row, last_col))
         self.selectionModel().select(
@@ -593,6 +704,7 @@ class _DragTableView(QTableView):
 
     def dragMoveEvent(self, event) -> None:
         pos = event.position().toPoint()
+        self.drag_scroll.move(pos)
         folder = self._pane._folder_at(pos)
         self._pane.dragMoveEvent(event, folder, origin=self.viewport())
         if event.isAccepted() and not event.mimeData().hasFormat(PANE_MIME_TYPE):
@@ -601,10 +713,12 @@ class _DragTableView(QTableView):
             self._pane._hide_drop_hint()
 
     def dragLeaveEvent(self, event) -> None:
+        self.drag_scroll.stop()
         self._pane._hide_drop_hint()
         self._pane.dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
+        self.drag_scroll.stop()
         self._pane._hide_drop_hint()
         self._pane.dropEvent(
             event, self._pane._folder_at(event.position().toPoint()), origin=self.viewport()
@@ -724,24 +838,73 @@ def drag_pixmap(names: list[str], dirs: int) -> QPixmap:
 
 _MIN_COLUMN_WIDTH = 60
 # Size, Modified, Permissions, Owner
+#: Bytes Show Checksum reads at a time (a cancel is seen between two).
+CHECKSUM_CHUNK = 1024 * 1024
+
+
+def _stream_sha256(backend, path: str, total: int, cancelled, report) -> str | None:
+    """SHA-256 of *path* read through *backend*, on a worker thread;
+    None when *cancelled()* turned true. *report(done, total, path)*
+    after each chunk."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    done = 0
+    with backend.open_read(path) as fh:
+        while not cancelled():
+            chunk = fh.read(CHECKSUM_CHUNK)
+            if not chunk:
+                return digest.hexdigest()
+            digest.update(chunk)
+            done += len(chunk)
+            report(done, total, path)
+    return None
+
+
+def _read_header(backend, path: str, size: int = 512) -> bytes:
+    """The first *size* bytes of *path* ("" when it cannot be read)."""
+    try:
+        with backend.open_read(path) as fh:
+            return fh.read(size) or b""
+    except (OSError, ValueError):
+        return b""
+
+
+def _link_is_dir(backend, folder: str, path: str) -> bool:
+    """Whether the link *path* (in *folder*) leads to a folder."""
+    try:
+        target = backend.readlink(path)
+        if not target:
+            return False
+        if not target.startswith(backend.separator()):
+            target = backend.join(folder, target)
+        return backend.stat(target).is_dir
+    except OSError:
+        return False
+
+
+def _sweep_orphans(backend, path: str, items: list) -> None:
+    """core.atomic_recovery.sweep_orphans of *path*, on a worker; logs only."""
+    try:
+        from core import atomic_recovery as AR
+
+        removed = AR.sweep_orphans(backend, path, prefetched_entries=items)
+        if removed:
+            log.info("atomic_recovery: removed %d orphan(s) under %s", removed, path)
+    except Exception as exc:  # noqa: BLE001 - never more than a log line
+        log.debug("atomic_recovery sweep skipped for %s: %s", path, exc)
+
+
+def _human_size(size: int) -> str:
+    return FileItem(name="", size=size).size_human
+
+
 _DEFAULT_COLUMN_WIDTHS = {1: 90, 2: 150, 3: 110, 4: 150}
 # How many rows the content-width measurement reads, and how many of the
 # longest texts per column it measures exactly. A listing larger than
 # _MEASURE_ROWS is judged by its first rows in the current sort order.
 _MEASURE_ROWS = 5000
 _MEASURE_LONGEST = 8
-
-
-#: Steps of a byte-count progress bar (see :func:`_progress_units`).
-_PROGRESS_UNITS = 1000
-
-
-def _progress_units(done: int, total: int) -> int:
-    """*done* of *total* bytes as 0.._PROGRESS_UNITS, for a Qt progress
-    range (a C int, which a byte count over 2 GiB overflows)."""
-    if total <= 0:
-        return 0
-    return min(_PROGRESS_UNITS, max(0, done) * _PROGRESS_UNITS // total)
 
 
 class FilePaneWidget(QWidget):
@@ -752,6 +915,8 @@ class FilePaneWidget(QWidget):
     file_activated = pyqtSignal(str)  # full path of activated file
     # (path, ok) when a background load ends; ok is False for failures and cancels.
     navigation_finished = pyqtSignal(str, bool)
+    #: the connection's protection (the security badge) changed
+    security_changed = pyqtSignal()
     transfer_requested = pyqtSignal(list)  # list of full paths to transfer (copy)
     move_requested = pyqtSignal(list)  # list of full paths to move
     #: Paste (Ctrl+V, right-click): move the pending Cut (ui.cut_clipboard)
@@ -788,12 +953,6 @@ class FilePaneWidget(QWidget):
     analyse_requested = pyqtSignal(list)
     #: Analyse Folder with sift: the folder (selected, else the one shown).
     analyse_folder_requested = pyqtSignal(str)
-    # Emitted from the watcher background thread so the GUI thread
-    # owns the actual list refresh. Internal: connect via Qt's auto
-    # cross-thread queueing (PyQt does this when the receiver lives
-    # on a different thread than the emitter).
-    _watch_event = pyqtSignal()
-
     def __init__(
         self,
         backend: FileBackend,
@@ -822,6 +981,14 @@ class FilePaneWidget(QWidget):
 
         self._watch_enabled = _watch.auto_refresh_by_default(backend)
         self._watch_debounce: QTimer | None = None
+        #: The number of the watcher's last report of a change, and the last
+        #: report's number when the listing shown was asked for (-1: unknown).
+        #: Numbers, not times: on Windows with Python 3.12 time.monotonic()
+        #: ticks every 15.6 ms, and a change made in the same tick as a
+        #: listing looked older than it and was never shown.
+        self._watch_counter = itertools.count(1)
+        self._watch_report = 0
+        self._shown_listing_after = -1
         self._shutting_down = False
         #: Open metadata windows (see open_metadata).
         self.metadata_dialogs: list = []
@@ -851,7 +1018,10 @@ class FilePaneWidget(QWidget):
         self._watch_timeout_slot = lambda: self._on_debounce_fired()
         self._watch_event_slot = lambda: self._on_watch_event_signal()
         self._watch_debounce.timeout.connect(self._watch_timeout_slot)
-        self._watch_event.connect(self._watch_event_slot)
+        # The watcher thread reports through this, not through a signal of
+        # the pane: a pane deleted with its window (no shutdown()) may be
+        # being deleted while the thread reports (core/thread_relay.py).
+        self._watch_call = GuiCall(self._on_watch_call)
         self.destroyed.connect(lambda *_: self._mark_destroyed())
 
         if async_initial_load:
@@ -895,6 +1065,14 @@ class FilePaneWidget(QWidget):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
+
+        # How the connection is protected (cleartext, TLS, SSH, SMB3 ...),
+        # always in sight: ui/security_badge.py
+        from ui.security_badge import SecurityBadge
+
+        self._security_badge = SecurityBadge(self)
+        header_layout.addWidget(self._security_badge)
+        self.navigation_finished.connect(lambda _path, _ok: self.refresh_security())
 
         header = DraggableHeader(self)
         header.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -1027,6 +1205,7 @@ class FilePaneWidget(QWidget):
 
         self._table = _DragTableView(self)
         self._table.setModel(self._proxy)
+        detach_header_selection(self._table)
         # Tags (core.tags): dots in the Name column, listed in its tooltip.
         from ui.tag_ui import TagDotsDelegate
 
@@ -1047,6 +1226,8 @@ class FilePaneWidget(QWidget):
         # after the listing changes (see _content_width).
         self._content_widths: dict[int, int] = {}
         self._content_fit_pending = False
+        # Columns the fitting hid to give a name room (never a user choice).
+        self._fit_hidden: set[int] = set()
         for signal in (
             self._proxy.modelReset,
             self._proxy.layoutChanged,
@@ -1131,6 +1312,21 @@ class FilePaneWidget(QWidget):
         self._cancel_size_btn.hide()
         status_layout.addWidget(self._cancel_size_btn)
         self._size_job: ScanJob | None = None
+        # Shown only while Show Checksum asks the backend or reads the file.
+        self._cancel_checksum_btn = QPushButton(tr("Cancel"))
+        self._cancel_checksum_btn.setToolTip(tr("Stop the checksum"))
+        self._cancel_checksum_btn.clicked.connect(self._cancel_checksum)
+        self._cancel_checksum_btn.hide()
+        status_layout.addWidget(self._cancel_checksum_btn)
+        self._checksum_job: ScanJob | None = None
+        # What a file is / where a link leads, read for a double-click, F3, F4.
+        self._probe_job: ScanJob | None = None
+        self._probe_text = ""
+        self._probe_then = (None, None, None)
+        # New Folder / New File / Rename: their backend calls (see _run_op).
+        self._op_job: ScanJob | None = None
+        self._op_text = ""
+        self._op_then = (None, "", "", None)
         # Shown only while Delete / Move to Trash runs in the background.
         self._cancel_delete_btn = QPushButton(tr("Cancel"))
         self._cancel_delete_btn.setToolTip(tr("Stop the delete after the entry in progress"))
@@ -1183,10 +1379,12 @@ class FilePaneWidget(QWidget):
         ".." row). Touches no widget, so it may run on a worker thread."""
         path = self._backend.normalize(path)
         items = self._backend.list_dir(path)
-        # Prepend ".." entry for navigating up (except at root)
+        # Prepend ".." entry for navigating up (except at root), and "." -
+        # this folder, a drop target for a drag from the other pane.
         parent = self._backend.parent(path)
         if parent != path:
             items.insert(0, FileItem(name="..", is_dir=True))
+        items.insert(0, FileItem(name=".", is_dir=True))
         return path, items
 
     def _read_disk_usage(self, path: str):
@@ -1197,16 +1395,30 @@ class FilePaneWidget(QWidget):
             log.debug("Disk usage unavailable for %s on %s: %s", path, self._backend.name, e)
             return None
 
-    def _apply_listing(self, path: str, items: list, history="push", usage=_UNSET) -> None:
+    def _apply_listing(self, path: str, items: list, history="push", usage=_UNSET,
+                       listed_after: int = -1, keep_sizes: bool = False) -> None:
         """UI part of a navigation. *history* is ``"push"`` (record the path),
         ``"keep"`` (refresh: leave the history alone) or an int (back / forward:
-        move to that position)."""
+        move to that position). *listed_after* is the watcher's last report
+        when the listing was asked for (-1: unknown) - a change reported up
+        to then is in it (_on_debounce_fired)."""
+        self._shown_listing_after = listed_after
         # The same folder again (F5, an operation, the watcher): the model
-        # reset drops the selection, so it is taken by name and given back.
-        keep = self._selection_by_name() if path == self._current_path else None
-        self._model.set_items(items)
-        if keep:
-            self._restore_selection(*keep)
+        # reset drops the selection, so it is taken by name and given back -
+        # and the view stays where the user scrolled it (see _keep_place).
+        same_folder = path == self._current_path
+        keep = self._selection_by_name() if same_folder else None
+        places = self._scroll_places() if same_folder else None
+        # Calculated folder sizes go with a reload the user asked for (F5)
+        # and with another folder; a refresh of its own keeps them.
+        self._model.set_items(items, keep_sizes=keep_sizes and same_folder)
+        self._keep_place(places, keep)
+        if listed_after >= 0 and self._watch_report > listed_after:
+            # A change reported while the folder was being listed may not be
+            # in it: look again. (A report during a load was dropped before -
+            # a change on a slow server stayed unseen.)
+            if self._watch_debounce is not None:
+                self._watch_debounce.start()
         if history == "push":
             if not self._history or path != self._history[self._history_pos]:
                 # Truncate forward history and append
@@ -1219,8 +1431,7 @@ class FilePaneWidget(QWidget):
         self._apply_cut_marks()
         self._retire_stale_menus()
         self._path_edit.setText(path)
-        real_count = sum(1 for i in items if i.name != "..")
-        self._status.setText(f"{real_count} items")
+        self._status.setText(self._items_text())
         self.path_changed.emit(path)
         log.debug("Navigated to %s", path)
         if usage is _UNSET:
@@ -1235,25 +1446,17 @@ class FilePaneWidget(QWidget):
         # Opportunistic crash-recovery sweep — only the directory
         # we just landed in, only files older than the conservative
         # default age. Reuse the listing we already fetched so a
-        # remote backend doesn't pay for a second list_dir.
-        # Wrapped so a backend that doesn't support remove() (e.g.
-        # read-only mount) can't break navigation.
-        try:
-            from core import atomic_recovery as AR
+        # remote backend doesn't pay for a second list_dir. Only when
+        # the listing holds a candidate (a name check, no I/O), and then
+        # on a thread of its own: a remove() per orphan on a server held
+        # the window. It only logs; a backend that cannot remove() (a
+        # read-only mount) cannot break navigation.
+        from core import atomic_recovery as AR
 
-            removed = AR.sweep_orphans(
-                self._backend,
-                path,
-                prefetched_entries=items,
-            )
-            if removed:
-                log.info(
-                    "atomic_recovery: removed %d orphan(s) under %s",
-                    removed,
-                    path,
-                )
-        except Exception as exc:  # noqa: BLE001 — never block navigate
-            log.debug("atomic_recovery sweep skipped for %s: %s", path, exc)
+        if AR.any_orphan_name(getattr(i, "name", "") for i in items):
+            backend = self._backend
+            threading.Thread(target=_sweep_orphans, args=(backend, path, list(items)),
+                             name="orphan-sweep", daemon=True).start()
 
     def navigate(self, path: str) -> None:
         """Load *path* and wait for it (programmatic callers and tests).
@@ -1268,9 +1471,11 @@ class FilePaneWidget(QWidget):
         QApplication.processEvents()
 
         try:
+            listed_after = self._watch_report
             path, items = self._fetch_listing(path)
             # Track history (skip during back/forward and refresh)
-            self._apply_listing(path, items, "keep" if self._history_navigating else "push")
+            self._apply_listing(path, items, "keep" if self._history_navigating else "push",
+                                listed_after=listed_after)
         except OSError as e:
             log.error("Navigation failed: %s", e)
             self._status.setText(f"Error: {e}")
@@ -1283,7 +1488,8 @@ class FilePaneWidget(QWidget):
         return bool(self._nav_ctx)
 
     def navigate_async(
-        self, path: str, history="push", quiet: bool = False, fallback: str | None = None
+        self, path: str, history="push", quiet: bool = False, fallback: str | None = None,
+        keep_sizes: bool = False,
     ) -> None:
         """Load *path* on a worker thread. The current listing stays shown
         and usable; a status line with a Cancel button reports the load
@@ -1295,7 +1501,7 @@ class FilePaneWidget(QWidget):
         comes back as home, decided off the GUI thread)."""
         self._status_before = self._status.text()
         self._nav_ctx = {"path": path, "history": history, "quiet": quiet,
-                         "fallback": fallback}
+                         "fallback": fallback, "keep_sizes": keep_sizes}
         if not quiet:
             self._progress_bar.show()
             self._cancel_nav_btn.show()
@@ -1307,14 +1513,18 @@ class FilePaneWidget(QWidget):
             with self._nav_lock:
                 if cancel():
                     return None
+                listed_after = self._watch_report
                 real, items = self._fetch_listing(path)
-                return real, items, self._read_disk_usage(real)
+                return real, items, self._read_disk_usage(real), listed_after
 
         self._nav_job.start(work, replace=True)
 
-    def refresh_async(self, quiet: bool = False) -> None:
-        """Reload the current folder in the background; history untouched."""
-        self.navigate_async(self._current_path, history="keep", quiet=quiet)
+    def refresh_async(self, quiet: bool = False, keep_sizes: bool = False) -> None:
+        """Reload the current folder in the background; history untouched.
+        *keep_sizes*: a refresh of its own (watcher, operation), not one the
+        user asked for - calculated folder sizes stay."""
+        self.navigate_async(self._current_path, history="keep", quiet=quiet,
+                            keep_sizes=keep_sizes)
 
     def refresh_after_change(self, quiet: bool = False) -> None:
         """Show the current folder again after an operation changed it,
@@ -1327,7 +1537,7 @@ class FilePaneWidget(QWidget):
         ctx = self._nav_ctx
         if ctx and ctx["path"] != self._current_path:
             return
-        self.refresh_async(quiet=quiet)
+        self.refresh_async(quiet=quiet, keep_sizes=True)
 
     def cancel_navigation(self) -> None:
         """Stop a running background load (the pane stays where it was)."""
@@ -1365,8 +1575,9 @@ class FilePaneWidget(QWidget):
         if value is None:  # the worker saw the cancel flag first
             self.navigation_finished.emit(ctx["path"], False)
             return
-        path, items, usage = value
-        self._apply_listing(path, items, ctx["history"], usage)
+        path, items, usage, listed_after = value
+        self._apply_listing(path, items, ctx["history"], usage, listed_after=listed_after,
+                            keep_sizes=ctx.get("keep_sizes", False))
         self.navigation_finished.emit(path, True)
 
     def refresh(self) -> None:
@@ -1382,13 +1593,21 @@ class FilePaneWidget(QWidget):
     def _on_watch_toggled(self, on: bool) -> None:
         self._watch_enabled = on
         if on:
-            self._start_watcher()
+            # The listing shown is the watcher's first picture: without it
+            # the watcher listed the folder itself, on the GUI thread (a
+            # round trip on a server).
+            model = self._model
+            shown = [model.get_item(row) for row in range(model.rowCount())]
+            self._start_watcher(self._raw_listing(self._backend, self._current_path,
+                                                  [i for i in shown if i is not None]))
         else:
             self._stop_watcher()
 
     @staticmethod
     def _raw_listing(backend, path: str, items: list) -> list:
-        """*items* without the ".." row that _fetch_listing put in front."""
+        """*items* without the "." and ".." rows that _fetch_listing put in front."""
+        if items and items[0].name == "." and items[0].is_dir:
+            items = items[1:]
         if items and items[0].name == ".." and backend.parent(path) != path:
             return items[1:]
         return items
@@ -1428,13 +1647,16 @@ class FilePaneWidget(QWidget):
             self._watcher = None
             self._watched_path = None
 
-    def _stop_watcher(self) -> None:
-        """Idempotently stop the current watcher and forget it."""
+    def _stop_watcher(self, wait: bool = False) -> None:
+        """Idempotently stop the current watcher and forget it. Only
+        *wait* (closing the pane) waits for its thread: a poll under way
+        is a list_dir on a server, and every folder change waited up to a
+        second for it; a stopped watcher reports nothing more."""
         if self._watcher is None:
             self._watched_path = None
             return
         try:
-            self._watcher.stop(timeout=1.0)
+            self._watcher.stop(timeout=1.0 if wait else 0.0)
         except Exception as exc:  # noqa: BLE001 — never block shutdown
             log.debug("Watcher.stop() raised: %s", exc)
         finally:
@@ -1449,21 +1671,26 @@ class FilePaneWidget(QWidget):
         emit a signal — the GUI thread debounces it into a refresh."""
         if self._shutting_down:
             return
+        self._note_watch_report()
         log.debug("Watch event: %s %s (%s)", event_type, path, kind)
-        # pyqtSignal.emit is thread-safe and the connection is
-        # auto-queued because the receiver lives on another thread.
-        try:
-            self._watch_event.emit()
-        except RuntimeError as exc:
-            log.debug("Watch event ignored after FilePane teardown: %s", exc)
+        # Queued into the GUI thread (directly when already on it); dropped
+        # once the pane is deleted.
+        self._watch_call()
+
+    def _on_watch_call(self) -> None:
+        self._watch_event_slot()
 
     def _on_watch_event_signal(self) -> None:
-        """GUI-thread bounce for ``_watch_event``: just (re)start the
+        """GUI-thread bounce for a watch report: just (re)start the
         debounce timer. Wrapped so tests can patch this attribute."""
         if self._shutting_down:
             return
         if self._watch_debounce is not None:
             self._watch_debounce.start()
+
+    def _note_watch_report(self) -> None:
+        """The watcher reported a change (any thread)."""
+        self._watch_report = next(self._watch_counter)
 
     def _on_debounce_fired(self) -> None:
         """Debounce timeout — issue the actual refresh. Wrapped so
@@ -1471,8 +1698,16 @@ class FilePaneWidget(QWidget):
         if self._shutting_down:
             return
         if self.is_loading:
-            return  # a user navigation / refresh is already fetching fresh data
-        self.refresh_async(quiet=True)
+            # A navigation / refresh is fetching fresh data; a change it
+            # may have missed is caught when it is shown (_apply_listing).
+            return
+        if self._watch_report <= self._shown_listing_after:
+            # The listing shown was asked for after the last change the
+            # watcher reported: it has that change. An operation's own
+            # refresh and the watcher's report of the same change listed
+            # the folder twice - a second round trip to a server.
+            return
+        self.refresh_async(quiet=True, keep_sizes=True)
 
     def shutdown(self) -> None:
         """Stop background resources owned by this pane.
@@ -1488,6 +1723,12 @@ class FilePaneWidget(QWidget):
         self._hover_timer.stop()
         if getattr(self, "_size_job", None) is not None:
             self._size_job.abandon()
+        if getattr(self, "_checksum_job", None) is not None:
+            self._checksum_job.abandon()
+        if getattr(self, "_probe_job", None) is not None:
+            self._probe_job.abandon()
+        if getattr(self, "_op_job", None) is not None:
+            self._op_job.abandon()
         if getattr(self, "_removal_job", None) is not None:
             # A removal stops after the entry in progress; its worker gives
             # the claimed paths free when that entry has returned.
@@ -1507,15 +1748,13 @@ class FilePaneWidget(QWidget):
                 self._watch_debounce.timeout.disconnect(self._watch_timeout_slot)
             except (TypeError, RuntimeError):
                 pass
-        try:
-            self._watch_event.disconnect(self._watch_event_slot)
-        except (TypeError, RuntimeError):
-            pass
-        self._stop_watcher()
+        self._stop_watcher(wait=True)  # no watcher thread outlives its pane
         handle = getattr(self, "_fuse_handle", None)
         if handle is not None:
+            from ui.off_gui import run_off_gui
+
             try:
-                handle.unmount()
+                run_off_gui(handle.unmount)  # up to ~15 s: off the GUI thread
             except Exception as exc:  # noqa: BLE001 — never block close
                 log.debug("FilePane shutdown: FUSE unmount failed: %s", exc)
             self._fuse_handle = None
@@ -1564,10 +1803,9 @@ class FilePaneWidget(QWidget):
             return
         if self._open_document_viewer(full_path, item.name):
             return
-        if self._is_binary_file(full_path, item.name):
-            self._open_hex_editor(full_path, read_only=True)
-        else:
-            self._open_editor(full_path, read_only=True)
+        self._when_binary_known(full_path, item.name, lambda binary: (
+            self._open_hex_editor(full_path, read_only=True) if binary
+            else self._open_editor(full_path, read_only=True)))
 
     @staticmethod
     def _looks_like_image(name: str) -> bool:
@@ -1850,10 +2088,8 @@ class FilePaneWidget(QWidget):
         full_path = self._safe_item_path(item)
         if full_path is None:
             return
-        if self._is_binary_file(full_path, item.name):
-            self._open_hex_editor(full_path)
-        else:
-            self._open_editor(full_path)
+        self._when_binary_known(full_path, item.name, lambda binary: (
+            self._open_hex_editor(full_path) if binary else self._open_editor(full_path)))
 
     def _copy_to_target(self) -> None:
         """Copy selected items to the target pane (F5)."""
@@ -1927,16 +2163,15 @@ class FilePaneWidget(QWidget):
         sel = self._table.selectionModel()
         sel.blockSignals(True)
         self._table.selectAll()
-        # Deselect ".." row if present
+        # Deselect the "." and ".." rows
         for row in range(self._proxy.rowCount()):
             source_idx = self._proxy.mapToSource(self._proxy.index(row, 0))
             item = self._model.get_item(source_idx.row())
-            if item and item.name == "..":
+            if item and item.is_nav:
                 sel.select(
                     self._proxy.index(row, 0),
                     sel.SelectionFlag.Deselect | sel.SelectionFlag.Rows,
-                )
-                break
+                )  # each of them: "." and ".." may both be listed
         sel.blockSignals(False)
         self.selection_changed.emit()
 
@@ -1947,8 +2182,8 @@ class FilePaneWidget(QWidget):
             return
         source_idx = self._proxy.mapToSource(current)
         item = self._model.get_item(source_idx.row())
-        if item and item.name == "..":
-            # Don't toggle "..", just move down
+        if item and item.is_nav:
+            # Don't toggle "." / "..", just move down
             pass
         else:
             sel = self._table.selectionModel()
@@ -1987,7 +2222,7 @@ class FilePaneWidget(QWidget):
         for row in range(rows):
             item = self._model.get_item(proxy.mapToSource(proxy.index(row, 0)).row())
             take = not selected[row]
-            if item and item.name == "..":
+            if item and item.is_nav:
                 dotdot_rows.append(row)
                 take = False
             if take and run_start is None:
@@ -2059,18 +2294,36 @@ class FilePaneWidget(QWidget):
         """Return full paths of selected items."""
         return [path for path, _item in self._selected_entries()]
 
+    def _selected_rows(self) -> list[int]:
+        """The shown rows selected, as selectedRows() gives them - read off
+        the selection's ranges. selectedRows() asks the model for the flags
+        of every column of every row it checks: 0.4 s for 20 000 selected
+        rows, on every copy, refresh and right-click. The table selects
+        whole rows; a range that is not one (a cell selected by code) falls
+        back to selectedRows()."""
+        sel = self._table.selectionModel()
+        last = self._proxy.columnCount() - 1
+        ranges = list(sel.selection())
+        if any(r.left() != 0 or r.right() != last for r in ranges):
+            return [index.row() for index in sel.selectedRows(COL_NAME)]
+        return list(dict.fromkeys(row for r in ranges for row in range(r.top(), r.bottom() + 1)))
+
+    def _selected_source_items(self) -> list[FileItem]:
+        """The listing items of the selected rows ("." and ".." included)."""
+        get = self._model.get_item
+        return [item for row in self._proxy.source_rows_of(self._selected_rows())
+                if (item := get(row)) is not None]
+
     def _selected_entries(self) -> list[tuple[str, FileItem]]:
-        """``(full path, listing item)`` of every selected row but "..".
+        """``(full path, listing item)`` of every selected row but "." and "..".
 
         A row whose name cannot be joined safely on this backend is left
         out, and the status line says so: a copy that silently misses a
         selected file looks complete."""
         entries = []
         left_out = []
-        for index in self._table.selectionModel().selectedRows(COL_NAME):
-            source_idx = self._proxy.mapToSource(index)
-            item = self._model.get_item(source_idx.row())
-            if item and item.name != "..":
+        for item in self._selected_source_items():
+            if not item.is_nav:
                 path = self._safe_item_path(item, warn=False)
                 if path is not None:
                     entries.append((path, item))
@@ -2088,11 +2341,7 @@ class FilePaneWidget(QWidget):
     def _selection_by_name(self) -> tuple[set[str], str | None] | None:
         """The selected rows' names and the current row's name, or None."""
         sel = self._table.selectionModel()
-        names = set()
-        for index in sel.selectedRows(COL_NAME):
-            item = self._model.get_item(self._proxy.mapToSource(index).row())
-            if item is not None:
-                names.add(item.name)
+        names = {item.name for item in self._selected_source_items()}
         if not names:
             return None
         current = self._model.get_item(self._proxy.mapToSource(sel.currentIndex()).row())
@@ -2130,22 +2379,90 @@ class FilePaneWidget(QWidget):
         self.navigation_finished.connect(arrived)
         self.navigate_async(folder)
 
+    def _wait(self, fn, text: str):
+        """*fn()* - backend calls an action needs the answer of before it
+        goes on (encrypt, decrypt, a link's target) - off the GUI thread:
+        the windows keep painting meanwhile (ui.off_gui)."""
+        from ui.off_gui import run_off_gui
+
+        return run_off_gui(fn, text=text, status=lambda shown: self._status.setText(
+            shown or self._items_text()))
+
+    def _items_text(self) -> str:
+        """The status line's count: the entries, not the "." and ".." rows."""
+        items = self._model._items
+        count = len(items) - sum(1 for item in items if item.name in NAV_NAMES)
+        return f"{count} items"
+
+    def _list_views(self) -> list:
+        """The table and, once made, the thumbnail view: both show the model."""
+        views = [self._table]
+        thumbs = getattr(self, "_thumbs", None)
+        if thumbs is not None:
+            views.append(thumbs)
+        return views
+
+    def _scroll_places(self) -> list[tuple[int, int]]:
+        return [(v.verticalScrollBar().value(), v.horizontalScrollBar().value())
+                for v in self._list_views()]
+
+    def _keep_place(self, places, keep) -> None:
+        """After the model was reset: a refresh (*places* given) puts each
+        view back where it was scrolled and the selection back without
+        Qt's auto-scroll to the current row; another folder starts at the
+        top. Reported: scrolling up went to the top and then started at
+        the bottom again - every refresh (the watcher, a transfer writing
+        into the folder) jumped to the row last clicked."""
+        views = self._list_views()
+        for view in views:
+            # The scroll ranges follow a reset only at the next layout: now,
+            # so a value set below is not cut to the old list's range.
+            view.executeDelayedItemsLayout()
+        if keep:
+            held = [(view, view.hasAutoScroll()) for view in views]
+            for view, _on in held:
+                view.setAutoScroll(False)
+            try:
+                self._restore_selection(*keep)
+            finally:
+                for view, on in held:
+                    view.setAutoScroll(on)
+        for index, view in enumerate(views):
+            vertical, horizontal = places[index] if places and index < len(places) else (0, 0)
+            view.verticalScrollBar().setValue(vertical)
+            view.horizontalScrollBar().setValue(horizontal)
+
     def _restore_selection(self, names: set[str], current: str | None) -> None:
-        """Select the rows named ``names`` in one change; ``current`` back as current."""
-        selection = QItemSelection()
+        """Select the rows named ``names`` in one change; ``current`` back as current.
+
+        One range per run of adjacent rows: one per row made Qt merge 20 000
+        ranges for a folder with everything selected (2 s on every refresh)."""
+        proxy = self._proxy
+        rows = []
         current_index = None
         for row in range(self._model.rowCount()):
             item = self._model.get_item(row)
             if item is None or item.name not in names:
                 continue
-            index = self._proxy.mapFromSource(self._model.index(row, COL_NAME))
+            index = proxy.mapFromSource(self._model.index(row, COL_NAME))
             if not index.isValid():  # filtered out (hidden files)
                 continue
-            selection.select(index, index)
+            rows.append(index.row())
             if item.name == current:
                 current_index = index
-        if selection.isEmpty():
+        if not rows:
             return
+        rows.sort()
+        last = proxy.columnCount() - 1
+        selection = QItemSelection()
+        top = previous = rows[0]
+        for row in rows[1:] + [None]:
+            if row is not None and row == previous + 1:
+                previous = row
+                continue
+            selection.select(proxy.index(top, 0), proxy.index(previous, last))
+            if row is not None:
+                top = previous = row
         sel = self._table.selectionModel()
         flags = QItemSelectionModel.SelectionFlag
         sel.select(selection, flags.ClearAndSelect | flags.Rows)
@@ -2154,13 +2471,7 @@ class FilePaneWidget(QWidget):
 
     def selected_file_items(self) -> list[FileItem]:
         """Return FileItem objects for selected rows."""
-        items = []
-        for index in self._table.selectionModel().selectedRows(COL_NAME):
-            source_idx = self._proxy.mapToSource(index)
-            item = self._model.get_item(source_idx.row())
-            if item and item.name != "..":
-                items.append(item)
-        return items
+        return [item for item in self._selected_source_items() if not item.is_nav]
 
     def set_show_hidden(self, show: bool) -> None:
         self._proxy.show_hidden = show
@@ -2198,6 +2509,24 @@ class FilePaneWidget(QWidget):
         self._path_edit.setText(self._current_path)
         self.update_header_color()
         self.navigate_async(path or self._current_path)
+
+    #: what protects the pane's connection now (core.conn_security.SecurityInfo)
+    security_info = None
+
+    def refresh_security(self) -> None:
+        """Read the connection's protection again (negotiated values once the
+        backend is connected) and show it; tell the window when it changed
+        (the workspace tab shows the weakest of its panes)."""
+        badge = getattr(self, "_security_badge", None)
+        if badge is None:
+            return
+        from core import conn_security
+
+        info = conn_security.of_backend(self._backend)
+        badge.set_info(info)
+        if info != self.security_info:
+            self.security_info = info
+            self.security_changed.emit()
 
     def get_session_type(self) -> str:
         """Return 'local', 'remote', or 'root' based on the backend type."""
@@ -2263,6 +2592,7 @@ class FilePaneWidget(QWidget):
         bg, fg = scheme.get(session_type, scheme["local"])
 
         type_label = {"local": "LOCAL", "remote": "REMOTE", "root": "ROOT"}[session_type]
+        self.refresh_security()
         self._header_label.setText(
             f"<b>{escape(self._backend.name)}</b> <small>[{type_label}]</small>"
         )
@@ -2359,7 +2689,7 @@ class FilePaneWidget(QWidget):
     profile_name = ""
 
     def _tags_of_item(self, item) -> list[str]:
-        if item is None or item.name == "..":
+        if item is None or item.is_nav:
             return []
         from core import tags as T
 
@@ -2497,6 +2827,8 @@ class FilePaneWidget(QWidget):
         if item.name == "..":
             parent = self._backend.parent(self._current_path)
             return parent if parent and parent != self._current_path else None
+        if item.name == "." and item.is_dir:
+            return None  # this folder: the pane's own folder applies
         if not item.is_dir:
             return None
         return self._safe_item_path(item)
@@ -2688,49 +3020,64 @@ class FilePaneWidget(QWidget):
         if item.name == "..":
             self.navigate_async(self._backend.parent(self._current_path))
             return
+        if item.name == "." and item.is_dir:
+            return  # this folder: nothing to open
         full_path = self._safe_item_path(item)
         if full_path is None:
             return
         if item.is_dir:
             self.navigate_async(full_path)
-        elif item.is_link and self._link_points_to_directory(full_path):
-            # Symlink pointing to a directory — navigate into it
-            self.navigate_async(full_path)
+        elif item.is_link:
+            # Where it leads is read on a worker (readlink + stat: two round
+            # trips to a server, which held the window).
+            backend, folder = self._backend, self._current_path
+            self._probe(tr("Opening {name}…").format(name=item.name),
+                        lambda _c, _r: _link_is_dir(backend, folder, full_path),
+                        lambda is_dir: self.navigate_async(full_path) if is_dir
+                        else self._activate_file(item, full_path))
         else:
-            # Supported archives open in the non-modal preview dock
-            # (Task A4) BEFORE the binary/hex branch — otherwise a .zip
-            # would fall through to the hex editor. Local-backend only;
-            # the preview-dock owner extracts to the local filesystem.
-            from core import archive as _ARCH
-            from core import previews as _PV
+            self._activate_file(item, full_path)
 
-            if _PV._is_local_backend(self._backend) and _ARCH.is_supported_archive(item.name):
-                self._open_archive_preview(full_path)
-                return
-            # Route to the best viewer:
-            #   images (local only) → ImageViewerDialog
-            #   PDFs                → media viewer, that document alone
-            #   binaries            → hex
-            #   text                → text editor
-            #   fallthrough         → emit for other handlers
-            if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
-                return
-            if self._open_document_viewer(full_path, item.name):
-                return
-            if self._is_binary_file(full_path, item.name):
-                self._open_hex_editor(full_path)
-            elif self._is_editable_file(item.name, item.size):
-                self._open_editor(full_path)
-            elif item.size > max_open_bytes():
-                QMessageBox.information(
-                    self,
-                    "File Too Large",
-                    f"{item.name} is {item.size_human}; files up to {describe_limit()} "
-                    "are opened. Raise the limit under Edit → Settings… → Files & Panes → "
-                    "Open Size Limit.",
-                )
-            else:
-                self.file_activated.emit(full_path)
+    def _activate_file(self, item, full_path: str) -> None:
+        """A double-click on a file: the viewer or editor it calls for."""
+        # Supported archives open in the non-modal preview dock
+        # (Task A4) BEFORE the binary/hex branch - otherwise a .zip
+        # would fall through to the hex editor. Local-backend only;
+        # the preview-dock owner extracts to the local filesystem.
+        from core import archive as _ARCH
+        from core import previews as _PV
+
+        if _PV._is_local_backend(self._backend) and _ARCH.is_supported_archive(item.name):
+            self._open_archive_preview(full_path)
+            return
+        # Route to the best viewer:
+        #   images (local only) -> ImageViewerDialog
+        #   PDFs                -> media viewer, that document alone
+        #   binaries            -> hex
+        #   text                -> text editor
+        #   fallthrough         -> emit for other handlers
+        if self._looks_like_image(item.name) and self._open_image_viewer(full_path):
+            return
+        if self._open_document_viewer(full_path, item.name):
+            return
+        self._when_binary_known(full_path, item.name,
+                                lambda binary: self._open_by_kind(item, full_path, binary))
+
+    def _open_by_kind(self, item, full_path: str, binary: bool) -> None:
+        if binary:
+            self._open_hex_editor(full_path)
+        elif self._is_editable_file(item.name, item.size):
+            self._open_editor(full_path)
+        elif item.size > max_open_bytes():
+            QMessageBox.information(
+                self,
+                "File Too Large",
+                f"{item.name} is {item.size_human}; files up to {describe_limit()} "
+                "are opened. Raise the limit under Edit → Settings… → Files & Panes → "
+                "Open Size Limit.",
+            )
+        else:
+            self.file_activated.emit(full_path)
 
     # Known binary extensions
     _BINARY_EXTENSIONS = {
@@ -2876,39 +3223,117 @@ class FilePaneWidget(QWidget):
     _BINARY_MAGIC = list(BINARY_SIGNATURES)
 
     def _is_binary_file(self, path: str, name: str) -> bool:
-        """Detect if a file is binary using extension + magic bytes."""
-        lower = name.lower()
+        """Detect if a file is binary using extension + magic bytes. Reads
+        the first bytes through the backend when the name does not tell:
+        the UI asks :meth:`_when_binary_known`, which reads off the GUI
+        thread."""
+        by_name = self._binary_by_name(name)
+        if by_name is not None:
+            return by_name
+        return self._header_is_binary(_read_header(self._backend, path))
 
-        # Check extension first (fast path)
+    def _binary_by_name(self, name: str) -> bool | None:
+        """True / False when the extension says; None when only the
+        content can."""
+        lower = name.lower()
         for ext in self._BINARY_EXTENSIONS:
             if lower.endswith(ext):
                 return True
-
-        # If it's a known text extension, not binary
         for ext in self._TEXT_EXTENSIONS:
             if lower.endswith(ext):
                 return False
+        return None
 
-        # Read first 512 bytes and check magic bytes + null bytes
-        try:
-            with self._backend.open_read(path) as f:
-                header = f.read(512)
-        except (OSError, ValueError):
-            return False
-
+    def _header_is_binary(self, header: bytes) -> bool:
+        """Magic bytes, or a NUL in the first bytes of the file."""
         if not header:
             return False
-
-        # Check magic bytes
         for offset, magic in self._BINARY_MAGIC:
             if header[offset : offset + len(magic)] == magic:
                 return True
+        return b"\x00" in header
 
-        # Heuristic: if there are null bytes in the first 512 bytes, likely binary
-        if b"\x00" in header:
-            return True
+    def _when_binary_known(self, path: str, name: str, then) -> None:
+        """*then(is_binary)*: at once when the name decides, else once the
+        first bytes were read - on a worker. The read ran on the GUI thread
+        at every double-click, F3 and F4 on a file without a known
+        extension: one round trip to a server, the window held meanwhile."""
+        by_name = self._binary_by_name(name)
+        if by_name is not None:
+            then(by_name)
+            return
+        backend = self._backend
+        self._probe(tr("Opening {name}…").format(name=name),
+                    lambda _cancelled, _report: _read_header(backend, path),
+                    lambda header: then(self._header_is_binary(header)))
 
-        return False
+    def _probe(self, text: str, work, done) -> None:
+        """A short read for the UI (what a file is, where a link leads) on a
+        worker; *done(result)* on the GUI thread - unless the pane moved to
+        another folder or connection meanwhile, or another probe replaced
+        this one (a second double-click)."""
+        if self._probe_job is None:
+            self._probe_job = ScanJob(self, interval_ms=300, formatter=lambda _st: self._probe_text)
+            self._probe_job.progress.connect(self._status.setText)
+            self._probe_job.finished.connect(self._on_probe_finished)
+        self._probe_text = text
+        self._probe_then = (done, self._backend, self._current_path)
+        self._probe_job.start(work, replace=True)
+
+    def _on_probe_finished(self, kind: str, value, cancelled: bool) -> None:
+        done, backend, folder = self._probe_then
+        self._probe_then = (None, None, None)
+        if self._status.text() == self._probe_text:
+            self._status.setText(self._items_text())
+        if cancelled or done is None or self._shutting_down:
+            return
+        if backend is not self._backend or folder != self._current_path:
+            return  # the pane moved on: opening it now would surprise
+        if kind == "error":
+            log.warning("Could not read %s: %s", self._probe_text, value)
+            return
+        done(value)
+
+    def _run_op(self, text: str, work, done, title: str, *, failed: str,
+                exists: str | None = None) -> None:
+        """A short change for the UI (New Folder, New File, Rename) on a
+        worker: its backend calls held the window - an exists() and a
+        mkdir() are two round trips to a server. *done(result)* on the GUI
+        thread; an OSError is shown under *title* - *exists* for a
+        FileExistsError, else *failed* with ``{error}``. One at a time per
+        pane; dropped when the pane closes."""
+        if self._op_job is None:
+            self._op_job = ScanJob(self, interval_ms=300, formatter=lambda _st: self._op_text)
+            self._op_job.progress.connect(self._status.setText)
+            self._op_job.finished.connect(self._on_op_finished)
+        elif self._op_then[0] is not None:
+            self.status_message(tr("Another change is still running in this pane."))
+            return
+        self._op_text = text
+        self._op_then = (done, title, failed, exists)
+        # replace: a step started from the last step's done() finds that
+        # job's thread still ending (its result is in already).
+        self._op_job.start(work, replace=True)
+
+    def _on_op_finished(self, kind: str, value, cancelled: bool) -> None:
+        done, title, failed, exists = self._op_then
+        self._op_then = (None, "", "", None)
+        if self._status.text() == self._op_text:
+            self._status.setText(self._items_text())
+        if cancelled or done is None or self._shutting_down:
+            return
+        if kind == "error":
+            if isinstance(value, FileExistsError) and exists:
+                QMessageBox.warning(self, title, exists)
+                return
+            if not isinstance(value, OSError):
+                raise value  # a bug, not the server's answer: the error dialog
+            log.error("%s failed: %s", title, value)
+            # replace, not format(): *failed* already holds file names, and
+            # one with braces ("{draft}.txt") made format() raise KeyError.
+            QMessageBox.warning(self, title, failed.replace("{error}", str(value)))
+            return
+        done(value)
 
     def _is_editable_file(self, name: str, size: int) -> bool:
         """Check if a file should be opened in the text/hex editor."""
@@ -2967,17 +3392,7 @@ class FilePaneWidget(QWidget):
         VW.show_independent(dialog)
 
     def _link_points_to_directory(self, path: str) -> bool:
-        try:
-            target = self._backend.readlink(path)
-            if not target:
-                return False
-            sep = self._backend.separator()
-            if not target.startswith(sep):
-                target = self._backend.join(self._current_path, target)
-            target_item = self._backend.stat(target)
-            return target_item.is_dir
-        except OSError:
-            return False
+        return _link_is_dir(self._backend, self._current_path, path)
 
     def _build_context_menu(self) -> QMenu:
         """Assemble the right-click menu for the current selection.
@@ -3216,7 +3631,9 @@ class FilePaneWidget(QWidget):
 
         # -- this folder
         group()
-        entry("refresh", tr("R&efresh"), self.refresh)
+        # In the background, as Ctrl+R and the toolbar: refresh() lists the
+        # folder on the GUI thread (scripts and tests want it that way).
+        entry("refresh", tr("R&efresh"), lambda _checked=False: self.refresh_async())
         view_as = "Vie&w as Details" if self.view_mode == "thumbnails" else "Vie&w as Thumbnails"
         entry("view-mode", tr(view_as), lambda _checked=False: self.toggle_view_mode())
         entry("media-view", tr("View Media…"), lambda _checked=False: self.view_media())
@@ -3460,7 +3877,7 @@ class FilePaneWidget(QWidget):
             action.setEnabled(ok)
             action.setToolTip(reason)
             action.triggered.connect(lambda _checked=False, f=fmt_id: self.pack_selection(f))
-        files = [i for i in selected if not i.is_dir and i.name != ".."]
+        files = [i for i in selected if not i.is_dir and not i.is_nav]
         if len(selected) == 1 and len(files) == 1:
             menu.addSeparator()
             for fmt_id, label in self._QUICK_COMPRESS:
@@ -3498,7 +3915,7 @@ class FilePaneWidget(QWidget):
         if self.pack_running:
             self.status_message(tr("A pack is still running in this pane."))
             return False
-        items = [i for i in self.selected_file_items() if i.name != ".."]
+        items = [i for i in self.selected_file_items() if not i.is_nav]
         if not items:
             return False
         names = [i.name for i in items]
@@ -3561,34 +3978,31 @@ class FilePaneWidget(QWidget):
         # moves _current_path (see _rename_selected).
         folder = self._current_path
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
-        if ok and name:
-            if not _is_safe_leaf_name(name):
-                QMessageBox.warning(
-                    self,
-                    "New Folder",
-                    "Folder name must be a plain filename — no path "
-                    "separators, no '..', no NUL bytes.",
-                )
-                return
-            try:
-                path = self._backend.join(folder, name)
-                if self._backend.exists(path):
-                    QMessageBox.warning(
-                        self,
-                        "New Folder",
-                        f"Path already exists:\n{name}",
-                    )
-                    return
-                self._backend.mkdir(path)
-                log.info("Created folder: %s", path)
-                self.refresh_after_change()
-            except OSError as e:
-                log.error("Failed to create folder: %s", e)
-                QMessageBox.warning(
-                    self,
-                    "New Folder",
-                    f"Could not create folder:\n{e}",
-                )
+        if not ok or not name:
+            return
+        if not _is_safe_leaf_name(name):
+            QMessageBox.warning(
+                self,
+                "New Folder",
+                "Folder name must be a plain filename — no path "
+                "separators, no '..', no NUL bytes.",
+            )
+            return
+        backend = self._backend
+        path = backend.join(folder, name)
+
+        def work(_cancelled, _report):
+            if backend.exists(path):
+                raise FileExistsError(path)
+            backend.mkdir(path)
+
+        def done(_value):
+            log.info("Created folder: %s", path)
+            self.refresh_after_change()
+
+        self._run_op(tr("Creating {name}…").format(name=name), work, done, "New Folder",
+                     exists=f"Path already exists:\n{name}",
+                     failed="Could not create folder:\n{error}")
 
     def _create_empty_file(self) -> None:
         """Create a zero-byte file at a user-supplied name.
@@ -3613,26 +4027,22 @@ class FilePaneWidget(QWidget):
                 "File name must be a plain filename — no path separators, no '..', no NUL bytes.",
             )
             return
-        path = self._backend.join(folder, name)
-        try:
-            if self._backend.exists(path):
-                QMessageBox.warning(
-                    self,
-                    "New File",
-                    f"Path already exists:\n{name}",
-                )
-                return
-            with self._backend.open_write(path) as fh:
+        backend = self._backend
+        path = backend.join(folder, name)
+
+        def work(_cancelled, _report):
+            if backend.exists(path):
+                raise FileExistsError(path)
+            with backend.open_write(path) as fh:
                 fh.write(b"")
+
+        def done(_value):
             log.info("Created empty file: %s", path)
             self.refresh_after_change()
-        except OSError as e:
-            log.error("Failed to create file: %s", e)
-            QMessageBox.warning(
-                self,
-                "New File",
-                f"Could not create file:\n{e}",
-            )
+
+        self._run_op(tr("Creating {name}…").format(name=name), work, done, "New File",
+                     exists=f"Path already exists:\n{name}",
+                     failed="Could not create file:\n{error}")
 
     def _create_symlink(self) -> None:
         """Prompt for target + link name, then create a symlink.
@@ -3671,7 +4081,9 @@ class FilePaneWidget(QWidget):
             return
         link_path = self._backend.join(folder, link_name)
         try:
-            self._backend.symlink(target, link_path)
+            backend = self._backend
+            self._wait(lambda: backend.symlink(target, link_path),
+                       tr("Creating {name}…").format(name=link_name))
             log.info("Created symlink: %s → %s", link_path, target)
             self.refresh_after_change()
         except OSError as e:
@@ -3717,7 +4129,9 @@ class FilePaneWidget(QWidget):
             return
         link_path = self._backend.join(folder, link_name)
         try:
-            self._backend.hardlink(target, link_path)
+            backend = self._backend
+            self._wait(lambda: backend.hardlink(target, link_path),
+                       tr("Creating {name}…").format(name=link_name))
             log.info("Created hardlink: %s → %s", link_path, target)
             self.refresh_after_change()
         except OSError as e:
@@ -3742,39 +4156,46 @@ class FilePaneWidget(QWidget):
             return
         folder = self._current_path
         new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=item.name)
-        if ok and new_name and new_name != item.name:
-            if not _is_safe_leaf_name(new_name):
-                QMessageBox.warning(
-                    self,
-                    "Rename",
-                    "New name must be a plain filename — no path "
-                    "separators, no '..', no NUL bytes.",
-                )
-                return
-            from core.server_ops import rename_target_taken, server_side_move
+        if not ok or not new_name or new_name == item.name:
+            return
+        if not _is_safe_leaf_name(new_name):
+            QMessageBox.warning(
+                self,
+                "Rename",
+                "New name must be a plain filename — no path "
+                "separators, no '..', no NUL bytes.",
+            )
+            return
+        from core.server_ops import rename_target_taken, server_side_move
 
-            try:
-                new_path = self._backend.join(folder, new_name)
-                # Case-aware: "Report.txt" for "report.txt" on a
-                # case-insensitive backend finds the file itself.
-                if rename_target_taken(self._backend, old_path, new_path):
-                    QMessageBox.warning(
-                        self,
-                        "Rename",
-                        f"Target already exists:\n{new_name}",
-                    )
-                    return
-                if not self._production_ok(f"rename {old_path} to {new_name}"):
-                    return
-                server_side_move(self._backend, old_path, new_path)
-                log.info("Renamed %s -> %s", old_path, new_path)
-                self._tags_follow_rename(old_path, new_path)
-                self.refresh_after_change()
-            except OSError as e:
-                log.error("Rename failed: %s", e)
-                QMessageBox.warning(
-                    self, "Rename", f"Could not rename {item.name} to {new_name}:\n{e}"
-                )
+        backend = self._backend
+        new_path = backend.join(folder, new_name)
+        failed = f"Could not rename {item.name} to {new_name}:\n{{error}}"
+        busy = tr("Renaming {name}…").format(name=item.name)
+
+        def check(_cancelled, _report):
+            # Case-aware: "Report.txt" for "report.txt" on a
+            # case-insensitive backend finds the file itself.
+            if rename_target_taken(backend, old_path, new_path):
+                raise FileExistsError(new_path)
+
+        def move(_cancelled, _report):
+            server_side_move(backend, old_path, new_path)
+
+        def moved(_value):
+            log.info("Renamed %s -> %s", old_path, new_path)
+            self._tags_follow_rename(old_path, new_path)
+            self.refresh_after_change()
+
+        def checked(_value):
+            # The production question between the check and the move: on
+            # the GUI thread, as every dialog.
+            if not self._production_ok(f"rename {old_path} to {new_name}"):
+                return
+            self._run_op(busy, move, moved, "Rename", failed=failed)
+
+        self._run_op(busy, check, checked, "Rename",
+                     exists=f"Target already exists:\n{new_name}", failed=failed)
 
     def _batch_rename(self) -> None:
         from ui.batch_rename_dialog import BatchRenameDialog
@@ -4301,7 +4722,7 @@ class FilePaneWidget(QWidget):
         if cancelled:
             self._status.setText(tr("Size calculation cancelled"))
             return
-        self._status.setText(f"{self._model.rowCount()} items")
+        self._status.setText(self._items_text())
         if kind == "error":
             QMessageBox.warning(self, "Directory Size", f"Could not calculate the size:\n{value}")
             return
@@ -4357,138 +4778,110 @@ class FilePaneWidget(QWidget):
         return "sha256", value
 
     def _show_checksum(self, item) -> None:
-        """Compute or fetch a checksum for *item* and show it in a copy
-        dialog. Backends that have a cheap native fingerprint return it
-        from ``backend.checksum`` immediately; the rest return ``""``,
-        in which case we offer a stream-hash fallback."""
-        from PyQt6.QtCore import Qt
-
-        from ui.checksum_dialog import ChecksumDialog
-
+        """Fetch or compute a checksum for *item* and show it in a copy
+        dialog - off the GUI thread. Backends with a native fingerprint
+        answer ``backend.checksum`` (SFTP runs sha256sum on the server: a
+        large file took minutes, the window frozen under a wait cursor);
+        the rest answer ``""`` and SHA-256 is offered by reading the file,
+        which ran on the GUI thread a megabyte at a time. Both run on a
+        ScanJob now: the status line says how far it is, Cancel stops it."""
         full_path = self._safe_item_path(item)
         if full_path is None:
             return
-        # Cursor stack discipline: exactly one push and exactly one
-        # pop, no matter what exits below. The pop happens in the
-        # outer finally; the OSError is captured and surfaced AFTER
-        # the pop so the warning dialog doesn't render under a wait
-        # cursor. A non-OSError raised by the backend still propagates
-        # but the cursor is restored on the way out.
-        error: OSError | None = None
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            try:
-                value = self._backend.checksum(full_path)
-            except OSError as exc:
-                error = exc
-        finally:
-            QApplication.restoreOverrideCursor()
-        if error is not None:
-            QMessageBox.warning(
-                self,
-                "Checksum",
-                f"Failed to compute checksum:\n{error}",
-            )
+        job = self._ensure_checksum_job()
+        if job.running:
+            self.status_message(tr("A checksum is still running in this pane."))
             return
+        backend = self._backend
+        # The backend with them: the stream hash after the question reads
+        # through this one, not the one the pane shows by then.
+        self._checksum_target = (item, full_path)
+        self._checksum_backend = backend
+        self._checksum_phase = "native"
+        self._begin_checksum(tr("Checksum of {name}…").format(name=item.name))
+        job.start(lambda _cancelled, _report: backend.checksum(full_path))
 
-        source = "native"
-        if value:
-            algo, value = self._split_checksum(value)
+    def _ensure_checksum_job(self) -> ScanJob:
+        if self._checksum_job is None:
+            self._checksum_job = ScanJob(self, formatter=self._checksum_progress_text)
+            self._checksum_job.progress.connect(self._status.setText)
+            self._checksum_job.finished.connect(self._on_checksum_finished)
+        return self._checksum_job
+
+    def _checksum_progress_text(self, state: dict) -> str:
+        item, _path = getattr(self, "_checksum_target", (None, ""))
+        name = item.name if item is not None else ""
+        if getattr(self, "_checksum_phase", "") != "stream":
+            return tr("Checksum of {name}…").format(name=name)
+        done, total = state.get("scanned", 0), state.get("indexed", 0)
+        if total and total > 0:
+            return tr("Hashing {name}… {done} of {total}").format(
+                name=name, done=_human_size(done), total=_human_size(total))
+        return tr("Hashing {name}… {done}").format(name=name, done=_human_size(done))
+
+    def _begin_checksum(self, text: str) -> None:
+        self._status.setText(text)
+        self._progress_bar.show()
+        self._cancel_checksum_btn.show()
+
+    def _cancel_checksum(self) -> None:
+        if self._checksum_job is not None:
+            self._checksum_job.cancel()
+
+    def _start_stream_checksum(self, item, full_path: str) -> None:
+        """SHA-256 by reading the whole file through the backend it was asked on."""
+        backend = self._checksum_backend
+        total = item.size if item.size and item.size > 0 else 0
+        self._checksum_phase = "stream"
+        self._begin_checksum(tr("Hashing {name}…").format(name=item.name))
+        # replace: the first job's thread may not have ended yet - it
+        # finished its work and is reporting (its result is in already).
+        self._ensure_checksum_job().start(
+            lambda cancelled, report: _stream_sha256(backend, full_path, total, cancelled, report),
+            replace=True)
+
+    def _on_checksum_finished(self, kind: str, value, cancelled: bool) -> None:
+        self._cancel_checksum_btn.hide()
+        if not self.is_loading:
+            self._progress_bar.hide()
+        self._status.setText(self._items_text())
+        if cancelled or (kind == "done" and value is None):
+            self._status.setText(tr("Checksum cancelled"))
+            return
+        item, full_path = self._checksum_target
+        stream = self._checksum_phase == "stream"
+        if kind == "error":
+            text = ("Failed to read file for hashing:\n{error}" if stream
+                    else "Failed to compute checksum:\n{error}")
+            QMessageBox.warning(self, "Checksum", text.format(error=value))
+            return
+        if stream:
+            self._present_checksum(full_path, "sha256", value, "stream-read")
+            return
+        algo, digest = self._split_checksum(value) if value else ("", "")
         # A backend that returned a known prefix with an empty tail
         # (e.g. ``"md5:"``) is still "no native checksum" from the
-        # user's perspective — fall through to the stream-hash flow.
-        if not value:
-            reply = QMessageBox.question(
-                self,
-                "Checksum",
-                f"{item.name}: this backend has no native checksum.\n\n"
-                "Compute SHA-256 by reading the entire file?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-            try:
-                value = self._stream_sha256(full_path, item.size)
-            except OSError as exc:
-                QMessageBox.warning(
-                    self,
-                    "Checksum",
-                    f"Failed to read file for hashing:\n{exc}",
-                )
-                return
-            if value is None:  # user clicked Cancel on the progress dialog
-                return
-            algo = "sha256"
-            source = "stream-read"
+        # user's perspective - on to the stream hash.
+        if digest:
+            self._present_checksum(full_path, algo, digest, "native")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Checksum",
+            f"{item.name}: this backend has no native checksum.\n\n"
+            "Compute SHA-256 by reading the entire file?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._start_stream_checksum(item, full_path)
 
+    def _present_checksum(self, full_path: str, algo: str, value: str, source: str) -> None:
         from ui import viewer_window as VW
+        from ui.checksum_dialog import ChecksumDialog
 
         VW.show_independent(
             ChecksumDialog(full_path, algo, value, source=source, parent=VW.owner_window(self))
         )
-
-    def _stream_sha256(self, path: str, total_size: int = 0) -> str | None:
-        """Read *path* through the backend and return its SHA-256 hex,
-        or ``None`` if the user clicks Cancel on the progress dialog.
-
-        A QProgressDialog is shown after a brief delay (so a small
-        local file finishes silently). When the file size is known we
-        render a determinate bar; otherwise the dialog stays in busy
-        mode. Either way the user can abort the read at any time.
-        """
-        import hashlib
-
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QProgressDialog
-
-        chunk_size = 1024 * 1024
-        # Use a determinate range only when total_size > 0; otherwise
-        # the dialog renders as a busy indicator (range 0..0). The range
-        # is per mille of the size: Qt's maximum is a C int, and a byte
-        # count over 2 GiB overflowed it before a byte was read.
-        if total_size and total_size > 0:
-            progress = QProgressDialog(
-                f"Hashing {path}…",
-                "Cancel",
-                0,
-                _PROGRESS_UNITS,
-                self,
-            )
-        else:
-            progress = QProgressDialog(
-                f"Hashing {path}…",
-                "Cancel",
-                0,
-                0,
-                self,
-            )
-        progress.setWindowTitle("Checksum")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(500)  # don't flash for tiny files
-        progress.setValue(0)
-
-        h = hashlib.sha256()
-        bytes_done = 0
-        cancelled = False
-        try:
-            with self._backend.open_read(path) as fh:
-                while True:
-                    chunk = fh.read(chunk_size)
-                    if not chunk:
-                        break
-                    h.update(chunk)
-                    bytes_done += len(chunk)
-                    if total_size and total_size > 0:
-                        progress.setValue(_progress_units(bytes_done, total_size))
-                    QApplication.processEvents()
-                    if progress.wasCanceled():
-                        cancelled = True
-                        break
-        finally:
-            progress.close()
-        if cancelled:
-            return None
-        return h.hexdigest()
 
     # ------------------------------------------------------------------
     # Column header — show/hide + persist widths
@@ -4636,16 +5029,58 @@ class FilePaneWidget(QWidget):
             header.minimumSectionSize(), self._content_width(col), header.sectionSizeHint(col)
         )
 
+    def _user_visible_columns(self) -> list[int]:
+        """The columns the user wants shown (the fitting may hide some)."""
+        prefs = getattr(self, "_column_prefs", None)
+        hidden = prefs.hidden if prefs is not None else set()
+        return [c for c in range(self._model.columnCount()) if c not in hidden]
+
+    def _name_floor(self, viewport: int) -> int:
+        """Width Name gets before any other column is considered: what its
+        content needs, at most the larger of 40 % of the pane and about 24
+        characters - the other columns shrink or step aside for it."""
+        chars = self._table.fontMetrics().horizontalAdvance("n" * 24)
+        icon = self._table.iconSize().width() if self._table.iconSize().isValid() else 16
+        return min(self._content_width(0), max(viewport * 2 // 5, chars + icon + 24))
+
+    def _fit_widths(self, others: list[int], viewport: int, chosen: set[int]) -> dict[int, int]:
+        """Widths of *others*: their preferred ones, minus the slack a name
+        that does not fit takes (each gives up at most what its own content
+        does not use, in proportion to that slack)."""
+        widths = {c: self._preferred_width(c) for c in others}
+        missing = self._content_width(0) - (viewport - sum(widths.values()))
+        if missing <= 0 or not others:
+            return widths
+        slack = {
+            c: 0 if c in chosen else max(0, widths[c] - self._column_floor(c)) for c in others
+        }
+        total = sum(slack.values())
+        take = min(missing, total)
+        if take > 0:
+            given = {c: take * slack[c] // total for c in others}
+            rest = take - sum(given.values())
+            for c in sorted(others, key=lambda c: slack[c] - given[c], reverse=True):
+                if rest <= 0:
+                    break
+                if given[c] < slack[c]:
+                    given[c] += 1
+                    rest -= 1
+            for c in others:
+                widths[c] -= given[c]
+        return widths
+
     def _fit_name_column(self) -> None:
         """Lay the columns out across the viewport, Name first.
 
         Every other visible column gets its preferred width while the name
         fits in what is left. A name that does not fit takes the slack of
-        the others - each gives up at most what its own content does not
-        use, in proportion to that slack - and only then is it cut. A width
-        the user dragged is no slack: taking it made every drag snap back
-        while a long name did not fit. None of this is a user choice, so
-        nothing here writes column prefs.
+        the others first. If Name still has less than its floor
+        (_name_floor) the rightmost columns step aside - hidden for now,
+        not in the prefs, back as soon as the pane is wide enough; ones
+        the user never resized go first. A width the user dragged is no
+        slack: taking it made every drag snap back while a long name did
+        not fit. None of this is a user choice, so nothing here writes
+        column prefs.
         """
         if self._fitting or getattr(self, "_table", None) is None:
             return
@@ -4653,32 +5088,31 @@ class FilePaneWidget(QWidget):
         viewport = self._table.viewport().width()
         if viewport <= 0 or self._table.isColumnHidden(0):
             return
-        others = [c for c in self._visible_columns() if c != 0]
-        widths = {c: self._preferred_width(c) for c in others}
-        missing = self._content_width(0) - (viewport - sum(widths.values()))
+        others = [c for c in self._user_visible_columns() if c != 0]
+        chosen = set(getattr(self._column_prefs, "widths", {}) or {})
+        step_aside: set[int] = set()
         # Hidden, the viewport has no real width yet: nothing to make room in.
-        if missing > 0 and others and self._table.isVisible():
-            chosen = set(getattr(self._column_prefs, "widths", {}) or {})
-            slack = {
-                c: 0 if c in chosen else max(0, widths[c] - self._column_floor(c))
-                for c in others
-            }
-            total = sum(slack.values())
-            take = min(missing, total)
-            if take > 0:
-                given = {c: take * slack[c] // total for c in others}
-                rest = take - sum(given.values())
-                for c in sorted(others, key=lambda c: slack[c] - given[c], reverse=True):
-                    if rest <= 0:
-                        break
-                    if given[c] < slack[c]:
-                        given[c] += 1
-                        rest -= 1
-                for c in others:
-                    widths[c] -= given[c]
+        if self._table.isVisible():
+            widths = self._fit_widths(others, viewport, chosen)
+            floor = self._name_floor(viewport)
+            while others and viewport - sum(widths.values()) < floor:
+                by_position = sorted(others, key=header.visualIndex, reverse=True)
+                victim = next((c for c in by_position if c not in chosen), by_position[0])
+                others.remove(victim)
+                step_aside.add(victim)
+                widths = self._fit_widths(others, viewport, chosen)
+        else:
+            step_aside = self._fit_hidden & set(others)
+            others = [c for c in others if c not in step_aside]
+            widths = {c: self._preferred_width(c) for c in others}
         target = max(header.minimumSectionSize(), viewport - sum(widths.values()))
         self._fitting = True
         try:
+            for c in range(1, self._model.columnCount()):
+                user_visible = c in others or c in step_aside
+                if user_visible and self._table.isColumnHidden(c) != (c in step_aside):
+                    self._table.setColumnHidden(c, c in step_aside)
+            self._fit_hidden = step_aside
             for c in others:
                 if header.sectionSize(c) != widths[c]:
                     header.resizeSection(c, widths[c])
@@ -4748,7 +5182,7 @@ class FilePaneWidget(QWidget):
             )
             action = menu.addAction(str(label))
             action.setCheckable(True)
-            action.setChecked(not self._table.isColumnHidden(col))
+            action.setChecked(col not in self._column_prefs.hidden)
             if col == 0:
                 # Pinning: never let the user hide the Name column.
                 action.setEnabled(False)
@@ -4829,8 +5263,12 @@ class FilePaneWidget(QWidget):
         handle = getattr(self, "_fuse_handle", None)
         if handle is None:
             return
+        from ui.off_gui import run_off_gui
+
         try:
-            handle.unmount()
+            # fusermount -u, umount and the serving thread's end: up to
+            # about 15 s, off the GUI thread.
+            run_off_gui(handle.unmount)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(
                 self,
@@ -4869,15 +5307,19 @@ class FilePaneWidget(QWidget):
         try:
             # create_xlink replaces what is there (atomic_write); like New
             # Folder and New File, an existing name is refused, not overwritten.
-            if self._backend.exists(self._backend.join(folder, leaf)):
+            backend = self._backend
+
+            def create() -> str | None:
+                # Off the GUI thread (ui.off_gui): an exists() and an atomic
+                # write are round trips to a server.
+                if backend.exists(backend.join(folder, leaf)):
+                    return None
+                return XL.create_xlink(backend, target_path, url, display_name=display)
+
+            final = self._wait(create, tr("Creating {name}…").format(name=leaf))
+            if final is None:
                 QMessageBox.warning(self, "Create XLink", f"Path already exists:\n{leaf}")
                 return
-            final = XL.create_xlink(
-                self._backend,
-                target_path,
-                url,
-                display_name=display,
-            )
             log.info("Created xlink %s → %s", final, redact_url(url))
         except (OSError, ValueError) as exc:
             QMessageBox.critical(
@@ -4923,7 +5365,15 @@ class FilePaneWidget(QWidget):
         from ui.elevated_viewer import ElevatedViewerDialog
 
         try:
-            data = E.elevated_read(self._backend, full_path)
+            from ui.off_gui import run_off_gui
+
+            # pkexec waits for the polkit prompt: off the GUI thread, the
+            # window painting meanwhile.
+            backend = self._backend
+            data = run_off_gui(lambda: E.elevated_read(backend, full_path),
+                               text=tr("Waiting for the administrator password…"),
+                               status=lambda shown: self._status.setText(
+                                   shown or self._items_text()))
         except E.ElevatedCancelled:
             log.info("Open-as-root cancelled by user: %s", full_path)
             return
@@ -5043,12 +5493,16 @@ class FilePaneWidget(QWidget):
         done_event = threading.Event()
         # Pre-seed with something the types in the pipeline accept.
         state: dict = {"ok": False, "count": 0, "error": None, "current": 0, "total": 0, "name": ""}
+        # The worker reads this, never the dialog: a widget is the GUI
+        # thread's alone (wasCanceled() from the worker was a data race).
+        cancelled = threading.Event()
+        progress.canceled.connect(cancelled.set)
 
         def _progress_cb(done: int, total: int, name: str) -> None:
             state["current"] = done
             state["total"] = total
             state["name"] = name
-            if progress.wasCanceled():
+            if cancelled.is_set():
                 raise ARCH.ExtractCancelled(
                     "user cancelled via progress dialog",
                 )
@@ -5083,6 +5537,8 @@ class FilePaneWidget(QWidget):
         # event loop a chance to fire the Cancel button.
         while not done_event.is_set():
             QApplication.processEvents()
+            if progress.wasCanceled():  # here, on the GUI thread: Esc, the X, Cancel
+                cancelled.set()
             done_event.wait(0.05)
         # Drain any pending UI events so the final progress update
         # lands before we close the dialog.
@@ -5156,7 +5612,9 @@ class FilePaneWidget(QWidget):
             # Same question Decrypt asks: an existing ciphertext may be
             # the only copy of an older version, under another passphrase.
             existing = E._ensure_enc_suffix(src_path)
-            if self._backend.exists(existing):
+            backend = self._backend
+            if self._wait(lambda: backend.exists(existing), tr("Checking {name}…").format(
+                    name=existing.rsplit('/', 1)[-1])):
                 reply = QMessageBox.question(
                     self,
                     "Overwrite?",
@@ -5165,14 +5623,13 @@ class FilePaneWidget(QWidget):
                 )
                 if reply != QMessageBox.StandardButton.Yes:
                     return
-            with self._backend.open_read(src_path) as fh:
-                data = fh.read()
-            dst_path = E.write_encrypted(
-                self._backend,
-                src_path,
-                data,
-                pw,
-            )
+            def encrypt() -> str:
+                # Read, key derivation (scrypt: deliberately slow) and write.
+                with backend.open_read(src_path) as fh:
+                    data = fh.read(E.MAX_ENCRYPTED_SIZE + 1)  # more is refused anyway
+                return E.write_encrypted(backend, src_path, data, pw)
+
+            dst_path = self._wait(encrypt, tr("Encrypting {name}…").format(name=item.name))
             log.info("Encrypted %s -> %s", src_path, dst_path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
@@ -5211,8 +5668,10 @@ class FilePaneWidget(QWidget):
         )
         if not ok or not pw:
             return
+        backend = self._backend
         try:
-            plain = E.read_encrypted(self._backend, src_path, pw)
+            plain = self._wait(lambda: E.read_encrypted(backend, src_path, pw),
+                               tr("Decrypting {name}…").format(name=item.name))
         except E.InvalidCiphertext as exc:
             QMessageBox.warning(
                 self,
@@ -5229,7 +5688,8 @@ class FilePaneWidget(QWidget):
             return
 
         try:
-            if self._backend.exists(dst_path):
+            if self._wait(lambda: backend.exists(dst_path),
+                          tr("Checking {name}…").format(name=dst_name)):
                 reply = QMessageBox.question(
                     self,
                     "Overwrite?",
@@ -5240,7 +5700,8 @@ class FilePaneWidget(QWidget):
                     return
             from core.atomic_io import atomic_write
 
-            atomic_write(self._backend, dst_path, plain)
+            self._wait(lambda: atomic_write(backend, dst_path, plain),
+                       tr("Writing {name}…").format(name=dst_name))
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
                 self,
@@ -5257,17 +5718,22 @@ class FilePaneWidget(QWidget):
         if not links:
             return
 
-        msg_parts = []
-        for item in links:
-            path = self._safe_item_path(item, warn=False)
-            if path is None:
-                msg_parts.append(f"{item.name} -> (unsafe name)")
-                continue
-            try:
-                target = self._backend.readlink(path)
-                msg_parts.append(f"{item.name} -> {target}")
-            except OSError as e:
-                msg_parts.append(f"{item.name} -> (error: {e})")
+        named = [(item, self._safe_item_path(item, warn=False)) for item in links]
+        backend = self._backend
+
+        def targets() -> list[str]:
+            parts = []
+            for item, path in named:
+                if path is None:
+                    parts.append(f"{item.name} -> (unsafe name)")
+                    continue
+                try:
+                    parts.append(f"{item.name} -> {backend.readlink(path)}")
+                except OSError as e:
+                    parts.append(f"{item.name} -> (error: {e})")
+            return parts
+
+        msg_parts = self._wait(targets, tr("Reading link targets…"))
 
         QMessageBox.information(self, "Symlink Targets", "\n".join(msg_parts))
 
@@ -5425,9 +5891,9 @@ class FilePaneWidget(QWidget):
                 self._delete_selected()
                 return True
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and no_mods:
-                rows = self._table.selectionModel().selectedRows(COL_NAME)
+                rows = self._selected_rows()
                 if len(rows) == 1:
-                    self._on_double_click(rows[0])
+                    self._on_double_click(self._proxy.index(rows[0], COL_NAME))
                 return True
             if key == Qt.Key.Key_F2 and no_mods:
                 self._rename_selected()

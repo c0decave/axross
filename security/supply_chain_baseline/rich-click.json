@@ -1,0 +1,85 @@
+{
+ "name": "rich-click",
+ "versions": {
+  "1.9.9": {
+   "accepted_findings": [],
+   "archives": {
+    "rich_click-1.9.9-py3-none-any.whl": {
+     "entry_points": [
+      "rich-click = rich_click.cli:main"
+     ],
+     "files": {
+      "rich_click-1.9.9.dist-info/METADATA": "685d5a1b3365f5717c08b78c69c65b1fc07262bcd4f7f08e2d9a1d1f06d11dda",
+      "rich_click-1.9.9.dist-info/RECORD": "3bfc32e980c8709e6c2c6c5d74c2e67e219b4f8a7ea23afa4216f05218cf560e",
+      "rich_click-1.9.9.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "rich_click-1.9.9.dist-info/entry_points.txt": "abe25c92b2447e19b39254f9948a5ed684dfebc39a589a40cb532293b946797b",
+      "rich_click-1.9.9.dist-info/licenses/LICENSE": "d460cfe666617a2f86cb7c66f9041f0a87611c8b0c1f2f3f674a2022adc1f2af",
+      "rich_click-1.9.9.dist-info/top_level.txt": "b4a1cf424d73f5677c2eed87ab11d0c85ee8a8e790139fff4940c77b3419e161",
+      "rich_click/__init__.py": "9824fa2d2b8eaf8407312c66695ff4164c06f7f1283f6c7255eeb8b080ae1157",
+      "rich_click/__main__.py": "524cde49f75167637cf5c044079717b0834637c1bcb4d479b78c2ca7e95138e3",
+      "rich_click/_click_types_cache.py": "129f3f05c37c4d19c5f8efc18346c45d952691b308ce07162f824ed042f8a12f",
+      "rich_click/_compat_click.py": "abbe462540313b0e09be089676935a5b6926ef13aae818c74bbe3f4e4fece94d",
+      "rich_click/_compat_typer.py": "4487b7effdf18deccdcf39a444c967c4c250f1b9238df5c8e99307499d3c7d68",
+      "rich_click/_internal_types.py": "4d729d4b62f1fd50b2756088d59d9201910843e8d3b5cef5463409b173a03373",
+      "rich_click/cli.py": "edba3e8aa26bc20ec86aa699c5136f016940fcb8086f25505da016de0876d356",
+      "rich_click/decorators.py": "e116b6cd5f8e6fa5fe0281e899e93e6902af76396c924209ea92438be87ab3f6",
+      "rich_click/decorators.pyi": "786745d803bcfa68aba4214c4de9b99893a1b1121afefaf5ab68566ee1a03550",
+      "rich_click/patch.py": "93740d612848c23ae09c4896555cb9ff29a71eab64988b8d8fd749252f3c01d5",
+      "rich_click/py.typed": "facf0f0ef480ea9392fd51ce853e1ca03c64ba0657545c6fa303a3eb6c2f5feb",
+      "rich_click/rich_box.py": "dd18dc82ca18042464211cee1d1dcccd02547264396c094563363dc81798b6e6",
+      "rich_click/rich_click.py": "41cd5abf920f998f43ddf61d3aa95e79c28c8d6441032a4db6fedce7ed95e326",
+      "rich_click/rich_click_theme.py": "507506cb4ef2c64c64ffc91f9e15a9e505039ba77c3745c491d3e6b512da8c6f",
+      "rich_click/rich_command.py": "0c68bda83154f8173e0e9470ed0383854f4a57dab9bca5f2564332e1489e3fa7",
+      "rich_click/rich_command.pyi": "b995fd17478c2ad719388462a02bb209f0993a4dbe5f4d9c8660a5951129c968",
+      "rich_click/rich_context.py": "3e0f852c98a423634c684a42a259d466ec431ab17044b6d930dec3882ec31232",
+      "rich_click/rich_group.py": "2335894d5825a05d30e44491a57e36b8b3d2e75fab04cf9ec19a387681c23444",
+      "rich_click/rich_help_configuration.py": "fb1b71cf00d2e237295c999f64663872ecd529c9a8b0e0a0fc389570365c221f",
+      "rich_click/rich_help_formatter.py": "ddb507188dd460e1cd6514ade3c4fbac4a5535a10c6bda8ab623fb9683b85b22",
+      "rich_click/rich_help_rendering.py": "6becfaade669aa5981cb1c5f571a73347e835728d453b37a537f267270d6fbfe",
+      "rich_click/rich_panel.py": "2f217a4403cb86968376d8d897dc7f81d7ba917cabe48f10b35613583e248f0c",
+      "rich_click/rich_parameter.py": "f223eff35bf5205d540c8afce26413d699a18c19be84d29c4490f226f7f07285",
+      "rich_click/utils.py": "20b4981571ee97a5788d6b3d5ef3c21bf18a33e7a83ffebf2300fd83768c37e0"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "430ed7e24ac5b6d5d91d3e722193bd3bad22c38ae87bf5ab1652d29923cc3d6b",
+     "native": {},
+     "pth": {},
+     "sha256": "365e7a9d0adb42e41ea832a0a12e02c44c079a26536dee688125eb9814f97274"
+    }
+   },
+   "name": "rich-click",
+   "provenance": {
+    "rich_click-1.9.9-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "ewels/rich-click",
+     "workflow": "deploy-pypi.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Phil Ewels <phil@ewels.co.uk>",
+    "license": "MIT License\n        \n        Copyright (c) 2022 Phil Ewels\n        \n        Permission is hereby granted, free of charge, to any person obtaining a copy\n        of this software and associated documentation files (the \"Software\"), to deal\n        in the Software without restriction, including without limitation the rights\n        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n        copies of the Software, and to permit persons to whom the Software is\n        furnished to do so, subject to the following conditions:\n        \n        The above copyright notice and this permission notice shall be included in all\n        copies or substantial portions of the Software.\n        \n        THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n        SOFTWARE.\n        ",
+    "maintainer_email": "Phil Ewels <phil@ewels.co.uk>, Daniel Reeves <xdanielreeves@gmail.com>",
+    "project_urls": {
+     "Documentation": "https://github.com/ewels/rich-click",
+     "Homepage": "https://github.com/ewels/rich-click",
+     "Issues": "https://github.com/ewels/rich-click/issues",
+     "Repository": "https://github.com/ewels/rich-click"
+    },
+    "summary": "Format click help output nicely with rich"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (ewels/rich-click)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.9.9"
+  }
+ }
+}

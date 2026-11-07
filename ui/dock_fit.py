@@ -601,7 +601,16 @@ class DockFit(QObject):
                 and self._in_area(after) and window.dockWidgetArea(after) == area
                 and not window.tabifiedDockWidgets(after)):
             window.splitDockWidget(after, dock, orientation)
-            return
+            self._activate()
+            if after not in window.tabifiedDockWidgets(dock):
+                return
+            # Qt makes it a tab of *after* when that one still counts as a tab
+            # area (it just lost its last partner): to the end of the area
+            # instead, and the docks after it move behind it below.
+            window.removeDockWidget(dock)
+            window.addDockWidget(area, dock, orientation)
+            dock.show()
+            self._activate()
         # Next to a tab group (or first in the area): Qt only adds at the
         # end, so the docks that come after it move to the end behind it.
         rows = self._rows(area, self._slots(area))
@@ -664,6 +673,19 @@ class DockFit(QObject):
             self._activate()
 
     # -- session.json -----------------------------------------------------------------------
+
+    def forget(self, name: str) -> None:
+        """*name* is gone for good (a conversation attached back into the
+        Agent dock): no automatic tab waits for it, and one tabbed onto it
+        has no anchor any more."""
+        self._records = [r for r in self._records if r.dock != name]
+        for record in self._records:
+            if record.anchor == name:
+                record.anchor = ""
+            if record.after == name:
+                record.after = None
+        self._declined.discard(name)
+        self.schedule()
 
     def auto_tabbed(self) -> list[str]:
         """The object names of the docks this class tabbed, oldest first."""

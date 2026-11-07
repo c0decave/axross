@@ -327,7 +327,7 @@ class LLMSettings:
             raw = json.loads(Path(path).read_text(encoding="utf-8"))
         except FileNotFoundError:
             return cls()
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             log.warning("LLM settings: cannot read %s (%s), using none", path, exc)
             return cls(file_not_fully_loaded=True)
         if not isinstance(raw, dict) or not isinstance(raw.get("profiles"), list):

@@ -117,6 +117,9 @@ class ThumbnailView(QListView):
     def __init__(self, pane, parent=None) -> None:
         super().__init__(parent or pane)
         self._pane = pane
+        from ui.drag_autoscroll import DragAutoScroll
+
+        self.drag_scroll = DragAutoScroll(self)
         self._edge = TILE_EDGE
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
@@ -176,14 +179,17 @@ class ThumbnailView(QListView):
         self._pane.dragEnterEvent(event, origin=self.viewport())
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.drag_scroll.move(event.position().toPoint())
         self._pane.dragMoveEvent(
             event, self._pane._folder_at(event.position().toPoint(), self), origin=self.viewport()
         )
 
     def dragLeaveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.drag_scroll.stop()
         self._pane.dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.drag_scroll.stop()
         self._pane.dropEvent(
             event, self._pane._folder_at(event.position().toPoint(), self), origin=self.viewport()
         )
@@ -192,7 +198,7 @@ class ThumbnailView(QListView):
     def _media_item(self, index: QModelIndex):
         pane = self._pane
         item = pane._model.get_item(pane._proxy.mapToSource(index).row())
-        if item is None or item.is_dir or item.name == "..":
+        if item is None or item.is_dir or item.is_nav:
             return None
         kind = MC.classify(item.name)
         if kind is None:

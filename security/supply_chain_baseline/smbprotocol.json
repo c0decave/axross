@@ -1,0 +1,92 @@
+{
+ "name": "smbprotocol",
+ "versions": {
+  "1.17.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|smbclient/_os.py|259d437b7a950bc7",
+    "yara|capability_filesystem_read|smbclient/_io.py|0d7fbe8f941a960b",
+    "yara|capability_filesystem_read|smbclient/_os.py|259d437b7a950bc7",
+    "yara|capability_filesystem_write_executable|smbclient/shutil.py|e9e5f95d23d2c2ee"
+   ],
+   "archives": {
+    "smbprotocol-1.17.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "smbclient/__init__.py": "4c46a07c9abfcfe19ad51e24440a08bfce2c78f0d3069a997f889a1447e6cdf9",
+      "smbclient/_io.py": "0d7fbe8f941a960bba2ee1996e121b50b51faeabd1543a24e812f5e1402b5245",
+      "smbclient/_os.py": "259d437b7a950bc798a0d8dd9321b5528e5791679381b8edb1ab5ab6fd74c6ad",
+      "smbclient/_pool.py": "2adb7897370ec9c7adaca735b4ac464449ea33e80a86b66328d1bae731cb9fbe",
+      "smbclient/path.py": "743acf4de3a5f5188e6200564f14aaaabd585b9d0ac63eccaf1103b1172ad4b2",
+      "smbclient/shutil.py": "e9e5f95d23d2c2eecc28a4e3efd5bf2cec70d4a9357bd4a49b21b681f2524d9a",
+      "smbprotocol-1.17.0.dist-info/METADATA": "69f0f2bb997d8e07fbdedb708cd807622008fc8f7ac30c0287777476271a23f8",
+      "smbprotocol-1.17.0.dist-info/RECORD": "20997e8ab417a9084104ca87092cc9c192495b5ac3aad070f5c92b5f70e95d9a",
+      "smbprotocol-1.17.0.dist-info/WHEEL": "2b6eb4118ce7cd7b09601406aa623c553c4476265836f0d9c16f5c061f7efcc0",
+      "smbprotocol-1.17.0.dist-info/licenses/LICENSE": "4c3c550abc2b04c507ed0d641dd7e524eaff5bd06c7862af957301836d496d15",
+      "smbprotocol-1.17.0.dist-info/top_level.txt": "14a042b1c148e4129478972a884b403199fb2d79bdc7a455e4956be371fcf4db",
+      "smbprotocol/__init__.py": "2a01ffeb793a409da706e74ca5438df211bc13b5e687536a399fa8e13924a2da",
+      "smbprotocol/_text.py": "b4b24af0d84e0a39292ec5f5198d90acb3738ed763a2628ac0e1babd60a300bb",
+      "smbprotocol/change_notify.py": "1b8d159870a6e2a127c8ba101e56e8cb06720d06075c7be601f7bd1188b13eeb",
+      "smbprotocol/connection.py": "c2f4dfb9454dcacb32af7b1f0b61d4aa09a4e22d0f8b986e79c4c3ebc4ae2f7c",
+      "smbprotocol/create_contexts.py": "87e796e47f928d995b8304faee938cc83b5e635d0bfd2da9bed912becf1a7705",
+      "smbprotocol/dfs.py": "12225365958dcf330b2833c6e5a7985f41b0bcbf2587ac1926c13ed4e6ee7d1c",
+      "smbprotocol/exceptions.py": "4b5f33e5440985c2983611d8ad1b387a56f78b855db38c52fc4a590ad84cde9c",
+      "smbprotocol/file_info.py": "f46037e1024ef61f807e3ac337a6da47b60800c560f5f0b48206382e02e70178",
+      "smbprotocol/header.py": "e0219a05ce87c92296ba21e8ce33cdd65c9c4a564a0480ee3422235a8b074b25",
+      "smbprotocol/ioctl.py": "86554b3cc2afbe9aac36ee5361e01157f4642ea6624a096d6a74141bea0b9416",
+      "smbprotocol/open.py": "d3fb6cc19cdccd41e721f9c7f169e4a3ebb780cab24e990364801fee70fc7dc3",
+      "smbprotocol/query_info.py": "3c27228a3115c3c61b35a3bd86b2a74f898cd6f417f5f9ec8d7246385f1dba1a",
+      "smbprotocol/reparse_point.py": "6d73281cd85455302eec5cf44d876f52d741db537b3b124c78d22d702ee63726",
+      "smbprotocol/security_descriptor.py": "3dfd14cc42cde7fd59b4860efba8bccc3fff76e1e76b9c8ffc96f70540a722c6",
+      "smbprotocol/session.py": "4815cbab025032c51ee291df9636f5744914a5717daa60f76ca053985bf5f95e",
+      "smbprotocol/structure.py": "efe0afa0bcbe038f1d4e145a50c63947ef7027283521d4f35ea26400d3b48ccc",
+      "smbprotocol/transport.py": "6276c0732c38ece2407cf2385293b4c0d3e676fd3b37fd55a3bba1137d097a59",
+      "smbprotocol/tree.py": "8f9460696fc221ab7815c10044e4d08221b88e9b804ff2b70123af7242c00e32"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2234dcf14d3c7c7da8925cb993d31be6bf3a1990e7620d90968401134d67d5ce",
+     "native": {},
+     "pth": {},
+     "sha256": "bd1abff5417f5af83ca516a64ab8e5acece3dbdcf58d4e5e23e47f5165a77349"
+    }
+   },
+   "name": "smbprotocol",
+   "provenance": {
+    "smbprotocol-1.17.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "jborean93/smbprotocol",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Jordan Borean <jborean93@gmail.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "homepage": "https://github.com/jborean93/smbprotocol"
+    },
+    "summary": "Interact with a server using the SMB 2/3 Protocol"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable; attestation verifies (jborean93/smbprotocol)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|smbclient/_os.py|259d437b7a950bc7",
+     "yara|capability_filesystem_read|smbclient/_io.py|0d7fbe8f941a960b",
+     "yara|capability_filesystem_read|smbclient/_os.py|259d437b7a950bc7",
+     "yara|capability_filesystem_write_executable|smbclient/shutil.py|e9e5f95d23d2c2ee"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete smbclient/_os.py",
+     "capability_filesystem_read:capability_filesystem_read smbclient/_io.py",
+     "capability_filesystem_read:capability_filesystem_read smbclient/_os.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable smbclient/shutil.py"
+    ]
+   },
+   "version": "1.17.0"
+  }
+ }
+}

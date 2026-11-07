@@ -5,17 +5,15 @@ import logging
 import os
 import posixpath
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QByteArray, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QByteArray, Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
-    QLabel,
     QLineEdit,
     QMainWindow,
     QMenu,
@@ -27,11 +25,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core import i18n, posix_compat
+from core import i18n
 from core.bookmarks import KIND_TERMINAL as BOOKMARK_TERMINAL
 from core.bookmarks import LOCAL_SHELL, Bookmark, BookmarkManager
 from core.connection_manager import ConnectionManager
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.local_fs import LocalFS
 from core.profiles import (
     SIMPLE_PASSWORD_PROTOCOLS,
@@ -39,16 +37,23 @@ from core.profiles import (
     ProfileManager,
     password_needed,
 )
+from core.thread_relay import GuiCall
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferDirection
 from ui import themes, window_prefs
+from ui.state_files import MAX_UI_STATE_BYTES, _read_json_file, _write_private_text  # noqa: F401 - also used from here
 from ui.analysis_dock import DOCK_TITLE as ANALYSIS_DOCK_TITLE
 from ui.bookmark_edit_dialog import BookmarkEditDialog
 from ui.close_corner import add_close_corner
 from ui.disconnected_pane import KIND_PANE, KIND_TERMINAL, DisconnectedPanePlaceholder
+from ui.dock_bindings import SESSION_KEY as DOCK_BINDINGS_KEY
+from ui.dock_bindings import DockBindingMixin
 from ui.dock_fit import SESSION_KEY as DOCK_FIT_SESSION_KEY
 from ui.dock_fit import DockFit
+from ui.extension_panels import PANEL_NODE, ExtensionDock, ExtensionPanelsMixin
+from ui.extension_panels import panel_node_problem as _panel_node_problem
 from ui.file_pane import FilePaneWidget
+from ui.icon_provider import set_window_icon
 from ui.layout_utils import (
     equal_split_sizes,
     sanitize_splitter_sizes,
@@ -75,8 +80,6 @@ from ui.window_prefs import (
     RESTORE_ON_START_KEY,
     SHOW_HIDDEN_KEY,
 )
-from ui.extension_panels import PANEL_NODE, ExtensionDock, ExtensionPanelsMixin
-from ui.extension_panels import panel_node_problem as _panel_node_problem
 from ui.workspaces import Workspace, WorkspaceMixin
 from ui.workspaces import session_problem as _workspaces_problem
 
@@ -132,18 +135,7 @@ def _needs_key_passphrase(exc: BaseException) -> bool:
 KEY_PASSPHRASE_TRIES = 3
 
 RECONNECT_INTERVAL_MS = 30_000  # 30 seconds
-MAX_UI_STATE_BYTES = 1024 * 1024
 MAX_PROFILE_IMPORT_BYTES = 8 * 1024 * 1024
-
-
-def _read_json_file(path: Path | str, *, max_bytes: int = MAX_UI_STATE_BYTES):
-    """Parsed JSON of ``path``. Raises OSError (unreadable, too large) or
-    ValueError (not UTF-8: UnicodeDecodeError, not JSON: JSONDecodeError);
-    callers catch both."""
-    target = Path(path)
-    if target.stat().st_size > max_bytes:
-        raise OSError(f"{target} exceeds {max_bytes} bytes")
-    return json.loads(target.read_bytes().decode("utf-8"))
 
 
 #: Real layouts are a few splitters deep; the rebuild recurses per level.
@@ -249,50 +241,6 @@ def _defer_while_alive(widgets, fn) -> None:
     QTimer.singleShot(0, run)
 
 
-def _write_private_text(path: Path | str, text: str, *, private_dir: bool = True) -> None:
-    """Write *text* to *path* atomically as a 0600 file.
-
-    *private_dir* (axross' own config folder) also creates the folder and
-    makes it 0700. A folder the user picked (an export) is left exactly
-    as it is: its mode is not ours to change."""
-    target = Path(path)
-    if private_dir:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(target.parent, 0o700)
-        except OSError:
-            log.debug("Could not set permissions on %s", target.parent, exc_info=True)
-    fd, temp_name = tempfile.mkstemp(
-        dir=target.parent,
-        prefix=f".{target.name}.",
-        suffix=".tmp",
-    )
-    try:
-        try:
-            posix_compat.fchmod_private(fd, 0o600)
-        except OSError:
-            pass
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = -1
-            handle.write(text)
-        os.replace(temp_name, target)
-        try:
-            os.chmod(target, 0o600)
-        except OSError:
-            pass
-    except BaseException:
-        if fd != -1:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        try:
-            os.unlink(temp_name)
-        except OSError:
-            pass
-        raise
-
-
 _PROMPT_PROTOCOL_NAMES = {
     "telnet": "Telnet",
     "cisco-telnet": "Cisco Telnet",
@@ -350,12 +298,11 @@ def _desktop_font_size() -> int:
     return _DESKTOP_FONT_PT
 
 
-class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
+class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
     """Main application window with file panes."""
 
     #: (job_id, ok, detail) — emitted from a scheduler worker thread so
     #: the store write and the status bar happen on the GUI thread.
-    _scheduler_done = pyqtSignal(str, bool, str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -376,6 +323,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._connection_manager = ConnectionManager()
         self._connection_manager.set_profile_resolver(self._profile_manager.get)
         self._transfer_manager = TransferManager(self)
+        from core.json_store import on_save_failure
+        from core.thread_relay import GuiCall
+
+        on_save_failure(GuiCall(self._store_not_saved))
         self._bookmark_manager = BookmarkManager()
         # In-flight async connect handles; we pin them here so Qt
         # doesn't tear the worker threads down mid-run. Older tasks
@@ -434,6 +385,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._setup_bookmark_sidebar()
         self._setup_analysis_dock()
         self._setup_agent_dock()
+        self._setup_mail_docks()
         # A sign-in that shows a code in the browser asks for it here (Dropbox).
         from ui import auth_prompt as _auth_prompt
 
@@ -532,29 +484,29 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # File menu
         file_menu = menubar.addMenu(tr("&File"))
 
-        quick_connect_action = file_menu.addAction(tr("Quic&k Connect..."))
+        quick_connect_action = file_menu.addAction(tr("Quic&k Connect…"))
         quick_connect_action.setShortcut(QKeySequence("Ctrl+N"))
         quick_connect_action.triggered.connect(self._show_quick_connect)
 
-        connect_action = file_menu.addAction(tr("Connection &Manager..."))
+        connect_action = file_menu.addAction(tr("Connection &Manager…"))
         connect_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
         connect_action.triggered.connect(self._on_connect)
 
         ssh_menu = file_menu.addMenu(tr("Import SSH &Config"))
         ssh_default_action = ssh_menu.addAction(tr("From ~/.ssh/config"))
         ssh_default_action.triggered.connect(self._import_ssh_config)
-        ssh_file_action = ssh_menu.addAction(tr("From File..."))
+        ssh_file_action = ssh_menu.addAction(tr("From File…"))
         ssh_file_action.triggered.connect(self._import_ssh_config_file)
-        ssh_paste_action = ssh_menu.addAction(tr("Paste Config Text..."))
+        ssh_paste_action = ssh_menu.addAction(tr("Paste Config Text…"))
         ssh_paste_action.triggered.connect(self._import_ssh_config_paste)
 
-        import_profiles_action = file_menu.addAction(tr("Import &Profiles (JSON)..."))
+        import_profiles_action = file_menu.addAction(tr("Import &Profiles (JSON)…"))
         import_profiles_action.triggered.connect(self._import_profiles_json)
 
-        export_profiles_action = file_menu.addAction(tr("&Export Profiles (JSON)..."))
+        export_profiles_action = file_menu.addAction(tr("&Export Profiles (JSON)…"))
         export_profiles_action.triggered.connect(self._export_profiles_json)
 
-        view_profiles_action = file_menu.addAction(tr("&View All Profiles..."))
+        view_profiles_action = file_menu.addAction(tr("&View All Profiles…"))
         view_profiles_action.triggered.connect(self._view_all_profiles)
 
         file_menu.addSeparator()
@@ -645,10 +597,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # Layout-preset submenu + cycle hotkey. The submenu lists each
         # preset; the hotkey rotates through them in PRESET_ORDER.
         layout_menu = view_menu.addMenu(tr("La&yout Preset"))
-        from ui.layout_presets import PRESET_ORDER
+        from ui.layout_presets import PRESET_ORDER, preset_label
 
         for preset_name in PRESET_ORDER:
-            act = layout_menu.addAction(preset_name)
+            act = layout_menu.addAction(preset_label(preset_name))
             act.triggered.connect(lambda _checked, n=preset_name: self.apply_layout_preset(n))
         layout_menu.addSeparator()
         cycle_fwd = layout_menu.addAction(tr("Cycle Next"))
@@ -862,12 +814,55 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             tr("Configure the agent's MCP servers, or add one from a catalog (runs in podman)")
         )
         mcp_action.triggered.connect(lambda _checked=False: self._show_mcp_servers())
+        # Agents that watch a mailbox each (ui/mail_docks.py) and the mail
+        # analysis projects (ui/mail_project.py).
+        mail_docks_action = tools_menu.addAction(tr("Mail D&ocks…"))
+        mail_docks_action.setToolTip(
+            tr("Agents that each watch one mailbox and follow their instructions: read, analyse, "
+               "draft, send as their policy allows, report to each other")
+        )
+        mail_docks_action.triggered.connect(lambda _checked=False: self._mail_docks_manage())
+        self._menu_icon(mail_docks_action, "mail")
+        mail_project_action = tools_menu.addAction(tr("Mail Pro&ject…"))
+        mail_project_action.setToolTip(
+            tr("Import .eml, .msg, mbox, Maildir or a mailbox into a project and analyse every message")
+        )
+        mail_project_action.triggered.connect(lambda _checked=False: self._open_mail_project())
+        self._menu_icon(mail_project_action, "mail-project")
         # Opens Settings on the page titled "Audio" (playback, voice); the
         # toolbar shows it beside the Media Player.
         self._av_settings_action = tools_menu.addAction(tr("Audio && &Video Settings…"))
         self._av_settings_action.triggered.connect(
             lambda _checked=False: self.open_audio_video_settings()
         )
+        # The Audio Mixer extension's panel (switched off: it offers to switch it on).
+        self._audio_mixer_action = tools_menu.addAction(tr("Audio Mi&xer"))
+        self._audio_mixer_action.setToolTip(
+            tr("Volumes, outputs and the equalizer of axross and of the system's sound "
+               "server (the Audio Mixer extension)"))
+        self._audio_mixer_action.triggered.connect(
+            lambda _checked=False: self._toggle_extension_tool("bundled:audio_mixer",
+                                                               "Audio Mixer"))
+        self._menu_icon(self._audio_mixer_action, "mixer")
+        # The Bluetooth extension's panel, the same way (switched off: it
+        # offers to switch it on) - before, only Extensions > Manage found it.
+        self._bluetooth_action = tools_menu.addAction(tr("&Bluetooth"))
+        self._bluetooth_action.setToolTip(
+            tr("Find, pair and connect Bluetooth devices; a headset or speaker becomes "
+               "axross's sound output (the Bluetooth extension)"))
+        self._bluetooth_action.triggered.connect(
+            lambda _checked=False: self._toggle_extension_tool("bundled:bluetooth",
+                                                               "Bluetooth"))
+        self._menu_icon(self._bluetooth_action, "bluetooth")
+        # The System Information extension's window (switched off: it offers to switch it on).
+        self._system_info_action = tools_menu.addAction(tr("S&ystem Information…"))
+        self._system_info_action.setToolTip(
+            tr("Everything about this computer's hardware, in a window of its own (the "
+               "System Information extension)"))
+        self._system_info_action.triggered.connect(
+            lambda _checked=False: self._open_extension_window("bundled:system_info",
+                                                               "System Information"))
+        self._menu_icon(self._system_info_action, "system-info")
         metadata_settings_action = tools_menu.addAction(tr("&Metadata Settings…"))
         metadata_settings_action.setToolTip(
             "How Remove Metadata writes (in place or a cleaned copy) and whether it asks first"
@@ -1162,27 +1157,54 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             return
         pane._show_trash_browser()
 
+    def _switch_on_extension(self, ext_id: str, title: str) -> bool:
+        """True when extension *ext_id* is on - after asking to switch it on
+        if it was off (Extensions > Manage Extensions… does the same)."""
+        host = self.extension_host
+        if ext_id in host.loaded_ids():
+            return True
+        answer = QMessageBox.question(
+            self,
+            tr("Switch on {title}?").format(title=tr(title)),
+            tr("{title} is an extension and switched off. Switch it on now? "
+               "(Extensions > Manage Extensions… switches it off again.)").format(
+                   title=tr(title)),
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        host.set_enabled(ext_id, True)
+        if ext_id not in host.loaded_ids():
+            why = host.error(ext_id) or tr("see the log")
+            self.statusBar().showMessage(
+                tr("{title} could not be switched on: {why}").format(title=tr(title), why=why),
+                8000)
+            return False
+        return True
+
+    def _open_extension_window(self, ext_id: str, title: str) -> None:
+        """An extension tool that is a window (System Information): switch
+        the extension on if needed (asking first), then open its window."""
+        if not self._switch_on_extension(ext_id, title):
+            return
+        opener = getattr(self.extension_host.module(ext_id), "show_window", None)
+        if not callable(opener):
+            self.statusBar().showMessage(
+                tr("{title} has no window.").format(title=tr(title)), 5000)
+            return
+        try:
+            opener(self)
+        except Exception as exc:  # noqa: BLE001 - extension code must not reach Qt
+            log.warning("%s could not open its window", title, exc_info=True)
+            self.statusBar().showMessage(
+                tr("{title} could not open: {why}").format(title=tr(title), why=exc), 8000)
+
     def _toggle_extension_tool(self, ext_id: str, title: str) -> None:
         """An extension tool's button: show or hide its panel; switched off,
         ask first to switch it on (Extensions > Manage Extensions… does the
         same), then show the panel."""
         host = self.extension_host
         if ext_id not in host.loaded_ids():
-            answer = QMessageBox.question(
-                self,
-                tr("Switch on {title}?").format(title=tr(title)),
-                tr("{title} is an extension and switched off. Switch it on now? "
-                   "(Extensions > Manage Extensions… switches it off again.)").format(
-                       title=tr(title)),
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            host.set_enabled(ext_id, True)
-            if ext_id not in host.loaded_ids():
-                why = host.error(ext_id) or tr("see the log")
-                self.statusBar().showMessage(
-                    tr("{title} could not be switched on: {why}").format(title=tr(title), why=why),
-                    8000)
+            if not self._switch_on_extension(ext_id, title):
                 return
             for dock in host.docks(ext_id):
                 dock.show()
@@ -1308,9 +1330,18 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         legitimately can't see. The custom bar always shows them at
         a consistent size using our SVG icon set."""
         from ui.dock_titlebar import DockTitleBar
+        from ui.extension_panels import ExtensionPanelTitleBar
 
         old = dock.titleBarWidget()
-        dock.setTitleBarWidget(DockTitleBar(title, icon_name, dock))
+        if isinstance(dock, ExtensionDock):
+            # A built-in dock that moves to a workspace like an extension
+            # panel (the Agent dock): that title bar, with Send to Workspace.
+            bar = ExtensionPanelTitleBar(title, dock, icon_name=icon_name,
+                                         reopen_hint="View → Panels")
+            bar.set_pane_mode(dock.pane_mode)
+            dock.setTitleBarWidget(bar)
+        else:
+            dock.setTitleBarWidget(DockTitleBar(title, icon_name, dock))
         if old is not None:
             # QDockWidget hides a replaced title bar but keeps it as a child:
             # every theme switch left six behind, each repolished ever after.
@@ -1327,10 +1358,11 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             self._bookmark_manager,
             self,
             terminal_profiles=self._terminal_profile_names,
+            profile_lookup=self._profile_manager.peek,
         )
         self._install_dock_titlebar(
             self._bookmark_sidebar,
-            "Bookmarks",
+            tr("Bookmarks"),
             "bookmark",
         )
         self._bookmark_sidebar.navigate_requested.connect(
@@ -1374,7 +1406,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._transfer_dock.setObjectName("axTransferDock")
         self._install_dock_titlebar(
             self._transfer_dock,
-            "Transfers",
+            tr("Transfers"),
             "download",
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._transfer_dock)
@@ -1384,7 +1416,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._terminal_dock.setObjectName("axTerminalDock")
         self._install_dock_titlebar(
             self._terminal_dock,
-            "Terminal",
+            tr("Terminal"),
             "terminal",
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._terminal_dock)
@@ -1396,8 +1428,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._log_dock.setObjectName("axLogDock")
         self._install_dock_titlebar(
             self._log_dock,
-            "Log",
-            "inbox",
+            tr("Log"),
+            "log",
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._log_dock)
         self.tabifyDockWidget(self._terminal_dock, self._log_dock)
@@ -1410,14 +1442,19 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._console_dock.setObjectName("axConsoleDock")
         self._install_dock_titlebar(
             self._console_dock,
-            "Console",
-            "code",
+            tr("Console"),
+            "console",
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
         self.tabifyDockWidget(self._log_dock, self._console_dock)
         self._transfer_dock.raise_()
         self._populate_dock_view_menu()
         self._wire_dock_activity_indicators()
+        # The bar the extra windows' "_" button puts them into, above the
+        # status bar (ui.window_dock_bar); hidden while it holds nothing.
+        from ui import window_dock_bar
+
+        window_dock_bar.install(self)
 
     def _setup_scripts_dock(self) -> None:
         """Saved scripts: edit, run in a child process, manage. Tabbed
@@ -1425,7 +1462,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         from ui.scripts_dock import ScriptsDock
 
         self._scripts_dock = ScriptsDock(self, scheduled_jobs=self._scheduled_script_jobs)
-        self._install_dock_titlebar(self._scripts_dock, tr("Scripts"), "edit")
+        self._install_dock_titlebar(self._scripts_dock, tr("Scripts"), "scripts")
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._scripts_dock)
         self.tabifyDockWidget(self._console_dock, self._scripts_dock)
         self._transfer_dock.raise_()
@@ -1631,6 +1668,12 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._agent_dock.show_lamp_in(self._agent_dock.titleBarWidget())
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._agent_dock)
         self._agent_dock.hide()
+        # Laid out on a workspace like an extension panel (ui.extension_panels):
+        # panes dropped on it, and shown from View > Panels or the toolbar,
+        # its workspace comes to the front.
+        self._agent_dock.pane_drop_requested.connect(self._on_pane_drop)
+        self._agent_dock.toggleViewAction().triggered.connect(
+            lambda checked: self.reveal_extension_panel(self._agent_dock) if checked else None)
         # Detached conversations are panels of this window (ui.agent_panels):
         # the kept ones come back now, before a session layout is restored.
         self._agent_dock.panel_host = self
@@ -1780,6 +1823,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         """A detached conversation was attached back or closed: out of its
         workspace (which goes when nothing else is in it) or the dock area."""
         self._panel_homes.pop(panel.objectName(), None)
+        fit = getattr(self, "_dock_fit", None)
+        if fit is not None:
+            fit.forget(panel.objectName())  # it does not come back as a panel
         if self._in_layout(panel):
             self._take_out_of_layout(panel)
             self._prune_empty_workspaces()
@@ -1787,8 +1833,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             self.removeDockWidget(panel)
 
     def _own_panels(self) -> list:
+        """The Agent dock and its detached conversations: laid out on
+        workspaces like extension panels."""
         dock = getattr(self, "_agent_dock", None)
-        return dock.panels() if dock is not None else []
+        return [dock, *dock.panels()] if dock is not None else []
 
     def _settle_agent_panels(self) -> None:
         from PyQt6 import sip
@@ -1803,6 +1851,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             return
         dock.show()
         dock.raise_()
+        self.reveal_extension_panel(dock)  # on a workspace: that one to the front
         tab = dock.current_tab()
         if tab is not None:
             tab.input.setFocus()
@@ -2054,7 +2103,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # ``on_open_member`` is left None; the open_member signal is
         # wired below so the slot is the MainWindow's extractor rather
         # than a pane-internal callback.
-        pane = ArchivePaneWidget(path, on_open_member=None, chain=chain)
+        # Listed on a worker: a large .tar.gz is read through to its end.
+        pane = ArchivePaneWidget(path, on_open_member=None, chain=chain, background=True)
         basename = pane.display_name()
         pane.extract_all.connect(lambda p=path, d=parent: self._archive_extract_all(p, d))
         pane.extract_selected.connect(
@@ -2065,6 +2115,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             lambda members, p=path: self._archive_extract_selected_to(p, members)
         )
         pane.open_member.connect(lambda member, p=path: self._archive_open_member(p, member))
+        pane.open_member_as.connect(
+            lambda member, view, p=path: self._archive_open_member(p, member, view=view))
         pane.back_requested.connect(self._archive_back)
 
         if self._archive_dock is None:
@@ -2086,7 +2138,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         dock.setWidget(pane)
         # ``_install_dock_titlebar`` constructs a fresh DockTitleBar each
         # call, so this installs a new title bar carrying the new title.
-        self._install_dock_titlebar(dock, f"Archive: {basename}", "inbox")
+        self._install_dock_titlebar(dock, f"Archive: {basename}", "archive")
         dock.show()
         dock.raise_()
         if pane.load_error is not None:
@@ -2159,6 +2211,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         dialog.setWindowTitle("Open Archive")
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.setMinimumDuration(250)
+        # Starts the minimum-duration clock: without a setValue() the dialog
+        # (and its Cancel) never showed, however long the extraction took.
+        dialog.setValue(0)
         cancel = threading.Event()
         dialog.canceled.connect(cancel.set)  # read by the worker, never the widget
         done = threading.Event()
@@ -2179,6 +2234,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         threading.Thread(target=run, daemon=True, name="archive-nested").start()
         while not done.is_set():
             QApplication.processEvents()
+            if dialog.wasCanceled():  # here, on the GUI thread: Esc and the X too
+                cancel.set()
             done.wait(0.05)
         dialog.close()
         dialog.deleteLater()
@@ -2259,9 +2316,13 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
 
         done_event = threading.Event()
         state: dict = {"ok": False, "count": 0, "error": None}
+        # The worker reads this, never the dialog: a widget is the GUI
+        # thread's alone (wasCanceled() from the worker was a data race).
+        cancelled = threading.Event()
+        progress.canceled.connect(cancelled.set)
 
         def _progress_cb(done: int, total: int, name: str) -> None:
-            if progress.wasCanceled():
+            if cancelled.is_set():
                 raise ARCH.ExtractCancelled("user cancelled via progress dialog")
 
         def _worker() -> None:
@@ -2294,6 +2355,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         t.start()
         while not done_event.is_set():
             QApplication.processEvents()
+            if progress.wasCanceled():  # here, on the GUI thread: Esc, the X, Cancel
+                cancelled.set()
             done_event.wait(0.05)
         QApplication.processEvents()
         progress.close()
@@ -2444,7 +2507,15 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # the extraction in a child of the mkdtemp dir.
         target = os.path.join(base, "member")
         try:
-            ARCH.extract_members(archive_path, target, [member_name])
+            # On a worker, with Cancel after 250 ms: one member can be
+            # gigabytes, and a .tar.gz is decompressed up to it - that held
+            # every window (_extract_off_the_gui_thread).
+            self._extract_off_the_gui_thread(
+                f"Opening {os.path.basename(member_name.rstrip('/'))}…",
+                lambda progress: ARCH.extract_members(
+                    archive_path, target, [member_name], progress=progress))
+        except ARCH.ExtractCancelled:
+            return None
         except NotImplementedError:
             QMessageBox.information(
                 self,
@@ -2481,7 +2552,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._archive_last_member_tempdir = base
         return extracted
 
-    def _archive_open_member(self, archive_path: str, member_name: str) -> None:
+    def _archive_open_member(
+        self, archive_path: str, member_name: str, *, view: str | None = None
+    ) -> None:
         """Extract ONE member to a temp dir and open it in a read-only
         viewer (image / hex / text dispatch shared with the file pane).
         Extraction + failure handling live in
@@ -2491,13 +2564,13 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         from core import archive as ARCH
         from ui.file_pane import open_local_file_in_viewer
 
-        if ARCH.is_supported_archive(member_name):
+        if view is None and ARCH.is_supported_archive(member_name):
             self._archive_open_nested(archive_path, member_name)
             return
         extracted = self._extract_single_member(archive_path, member_name)
         if extracted is None:
             return
-        open_local_file_in_viewer(self, extracted, read_only=True)
+        open_local_file_in_viewer(self, extracted, read_only=True, view=view)
 
     def _reap_last_member_tempdir(self) -> None:
         """Remove the previous single-member preview temp dir, if any.
@@ -2631,7 +2704,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         sidebar = getattr(self, "_bookmark_sidebar", None)
         if sidebar is not None:
             bm_toggle = sidebar.toggleViewAction()
-            bm_toggle.setText("&Bookmark Sidebar")
+            bm_toggle.setText(tr("&Bookmark Sidebar"))
             bm_toggle.setShortcut(QKeySequence("F12"))
             self._dock_view_menu.addAction(bm_toggle)
         # The archive dock is created lazily (on first preview), so its
@@ -2648,7 +2721,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         agent = getattr(self, "_agent_dock", None)
         if agent is not None:
             agent_toggle = agent.toggleViewAction()
-            agent_toggle.setText("A&gent")
+            agent_toggle.setText(tr("A&gent"))
             self._dock_view_menu.addAction(agent_toggle)
             focus = getattr(self, "_focus_agent_action", None)
             if focus is not None:
@@ -2667,6 +2740,12 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         among them: a pane made with the model default showed no hidden
         files while the menu said it did."""
         pane = FilePaneWidget(backend, async_initial_load=True)
+        # the workspace tab shows the weakest connection of its panes
+        from ui.security_badge import schedule_workspace_tabs
+
+        pane.security_changed.connect(lambda: schedule_workspace_tabs(self))
+        pane.destroyed.connect(lambda _obj=None: schedule_workspace_tabs(self))
+        schedule_workspace_tabs(self)
         pane.set_show_hidden(self._hidden_action.isChecked())
         pane.set_hidden_style(self._highlight_hidden, self._hidden_color)
         pane.pane_focused.connect(lambda p=pane: self._set_active_pane(p))
@@ -3225,13 +3304,14 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             return True
         lost = []
         if shells:
-            lost.append(f"{shells} shell{'s' if shells != 1 else ''}")
+            lost.append(tr_n(shells, "{n} shell", "{n} shells"))
         if remotes:
-            lost.append(f"{remotes} connection{'s' if remotes != 1 else ''}")
+            lost.append(tr_n(remotes, "{n} connection", "{n} connections"))
         reply = QMessageBox.question(
             self,
             tr("Switch Layout"),
-            f"Switching the layout closes {' and '.join(lost)}. Switch anyway?",
+            tr("Switching the layout closes {what}. Switch anyway?").format(
+                what=tr(" and ").join(lost)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -3240,14 +3320,15 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
     def cycle_layout_preset(self, *, forward: bool = True) -> None:
         """Rotate through the built-in preset list. Wired to
         ``Ctrl+Alt+L`` (forward) and ``Ctrl+Alt+Shift+L`` (back)."""
-        from ui.layout_presets import cycle_preset
+        from ui.layout_presets import cycle_preset, preset_label
 
         if not self._layout_switch_confirmed():
             return
         new_name = cycle_preset(self, forward=forward)
         # Lightweight statusbar hint so the user sees what they cycled to.
         try:
-            self.statusBar().showMessage(f"Layout: {new_name}", 2000)
+            self.statusBar().showMessage(
+                tr("Layout: {name}").format(name=preset_label(new_name)), 2000)
         except Exception:  # noqa: BLE001
             pass
 
@@ -3256,14 +3337,45 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         no transfer uses it any more. Released at once, a session whose
         last reference that was got disconnected under its running and
         queued transfers, and every one of them failed."""
+        if self._editors_use(backend):
+            # An open editor tab or hex window saves through it: released,
+            # the session disconnected under the unsaved edits. It stays
+            # open for them (until axross ends).
+            log.info("%s stays connected: an open editor uses it", profile.name)
+            return
         if not self._transfer_manager.busy(backend):
-            self._connection_manager.release(profile)
+            from ui.off_gui import run_off_gui
+
+            # The last reference disconnects: a logout round trip, and a
+            # dead link's whole timeout - off the GUI thread.
+            run_off_gui(lambda: self._connection_manager.release(profile))
             return
         self._deferred_releases.append((profile, backend))
         log.info("%s stays connected until its transfers finish", profile.name)
         self.statusBar().showMessage(
             f"{profile.name}: the connection stays open until its transfers finish", 8000
         )
+
+    @staticmethod
+    def _keep_running(jobs: list) -> list:
+        """The jobs of *jobs* still running; the ended ones go (deleteLater):
+        each was a QObject with a timer, kept for the window's life."""
+        running = []
+        for job in jobs:
+            if job.running:
+                running.append(job)
+            else:
+                try:
+                    job.deleteLater()
+                except RuntimeError:  # already gone
+                    pass
+        return running
+
+    def _release_quietly(self, profile) -> None:
+        try:
+            self._connection_manager.release(profile)
+        except Exception:  # noqa: BLE001 - a dead session must not stop the others
+            log.debug("Releasing %s after its transfers failed", profile.name, exc_info=True)
 
     def _release_idle_connections(self, *_args) -> None:
         """A transfer ended: release the kept connections it was the last
@@ -3273,8 +3385,15 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             if self._transfer_manager.busy(backend):
                 continue
             self._deferred_releases.remove(entry)
+            # On a thread of its own, not waited for: this is a slot of the
+            # transfer manager's job_finished, and a wait here (a nested
+            # event loop) let the next finished jobs re-enter the manager.
+            # ConnectionManager.release is thread-safe; nobody needs its end.
+            import threading
+
             try:
-                self._connection_manager.release(profile)
+                threading.Thread(target=self._release_quietly, args=(profile,),
+                                 name="release-connection", daemon=True).start()
             except Exception:  # noqa: BLE001 - a dead session must not stop the others
                 log.debug("Releasing %s after its transfers failed", profile.name, exc_info=True)
 
@@ -3338,7 +3457,11 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             # pane whatever was closed turned the source into the target
             # and F5 / F6 ran the other way round.
             if self._active_pane is None:
-                self._set_active_pane(self._panes[0])
+                # A pane of the workspace on screen: the first pane of all
+                # could be in another workspace, and activating it switched
+                # the window away from the one the pane was closed in.
+                here = [p for p in self._panes if self.workspace_of(p) is self._current_ws]
+                self._set_active_pane((here or self._panes)[0])
             if self._target_pane is None and len(self._panes) > 1:
                 self._target_pane = next(
                     (other for other in self._panes if other is not self._active_pane),
@@ -3655,7 +3778,6 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         from PyQt6.QtCore import QTimer
 
         self._scheduler_jobs = self._job_store().load()
-        self._scheduler_done.connect(self._on_scheduled_job_finished)
         self._scheduler_timer = QTimer(self)
         self._scheduler_timer.setInterval(60_000)
         self._scheduler_timer.timeout.connect(self._scheduler_tick)
@@ -3708,7 +3830,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
 
         from core.scheduler import run_job
 
-        done = self._scheduler_done
+        # Not a signal of the window: closeEvent hands a running job thread
+        # over, and the window is deleted at quit while the job may still
+        # report (core/thread_relay.py). Dropped once the window is gone.
+        done = GuiCall(self._on_scheduled_job_finished)
         cancel = getattr(self, "_scheduler_cancel", None)
         if cancel is None:
             # Set on close: a scheduled script's child process ends with the app.
@@ -3716,10 +3841,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         runner = functools.partial(self._scheduled_runner, cancel_event=cancel)
 
         def _report(j, ok, detail):
-            try:
-                done.emit(j.job_id, ok, detail)
-            except RuntimeError:  # the window is gone; nobody to tell
-                log.info("scheduler: job %s ended after the window closed", j.name)
+            done(j.job_id, ok, detail)
 
         class _JobThread(QThread):
             # The work goes into run(): a plain function connected to
@@ -3789,10 +3911,18 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         core.undo.pick_undoable. Non-reversible entries are reported
         with their reason rather than skipped in silence: a user who
         presses undo and gets no response assumes it worked.
+
+        The backend calls run on a worker (_undo_step): finding the entry
+        asks each trash entry's connection whether it is still there, and
+        carrying it out renames or restores on the server - round trips
+        that held the window. The question in between stays here.
         """
         from core.operation_journal import read_recent
-        from core.undo import apply_undo, gone_reason, pick_undoable, undoable
+        from core.undo import gone_reason, pick_undoable, undoable
 
+        if getattr(self, "_undo_busy", False):
+            self._undo_status("An undo is still running.")
+            return
         try:
             events = read_recent(limit=200)
         except Exception as exc:  # noqa: BLE001 — a broken journal must not block the app
@@ -3811,7 +3941,39 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                 entry = next(iter(by_label.values()))
             return entry is not None and bool(gone_reason(candidate, entry[0]))
 
-        plan = pick_undoable(plans, set(by_label), gone=_gone)
+        self._undo_status("Looking for the operation to undo…")
+        self._undo_step(lambda: pick_undoable(plans, set(by_label), gone=_gone),
+                        lambda kind, value: self._undo_picked(plans, kind, value))
+
+    def _undo_status(self, text: str) -> None:
+        status_bar = getattr(self, "statusBar", None)
+        if callable(status_bar):
+            status_bar().showMessage(text, 5000)
+
+    def _undo_step(self, work, done) -> None:
+        """*work()* on a worker, then *done(kind, value)* here ("done" with
+        its result, or "error" with the exception). One undo at a time."""
+        from PyQt6.QtCore import QObject
+
+        from ui.scan_job import ScanJob
+
+        job = ScanJob(self if isinstance(self, QObject) else None)
+        self._undo_busy = True
+        # Held until each has ended: a step started from the last one's
+        # done() runs while that job is still delivering its result.
+        self._undo_jobs = MainWindow._keep_running(getattr(self, "_undo_jobs", [])) + [job]
+
+        def finished(kind, value, _cancelled):
+            self._undo_busy = False
+            done(kind, value)
+
+        job.finished.connect(finished)
+        job.start(lambda _cancelled, _report: work())
+
+    def _undo_picked(self, plans, kind: str, plan) -> None:
+        if kind == "error":
+            QMessageBox.warning(self, "Undo failed", str(plan))
+            return
         if plan is None:
             newest = plans[0] if plans else None
             if newest is not None and not newest.reversible:
@@ -3829,7 +3991,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                 )
             return
 
-        refusal = self._undo_refusal(plan, by_label)
+        refusal = self._undo_refusal(plan, self._backends_by_label())
         if refusal:
             QMessageBox.information(self, "Cannot undo", refusal)
             return
@@ -3850,28 +4012,48 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if refusal:
             QMessageBox.information(self, "Cannot undo", refusal)
             return
+        self._undo_apply(plan, by_label)
+
+    def _undo_apply(self, plan, by_label: dict) -> None:
+        from core.undo import apply_undo
+
         backend, pane = by_label[plan.backend] if plan.backend else next(iter(by_label.values()))
-        queued: list = []
-
-        def transfer(**kwargs):
-            return self._undo_transfer(queued=queued, **kwargs)
-
-        try:
-            apply_undo(
-                plan,
-                backend,
-                source_backend=self._undo_source_backend(plan, by_label),
-                transfer=transfer,
-            )
-        except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Undo failed", str(exc))
-            return
         if plan.action == "transfer_back":
-            # Only queued so far: recording it now would drop the entry
-            # from the undo history even when the transfer back fails.
-            self._await_undo_jobs(plan, queued, pane)
+            # Here: it only queues transfers (the transfer engine is the
+            # GUI thread's), which do their work off it themselves.
+            partial: list = []
+
+            def queued(jobs) -> None:
+                self._undo_jobs_queued(plan, pane, partial, jobs)
+
+            def transfer(**kwargs):
+                # Only queued then: recording the undo now would drop the
+                # entry from the history even when the transfer back fails.
+                # on_error comes before on_queued and only notes the failure.
+                return self._undo_transfer(on_queued=queued, on_error=partial.append, **kwargs)
+
+            try:
+                apply_undo(
+                    plan,
+                    backend,
+                    source_backend=self._undo_source_backend(plan, by_label),
+                    transfer=transfer,
+                )
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Undo failed", str(exc))
             return
-        self._finish_undo(plan, pane)
+
+        def carried_out(kind, value):
+            if kind == "error":
+                if not isinstance(value, (OSError, ValueError)):
+                    raise value  # a bug: the error dialog
+                QMessageBox.warning(self, "Undo failed", str(value))
+                return
+            self._finish_undo(plan, pane)
+
+        self._undo_status(f"Undoing: {plan.reason}")
+        self._undo_step(lambda: apply_undo(plan, backend, source_backend=None,
+                                           transfer=None), carried_out)
 
     def _finish_undo(self, plan, pane, jobs=()) -> None:
         try:
@@ -3886,8 +4068,24 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             pane.refresh_after_change()
         self.statusBar().showMessage(f"Undone: {plan.reason}", 5000)
 
-    def _await_undo_jobs(self, plan, jobs: list, pane) -> None:
-        """Record *plan* as undone when every job of it has finished."""
+    def _undo_jobs_queued(self, plan, pane, partial: list, jobs) -> None:
+        """The jobs of a transfer-back undo are queued; *partial* holds the
+        walk's error when it stopped half way. The jobs are watched first,
+        the warning comes after: its dialog's event loop delivers the
+        finished signals of jobs already running, which an undo not yet
+        watching them missed (it then never completed)."""
+        if partial and not jobs:
+            QMessageBox.warning(self, "Undo failed", f"{plan.reason} failed:\n{partial[0]}")
+            return
+        self._await_undo_jobs(plan, list(jobs), pane, record=not partial)
+        if partial:
+            QMessageBox.warning(
+                self, "Undo", f"Not all of {plan.source} could be read for the undo:"
+                f"\n{partial[0]}\n\nWhat was found moves back; the undo stays in the history.")
+
+    def _await_undo_jobs(self, plan, jobs: list, pane, record: bool = True) -> None:
+        """Record *plan* as undone when every job of it has finished (not
+        when *record* is False: only part of it could be queued)."""
         from core.transfer_worker import TransferStatus
 
         refused = [j for j in jobs if j.status is TransferStatus.ERROR]
@@ -3896,7 +4094,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             QMessageBox.warning(self, "Undo failed", f"{plan.reason} failed:\n{why}")
             return
         self._undo_waits.append(
-            {"plan": plan, "pending": {j.job_id for j in jobs}, "pane": pane, "jobs": jobs}
+            {"plan": plan, "pending": {j.job_id for j in jobs}, "pane": pane, "jobs": jobs,
+             "record": record}
         )
         self.statusBar().showMessage(f"Undoing: {plan.reason}", 5000)
 
@@ -3907,7 +4106,14 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             wait["pending"].discard(job_id)
             if not wait["pending"]:
                 self._undo_waits.remove(wait)
-                self._finish_undo(wait["plan"], wait["pane"], wait.get("jobs", ()))
+                if wait.get("record", True):
+                    self._finish_undo(wait["plan"], wait["pane"], wait.get("jobs", ()))
+                else:  # partly undone: the entry stays for the rest
+                    pane = wait["pane"]
+                    if pane is not None and pane in self._panes:
+                        pane.refresh_after_change()
+                    self.statusBar().showMessage(
+                        f"Partly undone: {wait['plan'].reason}", 8000)
 
     def _on_undo_job_error(self, job_id: str, error: str) -> None:
         for wait in list(self._undo_waits):
@@ -3967,7 +4173,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         return entry[0] if entry else None
 
     def _undo_transfer(
-        self, *, src_backend, src_path, dst_backend, dst_path, queued: list | None = None
+        self, *, src_backend, src_path, dst_backend, dst_path, queued: list | None = None,
+        on_queued=None, on_error=None,
     ) -> str:
         """Move data back to *dst_path* through the normal transfer engine.
 
@@ -3978,15 +4185,32 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         """
         from core.path_policy import safe_join, transfer_leaf
         from core.transfer_conflicts import IF_EXISTS_FAIL, ConflictPlan
+        from ui.off_gui import run_off_gui
 
         src_name = src_path.rsplit(src_backend.separator(), 1)[-1]
         dst_name = dst_path.rsplit(dst_backend.separator(), 1)[-1]
-        if dst_backend.exists(dst_path):
+        if run_off_gui(lambda: dst_backend.exists(dst_path)):  # a server round trip
             raise OSError(
                 f"{dst_path} exists again — undo would overwrite it. Move or rename it first."
             )
         direction = self._transfer_direction(src_backend, dst_backend)
-        if src_name == dst_name:
+        if src_name == dst_name and on_queued is not None:
+            # The walk of a moved folder is a round trip per folder: on a
+            # worker (transfer_files_in_background); on_queued gets the jobs.
+            self._transfer_manager.transfer_files_in_background(
+                src_backend, dst_backend, [src_path], dst_backend.parent(dst_path),
+                direction, True,
+                conflict_plan=ConflictPlan.never_replace(dst_backend),
+                on_done=on_queued,
+                # The real reason, not just "nothing was queued"; what the
+                # walk found before it failed still moves back.
+                # No dialog here: one opened before the jobs are watched lets
+                # their finished signals pass unseen (_undo_jobs_queued).
+                on_error=on_error or (lambda exc, p=src_path: log.warning(
+                    "Undo: not all of %s could be read: %s", p, exc)),
+            )
+            jobs = None
+        elif src_name == dst_name:
             jobs = self._transfer_manager.transfer_files(
                 source_backend=src_backend,
                 dest_backend=dst_backend,
@@ -4014,8 +4238,11 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                     move=True, if_exists=IF_EXISTS_FAIL,
                 )
             ]
-        if queued is not None:
-            queued.extend(jobs)
+        if jobs is not None:
+            if queued is not None:
+                queued.extend(jobs)
+            if on_queued is not None:
+                on_queued(jobs)
         labels = {getattr(src_backend, "name", None), getattr(dst_backend, "name", None)}
         for pane in self._panes:
             if getattr(pane.backend, "name", None) in labels:
@@ -4111,6 +4338,18 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         except OSError as exc:
             log.debug("compare: could not reveal %s: %s", full_path, exc)
 
+    def _store_not_saved(self, what: str, error: str) -> None:
+        """A bookmark or profile store could not be written: said, not only
+        logged - what looks added would be gone at the next start."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        from ui.plain_text import plain_message
+
+        plain_message(self, QMessageBox.Icon.Warning, "Not saved",
+                      f"The {what} could not be saved: {error}\n\nThe change is "
+                      "kept until axross ends; free some space or fix the permissions "
+                      "of ~/.config/axross to keep it.").open()
+
     def _apply_sync(self, left, right, items: list) -> None:
         """Carry out a confirmed sync plan.
 
@@ -4122,45 +4361,81 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         """
         if not items or not self._compared_panes_open(left, right):
             return
-        made, errors = 0, []
+        folders = []
         for item in items:
             if item.get("kind") != "mkdir":
                 continue
             target = right if item["direction"] == "to_right" else left
             backend = getattr(target, "backend", None)
-            if backend is None:
-                continue
-            try:
-                backend.mkdir(item["dest"])
-                made += 1
-            except OSError as exc:
-                # An existing directory is the normal case on a re-run.
-                log.debug("sync: mkdir %s: %s", item["dest"], exc)
+            if backend is not None:
+                folders.append((backend, item["dest"]))
+        if not folders:
+            self._queue_sync(left, right, items, 0)
+            return
 
+        def make(cancelled, report) -> int:
+            # On a worker: one round trip per folder held the window.
+            made = 0
+            for done, (backend, dest) in enumerate(folders, 1):
+                if cancelled():
+                    break
+                try:
+                    backend.mkdir(dest)
+                    made += 1
+                except OSError as exc:
+                    # An existing directory is the normal case on a re-run.
+                    log.debug("sync: mkdir %s: %s", dest, exc)
+                report(done, len(folders), dest)
+            return made
+
+        from PyQt6.QtCore import QObject
+
+        from ui.scan_job import ScanJob
+
+        job = ScanJob(self if isinstance(self, QObject) else None, formatter=lambda st: (
+            f"Sync: creating folders {st['scanned']} of {st['indexed']}…"))
+        job.progress.connect(lambda text: self.statusBar().showMessage(text, 3000))
+        job.finished.connect(
+            lambda kind, value, cancelled: self._queue_sync(
+                left, right, items, value if kind == "done" else 0,
+                error=value if kind == "error" else None))
+        self._sync_jobs = MainWindow._keep_running(getattr(self, "_sync_jobs", [])) + [job]
+        self.statusBar().showMessage(
+            tr_n(len(folders), "Sync: creating {n} folder…", "Sync: creating {n} folders…"),
+            3000)
+        job.start(make)
+
+    def _queue_sync(self, left, right, items: list, made: int, error=None) -> None:
+        """The copies of a sync plan, once its folders exist (_apply_sync)."""
+        if error is not None:
+            QMessageBox.warning(self, "Sync", f"Could not create the folders:\n{error}")
+            return
+        if not self._compared_panes_open(left, right):
+            return
         for direction, (source, target) in (
             ("to_right", (left, right)),
             ("to_left", (right, left)),
         ):
             # Only an action that says it overwrites may replace a file:
             # a "missing" one that exists by the time it runs fails instead.
-            for overwrites in (False, True):
+            for overwrites, newer_only in ((False, False), (True, False), (True, True)):
                 pairs = [
                     (i["source"], i["dest"])
                     for i in items
                     if i["direction"] == direction
                     and i.get("kind") == "copy"
                     and bool(i.get("overwrites")) is overwrites
+                    and bool(i.get("newer_only")) is newer_only
                 ]
                 if pairs:
-                    self._transfer_compared(source, target, pairs, overwrites=overwrites)
+                    self._transfer_compared(source, target, pairs, overwrites=overwrites,
+                                            newer_only=newer_only)
 
-        if errors:
-            QMessageBox.warning(
-                self, "Sync", f"{len(errors)} step(s) failed:\n" + "\n".join(errors[:10])
-            )
+        queued = sum(1 for i in items if i.get("kind") == "copy")
         self.statusBar().showMessage(
-            f"Sync started: {made} directory/directories created, "
-            f"{sum(1 for i in items if i.get('kind') == 'copy')} file(s) queued",
+            tr("Sync started: {folders}, {files}").format(
+                folders=tr_n(made, "{n} folder created", "{n} folders created"),
+                files=tr_n(queued, "{n} file queued", "{n} files queued")),
             5000,
         )
 
@@ -4173,7 +4448,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # free when compared, and a file there now is not to be replaced.
         self._transfer_compared(source, target, pairs, overwrites=False)
 
-    def _transfer_compared(self, source, target, pairs, *, overwrites: bool) -> None:
+    def _transfer_compared(self, source, target, pairs, *, overwrites: bool,
+                           newer_only: bool = False) -> None:
         """Queue ``(source, dest)`` pairs so each lands at its own path.
 
         ``_start_transfer_between`` on its own queues into the target
@@ -4188,7 +4464,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         from core.transfer_conflicts import ConflictPlan
 
         backend = target.backend
-        conflict_plan = None if overwrites else ConflictPlan.never_replace(backend)
+        if newer_only:
+            conflict_plan = ConflictPlan.only_newer(backend, pairs)
+        else:
+            conflict_plan = None if overwrites else ConflictPlan.never_replace(backend)
         by_dir: dict[str, list[str]] = {}
         for src, dst in pairs:
             by_dir.setdefault(backend.parent(dst), []).append(src)
@@ -4271,6 +4550,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             scan_id=scan_id,
         )
         dlg.open_requested.connect(self._on_cas_open)
+        dlg.open_folder_requested.connect(lambda bid, path: self._on_cas_open(bid, path,
+                                                                               folder=True))
+        dlg.bookmark_folder_requested.connect(self._on_cas_bookmark)
         dlg.open()
 
     def _open_cas_history(self) -> None:
@@ -4283,9 +4565,27 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         dlg.finished.connect(dlg.deleteLater)
         dlg.show()
 
-    def _on_cas_open(self, backend_id: str, path: str) -> None:
+    def _pane_for_backend_id(self, backend_id: str):
+        """The active pane when it is on *backend_id*, else another pane
+        that is; None when no pane is."""
+        from ui.cas_dialog import _backend_id_for
+
+        panes = [self._active_pane, *self._panes]
+        return next((p for p in panes if p is not None
+                     and _backend_id_for(p.backend) == backend_id), None)
+
+    def _on_cas_bookmark(self, backend_id: str, folder: str) -> None:
+        """Duplicate Finder, identical folders: bookmark *folder*."""
+        pane = self._pane_for_backend_id(backend_id)
+        if pane is None:
+            QMessageBox.information(self, "CAS", f"No pane is open on [{backend_id}].")
+            return
+        self._on_bookmark_request(folder, pane.backend.name, pane)
+
+    def _on_cas_open(self, backend_id: str, path: str, *, folder: bool = False) -> None:
         """Same routing as the metadata search: navigate the active
-        pane to the file's directory when the backend matches."""
+        pane to the file's directory (*folder*: to *path* itself) when the
+        backend matches."""
         from ui.cas_dialog import _backend_id_for
 
         pane = self._active_pane
@@ -4301,7 +4601,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             )
             return
         try:
-            pane.navigate_async(pane.backend.parent(path))
+            pane.navigate_async(path if folder else pane.backend.parent(path))
         except OSError as exc:
             QMessageBox.warning(
                 self,
@@ -4794,8 +5094,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if needs_password:
             # Try stored credential first
             from core.credentials import get_password as _get_stored_pw
+            from ui.off_gui import run_off_gui
 
-            stored = _get_stored_pw(profile.name)
+            # The keyring may wait for an unlock: off the GUI thread.
+            stored = run_off_gui(lambda: _get_stored_pw(profile.name))
             if stored:
                 password = stored
             else:
@@ -4994,6 +5296,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self.set_highlight_hidden(prefs.highlight_hidden, store=False)
         if prefs.font_size is not None:
             self.set_font_size(prefs.font_size, store=False)
+        self.set_own_title_bars(prefs.own_title_bars, store=False)
 
     # --- Window preferences: set now, stored at once ---
 
@@ -5001,11 +5304,15 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         """Merge *values* into session.json's ``window`` object now, not
         only on close (Edit > Settings…, Ctrl+H, the Theme menu, zoom).
         Every other key of the file is kept."""
+        from core.json_store import read_for_merge
+
         try:
-            previous = _read_json_file(self._SESSION_FILE)
-        except (OSError, ValueError):
-            previous = None
-        session = previous if isinstance(previous, dict) else {}
+            # A broken file is set aside; an unreadable one is not written
+            # over (it holds the panes, the layout, every preference).
+            session = read_for_merge(self._SESSION_FILE, max_bytes=MAX_UI_STATE_BYTES)
+        except OSError as exc:
+            log.warning("Window preferences not stored: %s", exc)
+            return
         window = session.get("window")
         if not isinstance(window, dict):
             window = {}
@@ -5020,6 +5327,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
     def current_window_prefs(self) -> window_prefs.WindowPrefs:
         """The preferences as the window has them now."""
         from ui.icon_provider import is_monochrome
+        from ui.title_bar import own_title_bars
 
         return window_prefs.WindowPrefs(
             theme=self._current_theme,
@@ -5032,6 +5340,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             font_size=self._font_size,
             icon_colours=self._icon_colours,
             icon_colour=self._icon_colour,
+            own_title_bars=own_title_bars(),
         )
 
     def set_theme(self, theme: str, *, store: bool = True) -> None:
@@ -5071,6 +5380,17 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             self.store_window_prefs(**{window_prefs.ICON_COLOURS_KEY: mode,
                                        window_prefs.ICON_COLOUR_KEY: colour})
 
+    def set_own_title_bars(self, on: bool, *, store: bool = True) -> None:
+        """axross's own title bars (frameless windows) or the window manager's
+        (ui.title_bar); open windows switch at once."""
+        from ui import title_bar
+
+        if bool(on) != title_bar.own_title_bars():
+            switched = title_bar.set_own_title_bars(bool(on))
+            log.info("Title bars: %s (%d open windows)", "axross" if on else "window manager", switched)
+        if store:
+            self.store_window_prefs(**{window_prefs.OWN_TITLE_BARS_KEY: bool(on)})
+
     def set_restore_on_start(self, on: bool, *, store: bool = True) -> None:
         self._restore_on_start = bool(on)
         if store:
@@ -5083,11 +5403,13 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # session.json is shared: core.i18n.store_language keeps the
         # language the user picked in window.language. Keep what this
         # window does not write itself instead of dropping it.
+        from core.json_store import read_for_merge
+
         try:
-            previous = _read_json_file(self._SESSION_FILE)
-        except (OSError, ValueError):
-            previous = None
-        session = previous if isinstance(previous, dict) else {}
+            session = read_for_merge(self._SESSION_FILE, max_bytes=MAX_UI_STATE_BYTES)
+        except OSError as exc:
+            log.warning("Session not saved: %s", exc)
+            return
         window = session.get("window")
         if not isinstance(window, dict):
             window = {}
@@ -5109,6 +5431,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                 "dock_state": bytes(self.saveState().toBase64()).decode("ascii"),
                 # The tabs axross made itself, which come apart with room.
                 DOCK_FIT_SESSION_KEY: self._dock_fit.session_state(),
+                # Docks shown only on one workspace (ui.dock_bindings).
+                DOCK_BINDINGS_KEY: self.dock_bindings_session(),
             }
         )
         workspaces = self._serialize_workspaces()
@@ -5275,6 +5599,52 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             return False
         return True
 
+    #: The layout of the very first start: two file panes side by side, the
+    #: source and target of a transfer (a fresh start used to show one).
+    FIRST_START_PRESET = "dual"
+
+    def apply_first_start_layout(self) -> bool:
+        """On the first start - no session saved yet, nothing restored -
+        lay the window out as FIRST_START_PRESET. True when it did. Later
+        starts keep what the user made of it (the session is saved on
+        quit), and a user who switched the layout restore off keeps the
+        single pane."""
+        if not self._restore_on_start or len(self._panes) != 1 or self._terminal_panes:
+            return False
+        try:
+            data = _read_json_file(self._SESSION_FILE)
+        except FileNotFoundError:
+            data = {}
+        except (OSError, ValueError):
+            return False  # a damaged file: restore_layout_on_start logged it
+        if not isinstance(data, dict) or _session_has_panes(data):
+            return False
+        self.apply_layout_preset(self.FIRST_START_PRESET)
+        # The docks' size hints (an empty transfer table, the sidebar's
+        # hint text) took half the window: the panes showed 3-5 rows.
+        self._first_start_docks_pending = True
+        return True
+
+    def _size_first_start_docks(self) -> None:
+        """First start only: the Bookmarks sidebar and the bottom docks
+        start small, the file panes get the room. A saved layout keeps
+        the sizes the user gave them (restoreState)."""
+        if not getattr(self, "_first_start_docks_pending", False):
+            return
+        self._first_start_docks_pending = False
+        horizontal, vertical = Qt.Orientation.Horizontal, Qt.Orientation.Vertical
+        sidebar = getattr(self, "_bookmark_sidebar", None)
+        if sidebar is not None and sidebar.isVisible() and not sidebar.isFloating():
+            bar = sidebar.titleBarWidget()
+            title = bar.sizeHint().width() if bar is not None else 0
+            width = max(title, sidebar.minimumSizeHint().width(), min(260, self.width() // 6))
+            self.resizeDocks([sidebar], [width], horizontal)
+        transfers = getattr(self, "_transfer_dock", None)
+        if transfers is not None and transfers.isVisible() and not transfers.isFloating():
+            # Title, table header, two rows and the button row stay whole.
+            height = max(transfers.minimumSizeHint().height(), 160, min(220, self.height() // 6))
+            self.resizeDocks([transfers], [height], vertical)
+
     def _reset_to_default_layout(self) -> None:
         """One local pane in one fresh workspace, whatever was there."""
         self._tear_down_panes(
@@ -5350,7 +5720,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             ):
                 self.resize(width, height)
         dock_state = _decode_window_state(win.get("dock_state"))
-        if dock_state is not None and not self.restoreState(QByteArray(dock_state)):
+        if dock_state is not None and not self.restore_dock_state(QByteArray(dock_state)):
             log.info("Session restore: the saved dock layout was not usable")
         # A dock state carries the corners; one of an older axross gave the
         # bottom area both bottom corners.
@@ -5387,6 +5757,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             self.switch_workspace(current_ws)
         elif self._active_pane is not None:
             self._note_active_workspace(self._active_pane)
+        self.restore_dock_bindings(win.get(DOCK_BINDINGS_KEY))
 
         self._refresh_pane_styles()
         log.info(
@@ -5571,8 +5942,11 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         key_passphrase = ""
         if profile.store_password:
             from core.credentials import get_password
+            from ui.off_gui import run_off_gui
 
-            password = get_password(profile.name) or ""
+            # The keyring (Secret Service over D-Bus) may wait for an
+            # unlock: off the GUI thread, the window painting meanwhile.
+            password = run_off_gui(lambda: get_password(profile.name)) or ""
 
         auth = getattr(profile, "auth_type", "password")
 
@@ -5632,11 +6006,14 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                     return pane
 
         try:
-            session = self._connection_manager.connect(
-                profile,
-                password=password,
-                key_passphrase=key_passphrase,
-                on_unknown_host=self._confirm_unknown_host,
+            from ui.off_gui import connect_off_gui
+
+            # Off the GUI thread: every remote pane of a restored session
+            # connected here in turn, the window frozen for each handshake.
+            session = connect_off_gui(
+                self._connection_manager, profile, password=password,
+                key_passphrase=key_passphrase, prompt=self._confirm_unknown_host,
+                status=lambda text: self.statusBar().showMessage(text),
             )
             pane = self._add_pane_to_splitter(
                 splitter,
@@ -5682,18 +6059,29 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             pane.set_proxy_info("", "")
             return
         from core import proxy_settings
+        from ui.scan_job import ScanJob
 
-        try:
-            res = proxy_settings.resolve_for_profile(profile)
-        except Exception as exc:  # noqa: BLE001 - e.g. an unreachable PAC file
-            pane.set_proxy_info("Proxy: ?", f"Proxy could not be resolved: {exc}")
-            return
-        if res.config is None:
-            pane.set_proxy_info("", res.description)
-        else:
-            cfg = res.config
-            label = f"via {cfg.proxy_type.upper()} {cfg.host}:{cfg.port}"
-            pane.set_proxy_info(label, res.description)
+        # Resolved on a worker: an expired PAC file is fetched over HTTP
+        # (up to 10 s) - after every connect and every settings change that
+        # held the window. The label follows when the answer is in, for a
+        # pane that is still there.
+        job = ScanJob(self)
+        self._proxy_jobs = MainWindow._keep_running(getattr(self, "_proxy_jobs", [])) + [job]
+
+        def show(kind, res, _cancelled) -> None:
+            if self._pane_profiles.get(pane) is not profile:
+                return  # closed, or connected anew meanwhile
+            if kind == "error":  # e.g. an unreachable PAC file
+                pane.set_proxy_info("Proxy: ?", f"Proxy could not be resolved: {res}")
+            elif res.config is None:
+                pane.set_proxy_info("", res.description)
+            else:
+                cfg = res.config
+                label = f"via {cfg.proxy_type.upper()} {cfg.host}:{cfg.port}"
+                pane.set_proxy_info(label, res.description)
+
+        job.finished.connect(show)
+        job.start(lambda _cancelled, _report: proxy_settings.resolve_for_profile(profile))
 
     def _on_connect(self, _checked: bool = False, *, profile=None) -> None:
         """The connection dialog; with *profile* it opens with that profile
@@ -5802,9 +6190,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         log.info("Imported %d profiles from %s", imported, source)
         QMessageBox.information(
             self,
-            "SSH Config Import",
-            f"Imported {imported} new profile(s) from {source}\n"
-            f"({len(hosts) - imported} already existed)",
+            tr("SSH Config Import"),
+            tr_n(imported, "Imported {n} new profile from {source}",
+                 "Imported {n} new profiles from {source}", source=source) + "\n"
+            + tr("({n} already existed)").format(n=len(hosts) - imported),
         )
 
     def _import_ssh_config(self) -> None:
@@ -5842,6 +6231,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Paste SSH Config")
+        set_window_icon(dlg, "server")
         dlg.resize(520, 380)
         layout = QVBoxLayout(dlg)
         add_close_corner(dlg)
@@ -5971,8 +6361,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             len(warnings),
         )
         msg_lines = [
-            f"Imported {imported} profile(s) from:\n{path}",
-            f"({skipped} skipped / already existed)",
+            tr_n(imported, "Imported {n} profile from:", "Imported {n} profiles from:")
+            + f"\n{path}",
+            tr("({n} skipped / already existed)").format(n=skipped),
         ]
         LIMIT = 8
         if failed:
@@ -5986,7 +6377,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             joined = "\n".join(f"  - {n}: {w}" for n, w in shown)
             more = len(warnings) - len(shown)
             suffix = f"\n  ...and {more} more" if more > 0 else ""
-            msg_lines.append(f"\n{len(warnings)} warning(s):\n{joined}{suffix}")
+            msg_lines.append("\n" + tr_n(len(warnings), "{n} warning:", "{n} warnings:")
+                             + f"\n{joined}{suffix}")
         QMessageBox.information(
             self,
             "Profile Import",
@@ -6017,7 +6409,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             return
 
         QMessageBox.information(
-            self, "Profile Export", f"Exported {len(data)} profile(s) to:\n{path}"
+            self, tr("Profile Export"),
+            tr_n(len(data), "Exported {n} profile to:", "Exported {n} profiles to:") + f"\n{path}"
         )
 
     def _view_all_profiles(self) -> None:
@@ -6042,6 +6435,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
+        set_window_icon(dlg, "file")
         dlg.resize(*size)
         layout = QVBoxLayout(dlg)
         add_close_corner(dlg)
@@ -6072,24 +6466,37 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                 == QMessageBox.StandardButton.Yes
             )
         from core.diagnostics import diagnose_backend
+        from ui.off_gui import run_off_gui
 
-        report = diagnose_backend(
-            self._active_pane.backend,
-            root=self._active_pane.current_path,
-            write_test=write_test,
-        )
+        backend, root = self._active_pane.backend, self._active_pane.current_path
+        try:
+            # Listing, stat and the probes are round trips: off the GUI thread.
+            report = run_off_gui(
+                lambda: diagnose_backend(backend, root=root, write_test=write_test),
+                text="Running diagnostics…",
+                status=lambda text: self.statusBar().showMessage(text))
+        except Exception as exc:  # noqa: BLE001 - shown, the window goes on
+            QMessageBox.warning(self, tr("Diagnostics"),
+                                tr("Diagnostics failed:\n{error}").format(error=exc))
+            return
         self._show_text_dialog("Diagnostics", report.to_text())
 
     def _run_recovery_scan(self) -> None:
         if self._active_pane is None:
-            QMessageBox.information(self, "Recovery", "No active pane.")
+            QMessageBox.information(self, tr("Recovery"), tr("No active pane."))
             return
         from core.recovery import format_findings, scan_backend_recovery
+        from ui.off_gui import run_off_gui
 
-        findings = scan_backend_recovery(
-            self._active_pane.backend,
-            self._active_pane.current_path,
-        )
+        backend, folder = self._active_pane.backend, self._active_pane.current_path
+        try:
+            findings = run_off_gui(lambda: scan_backend_recovery(backend, folder),
+                                   text="Scanning for recovery files…",
+                                   status=lambda text: self.statusBar().showMessage(text))
+        except OSError as exc:
+            QMessageBox.warning(self, tr("Recovery Scan"),
+                                tr("Could not scan:\n{error}").format(error=exc))
+            return
         self._show_text_dialog("Recovery Scan", format_findings(findings))
 
     def set_paranoid_mode(self, on: bool, *, announce: bool = False) -> None:
@@ -6118,8 +6525,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if announce:
             QMessageBox.information(
                 self,
-                "Security Mode",
-                f"Security mode is now: {policy.name}",
+                tr("Security Mode"),
+                tr("Security mode is now: {mode}").format(mode=policy.name),
             )
         if not_stored is not None:
             raise not_stored
@@ -6140,8 +6547,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if not self._target_pane:
             QMessageBox.information(
                 self,
-                "Move",
-                "Select files in one pane and activate a second pane as the target first.",
+                tr("Move"),
+                tr("Select files in one pane and activate a second pane as the target first."),
             )
             return
         if paths:
@@ -6222,8 +6629,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if not self._target_pane:
             QMessageBox.information(
                 self,
-                "Transfer",
-                "Select files in one pane and activate a second pane as the target first.",
+                tr("Transfer"),
+                tr("Select files in one pane and activate a second pane as the target first."),
             )
             return
         if not selected:
@@ -6283,11 +6690,18 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         cancel_epoch = self._transfer_manager.cancel_epoch
         check = ScanJob(self)
         self._conflict_checks.add(check)
+        #: Sources a move could not remove afterwards (core.move_permissions).
+        undeletable: list = []
 
         def work(cancel, _progress):
-            return TC.scan_conflicts(
+            scan = TC.scan_conflicts(
                 source_backend, dest_backend, paths, dest_dir, cancel=cancel
             )
+            if move:
+                from core.move_permissions import undeletable_sources
+
+                undeletable.extend(undeletable_sources(source_backend, paths, cancel=cancel))
+            return scan
 
         def finished(kind: str, value, cancelled: bool) -> None:
             self._conflict_checks.discard(check)
@@ -6320,12 +6734,25 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             ):
                 log.info("Transfer dropped: a pane closed or changed connection meanwhile")
                 return
+            move_now = move
+            if move and undeletable:
+                choice = self._ask_undeletable_move(undeletable)
+                if choice == "cancel":
+                    log.info("Move cancelled: %d source(s) could not be removed afterwards",
+                             len(undeletable))
+                    return
+                if choice == "elevated":
+                    self._elevated_move(source, target, paths, dest_dir)
+                    if on_queued is not None:
+                        on_queued()
+                    return
+                move_now = False  # "copy only"
             plan = self._resolve_transfer_conflicts(dest_backend, value)
             if plan is None:
                 log.info("Transfer cancelled at the conflict prompt")
                 return
             self._start_transfer_between(
-                source, target, paths, move=move, dest_dir=dest_dir, conflict_plan=plan
+                source, target, paths, move=move_now, dest_dir=dest_dir, conflict_plan=plan
             )
             if on_queued is not None:
                 on_queued()
@@ -6333,6 +6760,83 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         check.finished.connect(finished)
         self.statusBar().showMessage(tr("Checking the destination for existing names…"))
         check.start(work)
+
+    def _ask_undeletable_move(self, undeletable: list) -> str:
+        """Some sources of a move could not be removed after the copy: move
+        them as administrator, copy only, or cancel. ``"elevated"``,
+        ``"copy"`` or ``"cancel"``."""
+        from core import elevated_io as EIO
+
+        shown = "\n".join(f"• {u.path}: {u.reason}" for u in undeletable[:5])
+        more = len(undeletable) - 5
+        if more > 0:
+            shown += "\n" + tr("… and {count} more").format(count=more)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(tr("Move"))
+        box.setText(tr("{count} source(s) cannot be removed after the copy - "
+                       "you lack the permission:").format(count=len(undeletable)))
+        box.setInformativeText(shown + "\n\n" + tr(
+            "As administrator, the move runs as root (one password prompt); names "
+            "already in the destination are not replaced. No permission is changed."))
+        elevated = box.addButton(tr("Move as Administrator"), QMessageBox.ButtonRole.AcceptRole)
+        elevated.setEnabled(EIO.is_elevated_move_available())
+        if not elevated.isEnabled():
+            elevated.setToolTip(tr("pkexec (polkit) is not installed"))
+        copy = box.addButton(tr("Copy Only"), QMessageBox.ButtonRole.ActionRole)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel)
+        try:
+            box.exec()
+            clicked = box.clickedButton()
+        finally:
+            box.deleteLater()
+        if clicked is elevated:
+            return "elevated"
+        if clicked is copy:
+            return "copy"
+        return "cancel"
+
+    def _elevated_move(self, source, target, paths: list[str], dest_dir: str) -> None:
+        """Move *paths* into *dest_dir* as root (core.elevated_io), off the
+        GUI thread; both panes are listed again afterwards and what stayed
+        behind is named."""
+        from core import elevated_io as EIO
+        from ui.scan_job import ScanJob
+
+        backend = source.backend
+        job = ScanJob(self)
+        self._conflict_checks.add(job)
+
+        def work(cancel, _progress):
+            EIO.elevated_move(backend, list(paths), dest_dir)
+            return [p for p in paths if os.path.lexists(p)]
+
+        def finished(kind: str, value, cancelled: bool) -> None:
+            self._conflict_checks.discard(job)
+            job.deleteLater()
+            self.statusBar().clearMessage()
+            for pane in (source, target):
+                if pane in self._panes:
+                    pane.refresh_async()
+            if cancelled:
+                return
+            if kind == "error":
+                if isinstance(value, EIO.ElevatedCancelled):
+                    log.info("Move as administrator cancelled at the password prompt")
+                    return
+                QMessageBox.warning(self, tr("Move"), tr(
+                    "The move as administrator failed:\n{error}").format(error=value))
+                return
+            if value:
+                QMessageBox.information(self, tr("Move"), tr(
+                    "{count} item(s) were not moved - a name already in the destination "
+                    "is not replaced:\n{names}").format(
+                        count=len(value), names="\n".join(value[:10])))
+
+        job.finished.connect(finished)
+        self.statusBar().showMessage(tr("Moving as administrator…"))
+        job.start(work)
 
     def _next_conflict_prompt(self) -> None:
         """Ask about the checked transfers in the order their checks
@@ -6410,11 +6914,24 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         # operation journal as well. The walk itself (a round trip per
         # remote folder) runs off the GUI thread; the jobs are queued here
         # when it is done, in the same order.
+        walk_errors: list = []
+
         def _walked(jobs) -> None:
+            if walk_errors:
+                # The walk stopped part-way: what it built is queued, the
+                # rest of the selection is not copied - said, not only logged.
+                from PyQt6.QtWidgets import QMessageBox
+
+                from ui.plain_text import plain_message
+
+                plain_message(self, QMessageBox.Icon.Warning, "Transfer incomplete",
+                              f"Reading the folders to {'move' if move else 'copy'} stopped: "
+                              f"{walk_errors[0]}\n\n{len(jobs)} file(s) were queued; the rest of "
+                              "the selection was not transferred.").open()
             if move:
                 self._track_tag_moves(source, target, selected,
                                       target.current_path if dest_dir is None else dest_dir, jobs,
-                                      conflict_plan)
+                                      conflict_plan, partial=bool(walk_errors))
             log.info(
                 "Transfer enqueued: %s: %d file(s), %d byte(s)",
                 "move" if move else "copy",
@@ -6431,6 +6948,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             move=move,
             conflict_plan=conflict_plan,
             on_done=_walked,
+            on_error=walk_errors.append,  # called before on_done
         )
 
         action = "Move" if move else "Copy"
@@ -6447,7 +6965,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
     # -- tags follow moves -------------------------------------------------------
 
     def _track_tag_moves(self, source, target, selected, dest_dir: str, jobs,
-                         conflict_plan=None) -> None:
+                         conflict_plan=None, partial: bool = False) -> None:
         """Remember the jobs of a move whose files or folders carry tags.
 
         A folder's own tags (and those of the folders inside it) follow
@@ -6471,6 +6989,10 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         for job in jobs:
             if _under_any(job.source_path, roots):
                 self._tag_moves[job.job_id] = (src, dst, profile, job.source_path, job.dest_path)
+        if partial:
+            # The walk stopped half way: part of every folder may stay at
+            # the source, so no folder's own tags follow - its files' do.
+            return
         sep = source.backend.separator() or "/"
         for path in tagged:
             prefix = path.rstrip(sep) + sep
@@ -6483,7 +7005,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
             except ValueError:
                 continue  # transfer_files queued nothing under it either
             if conflict_plan is not None:
-                resolved = conflict_plan.resolve(new)
+                resolved = conflict_plan.resolve(new, path)
                 if resolved is None or conflict_plan.keeps_inside(new):
                     continue
                 new = resolved[0]
@@ -6514,7 +7036,17 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         if not self._tag_job_queue:
             since = (time.monotonic() - self._tag_last_flush) * 1000
             QTimer.singleShot(max(0, int(self.TAG_FLUSH_GAP_MS - since)), self._flush_tag_jobs)
-        self._tag_job_queue.append((job_id, ok))
+        # Its outcome is read now, while the job is in the list: the flush
+        # comes later, and a long copy may have dropped the finished job by
+        # then (core.transfer_manager.MAX_DONE_KEPT) - its tags stayed behind.
+        done_well = self._job_done_well(job_id) if ok is None else False
+        self._tag_job_queue.append((job_id, ok, done_well))
+
+    def _job_done_well(self, job_id: str) -> bool:
+        from core.transfer_worker import TransferStatus
+
+        job = self._transfer_manager.get_job(job_id)
+        return job is not None and job.status == TransferStatus.DONE and not job.skipped
 
     def _flush_tag_jobs(self) -> None:
         from core import tags as TG
@@ -6526,22 +7058,22 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         store = TG.store()
         try:
             with store.batch():
-                for job_id, ok in queue:
+                for job_id, ok, done_well in queue:
                     if ok is None:
-                        self._tags_job_finished(job_id)
+                        self._tags_job_finished(job_id, done_well)
                     else:
                         self._tag_moves.pop(job_id, None)
                         self._tags_folder_progress(job_id, False)
         except OSError as exc:  # tags.json not writable: the moves themselves stand
             log.warning("Tags could not follow the moved files: %s", exc)
 
-    def _tags_job_finished(self, job_id: str) -> None:
+    def _tags_job_finished(self, job_id: str, done_well: bool | None = None) -> None:
         from core import tags as TG
-        from core.transfer_worker import TransferStatus
 
         entry = self._tag_moves.pop(job_id, None)
-        job = self._transfer_manager.get_job(job_id) if entry is not None else None
-        ok = job is not None and job.status == TransferStatus.DONE and not job.skipped
+        if done_well is None:
+            done_well = self._job_done_well(job_id) if entry is not None else False
+        ok = entry is not None and done_well
         if entry is not None and ok:
             src, dst, profile, old, new = entry
             try:
@@ -6611,6 +7143,33 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
 
             self._start_auto_reconnect(pane, self._pane_profiles[pane], backend)
 
+    def _editors_use(self, backend) -> bool:
+        """An editor tab or a viewer / hex window of this window works on
+        *backend*."""
+        from PyQt6 import sip
+
+        editor = getattr(self, "_editor_window", None)
+        if editor is not None and not sip.isdeleted(editor):
+            if any(tab.backend is backend for tab in editor._tabs()):  # noqa: SLF001
+                return True
+        from ui import viewer_window as VW
+
+        return any(getattr(w, "_backend", None) is backend for w in VW.independent_windows(self))
+
+    def _rebind_open_editors(self, old, new) -> None:
+        from PyQt6 import sip
+
+        editor = getattr(self, "_editor_window", None)
+        if editor is not None and not sip.isdeleted(editor):
+            moved = editor.rebind_backend(old, new)
+            if moved:
+                log.info("%d editor tab(s) now save through the reconnected %s", moved, new.name)
+        from ui import viewer_window as VW
+
+        for window in VW.independent_windows(self):
+            if getattr(window, "_backend", None) is old:
+                window._backend = new  # noqa: SLF001 - the hex editor's session
+
     def _start_auto_reconnect(self, pane, profile, dropped) -> None:
         from core.connect_worker import run_connect
 
@@ -6629,6 +7188,9 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                 return
             # One load, straight to where the pane was.
             pane.set_backend(session, previous_path)
+            # Editor tabs and hex windows opened through the dropped session
+            # save through the new one (they held the dead session).
+            self._rebind_open_editors(dropped, session)
             # The reference the pane held on the dropped session.
             self._connection_manager.release(profile)
             transport = getattr(session, "transport", None)
@@ -6742,7 +7304,7 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         add_action.setShortcuts([QKeySequence("F8"), QKeySequence("Ctrl+Shift+B")])
         add_action.triggered.connect(self._bookmark_active_dir)
 
-        manage_action = self._bookmarks_menu.addAction(tr("Manage Bookmarks..."))
+        manage_action = self._bookmarks_menu.addAction(tr("Manage Bookmarks…"))
         manage_action.triggered.connect(self._manage_bookmarks)
 
         nodes = self._bookmark_manager.tree()
@@ -6830,12 +7392,14 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
                 skipped += 1
         self._rebuild_bookmarks_menu()
         if added and skipped:
-            text = tr("Bookmarked {added} folder(s); {skipped} already bookmarked.")
+            text = (tr_n(added, "Bookmarked {n} folder;", "Bookmarked {n} folders;") + " "
+                    + tr("{n} already bookmarked.").format(n=skipped))
         elif added:
-            text = tr("Bookmarked {added} folder(s).")
+            text = tr_n(added, "Bookmarked {n} folder.", "Bookmarked {n} folders.")
         else:
-            text = tr("Nothing added: {skipped} folder(s) already bookmarked.")
-        self._drop_status(text.format(added=added, skipped=skipped))
+            text = tr_n(skipped, "Nothing added: {n} folder already bookmarked.",
+                        "Nothing added: {n} folders already bookmarked.")
+        self._drop_status(text)
 
     @staticmethod
     def _pane_serves_bookmark(pane: FilePaneWidget, bookmark: Bookmark) -> bool:
@@ -7270,7 +7834,8 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         from ui.bookmark_manager_dialog import BookmarkManagerDialog
 
         dialog = BookmarkManagerDialog(
-            self._bookmark_manager, self, terminal_profiles=self._terminal_profile_names
+            self._bookmark_manager, self, terminal_profiles=self._terminal_profile_names,
+            profile_lookup=self._profile_manager.peek,
         )
         dialog.changed.connect(self._rebuild_bookmarks_menu)
         try:
@@ -7411,55 +7976,98 @@ class MainWindow(ExtensionPanelsMixin, WorkspaceMixin, QMainWindow):
         self._update_menu_action.setText(text.replace("&", "&&"))
         self._update_menu_action.setVisible(visible)
 
-    def _show_about(self) -> None:
+    #: Help > About: (name, what it is) of the protocols named there.
+    _ABOUT_PROTOCOLS = (
+        ("SFTP / SCP", "SSH (password, key, agent)"),
+        ("FTP / FTPS", "Active/passive, explicit TLS"),
+        ("SMB / CIFS", "Windows/Samba shares"),
+        ("WebDAV", "Nextcloud, ownCloud, Apache"),
+        ("S3", "AWS, MinIO, R2 (anonymous too)"),
+        ("Rsync", "Daemon and SSH transport"),
+        ("NFS", "v3 / v4"),
+        ("IMAP / POP3", "Mail as a file system"),
+        ("Azure Blob / Files", "Microsoft cloud storage"),
+        ("OneDrive / SharePoint", "Microsoft 365"),
+        ("Google Drive, Dropbox", "Cloud storage"),
+        ("iSCSI", "Block storage mount"),
+    )
+    #: Help > About: what axross does, one line each.
+    _ABOUT_FEATURES = (
+        "Any number of panes, split horizontally or vertically, in workspaces of their own",
+        "Drag & drop between all panes and protocols; remote-to-remote relay",
+        "Transfer queue with progress, resume and retry; asks before overwriting",
+        "Find Files, an index with tags, duplicates, disk usage and folder comparison",
+        "Live filter, text and hex editor, batch rename, bookmarks",
+        "Proxies (SOCKS, HTTP, HTTPS, PAC) per profile or globally",
+        "An LLM agent in a sandbox, with MCP servers and agent profiles",
+        "An MCP server for other LLM agents (axross --mcp-server)",
+        "Themes: Modern (light/dark), Classic, Light, Hacker, Amber",
+    )
+    #: Help > About: (panel, what it shows).
+    _ABOUT_PANELS = (
+        ("Transfers", "queue, progress, retry and cancel"),
+        ("Terminal", "a shell on the connected hosts"),
+        ("Log", "a live log of all operations"),
+        ("Console / Scripts", "a Python REPL and saved scripts"),
+        ("Analysis (sift)", "what the selected file is"),
+        ("Agent", "tasks for the LLM agent, with voice; Tools > MCP Servers… for its tools"),
+        ("Bookmarks", "the bookmark sidebar (F12)"),
+    )
+    #: Help > About: (tool, what it does) - extensions, switched on when first opened.
+    _ABOUT_TOOLS = (
+        ("Media Player", "music and videos, with an equalizer and visualizations"),
+        ("Audio Mixer", "volumes, outputs and the system's sound server"),
+        ("Bluetooth", "find, pair and connect devices; a headset becomes the output"),
+        ("System Information", "this computer's hardware, in a window of its own"),
+    )
+
+    def about_html(self) -> str:
+        """The text of Help > About axross, in the interface language."""
+        import html
+
         from axross._version import __version__
 
-        about_text = f"""<h2>axross {__version__}</h2>
-<p>Multi-protocol file manager with a pane-based UI, a scripting surface
-and an MCP server.</p>
+        def e(text: str) -> str:
+            return html.escape(tr(text), quote=False)
 
-<h3>Protocols</h3>
-<table>
-<tr><td><b>SFTP / SCP</b></td><td>SSH (password, key, agent)</td></tr>
-<tr><td><b>FTP / FTPS</b></td><td>Active/passive, explicit TLS</td></tr>
-<tr><td><b>SMB / CIFS</b></td><td>Windows/Samba shares</td></tr>
-<tr><td><b>WebDAV</b></td><td>Nextcloud, ownCloud, Apache</td></tr>
-<tr><td><b>S3</b></td><td>AWS, MinIO, R2 (anonymous too)</td></tr>
-<tr><td><b>Rsync</b></td><td>Daemon and SSH transport</td></tr>
-<tr><td><b>NFS</b></td><td>v3 / v4</td></tr>
-<tr><td><b>IMAP / POP3</b></td><td>Mail as a file system</td></tr>
-<tr><td><b>Azure Blob / Files</b></td><td>Microsoft cloud storage</td></tr>
-<tr><td><b>OneDrive / SharePoint</b></td><td>Microsoft 365</td></tr>
-<tr><td><b>Google Drive, Dropbox</b></td><td>Cloud storage</td></tr>
-<tr><td><b>iSCSI</b></td><td>Block storage mount</td></tr>
-</table>
-<p>…and more: see File &gt; Connection Manager for the full list.</p>
+        def rows(pairs) -> str:
+            return "".join(f"<tr><td><b>{e(name)}</b></td><td>{e(what)}</td></tr>"
+                           for name, what in pairs)
 
-<h3>Features</h3>
-<ul>
-<li>Any number of panes, split horizontally or vertically</li>
-<li>Drag &amp; drop between all panes and protocols; remote-to-remote relay</li>
-<li>Transfer queue with progress, resume and retry; asks before overwriting</li>
-<li>Live filter, text and hex editor, batch rename, bookmarks</li>
-<li>Proxies (SOCKS, HTTP, HTTPS, PAC) per profile or globally</li>
-<li>Analysis dock, media viewer, Scripts panel with a Python editor</li>
-<li>Themes: Modern (light/dark), Classic, Light, Hacker, Amber</li>
-</ul>
+        def items(pairs) -> str:
+            return "".join(f"<li><b>{e(name)}</b> — {e(what)}</li>" for name, what in pairs)
 
-<h3>Docks</h3>
-<ul>
-<li><b>Transfers</b> — queue, progress, retry/cancel</li>
-<li><b>Terminal</b> — shell on connected hosts</li>
-<li><b>Log</b> — live log of all operations</li>
-<li><b>Console / Scripts</b> — Python REPL and saved scripts</li>
-<li><b>Analysis (sift)</b> — what the selected file is; right-click › Analyse with sift</li>
-</ul>
+        features = "".join(f"<li>{e(line)}</li>" for line in self._ABOUT_FEATURES)
+        summary = e("Multi-protocol file manager with a pane-based UI, an LLM agent, "
+                    "a scripting surface and an MCP server.")
+        return (
+            f"<h2>axross {__version__}</h2>"
+            f"<p>{summary}</p>"
+            f"<h3>{e('Protocols')}</h3><table>{rows(self._ABOUT_PROTOCOLS)}</table>"
+            f"<p>{e('…and more: see File > Connection Manager… for the full list.')}</p>"
+            f"<h3>{e('Features')}</h3><ul>{features}</ul>"
+            f"<h3>{e('Panels')}</h3><ul>{items(self._ABOUT_PANELS)}</ul>"
+            f"<h3>{e('Tools')}</h3><ul>{items(self._ABOUT_TOOLS)}</ul>"
+            f"<p><small>{e('axross {version} - Python + PyQt6').format(version=__version__)}"
+            " | github.com/c0decave/axross</small></p>"
+            f"<p><small>{e('F1: keyboard shortcuts · Help > Scripting Guide')}</small></p>"
+            f"<p><small>{e('Thanks to the projects behind axross: Help > Third-Party Software…')}"
+            "</small></p>"
+        )
 
-<p><small>axross {__version__} — Python + PyQt6 | github.com/c0decave/axross</small></p>
-<p><small>F1 = keyboard shortcuts · Help &gt; Scripting Guide</small></p>
-<p><small>Thanks to the projects behind axross: Help &gt; Third-Party Software…</small></p>
-"""
-        QMessageBox.about(self, f"About axross {__version__}", about_text)
+    def about_dialog(self):
+        """Help > About axross: the text scrolls once the screen is too
+        short for it (QMessageBox.about was 967 px high)."""
+        from axross._version import __version__
+        from ui.about_dialog import AboutDialog
+
+        return AboutDialog(tr("About axross {version}").format(version=__version__),
+                           self.about_html(), self)
+
+    def _show_about(self) -> None:
+        dialog = self.about_dialog()
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.exec()
 
     # --- Font / Zoom ---
 
@@ -7527,17 +8135,23 @@ and an MCP server.</p>
             self._base_style_name = app.style().objectName()
             self._base_palette = app.palette()
         css = themes.stylesheet_for(theme, scheme, compact=self._compact_mode)
+        # Fusion honours the palette and the stylesheet uniformly; native
+        # styles (Breeze, Windows11, ...) draw some controls themselves and
+        # ignore parts of both.
+        style = "Fusion" if tokens is not None else self._base_style_name
         with themes.collection_paused():
-            if tokens is not None:
-                # Fusion honours the palette and the stylesheet uniformly;
-                # native styles (Breeze, Windows11, ...) draw some controls
-                # themselves and ignore parts of both.
-                app.setStyle("Fusion")
-                app.setPalette(themes.qpalette_for(tokens))
-            else:
-                if self._base_style_name:
-                    app.setStyle(self._base_style_name)
-                app.setPalette(self._base_palette)
+            # The old sheet goes first, and the new one is set as a first
+            # one. Replacing a sheet repolishes every widget once more per
+            # widget above it (QStyleSheetStyle::repolish walks every widget
+            # and again its children): 4500 style, 9000 palette and up to
+            # 7000 font changes for the main window's 580 widgets, where
+            # this order sends 1900, 2400 and 1300 - about a third of the
+            # time. The style is set only when it changes (one more pass).
+            app.setStyleSheet("")
+            if style and app.style().name().lower() != style.lower():
+                app.setStyle(style)
+            app.setPalette(themes.qpalette_for(tokens) if tokens is not None
+                           else self._base_palette)
             app.setStyleSheet(css)
 
         # Re-apply pane border styles on top of the theme
@@ -7572,7 +8186,7 @@ and an MCP server.</p>
         thread. One session per host, share and login is kept for reuse."""
         import threading
 
-        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtCore import QObject
 
         key = (hit.host, hit.share, login.username, login.domain, login.port)
         cache = self.__dict__.setdefault("_sweep_sessions", {})
@@ -7581,21 +8195,34 @@ and an MCP server.</p>
             return
 
         class _Ready(QObject):
-            done = pyqtSignal(object, str)
+            """The worker's answer arrives in deliver() through a GuiCall: the
+            bridge is deleted right after it, and with the window at quit,
+            while the worker may still be reporting (core/thread_relay.py)."""
 
-        bridge = _Ready(self)
-        self.__dict__.setdefault("_sweep_bridges", set()).add(bridge)
+            def __init__(self, parent, callback) -> None:
+                super().__init__(parent)
+                self._callback = callback
+
+            def deliver(self, session, error: str) -> None:
+                self._callback(session, error)
 
         def finish(session, error: str) -> None:
             self._sweep_bridges.discard(bridge)
             bridge.deleteLater()
             if session is None:
-                QMessageBox.warning(self, tr("Find on Network Hosts"), error)
+                # Names the host and share (the server's) and the server's
+                # error: text, never markup.
+                from ui.plain_text import plain_message
+
+                plain_message(self, QMessageBox.Icon.Warning, tr("Find on Network Hosts"),
+                              error).exec()
                 return
             cache[key] = session
             on_ready(session)
 
-        bridge.done.connect(finish)
+        bridge = _Ready(self, finish)
+        self.__dict__.setdefault("_sweep_bridges", set()).add(bridge)
+        done = GuiCall(bridge.deliver)
         user = f"{login.domain}\\{login.username}" if login.domain else login.username
 
         def work() -> None:
@@ -7607,9 +8234,9 @@ and an MCP server.</p>
                 text = str(exc) or type(exc).__name__
                 if login.password:
                     text = text.replace(login.password, "***")
-                bridge.done.emit(None, f"{hit.host}\\{hit.share}: {text}")
+                done(None, f"{hit.host}\\{hit.share}: {text}")
                 return
-            bridge.done.emit(session, "")
+            done(session, "")
 
         threading.Thread(target=work, name="axross-sweep-connect", daemon=True).start()
 
@@ -7687,12 +8314,39 @@ and an MCP server.</p>
         _set_tint(self._icon_tint())
         self._rebuild_toolbar_icons()
         self._rebuild_dock_titlebars()
+        self._refresh_window_icons()
         if hasattr(self, "_bookmark_sidebar"):
             self._bookmark_sidebar.rebuild()
         if hasattr(self, "_bookmarks_menu"):
             self._rebuild_bookmarks_menu()
         for pane in self._panes:
             pane._table.viewport().update()
+
+    @staticmethod
+    def _menu_icon(action, name: str) -> None:
+        """A menu entry with the icon of the window or panel it opens; the
+        ``axIcon`` property lets a theme switch draw it again."""
+        from ui.icon_provider import icon as _ico
+
+        action.setIcon(_ico(name))
+        action.setProperty("axIcon", name)
+
+    def _refresh_window_icons(self) -> None:
+        """Every window's and panel's own icon, drawn again: the title bars
+        of the panels not rebuilt above (Console, Agent, extension panels,
+        archive previews) and the window icons of set_window_icon."""
+        from ui.dock_titlebar import DockTitleBar
+        from ui.icon_provider import refresh_window_icons
+
+        from ui.icon_provider import icon as _ico
+
+        for bar in self.findChildren(DockTitleBar):
+            bar.refresh_icon()
+        for action in self.findChildren(QAction):
+            name = action.property("axIcon")
+            if name:  # menu entries (and toolbar buttons, drawn again)
+                action.setIcon(_ico(str(name)))
+        refresh_window_icons()
 
     def _rebuild_toolbar_icons(self) -> None:
         """Re-apply icons to the toolbars' actions (those carrying
@@ -7956,6 +8610,9 @@ and an MCP server.</p>
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt
         super().showEvent(event)
+        if getattr(self, "_first_start_docks_pending", False):
+            # After the first layout pass: resizeDocks needs real geometry.
+            QTimer.singleShot(0, self._size_first_start_docks)
         for reorder in getattr(self, "_toolbar_reorder", {}).values():
             reorder.arm()
 
@@ -7982,11 +8639,11 @@ and an MCP server.</p>
         """Re-install the dock title bars so their icons re-rasterise
         from the now-monochrome (or colourful-again) provider."""
         dock_specs = [
-            (getattr(self, "_transfer_dock", None), "Transfers", "download"),
-            (getattr(self, "_terminal_dock", None), "Terminal", "terminal"),
-            (getattr(self, "_log_dock", None), "Log", "inbox"),
-            (getattr(self, "_scripts_dock", None), tr("Scripts"), "edit"),
-            (getattr(self, "_bookmark_sidebar", None), "Bookmarks", "bookmark"),
+            (getattr(self, "_transfer_dock", None), tr("Transfers"), "download"),
+            (getattr(self, "_terminal_dock", None), tr("Terminal"), "terminal"),
+            (getattr(self, "_log_dock", None), tr("Log"), "log"),
+            (getattr(self, "_scripts_dock", None), tr("Scripts"), "scripts"),
+            (getattr(self, "_bookmark_sidebar", None), tr("Bookmarks"), "bookmark"),
             (getattr(self, "_analysis_dock", None), tr(ANALYSIS_DOCK_TITLE), "analysis"),
         ]
         for dock, title, icon_name in dock_specs:
@@ -8027,6 +8684,29 @@ and an MCP server.</p>
             detach_running_thread(thread)
         self._scheduler_threads = []
 
+    def _setup_mail_docks(self) -> None:
+        """The mail docks of the settings file (Tools > Mail Docks…)."""
+        from ui.mail_docks import MailDocks
+
+        self._mail_docks = MailDocks(self)
+        try:
+            self._mail_docks.start()
+        except Exception:  # a broken settings file must not stop the window
+            log.warning("Mail docks could not be started", exc_info=True)
+
+    def _mail_docks_manage(self) -> None:
+        self._mail_docks.manage()
+
+    def _open_mail_project(self) -> None:
+        from core.connection_manager import ConnectionManager
+        from ui.mail_project import MailProjectDialog
+
+        manager = getattr(self, "_connection_manager", None) or ConnectionManager()
+        dialog = MailProjectDialog(self, agent_dock=lambda: getattr(self, "_agent_dock", None),
+                                   connect=lambda profile: manager.connect(profile))
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+
     def closeEvent(self, event) -> None:
         scripts = getattr(self, "_scripts_dock", None)
         if scripts is not None and not scripts.maybe_close():
@@ -8050,6 +8730,23 @@ and an MCP server.</p>
         if not VW.close_independent_windows(self):
             event.ignore()
             return
+        manager = getattr(self, "_transfer_manager", None)
+        unfinished = manager.unfinished() if manager is not None else 0
+        if unfinished and not getattr(self, "_quit_with_transfers", False):
+            # Quitting cancels them all (and leaves their partial files):
+            # closing one pane asks the same, the whole window asked nothing.
+            from PyQt6.QtWidgets import QMessageBox
+
+            from ui.plain_text import plain_message
+
+            box = plain_message(self, QMessageBox.Icon.Warning, "Transfers running",
+                                f"{unfinished} transfer(s) are running or waiting. Quitting cancels "
+                                "them; partly copied files are left behind.\n\nQuit anyway?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            box.setDefaultButton(QMessageBox.StandardButton.No)
+            if box.exec() != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         log.info("Application closing, cleaning up...")
         if self._tag_job_queue:
             self._flush_tag_jobs()  # ended moves whose tags wait for the gap
@@ -8085,6 +8782,12 @@ and an MCP server.</p>
                 pane.shutdown()
             except Exception:  # noqa: BLE001 — the rest of the cleanup must run
                 log.warning("File pane shutdown failed on close", exc_info=True)
+        mail_docks = getattr(self, "_mail_docks", None)
+        if mail_docks is not None:
+            try:
+                mail_docks.shutdown()
+            except Exception:
+                log.warning("Mail docks shutdown failed on close", exc_info=True)
         self._log_dock.shutdown()
         self._terminal_dock.shutdown()
         if getattr(self, "_analysis_dock", None) is not None:

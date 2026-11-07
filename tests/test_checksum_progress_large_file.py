@@ -4,7 +4,8 @@ checksum.
 Found in review (round 3, files): the stream-hash fallback built its
 QProgressDialog with ``maximum=total_size``. Qt's range is a C int, so a
 3 GiB file raised OverflowError straight into the global error dialog
-before a byte was read. The bar now runs in per-mille of the size.
+before a byte was read. Since 0.14.158 the hash runs on the pane's
+ScanJob and says how far it is in the status line - no Qt range at all.
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ from core.local_fs import LocalFS  # noqa: E402
 from models.file_item import FileItem  # noqa: E402
 
 GIB = 1024**3
-INT_MAX = 2**31 - 1
 
 
 class _NoNativeChecksumFS(LocalFS):
@@ -64,9 +64,23 @@ class ChecksumLargeFileTest(unittest.TestCase):
         self.addCleanup(self.pane.deleteLater)
         self.pane.navigate(str(self.root))
 
+    def _drain(self) -> None:
+        from tests.off_gui_wait import _drain_checksum
+
+        self.assertTrue(_drain_checksum(self.pane))
+
     def test_happy_stream_hash_of_a_3_gib_file_does_not_overflow(self) -> None:
-        digest = self.pane._stream_sha256(str(self.root / "video.mkv"), 3 * GIB)
+        from ui import file_pane as FP
+
+        seen: list = []
+        digest = FP._stream_sha256(self.pane._backend, str(self.root / "video.mkv"), 3 * GIB,
+                                   lambda: False, lambda *a: seen.append(a))
         self.assertEqual(digest, hashlib.sha256(_NoNativeChecksumFS.data).hexdigest())
+        self.assertEqual(seen[-1][1], 3 * GIB)
+        self.pane._checksum_target = (FileItem(name="video.mkv", size=3 * GIB), "x")
+        self.pane._checksum_phase = "stream"
+        text = self.pane._checksum_progress_text({"scanned": 2 * GIB + 7, "indexed": 3 * GIB})
+        self.assertIn("2.0 GB of 3.0 GB", text)
 
     def test_happy_show_checksum_reaches_the_result_dialog(self) -> None:
         from PyQt6.QtWidgets import QMessageBox
@@ -77,6 +91,7 @@ class ChecksumLargeFileTest(unittest.TestCase):
             "ui.file_pane.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
         ), mock.patch("ui.viewer_window.show_independent", lambda dlg: shown.append(dlg)):
             self.pane._show_checksum(item)
+            self._drain()
         self.assertEqual(len(shown), 1)
 
     def test_sad_read_error_is_still_reported(self) -> None:
@@ -91,17 +106,12 @@ class ChecksumLargeFileTest(unittest.TestCase):
             "ui.file_pane.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
         ), mock.patch("ui.file_pane.QMessageBox.warning") as warning:
             self.pane._show_checksum(item)
+            self._drain()
         warning.assert_called_once()
         self.assertIn("connection lost", warning.call_args.args[2])
 
-
-def test_edge_progress_units_stay_in_qt_range():
-    from ui.file_pane import _progress_units
-
-    for total in (1, 10, 2 * GIB, 3 * GIB, 16 * 1024**4):
-        values = [_progress_units(done, total) for done in (0, total // 3, total, total * 2)]
-        assert all(0 <= v <= 1000 <= INT_MAX for v in values)
-        assert values == sorted(values)
-        assert values[0] == 0
-        assert values[2] == values[3] == 1000
-    assert _progress_units(5, 0) == 0
+    def test_edge_the_status_line_without_a_size_counts_up(self) -> None:
+        self.pane._checksum_target = (FileItem(name="pipe", size=0), "x")
+        self.pane._checksum_phase = "stream"
+        self.assertEqual(self.pane._checksum_progress_text({"scanned": 1024, "indexed": 0}),
+                         "Hashing pipe… 1.0 KB")

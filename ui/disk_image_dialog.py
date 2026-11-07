@@ -36,8 +36,10 @@ from PyQt6.QtWidgets import (
 from core import disk_image as DI
 from core import loop_mount as LM
 from core.i18n import tr
+from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +68,14 @@ class _PasswordBridge(QObject):
         self._answer: str | None = None
         self._abandoned = False
         self.request.connect(self._on_request)
+        # The worker reaches the UI thread through this and ``request`` is
+        # emitted there. The dialog deletes itself on close, maybe while a
+        # mount asks for a password: an emit from the worker meeting that
+        # deletion is a use-after-free (core/thread_relay.py).
+        self._post_request = GuiCall(self._emit_request)
+
+    def _emit_request(self, title: str, retry: bool) -> None:
+        self.request.emit(title, retry)
 
     def ask_from_worker(self, title: str, retry: bool = False) -> str | None:
         if threading.current_thread() is threading.main_thread():
@@ -76,10 +86,7 @@ class _PasswordBridge(QObject):
             self._answer = None
             if self._abandoned:  # checked after clear(): abandon() cannot be lost
                 return None
-            try:
-                self.request.emit(title, retry)  # queued: the receiver is in the UI thread
-            except RuntimeError:  # the dialog is gone
-                return None
+            self._post_request(title, retry)  # dropped if the dialog is gone: times out
             self._event.wait(LM.COMMAND_TIMEOUT)
             return None if self._abandoned else self._answer
 
@@ -102,6 +109,7 @@ class DiskImageDialog(QDialog):
     def __init__(self, backend, path: str, parent=None, *, open_folder=None,
                  mount=LM.mount_partition, unmount=LM.unmount) -> None:
         super().__init__(parent)
+        set_window_icon(self, "drives")
         self.setWindowTitle(tr("Disk Image"))
         self.resize(820, 460)
         self._backend = backend

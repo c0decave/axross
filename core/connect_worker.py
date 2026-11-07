@@ -51,6 +51,7 @@ from typing import Any
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
 from core.thread_lifetime import detach_running_thread
+from core.thread_relay import GuiCall
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +92,15 @@ class HostKeyPrompt(QObject):
         self._reply_timeout_s = max(0.0, float(reply_timeout_s))
         self._prompt: Callable[[Any], bool] | None = None
         self._abandoned = False
+        # ask() reaches the GUI thread through this; ``request`` is emitted
+        # there. The worker never emits on this object itself: it may be
+        # deleted meanwhile (at quit, say), and an emit meeting the deletion
+        # is a use-after-free (core/thread_relay.py). A dropped question
+        # times out and is denied.
+        self._post_request = GuiCall(self._emit_request)
+
+    def _emit_request(self, exc: Any) -> None:
+        self.request.emit(exc)
 
     def set_prompt(self, prompt: Callable[[Any], bool] | None) -> None:
         self._prompt = prompt
@@ -105,9 +115,7 @@ class HostKeyPrompt(QObject):
             return False
         self._event.clear()
         self._answer = False
-        # Qt.QueuedConnection auto-selected because the emitter is on
-        # a different thread than the receiver.
-        self.request.emit(exc)
+        self._post_request(exc)
         if self._abandoned:  # abandon() ran between the check and clear()
             return False
         if not self._event.wait(self._reply_timeout_s):

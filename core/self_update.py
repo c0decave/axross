@@ -120,14 +120,23 @@ SIG_BYTES = 64
 #: signed with; any one of them verifying is enough. More than one only
 #: while a key is rotated: a new key is added here a release before the
 #: releases are signed with it. Tests replace it with their own key.
-TRUSTED_KEYS: tuple[str, ...] = ("rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68=",)
+TRUSTED_KEYS: tuple[str, ...] = (
+    "rJX0yymA5/Mbw24qIpuLNaLqC/FbvugEREz1p0pSz68=",  # signed 0.14.53 - 0.15.176
+    "INHsCyIzJ305W1+SvRkrEMuaO7puYtlgnhP72N6+mcw=",  # from 0.15.176 on; signs once the binaries in use carry it
+)
 #: Written into the bundle by build/axross.spec: "full" or "slim". In the
 #: first-party folder "axross" (core.third_party.FIRST_PARTY): a file at
 #: the bundle root would be an unclaimed part of the bundle to the release
 #: gate (tests/test_third_party_bundle.py).
 FLAVOR_FILE = "axross-bundle-flavor.txt"
 FLAVOR_PATH = ("axross", FLAVOR_FILE)
-FLAVORS = ("full", "slim")
+FLAVORS = ("full", "slim", "base")
+#: The target system's glibc floor of a Linux binary ("glibc-2.34" or
+#: "glibc-2.36"), written by build/axross.spec beside the flavour. A
+#: bundle without it is a glibc-2.34 one (every binary before 0.15.166).
+VARIANT_FILE = "axross-bundle-variant.txt"
+VARIANT_PATH = ("axross", VARIANT_FILE)
+VARIANTS = ("glibc-2.34", "glibc-2.36")
 
 MAX_API_BYTES = 1 << 20
 MAX_SUMS_BYTES = 64 << 10
@@ -210,7 +219,7 @@ class Install:
     """How this axross was installed and which release asset replaces it."""
 
     frozen: bool
-    flavor: str = ""  # "full", "slim", "" (unknown or not frozen)
+    flavor: str = ""  # "full", "slim", "base", "" (unknown or not frozen)
     asset: str = ""  # the release asset of this build, "" when there is none
     executable: Path | None = None  # the real file of the running binary
     platform: str = ""
@@ -246,11 +255,14 @@ class Install:
         return ""
 
 
-def asset_name(platform: str, machine: str, flavor: str) -> str:
-    """The release asset of a binary of *flavor* on *platform*/*machine*."""
+def asset_name(platform: str, machine: str, flavor: str, variant: str = "glibc-2.34") -> str:
+    """The release asset of a binary of *flavor* (and, on Linux, glibc
+    *variant*) on *platform*/*machine*: ``axross-full`` / ``-slim`` /
+    ``-base`` for glibc 2.34, ``axross-full-glibc2.36`` ... for 2.36."""
     machine = (machine or "").lower()
     if platform.startswith("linux") and machine in ("x86_64", "amd64") and flavor in FLAVORS:
-        return f"axross-{flavor}"
+        suffix = "" if variant in ("", "glibc-2.34") else "-" + variant.replace("-", "")
+        return f"axross-{flavor}{suffix}" if variant in VARIANTS or not variant else ""
     if platform == "darwin" and machine == "arm64" and flavor == "slim":
         return "axross-slim-macos-arm64"
     if platform == "win32" and machine in ("amd64", "x86_64") and flavor == "slim":
@@ -274,6 +286,19 @@ def _flavor_of(bundle_dir, executable: Path) -> str:
     return ""
 
 
+def _variant_of(bundle_dir) -> str:
+    """The bundle's glibc variant; glibc-2.34 for a bundle without the file."""
+    if bundle_dir:
+        try:
+            with open(os.path.join(bundle_dir, *VARIANT_PATH), encoding="ascii") as fh:
+                marker = fh.read(32).strip()
+        except (OSError, ValueError):
+            marker = ""
+        if marker in VARIANTS:
+            return marker
+    return "glibc-2.34"
+
+
 def detect_install(*, frozen=None, executable=None, bundle_dir=_UNSET, platform=None,
                    machine=None) -> Install:
     """This process's :class:`Install` (every argument is for tests)."""
@@ -286,7 +311,8 @@ def detect_install(*, frozen=None, executable=None, bundle_dir=_UNSET, platform=
     if bundle_dir is _UNSET:
         bundle_dir = getattr(sys, "_MEIPASS", None)
     flavor = _flavor_of(bundle_dir, exe)
-    return Install(True, flavor, asset_name(platform, machine, flavor), exe, platform, machine)
+    variant = _variant_of(bundle_dir)
+    return Install(True, flavor, asset_name(platform, machine, flavor, variant), exe, platform, machine)
 
 
 # -- releases ----------------------------------------------------------------------------
@@ -412,7 +438,7 @@ def build_opener(*, handlers=(), ssl_context=None) -> urllib.request.OpenerDirec
     return opener_without_redirects(proxy_handler(), *extra)
 
 
-def _check_url(url: str) -> str:
+def _check_url(url: str, hosts=None) -> str:
     try:
         parts = urllib.parse.urlsplit(url)
         host = (parts.hostname or "").lower()
@@ -421,7 +447,8 @@ def _check_url(url: str) -> str:
         raise UpdateError(f"refused a malformed address: {url[:100]!r}") from None
     if parts.scheme != "https":
         raise UpdateError(f"refused {host or url[:100]}: only https is used for updates")
-    if host not in ALLOWED_HOSTS or port not in (None, 443) or parts.username or parts.password:
+    if host not in (ALLOWED_HOSTS if hosts is None else hosts) or port not in (None, 443) \
+            or parts.username or parts.password:
         raise UpdateError(f"refused {host or url[:100]}: not a GitHub host of the releases")
     return host
 
@@ -447,14 +474,15 @@ def fetch(url: str, *, opener, max_bytes: int, timeout: float = READ_TIMEOUT,
           deadline: float | None = None, accept: str = "application/octet-stream",
           sink: Callable[[bytes], None] | None = None,
           progress: Callable[[int, int], None] | None = None, total: int = 0,
-          cancel: threading.Event | None = None) -> bytes | int:
-    """GET *url* over https from an allowed host, following up to
-    :data:`MAX_REDIRECTS` redirects (each target checked). Returns the body,
-    or with *sink* hands each chunk to it and returns the byte count. More
-    than *max_bytes*, or past *deadline* (time.monotonic), is refused."""
+          cancel: threading.Event | None = None, hosts=None) -> bytes | int:
+    """GET *url* over https from an allowed host (*hosts*, default
+    :data:`ALLOWED_HOSTS`), following up to :data:`MAX_REDIRECTS` redirects
+    (each target checked). Returns the body, or with *sink* hands each chunk
+    to it and returns the byte count. More than *max_bytes*, or past
+    *deadline* (time.monotonic), is refused."""
     current = url
     for _hop in range(MAX_REDIRECTS + 1):
-        host = _check_url(current)
+        host = _check_url(current, hosts)
         headers = {"Accept": accept, "User-Agent": _user_agent()}
         if host == "api.github.com":
             headers["X-GitHub-Api-Version"] = "2022-11-28"
@@ -535,7 +563,7 @@ def check(current: str | None = None, *, opener=None, timeout: float = API_TIMEO
                  deadline=time.monotonic() + timeout, accept="application/vnd.github+json")
     try:
         data = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise UpdateError("GitHub's answer is not JSON") from None
     if isinstance(data, dict):
         for flag in ("draft", "prerelease"):
@@ -569,6 +597,21 @@ class Installed:
     how_to_finish: str  # what the user still has to do ("" when replaced)
     sha256: str = ""
     version: str = ""
+
+
+#: The first line of a release's SHA256SUMS: the version the signature is
+#: for. Without it a signed SHA256SUMS of any old release could be published
+#: under a new tag (a downgrade to a known-vulnerable build).
+RELEASE_LINE_PREFIX = "# axross-release "
+
+
+def release_of_sums(text: str) -> str | None:
+    """The version the ``# axross-release X.Y.Z`` line of SHA256SUMS names;
+    None without one."""
+    for line in text.splitlines():
+        if line.startswith(RELEASE_LINE_PREFIX):
+            return line[len(RELEASE_LINE_PREFIX):].strip() or None
+    return None
 
 
 def parse_sums(text: str) -> dict[str, str]:
@@ -701,7 +744,16 @@ def _signed_sums(release: Release, opener) -> bytes:
 
 def _expected_sha256(release: Release, asset: Asset, opener) -> str:
     data = _signed_sums(release, opener)
-    expected = parse_sums(data.decode("utf-8", errors="replace")).get(asset.name)
+    text = data.decode("utf-8", errors="replace")
+    signed_for = release_of_sums(text)
+    if signed_for is None:
+        raise SignatureError(f"the signed {SUMS_NAME} of release {release.version} names no "
+                             "release version - an older release's checksums under a new tag? "
+                             "Refused")
+    if signed_for != release.version:
+        raise SignatureError(f"the signed {SUMS_NAME} is for axross {signed_for}, the release says "
+                             f"{release.version} - refused")
+    expected = parse_sums(text).get(asset.name)
     if expected is None:
         raise ChecksumError(f"the {SUMS_NAME} of release {release.version} has no entry for "
                             f"{asset.name} - refused")
@@ -828,6 +880,7 @@ def update(release: Release, inst: Install, *, opener=None,
     and the result says so (the window offers Save to…)."""
     if not inst.can_download:
         raise UpdateError(inst.why_not())
+    _carry_packs(release, opener, progress, cancel)
     folder = inst.executable.parent
     if _writable(folder):
         downloaded = download(release, inst, dest_dir=folder, opener=opener, progress=progress,
@@ -854,6 +907,32 @@ def update(release: Release, inst: Install, *, opener=None,
         f"The verified new version is {final}: use Save to… to put it where you want, or "
         f"replace {inst.executable.name} with it yourself.",
         downloaded.sha256, release.version)
+
+
+def _carry_packs(release: Release, opener, progress=None, cancel=None, *, current: str | None = None,
+                 root=None, verify=None) -> list[str]:
+    """The packs installed for the running version, fetched and checked for
+    *release* before its binary is fetched (core.packs) - an update that
+    cannot bring a unit along stops here, nothing is replaced."""
+    from core import packs
+
+    if current is None:
+        from axross._version import __version__ as current
+    units = packs.installed(current, root)
+    if not units:
+        return []
+
+    def get(url, max_bytes, hosts):
+        if cancel is not None and cancel.is_set():
+            raise Cancelled("cancelled")
+        return fetch(url, opener=opener or build_opener(), max_bytes=max_bytes, hosts=hosts,
+                     deadline=time.monotonic() + 600)
+    try:
+        return packs.install(release, units, fetch=packs.Fetcher(get), root=root, verify=verify,
+                             progress=progress)
+    except packs.PackError as exc:
+        raise UpdateError(f"the packs of {release.version} could not be brought along ({exc}); "
+                          "axross was not updated") from None
 
 
 def save_copy(installed: Installed, destination) -> Path:

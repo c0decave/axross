@@ -182,7 +182,7 @@ def validate_topic(topic: Topic) -> None:
         raise ValueError(f"task must be 1 to {MAX_TASK} characters")
     if not isinstance(topic.description, str) or len(topic.description) > MAX_DESCRIPTION:
         raise ValueError(f"description must be at most {MAX_DESCRIPTION} characters")
-    if topic.command and not (isinstance(topic.command, str) and _COMMAND.match(topic.command)):
+    if topic.command and not (isinstance(topic.command, str) and _COMMAND.fullmatch(topic.command)):
         raise ValueError(
             "command must be lower case letters, digits and '-', 1 to 32 characters, without '/'"
         )
@@ -222,7 +222,7 @@ def _read_user_topics(path: Path, *, quiet: bool = False) -> tuple[list[Topic], 
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return [], True
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         warn("Work prompts: %s is not readable (%s)", path, exc)
         return [], False
     entries = data.get("topics") if isinstance(data, dict) else None

@@ -48,11 +48,13 @@ def _alive(pid: int) -> bool:
         return True
 
 
-def _parent(tmp_path: Path, ending: str, timeout_s: float = 3.0) -> int:
+def _parent(tmp_path: Path, ending: str, timeout_s: float = 3.0) -> int | None:
     """Run a parent process that starts a bounded run of a script sleeping
     600 s, waits until the child is up, then ends with *ending*; returns the
-    pid of the script child (written by the script itself)."""
-    pidfile = tmp_path / "child.pid"
+    pid of the script child (written by the script itself), or None when the
+    script never ran: the run's limit ended the child while it was still
+    starting (the interpreter took longer than the limit)."""
+    pidfile = tmp_path / f"child-{timeout_s:g}.pid"
     name = f"sleeper_{os.getpid()}"
     scripting.save_script(name, textwrap.dedent(f"""
         import os, time
@@ -65,7 +67,7 @@ def _parent(tmp_path: Path, ending: str, timeout_s: float = 3.0) -> int:
         from core import script_runner
         threading.Thread(target=lambda: script_runner.run_bounded(
             {name!r}, timeout_s={timeout_s}, max_output_chars=1000), daemon=True).start()
-        for _ in range(400):
+        for _ in range({int((timeout_s + 10) / 0.025)}):
             if os.path.exists({str(pidfile)!r}) and os.path.getsize({str(pidfile)!r}):
                 break
             time.sleep(0.025)
@@ -73,9 +75,22 @@ def _parent(tmp_path: Path, ending: str, timeout_s: float = 3.0) -> int:
     """)
     try:
         subprocess.run([sys.executable, "-c", code], timeout=60, capture_output=True)
-        return int(pidfile.read_text())
+        return int(pidfile.read_text()) if pidfile.exists() else None
     finally:
         scripting.delete_script(name)
+
+
+def _parent_with_child(tmp_path: Path, ending: str, limits: tuple[float, ...]):
+    """:func:`_parent` with the first of *limits* under which the script
+    child got to run: (child pid, limit). A short limit keeps the test
+    short; on a busy host the child took 2-6 s to start, and a limit of 1 s
+    ended it before the script had run (no child.pid) - a run that tests
+    nothing, so it is made again with the next, longer limit."""
+    for limit in limits:
+        pid = _parent(tmp_path, ending, timeout_s=limit)
+        if pid is not None:
+            return pid, limit
+    raise AssertionError(f"the script child never started, not even within {limit:g} s")
 
 
 def _wait_gone(pid: int, seconds: float) -> bool:
@@ -97,7 +112,7 @@ def _reap(pid: int) -> None:
 # -- happy ----------------------------------------------------------------------------------
 
 def test_happy_a_normal_exit_ends_the_run_in_flight_at_once(tmp_path):
-    pid = _parent(tmp_path, "sys.exit(0)")
+    pid, _limit = _parent_with_child(tmp_path, "sys.exit(0)", (3.0, 10.0, 30.0))
     try:
         assert _wait_gone(pid, 2.0), "the script child outlived the normal exit"
     finally:
@@ -120,9 +135,9 @@ def test_happy_a_run_that_ends_by_itself_leaves_nothing_tracked(tmp_path):
 def test_sad_a_killed_parent_leaves_a_child_that_ends_itself_after_its_limit(tmp_path):
     """SIGKILL skips atexit: the child's own timer ends it, at its limit
     plus the stop grace, not 600 s later."""
-    pid = _parent(tmp_path, "os.kill(os.getpid(), 9)", timeout_s=1.0)
+    pid, limit = _parent_with_child(tmp_path, "os.kill(os.getpid(), 9)", (1.0, 10.0, 30.0))
     try:
-        bound = 1.0 + SR.STOP_GRACE_SECONDS + SR.CHILD_DEADLINE_MARGIN + 3.0
+        bound = limit + SR.STOP_GRACE_SECONDS + SR.CHILD_DEADLINE_MARGIN + 3.0
         assert _wait_gone(pid, bound), "the script child outlived its limit"
     finally:
         _reap(pid)

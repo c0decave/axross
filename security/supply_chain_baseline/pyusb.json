@@ -1,0 +1,77 @@
+{
+ "name": "pyusb",
+ "versions": {
+  "1.3.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|usb/core.py|aa6089accb592aec",
+    "yara|capability_filesystem_read|usb/legacy.py|5d3c418e0c712a18"
+   ],
+   "archives": {
+    "pyusb-1.3.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pyusb-1.3.1.dist-info/LICENSE": "03e39fdcee9c18f2f9d0c3500a993ddeac050695eb81070ea41347587c76a7fe",
+      "pyusb-1.3.1.dist-info/METADATA": "a0d52a94c2f609d31e08426f171645431292fe50fba849039964d642f74157cd",
+      "pyusb-1.3.1.dist-info/RECORD": "04c1e32b97e58312df8cdb704c82ac2d697dd9a200f2d336ca1a4924524689ed",
+      "pyusb-1.3.1.dist-info/WHEEL": "39531ce547ee010892a6580ed3f59d5bbbd754602df4775deaab4de07a2d7720",
+      "pyusb-1.3.1.dist-info/top_level.txt": "bd40397fe8fdda8c4f9d447f5db0a83a8c69a415be74ff1f78e0fb06654c32d1",
+      "usb/__init__.py": "273b5fba3dfeb5f9092224cfcc3f9f4f0e005ff9b7b4c5510558c81b0f3d825d",
+      "usb/_debug.py": "77e2a76d02f096424adc3aad2e23b097598fec04b7c444591a481a46e61893b3",
+      "usb/_interop.py": "4a216f41bebf83dfa6fa05169db5589f29c343c2742eb7137ea4f431968870c2",
+      "usb/_lookup.py": "eb7d197159682ea97064852ad4467f8ffac4b461313f23198ce53decb0e82e41",
+      "usb/_objfinalizer.py": "9322135c71ce5968140352873396ad0106d2a7027670cbe3b4622fb859e8e68f",
+      "usb/_version.py": "70e54f0af0f68761bfd8a07a1b775dade6242107c09d2e96aa002417faa018e4",
+      "usb/backend/__init__.py": "99bf9cb97ea16ce320fa78bbfd48d74b8a124525a3dc583e7161aa3fb985e4cc",
+      "usb/backend/libusb0.py": "b5d9b62922c1ff2de932a4d3bb1658c1a7cecf01f8871d921fbc2a124aa89291",
+      "usb/backend/libusb1.py": "ea13c99dbe9667904ad1d3f364a147cf75bfdf98111b3426ceec20d055f3203d",
+      "usb/backend/openusb.py": "ea83a409baf45edc708741b427ec9bb6e4420c35aac5619b98e50efb47c747da",
+      "usb/control.py": "037e0030c3c1ba3cb108f45d9d754fd4b4b9e2c0e1953cf5660645c84396f0ba",
+      "usb/core.py": "aa6089accb592aecb18e1eb8bba9ea62b0a1eee7df4e564b8d4b5a0877bc7c7c",
+      "usb/legacy.py": "5d3c418e0c712a186b1e769b6b7b7a24af88301c283bc07cebd61bf7b880bbe0",
+      "usb/libloader.py": "0347789cec30a0b32540a9bc09785a7f46a84107472a5b30f3600f835618ad03",
+      "usb/util.py": "4be8a03d725fb82f773ed79b890ba3167781e9cee722015228d369c25cd19294"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e42858aa2ba8c59f7ee058b95c84d3b1fd09d9003ef81abcdc0763e66a237d04",
+     "native": {},
+     "pth": {},
+     "sha256": "bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430"
+    }
+   },
+   "name": "pyusb",
+   "provenance": {
+    "pyusb-1.3.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Jonas Malaco",
+    "author_email": "me@jonasmalaco.com",
+    "home_page": "https://pyusb.github.io/pyusb",
+    "project_urls": {
+     "Homepage": "https://pyusb.github.io/pyusb",
+     "Source": "https://github.com/pyusb/pyusb",
+     "docs/FAQ": "https://github.com/pyusb/pyusb/blob/master/docs/faq.rst",
+     "docs/Tutorial": "https://github.com/pyusb/pyusb/blob/master/docs/tutorial.rst"
+    },
+    "summary": "Easy USB access for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|usb/core.py|aa6089accb592aec",
+     "yara|capability_filesystem_read|usb/legacy.py|5d3c418e0c712a18"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read usb/core.py",
+     "capability_filesystem_read:capability_filesystem_read usb/legacy.py"
+    ]
+   },
+   "version": "1.3.1"
+  }
+ }
+}

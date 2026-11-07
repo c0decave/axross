@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from core import agent_profiles as AP
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 
 def profile_label(profile: AP.AgentProfile) -> str:
@@ -36,6 +37,7 @@ class ProfilePickerDialog(QDialog):
                  resolve: Callable[[AP.AgentProfile], AP.Resolution], *,
                  conversation: bool = False) -> None:
         super().__init__(parent)
+        set_window_icon(self, "agent")
         self.setWindowTitle(tr("Apply Profile to {title}").format(title=title))
         self.resize(720, 460)
         self._profiles = list(profiles)

@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import codecs
 import errno
 import hashlib
 import logging
+import os
 import posixpath
 import re
 import socket
@@ -208,6 +210,34 @@ def _scp_status(chan, path: str) -> None:
     raise OSError(f"SCP {path}: protocol error, got {byte!r}")
 
 
+#: An upload larger than this streams from its spool file instead of being
+#: read into memory (the spool keeps this much in RAM anyway).
+STREAM_ABOVE = 8 * 1024 * 1024
+#: Bytes per piece sent; a multiple of 3, so base64 pieces join seamlessly.
+STREAM_CHUNK = 48 * 1024
+
+
+def _chunks(data):
+    """*data* - bytes or a binary file - in pieces of STREAM_CHUNK."""
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        view = memoryview(data)
+        for start in range(0, len(view), STREAM_CHUNK):
+            yield view[start : start + STREAM_CHUNK]
+        return
+    yield from iter(lambda: data.read(STREAM_CHUNK), b"")
+
+
+class _Base64Stream:
+    """A binary file read as its base64 encoding, piece by piece (each
+    piece a multiple of 3 bytes, so the pieces' encodings join into one)."""
+
+    def __init__(self, raw) -> None:
+        self._raw = raw
+
+    def read(self, _n: int = -1) -> bytes:
+        return base64.b64encode(self._raw.read(STREAM_CHUNK))
+
+
 # ---------------------------------------------------------------------------
 # SpooledWriter — buffers writes, uploads on close()
 # ---------------------------------------------------------------------------
@@ -247,12 +277,18 @@ class _SpooledWriter:
             return
         self._closed = True
         try:
+            size = self._buf.seek(0, os.SEEK_END)
             self._buf.seek(0)
-            data = self._buf.read()
+            # Up to the spool's memory size as bytes; a larger file streams
+            # from its spool file: read whole (and base64-encoded on top) a
+            # 4 GiB upload needed some 9 GiB of RAM.
+            data = self._buf.read() if size <= STREAM_ABOVE else self._buf
+            self._upload(data, shell_path(self._remote_path))
         finally:
             self._buf.close()
-        qpath = shell_path(self._remote_path)
 
+    def _upload(self, data, qpath: str) -> None:
+        """*data*: bytes, or the spool file read from its start."""
         if self._caps.transfer_method == "base64":
             self._upload_base64(data, qpath)
         elif self._caps.transfer_method == "scp" and self._scp_upload is not None:
@@ -270,17 +306,24 @@ class _SpooledWriter:
     # string (a heredoc) it became one argument of ``$SHELL -c``, and
     # Linux refuses exec arguments above 128 KiB (E2BIG).
 
-    def _upload_base64(self, data: bytes, qpath: str) -> None:
+    def _upload_base64(self, data, qpath: str) -> None:
         redirect = ">>" if self._append else ">"
         self._exec_fn(
             f"base64 -d {redirect} {qpath}",
             TRANSFER_TIMEOUT,
-            stdin_data=base64.b64encode(data),
+            stdin_data=base64.b64encode(data) if isinstance(data, bytes) else _Base64Stream(data),
         )
 
-    def _upload_raw(self, data: bytes, qpath: str) -> None:
+    def _upload_raw(self, data, qpath: str) -> None:
         try:
-            data.decode("utf-8")
+            if isinstance(data, bytes):
+                data.decode("utf-8")
+            else:   # checked through once before anything is sent
+                decoder = codecs.getincrementaldecoder("utf-8")()
+                for chunk in iter(lambda: data.read(STREAM_CHUNK), b""):
+                    decoder.decode(chunk)
+                decoder.decode(b"", final=True)
+                data.seek(0)
         except UnicodeDecodeError:
             raise OSError(
                 "Cannot upload binary file: no base64 available on remote system. "
@@ -350,6 +393,13 @@ class SCPSession(SessionLifecycle):
         if self._client is None:
             return None
         return self._client.get_transport()
+
+    def security_info(self):
+        """The negotiated SSH protection for the security badge; None when
+        not connected (the profile tells then)."""
+        from core.conn_security import ssh_transport
+
+        return ssh_transport(self.transport, "SCP over SSH")
 
     # -- Connection ----------------------------------------------------------
 
@@ -542,9 +592,8 @@ class SCPSession(SessionLifecycle):
                     timeout=timeout,
                 )
                 if stdin_data is not None:
-                    view = memoryview(stdin_data)
-                    for start in range(0, len(view), 64 * 1024):
-                        stdin.channel.sendall(view[start : start + 64 * 1024])
+                    for chunk in _chunks(stdin_data):
+                        stdin.channel.sendall(chunk)
                     stdin.channel.shutdown_write()
                 out_bytes = _read_limited_stream(
                     stdout,
@@ -910,8 +959,9 @@ class SCPSession(SessionLifecycle):
         spool.seek(0)
         return spool
 
-    def _scp_write(self, path: str, data: bytes) -> None:
-        """Write *data* to *path* with ``scp -t`` (sink mode)."""
+    def _scp_write(self, path: str, data) -> None:
+        """Write *data* (bytes, or a binary file read from its start) to
+        *path* with ``scp -t`` (sink mode)."""
         name = posixpath.basename(path)
         if "\n" in name or "\r" in name:
             raise OSError(f"SCP cannot carry a file name with a line break: {path!r}")
@@ -921,9 +971,15 @@ class SCPSession(SessionLifecycle):
             chan = self._scp_channel(f"scp -t {shell_path(path)}")
             try:
                 _scp_status(chan, path)
-                chan.sendall(b"C0644 %d %s\n" % (len(data), name.encode("utf-8")))
+                if isinstance(data, bytes):
+                    size = len(data)
+                else:
+                    size = data.seek(0, os.SEEK_END)
+                    data.seek(0)
+                chan.sendall(b"C0644 %d %s\n" % (size, name.encode("utf-8")))
                 _scp_status(chan, path)
-                chan.sendall(data)
+                for chunk in _chunks(data):
+                    chan.sendall(chunk)
                 chan.sendall(b"\0")
                 _scp_status(chan, path)
                 chan.shutdown_write()

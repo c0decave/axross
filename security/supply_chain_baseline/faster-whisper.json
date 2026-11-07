@@ -1,0 +1,66 @@
+{
+ "name": "faster-whisper",
+ "versions": {
+  "1.2.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|faster_whisper/audio.py|60a1d8638f718cbf"
+   ],
+   "archives": {
+    "faster_whisper-1.2.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "faster_whisper-1.2.1.dist-info/LICENSE": "af6798135e729f8aa6c853936d037dfdea449734d26b8ea6a89805fca758c0d5",
+      "faster_whisper-1.2.1.dist-info/METADATA": "b85622132a43897972924db98e024c0d40dcec19c577b1ee5640f1bc1b59aada",
+      "faster_whisper-1.2.1.dist-info/RECORD": "e8310953652f87686fad83a18e07e4e8093c81260a738eb8ef3dab5157391d35",
+      "faster_whisper-1.2.1.dist-info/WHEEL": "b59a1e1a3b56c5645f769944ec4ddde3954f94b3509ef6ca8989f1ee0c00cbc0",
+      "faster_whisper-1.2.1.dist-info/top_level.txt": "636865f23cdf2058d3db77b66d6d7f8d4154e9894fcf7700374dfb847b76b188",
+      "faster_whisper/__init__.py": "5396c3a025a7b0cf81246fcd680c0bb7e384e2e587cc2e18f9518cef4c26d56c",
+      "faster_whisper/assets/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "faster_whisper/assets/silero_vad_v6.onnx": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+      "faster_whisper/audio.py": "60a1d8638f718cbf6d245aed3e5a5aa61c1f822a0b0fe9b48a7c928d47c23909",
+      "faster_whisper/feature_extractor.py": "e403966dbc592a53695eea2aea24fa60bab50ef6755e0076b311f907be7a397c",
+      "faster_whisper/tokenizer.py": "614a96b6a9660096e4f4e9fbe8860cd75ad250dce8e85a847998a3d6d48165d2",
+      "faster_whisper/transcribe.py": "5d5ffb00018561d3d529b2c72e1d9f5fff055bea725f3cccc7c6c67f5cc8ffe4",
+      "faster_whisper/utils.py": "5b36ceb9d0fd3961de8cfb144bd82f9a4ef3151b2e5958405a11efb4f3ac4f82",
+      "faster_whisper/vad.py": "37a9c774aefdd3162d936b896c8dcf5571b2ed938d65bffecfd631770049a18d",
+      "faster_whisper/version.py": "70ee45276562706d9787f105fb3010417fa9621fe6a9e2fad01a209f3044d9c5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "bb78fc483d809e47df09ed84532e456610891d45acaa1374dc7a6cc3b389dae4",
+     "native": {},
+     "pth": {},
+     "sha256": "79a66ad50688c0b794dd501dc340a736992a6342f7f95e5811be60b5224a26a7"
+    }
+   },
+   "name": "faster-whisper",
+   "provenance": {
+    "faster_whisper-1.2.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Guillaume Klein",
+    "home_page": "https://github.com/SYSTRAN/faster-whisper",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/SYSTRAN/faster-whisper"
+    },
+    "summary": "Faster Whisper transcription with CTranslate2"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|faster_whisper/audio.py|60a1d8638f718cbf"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read faster_whisper/audio.py"
+    ]
+   },
+   "version": "1.2.1"
+  }
+ }
+}

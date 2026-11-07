@@ -327,6 +327,30 @@ Diese drei brauchen System-Binaries (`rsync`, `mount.nfs`,
 passwortlosem `sudo -n` gemountet — richte das ein, bevor du diese
 Protokolle nutzt.
 
+**iSCSI-Absender:** Im Verbinden-Dialog legen *Initiator Name* und
+*Send From Interface* fest, was axross dem Target über sich sagt: den
+Initiator-Namen (IQN) bei Login und Discovery - frei wählbar, jeder Name,
+den das Target annimmt - und die Netzwerkschnittstelle, über die die
+Verbindung geht. Leer bleibt es beim System (`/etc/iscsi/initiatorname.iscsi`,
+beliebige Schnittstelle). axross legt dafür pro Sitzung einen eigenen
+open-iscsi-Interface-Eintrag an und entfernt ihn beim Trennen wieder; die
+Systemeinstellung und andere Sitzungen bleiben unberührt. Im Scripting
+dieselben Felder: `axross.open_url("iscsi://host/", iscsi_target_iqn=...,
+iscsi_initiator_name=..., iscsi_initiator_interface=...)`, für eine Suche
+vor dem Login `IscsiSession.targets_discover(host, initiator_name=...)`.
+
+**NFS-Absender:** *Machine Name*, *Send UID*, *Send GID* und *Extra GIDs*
+legen fest, was axross dem NFS-Server über sich sagt (AUTH_SYS) - frei
+wählbar, der Server glaubt es und entscheidet danach über den Zugriff. Ist
+eines davon gesetzt, spricht axross NFS selbst (`core/nfs_user_client.py`; v3, v4.0
+oder v4.1 mit Sessions, mit *NFSv4 Client ID* - der Name, unter dem der Server den Client kennt): kein
+Mount, kein root, alle Verbindungen gehen über den Proxy des Profils. Leere Felder sind der Rechnername, deine UID und GID, keine
+weiteren Gruppen. *Send from a privileged port* ist für Exporte mit `secure`
+(Quellport unter 1024, nur als root). Ohne Absenderfelder bleibt es beim
+Kernel-Mount, der immer den Rechnernamen und die IDs des lesenden Prozesses
+sendet. Im Scripting: `axross.open_url("nfs://host/export",
+nfs_machine_name=..., nfs_uid=..., nfs_gid=..., nfs_gids="27, 100")`.
+
 ---
 
 ## 6. Datei-Operationen
@@ -704,6 +728,38 @@ wird die Verzeichnisstruktur alle 2 Sekunden gepollt und auf Differenzen
 geprüft. Der Pane refresht debounced bei Änderungen.
 
 ---
+
+### Mail-Docks und Mail-Projekte
+
+**Tools → Mail-Docks…** richtet Agenten ein, die je ein Postfach beobachten (ein
+gespeichertes IMAP-, POP3- oder Exchange-Profil und ein Ordner). Jedes Dock hat ein
+eigenes Panel mit Log, *Jetzt ausführen*, *Pause* und *Settings…*: Intervall, die
+**Anweisungen** für jeden Lauf (z. B. „neue Mails lesen, analysieren, Antwort
+entwerfen" oder „jede Mail analysieren und verdächtige an das Dock Security melden"),
+LLM-Profil, **Sandbox**-Profil (Modell und Agent laufen darin, die Zugangsdaten des
+Postfachs nie), die **Sende-Regel** und der SMTP-Server.
+
+- *Nie senden - nur Entwürfe*: Antworten landen im Entwürfe-Ordner (IMAP APPEND mit
+  \Draft; bei POP3 im Entwurfsordner des Docks).
+- *Vor jeder Mail fragen*: eine Mail wartet im Panel auf *Senden* / *Nicht senden*
+  (nach 30 Minuten ohne Antwort: nicht gesendet).
+- *Dem Absender ohne Nachfrage antworten*: Antworten an den Absender der beantworteten
+  Mail (und an die *erlaubten Empfänger*, Adressen oder `@domain`) gehen sofort raus,
+  alle anderen warten auf dein Ja.
+
+Der Agent eines Docks hat nur die Mail-Werkzeuge und keine Dateischreibrechte;
+Mail-Inhalt ist in jedem Ergebnis als nicht vertrauenswürdig markiert, eine Mail kann
+weder Empfänger hinzufügen noch die Regel ändern. `dock_report` hinterlässt einem
+anderen Dock eine Notiz, die es beim nächsten Lauf liest.
+
+**Tools → Mail-Projekt…** importiert `.eml`- und Outlook-`.msg`-Dateien, `.pst`/`.ost`, mbox,
+Maildir, ganze Ordner oder einen Postfach-Ordner in einen Projektordner und analysiert
+jede Nachricht offline: Received-Kette, SPF/DKIM/DMARC wie aufgezeichnet,
+abweichende Absender-, Reply-To- und DKIM-Domains, Links mit irreführendem Text,
+gefährliche Anhänge (Programme, Makros, doppelte Endungen, Rechts-nach-links-Zeichen,
+Inhalt passt nicht zum Namen); auf Wunsch SPF/DKIM/DMARC live im DNS; der Tab *Message*
+zeigt die Mail mit entschärftem HTML. Die Liste ist nach Verdacht sortiert; *Agent fragen…*
+öffnet einen Agent-Tab auf dem Projektordner, nur lesend, mit einem Analyse-Prompt.
 
 ## 8. Bottom-Docks: Transfers / Terminal / Log
 

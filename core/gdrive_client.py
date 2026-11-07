@@ -15,6 +15,7 @@ import logging
 import os
 import posixpath
 import tempfile
+import threading
 from datetime import datetime, timezone
 from typing import IO
 
@@ -147,6 +148,33 @@ class GDriveSession(SessionLifecycle):
     file IDs internally via ``_resolve_path``, with a cache to avoid
     repeated lookups.
     """
+
+    @property
+    def _service(self):
+        """The Drive service of the calling thread. googleapiclient's
+        service sits on one httplib2.Http, which is not thread-safe: the
+        connection-health check and a transfer on two threads interleaved
+        on one connection (SSL and protocol errors, one call reading the
+        other's answer). Each thread gets a service of its own, built from
+        the same credentials; a session made without them (tests) keeps the
+        one it was given."""
+        base = self.__dict__.get("_service_base")
+        creds = self.__dict__.get("_creds")
+        if base is None or creds is None:
+            return base
+        local = self.__dict__.get("_per_thread")
+        if local is None:
+            return base
+        service = getattr(local, "service", None)
+        if service is None or getattr(local, "base", None) is not base:
+            service = (base if threading.current_thread() is self.__dict__.get("_owner_thread")
+                       else self._build_service(creds))
+            local.service, local.base = service, base
+        return service
+
+    @_service.setter
+    def _service(self, value) -> None:
+        self.__dict__["_service_base"] = value
 
     _MAX_APPEND_EXISTING_SIZE = 256 * 1024 * 1024
 
@@ -286,6 +314,9 @@ class GDriveSession(SessionLifecycle):
             except OSError as exc:
                 log.error("Google Drive: failed to save token to %s: %s", self._token_file, exc)
 
+        self._creds = creds
+        self._per_thread = threading.local()
+        self._owner_thread = threading.current_thread()
         self._service = self._build_service(creds)
         log.info("Google Drive connected")
 
@@ -380,14 +411,17 @@ class GDriveSession(SessionLifecycle):
     # Path resolution
     # ------------------------------------------------------------------
 
-    def _resolve_path(self, path: str) -> str:
+    def _resolve_path(self, path: str, *, fresh: bool = False) -> str:
         """Resolve a POSIX-style path to a Google Drive file ID.
 
         Walks the path components, querying for each folder by name within
-        its parent. Results are cached in ``self._path_cache``.
+        its parent. Results are cached in ``self._path_cache``. *fresh*
+        asks the server for every component: what deletes or overwrites
+        must not act on a cached id - renamed on the web since, that id is
+        another file now.
         """
         path = self.normalize(path)
-        if path in self._path_cache:
+        if not fresh and path in self._path_cache:
             return self._path_cache[path]
 
         parts = [p for p in path.split("/") if p]
@@ -396,11 +430,15 @@ class GDriveSession(SessionLifecycle):
 
         for part in parts:
             current_path = posixpath.join(current_path, part)
-            if current_path in self._path_cache:
+            if not fresh and current_path in self._path_cache:
                 current_id = self._path_cache[current_path]
                 continue
 
-            current_id = self._lookup_child(current_id, part, path)
+            try:
+                current_id = self._lookup_child(current_id, part, path)
+            except FileNotFoundError:
+                self._invalidate_cache(current_path)
+                raise
             self._path_cache[current_path] = current_id
 
         return current_id
@@ -597,6 +635,12 @@ class GDriveSession(SessionLifecycle):
         # file holds: a shared name stays out, so _resolve_path finds it
         # ambiguous instead of the cache naming one of the files.
         base = self.normalize(path)
+        # Names cached before and gone from the folder now (renamed,
+        # moved or deleted on the web) leave the cache with their subtree.
+        prefix = base.rstrip("/") + "/"
+        for cached in [k for k in self._path_cache if k.startswith(prefix)
+                       and "/" not in k[len(prefix):] and k[len(prefix):] not in ids]:
+            self._invalidate_cache(cached)
         for name, file_ids in ids.items():
             child_path = posixpath.join(base, name)
             if len(file_ids) == 1:
@@ -666,7 +710,7 @@ class GDriveSession(SessionLifecycle):
         log.info("Created directory: %s", path)
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        file_id = self._resolve_path(path)
+        file_id = self._resolve_path(path, fresh=True)
         # files.delete takes a folder with everything in it, so a
         # non-recursive remove refuses a folder with children first.
         if not recursive and self._get_metadata(file_id).get("mimeType") == _FOLDER_MIME:
@@ -682,7 +726,7 @@ class GDriveSession(SessionLifecycle):
     def rename(self, src: str, dst: str) -> None:
         src = self.normalize(src)
         dst = self.normalize(dst)
-        file_id = self._resolve_path(src)
+        file_id = self._resolve_path(src, fresh=True)
         if src == dst:
             return
 
@@ -732,14 +776,14 @@ class GDriveSession(SessionLifecycle):
         path = self.normalize(path)
         parent_path = self.parent(path)
         file_name = posixpath.basename(path)
-        parent_id = self._resolve_path(parent_path)
+        parent_id = self._resolve_path(parent_path, fresh=True)
 
         # Check if file already exists (for update vs create). Only "not
         # found" means create: any other lookup failure (a transient API
         # error, a name two files share) would create a second file.
         existing_id: str | None = None
         try:
-            existing_id = self._resolve_path(path)
+            existing_id = self._resolve_path(path, fresh=True)
         except FileNotFoundError:
             pass
 

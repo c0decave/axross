@@ -258,3 +258,12 @@ def test_edge_collect_backends_skips_panes_without_one():
 
     a = object()
     assert collect_backends([_Bare(), _Pane(a), _Pane(None)]) == [a]
+
+
+def test_happy_the_count_of_connections_is_singular_or_plural(dialog):
+    """Product review: "1 connection(s)"."""
+    one = dialog(_snapshot(_row(label="a", total=100, used=75, free=25)))
+    assert one.status_text() == "1 connection"
+    two = dialog(_snapshot(_row(label="a", total=100, used=75, free=25),
+                           _row(label="imap", protocol="imap")))
+    assert two.status_text() == "2 connections, 1 without capacity reporting"

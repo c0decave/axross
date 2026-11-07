@@ -142,13 +142,13 @@ def github_location(url) -> tuple[str, str]:
     owner, repo = segments[0], segments[1]
     if repo.lower().endswith(".git"):
         repo = repo[:-4]
-    if (not _OWNER.match(owner) or owner.lower() in _RESERVED or not _REPO.match(repo)
+    if (not _OWNER.fullmatch(owner) or owner.lower() in _RESERVED or not _REPO.fullmatch(repo)
             or repo in (".", "..")):
         return "", ""
     folder = ""
     rest = segments[2:]
     if (3 <= len(rest) <= 12 and rest[0] in ("tree", "blob")
-            and all(_SEGMENT.match(s) and s not in (".", "..") for s in rest[1:])):
+            and all(_SEGMENT.fullmatch(s) and s not in (".", "..") for s in rest[1:])):
         folder = "/".join(rest)
     return f"https://github.com/{owner}/{repo}", folder
 

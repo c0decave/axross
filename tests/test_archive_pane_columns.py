@@ -43,8 +43,18 @@ def _widths(tree):
 
 def test_happy_name_takes_the_free_width_and_numbers_fit(pane):
     tree = pane._tree
+    # Room for every column's content: how much that is comes from the font
+    # in use (with wider glyphs the long name did not fit 900 px, and a
+    # narrow view gives the name at most half of it - ui.column_fit).
+    h = tree.header()
+    need = tree.sizeHintForColumn(0) + sum(
+        max(tree.sizeHintForColumn(c), h.sectionSizeHint(c)) for c in range(1, h.count()))
+    chrome = pane.width() - tree.viewport().width()
+    pane.resize(max(900, need + chrome + 200), 400)
+    APP.processEvents()
+    APP.processEvents()
     w = _widths(tree)
-    assert w[0] >= tree.sizeHintForColumn(0), w
+    assert w[0] >= tree.sizeHintForColumn(0) + 200, w  # the free width went to Name
     for c in range(1, len(w)):
         assert w[c] >= tree.header().sectionSizeHint(c), (c, w)
         assert w[c] < w[0], w

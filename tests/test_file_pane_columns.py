@@ -317,7 +317,12 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
     """A long file name was cut while Owner, Permissions and Modified kept
     their full default widths (500 px together) around much shorter text:
     Name only ever got what they left. The other columns now give up their
-    slack - never more - before a name is cut."""
+    slack - never more - before a name is cut.
+
+    The pixel numbers come from the font and the style sheet in use (a
+    window shown earlier in the run leaves its theme on the application),
+    so the pane widths here are measured, not fixed: a fixed 760 px left
+    the name no room with wider glyphs or the theme's padding."""
 
     LONG = "holiday-photos-2026-summer-lake-and-mountains.jpg"
 
@@ -345,12 +350,32 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
             h.sectionSizeHint(col),
         )
 
+    def _least(self, pane, col: int) -> int:
+        """Narrowest the fitting may make *col*: its content, or its default
+        width where that is narrower already (a column is never widened)."""
+        return min(pane._preferred_width(col), self._floor(pane, col))
+
+    def _width_for(self, names) -> int:
+        """The pane width at which the longest of *names* just fits once the
+        other columns gave up their slack - and does not at their defaults."""
+        probe, _ = self._pane()
+        self._items(probe, names)
+        self._show(probe, 2000)
+        chrome = probe.width() - probe._table.viewport().width()
+        need = self._name_need(probe)
+        width = need + sum(self._least(probe, c) for c in range(1, 5)) + chrome
+        defaults = need + sum(probe._preferred_width(c) for c in range(1, 5)) + chrome
+        self.assertLess(width, defaults, "the name fits at the default widths")
+        probe.hide()
+        return width
+
     # --- happy --------------------------------------------------------------
 
     def test_happy_a_long_name_takes_the_slack_of_the_other_columns(self) -> None:
+        width = self._width_for([self.LONG, "a.txt"])
         pane, _ = self._pane()
         self._items(pane, [self.LONG, "a.txt"])
-        self._show(pane, 760)
+        self._show(pane, width)
         w = self._widths(pane)
         self.assertGreaterEqual(w[0], self._name_need(pane), w)
         self.assertLess(w[4], 150, w)  # Owner gave up space for the name
@@ -370,10 +395,45 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
         pane, _ = self._pane()
         self._items(pane, [self.LONG * 3])
         self._show(pane, 640)
+        # Measure again under the style now in effect: a theme or font another
+        # test left on the application can change between the pane's first
+        # measurement and this check (seen once in a parallel batch).
+        pane._content_widths_changed()
+        self.app.processEvents()
+        self.app.processEvents()
         w = self._widths(pane)
-        for col in range(1, 5):
-            self.assertGreaterEqual(w[col], self._floor(pane, col), (col, w))
+        h = pane._table.horizontalHeader()
+        shown = [c for c in range(1, 5) if not h.isSectionHidden(c)]
+        for col in shown:
+            least = min(pane._preferred_width(col), pane._column_floor(col))
+            self.assertGreaterEqual(w[col], least, (col, w))
         self.assertEqual(sum(w), pane._table.viewport().width())
+
+    def test_sad_a_narrow_pane_gives_name_room_before_the_other_columns(self) -> None:
+        # 445 px was the reported pane: Name got 60 px, the rest full width.
+        pane, path = self._pane()
+        self._items(pane, ["quarterly-report.pdf", "a.txt"])
+        self._show(pane, 460)
+        w = self._widths(pane)
+        h = pane._table.horizontalHeader()
+        self.assertGreaterEqual(w[0], self._name_need(pane), w)
+        self.assertTrue(h.isSectionHidden(4), w)  # Owner, the rightmost, stepped aside
+        self.assertEqual(sum(w), pane._table.viewport().width())
+        # not a user choice: the prefs stay untouched, the menu still ticks it
+        self.assertFalse(path.exists())
+        self.assertNotIn(4, pane._column_prefs.hidden)
+        # wide again, the column is back
+        self._show(pane, 1600)
+        self.assertFalse(h.isSectionHidden(4))
+        self.assertEqual(self._widths(pane)[1:], [90, 150, 110, 150])
+
+    def test_edge_a_column_the_user_hid_stays_hidden_when_room_returns(self) -> None:
+        pane, _ = self._pane()
+        self._items(pane, ["quarterly-report.pdf"])
+        self._show(pane, 460)
+        pane._toggle_column(4, False)
+        self._show(pane, 1600)
+        self.assertTrue(pane._table.horizontalHeader().isSectionHidden(4))
 
     def test_sad_making_room_for_a_name_never_writes_prefs(self) -> None:
         pane, path = self._pane()
@@ -385,11 +445,12 @@ class NameFitsBeforeOtherColumnsTest(_PaneTestBase):
     # --- edge ---------------------------------------------------------------
 
     def test_edge_a_longer_name_arriving_later_refits(self) -> None:
+        width = self._width_for([self.LONG])
         pane, _ = self._pane()
         self._items(pane, ["a.txt"])
-        self._show(pane, 760)
+        self._show(pane, width)
         self._items(pane, [self.LONG])
-        self._show(pane, 760)
+        self._show(pane, width)
         self.assertGreaterEqual(self._widths(pane)[0], self._name_need(pane))
 
     def test_edge_a_pane_not_yet_shown_keeps_its_stored_widths(self) -> None:

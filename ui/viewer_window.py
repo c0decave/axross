@@ -47,6 +47,7 @@ VIEWERS_KEY = "viewers"
 DEFAULT_SIZES: dict[str, tuple[int, int]] = {
     "image": (900, 680),
     "media": (1000, 720),
+    "system_info": (1180, 800),
 }
 
 #: Dynamic property: was the window maximized when it went fullscreen?
@@ -214,7 +215,7 @@ def _settings_path() -> Path:
 
 
 def _read_settings():
-    from ui.main_window import _read_json_file
+    from ui.state_files import _read_json_file
 
     return _read_json_file(_settings_path())
 
@@ -273,7 +274,11 @@ def restore_window_state(window: QWidget, name: str) -> None:
     size and opens normal."""
     state = load_state(name)
     if state is None:
-        window.resize(QSize(*DEFAULT_SIZES[name]))
+        # Capped at the screen: System Information opened 1180x800 on a
+        # 1280x800 screen, its title bar and bottom edge off it.
+        from ui.screen_fit import fit_size
+
+        window.resize(fit_size(QSize(*DEFAULT_SIZES[name]), window))
         return
     rect = QRect(state["x"], state["y"], state["width"], state["height"])
     normal = clamp_to_screen(rect, window)
@@ -325,16 +330,19 @@ def save_window_state(window: QWidget, name: str) -> None:
         "height": rect.height(),
         "maximized": maximized,
     }
-    from ui.main_window import _write_private_text
+    from ui.state_files import _write_private_text
 
     # Same merge as MainWindow._save_session and i18n.store_language: keep
     # whatever this function does not write itself.
+    from core.json_store import read_for_merge
+    from ui.state_files import MAX_UI_STATE_BYTES
+
     try:
-        data = _read_settings()
-    except (OSError, ValueError):
-        data = None
-    if not isinstance(data, dict):
-        data = {}
+        data = read_for_merge(_settings_path(), max_bytes=MAX_UI_STATE_BYTES)
+    except OSError as exc:
+        # Unreadable: writing would replace the layout, panes and settings.
+        log.warning("viewer window state not saved: %s", exc)
+        return
     win = data.get("window")
     if not isinstance(win, dict):
         win = {}
@@ -403,8 +411,18 @@ def close_independent_windows(owner: QWidget) -> bool:
     """Close every open window *owner* owns, each asking about its unsaved
     changes as when closed by hand. False - and the rest stay open - as
     soon as one is kept open."""
+    from ui.window_dock_bar import bar_for
+
+    bar = bar_for(owner)
+    docked = {id(w) for w in bar.windows()} if bar is not None else set()
     for window in independent_windows(owner):
-        if sip.isdeleted(window) or not window.isVisible():
+        if sip.isdeleted(window):
+            continue
+        if id(window) in docked:
+            # Put into the dock bar with _ it is hidden, not closed: it may
+            # hold unsaved edits. Shown again, so its question is seen.
+            bar.restore(window)
+        elif not window.isVisible():
             continue
         if not window.close():
             return False

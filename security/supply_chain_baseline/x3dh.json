@@ -1,0 +1,70 @@
+{
+ "name": "x3dh",
+ "versions": {
+  "1.3.0": {
+   "accepted_findings": [],
+   "archives": {
+    "x3dh-1.3.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "x3dh-1.3.0.dist-info/METADATA": "4fd770818b0ca8775b852b42cd436049dfc0b69c636e28cd4cbd4b1df5aa9a24",
+      "x3dh-1.3.0.dist-info/RECORD": "71f2681df34373a2853500c46f9b32e9916b111509a89e9b3bd64f753761697e",
+      "x3dh-1.3.0.dist-info/WHEEL": "c14c80f0e6ae95195b7f032d990b2f367806af140702f90a72f466762ce5262d",
+      "x3dh-1.3.0.dist-info/licenses/LICENSE": "32bcc74db2e8d577be4c5367053ab10538889befd30d745271ae11c6e9ac42ee",
+      "x3dh-1.3.0.dist-info/top_level.txt": "628e4fc6dd2a208c07f6e5fcaddc4a13668e44fa52d9ec65de546a056ec2810f",
+      "x3dh/__init__.py": "454926645dd7dc4156bcf6fd57b6afbd435cd715e86b8b78008c4b75e98fb90f",
+      "x3dh/base_state.py": "b3210414695fb9e986791a0882725f98d13d1a0c63ba84d245a35b7185b1cf8a",
+      "x3dh/crypto_provider.py": "3b76fb35c5878a6d13a23d874fdaa36ebc0e05e22c84d4853211d739fec474f4",
+      "x3dh/crypto_provider_cryptography.py": "bfe96879bc43bc4990a0326f0eacdbeb3f74b45ae2a2aadad5375c4b840bb728",
+      "x3dh/identity_key_pair.py": "ab74b7c32891b2ef33d69e6cf8f36b6fef4272888e46dc29c90ca664f7e15fa0",
+      "x3dh/migrations.py": "86a423a63e6c26b4309f74d00c7dd75df99c770d4692c8fd66b1e56e76284d07",
+      "x3dh/models.py": "11362d6923503fe3de9ca6ff21db5b533b970289e8b157fecda77b811bc8d772",
+      "x3dh/pre_key_pair.py": "4a4bafdfc5889fadd53d3a048371d1264bb7fcafbc35fcb5c4b6714ec4640808",
+      "x3dh/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "x3dh/signed_pre_key_pair.py": "0023cd62709023c53a2dd703626aaaf23c020090664b81a5350c18efef25da6d",
+      "x3dh/state.py": "ac23a0aa350036049428ef5c1af2495d4ff0e4f4a8cb170d3efe6cda1cbd0537",
+      "x3dh/types.py": "c17fdfe6a698d24427f74a0f33650bea3c73cb73b1ab444f8dd6d727b5f6ec50",
+      "x3dh/version.py": "129e56f9d4c10790fe36604defe008d6a63a5b29bdf8249981e7e6a2a5f75b59"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fefa4372ae83574c18030cb5eb5393d39214c299325f24ae1be2d76383129433",
+     "native": {},
+     "pth": {},
+     "sha256": "92548974e0cd9eccf19315f59014e5796ee4c5440b6fe753a9168fb92dd6c914"
+    }
+   },
+   "name": "x3dh",
+   "provenance": {
+    "x3dh-1.3.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "Syndace/python-x3dh",
+     "workflow": "test-and-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "license_expression": "MIT",
+    "maintainer_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "project_urls": {
+     "Changelog": "https://github.com/Syndace/python-x3dh/blob/main/CHANGELOG.md",
+     "Documentation": "https://python-x3dh.readthedocs.io/",
+     "Issues": "https://github.com/Syndace/python-x3dh/issues",
+     "Repository": "https://github.com/Syndace/python-x3dh"
+    },
+    "summary": "A Python implementation of the Extended Triple Diffie-Hellman key agreement protocol."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (Syndace/python-x3dh)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.3.0"
+  }
+ }
+}

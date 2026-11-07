@@ -76,16 +76,25 @@ def test_sad_a_refused_group_kill_still_kills_the_child(monkeypatch):
 
 
 @pytest.mark.skipif(not shutil.which("setsid"), reason="no setsid")
-def test_edge_a_grandchild_that_keeps_the_pipe_open_cannot_hold_the_answer(monkeypatch):
+def test_edge_a_grandchild_that_keeps_the_pipe_open_cannot_hold_the_answer(monkeypatch, tmp_path):
     """The child is killed after the bound; a grandchild in a session of its
-    own still holds stdout. The answer comes after the reap bound anyway."""
+    own still holds stdout. The answer comes after the reap bound anyway.
+    The grandchild leaves its pid behind to be killed: no pkill needed."""
     monkeypatch.setattr(MP, "_REAP_SECONDS", 1.0)
     monkeypatch.setattr(MP, "_native_stack", lambda pid: "")
-    command = ["sh", "-c", "setsid sleep 37.4242 & sleep 37.4242"]
+    pid_file = tmp_path / "grandchild.pid"
+    grandchild = 'setsid sh -c \'echo $$ > "$0"; exec sleep 37.4242\' "$0"'
+    command = ["sh", "-c", grandchild + " & sleep 37.4242", str(pid_file)]
     start = time.monotonic()
-    result = MP.run_probe(1.0, command=command, env=dict(os.environ))
-    took = time.monotonic() - start
-    subprocess.run(["pkill", "-f", "^sleep 37.4242$"], capture_output=True)
+    try:
+        result = MP.run_probe(1.0, command=command, env=dict(os.environ))
+        took = time.monotonic() - start
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except (ValueError, ProcessLookupError):
+                pass
     assert not result.ok and "did not answer within 1 s" in result.reason
     assert took < 6, took
 

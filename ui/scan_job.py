@@ -20,6 +20,8 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
 
+from core.thread_relay import GuiCall
+
 Work = Callable[[Callable[[], bool], Callable[[int, int, str], None]], Any]
 
 
@@ -40,9 +42,6 @@ class ScanJob(QObject):
     started = pyqtSignal()
     progress = pyqtSignal(str)
     finished = pyqtSignal(str, object, bool)
-    # Emitted by the worker thread when it ends (queued to the UI thread), so
-    # a short job is reported at once instead of at the next poll tick.
-    _wake = pyqtSignal()
 
     def __init__(
         self,
@@ -60,7 +59,11 @@ class ScanJob(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._poll)
-        self._wake.connect(self._poll)
+        # Called by the worker thread when it ends, so a short job is reported
+        # at once instead of at the next poll tick. Not a signal of this
+        # object: the job may be being deleted (its window closed) while the
+        # worker ends, and emitting on it then crashes (core/thread_relay.py).
+        self._wake = GuiCall(self._poll)
         self._abandoned = False
 
     @property
@@ -93,11 +96,8 @@ class ScanJob(QObject):
                 state["result"] = ("done", work(cancel.is_set, report))
             except Exception as exc:  # noqa: BLE001 — handed to the UI thread
                 state["result"] = ("error", exc)
-            try:
-                if self._state is state:  # not superseded meanwhile
-                    self._wake.emit()
-            except RuntimeError:  # the owner is already gone
-                pass
+            if self._state is state:  # not superseded meanwhile
+                self._wake()
 
         self._thread = threading.Thread(target=run, name="scan-job", daemon=True)
         self.started.emit()

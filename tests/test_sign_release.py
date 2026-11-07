@@ -36,7 +36,7 @@ from tests.fake_github import (  # noqa: E402
 )
 
 DIGEST = hashlib.sha256(b"binary").hexdigest()
-SUMS_TEXT = f"{DIGEST}  axross-full\n{DIGEST}  axross-slim\n".encode()
+SUMS_TEXT = f"# axross-release 9.9.9\n{DIGEST}  axross-full\n{DIGEST}  axross-slim\n".encode()
 
 
 def raw_private(key: Ed25519PrivateKey) -> bytes:
@@ -177,7 +177,8 @@ def test_sad_a_key_that_is_not_ed25519_is_refused(tmp_path, files):
 def test_sad_a_garbage_key_file_is_refused_without_echoing_it(tmp_path, files):
     _key_file, sums = files
     garbage = tmp_path / "garbage.pem"
-    garbage.write_text("<REDACTED-PRIVATE-KEY>\n")
+    garbage.write_text("-----BEGIN " "PRIVATE KEY-----\nSECRETSECRETSECRET\n"
+                       "-----END PRIVATE KEY-----\n")
     garbage.chmod(0o600)
     done = run("--allow-unpinned", garbage, sums)
     assert done.returncode != 0 and "cannot read the private key" in done.stderr
@@ -254,3 +255,33 @@ def test_edge_the_signature_covers_the_exact_bytes(files, key):
     SU.verify_signature(exact, sig, keys=(public_key_b64(key),))
     with pytest.raises(SU.SignatureError):
         SU.verify_signature(SUMS_TEXT, sig, keys=(public_key_b64(key),))
+
+
+# -- the release line (review 2026-11-06) -------------------------------------
+
+
+def test_happy_version_adds_the_release_line_it_signs(tmp_path, key):
+    key_file = write_key(tmp_path / "k.pem", key)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_bytes(f"{DIGEST}  axross-full\n".encode())
+    assert sign_release.main(["--allow-unpinned", "--version", "1.2.3", str(key_file), str(sums)]) == 0
+    data = sums.read_bytes()
+    assert data.startswith(b"# axross-release 1.2.3\n")
+    SU.verify_signature(data, sums.with_name("SHA256SUMS.sig").read_bytes(), keys=(public_key_b64(key),))
+
+
+def test_sad_checksums_without_a_version_are_not_signed(tmp_path, key, capsys):
+    key_file = write_key(tmp_path / "k.pem", key)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_bytes(f"{DIGEST}  axross-full\n".encode())
+    assert sign_release.main(["--allow-unpinned", str(key_file), str(sums)]) != 0
+    assert "names no release version" in capsys.readouterr().err
+    assert not sums.with_name("SHA256SUMS.sig").exists()
+
+
+def test_sad_a_version_other_than_the_line_is_refused(tmp_path, key):
+    key_file = write_key(tmp_path / "k.pem", key)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_bytes(SUMS_TEXT)   # names 9.9.9
+    assert sign_release.main(["--allow-unpinned", "--version", "1.0.0", str(key_file), str(sums)]) != 0
+    assert not sums.with_name("SHA256SUMS.sig").exists()

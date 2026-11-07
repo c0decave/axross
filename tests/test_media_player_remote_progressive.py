@@ -26,7 +26,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtCore import QMimeData, QObject, QPointF, Qt, pyqtSignal  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
@@ -229,7 +229,7 @@ def test_happy_e2e_play_in_media_player_starts_with_the_first_copy(temp_root, mo
         def __init__(self):
             self.actions, self.notes, self.docks = {}, [], []
 
-        def add_dock(self, title, widget):
+        def add_dock(self, title, widget, **_kw):
             self.docks.append(widget)
 
         def add_context_action(self, label, cb, applies_to="any", extensions=()):

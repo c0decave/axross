@@ -87,7 +87,7 @@ def _validate_filename(name: str) -> str:
     cleaned = name.lstrip("/").strip()
     if not cleaned:
         raise OSError("TFTP filename is empty")
-    if not _FILENAME_RE.match(cleaned):
+    if not _FILENAME_RE.fullmatch(cleaned):
         raise OSError(
             f"TFTP filename {name!r} contains characters outside the [A-Za-z0-9._/-] safe set",
         )

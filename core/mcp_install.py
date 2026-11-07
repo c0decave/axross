@@ -60,10 +60,11 @@ from core.subprocess_env import clean_child_env
 
 log = logging.getLogger(__name__)
 
-#: node:22-slim and python:3.13-slim, by the digest of their image index
-#: (Docker Hub tag API and registry manifest, read 2026-10-25).
+#: node:24-slim (Node 24.22.2) and python:3.13-slim, by the digest of their
+#: image index (Docker Hub tag API and registry manifest, read 2026-11-03 and
+#: 2026-10-25). Node 24: the 2026 reference servers want node >= 24.
 NODE_IMAGE = ("docker.io/library/node@sha256:"
-              "de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d")
+              "c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c")
 PYTHON_IMAGE = ("docker.io/library/python@sha256:"
                 "d98cc29d3266e535dd9da1099688d9cb3ca4753813571e071763d17725460962")
 #: What an install container may reach, per package kind.
@@ -171,7 +172,7 @@ def choice_problems(entry: M.CatalogEntry, choice: InstallChoice, *,
     out: list[str] = []
     if entry.why_not:
         out.append(f"cannot be installed: {entry.why_not}")
-    if not re.match(r"^[A-Za-z0-9_-]{1,32}$", choice.name or ""):
+    if not re.fullmatch(r"^[A-Za-z0-9_-]{1,32}$", choice.name or ""):
         out.append("the name: 1-32 letters, digits, '-' or '_'")
     elif choice.name in set(taken):
         out.append(f"a server named {choice.name} is already configured")
@@ -289,7 +290,7 @@ def contained_files_problem(argv) -> str:
         if arg in RUN_FLAGS or arg in ("--network=none", "--user=0:0") \
                 or arg == f"--env-file=/dev/fd/{C.TOKEN_ENV_FD}" \
                 or arg.startswith(("--name=axross-mcp-", "--label=io.axross.mcp=")) \
-                or _RO_VOLUME.match(arg):
+                or _RO_VOLUME.fullmatch(arg):
             continue
         if arg.startswith("--volume="):
             return "it has a writable folder"
@@ -376,7 +377,7 @@ class Podman:
             raise InstallError(f"podman images failed: {_tail(done.stderr)}")
         try:
             data = json.loads(done.stdout or "[]")
-        except ValueError:
+        except (ValueError, RecursionError):
             raise InstallError("podman images did not answer JSON") from None
         return data if isinstance(data, list) else []
 
@@ -389,7 +390,7 @@ class Podman:
             return None
         try:
             data = json.loads(done.stdout)
-        except ValueError:
+        except (ValueError, RecursionError):
             return None
         return data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else None
 
@@ -506,7 +507,7 @@ class Podman:
                 raise InstallError(f"installing {spec} failed: {_tail(lines)}")
             found = [line.split("=", 1)[1] for line in lines if line.startswith("AXROSS_ENTRY=")]
             entry_point = found[-1] if found else ""
-            if not _ENTRY.match(entry_point) or ".." in entry_point.split("/"):
+            if not _ENTRY.fullmatch(entry_point) or ".." in entry_point.split("/"):
                 raise InstallError(f"{spec} was installed, but its entry point was not found")
             tag = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{name}-{entry.version}")[:128]
             image = f"localhost/axross-mcp:{tag}"
@@ -584,7 +585,7 @@ def install(entry: M.CatalogEntry, choice: InstallChoice, *, podman: Podman | No
                 d.split("@", 1)[1] for d in info.get("RepoDigests") or ()
                 if isinstance(d, str) and d.startswith(entry.identifier + "@")]
             digest = next((d for d in candidates
-                           if isinstance(d, str) and re.match(r"^sha256:[a-f0-9]{64}$", d)), "")
+                           if isinstance(d, str) and re.fullmatch(r"^sha256:[a-f0-9]{64}$", d)), "")
             if not digest:
                 raise InstallError(f"podman names no digest for {entry.image_ref}")
         image = f"{entry.identifier}@{digest}"
@@ -767,7 +768,7 @@ def remote_digest(image: str, tag: str, *, opener=None,
         raise M.CatalogError(f"{api} answered HTTP {exc.code}") from None
     except (urllib.error.URLError, OSError) as exc:
         raise M.CatalogError(f"cannot reach {api}: {getattr(exc, 'reason', exc)}") from None
-    if not re.match(r"^sha256:[a-f0-9]{64}$", digest or ""):
+    if not re.fullmatch(r"^sha256:[a-f0-9]{64}$", digest or ""):
         raise M.CatalogError(f"{api} names no digest for {image}:{tag}")
     return digest
 

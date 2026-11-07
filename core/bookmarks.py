@@ -477,7 +477,7 @@ class BookmarkManager:
             self._root = self._load_nodes(data, 0)
             self._base = self._dump_nodes(self._root)
             log.info("Loaded %d bookmarks", len(self.all()))
-        except (ValueError, OSError, TypeError) as e:
+        except (ValueError, OSError, TypeError, RecursionError) as e:
             # ValueError covers JSONDecodeError and UnicodeDecodeError.
             log.error("Failed to load bookmarks: %s", e)
             # The next save writes the (now empty) tree to this path; move
@@ -501,7 +501,7 @@ class BookmarkManager:
             data = json.loads(raw.decode("utf-8"))
             if not isinstance(data, list):
                 raise TypeError("Bookmarks JSON must be a list")
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, RecursionError) as e:
             log.error("Failed to re-read bookmarks: %s", e)
             _set_aside(bf)
             return None
@@ -672,7 +672,9 @@ class BookmarkManager:
                 self._merge_from_disk(bf)
                 self._write(bf)
         except OSError as e:
-            log.error("Failed to save bookmarks: %s", e)
+            from core.json_store import report_save_failure
+
+            report_save_failure("bookmarks", e)
 
     def _write(self, bf: Path) -> None:
         target_dir = bf.parent
@@ -690,7 +692,7 @@ class BookmarkManager:
             suffix=".tmp",
         )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as tmp:
                 fd = -1
                 tmp.write(payload)
             os.replace(temp_name, bf)

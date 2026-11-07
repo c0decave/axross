@@ -130,7 +130,7 @@ class AgentSession:
         if (
             not isinstance(data, dict)
             or not isinstance(data.get("id"), str)
-            or not _ID.match(data["id"])
+            or not _ID.fullmatch(data["id"])
         ):
             return None
         out = cls(id=data["id"])
@@ -194,7 +194,7 @@ class SessionStore:
         self.folder = Path(folder) if folder is not None else sessions_dir()
 
     def path(self, session_id: str) -> Path:
-        if not _ID.match(session_id):
+        if not _ID.fullmatch(session_id):
             raise ValueError(f"not a session id: {session_id!r}")
         return self.folder / f"{session_id}.json"
 
@@ -202,7 +202,8 @@ class SessionStore:
         session.updated = _now()
         # Encoded in one go: json.dumps takes the C encoder (json.dump streams
         # through the Python one, 29 instead of 24 ms for 3.8 MB on the GUI
-        # thread), and a session that cannot be encoded writes nothing.
+        # thread; Python 3.11's C encoder does no indent, so there both take
+        # the Python one), and a session that cannot be encoded writes nothing.
         data = json.dumps(session.to_dict(), ensure_ascii=False, indent=1).encode("utf-8")
         self.folder.mkdir(parents=True, exist_ok=True)
         try:
@@ -223,7 +224,7 @@ class SessionStore:
                 log.warning("agent session %s is too large to load", session_id)
                 return None
             return AgentSession.from_dict(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return None
 
     def all(self) -> list[AgentSession]:
@@ -234,9 +235,9 @@ class SessionStore:
         except OSError:
             return out
         for path in names:
-            session = self.load(path.stem) if _ID.match(path.stem) else None
+            session = self.load(path.stem) if _ID.fullmatch(path.stem) else None
             if session is None:
-                if _ID.match(path.stem):
+                if _ID.fullmatch(path.stem):
                     log.warning("agent session %s is unreadable: skipped", path.name)
                 continue
             out.append(session)

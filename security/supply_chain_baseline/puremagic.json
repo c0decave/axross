@@ -1,0 +1,98 @@
+{
+ "name": "puremagic",
+ "versions": {
+  "2.2.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|puremagic/main.py|f09844531903e2eb",
+    "yara|capability_filesystem_read|puremagic/scanners/asf_scanner.py|331639dc09448ddf",
+    "yara|capability_filesystem_read|puremagic/scanners/cfbf_scanner.py|c34cf2c1125a3f37",
+    "yara|capability_filesystem_read|puremagic/scanners/hdf5_scanner.py|20c0b40bfe086320",
+    "yara|capability_filesystem_read|puremagic/scanners/mpeg_audio_scanner.py|a95726c02d5d0417",
+    "yara|capability_filesystem_read|puremagic/scanners/python_scanner.py|1b896abcd013263b",
+    "yara|capability_filesystem_read|puremagic/scanners/text_scanner.py|407232d9b51562af",
+    "yara|capability_filesystem_read|puremagic/scanners/zip_scanner.py|28959faf01453e4f"
+   ],
+   "archives": {
+    "puremagic-2.2.0-py3-none-any.whl": {
+     "entry_points": [
+      "puremagic = puremagic.main:command_line_entry"
+     ],
+     "files": {
+      "puremagic-2.2.0.dist-info/METADATA": "3365454abd2e093798790fd42383f1a1e8243500fecd82f438408c03302ef805",
+      "puremagic-2.2.0.dist-info/RECORD": "8b34aef04492b8abe06da6b69e5c715d4bdd491c1febde425520864a2974c3c2",
+      "puremagic-2.2.0.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "puremagic-2.2.0.dist-info/entry_points.txt": "3952f4e76c737a4c4175884a35b0265760c01f0725d3725e57994352aa8543f3",
+      "puremagic-2.2.0.dist-info/licenses/LICENSE": "a6847707e41f6fcab7238b93296c12d9aacae2e9ac129fa3bec70d8f05bc735d",
+      "puremagic-2.2.0.dist-info/top_level.txt": "1d44c498b9ad47d28285a90b87e15376b894e4aca21d1504e596849c10f364c9",
+      "puremagic/__init__.py": "68b71d188aa944f679ab6e416a1f81cdb28bd2fe01b6e344ba14c4b9d4dfccc2",
+      "puremagic/__main__.py": "4b1dbb5cba8acc555463e28642dfed3a5a90bc9b539e5c3a22fbe21cee24c090",
+      "puremagic/magic_data.json": "18f3a7724008a09dd21c01a188839c86ea1fe0fa1f87ebb67c0294d23c150861",
+      "puremagic/main.py": "f09844531903e2eb35b8bd296cbba4cf9b880108baad092014ded94a43d86a5a",
+      "puremagic/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "puremagic/scanners/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "puremagic/scanners/asf_scanner.py": "331639dc09448ddfcf6ab18df16cb4bdaa7d93726dcfb3378e0c59defdb49d20",
+      "puremagic/scanners/cfbf_scanner.py": "c34cf2c1125a3f37e7843cc348393124adacd2a3a46cf29ec074313b2374308a",
+      "puremagic/scanners/ebml_scanner.py": "64d5f80b054e319e85d45c28ca2ce8b4d945e6fa108d838159d82e21b4c0522f",
+      "puremagic/scanners/hdf5_scanner.py": "20c0b40bfe086320d4d63992bb5f6cbfb31206231efb993720b914cfcdd8a08d",
+      "puremagic/scanners/helpers.py": "f17844425f0d53b6ac46c91303e2a8649749d1def452a02e55348ddf72ab7905",
+      "puremagic/scanners/json_scanner.py": "39a8ebe320c322fcf2a082ff45d874c947cdc71e69135c990dfaab5e779be604",
+      "puremagic/scanners/mpeg_audio_scanner.py": "a95726c02d5d0417387b707d7afb54d03ab382b36d991409a8f3e51107f45321",
+      "puremagic/scanners/ogg_scanner.py": "0a5c38797d377baa5ca90d1a5d7e98ad87981b68dcea3b64bc41f441598d7d31",
+      "puremagic/scanners/pdf_scanner.py": "48a27096a556ac0570190c7f186b440f118c4c0725d7845a2ec5e94c2d8b579e",
+      "puremagic/scanners/python_scanner.py": "1b896abcd013263bca2569347234d67ba305ded6e4392f1d25af8a2e1cebb003",
+      "puremagic/scanners/sndhdr_scanner.py": "5c690acd0b1eddd1076b68bba59201173b3db8e422794c96821879eedfb82aa4",
+      "puremagic/scanners/text_scanner.py": "407232d9b51562af42203cf25789ddf40d0a6d1911fcbd60f064b373e58f4d91",
+      "puremagic/scanners/zip_scanner.py": "28959faf01453e4fbff02b9fda0fbe3f9cd45f02888ee4ab8776e4682e915f64"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "18a32786c0959b7582c0c3dfb8d92633527c887b0b4b13e517adc40f2d80a61f",
+     "native": {},
+     "pth": {},
+     "sha256": "c4f7ed7307f056c787199acfda839555921be1df13abba61e8e6db0c787ae1d0"
+    }
+   },
+   "name": "puremagic",
+   "provenance": {
+    "puremagic-2.2.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Chris Griffith <chris@cdgriffith.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/cdgriffith/puremagic"
+    },
+    "summary": "Pure python implementation of magic file detection"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|puremagic/main.py|f09844531903e2eb",
+     "yara|capability_filesystem_read|puremagic/scanners/asf_scanner.py|331639dc09448ddf",
+     "yara|capability_filesystem_read|puremagic/scanners/cfbf_scanner.py|c34cf2c1125a3f37",
+     "yara|capability_filesystem_read|puremagic/scanners/hdf5_scanner.py|20c0b40bfe086320",
+     "yara|capability_filesystem_read|puremagic/scanners/mpeg_audio_scanner.py|a95726c02d5d0417",
+     "yara|capability_filesystem_read|puremagic/scanners/python_scanner.py|1b896abcd013263b",
+     "yara|capability_filesystem_read|puremagic/scanners/text_scanner.py|407232d9b51562af",
+     "yara|capability_filesystem_read|puremagic/scanners/zip_scanner.py|28959faf01453e4f"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read puremagic/main.py",
+     "capability_filesystem_read:capability_filesystem_read puremagic/scanners/asf_scanner.py",
+     "capability_filesystem_read:capability_filesystem_read puremagic/scanners/cfbf_scanner.py",
+     "capability_filesystem_read:capability_filesystem_read puremagic/scanners/hdf5_scanner.py",
+     "capability_filesystem_read:capability_filesystem_read puremagic/scanners/mpeg_audio_scanner.py",
+     "capability_filesystem_read:capability_filesystem_read puremagic/scanners/python_scanner.py",
+     "capability_filesystem_read:capability_filesystem_read puremagic/scanners/text_scanner.py",
+     "capability_filesystem_read:capability_filesystem_read puremagic/scanners/zip_scanner.py"
+    ]
+   },
+   "version": "2.2.0"
+  }
+ }
+}

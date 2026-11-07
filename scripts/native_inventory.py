@@ -69,8 +69,8 @@ PROGRAMS = {
 }
 #: A library without a version string of its own -> the one of its build.
 SIBLINGS = {"libssl": "libcrypto", "libswscale": "libavutil"}
-_EXTENSION = re.compile(r"\.(cpython-[^/]*|abi3)\.so$")
-_SONAME = re.compile(r"\.so\.([0-9][0-9.]*)$")
+_EXTENSION = re.compile(r"\.(cpython-[^/]*|abi3)\.so\Z")
+_SONAME = re.compile(r"\.so\.([0-9][0-9.]*)\Z")
 _WHEEL_DIR = re.compile(r"^licenses/python/(?P<dist>.+)-(?P<version>[^-/]+)/")
 _DIST_INFO = re.compile(r"^(?P<dist>[^/]+)-(?P<version>[^-/]+)\.dist-info/")
 

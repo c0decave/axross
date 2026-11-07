@@ -1,0 +1,102 @@
+{
+ "name": "ipwhois",
+ "versions": {
+  "1.3.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|ipwhois/net.py|99f300fc6ec27ecb",
+    "yara|capability_filesystem_read|ipwhois/utils.py|96a1350a0c28750e",
+    "yara|capability_network_download|ipwhois/scripts/py36.py|8c68018fbb8202b0",
+    "yara|capability_network_download|ipwhois/scripts/test.py|f161f7c1406f202f",
+    "yara|capability_network_outbound|ipwhois/experimental.py|8b84367a9e224818",
+    "yara|capability_network_outbound|ipwhois/ipwhois.py|28af6891eb2c352b",
+    "yara|capability_network_outbound|ipwhois/net.py|99f300fc6ec27ecb",
+    "yara|capability_network_outbound|ipwhois/scripts/py36.py|8c68018fbb8202b0",
+    "yara|capability_network_outbound|ipwhois/scripts/test.py|f161f7c1406f202f"
+   ],
+   "archives": {
+    "ipwhois-1.3.0-py2.py3-none-any.whl": {
+     "entry_points": [
+      "ipwhois_cli = ipwhois.scripts.ipwhois_cli:main",
+      "ipwhois_utils_cli = ipwhois.scripts.ipwhois_utils_cli:main"
+     ],
+     "files": {
+      "ipwhois-1.3.0.dist-info/LICENSE.txt": "1803dcb7b3d33a9b85c08e98d28cdf31a56838ecb6277d07f52d82058ba25ff1",
+      "ipwhois-1.3.0.dist-info/METADATA": "c934281f17e965bfb0b1f573574e6603f2858e60a13726f230d76bd2840466d9",
+      "ipwhois-1.3.0.dist-info/RECORD": "466c0cd76baf0fb5256124edd52f94bf991c3021d2db1a5669fb1dba755b091d",
+      "ipwhois-1.3.0.dist-info/WHEEL": "0075fab56937a96b9c7bbbca2eb8fb967ba554711d5a896d81aba8f1b8025e05",
+      "ipwhois-1.3.0.dist-info/entry_points.txt": "2875db847c96c8d8b71c133ee40e20027d863199af54238b0dcf27b2d9fbd476",
+      "ipwhois-1.3.0.dist-info/top_level.txt": "464ff7c4a20296c83eae819138b8bc4d8478ce8ffc2ba82ba802af2ff3bd69df",
+      "ipwhois/__init__.py": "12313e1dca215c23631ff0718ba2a84084af7cf1fd34d1c141b4bb3d463b25e2",
+      "ipwhois/asn.py": "2eabf3fd7ea807e6060c8679d51fcb122cac9873b9e1f8b2dea75acd743df96f",
+      "ipwhois/exceptions.py": "f091fd0a554ea2c8e5118adeccfb243ce1c48cc4bddc355e8dc74b8d1b7fb2ae",
+      "ipwhois/experimental.py": "8b84367a9e22481876357b52623bffc3cd8363b118075861fae06b1b30f91cf4",
+      "ipwhois/hr.py": "9fc42728461fb1b11224341f9eb0c74862af656c713fd32ddc8f01609fff21d3",
+      "ipwhois/ipwhois.py": "28af6891eb2c352b85ecffb4392457fe6193dd3713a866bf679c5ddd7b6c3d8d",
+      "ipwhois/net.py": "99f300fc6ec27ecbfe4ae7855290317fc0eceee84a3d36377bf7f7027787a199",
+      "ipwhois/nir.py": "ca24129cc5e14c3e18decab728c3e3da6a5e0bc80bdb556221321cf286ad253a",
+      "ipwhois/rdap.py": "0117cc7671d9b499958f8ed7d991261a05dae5c65af210f9ef35389923e0cd1c",
+      "ipwhois/scripts/ipwhois_cli.py": "84237e2731f773bb2cc7a4badc4a2c891319c054124ccf1570bdc7ae4d9855ba",
+      "ipwhois/scripts/ipwhois_utils_cli.py": "3bfe256cc0af0e330b7cd5497272b80240af3a7b9a863d4b70405f031be1128a",
+      "ipwhois/scripts/py36.py": "8c68018fbb8202b0984ae8584fb69f27ee30a2437f50374bf7c0106c124a52e7",
+      "ipwhois/scripts/test.py": "f161f7c1406f202f3b19ea6b24089609b16888b1b305fe59ee2da02d15ece85a",
+      "ipwhois/scripts/urllib3.py": "cf69854c7e1b38978855443316cc0639d78975e4292142d9b185f819b6a6e31b",
+      "ipwhois/utils.py": "96a1350a0c28750e2a3bdfbd98244d706ed5b5531b199b10506c6bf8afbfda77",
+      "ipwhois/whois.py": "10e44f0e6326c6c3ed398dc63a5c85d3874cfbd299db8234ff9fb377ae13f582"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b6e38bad939df680d70d06cad38e4834299b8c6276e2aa8bfdd63b0ecc592fbb",
+     "native": {},
+     "pth": {},
+     "sha256": "ad2cd7e7b8c81044fc8829bb4357bce6088c654a20f51f5d234fe6a99e0fbf90"
+    }
+   },
+   "name": "ipwhois",
+   "provenance": {
+    "ipwhois-1.3.0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Philip Hane",
+    "author_email": "secynic@gmail.com",
+    "home_page": "https://github.com/secynic/ipwhois",
+    "license": "BSD",
+    "project_urls": {
+     "Download": "https://github.com/secynic/ipwhois/tarball/master",
+     "Homepage": "https://github.com/secynic/ipwhois"
+    },
+    "summary": "Retrieve and parse whois data for IPv4 and IPv6 addresses."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_download, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|ipwhois/net.py|99f300fc6ec27ecb",
+     "yara|capability_filesystem_read|ipwhois/utils.py|96a1350a0c28750e",
+     "yara|capability_network_download|ipwhois/scripts/py36.py|8c68018fbb8202b0",
+     "yara|capability_network_download|ipwhois/scripts/test.py|f161f7c1406f202f",
+     "yara|capability_network_outbound|ipwhois/experimental.py|8b84367a9e224818",
+     "yara|capability_network_outbound|ipwhois/ipwhois.py|28af6891eb2c352b",
+     "yara|capability_network_outbound|ipwhois/net.py|99f300fc6ec27ecb",
+     "yara|capability_network_outbound|ipwhois/scripts/py36.py|8c68018fbb8202b0",
+     "yara|capability_network_outbound|ipwhois/scripts/test.py|f161f7c1406f202f"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read ipwhois/net.py",
+     "capability_filesystem_read:capability_filesystem_read ipwhois/utils.py",
+     "capability_network_download:capability_network_download ipwhois/scripts/py36.py",
+     "capability_network_download:capability_network_download ipwhois/scripts/test.py",
+     "capability_network_outbound:capability_network_outbound ipwhois/experimental.py",
+     "capability_network_outbound:capability_network_outbound ipwhois/ipwhois.py",
+     "capability_network_outbound:capability_network_outbound ipwhois/net.py",
+     "capability_network_outbound:capability_network_outbound ipwhois/scripts/py36.py",
+     "capability_network_outbound:capability_network_outbound ipwhois/scripts/test.py"
+    ]
+   },
+   "version": "1.3.0"
+  }
+ }
+}

@@ -107,7 +107,7 @@ def activate(api):
                 text += f", {len(skipped)} skipped ({skipped[0]})"
             api.notify(text)
             if ctx.pane is not None:
-                ctx.pane.refresh()
+                getattr(ctx.pane, "refresh_after_change", ctx.pane.refresh)()  # not blocking
 
         api.run_in_background(
             lambda: run_batch(ctx.backend, ctx.folder, names, edge, fmt), on_done=done

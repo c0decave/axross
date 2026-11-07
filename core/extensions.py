@@ -261,7 +261,7 @@ def _read_settings() -> tuple[dict, bool]:
         return {}, False
     try:
         data = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         log.warning("%s is not valid JSON; no extension is switched on", path)
         return {}, False
     if not isinstance(data, dict):
@@ -477,7 +477,7 @@ def collect_stale_activations() -> list[dict]:
         return []
     found = []
     for path in entries:
-        match = _MARKER_NAME.match(path.name)
+        match = _MARKER_NAME.fullmatch(path.name)
         if match is None or path.is_symlink():
             continue
         try:
@@ -487,7 +487,7 @@ def collect_stale_activations() -> list[dict]:
             started = float(data.get("started", 0))
             if not (isinstance(pid, int) and isinstance(ext_id, str) and ext_id):
                 raise ValueError("bad marker")
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, RecursionError):
             _remove(path)
             continue
         name = data.get("name") if isinstance(data.get("name"), str) else ext_id

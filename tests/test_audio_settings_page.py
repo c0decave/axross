@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-QtMultimedia = pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+QtMultimedia = pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # no libpulse
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
@@ -295,9 +295,14 @@ def test_happy_e2e_choose_devices_and_volumes_then_ok_writes_audio_json(
     assert dialog.dirty_page_ids() == ["audio"]
     QTest.mouseClick(dialog.buttons.button(QDialogButtonBox.StandardButton.Ok),
                      Qt.MouseButton.LeftButton)
-    assert saved_json(stores) == {"version": 1, "backend": "pulseaudio",
-                                  "output_device": HEADSET.device_id, "output_volume": 40,
-                                  "input_device": MIC.device_id, "input_volume": 90}
+    saved = saved_json(stores)
+    page_fields = {k: saved[k] for k in ("version", "backend", "output_device",
+                                         "output_volume", "input_device", "input_volume")}
+    assert page_fields == {"version": 1, "backend": "pulseaudio",
+                           "output_device": HEADSET.device_id, "output_volume": 40,
+                           "input_device": MIC.device_id, "input_volume": 90}
+    # the Audio Mixer's settings (core.audio_route) are written with their defaults
+    assert saved["output_muted"] is False and saved["eq_gains"] == [0.0] * 10
     assert len(heard) == 1 and heard[0].output_device == HEADSET.device_id
     assert AR.output_gain() == pytest.approx(0.4)
 

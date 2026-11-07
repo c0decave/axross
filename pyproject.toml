@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0", "wheel"]
+requires = ["setuptools>=84.1.0", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -47,7 +47,11 @@ classifiers = [
 # is at or above the highest known fix for that distribution.
 # Verify with: python -m security.dep_floor_audit
 dependencies = [
-    "PyQt6>=6.6",
+    # <6.12: PyQt6 6.12's wheels carry no QtPdf any more (the PDF viewer);
+    # Riverbank ships it as the separate PyQt6-Pdf, first released on
+    # 2026-11-02. The cap goes once the bundle lock moves to 6.12 together
+    # with PyQt6-Pdf.
+    "PyQt6>=6.6,<6.12",
     "paramiko>=5.0,<6.0",
     "PySocks>=1.7",
     "keyring>=25.0",
@@ -94,20 +98,30 @@ archive = ["py7zr>=1.1.3", "rarfile>=4.0", "backports.zstd>=1.0; python_version 
 tftp = ["tftpy>=0.8"]
 postgres = ["psycopg[binary]>=3.1"]
 redis = ["redis>=5.0"]
-mongo = ["pymongo>=4.18.2"]
+# 4.18.3: the C BSON decoder no longer over-reads a truncated Regex element
+# (GHSA-98qm-wvgf-w4cf); axross decodes what a server sends.
+mongo = ["pymongo>=4.18.3"]
 # urllib3: core/proxy.py builds the proxied pool manager dulwich talks through.
 git = ["dulwich>=1.2.9", "urllib3>=2.8.0"]
-dns = ["dnspython>=2.6.1"]
+# 2.9.0: no CPU exhaustion on a crafted compressed name (GHSA-45c3-73f7-pv4m).
+dns = ["dnspython>=2.9.0"]
 magic = ["puremagic>=1.20"]
 encoding = ["chardet>=5.2"]
 snmp = ["pysnmp>=6.2"]
 ldap = ["ldap3>=2.9"]
 mac = ["manuf>=1.1"]
+# Bluetooth panel: a USB stick driven directly, without BlueZ (also Windows,
+# macOS) - core/bluetooth_direct.py. An opt-in extra: it takes the stick from
+# the operating system while axross uses it.
+bluetooth-raw = ["bumble>=0.0.236"]
 whois = ["ipwhois>=1.3"]
 ntp = ["ntplib>=0.4"]
 # Removing PDF metadata (Info dictionary + XMP, full rewrite). Reading works
 # without it through QtPdf. Not mutagen: GPL-2.0+ would bind the binary.
-metadata = ["pypdf>=6.21.2"]
+# 6.21.4 fixes the parser advisories of 6.21.2 and 6.21.3
+# (GHSA-5849-834g-hvw5, GHSA-mfr5-77xh-9j7h, GHSA-cggf-277g-3q54 and four
+# fixed in 6.21.3); axross opens untrusted PDFs with it.
+metadata = ["pypdf>=6.21.4"]
 # File analysis (Analysis dock), an opt-in extra: not part of "all".
 sift = ["sift-summarizer>=0.1.86"]
 # Media Player extension: equalizer and spectrum (playback works without).
@@ -115,7 +129,11 @@ media = ["numpy>=2.0"]
 # Talking with the Agent dock: Piper speech output and local faster-whisper
 # recognition. An opt-in extra, not part of "all": piper-tts is
 # GPL-3.0-or-later. Voices and models are downloaded in Help > Features….
-voice = ["piper-tts>=1.8.0", "onnxruntime>=1.31.0", "faster-whisper>=1.2.1", "ctranslate2>=4.8.4"]
+# Chat panels: Matrix with end-to-end encryption (vodozemac), XMPP with OMEMO 2
+# (the old OMEMO only if the user installs the AGPL "oldmemo" package). IRC
+# needs nothing extra. Opt-in, not part of "all"; bundled in axross-full.
+chat = ["matrix-nio[e2e]>=0.26.0", "slixmpp>=1.17.0", "omemo>=2.1.0", "twomemo[xml]>=2.1.0"]
+voice = ["piper-tts>=1.8.0", "onnxruntime>=1.31.0", "faster-whisper>=1.2.1", "ctranslate2>=4.8.3"]
 all = [
     "smbprotocol>=1.13",
     "defusedxml>=0.7",
@@ -134,10 +152,10 @@ all = [
     "tftpy>=0.8",
     "psycopg[binary]>=3.1",
     "redis>=5.0",
-    "pymongo>=4.18.2",
+    "pymongo>=4.18.3",
     "dulwich>=1.2.9",
     "urllib3>=2.8.0",
-    "dnspython>=2.6.1",
+    "dnspython>=2.9.0",
     "puremagic>=1.20",
     "chardet>=5.2",
     "pysnmp>=6.2",
@@ -145,7 +163,7 @@ all = [
     "manuf>=1.1",
     "ipwhois>=1.3",
     "ntplib>=0.4",
-    "pypdf>=6.21.2",
+    "pypdf>=6.21.4",
 ]
 
 [project.scripts]
@@ -171,6 +189,8 @@ packages = [
     "resources.voice",
     "resources.mcp",
     "resources.credits",
+    "resources.i18n",
+    "resources.chat_servers",
 ]
 
 [tool.setuptools.package-data]
@@ -181,6 +201,8 @@ packages = [
 "resources.voice" = ["*.txt"]
 "resources.mcp" = ["*.json"]
 "resources.credits" = ["*.json"]
+"resources.i18n" = ["*.json"]
+"resources.chat_servers" = ["*.json"]
 "examples" = ["*.md"]
 "examples.scripting_api" = ["*.md"]
 
@@ -189,10 +211,19 @@ version = { attr = "axross._version.__version__" }
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
+# setuptools' build output (a copy of the tree): a build before `ruff check .`
+# - as in CI - must not lint it twice.
+extend-exclude = ["build/lib"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+# The gate `ruff check .` (CONTRIBUTING.md; the "package" job of
+# .github/workflows/python-app.yml): pyflakes (undefined names, unused
+# imports and variables, redefinitions), syntax errors, raw bidi
+# characters in the source (PLE2502: write them as \u escapes) and an
+# exception repeated in the handlers of one try (B025). Line length and
+# import order (E501, I001) are not gated: the tree does not meet them yet.
+select = ["F", "E9", "PLE2502", "B025"]
 
 [tool.ruff.lint.per-file-ignores]
 # Bundled example scripts under resources/scripts/ are exec()-ed inside
@@ -200,10 +231,16 @@ select = ["E", "F", "W", "I"]
 # see that binding. Suppress F821 (undefined name) and F401 (unused
 # import) for that tree only.
 "resources/scripts/*.py" = ["F821", "F401"]
+# Tests import pytest fixtures by name and take them as arguments (F811),
+# and import modules for what importing them does (F401).
+"tests/**/*.py" = ["F811", "F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["scripts", "."]
+# /tmp is often a tmpfs (RAM): the tmp_path folders of the last three runs
+# held 1.5 GiB of memory. Only a failed test's folder is kept.
+tmp_path_retention_policy = "failed"
 
 [tool.mypy]
 # We don't gate CI on mypy yet — the codebase has structural typing

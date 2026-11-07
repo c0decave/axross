@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QDialog, QLineEdit  # noqa: E402
 
 from core import auth_prompt as AP  # noqa: E402
@@ -39,6 +40,11 @@ def pump(until, seconds=10.0):
 
 @pytest.fixture(autouse=True)
 def _no_handler():
+    # A window an earlier test of this process left to deleteLater() is
+    # deleted only when an event loop starts - the dialog's exec(). Were it
+    # still the active window, the dialog (its child) went with it: "no
+    # sign-in dialog", and a RuntimeError out of code_dialog's deleteLater.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     AP.set_handler(None)
     yield
     AP.set_handler(None)

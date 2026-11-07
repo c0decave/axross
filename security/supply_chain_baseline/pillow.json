@@ -1,0 +1,1127 @@
+{
+ "name": "pillow",
+ "versions": {
+  "13.0.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|PIL/EpsImagePlugin.py|a6f288068186c0a0",
+    "yara|capability_filesystem_delete|PIL/Image.py|04050c2d4dd67931",
+    "yara|capability_filesystem_delete|PIL/ImageGrab.py|54b1f0c2a04541f2",
+    "yara|capability_filesystem_delete|PIL/ImageShow.py|aa6687ceef56beaf",
+    "yara|capability_filesystem_delete|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+    "yara|capability_filesystem_read|PIL/AvifImagePlugin.py|7d5c9addebc40cdb",
+    "yara|capability_filesystem_read|PIL/BdfFontFile.py|77ca2d9ac0cfd7fe",
+    "yara|capability_filesystem_read|PIL/BlpImagePlugin.py|8f603c8fbe741c04",
+    "yara|capability_filesystem_read|PIL/BmpImagePlugin.py|778ffbc6dfb15b7c",
+    "yara|capability_filesystem_read|PIL/BufrStubImagePlugin.py|20cd04cee3c05601",
+    "yara|capability_filesystem_read|PIL/ContainerIO.py|b90898580337cba2",
+    "yara|capability_filesystem_read|PIL/CurImagePlugin.py|ac6d237f4fafcfa8",
+    "yara|capability_filesystem_read|PIL/DcxImagePlugin.py|1b5cf45c25491a78",
+    "yara|capability_filesystem_read|PIL/DdsImagePlugin.py|133b4bfe48e78e30",
+    "yara|capability_filesystem_read|PIL/EpsImagePlugin.py|a6f288068186c0a0",
+    "yara|capability_filesystem_read|PIL/FitsImagePlugin.py|0033984c0c8f97e8",
+    "yara|capability_filesystem_read|PIL/FliImagePlugin.py|fdec8e67a3019152",
+    "yara|capability_filesystem_read|PIL/FpxImagePlugin.py|40a859a4573cf5e9",
+    "yara|capability_filesystem_read|PIL/FtexImagePlugin.py|7f95e8baf6ad63c1",
+    "yara|capability_filesystem_read|PIL/GbrImagePlugin.py|3545646e393680d5",
+    "yara|capability_filesystem_read|PIL/GdImageFile.py|5f73e93245a796a0",
+    "yara|capability_filesystem_read|PIL/GifImagePlugin.py|10de47f8b414ee9d",
+    "yara|capability_filesystem_read|PIL/GimpGradientFile.py|3456596b4ad84c94",
+    "yara|capability_filesystem_read|PIL/GimpPaletteFile.py|0f5b7cebe76f5bc9",
+    "yara|capability_filesystem_read|PIL/GribStubImagePlugin.py|b192ff430da9a39c",
+    "yara|capability_filesystem_read|PIL/Hdf5StubImagePlugin.py|9f8a32aa127b0215",
+    "yara|capability_filesystem_read|PIL/IcnsImagePlugin.py|c4d2de3c0cddbb84",
+    "yara|capability_filesystem_read|PIL/IcoImagePlugin.py|b771b2582490349e",
+    "yara|capability_filesystem_read|PIL/ImImagePlugin.py|10e53c037685b09b",
+    "yara|capability_filesystem_read|PIL/Image.py|04050c2d4dd67931",
+    "yara|capability_filesystem_read|PIL/ImageCms.py|9e161faa0807179b",
+    "yara|capability_filesystem_read|PIL/ImageFile.py|55a48a69263e4b4d",
+    "yara|capability_filesystem_read|PIL/ImageFont.py|9182befa0e4047e8",
+    "yara|capability_filesystem_read|PIL/ImageMorph.py|4c5a1a35a50288d9",
+    "yara|capability_filesystem_read|PIL/ImtImagePlugin.py|86d45657568be500",
+    "yara|capability_filesystem_read|PIL/IptcImagePlugin.py|6337bf6c2e584979",
+    "yara|capability_filesystem_read|PIL/Jpeg2KImagePlugin.py|f50e79ef315d2fb9",
+    "yara|capability_filesystem_read|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+    "yara|capability_filesystem_read|PIL/McIdasImagePlugin.py|bdd9412edd3924ad",
+    "yara|capability_filesystem_read|PIL/MpegImagePlugin.py|d5aec9c58619b3cb",
+    "yara|capability_filesystem_read|PIL/MpoImagePlugin.py|73480afd2311cc30",
+    "yara|capability_filesystem_read|PIL/MspImagePlugin.py|8e28773c59bae649",
+    "yara|capability_filesystem_read|PIL/PaletteFile.py|8954b01a8d43c1f2",
+    "yara|capability_filesystem_read|PIL/PcdImagePlugin.py|fa09cc52a407d11f",
+    "yara|capability_filesystem_read|PIL/PcfFontFile.py|062b00838e08338a",
+    "yara|capability_filesystem_read|PIL/PcxImagePlugin.py|f6c031982ad43a0c",
+    "yara|capability_filesystem_read|PIL/PixarImagePlugin.py|2f60af2f631b1941",
+    "yara|capability_filesystem_read|PIL/PngImagePlugin.py|67608f9c458e2d13",
+    "yara|capability_filesystem_read|PIL/PpmImagePlugin.py|1a6b4dcb85493f97",
+    "yara|capability_filesystem_read|PIL/PsdImagePlugin.py|7154b3a26d27236e",
+    "yara|capability_filesystem_read|PIL/QoiImagePlugin.py|40ce66160adbd3bc",
+    "yara|capability_filesystem_read|PIL/SgiImagePlugin.py|b8d23659cfb6fd3c",
+    "yara|capability_filesystem_read|PIL/SpiderImagePlugin.py|f3b2147519e8ab91",
+    "yara|capability_filesystem_read|PIL/SunImagePlugin.py|f2151329b8c9deb2",
+    "yara|capability_filesystem_read|PIL/TarIO.py|f058a10a3fe047a3",
+    "yara|capability_filesystem_read|PIL/TgaImagePlugin.py|eeb961e08ffd2e8a",
+    "yara|capability_filesystem_read|PIL/TiffImagePlugin.py|e3322c6660610c41",
+    "yara|capability_filesystem_read|PIL/WalImageFile.py|41bfdc25f89430ce",
+    "yara|capability_filesystem_read|PIL/WebPImagePlugin.py|99cf0cad0c42b71a",
+    "yara|capability_filesystem_read|PIL/WmfImagePlugin.py|0e116aa192a249d9",
+    "yara|capability_filesystem_read|PIL/XVThumbImagePlugin.py|3ef75a7f971b193d",
+    "yara|capability_filesystem_read|PIL/XbmImagePlugin.py|208212c895882d4f",
+    "yara|capability_filesystem_read|PIL/XpmImagePlugin.py|b47dd3e03c01803b",
+    "yara|capability_network_outbound|PIL/TiffImagePlugin.py|e3322c6660610c41",
+    "yara|capability_process_spawn|PIL/EpsImagePlugin.py|a6f288068186c0a0",
+    "yara|capability_process_spawn|PIL/Image.py|04050c2d4dd67931",
+    "yara|capability_process_spawn|PIL/ImageGrab.py|54b1f0c2a04541f2",
+    "yara|capability_process_spawn|PIL/ImageMath.py|5cfa1434c498968f",
+    "yara|capability_process_spawn|PIL/ImageShow.py|aa6687ceef56beaf",
+    "yara|capability_process_spawn|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+    "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|04050c2d4dd67931"
+   ],
+   "archives": {
+    "pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "PIL/AvifImagePlugin.py": "7d5c9addebc40cdbb6d9d7643e303c388bb9fd302838a750319565f6090dddb9",
+      "PIL/BdfFontFile.py": "77ca2d9ac0cfd7fe08f70cb82298f743ccc546f478cd28feecbbe55056dc4556",
+      "PIL/BlpImagePlugin.py": "8f603c8fbe741c044577f8a5852c678ffe9c57a573b9db2b904e8094a3aa0e32",
+      "PIL/BmpImagePlugin.py": "778ffbc6dfb15b7cba970a5962dafaf721cf8784ff13a140dccab25436c0ac9c",
+      "PIL/BufrStubImagePlugin.py": "20cd04cee3c05601e94ff56ea735dc397269c504fa667dc68a6740d05cb9b618",
+      "PIL/ContainerIO.py": "b90898580337cba237436dacf897048e414d3d96e009a80877c441046b514d3c",
+      "PIL/CurImagePlugin.py": "ac6d237f4fafcfa8fe76e4b087cca78f2a42103ef99062ab8e755ad2de6b5ee0",
+      "PIL/DcxImagePlugin.py": "1b5cf45c25491a78e417ddf8c67b7e56de97885c2b5bfa69868790b226078e3d",
+      "PIL/DdsImagePlugin.py": "133b4bfe48e78e3096e065431cfe873d00b7abb4b5039833b297692e7fa38c9c",
+      "PIL/EpsImagePlugin.py": "a6f288068186c0a0cf3ca3709552df4e7c7b332069d8907fd7618c7a43a04460",
+      "PIL/ExifTags.py": "8bf09947c265a4cdadb0daaeeab597ec52820f79e1d3dc236e518e873dd0ec4f",
+      "PIL/FitsImagePlugin.py": "0033984c0c8f97e8d03a46f75cb421293b43fc7ed79e2031695e576d6213c464",
+      "PIL/FliImagePlugin.py": "fdec8e67a3019152ab5365234d60686524f4c3bebbafb946bf1cf72ced6cda19",
+      "PIL/FontFile.py": "f1ad4c036be09fce0a08765d42e0ccf65c784c1e238f41b5c3f7a85f8f04fe3f",
+      "PIL/FpxImagePlugin.py": "40a859a4573cf5e94ba4e9041b4485ebeed9f5dedd38054e3a99473c55d90864",
+      "PIL/FtexImagePlugin.py": "7f95e8baf6ad63c1569870d93beb4dd49b763d93430290654ec2ac3e5f942b63",
+      "PIL/GbrImagePlugin.py": "3545646e393680d5cc635aa3643d634131a9c6213b9cc3c4cc276fc269fb7044",
+      "PIL/GdImageFile.py": "5f73e93245a796a0cd8ee1ed1ae20dd7a3c2d7ebe7fa98c0b3e37f64a381a77c",
+      "PIL/GifImagePlugin.py": "10de47f8b414ee9d1478b469a0f7ed38fe5cf4da2a14313989ecc75469c798cb",
+      "PIL/GimpGradientFile.py": "3456596b4ad84c9492482deb3820573a15b817a1ce3b55eab0069f9e542021d7",
+      "PIL/GimpPaletteFile.py": "0f5b7cebe76f5bc92951c4eac9a6bc5875c2a7a683c42de438e6ecdbc176d98f",
+      "PIL/GribStubImagePlugin.py": "b192ff430da9a39cb25c51b4a401d443558634e4fc7b25d4b58097d89f0da1d8",
+      "PIL/Hdf5StubImagePlugin.py": "9f8a32aa127b0215c53f06f8a11dccc5aa807c0daf4e8ab14d531f1723c46b38",
+      "PIL/IcnsImagePlugin.py": "c4d2de3c0cddbb8458aaf6b872d1e8a3dbcefa39bac9a4aec71fdbe335e113a8",
+      "PIL/IcoImagePlugin.py": "b771b2582490349e83ad296df2727036bca5f4b8ea87e1b756193cc59f08741b",
+      "PIL/ImImagePlugin.py": "10e53c037685b09bdf0dfb546b0fe0f2f56a6162ee15b9c902327d552238a37e",
+      "PIL/Image.py": "04050c2d4dd67931ce8c3cfdbc49ac4a6944d379d037c8f1d5eeeb67fba29a10",
+      "PIL/ImageChops.py": "9443089e2ab9bba37caf454bb6509c8c05b947275b9895b891f8fab9fe8b476a",
+      "PIL/ImageCms.py": "9e161faa0807179b599d8fd7fa1de1078010ba34087201e092a77d7c9194b1fc",
+      "PIL/ImageColor.py": "a20b0d2eab7e6d2d095fd36e3da71446d874f408f296e2641875ddfc78295070",
+      "PIL/ImageDraw.py": "9f4f14b890236731df684c3c9334487af7704bf1b83434481aa8636c5892ffe1",
+      "PIL/ImageDraw2.py": "d4da845bca46ba0812fcc04b686616fb08e2d506f18551db6f0f065c4e8d3047",
+      "PIL/ImageEnhance.py": "cdd4a9458df340bce21680153f5b8065c091c1d79d9530974317ad5d1034caf5",
+      "PIL/ImageFile.py": "55a48a69263e4b4d52fc3b419103c92836cf259a4f6383f93d65e1f22aab0c04",
+      "PIL/ImageFilter.py": "d54985fcaec43ced7bfeb4eba4600dea4482559a2811ff0e7caad1a72f6b5f43",
+      "PIL/ImageFont.py": "9182befa0e4047e8df244ca9e8534fdb52312bcf10219629c608c91efe8a6821",
+      "PIL/ImageGrab.py": "54b1f0c2a04541f23503c8ec6dc0aeac3dde9df9063f6d3147c82af2232680ab",
+      "PIL/ImageMath.py": "5cfa1434c498968fbd4a7708760c5d2c7cfafbc334b68de87758549f3047b839",
+      "PIL/ImageMode.py": "b673e835526da9d855402d4c025d4eca56272d132e63b145d309d2ebe5476001",
+      "PIL/ImageMorph.py": "4c5a1a35a50288d9c356ede25d8d67a056407c1e107398db357e4496024dd1ed",
+      "PIL/ImageOps.py": "ab8f2f995bb77b95e71e69f985ba8d1087e138e8f362a1183fc7a252c457604d",
+      "PIL/ImagePalette.py": "62299569a0a3304fcbcbbed5bbe442cf5760e12ca7834a99aba4651e333a73ab",
+      "PIL/ImagePath.py": "e72506e570948a5d4a2934c0ffc3e01a172683e9a7b9ef862b41704c19618f0e",
+      "PIL/ImageQt.py": "47febee43f5d77222f464edce61e7eae03d627db558af78cb88410aff501745e",
+      "PIL/ImageSequence.py": "023ad8b469f345224cedec8e31655d72a5b8b30dfec1830bbe4284c12fd7055b",
+      "PIL/ImageShow.py": "aa6687ceef56beaf630785b7c14796b8ccb3b32d5321c89c29faef6d2505cf70",
+      "PIL/ImageStat.py": "e761e894621ed0b9460f85cf07c0289e931ab4abd70bd5e7367b4f97f1991a12",
+      "PIL/ImageText.py": "8d5880474c51cc437b8f3ef6c7920a5189aff77339db53a5b9f508de719e3590",
+      "PIL/ImageTk.py": "c04c6493e880620007f07bf3fcf30e190b805ec573e6e43c6b4fed70357947f5",
+      "PIL/ImageTransform.py": "51c71f789a92fa3909ef0dd375abe150159f6bf257f2e5d6d63512c69e6a48a0",
+      "PIL/ImageWin.py": "c451019b8890649af73ec1aeb07788724ce4331f188bcc3946b50f24a1a4d202",
+      "PIL/ImtImagePlugin.py": "86d45657568be5006a8432cc70a33535a592fffd3046341c2cc6b4dbb8b7d57d",
+      "PIL/IptcImagePlugin.py": "6337bf6c2e5849799dac3f30b3d6f4bdb9f7aa05084312136eddc669ceeef835",
+      "PIL/Jpeg2KImagePlugin.py": "f50e79ef315d2fb9b14a70225082373e5a3905e15646aa8c4c781a943a1360df",
+      "PIL/JpegImagePlugin.py": "43ede4e4c76826e9c4ce9b7dbcfbae61abb09b9955816a88a0d775de28220bba",
+      "PIL/JpegPresets.py": "c4a931b287992b806da20472a6fd53beae5b43d6bf8d914ae33b469b99a1b018",
+      "PIL/McIdasImagePlugin.py": "bdd9412edd3924ad3696d87463eadef11ce9a2faec7b7c0f3e439880bf0bab44",
+      "PIL/MicImagePlugin.py": "63a00f44c8a639fe4a937f851d59e6618db4c0cf70c867a3a255e804b40e4c65",
+      "PIL/MpegImagePlugin.py": "d5aec9c58619b3cb4f1784c3fd7cc12c83b874ef8ac5e6604ebcffe455d4883a",
+      "PIL/MpoImagePlugin.py": "73480afd2311cc30d20fce9ee0d6eba750de90876d4b1f4520ed0f0b5c7c6dfa",
+      "PIL/MspImagePlugin.py": "8e28773c59bae649f034c22b68d64ae4cdc9c26605947e34114e254dd458f8e6",
+      "PIL/PSDraw.py": "9a107fec78589c500caed175d40e7ce03cf65cb6cded1e360e2b06280ace4026",
+      "PIL/PaletteFile.py": "8954b01a8d43c1f232131d3d285636f3cd34986b5f429e3c9aa0246de74a658b",
+      "PIL/PalmImagePlugin.py": "d2dded0bdcbff2961cbcea04c260463484ce9db40a21fb13c5693a0fd234e698",
+      "PIL/PcdImagePlugin.py": "fa09cc52a407d11f9a963b1dde7652f5e048d63ef98a3583fc765f69d13746c4",
+      "PIL/PcfFontFile.py": "062b00838e08338a8757943a9292a89b37eeabba76304a38bf04f555ac8561b3",
+      "PIL/PcxImagePlugin.py": "f6c031982ad43a0c28d39ca5dc03a96a33a8b32b9e669355bba4dc43ef5e0c34",
+      "PIL/PdfImagePlugin.py": "7de6837a2807fe1326ec521650ac869d2cce410973cf6bdda8319f0a1275ecce",
+      "PIL/PdfParser.py": "1931bff76826dcbeb0702383a35c0fbf85310d7c49a7d92401fe3fc60fa3fff1",
+      "PIL/PixarImagePlugin.py": "2f60af2f631b194149cbbc95efad2045e2b96d04992741c396fe4c746bf320cd",
+      "PIL/PngImagePlugin.py": "67608f9c458e2d1350997580bb6604a3ca4f351b3103f78430393b3c23d5e50d",
+      "PIL/PpmImagePlugin.py": "1a6b4dcb85493f97b2dca8ec4069cd66cb4947e6e1b30905404604e7be14e3e9",
+      "PIL/PsdImagePlugin.py": "7154b3a26d27236e33d318e68663c6dd763ae4a00b143c4f63bcab2108e12969",
+      "PIL/QoiImagePlugin.py": "40ce66160adbd3bc0f5abf5c831de81b23b2851e4fbeb28e9e88bf97e40972ee",
+      "PIL/SgiImagePlugin.py": "b8d23659cfb6fd3cc7eb5c4174141a5e6931cb64f15b10f22c4fd0ba8a0c13b9",
+      "PIL/SpiderImagePlugin.py": "f3b2147519e8ab919f528358e1386473432a2f7173e2b667a49b0a96934a8ebb",
+      "PIL/SunImagePlugin.py": "f2151329b8c9deb24d753fc46eadce72fc8f0c5037e1181ec80785cd5ca12d59",
+      "PIL/TarIO.py": "f058a10a3fe047a39d80b7d8b10494005cf9520dca78b39dd7d7827ade66f2c8",
+      "PIL/TgaImagePlugin.py": "eeb961e08ffd2e8a5e5d31a66fef4404a498e7874942e5b7f1c6e698880e8296",
+      "PIL/TiffImagePlugin.py": "e3322c6660610c41196adddb6b2d46f303dd0d0034d76544f9364fb32a13f709",
+      "PIL/TiffTags.py": "1aedff2bce1102bd7857bb5f894986bc788bc6c811c5b2753c38d493d25be964",
+      "PIL/WalImageFile.py": "41bfdc25f89430ce348362c9256a7c2ace8629a0bf44bff342b356ec9940ce07",
+      "PIL/WebPImagePlugin.py": "99cf0cad0c42b71a91ed83122c8c1aac20d60db32e3c897d3abd995e75dd6ec7",
+      "PIL/WmfImagePlugin.py": "0e116aa192a249d9d7469f4aad4d141afcd8295bb15c6da24c016d4d278bd7ab",
+      "PIL/XVThumbImagePlugin.py": "3ef75a7f971b193da344dc8b4c918e0368629ecfbc04b5e5ad3ae80b1b69d69a",
+      "PIL/XbmImagePlugin.py": "208212c895882d4f86f6611359ef471070db41f6b956c96e90336fb7aa056395",
+      "PIL/XpmImagePlugin.py": "b47dd3e03c01803b10acd2dc0e69e96405579dd2b9b7d287233e69cf5ac763fd",
+      "PIL/__init__.py": "7361b6ad3878589affe5956e4a4da24d71398b0891fd3a8c15e9362217b4ca01",
+      "PIL/__main__.py": "2e98f8bde7fc988ee3035b1109402855869e78f0ff51cf3df3117973b5cbc750",
+      "PIL/_avif.cpython-312-x86_64-linux-gnu.so": "642ebac0cc9ac2e53a6abfb815f392832da737cac2b1f91ebcff7732081c1b65",
+      "PIL/_avif.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_binary.py": "7590dd4a52c7379e18107f2e434478ff5c2876e22f461748e44cddc947fcdbaa",
+      "PIL/_deprecate.py": "6a0bbb052f12bd49c2194391e9be9e9b38c9abcf9ce6be7a0d0df8179e3943f5",
+      "PIL/_imaging.cpython-312-x86_64-linux-gnu.so": "d898ef14b7c4455374dd640484f463ecc7f4e88b8fb41503cd8d19edcd200bf6",
+      "PIL/_imaging.pyi": "7d3f934c6412d24ca6d60bfbee05d3290b49ac098ed4dca74b92ca06d1b71ba3",
+      "PIL/_imagingcms.cpython-312-x86_64-linux-gnu.so": "e04cff5147dd848945d2151f7102da62d01cb7ce0021dbc8255fc3047df25a7c",
+      "PIL/_imagingcms.pyi": "659f222288ba10758bbe001d7e6d613c3e42426c62ef92e2265e71f321b16285",
+      "PIL/_imagingft.cpython-312-x86_64-linux-gnu.so": "ec9b3071a11d90e5fbe0509f4ffa984a0fde3c848683e5fa2189800a42c248a0",
+      "PIL/_imagingft.pyi": "718c92cef70a0428873c1b2fb6d3227bd01d7d4704b2a651fb7db9e9842dcf64",
+      "PIL/_imagingmath.cpython-312-x86_64-linux-gnu.so": "5bf62104099491a767ab62e72f7fb1f70024c4ad6734466fac4c904a45bebf02",
+      "PIL/_imagingmath.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_imagingmorph.cpython-312-x86_64-linux-gnu.so": "981baa3207a79f8bd46dff2bd80350f66950c4cd51d6769320b330fbb395f455",
+      "PIL/_imagingmorph.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_imagingtk.cpython-312-x86_64-linux-gnu.so": "64ef97cc24e52c8752ba704821945139def64bdeb2d4cc8c0522f76e2ca4971c",
+      "PIL/_imagingtk.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/_tkinter_finder.py": "188678b2d985854a2c987292addc5c8d2b62a1c0cd7f2267ed10627b6496c54d",
+      "PIL/_typing.py": "3c65612aa24fbc54c76dc23d000e41168b05453063922dd39be6ee69ca577bdb",
+      "PIL/_util.py": "7f185676b2c04727363ec3203779bdfd4d5d637a1429b57b9a4a0771782879e0",
+      "PIL/_version.py": "10a1ea208d5c54ec96416511a6a6811a1da3d97ce2bad18c4f2fe9d73e71dbad",
+      "PIL/_webp.cpython-312-x86_64-linux-gnu.so": "101c37ad4308d511d1fb4fe9220d68a910ec64ec299f05739ed7aeca63fa4c02",
+      "PIL/_webp.pyi": "ddf071712a6926be84384714a23bdf946dc47a083b96fd90a7474d41020bacfe",
+      "PIL/features.py": "28a2482eb1e320ab6ffff78bf3f04057f9fe42cb6a1b87d2b492a2e51b28c627",
+      "PIL/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "PIL/report.py": "e0963af8853bb07d512ae45b3afcb57d4b74740a22efd157e2d609377a750d3d",
+      "pillow-13.0.0.dist-info/METADATA": "dba7fdfe24e302f46bae562f55d66cc367c0618abae9894a1ebec93dc8f0e511",
+      "pillow-13.0.0.dist-info/RECORD": "e3723da7b84afdeb2fdf8f8669d1a65571fef65a8a8a718aabb6605f76655fa6",
+      "pillow-13.0.0.dist-info/WHEEL": "c58d27a294d0bb25ef5b3465c41b45d28fbc19afdbcfc665637ef1d33291c3b8",
+      "pillow-13.0.0.dist-info/licenses/LICENSE": "dda12a98c1979cf3d94df1cff45d27a4cb3f04a60c76f76902ac54cac03ec0ce",
+      "pillow-13.0.0.dist-info/sboms/auditwheel.cdx.json": "d4c7d41b4eac586f935c189dc49205b127137c39f2babc54ac5d34fe4afc1e0e",
+      "pillow-13.0.0.dist-info/sboms/pillow-13.0.0.cdx.json": "fe1ca6e3a4f73e7018a3805a75a19377453f342d203712f37387ad6ee853fd44",
+      "pillow-13.0.0.dist-info/top_level.txt": "ae266aae4fa1c99aa1e5fd59d19c228b774a7f112c07286ef5c53d20e0c5f8d6",
+      "pillow.libs/libXau-154567c4.so.6.0.0": "8b5a93469805d3550471766696d4755f05bc6ca0587f22c03037ca7d12545c8b",
+      "pillow.libs/libavif-c6062d5f.so.16.4.2": "d12ec0b696860b292114b130ecac6082fc75c198c1b4fa57b26089e9b0a7eb6a",
+      "pillow.libs/libbrotlicommon-53534446.so.1.2.0": "72c1ab487e4bd44c906336747bf1926cbf5f164f9d05e0b4fd18b7d8d113b7fe",
+      "pillow.libs/libbrotlidec-7e5462ba.so.1.2.0": "1b497acc3d8d8e1fc286088f0c288be7c0c54bf5a8fa94b12b23e54de205d48c",
+      "pillow.libs/libfreetype-57f805ba.so.6.20.6": "5be086dea47fd1c3fadd431ee79fe0b5e5a0c6c38e78f1db55cf2dad17dea430",
+      "pillow.libs/libharfbuzz-fb49c9fc.so.0.61450.0": "4a30b9e3a12a72691b70b14945f3e8adaa8c2bc191bd8b706aae6ed0f0fa9fc0",
+      "pillow.libs/libjpeg-6dc8d115.so.62.4.0": "cc04bc42fd6296e81d24d13955fb95bd829624f6c74105eaf4a7fcf2ce42e048",
+      "pillow.libs/liblcms2-88eaba2f.so.2.0.19": "4cf9f69016c7804bcb4fa56f5bbc55640cb1b7196ac7b93ba29ed9df9bd9ff4d",
+      "pillow.libs/liblzma-de26b416.so.5.8.4": "ab4d2f260d6777088cc4bd96ce4997a5199d20b94e146a764b02c37d42477ce9",
+      "pillow.libs/libopenjp2-e530e1bf.so.2.5.4": "eea7a2058e0f2084d41ba88c561bddc866bd38e74f76b5ca4fccb965e2fb1c24",
+      "pillow.libs/libpng16-1d1ba958.so.16.58.0": "38d5a01026f61afba1bb94698846722840067fc87b2ee9003fe8dcccf1bc155f",
+      "pillow.libs/libsharpyuv-0066295b.so.0.1.2": "8abd5c39ee3b26330288b2e833d4d9b5d4b5ed4c881649057354df17326b6996",
+      "pillow.libs/libtiff-20b7e810.so.6.3.0": "729883f61144533eb3215d405e4daad528a68f89e9a1fccf51e9862819f30020",
+      "pillow.libs/libwebp-51b0b3f7.so.7.2.0": "6a97159a7c36acacb112618eb74720c97bbab4ecc499a8bfeb495dd726285259",
+      "pillow.libs/libwebpdemux-9fe2abcc.so.2.0.17": "5d728787db553c48c74dccd93d2763ec88234850a5f2f821df11483c8d28d2a7",
+      "pillow.libs/libwebpmux-8fb1c9f6.so.3.1.2": "6bdb41f738f088e7420374d67a4a6523cc4786f340d355d2bf4f124dcf3d5820",
+      "pillow.libs/libxcb-9065bb12.so.1.1.0": "f3707868b0b2e78dbdac0994d2977b0ec4303c9c6250f03576b1bd93c42cad63",
+      "pillow.libs/libzstd-40ad5e7e.so.1.5.7": "95a5af7845018639470635243c36b428f90af32b728804af6d951e7fcb08bbea"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "73e1cb9a8bd89ed342c7ff1a40871c81e6a8f177143589180bac750669a8893b",
+     "native": {
+      "PIL/_avif.cpython-312-x86_64-linux-gnu.so": "elf",
+      "PIL/_imaging.cpython-312-x86_64-linux-gnu.so": "elf",
+      "PIL/_imagingcms.cpython-312-x86_64-linux-gnu.so": "elf",
+      "PIL/_imagingft.cpython-312-x86_64-linux-gnu.so": "elf",
+      "PIL/_imagingmath.cpython-312-x86_64-linux-gnu.so": "elf",
+      "PIL/_imagingmorph.cpython-312-x86_64-linux-gnu.so": "elf",
+      "PIL/_imagingtk.cpython-312-x86_64-linux-gnu.so": "elf",
+      "PIL/_webp.cpython-312-x86_64-linux-gnu.so": "elf",
+      "pillow.libs/libXau-154567c4.so.6.0.0": "elf",
+      "pillow.libs/libavif-c6062d5f.so.16.4.2": "elf",
+      "pillow.libs/libbrotlicommon-53534446.so.1.2.0": "elf",
+      "pillow.libs/libbrotlidec-7e5462ba.so.1.2.0": "elf",
+      "pillow.libs/libfreetype-57f805ba.so.6.20.6": "elf",
+      "pillow.libs/libharfbuzz-fb49c9fc.so.0.61450.0": "elf",
+      "pillow.libs/libjpeg-6dc8d115.so.62.4.0": "elf",
+      "pillow.libs/liblcms2-88eaba2f.so.2.0.19": "elf",
+      "pillow.libs/liblzma-de26b416.so.5.8.4": "elf",
+      "pillow.libs/libopenjp2-e530e1bf.so.2.5.4": "elf",
+      "pillow.libs/libpng16-1d1ba958.so.16.58.0": "elf",
+      "pillow.libs/libsharpyuv-0066295b.so.0.1.2": "elf",
+      "pillow.libs/libtiff-20b7e810.so.6.3.0": "elf",
+      "pillow.libs/libwebp-51b0b3f7.so.7.2.0": "elf",
+      "pillow.libs/libwebpdemux-9fe2abcc.so.2.0.17": "elf",
+      "pillow.libs/libwebpmux-8fb1c9f6.so.3.1.2": "elf",
+      "pillow.libs/libxcb-9065bb12.so.1.1.0": "elf",
+      "pillow.libs/libzstd-40ad5e7e.so.1.5.7": "elf"
+     },
+     "pth": {},
+     "sha256": "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca"
+    }
+   },
+   "name": "pillow",
+   "provenance": {
+    "pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "release-pypi",
+     "kind": "GitHub",
+     "repository": "python-pillow/Pillow",
+     "workflow": "wheels.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Jeffrey 'Alex' Clark <aclark@aclark.net>",
+    "license_expression": "MIT-CMU",
+    "project_urls": {
+     "Changelog": "https://github.com/python-pillow/Pillow/releases",
+     "Documentation": "https://pillow.readthedocs.io",
+     "Funding": "https://tidelift.com/lifter/search/pypi/pillow",
+     "Homepage": "https://python-pillow.org",
+     "Mastodon": "https://fosstodon.org/@pillow",
+     "Release notes": "https://pillow.readthedocs.io/en/stable/releasenotes/index.html",
+     "Security": "https://pillow.readthedocs.io/en/stable/handbook/security.html",
+     "Source": "https://github.com/python-pillow/Pillow"
+    },
+    "summary": "Python Imaging Library (fork)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One hit: Image.eval() is Pillow's public per-pixel function API (no Python eval). Native libs: libxcb's socket imports are the X11 connection, libavif's prctl names threads. Attestation verifies."
+   },
+   "scans": {
+    "capa": {
+     "101c37ad4308d511d1fb4fe9220d68a910ec64ec299f05739ed7aeca63fa4c02": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "PIL/_webp.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libwebp-51b0b3f7.so.7.2.0",
+        "libwebpdemux-9fe2abcc.so.2.0.17",
+        "libwebpmux-8fb1c9f6.so.3.1.2"
+       ],
+       "rpath": [
+        "$ORIGIN/../pillow.libs"
+       ],
+       "urls": []
+      }
+     },
+     "1b497acc3d8d8e1fc286088f0c288be7c0c54bf5a8fa94b12b23e54de205d48c": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "pillow.libs/libbrotlidec-7e5462ba.so.1.2.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libbrotlicommon-53534446.so.1.2.0",
+        "libc.so.6",
+        "libm.so.6"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "38d5a01026f61afba1bb94698846722840067fc87b2ee9003fe8dcccf1bc155f": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "contain loop",
+       "create or open file",
+       "delete file",
+       "encode data using XOR",
+       "encrypt data using RC4 KSA",
+       "read file on Linux",
+       "reference analysis tools strings",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libpng16-1d1ba958.so.16.58.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libz.so.1"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "4a30b9e3a12a72691b70b14945f3e8adaa8c2bc191bd8b706aae6ed0f0fa9fc0": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "change memory permission on Linux",
+       "check for software breakpoints",
+       "contain loop",
+       "create or open file",
+       "encode data using XOR",
+       "get system information on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libharfbuzz-fb49c9fc.so.0.61450.0",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "mprotect"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libfreetype-57f805ba.so.6.20.6",
+        "libm.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "4cf9f69016c7804bcb4fa56f5bbc55640cb1b7196ac7b93ba29ed9df9bd9ff4d": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "delete file",
+       "encode data using XOR",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/liblcms2-88eaba2f.so.2.0.19",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "5be086dea47fd1c3fadd431ee79fe0b5e5a0c6c38e78f1db55cf2dad17dea430": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "encode data using XOR",
+       "encrypt data using RC4 KSA",
+       "encrypt data using RC4 PRGA",
+       "hash data using murmur3",
+       "map or unmap memory on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "terminate process",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libfreetype-57f805ba.so.6.20.6",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libbrotlidec-7e5462ba.so.1.2.0",
+        "libc.so.6",
+        "libharfbuzz-fb49c9fc.so.0.61450.0",
+        "libm.so.6",
+        "libpng16-1d1ba958.so.16.58.0",
+        "libpthread.so.0",
+        "libz.so.1"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "5bf62104099491a767ab62e72f7fb1f70024c4ad6734466fac4c904a45bebf02": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "PIL/_imagingmath.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "5d728787db553c48c74dccd93d2763ec88234850a5f2f821df11483c8d28d2a7": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "pillow.libs/libwebpdemux-9fe2abcc.so.2.0.17",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libwebp-51b0b3f7.so.7.2.0"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "642ebac0cc9ac2e53a6abfb815f392832da737cac2b1f91ebcff7732081c1b65": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "PIL/_avif.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libavif-c6062d5f.so.16.4.2",
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/../pillow.libs"
+       ],
+       "urls": []
+      }
+     },
+     "64ef97cc24e52c8752ba704821945139def64bdeb2d4cc8c0522f76e2ca4971c": {
+      "capabilities": [
+       "contain loop",
+       "link function at runtime on Linux"
+      ],
+      "note": "",
+      "path": "PIL/_imagingtk.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "6a97159a7c36acacb112618eb74720c97bbab4ecc499a8bfeb495dd726285259": {
+      "capabilities": [
+       "contain loop",
+       "create thread",
+       "encode data using XOR",
+       "encrypt data using RC4 KSA",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "pillow.libs/libwebp-51b0b3f7.so.7.2.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libsharpyuv-0066295b.so.0.1.2"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "6bdb41f738f088e7420374d67a4a6523cc4786f340d355d2bf4f124dcf3d5820": {
+      "capabilities": [
+       "contain loop",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libwebpmux-8fb1c9f6.so.3.1.2",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libwebp-51b0b3f7.so.7.2.0"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "729883f61144533eb3215d405e4daad528a68f89e9a1fccf51e9862819f30020": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "decompress data using QuickLZ",
+       "encrypt data using RC4 PRGA",
+       "map or unmap memory on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libtiff-20b7e810.so.6.3.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libjpeg-6dc8d115.so.62.4.0",
+        "liblzma-de26b416.so.5.8.4",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libz.so.1",
+        "libzstd-40ad5e7e.so.1.5.7"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "72c1ab487e4bd44c906336747bf1926cbf5f164f9d05e0b4fd18b7d8d113b7fe": {
+      "capabilities": [
+       "contain loop",
+       "reference analysis tools strings"
+      ],
+      "note": "",
+      "path": "pillow.libs/libbrotlicommon-53534446.so.1.2.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://.css",
+        "http://.jpg",
+        "http://Descriptionrelatively",
+        "http://UA-Compatible",
+        "http://according",
+        "http://addEventListenerresponsible",
+        "http://applicationslink",
+        "http://ator",
+        "http://cript",
+        "http://dictionaryperceptionrevolutionfoundationpx",
+        "http://encoding",
+        "http://familiar",
+        "http://html4/loose.dtd\">",
+        "http://imEnglish",
+        "http://interested",
+        "http://interpreted",
+        "http://iparticipation",
+        "http://link",
+        "http://mathematicsmargin-top",
+        "http://navigation",
+        "http://option",
+        "http://site",
+        "http://staticsuggested",
+        "http://style",
+        "http://whether",
+        "http://www",
+        "http://www-//W3C//DTD",
+        "http://www.",
+        "http://www./div></div><div",
+        "http://www.C//DTD",
+        "http://www.a",
+        "http://www.css",
+        "http://www.hortcut",
+        "http://www.icon",
+        "http://www.interpretation",
+        "http://www.language",
+        "http://www.style",
+        "http://www.text-decoration",
+        "http://www.w3.org/shortcut",
+        "http://www.wencodeURIComponent",
+        "http://www.years",
+        "https://aIn",
+        "https://was",
+        "https://www.World",
+        "https://www.recent"
+       ]
+      }
+     },
+     "8abd5c39ee3b26330288b2e833d4d9b5d4b5ed4c881649057354df17326b6996": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "pillow.libs/libsharpyuv-0066295b.so.0.1.2",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8b5a93469805d3550471766696d4755f05bc6ca0587f22c03037ca7d12545c8b": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "pillow.libs/libXau-154567c4.so.6.0.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "95a5af7845018639470635243c36b428f90af32b728804af6d951e7fcb08bbea": {
+      "capabilities": [
+       "contain loop",
+       "create thread",
+       "encode data using XOR",
+       "encrypt data using RC4 KSA",
+       "encrypt data using RC4 PRGA",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libzstd-40ad5e7e.so.1.5.7",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "981baa3207a79f8bd46dff2bd80350f66950c4cd51d6769320b330fbb395f455": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "PIL/_imagingmorph.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ab4d2f260d6777088cc4bd96ce4997a5199d20b94e146a764b02c37d42477ce9": {
+      "capabilities": [
+       "contain loop",
+       "create thread",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "get system information on Linux",
+       "hash data using SHA256",
+       "hash data with CRC32"
+      ],
+      "note": "",
+      "path": "pillow.libs/liblzma-de26b416.so.5.8.4",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "cc04bc42fd6296e81d24d13955fb95bd829624f6c74105eaf4a7fcf2ce42e048": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "check for software breakpoints",
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 KSA",
+       "encrypt data using RC4 PRGA",
+       "query environment variable",
+       "read file on Linux",
+       "terminate process",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libjpeg-6dc8d115.so.62.4.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d12ec0b696860b292114b130ecac6082fc75c198c1b4fa57b26089e9b0a7eb6a": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "pillow.libs/libavif-c6062d5f.so.16.4.2",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "prctl"
+        ],
+        "dynamic-code": [
+         "dlsym"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libstdc++.so.6"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d898ef14b7c4455374dd640484f463ecc7f4e88b8fb41503cd8d19edcd200bf6": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "PIL/_imaging.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libjpeg-6dc8d115.so.62.4.0",
+        "libopenjp2-e530e1bf.so.2.5.4",
+        "libpthread.so.0",
+        "libtiff-20b7e810.so.6.3.0",
+        "libxcb-9065bb12.so.1.1.0",
+        "libz.so.1"
+       ],
+       "rpath": [
+        "$ORIGIN/../pillow.libs"
+       ],
+       "urls": []
+      }
+     },
+     "e04cff5147dd848945d2151f7102da62d01cb7ce0021dbc8255fc3047df25a7c": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "PIL/_imagingcms.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "liblcms2-88eaba2f.so.2.0.19",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/../pillow.libs"
+       ],
+       "urls": []
+      }
+     },
+     "ec9b3071a11d90e5fbe0509f4ffa984a0fde3c848683e5fa2189800a42c248a0": {
+      "capabilities": [
+       "contain loop",
+       "link function at runtime on Linux"
+      ],
+      "note": "",
+      "path": "PIL/_imagingft.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libfreetype-57f805ba.so.6.20.6",
+        "libharfbuzz-fb49c9fc.so.0.61450.0",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/../pillow.libs"
+       ],
+       "urls": []
+      }
+     },
+     "eea7a2058e0f2084d41ba88c561bddc866bd38e74f76b5ca4fccb965e2fb1c24": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "contain loop",
+       "create or open file",
+       "create thread",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "get system information on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libopenjp2-e530e1bf.so.2.5.4",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f3707868b0b2e78dbdac0994d2977b0ec4303c9c6250f03576b1bd93c42cad63": {
+      "capabilities": [
+       "connect socket",
+       "contain loop",
+       "get hostname",
+       "query environment variable",
+       "receive data",
+       "receive data on socket",
+       "resolve DNS",
+       "set socket configuration",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pillow.libs/libxcb-9065bb12.so.1.1.0",
+      "profile": {
+       "categories": {
+        "network": [
+         "connect",
+         "getaddrinfo",
+         "recv",
+         "sendmsg",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libXau-154567c4.so.6.0.0",
+        "libc.so.6"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_delete|PIL/EpsImagePlugin.py|a6f288068186c0a0",
+     "yara|capability_filesystem_delete|PIL/Image.py|04050c2d4dd67931",
+     "yara|capability_filesystem_delete|PIL/ImageGrab.py|54b1f0c2a04541f2",
+     "yara|capability_filesystem_delete|PIL/ImageShow.py|aa6687ceef56beaf",
+     "yara|capability_filesystem_delete|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+     "yara|capability_filesystem_read|PIL/AvifImagePlugin.py|7d5c9addebc40cdb",
+     "yara|capability_filesystem_read|PIL/BdfFontFile.py|77ca2d9ac0cfd7fe",
+     "yara|capability_filesystem_read|PIL/BlpImagePlugin.py|8f603c8fbe741c04",
+     "yara|capability_filesystem_read|PIL/BmpImagePlugin.py|778ffbc6dfb15b7c",
+     "yara|capability_filesystem_read|PIL/BufrStubImagePlugin.py|20cd04cee3c05601",
+     "yara|capability_filesystem_read|PIL/ContainerIO.py|b90898580337cba2",
+     "yara|capability_filesystem_read|PIL/CurImagePlugin.py|ac6d237f4fafcfa8",
+     "yara|capability_filesystem_read|PIL/DcxImagePlugin.py|1b5cf45c25491a78",
+     "yara|capability_filesystem_read|PIL/DdsImagePlugin.py|133b4bfe48e78e30",
+     "yara|capability_filesystem_read|PIL/EpsImagePlugin.py|a6f288068186c0a0",
+     "yara|capability_filesystem_read|PIL/FitsImagePlugin.py|0033984c0c8f97e8",
+     "yara|capability_filesystem_read|PIL/FliImagePlugin.py|fdec8e67a3019152",
+     "yara|capability_filesystem_read|PIL/FpxImagePlugin.py|40a859a4573cf5e9",
+     "yara|capability_filesystem_read|PIL/FtexImagePlugin.py|7f95e8baf6ad63c1",
+     "yara|capability_filesystem_read|PIL/GbrImagePlugin.py|3545646e393680d5",
+     "yara|capability_filesystem_read|PIL/GdImageFile.py|5f73e93245a796a0",
+     "yara|capability_filesystem_read|PIL/GifImagePlugin.py|10de47f8b414ee9d",
+     "yara|capability_filesystem_read|PIL/GimpGradientFile.py|3456596b4ad84c94",
+     "yara|capability_filesystem_read|PIL/GimpPaletteFile.py|0f5b7cebe76f5bc9",
+     "yara|capability_filesystem_read|PIL/GribStubImagePlugin.py|b192ff430da9a39c",
+     "yara|capability_filesystem_read|PIL/Hdf5StubImagePlugin.py|9f8a32aa127b0215",
+     "yara|capability_filesystem_read|PIL/IcnsImagePlugin.py|c4d2de3c0cddbb84",
+     "yara|capability_filesystem_read|PIL/IcoImagePlugin.py|b771b2582490349e",
+     "yara|capability_filesystem_read|PIL/ImImagePlugin.py|10e53c037685b09b",
+     "yara|capability_filesystem_read|PIL/Image.py|04050c2d4dd67931",
+     "yara|capability_filesystem_read|PIL/ImageCms.py|9e161faa0807179b",
+     "yara|capability_filesystem_read|PIL/ImageFile.py|55a48a69263e4b4d",
+     "yara|capability_filesystem_read|PIL/ImageFont.py|9182befa0e4047e8",
+     "yara|capability_filesystem_read|PIL/ImageMorph.py|4c5a1a35a50288d9",
+     "yara|capability_filesystem_read|PIL/ImtImagePlugin.py|86d45657568be500",
+     "yara|capability_filesystem_read|PIL/IptcImagePlugin.py|6337bf6c2e584979",
+     "yara|capability_filesystem_read|PIL/Jpeg2KImagePlugin.py|f50e79ef315d2fb9",
+     "yara|capability_filesystem_read|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+     "yara|capability_filesystem_read|PIL/McIdasImagePlugin.py|bdd9412edd3924ad",
+     "yara|capability_filesystem_read|PIL/MpegImagePlugin.py|d5aec9c58619b3cb",
+     "yara|capability_filesystem_read|PIL/MpoImagePlugin.py|73480afd2311cc30",
+     "yara|capability_filesystem_read|PIL/MspImagePlugin.py|8e28773c59bae649",
+     "yara|capability_filesystem_read|PIL/PaletteFile.py|8954b01a8d43c1f2",
+     "yara|capability_filesystem_read|PIL/PcdImagePlugin.py|fa09cc52a407d11f",
+     "yara|capability_filesystem_read|PIL/PcfFontFile.py|062b00838e08338a",
+     "yara|capability_filesystem_read|PIL/PcxImagePlugin.py|f6c031982ad43a0c",
+     "yara|capability_filesystem_read|PIL/PixarImagePlugin.py|2f60af2f631b1941",
+     "yara|capability_filesystem_read|PIL/PngImagePlugin.py|67608f9c458e2d13",
+     "yara|capability_filesystem_read|PIL/PpmImagePlugin.py|1a6b4dcb85493f97",
+     "yara|capability_filesystem_read|PIL/PsdImagePlugin.py|7154b3a26d27236e",
+     "yara|capability_filesystem_read|PIL/QoiImagePlugin.py|40ce66160adbd3bc",
+     "yara|capability_filesystem_read|PIL/SgiImagePlugin.py|b8d23659cfb6fd3c",
+     "yara|capability_filesystem_read|PIL/SpiderImagePlugin.py|f3b2147519e8ab91",
+     "yara|capability_filesystem_read|PIL/SunImagePlugin.py|f2151329b8c9deb2",
+     "yara|capability_filesystem_read|PIL/TarIO.py|f058a10a3fe047a3",
+     "yara|capability_filesystem_read|PIL/TgaImagePlugin.py|eeb961e08ffd2e8a",
+     "yara|capability_filesystem_read|PIL/TiffImagePlugin.py|e3322c6660610c41",
+     "yara|capability_filesystem_read|PIL/WalImageFile.py|41bfdc25f89430ce",
+     "yara|capability_filesystem_read|PIL/WebPImagePlugin.py|99cf0cad0c42b71a",
+     "yara|capability_filesystem_read|PIL/WmfImagePlugin.py|0e116aa192a249d9",
+     "yara|capability_filesystem_read|PIL/XVThumbImagePlugin.py|3ef75a7f971b193d",
+     "yara|capability_filesystem_read|PIL/XbmImagePlugin.py|208212c895882d4f",
+     "yara|capability_filesystem_read|PIL/XpmImagePlugin.py|b47dd3e03c01803b",
+     "yara|capability_network_outbound|PIL/TiffImagePlugin.py|e3322c6660610c41",
+     "yara|capability_process_spawn|PIL/EpsImagePlugin.py|a6f288068186c0a0",
+     "yara|capability_process_spawn|PIL/Image.py|04050c2d4dd67931",
+     "yara|capability_process_spawn|PIL/ImageGrab.py|54b1f0c2a04541f2",
+     "yara|capability_process_spawn|PIL/ImageMath.py|5cfa1434c498968f",
+     "yara|capability_process_spawn|PIL/ImageShow.py|aa6687ceef56beaf",
+     "yara|capability_process_spawn|PIL/JpegImagePlugin.py|43ede4e4c76826e9",
+     "yara|threat_runtime_obfuscation_steganography|PIL/Image.py|04050c2d4dd67931"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete PIL/EpsImagePlugin.py",
+     "capability_filesystem_delete:capability_filesystem_delete PIL/Image.py",
+     "capability_filesystem_delete:capability_filesystem_delete PIL/ImageGrab.py",
+     "capability_filesystem_delete:capability_filesystem_delete PIL/ImageShow.py",
+     "capability_filesystem_delete:capability_filesystem_delete PIL/JpegImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/AvifImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/BdfFontFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/BlpImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/BmpImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/BufrStubImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/ContainerIO.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/CurImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/DcxImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/DdsImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/EpsImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/FitsImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/FliImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/FpxImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/FtexImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/GbrImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/GdImageFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/GifImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/GimpGradientFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/GimpPaletteFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/GribStubImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/Hdf5StubImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/IcnsImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/IcoImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/ImImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/Image.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/ImageCms.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/ImageFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/ImageFont.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/ImageMorph.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/ImtImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/IptcImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/Jpeg2KImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/JpegImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/McIdasImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/MpegImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/MpoImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/MspImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PaletteFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PcdImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PcfFontFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PcxImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PixarImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PngImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PpmImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/PsdImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/QoiImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/SgiImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/SpiderImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/SunImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/TarIO.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/TgaImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/TiffImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/WalImageFile.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/WebPImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/WmfImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/XVThumbImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/XbmImagePlugin.py",
+     "capability_filesystem_read:capability_filesystem_read PIL/XpmImagePlugin.py",
+     "capability_network_outbound:capability_network_outbound PIL/TiffImagePlugin.py",
+     "capability_process_spawn:capability_process_spawn PIL/EpsImagePlugin.py",
+     "capability_process_spawn:capability_process_spawn PIL/Image.py",
+     "capability_process_spawn:capability_process_spawn PIL/ImageGrab.py",
+     "capability_process_spawn:capability_process_spawn PIL/ImageMath.py",
+     "capability_process_spawn:capability_process_spawn PIL/ImageShow.py",
+     "capability_process_spawn:capability_process_spawn PIL/JpegImagePlugin.py",
+     "threat_runtime_obfuscation_steganography:threat_runtime_obfuscation_steganography PIL/Image.py"
+    ]
+   },
+   "version": "13.0.0"
+  }
+ }
+}

@@ -324,6 +324,28 @@ def _user_scope_works() -> bool:
     return done.returncode == 0
 
 
+#: Runs a command in a network namespace of its own that still reaches the
+#: internet (passt's pasta, as rootless podman uses it).
+PASTA_PREFIX = ("pasta", "--config-net", "--quiet", "--")
+
+
+@functools.lru_cache(maxsize=1)
+def _pasta_works() -> bool:
+    """Whether bubblewrap runs inside pasta here (checked once). The
+    host's network namespace (--share-net alone) also shares its abstract
+    Unix sockets - the X server's @/tmp/.X11-unix/X0, D-Bus - with the
+    sandbox; pasta gives it a network of its own instead."""
+    if not shutil.which("pasta") or not shutil.which("bwrap"):
+        return False
+    try:
+        done = subprocess.run([*PASTA_PREFIX, "bwrap", "--ro-bind", "/", "/", "--dev", "/dev",
+                               "--share-net", "--", "true"],
+                              capture_output=True, timeout=20, env=clean_child_env())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
 def _limits_prefix(rules: LevelRules) -> list[str]:
     """bubblewrap has no resource limits: a systemd user scope gives memory,
     tasks and CPU (cgroups); without one, prlimit caps the address space."""
@@ -410,6 +432,13 @@ def _bwrap_command(profile: SandboxProfile, root: str, writable: bool, inner: li
     for path, rw in _agent_mounts(profile, root, writable, extra):
         argv += ["--bind" if rw else "--ro-bind", path, path]
     argv += ["--chdir", root, "--", *inner]
+    if profile.network == "full":
+        if _pasta_works():
+            argv = [*PASTA_PREFIX, *argv]
+        else:
+            log.warning("sandbox %s: the host's network is shared - its abstract sockets (X11, "
+                        "D-Bus) too; install passt (pasta) for a network of the sandbox's own",
+                        getattr(profile, "name", "?"))
     return [*_limits_prefix(rules), *argv]
 
 
@@ -972,7 +1001,7 @@ class SandboxedAgent:
                 )
             try:
                 message = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if not isinstance(message, dict):
                 continue
@@ -1127,7 +1156,7 @@ class SandboxedAgent:
             yes = False
             if self._confirm is not None:
                 try:
-                    yes = bool(self._confirm(name, A._shown(args, tool.schema)))
+                    yes = bool(self._confirm(name, A._shown(args, tool.schema, cut=False)))
                 except Exception as exc:  # noqa: BLE001 - a broken prompt is a "no"
                     log.warning("agent sandbox: the confirmation of %s failed: %s", name, exc)
             if not yes or self.cancel.is_set():
@@ -1173,7 +1202,7 @@ class SandboxedAgent:
             return text
         try:
             data = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
             return text
         profiles = dict(self._host_registry.entries()) if self._host_registry is not None else {}
 

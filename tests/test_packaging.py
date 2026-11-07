@@ -864,10 +864,12 @@ class BundledSubprocessEnvironmentTests(unittest.TestCase):
     artifact has to be asserted against the artifact.
     """
 
-    def _run_in_bundle(self, flavor: str, script: str) -> subprocess.CompletedProcess:
+    def _run_in_bundle(
+        self, flavor: str, script: str, env: dict | None = None
+    ) -> subprocess.CompletedProcess:
         binary = _binary_for(flavor)
         _skip_if_missing(binary)
-        env = dict(os.environ)
+        env = dict(os.environ if env is None else env)
         env["QT_QPA_PLATFORM"] = "offscreen"
         return subprocess.run(
             [str(binary), "--script", "-"],
@@ -896,17 +898,36 @@ class BundledSubprocessEnvironmentTests(unittest.TestCase):
         self.assertIn("OUT spawn-ok", result.stdout)
         self.assertNotIn("symbol lookup error", result.stdout + result.stderr)
 
+    _CHILD_LD = (
+        "import sys\n"
+        "from core.subprocess_env import clean_child_env\n"
+        "env = clean_child_env()\n"
+        "print('HAS_LD', 'LD_LIBRARY_PATH' in env)\n"
+        "print('HAS_ORIG', 'LD_LIBRARY_PATH_ORIG' in env)\n"
+        "print('LD', env.get('LD_LIBRARY_PATH', ''))\n"
+        "print('BUNDLE_IN_LD', sys._MEIPASS in env.get('LD_LIBRARY_PATH', ''))\n"
+    )
+
     def test_bundle_strips_its_own_loader_path_from_children(self) -> None:
         """The mechanism, not just the symptom: a child must not see the
-        extraction directory in LD_LIBRARY_PATH."""
-        result = self._run_in_bundle(
-            "slim",
-            "from core.subprocess_env import clean_child_env\n"
-            "env = clean_child_env()\n"
-            "print('HAS_LD', 'LD_LIBRARY_PATH' in env)\n"
-            "print('HAS_ORIG', 'LD_LIBRARY_PATH_ORIG' in env)\n",
-        )
+        extraction directory in LD_LIBRARY_PATH. Started without one of the
+        user's own (the test runner may have set one: it is taken out here),
+        the child gets none."""
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("LD_LIBRARY_PATH", "LD_LIBRARY_PATH_ORIG")}
+        result = self._run_in_bundle("slim", self._CHILD_LD, env=env)
         self.assertIn("HAS_LD False", result.stdout, result.stdout + result.stderr)
+        self.assertIn("HAS_ORIG False", result.stdout)
+
+    def test_bundle_gives_children_the_users_own_loader_path_back(self) -> None:
+        """A user's own LD_LIBRARY_PATH reaches the child as it was - and
+        the extraction directory the bootloader put in front is gone."""
+        env = dict(os.environ)
+        env.pop("LD_LIBRARY_PATH_ORIG", None)
+        env["LD_LIBRARY_PATH"] = "/opt/users-own/lib"
+        result = self._run_in_bundle("slim", self._CHILD_LD, env=env)
+        self.assertIn("LD /opt/users-own/lib\n", result.stdout, result.stdout + result.stderr)
+        self.assertIn("BUNDLE_IN_LD False", result.stdout)
         self.assertIn("HAS_ORIG False", result.stdout)
 
     def test_bundle_keeps_loading_its_own_libraries_after_the_restore(self) -> None:

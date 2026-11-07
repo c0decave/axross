@@ -1,0 +1,109 @@
+{
+ "name": "wheel",
+ "versions": {
+  "0.48.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|wheel/_bdist_wheel.py|6e998d6bbfecf826",
+    "yara|capability_filesystem_delete|wheel/_commands/tags.py|0e70cadb09a36ace",
+    "yara|capability_filesystem_read|wheel/_bdist_wheel.py|6e998d6bbfecf826",
+    "yara|capability_filesystem_read|wheel/_commands/convert.py|329831e79101a702",
+    "yara|capability_filesystem_read|wheel/_commands/tags.py|0e70cadb09a36ace",
+    "yara|capability_filesystem_read|wheel/_metadata.py|04fe630bdb82d61c",
+    "yara|capability_filesystem_read|wheel/macosx_libfile.py|a4bd309bcf2344c9",
+    "yara|capability_filesystem_read|wheel/wheelfile.py|2ebfa1943eaf95a8",
+    "yara|capability_filesystem_write_executable|wheel/_bdist_wheel.py|6e998d6bbfecf826",
+    "yara|capability_filesystem_write_executable|wheel/_commands/unpack.py|0230d24b6dd76320"
+   ],
+   "archives": {
+    "wheel-0.48.0-py3-none-any.whl": {
+     "entry_points": [
+      "wheel=wheel._commands:main",
+      "bdist_wheel=wheel.bdist_wheel:bdist_wheel"
+     ],
+     "files": {
+      "wheel-0.48.0.dist-info/METADATA": "e702fede719fefbb8accad64c01c78efe8d7efea27a7dcef3423f83ffaadfc48",
+      "wheel-0.48.0.dist-info/RECORD": "3c45f245c285e8d85a09230c6c5777dfcc6f0e3e557e5a6d3153a973203a4fd1",
+      "wheel-0.48.0.dist-info/WHEEL": "ff23073da055face9f40cc14a28f3735275308cddcf315d6157461a9a7cdfbb6",
+      "wheel-0.48.0.dist-info/entry_points.txt": "24976d480193bcc2db2244d565400cbc628edfd16d59f09517c9a9fcd1fa7b88",
+      "wheel-0.48.0.dist-info/licenses/LICENSE.txt": "30c23618679108f3e8ea1d2a658c7ca417bdfc891c98ef1a89fa4ff0c9828654",
+      "wheel/__init__.py": "486f49117612245c2a2d8e9f4b9686a6e8451c5aa8bd0d7a63c9ee6d0e446bd4",
+      "wheel/__main__.py": "d87fa9659c3ed2e1563d84f8e978c5b7bc148bb789d5a7cf5f0a1c2a40f35d73",
+      "wheel/_bdist_wheel.py": "6e998d6bbfecf826059158177fd10d0184e2274d57061456e29c47d53f1762c2",
+      "wheel/_commands/__init__.py": "3b5ef331ee8dc0f4728a849effc4742223df02de0f25196215b67fa8cb32bad2",
+      "wheel/_commands/convert.py": "329831e79101a70204621128686112c1ccb09a3c9a73c773e44be361b3e51482",
+      "wheel/_commands/info.py": "1b3578875b28bc1dc362c082350e426336af6c0d33d845367757b5aaa8bd987d",
+      "wheel/_commands/pack.py": "80ca2046047e8d421f57c45d3be590191e437b60c36f2ab95883fff8d45d2ce9",
+      "wheel/_commands/tags.py": "0e70cadb09a36ace46a52c3b105c1a0a30103bf2d37942b99d7551e07b4c4bb2",
+      "wheel/_commands/unpack.py": "0230d24b6dd763209215f89f9ccbad8a7ae93eff832bfdb06cd1e4280505c203",
+      "wheel/_metadata.py": "04fe630bdb82d61ca2729ee72f8149d8b622c4d169109215fee3036352816418",
+      "wheel/_setuptools_logging.py": "fb9282fa59ded2294e5162037ce92a6a951618c15986e2980c86af219881e643",
+      "wheel/bdist_wheel.py": "1ebcd8892ccc921e688400219509d8052d69f2a6ebf395fa179f71ab177d9018",
+      "wheel/macosx_libfile.py": "a4bd309bcf2344c97fe004a01a5360fe6cfaf599afe719bc2529232ddc32bc84",
+      "wheel/metadata.py": "1a49ce3bb2498993257047bf7e20fb9ea9c34d32ddd2c5fff88822a4ce0bdfee",
+      "wheel/wheelfile.py": "2ebfa1943eaf95a80ea178c7909b1e37b6ca0f8aac59096c3c1681e509c9ad5b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2e533e361d6c1dca3f99a9136ce598c3f32900828d09f939f5549d0d1416e7a8",
+     "native": {},
+     "pth": {},
+     "sha256": "3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab"
+    }
+   },
+   "name": "wheel",
+   "provenance": {
+    "wheel-0.48.0-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "pypa/wheel",
+     "workflow": "publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Daniel Holth <dholth@fastmail.fm>",
+    "license_expression": "MIT",
+    "maintainer_email": "Alex Gr\u00f6nholm <alex.gronholm@nextday.fi>",
+    "project_urls": {
+     "Changelog": "https://wheel.readthedocs.io/en/stable/news.html",
+     "Documentation": "https://wheel.readthedocs.io/",
+     "Issue Tracker": "https://github.com/pypa/wheel/issues",
+     "Source": "https://github.com/pypa/wheel"
+    },
+    "summary": "Command line tool for manipulating wheel files"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable; attestation verifies (pypa/wheel)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|wheel/_bdist_wheel.py|6e998d6bbfecf826",
+     "yara|capability_filesystem_delete|wheel/_commands/tags.py|0e70cadb09a36ace",
+     "yara|capability_filesystem_read|wheel/_bdist_wheel.py|6e998d6bbfecf826",
+     "yara|capability_filesystem_read|wheel/_commands/convert.py|329831e79101a702",
+     "yara|capability_filesystem_read|wheel/_commands/tags.py|0e70cadb09a36ace",
+     "yara|capability_filesystem_read|wheel/_metadata.py|04fe630bdb82d61c",
+     "yara|capability_filesystem_read|wheel/macosx_libfile.py|a4bd309bcf2344c9",
+     "yara|capability_filesystem_read|wheel/wheelfile.py|2ebfa1943eaf95a8",
+     "yara|capability_filesystem_write_executable|wheel/_bdist_wheel.py|6e998d6bbfecf826",
+     "yara|capability_filesystem_write_executable|wheel/_commands/unpack.py|0230d24b6dd76320"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete wheel/_bdist_wheel.py",
+     "capability_filesystem_delete:capability_filesystem_delete wheel/_commands/tags.py",
+     "capability_filesystem_read:capability_filesystem_read wheel/_bdist_wheel.py",
+     "capability_filesystem_read:capability_filesystem_read wheel/_commands/convert.py",
+     "capability_filesystem_read:capability_filesystem_read wheel/_commands/tags.py",
+     "capability_filesystem_read:capability_filesystem_read wheel/_metadata.py",
+     "capability_filesystem_read:capability_filesystem_read wheel/macosx_libfile.py",
+     "capability_filesystem_read:capability_filesystem_read wheel/wheelfile.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable wheel/_bdist_wheel.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable wheel/_commands/unpack.py"
+    ]
+   },
+   "version": "0.48.0"
+  }
+ }
+}

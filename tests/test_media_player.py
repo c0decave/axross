@@ -25,11 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 np = pytest.importorskip("numpy")
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import extensions as EX  # noqa: E402
+from tests.media_testkit import need_multimedia_backend  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 AUDIO = Path(__file__).resolve().parent / "fixtures" / "audio"
@@ -140,6 +141,8 @@ def _wait(cond, timeout=15.0):
 
 @pytest.mark.parametrize("name", ["sine.wav", "sine.mp3", "sine.ogg", "sine.flac"])
 def test_e2e_every_format_decodes_through_the_equalizer(name):
+    if not name.endswith(".wav"):  # Qt reads WAV itself; the rest needs its FFmpeg backend
+        need_multimedia_backend()
     sink = MP.MemorySink()
     engine = MP.EqEngine(sink_factory=lambda fmt: sink)
     engine.load(str(AUDIO / name))
@@ -202,6 +205,7 @@ def test_edge_stop_and_pause():
 
 
 def test_happy_panel_playlist_eq_and_visualizer(tmp_path):
+    need_multimedia_backend()
     panel = MP.PlayerPanel(engine=MP.EqEngine(sink_factory=lambda fmt: MP.MemorySink()))
     try:
         panel.add_files([str(AUDIO / "sine.wav"), str(AUDIO / "sine.ogg"), str(tmp_path / "x.txt")])
@@ -316,6 +320,7 @@ def test_edge_a_long_track_is_decoded_only_a_little_ahead_and_plays_whole(tmp_pa
     """The whole track was decoded as fast as the decoder went and kept as
     float samples until played: memory grew with the track's length
     (30 s of play had 90 s decoded; a one-hour track ~1 GB)."""
+    need_multimedia_backend()
     frames = _long_wav(tmp_path / "long.wav", 40)
     sink = _StalledSink()
     engine = MP.EqEngine(sink_factory=lambda fmt: sink)
@@ -343,7 +348,7 @@ class _RemoteApi:
     def __init__(self):
         self.actions, self.notes, self.docks = {}, [], []
 
-    def add_dock(self, title, widget):
+    def add_dock(self, title, widget, **_kw):
         self.docks.append(widget)
 
     def add_context_action(self, label, cb, applies_to="any", extensions=()):

@@ -79,29 +79,46 @@ def _write(backend, path: str, text: str) -> None:
 
 def activate(api):
     def create(ctx):
-        files = [i.name for i in ctx.items if not i.is_dir and i.name != ".."]
-        if not ctx.items:  # nothing selected: every file of the folder
-            files = [
-                i.name
-                for i in ctx.backend.list_dir(ctx.folder)
-                if not i.is_dir and i.name not in ("..", MANIFEST_NAME)
-            ]
-        if not files:
-            api.notify("no files to checksum")
-            return
-        target = ctx.backend.join(ctx.folder, MANIFEST_NAME)
-        if ctx.backend.exists(target):
-            api.notify(f"{MANIFEST_NAME} already exists here - not overwritten")
-            return
-        api.notify(f"hashing {len(files)} file(s)…")
+        # Everything that asks the backend runs in the background: the
+        # folder listing, the check for an existing manifest, the hashing
+        # and the write (on a remote folder each was a round trip that
+        # held the window), and the pane is shown again without blocking.
+        backend, folder = ctx.backend, ctx.folder
+        chosen = [i.name for i in ctx.items if not i.is_dir and i.name not in ("..", ".")]
+        whole_folder = not ctx.items  # nothing selected: every file of the folder
+        target = backend.join(folder, MANIFEST_NAME)
 
-        def done(text):
-            _write(ctx.backend, target, text)
-            api.notify(f"wrote {MANIFEST_NAME} for {len(files)} file(s)")
-            if ctx.pane is not None:
-                ctx.pane.refresh()
+        def work():
+            files = chosen
+            if whole_folder:
+                files = [
+                    i.name
+                    for i in backend.list_dir(folder)
+                    if not i.is_dir and i.name not in ("..", ".", MANIFEST_NAME)
+                ]
+            if not files:
+                return ("none", 0)
+            if backend.exists(target):
+                return ("exists", 0)
+            _write(backend, target, manifest_text(backend, folder, files))
+            return ("written", len(files))
 
-        api.run_in_background(lambda: manifest_text(ctx.backend, ctx.folder, files), on_done=done)
+        def done(result):
+            kind, count = result
+            if kind == "none":
+                api.notify("no files to checksum")
+                return
+            if kind == "exists":
+                api.notify(f"{MANIFEST_NAME} already exists here - not overwritten")
+                return
+            api.notify(f"wrote {MANIFEST_NAME} for {count} file(s)")
+            pane = ctx.pane
+            if pane is not None:
+                refresh = getattr(pane, "refresh_after_change", None) or pane.refresh
+                refresh()
+
+        api.notify(f"hashing {len(chosen)} file(s)…" if chosen else "hashing the folder…")
+        api.run_in_background(work, on_done=done)
 
     def check(ctx):
         item = next(i for i in ctx.items if not i.is_dir)

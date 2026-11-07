@@ -1,0 +1,85 @@
+{
+ "name": "markupsafe",
+ "versions": {
+  "3.0.4": {
+   "accepted_findings": [],
+   "archives": {
+    "markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "markupsafe-3.0.4.dist-info/METADATA": "66767d76388ece15d49d50dafb655891ef5d868715e7128e7f7d737a70b353c4",
+      "markupsafe-3.0.4.dist-info/RECORD": "18127af6c0698d8fa0421a2799e2a81ba1f49caa3577ad230a916855f9a714db",
+      "markupsafe-3.0.4.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "markupsafe-3.0.4.dist-info/licenses/LICENSE.txt": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea",
+      "markupsafe-3.0.4.dist-info/top_level.txt": "ab2d0f9637b9209bafb020637a32728430a310075c0cb2bfd9a81571ec7c67a5",
+      "markupsafe/__init__.py": "1f512743b0ba6e96c1d7a9450e425889e9978eb3d2d15e72dd57c8c47f518686",
+      "markupsafe/_native.py": "8522ecf099b3e5aa9acae7a780927791d4f93f0369056a4aae6412762a67742f",
+      "markupsafe/_speedups.c": "b77b42ea8555efe6e6294aaf08ee69552932f86f000885e958c689c2436d2638",
+      "markupsafe/_speedups.cpython-312-x86_64-linux-gnu.so": "0ed5c27bc96bc511b307081fb18d33785eb976044c8812ef9189579f053de80d",
+      "markupsafe/_speedups.pyi": "10d7756d87bb81b0547f6cb0c9858e194a675ce1cd27e7204cda9eb655bc8799",
+      "markupsafe/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "06a59d7381184705c0a8a4d4901be12a369074c73ff1272bccfb3874af5e688d",
+     "native": {
+      "markupsafe/_speedups.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "8e124f974786f831d6043728e38296969d3579db8896fe004682f5758e613581"
+    }
+   },
+   "name": "markupsafe",
+   "provenance": {
+    "markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "pallets/markupsafe",
+     "workflow": "publish.yaml"
+    }
+   },
+   "pypi": {
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "Pallets <contact@palletsprojects.com>",
+    "project_urls": {
+     "Changes": "https://markupsafe.palletsprojects.com/page/changes/",
+     "Chat": "https://discord.gg/pallets",
+     "Documentation": "https://markupsafe.palletsprojects.com/",
+     "Donate": "https://palletsprojects.com/donate",
+     "Source": "https://github.com/pallets/markupsafe/"
+    },
+    "summary": "Safely add untrusted strings to HTML/XML markup."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pallets/markupsafe)."
+   },
+   "scans": {
+    "capa": {
+     "0ed5c27bc96bc511b307081fb18d33785eb976044c8812ef9189579f053de80d": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "markupsafe/_speedups.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "3.0.4"
+  }
+ }
+}

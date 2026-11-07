@@ -1,0 +1,310 @@
+{
+ "name": "aiohttp",
+ "versions": {
+  "3.14.5": {
+   "accepted_findings": [
+    "secret-paths|aiohttp/client.py|582987ba0e22dc90",
+    "secret-paths|aiohttp/helpers.py|054bfbd473496f74",
+    "secret-paths|aiohttp/helpers.py|34d63ff11b918ead",
+    "secret-paths|aiohttp/helpers.py|39d3ec5a0516d5ea",
+    "secret-paths|aiohttp/helpers.py|723273f42921fffd",
+    "secret-paths|aiohttp/helpers.py|90baa3a823fcbed3",
+    "secret-paths|aiohttp/helpers.py|a84d62d39fe441ab",
+    "secret-paths|aiohttp/helpers.py|c4586747fa63eea4",
+    "secret-paths|aiohttp/helpers.py|de146ff371e7e69c",
+    "secret-paths|aiohttp/helpers.py|e397aae37d747008",
+    "yara|capability_filesystem_read|aiohttp/client.py|61eaeff40f029466",
+    "yara|capability_filesystem_read|aiohttp/client_reqrep.py|75153bcadc900440",
+    "yara|capability_filesystem_read|aiohttp/client_ws.py|35246f7732ab36b1",
+    "yara|capability_filesystem_read|aiohttp/multipart.py|c1436dbf370e052b",
+    "yara|capability_filesystem_read|aiohttp/payload.py|e7319cd9fb13c9b4",
+    "yara|capability_filesystem_read|aiohttp/payload_streamer.py|3c6a892adff571af",
+    "yara|capability_filesystem_read|aiohttp/streams.py|14c7f018cea18a4b",
+    "yara|capability_filesystem_read|aiohttp/web_fileresponse.py|e6f95ff8e99f805c",
+    "yara|capability_filesystem_read|aiohttp/web_request.py|00f9eddf058f7086",
+    "yara|capability_filesystem_read|aiohttp/web_urldispatcher.py|f92c5f98875c2161",
+    "yara|capability_filesystem_read|aiohttp/web_ws.py|b75db90128267f0a",
+    "yara|capability_network_download|aiohttp/client.py|61eaeff40f029466",
+    "yara|capability_network_outbound|aiohttp/abc.py|1218d92a687f41ad",
+    "yara|capability_network_outbound|aiohttp/client_reqrep.py|75153bcadc900440",
+    "yara|capability_network_outbound|aiohttp/connector.py|49cc264ebc7d8dcb",
+    "yara|capability_network_outbound|aiohttp/resolver.py|898d0e938b565b96",
+    "yara|capability_network_outbound|aiohttp/test_utils.py|2d44fcf9eb425841",
+    "yara|capability_network_outbound|aiohttp/web_app.py|d644c9e91255c66e",
+    "yara|capability_network_outbound|aiohttp/web_middlewares.py|3887e79c21c98119",
+    "yara|capability_network_outbound|aiohttp/web_urldispatcher.py|f92c5f98875c2161",
+    "yara|capability_process_schedule|aiohttp/client.py|61eaeff40f029466",
+    "yara|capability_process_schedule|aiohttp/client_proto.py|e2245a9166011c60",
+    "yara|capability_process_schedule|aiohttp/client_ws.py|35246f7732ab36b1",
+    "yara|capability_process_schedule|aiohttp/connector.py|49cc264ebc7d8dcb",
+    "yara|capability_process_schedule|aiohttp/helpers.py|587ef64942a5e4de",
+    "yara|capability_process_schedule|aiohttp/http_parser.py|0f8ff5637605c4ec",
+    "yara|capability_process_schedule|aiohttp/web_ws.py|b75db90128267f0a",
+    "yara|capability_process_spawn|aiohttp/helpers.py|587ef64942a5e4de",
+    "yara|capability_process_spawn|aiohttp/web_urldispatcher.py|f92c5f98875c2161"
+   ],
+   "archives": {
+    "aiohttp-3.14.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "aiohttp-3.14.5.dist-info/METADATA": "50b29a2268649f7ce5b22c0a41b60896d246fee58e2a74b468f66848e469834c",
+      "aiohttp-3.14.5.dist-info/RECORD": "5b464ad3870b7d8e906af2a89bcc0839d34a29ba345b1d26abb9ae7bfb37191e",
+      "aiohttp-3.14.5.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "aiohttp-3.14.5.dist-info/licenses/LICENSE.txt": "2e4be5fc6c4c72a466fcb665d726e049a6891981fe536c4f04b6366749461d23",
+      "aiohttp-3.14.5.dist-info/licenses/vendor/llhttp/LICENSE": "628168d68bb5a8a17e0bbefb3bd74e326e1edc20583d76f52f457c82c921867d",
+      "aiohttp-3.14.5.dist-info/top_level.txt": "8aff8921a69c99397e852868dd09a985c2a76d1458c75b2de3bca3cffd7bf11a",
+      "aiohttp/__init__.py": "7ddd3da8369592dbd4a04d9ada4629ce54d38779fc05ecef6cbeeb7a3e26d46e",
+      "aiohttp/_cookie_helpers.py": "13a1c5cfede8d86eb9e5d110ae2eb9379d591efa8d228c28072ce64943bfd1b5",
+      "aiohttp/_cparser.pxd": "69cb3016cc16fd8415d8f7d577e94595cfd705e9b8f926fa5d18171e8a1c30ae",
+      "aiohttp/_find_header.pxd": "d067f01423cddb3c442933b5fcc039b18ab651fcec1bc91c577693aafc25cf78",
+      "aiohttp/_headers.pxi": "9fdc44f2ca263e0f6fb5e8909ac5372056183de08cfe5912e0445af512ea3e59",
+      "aiohttp/_http_parser.cpython-312-x86_64-linux-gnu.so": "fbdb69d4b707f0fa75ef3e5d72cc10681903fe428bdba1be2fd9eecbfa5009b2",
+      "aiohttp/_http_parser.pyx": "6e63b556cc67300e6b21336f85c0d8d5210f714d459941d8725c850c35f82393",
+      "aiohttp/_http_writer.cpython-312-x86_64-linux-gnu.so": "36f687dda2b63a85a305deed8d896551cbc74034cbb285ab91d099210b1b2338",
+      "aiohttp/_http_writer.pyx": "16686a44bbfeab2bcbd8126f570935dbc545ab060c6f56f5bc72cf0adddac170",
+      "aiohttp/_websocket/__init__.py": "31aaf747dfef04dfc46b896c5bb8930155c3ece2acc0a3c6a85e71812cadefb9",
+      "aiohttp/_websocket/helpers.py": "94c0dba6265e7e61d318dc63a5ee8ad3d665174e3c2b1cdc3af6e1f9962abe0d",
+      "aiohttp/_websocket/mask.cpython-312-x86_64-linux-gnu.so": "8f9be7e800e262ed6f2332b9818e8b9165adc23c14612c54a2aac887113b1038",
+      "aiohttp/_websocket/mask.pxd": "b01999d409b29bd916e067bc963d5f2d9ee63cfc9ae0bccb769910131417bf93",
+      "aiohttp/_websocket/mask.pyx": "0478ceb55d0ed30ef1a7da742cd003449bc69a07cf9fdb06789bd2b347cbfffe",
+      "aiohttp/_websocket/models.py": "8092ec93191429a91816c54c76339c9528ede35ad059108be117d107fc26c0ed",
+      "aiohttp/_websocket/reader.py": "782e2a4b4739b0e790d9e6c01cb681a48693545692297efda58db1be1dcfab2c",
+      "aiohttp/_websocket/reader_c.cpython-312-x86_64-linux-gnu.so": "1c727b5d9234ddcdbac7d8c38ffdc49b327598d86e5570b427e68306fee6d028",
+      "aiohttp/_websocket/reader_c.pxd": "b00a01c059e019742893b3120ef63d2c595c83735a42513bce7f75204dda205f",
+      "aiohttp/_websocket/reader_py.py": "8d1e9792c11de8d7aac6827b882451dedd54539b2f4f560dbbb5397ccdff530b",
+      "aiohttp/_websocket/writer.py": "c29ddc35b1de62e3a594c7827ff781806b0a3e6dcc63f0fbf686f1ef20f44484",
+      "aiohttp/abc.py": "1218d92a687f41adcb0f694cd1412958e23fd114c15559ab510934edeec30c28",
+      "aiohttp/base_protocol.py": "88c31ec8c16e99dff3f101e2e38a813878af4879adf394ad89090b183a742c64",
+      "aiohttp/client.py": "61eaeff40f0294666a3438c751698b7777b301fe8d43fc569bfa9c9ec33f8787",
+      "aiohttp/client_exceptions.py": "bd33e3aaef7306266efcdd78cf488ea7c20f999eb09dc4cc1229698ccd25c1e7",
+      "aiohttp/client_middleware_digest_auth.py": "a0d6d68f9b0182a420cd058fb7b65aae2cac62d858d7d1da8fa56c588cfe2496",
+      "aiohttp/client_middlewares.py": "90fe4df4233340f3063c813275e55488b5132ecc3c565f06af8a8059876edef3",
+      "aiohttp/client_proto.py": "e2245a9166011c6094248f8b2ac2f5f69eeed4e4a1827d0c17f123efeeb6b9df",
+      "aiohttp/client_reqrep.py": "75153bcadc900440fad5607bae0b1852a736c17370505f52c9050cbdd39904ca",
+      "aiohttp/client_ws.py": "35246f7732ab36b17713c1a82337ba8e20f83a1523f1c5988f828f073796a6fe",
+      "aiohttp/compression_utils.py": "cc1f2d52b2fabbbda34bce79f5edc6f0fa784036250d8fb7c5231bf08de0c3ff",
+      "aiohttp/connector.py": "49cc264ebc7d8dcbbb9181ad65f19ee171fc56765eb195d270dafa53716055a1",
+      "aiohttp/cookiejar.py": "ed3a0ecc55983443adfc409020bd0fbf27f33c6d0d79f1da99358d3bf03877ea",
+      "aiohttp/formdata.py": "cd1596d8e0d891679a84339dfa1c2b6befff1148b3741d9b7fa8403209022a17",
+      "aiohttp/hdrs.py": "e841e8cf3985671a53b28fe892ffb62c2ff5bf832ad3fa4f1fbadeaa8ad022e1",
+      "aiohttp/helpers.py": "587ef64942a5e4de725dc6ab95c91e39093312935bf7c0d619dc4517ba8c0448",
+      "aiohttp/http.py": "0875f116d3972bce513628d891fa63be309b2a525cde120646c08502787cde19",
+      "aiohttp/http_exceptions.py": "2359f2a29b75b185741aaa56dab6b8a670a615c3aa3280c2e1d10b821124da52",
+      "aiohttp/http_parser.py": "0f8ff5637605c4ec879330a9785744fc1d50e621e8c36d38d2539d3c0bf97da6",
+      "aiohttp/http_websocket.py": "f2354db21b6034f4839da6f40dcd6500eec716fb53ef2efd7992a35175fa7b6f",
+      "aiohttp/http_writer.py": "c465f010d23c01f118494f1c25d27fcd6ad991635ecb47c149797b5c1bed9e1f",
+      "aiohttp/log.py": "05b34ac7d7b754c226d31623648d087010684bbc2375e21e49a88913bfaa2b68",
+      "aiohttp/multipart.py": "c1436dbf370e052bdf3b28481d841dcab9e8dbf0db9bfee8599a33dd1d788234",
+      "aiohttp/payload.py": "e7319cd9fb13c9b451818f3ec8850f3a3b95161bcdfb05e33edb2268fb4bfd25",
+      "aiohttp/payload_streamer.py": "3c6a892adff571affb8baa7552053c8eba4ed6da0eb791100d030e2bd2e3b55e",
+      "aiohttp/py.typed": "b28c3db284f03fd4ff80401049587b19bf3ce79874e0dc2686cd967be2518193",
+      "aiohttp/pytest_plugin.py": "786851a32d1328d390de6b5a6e4a68320b74253867543af8d3a87f93266441ef",
+      "aiohttp/resolver.py": "898d0e938b565b961ba460a6faef1de47aa616234c9925fd182b9689e7ef0060",
+      "aiohttp/streams.py": "14c7f018cea18a4b83bc0336a07c16e5d3e4b07479a6192893c9b3bddf43ecb7",
+      "aiohttp/tcp_helpers.py": "05269da9559a0693050d15a785a691f78d4df4c88367b6dd4ebc6009bd025be3",
+      "aiohttp/test_utils.py": "2d44fcf9eb425841cc9c8aba4200e69573e09280bfcd34d9e32669d8e6cf3d98",
+      "aiohttp/tracing.py": "e26a2435329d5f962ea12aef5671b80fb5933ccc1ef949581d563142346fe05c",
+      "aiohttp/typedefs.py": "23e57a4b84fbddf23fc2425f05888bee8b44791bd51e649db24f9860f47a163d",
+      "aiohttp/web.py": "82ccb14523d65778998cf51b391ddd206729d639b696d06d5f090f87dd5ca374",
+      "aiohttp/web_app.py": "d644c9e91255c66ed236f54e08f2d629afa63f972c64b004415df31c30b5aa13",
+      "aiohttp/web_exceptions.py": "0ac106f3c75020d612169925084ffb6d980bd485631e8cb97654d25501873d14",
+      "aiohttp/web_fileresponse.py": "e6f95ff8e99f805c46e4ed731abce4f923d191bb39f22ccb95b425753f831d71",
+      "aiohttp/web_log.py": "949083b19db1269ec7a92ba28da4d9caac49d283563e1c31244d45546516c165",
+      "aiohttp/web_middlewares.py": "3887e79c21c98119ca8f30e31e873f57335c2ee55ff72f24bf9693cccd951af7",
+      "aiohttp/web_protocol.py": "64a27fa5d0ae7906d705dd95318601a59908f74b2594d99d5c4ae5bf72e28f80",
+      "aiohttp/web_request.py": "00f9eddf058f708617a0bc3456b548124f8d57b99c6ab7c5aa162267f942713d",
+      "aiohttp/web_response.py": "78aa643c57d0c94b7f41b5e8b4d2e68f63aaae80d02fb2dd01278384eaf92e74",
+      "aiohttp/web_routedef.py": "558018c3caf0892a7008b8a081c3995e4063ccf37204ae151e6e209fc97d4076",
+      "aiohttp/web_runner.py": "3c651d66cfdddaacccdd39dbeb2090428c5fc2a41916e56bfcd18824166af4cb",
+      "aiohttp/web_server.py": "2dac13e3b489b8b48862090058bfe1685807ea5572ba80f7cf2153bc16adbec1",
+      "aiohttp/web_urldispatcher.py": "f92c5f98875c2161514e2ab6ccecf148321dd720726c10f3eae5f1b496b79a62",
+      "aiohttp/web_ws.py": "b75db90128267f0a01331859c68fde05e71314c4dde2d48ba4435e39fd010f35",
+      "aiohttp/worker.py": "60ac0e0164f6178c892f6b10a2da9dd376c6b7534411d35b78bf0b5afde20a10"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c31ac12a2d44a6e962ea0a444b0889e3236ab6f59205de5051fd5f0fd0b4d037",
+     "native": {
+      "aiohttp/_http_parser.cpython-312-x86_64-linux-gnu.so": "elf",
+      "aiohttp/_http_writer.cpython-312-x86_64-linux-gnu.so": "elf",
+      "aiohttp/_websocket/mask.cpython-312-x86_64-linux-gnu.so": "elf",
+      "aiohttp/_websocket/reader_c.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "20f085697d7e911f1f73c43ed03fafbed1e7121797e2eb5428efa80398060584"
+    }
+   },
+   "name": "aiohttp",
+   "provenance": {
+    "aiohttp-3.14.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/aiohttp",
+     "workflow": "ci-cd.yml"
+    }
+   },
+   "pypi": {
+    "license_expression": "Apache-2.0 AND MIT",
+    "maintainer_email": "aiohttp team <team@aiohttp.org>",
+    "project_urls": {
+     "CI: GitHub Actions": "https://github.com/aio-libs/aiohttp/actions?query=workflow%3ACI",
+     "Chat: Matrix": "https://matrix.to/#/#aio-libs:matrix.org",
+     "Chat: Matrix Space": "https://matrix.to/#/#aio-libs-space:matrix.org",
+     "Coverage: codecov": "https://codecov.io/github/aio-libs/aiohttp",
+     "Docs: Changelog": "https://docs.aiohttp.org/en/stable/changes.html",
+     "Docs: RTD": "https://docs.aiohttp.org",
+     "GitHub: issues": "https://github.com/aio-libs/aiohttp/issues",
+     "GitHub: repo": "https://github.com/aio-libs/aiohttp",
+     "Homepage": "https://github.com/aio-libs/aiohttp"
+    },
+    "summary": "Async http client/server framework (asyncio)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 10 medium findings (capability patterns) seen; capabilities: filesystem_read, network_download, network_outbound, process_schedule, process_spawn; 4 native binaries profiled, none with network/process imports or addresses; attestation verifies (aio-libs/aiohttp)."
+   },
+   "scans": {
+    "capa": {
+     "1c727b5d9234ddcdbac7d8c38ffdc49b327598d86e5570b427e68306fee6d028": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "aiohttp/_websocket/reader_c.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "36f687dda2b63a85a305deed8d896551cbc74034cbb285ab91d099210b1b2338": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "aiohttp/_http_writer.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8f9be7e800e262ed6f2332b9818e8b9165adc23c14612c54a2aac887113b1038": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "aiohttp/_websocket/mask.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "fbdb69d4b707f0fa75ef3e5d72cc10681903fe428bdba1be2fd9eecbfa5009b2": {
+      "capabilities": [
+       "contain loop",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "aiohttp/_http_parser.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|aiohttp/client.py|61eaeff40f029466",
+     "yara|capability_filesystem_read|aiohttp/client_reqrep.py|75153bcadc900440",
+     "yara|capability_filesystem_read|aiohttp/client_ws.py|35246f7732ab36b1",
+     "yara|capability_filesystem_read|aiohttp/multipart.py|c1436dbf370e052b",
+     "yara|capability_filesystem_read|aiohttp/payload.py|e7319cd9fb13c9b4",
+     "yara|capability_filesystem_read|aiohttp/payload_streamer.py|3c6a892adff571af",
+     "yara|capability_filesystem_read|aiohttp/streams.py|14c7f018cea18a4b",
+     "yara|capability_filesystem_read|aiohttp/web_fileresponse.py|e6f95ff8e99f805c",
+     "yara|capability_filesystem_read|aiohttp/web_request.py|00f9eddf058f7086",
+     "yara|capability_filesystem_read|aiohttp/web_urldispatcher.py|f92c5f98875c2161",
+     "yara|capability_filesystem_read|aiohttp/web_ws.py|b75db90128267f0a",
+     "yara|capability_network_download|aiohttp/client.py|61eaeff40f029466",
+     "yara|capability_network_outbound|aiohttp/abc.py|1218d92a687f41ad",
+     "yara|capability_network_outbound|aiohttp/client_reqrep.py|75153bcadc900440",
+     "yara|capability_network_outbound|aiohttp/connector.py|49cc264ebc7d8dcb",
+     "yara|capability_network_outbound|aiohttp/resolver.py|898d0e938b565b96",
+     "yara|capability_network_outbound|aiohttp/test_utils.py|2d44fcf9eb425841",
+     "yara|capability_network_outbound|aiohttp/web_app.py|d644c9e91255c66e",
+     "yara|capability_network_outbound|aiohttp/web_middlewares.py|3887e79c21c98119",
+     "yara|capability_network_outbound|aiohttp/web_urldispatcher.py|f92c5f98875c2161",
+     "yara|capability_process_schedule|aiohttp/client.py|61eaeff40f029466",
+     "yara|capability_process_schedule|aiohttp/client_proto.py|e2245a9166011c60",
+     "yara|capability_process_schedule|aiohttp/client_ws.py|35246f7732ab36b1",
+     "yara|capability_process_schedule|aiohttp/connector.py|49cc264ebc7d8dcb",
+     "yara|capability_process_schedule|aiohttp/helpers.py|587ef64942a5e4de",
+     "yara|capability_process_schedule|aiohttp/http_parser.py|0f8ff5637605c4ec",
+     "yara|capability_process_schedule|aiohttp/web_ws.py|b75db90128267f0a",
+     "yara|capability_process_spawn|aiohttp/helpers.py|587ef64942a5e4de",
+     "yara|capability_process_spawn|aiohttp/web_urldispatcher.py|f92c5f98875c2161"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read aiohttp/client.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/client_reqrep.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/client_ws.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/multipart.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/payload.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/payload_streamer.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/streams.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/web_fileresponse.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/web_request.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/web_urldispatcher.py",
+     "capability_filesystem_read:capability_filesystem_read aiohttp/web_ws.py",
+     "capability_network_download:capability_network_download aiohttp/client.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/abc.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/client_reqrep.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/connector.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/resolver.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/test_utils.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/web_app.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/web_middlewares.py",
+     "capability_network_outbound:capability_network_outbound aiohttp/web_urldispatcher.py",
+     "capability_process_schedule:capability_process_schedule aiohttp/client.py",
+     "capability_process_schedule:capability_process_schedule aiohttp/client_proto.py",
+     "capability_process_schedule:capability_process_schedule aiohttp/client_ws.py",
+     "capability_process_schedule:capability_process_schedule aiohttp/connector.py",
+     "capability_process_schedule:capability_process_schedule aiohttp/helpers.py",
+     "capability_process_schedule:capability_process_schedule aiohttp/http_parser.py",
+     "capability_process_schedule:capability_process_schedule aiohttp/web_ws.py",
+     "capability_process_spawn:capability_process_spawn aiohttp/helpers.py",
+     "capability_process_spawn:capability_process_spawn aiohttp/web_urldispatcher.py"
+    ]
+   },
+   "version": "3.14.5"
+  }
+ }
+}

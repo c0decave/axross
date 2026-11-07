@@ -171,7 +171,7 @@ class PjlSession(SessionLifecycle):
         # hostile profile cannot smuggle a quote / metachar into the
         # NAME="…" envelope of every subsequent FS command.
         cleaned_volume = volume.rstrip("/")
-        if not _VOLUME_RE.match(cleaned_volume):
+        if not _VOLUME_RE.fullmatch(cleaned_volume):
             raise OSError(f"PJL volume {volume!r} is outside the safe set [0-9A-Za-z][:]")
         self._volume = cleaned_volume
         self._device_id = ""
@@ -303,7 +303,7 @@ class PjlSession(SessionLifecycle):
         """Translate ``/foo/bar`` → ``0:/foo/bar`` for the configured
         volume. Validates every byte against the safe character set."""
         path = self.normalize(path)
-        if not _PATH_RE.match(path):
+        if not _PATH_RE.fullmatch(path):
             raise OSError(f"PJL path contains characters outside [0-9A-Za-z._/:-]: {path!r}")
         if path == "/":
             return f"{self._volume}/"

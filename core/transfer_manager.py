@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from core import backend_registry
 from core.capability_contracts import contract_for_backend
 from core.path_policy import safe_join, safe_leaf, transfer_leaf
+from core.thread_relay import GuiCall
 from core.transfer_conflicts import IF_EXISTS_OVERWRITE, prefetch_stats
 from core.transfer_pool import MAX_PARALLEL, JobScheduler, parallel_transfers, valid_parallel
 from core.transfer_worker import (
@@ -31,6 +33,14 @@ if TYPE_CHECKING:
     from core.transfer_conflicts import ConflictPlan
 
 log = logging.getLogger(__name__)
+
+#: Finished (done) jobs kept in the list. Beyond it the oldest go, in
+#: chunks of TRIM_SLACK so the dock removes rows in ranges, not one by one:
+#: a copy of a million files kept a million jobs (with their backends,
+#: events and strings) until "Clear Finished". Failed and cancelled jobs
+#: are never dropped - Retry Failed works on them.
+MAX_DONE_KEPT = 2000
+TRIM_SLACK = 200
 
 
 def _safe_basename(name: str, source_backend=None, dest_backend=None) -> str:
@@ -249,10 +259,11 @@ class TransferManager(QObject):
     # visible in the log.
     directory_error = pyqtSignal(str, str)
     all_finished = pyqtSignal()
+    # The oldest done jobs left the list (MAX_DONE_KEPT): their ids, oldest
+    # first. get_job() no longer knows them.
+    jobs_trimmed = pyqtSignal(list)
     # A background walk (transfer_files_in_background) registered its jobs.
     walk_finished = pyqtSignal()
-    # Internal: a walk thread hands its result to the GUI thread.
-    _walk_done = pyqtSignal(object)
 
     def __init__(self, parent=None, *, max_parallel: int | None = None):
         """*max_parallel*: jobs that may run at the same time (1..MAX_PARALLEL); None
@@ -263,6 +274,9 @@ class TransferManager(QObject):
         elif not valid_parallel(max_parallel):
             raise ValueError(f"max_parallel must be 1..{MAX_PARALLEL}, not {max_parallel!r}")
         self._jobs: dict[str, TransferJob] = {}
+        # Done jobs in the order they finished (an ordered set): the
+        # oldest are dropped beyond MAX_DONE_KEPT.
+        self._done_order: OrderedDict[str, None] = OrderedDict()
         self._queued_count = 0
         self._active_count = 0
         self._dirs_to_remove_after_move: list[tuple] = []  # (backend, dir_path)
@@ -280,7 +294,13 @@ class TransferManager(QObject):
         # Cancel All presses so far: work that starts before it queues its
         # jobs (the conflict check of F5 / F6) compares and drops them.
         self._cancel_epoch = 0
-        self._walk_done.connect(self._finish_walk)
+        # A walk thread hands its result, and a folder it could not create
+        # or list, to the GUI thread through these - not through signals of
+        # the manager, which is deleted with the main window at quit while a
+        # walk may still run (core/thread_relay.py). On the GUI thread they
+        # run at once.
+        self._walk_done = GuiCall(self._finish_walk)
+        self._directory_error = GuiCall(self._emit_directory_error)
 
         # Worker threads. They share one queue (core.transfer_pool); with
         # max_parallel 1 the first worker is the only one and runs the jobs
@@ -489,7 +509,7 @@ class TransferManager(QObject):
             dest_path = safe_join(dest_backend, dest_dir, filename)
             if_exists = IF_EXISTS_OVERWRITE
             if conflict_plan is not None:
-                resolved = conflict_plan.resolve(dest_path)
+                resolved = conflict_plan.resolve(dest_path, src_path)
                 if resolved is None:
                     log.info("Transfer skipped (destination kept): %s", dest_path)
                     continue
@@ -570,6 +590,7 @@ class TransferManager(QObject):
         *,
         conflict_plan: ConflictPlan | None = None,
         on_done: Callable[[list[TransferJob]], None] | None = None,
+        on_error: Callable[[Exception], None] | None = None,
     ) -> None:
         """:meth:`transfer_files` with the walk on a worker thread.
 
@@ -590,6 +611,7 @@ class TransferManager(QObject):
             self._local.move_dirs = []
             self._local.cancelled = walk[2]
             jobs: list[TransferJob] = []
+            error: Exception | None = None
             try:
                 jobs = self.transfer_files(
                     source_backend,
@@ -600,23 +622,25 @@ class TransferManager(QObject):
                     move,
                     conflict_plan=conflict_plan,
                 )
-            except Exception:  # noqa: BLE001 - what was built is still queued
+            except Exception as exc:  # noqa: BLE001 - what was built is still queued
                 log.exception("Transfer walk of %s failed", source_paths)
+                error = exc
             finally:
-                payload = (walk, jobs, self._local.pending, self._local.move_dirs, move, on_done)
+                payload = (walk, jobs, self._local.pending, self._local.move_dirs, move, on_done,
+                           error, on_error)
                 self._local.pending = None
                 self._local.move_dirs = None
                 self._local.cancelled = None
-                try:
-                    self._walk_done.emit(payload)
-                except RuntimeError:  # the manager is gone (app quit)
-                    pass
+                self._walk_done(payload)
 
         threading.Thread(target=run, name="axross-transfer-walk", daemon=True).start()
 
+    def _emit_directory_error(self, path: str, reason: str) -> None:
+        self.directory_error.emit(path, reason)
+
     def _finish_walk(self, payload) -> None:
         """GUI thread: register what a walk built, in its order."""
-        walk, jobs, pending, move_dirs, move, on_done = payload
+        walk, jobs, pending, move_dirs, move, on_done, error, on_error = payload
         if walk in self._walks:
             self._walks.remove(walk)
         if self._shut_down:
@@ -636,9 +660,20 @@ class TransferManager(QObject):
         else:
             for job, refusal in pending:
                 self._commit(job, refusal)
+            if error is not None:
+                # The walk stopped half way: what it built is queued, and
+                # on_done gets those jobs - not none, as if nothing ran.
+                jobs = [job for job, _refusal in pending]
             self._dirs_to_remove_after_move.extend(move_dirs)
             if move and self._active_count == 0 and self._queued_count == 0:
                 self._cleanup_move_dirs()
+        # on_error first: a caller learns the walk was partial before it
+        # acts on the jobs on_done hands it.
+        if error is not None and on_error is not None and not walk[2].is_set():
+            try:
+                on_error(error)
+            except Exception:  # noqa: BLE001
+                log.exception("Transfer walk error callback failed")
         if on_done is not None:
             try:
                 on_done(jobs)
@@ -669,6 +704,11 @@ class TransferManager(QObject):
         """True inside a background walk that Cancel All stopped."""
         event = getattr(self._local, "cancelled", None)
         return event is not None and event.is_set()
+
+    def unfinished(self) -> int:
+        """Transfers running or waiting, and folder walks still building
+        jobs: what quitting now would cancel."""
+        return self._active_count + self._queued_count + len(getattr(self, "_walks", ()))
 
     def busy(self, backend: object) -> bool:
         """True while a job or a background walk still uses *backend*."""
@@ -754,9 +794,9 @@ class TransferManager(QObject):
             else:
                 dest_backend.mkdir(dest_dir)
                 dest_listing.created(dest_dir)
-        except OSError as e:
+        except Exception as e:  # noqa: BLE001 - a library error too: a refused row, not a stopped walk
             log.error("Failed to create directory %s: %s", dest_dir, e)
-            self.directory_error.emit(dest_dir, f"mkdir failed: {e}")
+            self._directory_error(dest_dir, f"mkdir failed: {e}")
             # A row in the transfer list: the folder's files are not copied.
             jobs.append(
                 self._refused_job(
@@ -770,9 +810,9 @@ class TransferManager(QObject):
         # List source directory
         try:
             items = source_backend.list_dir(source_dir)
-        except OSError as e:
+        except Exception as e:  # noqa: BLE001 - a library error too: a refused row, not a stopped walk
             log.error("Failed to list %s: %s", source_dir, e)
-            self.directory_error.emit(source_dir, f"list failed: {e}")
+            self._directory_error(source_dir, f"list failed: {e}")
             jobs.append(
                 self._refused_job(
                     source_backend, dest_backend, source_dir, dest_dir, direction, move,
@@ -798,7 +838,7 @@ class TransferManager(QObject):
                 continue
             if_exists = IF_EXISTS_OVERWRITE
             if conflict_plan is not None:
-                resolved = conflict_plan.resolve(dst_path)
+                resolved = conflict_plan.resolve(dst_path, src_path)
                 if resolved is None:
                     log.info("Transfer skipped (destination kept): %s", dst_path)
                     continue
@@ -972,6 +1012,7 @@ class TransferManager(QObject):
         ]
         for jid in to_remove:
             del self._jobs[jid]
+        self._done_order.clear()
         # No failed move is left to retry, so no kept folder will empty.
         self._kept_move_dirs.clear()
 
@@ -1014,11 +1055,30 @@ class TransferManager(QObject):
         job = self._jobs.get(job_id)
         if job:
             job.status = TransferStatus.DONE
+            self._done_order[job_id] = None
             log.info("Transfer finished: %s (%s)", job.filename, job_id)
         self.job_finished.emit(job_id)
         if self._active_count == 0 and self._queued_count == 0:
             self._cleanup_move_dirs()
             self.all_finished.emit()
+        self._trim_done()
+
+    def _trim_done(self) -> None:
+        """Drop the oldest done jobs once more than MAX_DONE_KEPT +
+        TRIM_SLACK are kept, down to MAX_DONE_KEPT."""
+        if len(self._done_order) <= MAX_DONE_KEPT + TRIM_SLACK:
+            return
+        dropped: list[str] = []
+        while len(self._done_order) > MAX_DONE_KEPT:
+            job_id, _ = self._done_order.popitem(last=False)
+            job = self._jobs.get(job_id)
+            if job is not None and job.status == TransferStatus.DONE:
+                del self._jobs[job_id]
+                dropped.append(job_id)
+        if dropped:
+            log.debug("Transfer list: %d finished job(s) dropped, %d kept",
+                      len(dropped), len(self._done_order))
+            self.jobs_trimmed.emit(dropped)
 
     def _on_job_error(self, job_id: str, error: str) -> None:
         self._active_count = max(0, self._active_count - 1)

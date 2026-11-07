@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import sys
 
+from core.i18n import tr
+
 EXTENSION = {
     "name": "Folder Treemap",
     "version": "1.0",
@@ -226,7 +228,7 @@ def activate(api):
                 ctx.pane.navigate_async(ctx.backend.join(ctx.folder, entry[0]))
 
     view = Treemap()
-    api.add_dock("Folder Treemap", view)
+    api.add_dock(tr("Folder Treemap"), view, icon="treemap")
     state = {"folder": None}
 
     def refresh(ctx):

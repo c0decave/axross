@@ -1,0 +1,67 @@
+{
+ "name": "truststore",
+ "versions": {
+  "0.10.5": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|truststore/_api.py|2fd87d3f3d7e0b62"
+   ],
+   "archives": {
+    "truststore-0.10.5-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "truststore-0.10.5.dist-info/METADATA": "1fd496f290853214e630d96f7163d2dd916f84ebe634b58aa827d6853e8f8610",
+      "truststore-0.10.5.dist-info/RECORD": "9e6b3c8c2bfd1c18f20dd36f75a9ecf9a854a53ec5a796786311e1e666e8435e",
+      "truststore-0.10.5.dist-info/WHEEL": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db",
+      "truststore-0.10.5.dist-info/licenses/LICENSE": "33be7b7e8fa4fd19b1760e1a8ed8a668bdab852c91b692dd41424bcb725a9fca",
+      "truststore/__init__.py": "a5b8a1cc844eba5da5e7525225a15baf12e1441ffdbb73a5fd270cff0e1613ae",
+      "truststore/_api.py": "2fd87d3f3d7e0b62df5075feb25aff4d4187887aced751577b3856e9d1466bea",
+      "truststore/_macos.py": "9d994b90e9accd413483aaf2470055198e423b33f2b9d72c889b4359aacce4b4",
+      "truststore/_openssl.py": "af8daaa2a982752ea442c1bd78d58179d631810873b3bfc35be9de86bace9403",
+      "truststore/_ssl_constants.py": "2da09a560406e0f35d35287a61f8381b150ce0131afcf8acc42011e0816060c5",
+      "truststore/_windows.py": "8d67902684892aaf6133193f5d47fa46915589770371df46ba2a7a88cc7d182c",
+      "truststore/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "dc29b22f253c0d2afd2daa2b05cef24efb3faa4756b37657beef4f97167e06e3",
+     "native": {},
+     "pth": {},
+     "sha256": "9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c"
+    }
+   },
+   "name": "truststore",
+   "provenance": {
+    "truststore-0.10.5-py3-none-any.whl": {
+     "environment": "deploy",
+     "kind": "GitHub",
+     "repository": "sethmlarson/truststore",
+     "workflow": "deploy.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Seth Michael Larson <sethmichaellarson@gmail.com>, David Glick <david@glicksoftware.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Documentation": "https://truststore.readthedocs.io",
+     "Source": "https://github.com/sethmlarson/truststore"
+    },
+    "summary": "Verify certificates using native system trust stores"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; attestation verifies (sethmlarson/truststore)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|truststore/_api.py|2fd87d3f3d7e0b62"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn truststore/_api.py"
+    ]
+   },
+   "version": "0.10.5"
+  }
+ }
+}

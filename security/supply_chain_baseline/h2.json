@@ -1,0 +1,66 @@
+{
+ "name": "h2",
+ "versions": {
+  "4.4.1": {
+   "accepted_findings": [],
+   "archives": {
+    "h2-4.4.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "h2-4.4.1.dist-info/METADATA": "b17f68f6127946c3b748ea5728a9b172589ede2b9cebfa353dd5f05263096c7f",
+      "h2-4.4.1.dist-info/RECORD": "d0b5d6a5f2fd0d00b9a652cb70e544e3a415d8c508b0ae4a84b26bf8149b4a8c",
+      "h2-4.4.1.dist-info/WHEEL": "2b6eb4118ce7cd7b09601406aa623c553c4476265836f0d9c16f5c061f7efcc0",
+      "h2-4.4.1.dist-info/licenses/LICENSE": "7a65a5af0cbabf1c16251c7c6b2b7cb46d16a7222e79975b9b61fcd66a2e3f28",
+      "h2-4.4.1.dist-info/top_level.txt": "1e2ba5c7c2b12368c550cd5d1bbf8265e4643b78f9d0c07008b1b7e95aeafa42",
+      "h2/__init__.py": "1baaac023c2da4d25451ad290ea0909519ca9eeef92b9dc13cfc61f338252bae",
+      "h2/_typing.py": "a82c4f398c0b2e3d6feb190ccff82f1ab02815c499c4cbcd660a620648a292f2",
+      "h2/config.py": "67ec2be6b162cdc076f964d5582b86b5ef32fbc71e6f9076fab95c5742f9b6e5",
+      "h2/connection.py": "8283e14ad0875ecdd5d94fbd4c4111e3c08d298ef80ae6b3ff223c1ce1aa8e09",
+      "h2/errors.py": "4be4dd61a25f3ff8709458f6b90189190e12e3fc96894ffd138e1a3f174009b1",
+      "h2/events.py": "ae36193d2ffac6f8cc9c06a4ed51db607c93aa5f206e314327952495c5df9bb1",
+      "h2/exceptions.py": "dc49b798b310047c58a4e2a868f74a0861469fc03dadef4006d51d2a56376d93",
+      "h2/frame_buffer.py": "37febf771e38929065f7c270f555cdcceb386a1253e94dca481736bce08f6b47",
+      "h2/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "h2/settings.py": "f356a3a890f7ec16eca6c14f53cb2083433db9eaa73eb2bf424044a8ec0ba356",
+      "h2/stream.py": "a52bed21bc71d78f7f004c44dec70450844d9c781b6e4d9f0236c3733065034a",
+      "h2/utilities.py": "6250a082e47953214db7fba7ca3259f4afcdf538bb3a9800404bbf6975dcf13d",
+      "h2/windows.py": "26958d843bfec782798c85d25a9d0834792af482203cfdbbc6bf455d8bdacc51"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "856da05a69296e971501ba756b0cbf39f8528420ea7e84a173ea8c89ca92dd1b",
+     "native": {},
+     "pth": {},
+     "sha256": "0e25f1462b23c9cb82d9eb02e28bc706dac2a68cb457c6a0d74d63c8a2a5d0e6"
+    }
+   },
+   "name": "h2",
+   "provenance": {
+    "h2-4.4.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Cory Benfield <cory@lukasa.co.uk>",
+    "license_expression": "MIT",
+    "maintainer_email": "Thomas Kriechbaumer <thomas@kriechbaumer.name>",
+    "project_urls": {
+     "Bug Reports": "https://github.com/python-hyper/h2/issues",
+     "Documentation": "https://python-hyper.org/",
+     "Homepage": "https://github.com/python-hyper/h2/",
+     "Source": "https://github.com/python-hyper/h2/"
+    },
+    "summary": "Pure-Python HTTP/2 protocol implementation"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "4.4.1"
+  }
+ }
+}

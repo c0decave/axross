@@ -521,6 +521,13 @@ class SSHSession(SessionLifecycle):
     def transport(self) -> paramiko.Transport | None:
         return self._transport
 
+    def security_info(self):
+        """The negotiated SSH protection (cipher, key exchange, host key) for
+        the security badge; None when not connected (the profile tells)."""
+        from core.conn_security import ssh_transport
+
+        return ssh_transport(self._transport, "SFTP over SSH")
+
     @property
     def sftp(self) -> paramiko.SFTPClient:
         sftp = self._get_sftp_client()
@@ -1123,6 +1130,18 @@ class SSHSession(SessionLifecycle):
     @_sftp_errors_as_oserror
     def chmod(self, path: str, mode: int) -> None:
         self.sftp.chmod(path, mode)
+
+    @_sftp_errors_as_oserror
+    def owner_ids(self, path: str) -> tuple[int, int] | None:
+        """(uid, gid) of *path* itself (a link is not followed); None
+        when the server does not say."""
+        st = self.sftp.lstat(path)
+        uid, gid = getattr(st, "st_uid", None), getattr(st, "st_gid", None)
+        return None if uid is None or gid is None else (int(uid), int(gid))
+
+    @_sftp_errors_as_oserror
+    def chown(self, path: str, uid: int, gid: int) -> None:
+        self.sftp.chown(path, uid, gid)
 
     @_sftp_errors_as_oserror
     def readlink(self, path: str) -> str:

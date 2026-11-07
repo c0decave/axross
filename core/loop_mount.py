@@ -67,7 +67,9 @@ MOUNT_SCRIPT = (
     '  dev=$(losetup --find --show --offset "$2" --sizelimit "$3" -- "$1") || exit 31\n'
     '  opts=rw\n'
     'fi\n'
-    'if mount -o "$opts" -- "$dev" "$5"; then echo "$dev"; else losetup -d "$dev"; exit 32; fi\n'
+    # nosuid,nodev as udisksctl mounts: device nodes and setuid files of an
+    # untrusted image stay inert.
+    'if mount -o "$opts,nosuid,nodev" -- "$dev" "$5"; then echo "$dev"; else losetup -d "$dev"; exit 32; fi\n'
 )
 UNMOUNT_SCRIPT = 'set -u\numount -- "$1" && losetup -d "$2"\n'
 
@@ -161,7 +163,7 @@ def _load_locked() -> None:
         data = json.loads(mounts_file().read_text(encoding="utf-8"))
     except FileNotFoundError:
         return
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         log.warning("Mounts: %s is unreadable (%s); ignored", mounts_file(), exc)
         return
     entries = data.get("mounts") if isinstance(data, dict) else None

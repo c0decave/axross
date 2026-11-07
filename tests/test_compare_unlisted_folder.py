@@ -215,6 +215,7 @@ def _win():
         _start_transfer_between = MainWindow._start_transfer_between
         _transfer_direction = staticmethod(MainWindow._transfer_direction)
         _apply_sync = MainWindow._apply_sync
+        _queue_sync = MainWindow._queue_sync
         _copy_compared = MainWindow._copy_compared
         _transfer_compared = MainWindow._transfer_compared
 
@@ -252,6 +253,7 @@ def _mode(plan, dest: str) -> str:
 def test_happy_a_sync_copy_that_adds_a_file_never_replaces_one():
     win = _win()
     win._apply_sync(_Pane("/l"), _Pane("/r"), [_item("new.txt", overwrites=False)])
+    _drain_sync(win)
     [(paths, plan)] = win._transfer_manager.calls
     assert paths == ["/l/new.txt"]
     assert _mode(plan, "/r/new.txt") == IF_EXISTS_FAIL
@@ -260,6 +262,7 @@ def test_happy_a_sync_copy_that_adds_a_file_never_replaces_one():
 def test_happy_a_sync_copy_that_says_it_overwrites_still_overwrites():
     win = _win()
     win._apply_sync(_Pane("/l"), _Pane("/r"), [_item("both.txt", overwrites=True)])
+    _drain_sync(win)
     [(paths, plan)] = win._transfer_manager.calls
     assert paths == ["/l/both.txt"]
     assert _mode(plan, "/r/both.txt") == "overwrite"
@@ -272,6 +275,7 @@ def test_edge_a_mixed_plan_in_one_folder_keeps_each_answer():
         _Pane("/r"),
         [_item("new.txt", overwrites=False), _item("both.txt", overwrites=True)],
     )
+    _drain_sync(win)
     modes = {}
     for paths, plan in win._transfer_manager.calls:
         for p in paths:
@@ -323,3 +327,18 @@ class NeverReplacePlanTest(unittest.TestCase):
             )
         self.assertEqual(len(jobs), 2)
         self.assertEqual({j.if_exists for j in jobs}, {IF_EXISTS_FAIL})
+
+
+def _drain_sync(win, timeout: float = 10.0) -> None:
+    """The folders of a sync plan are made on a worker (0.14.167)."""
+    import time as _time
+
+    from PyQt6.QtWidgets import QApplication as _QApp
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        _QApp.processEvents()
+        if not any(j.running for j in getattr(win, "_sync_jobs", [])):
+            _QApp.processEvents()
+            return
+        _time.sleep(0.01)

@@ -1,0 +1,101 @@
+{
+ "name": "macholib",
+ "versions": {
+  "1.16.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|macholib/MachO.py|8e66d47c2c06a4c3",
+    "yara|capability_filesystem_read|macholib/SymbolTable.py|cd3beb1889fe6853",
+    "yara|capability_filesystem_read|macholib/ptypes.py|a1ad2d444d84eb2e",
+    "yara|capability_filesystem_read|macholib/util.py|a1c94bb7f1bcf515",
+    "yara|capability_filesystem_write_executable|macholib/util.py|a1c94bb7f1bcf515",
+    "yara|capability_process_spawn|macholib/util.py|a1c94bb7f1bcf515"
+   ],
+   "archives": {
+    "macholib-1.16.4-py2.py3-none-any.whl": {
+     "entry_points": [
+      "macho_dump = macholib.macho_dump:main",
+      "macho_find = macholib.macho_find:main",
+      "macho_standalone = macholib.macho_standalone:main"
+     ],
+     "files": {
+      "macholib-1.16.4.dist-info/LICENSE": "47082ab2bc0184123ec9f10fdf80c70723ee68f07d44382e17615c2a6ba70b09",
+      "macholib-1.16.4.dist-info/METADATA": "321ee1b38831a66b79a26b5b041b7f80c0b08929ad3abf2ea23df877455126af",
+      "macholib-1.16.4.dist-info/RECORD": "e41b36a2311657adca65155ed82c33c42c9f6e9d1cddc0249cac2224f858d084",
+      "macholib-1.16.4.dist-info/WHEEL": "89896fe5f5f7e7b3d0c914f6a3ab70d5b37e61c2851472aa07f2f01cee703fe8",
+      "macholib-1.16.4.dist-info/entry_points.txt": "4c78aeabc8e4a7590dfc1cd23f1db612ee98a5e1f55a7acf37cedee0582c25b1",
+      "macholib-1.16.4.dist-info/top_level.txt": "e34849f2959f5e8f91f33b7ccfd8c5eca4bd9222f3126b8b9df155821d14524c",
+      "macholib-1.16.4.dist-info/zip-safe": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "macholib/MachO.py": "8e66d47c2c06a4c301eb01620b3f58706b7ec6d257dcd8429681f012878dc755",
+      "macholib/MachOGraph.py": "4d1fb9c47ad503f5e56a914644dda12d500df0dd0714396ba41c63ca3b2bddc6",
+      "macholib/MachOStandalone.py": "d6c98d767ac0b6a040abfd2dd6bd882623467825c53c5d8924c15aad406a66bb",
+      "macholib/SymbolTable.py": "cd3beb1889fe685303bc5ae5d79bfff9e03d4b155faec041f4406f243bd04233",
+      "macholib/__init__.py": "9a8ccc2503107251cd8673977caec4b190ab9e46a132c64eda8c364ed288dd98",
+      "macholib/__main__.py": "65bc0e71edc8934df832b5f28be02c5346f817f367ed71e0ddefefd17350c4b2",
+      "macholib/_cmdline.py": "0431dda9f00984db9cc9818954ed5dbceb975f0f56d1fb71f5a843911412fb7f",
+      "macholib/dyld.py": "2008eaf44ef8b3f5b4885571f278563f01774e65e6262aa2190bea39fdfb25b1",
+      "macholib/dylib.py": "a89fa75a5fd3ed2e060de29e945f7f918d8217700ee4a14736b0d116e312f8f9",
+      "macholib/framework.py": "408bddcc8577e00b4243617142dd62ec5cf6791927b610b3b7cc832e95e6f2be",
+      "macholib/itergraphreport.py": "7a9ca3bb0d98e247fa87fedc4a4a9b0d4438d186226c8d162b12fe48fa4e6958",
+      "macholib/mach_o.py": "1fbcc60794d9bbd63cb192243eff01b462e4720cc74c37c71fba06795ad22ca8",
+      "macholib/macho_dump.py": "051043c70521d8e2dd06065d9e1387ce3893e8946eabe3b23da779fb8bfda621",
+      "macholib/macho_find.py": "9a439daee7ef15ade5923c4b4e4296d2ac0cd7d7ccf7f6b98ca07356774fff61",
+      "macholib/macho_standalone.py": "d81bad4c2d82fc16a4438b316ed9483e53b0014d42ee79a0833cee090b6f9fde",
+      "macholib/ptypes.py": "a1ad2d444d84eb2e2c206bc96d11e4c86104dedd5005a7b6db2a76d0d5e4195a",
+      "macholib/util.py": "a1c94bb7f1bcf515d70aa94d2c25759fecad3b72247852e3e986a362e1737dd4"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "103aebb98f881ae718b4fbb72734de318cfdb0931a6f6fbb25f6371c79eab2d6",
+     "native": {},
+     "pth": {},
+     "sha256": "da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea"
+    }
+   },
+   "name": "macholib",
+   "provenance": {
+    "macholib-1.16.4-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Ronald Oussoren",
+    "author_email": "ronaldoussoren@mac.com",
+    "home_page": "http://github.com/ronaldoussoren/macholib",
+    "license": "MIT",
+    "maintainer": "Ronald Oussoren",
+    "maintainer_email": "ronaldoussoren@mac.com",
+    "project_urls": {
+     "Documentation": "https://macholib.readthedocs.io/en/latest/",
+     "Download": "http://pypi.python.org/pypi/macholib",
+     "Homepage": "http://github.com/ronaldoussoren/macholib",
+     "Issue tracker": "https://github.com/ronaldoussoren/macholib/issues",
+     "Repository": "https://github.com/ronaldoussoren/macholib"
+    },
+    "summary": "Mach-O header analysis and editing"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, filesystem_write_executable, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|macholib/MachO.py|8e66d47c2c06a4c3",
+     "yara|capability_filesystem_read|macholib/SymbolTable.py|cd3beb1889fe6853",
+     "yara|capability_filesystem_read|macholib/ptypes.py|a1ad2d444d84eb2e",
+     "yara|capability_filesystem_read|macholib/util.py|a1c94bb7f1bcf515",
+     "yara|capability_filesystem_write_executable|macholib/util.py|a1c94bb7f1bcf515",
+     "yara|capability_process_spawn|macholib/util.py|a1c94bb7f1bcf515"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read macholib/MachO.py",
+     "capability_filesystem_read:capability_filesystem_read macholib/SymbolTable.py",
+     "capability_filesystem_read:capability_filesystem_read macholib/ptypes.py",
+     "capability_filesystem_read:capability_filesystem_read macholib/util.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable macholib/util.py",
+     "capability_process_spawn:capability_process_spawn macholib/util.py"
+    ]
+   },
+   "version": "1.16.4"
+  }
+ }
+}

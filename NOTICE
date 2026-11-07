@@ -28,3 +28,7 @@ wish to produce non-GPL binaries may rebuild against PySide6 (LGPL-3.0)
 instead of PyQt6.
 
 Per-dependency license attribution is maintained in THIRD_PARTY_LICENSES.md.
+
+core/bluetooth_companies.py contains the Bluetooth SIG company identifier
+list from Bumble (https://github.com/google/bumble, bumble/company_ids.py),
+Copyright 2021-2022 Google LLC, licensed under the Apache License, Version 2.0.

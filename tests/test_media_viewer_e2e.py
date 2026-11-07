@@ -20,7 +20,7 @@ from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from core import security_mode  # noqa: E402
-from tests.media_testkit import write_image, write_pdf  # noqa: E402
+from tests.media_testkit import requires_qtpdf, write_image, write_pdf  # noqa: E402
 from ui import media_viewer as MV  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
 
@@ -97,6 +97,7 @@ def _pane_at(window, path: Path):
     return pane
 
 
+@requires_qtpdf
 def test_e2e_view_media_recursive_overview_viewer_slideshow_escape(window, tree):
     _pane_at(window, tree)
     _answer_options(recursive=True, mode="overview")
@@ -139,6 +140,7 @@ def test_e2e_view_media_recursive_overview_viewer_slideshow_escape(window, tree)
     assert wait_until(lambda: not _media_dialogs())
 
 
+@requires_qtpdf
 def test_happy_slideshow_start_mode_from_the_view_menu(window, tree):
     _pane_at(window, tree)
     _answer_options(recursive=False, mode="slideshow")

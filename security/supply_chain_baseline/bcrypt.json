@@ -1,0 +1,100 @@
+{
+ "name": "bcrypt",
+ "versions": {
+  "5.0.0": {
+   "accepted_findings": [],
+   "archives": {
+    "bcrypt-5.0.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "bcrypt-5.0.0.dist-info/LICENSE": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+      "bcrypt-5.0.0.dist-info/METADATA": "8b477d56972f624b96f5ab80002f130b97c6105212dd2126e88db80dc6ee884d",
+      "bcrypt-5.0.0.dist-info/RECORD": "a8d229d297a643c6e95e67d0ec914d77423a6f1c8389f98f8f2db050c4cd0bac",
+      "bcrypt-5.0.0.dist-info/WHEEL": "511db689bf05dd93d99394def98a03e841b704a778dad5500f2abcfd8e5e534c",
+      "bcrypt-5.0.0.dist-info/top_level.txt": "06447fa81cc36d2bb270ccc7584d6fcd7adf61e700cd456642ce86d82ba4a8d2",
+      "bcrypt/__init__.py": "72ff8dba9217e8fee8e80e0f2bf174babe886680ebdc69efcb314ef64d7ac0a4",
+      "bcrypt/__init__.pyi": "21350207d98f554f2c2946c940c0d41f961f41765bd4ee7917daaf29947fa3c2",
+      "bcrypt/_bcrypt.abi3.so": "87ce5749c8500c12d3695f7f6949f32e8bc89cf15cf9ed6b31b2b6cb22abacb2",
+      "bcrypt/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "8e5ebad2f9296274095be4431f0468a756462e6e406ceea82841724e14e55d15",
+     "native": {
+      "bcrypt/_bcrypt.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "560ddb6ec730386e7b3b26b8b4c88197aaed924430e7b74666a586ac997249ef"
+    }
+   },
+   "name": "bcrypt",
+   "provenance": {
+    "bcrypt-5.0.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/bcrypt",
+     "workflow": "pypi-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "The Python Cryptographic Authority developers <cryptography-dev@python.org>",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "homepage": "https://github.com/pyca/bcrypt/"
+    },
+    "summary": "Modern password hashing for your software and your servers"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (pyca/bcrypt)."
+   },
+   "scans": {
+    "capa": {
+     "87ce5749c8500c12d3695f7f6949f32e8bc89cf15cf9ed6b31b2b6cb22abacb2": {
+      "capabilities": [
+       "compiled with rust",
+       "contain loop",
+       "create or open file",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "encrypt data using blowfish",
+       "execute syscall",
+       "hash data using SHA512",
+       "link function at runtime on Linux",
+       "map or unmap memory on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "bcrypt/_bcrypt.abi3.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlsym"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://github.com/pyca/bcrypt/__version_ex__5.0.0The"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "5.0.0"
+  }
+ }
+}

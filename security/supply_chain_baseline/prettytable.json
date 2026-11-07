@@ -1,0 +1,68 @@
+{
+ "name": "prettytable",
+ "versions": {
+  "3.18.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|prettytable/prettytable.py|4107edcc625689e6"
+   ],
+   "archives": {
+    "prettytable-3.18.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "prettytable-3.18.0.dist-info/METADATA": "271a5357524f01c8ce05af4ecd0d9fb8ea969e774f80aa2dcaa1d39005255558",
+      "prettytable-3.18.0.dist-info/RECORD": "66a8f407539a3fb92f7caa1292a9bb8c99fd252b132596791493efa53b101f84",
+      "prettytable-3.18.0.dist-info/WHEEL": "99f7cfcbcc019d9427d959c9514e6313df4ab316927e2c8c1d5f58b7468b571b",
+      "prettytable-3.18.0.dist-info/licenses/LICENSE": "0c8adcc204c8af6cdfdf7887dfd1f99c29901f6c1d505a78bba96efa4fb2cb05",
+      "prettytable/__init__.py": "5b67828b1b0914da80300a4b3dd2b784047afaa9270646d5468f3946a4785450",
+      "prettytable/__main__.py": "35029cc1bcdc6c907faaea82dd1f8fb35c0731e3bf97f6f3dbec9e3d240a1e63",
+      "prettytable/_version.py": "b08ecf7fb2993c9aa99a946db7a399ef876e2fa45298cc891357427713b1f199",
+      "prettytable/colortable.py": "7676ceed97722dbb41488d994c36c9f3d4848fda556463dec0c644c693789f33",
+      "prettytable/prettytable.py": "4107edcc625689e65fe84011bde47d2063d5bd4cbb7051c5232226003c55dc73",
+      "prettytable/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c964634357b09abf2851a8893be50fd234df72dc66e0787ef955e5a2ec6c72f1",
+     "native": {},
+     "pth": {},
+     "sha256": "b3346e0e6f79180833aebaac088ae926340586cf6d7d991b9eb125b65f72313a"
+    }
+   },
+   "name": "prettytable",
+   "provenance": {
+    "prettytable-3.18.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "prettytable/prettytable",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Luke Maurits <luke@maurits.id.au>",
+    "license_expression": "BSD-3-Clause",
+    "maintainer": "Hugo van Kemenade",
+    "project_urls": {
+     "Changelog": "https://github.com/prettytable/prettytable/releases",
+     "Funding": "https://tidelift.com/subscription/pkg/pypi-prettytable?utm_source=pypi-prettytable&utm_medium=pypi",
+     "Homepage": "https://github.com/prettytable/prettytable",
+     "Source": "https://github.com/prettytable/prettytable"
+    },
+    "summary": "A simple Python library for easily displaying tabular data in a visually appealing ASCII table format"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; attestation verifies (prettytable/prettytable)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|prettytable/prettytable.py|4107edcc625689e6"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read prettytable/prettytable.py"
+    ]
+   },
+   "version": "3.18.0"
+  }
+ }
+}

@@ -185,7 +185,7 @@ def test_happy_ldap_rdn_with_slash_is_listed_as_one_segment_and_opens():
 def test_sad_ldap_unescaped_slash_path_is_not_a_valueerror_crash():
     s = _ldap()
     # The raw name as it used to be listed: two segments, second no RDN.
-    assert s.exists(f"/o=Rock\\2FPop,c=DE/ou=people/cn=AC/DC") is False
+    assert s.exists("/o=Rock\\2FPop,c=DE/ou=people/cn=AC/DC") is False
 
 
 def test_edge_ldap_names_without_slash_are_unchanged():

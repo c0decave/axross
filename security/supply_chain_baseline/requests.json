@@ -1,0 +1,103 @@
+{
+ "name": "requests",
+ "versions": {
+  "2.34.2": {
+   "accepted_findings": [
+    "secret-paths|requests/sessions.py|7aa606944e59c832",
+    "secret-paths|requests/utils.py|a8a4a231e502b518",
+    "yara|capability_filesystem_delete|requests/utils.py|657fd02343b2586b",
+    "yara|capability_filesystem_read|requests/models.py|d1bc0d990abf5d5e",
+    "yara|capability_filesystem_read|requests/sessions.py|96fbb30bbbf06a59",
+    "yara|capability_filesystem_read|requests/utils.py|657fd02343b2586b",
+    "yara|capability_network_download|requests/__init__.py|311157e7fa4aa916",
+    "yara|capability_network_outbound|requests/__init__.py|311157e7fa4aa916",
+    "yara|capability_process_spawn|requests/help.py|723519bb1884da18"
+   ],
+   "archives": {
+    "requests-2.34.2-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "requests-2.34.2.dist-info/METADATA": "8c384ba3e979480faae2859d3c5e6c1276dd2c3616e322e124d52c8cfc556f27",
+      "requests-2.34.2.dist-info/RECORD": "6c12f50645e5a7f6080e69eb18a4b7bd52329be9cb47f8bc29b62b24b303c89c",
+      "requests-2.34.2.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "requests-2.34.2.dist-info/licenses/LICENSE": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
+      "requests-2.34.2.dist-info/licenses/NOTICE": "f5110972dedad2b4e9d314518daf3b7d72d6e02e499acd802181de6f74571dcc",
+      "requests-2.34.2.dist-info/top_level.txt": "7cc4959877dbe6b6c63a8eb1bfe3bfb545fa8fe5b28b1b2c13e4a7c1c0d1c4d4",
+      "requests/__init__.py": "311157e7fa4aa9166c827d5237e6fd694eeb5ca549ee40e2e90f89f21abcd56e",
+      "requests/__version__.py": "abba90670b0370a3dc40d97c2dea46a35d4bec941ff10d7c3cf3098ef04a17f9",
+      "requests/_internal_utils.py": "4c7d8d132c9898fc7d715e473f3ac74785ddc4ab96d2c9240f87835dc6d981ff",
+      "requests/_types.py": "d06df79f54a279c0cc3faec596c446246d5ad14edfd529eb328defbd62a44a89",
+      "requests/adapters.py": "647eabd4453de232aa40b55ff033d6f19778910b7e7069c51fdf63076fc77493",
+      "requests/api.py": "4d15480ac046f089209798e8650476ef4a28ebe6f81b400758f8ef42ec6b5509",
+      "requests/auth.py": "e93951a552d4c3c5fd9b84a5e1d49b03caaba4723c4ff112da6053600ec85a65",
+      "requests/certs.py": "fd9c6b83359cef90ff6c4eeeab8dcc2388da382ebca7d00a499b3c0b434a87e4",
+      "requests/compat.py": "5d79ba289690b5015044341a1f7bc7d24134fc13a2db3efcf852515bf9aa18b4",
+      "requests/cookies.py": "0a1ce6140f2b9420522c5080e356e689fa796c2522f55ca10826f5ed8e0a723c",
+      "requests/exceptions.py": "c5e18f3352454968e337bb3056f0867df2f37c0a0d2c1a77dc05e7e0b3c0411b",
+      "requests/help.py": "723519bb1884da18d84f6b2fb78f7ebf7fb57f732070b6025ae071dac6a2d179",
+      "requests/hooks.py": "ebd8a02475d31a0e473a8f553e9501ff43645b9563885ad52844e7a63f0d76ab",
+      "requests/models.py": "d1bc0d990abf5d5ebee05f890911b4363fadf2d5264b686a963df47c529b6ace",
+      "requests/packages.py": "fe0d2067af355320252874631fa91a9db6a8c71d9e01beaacdc5e2383c932287",
+      "requests/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requests/sessions.py": "96fbb30bbbf06a59a5268d13b57885149756aa3f31695b5c15e41dd7bb2f67a6",
+      "requests/status_codes.py": "1950f47c89cf18019787e07d8ce48f66d6b38e622f7d94d70a90247fee6c040e",
+      "requests/structures.py": "ba9460c39078f25e6f1d2a24ac941ac6f8d2ee97197fa8c8d0c262d8a1e67a02",
+      "requests/utils.py": "657fd02343b2586bbd138a4ec0f03ceeb7610c2712f96ac54f28a708bf7d079c"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b2f37bbd8df9652e173d96c39ed9df129bcc258d28b647956bb345cd1edd50c3",
+     "native": {},
+     "pth": {},
+     "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+    }
+   },
+   "name": "requests",
+   "provenance": {
+    "requests-2.34.2-py3-none-any.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "psf/requests",
+     "workflow": "publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Kenneth Reitz <me@kennethreitz.org>",
+    "license": "Apache-2.0",
+    "maintainer_email": "Ian Stapleton Cordasco <graffatcolmingov@gmail.com>, Nate Prewitt <nate.prewitt@gmail.com>",
+    "project_urls": {
+     "Documentation": "https://requests.readthedocs.io",
+     "Source": "https://github.com/psf/requests"
+    },
+    "summary": "Python HTTP for Humans."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 2 medium findings (capability patterns) seen; capabilities: filesystem_delete, filesystem_read, network_download, network_outbound, process_spawn; attestation verifies (psf/requests)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|requests/utils.py|657fd02343b2586b",
+     "yara|capability_filesystem_read|requests/models.py|d1bc0d990abf5d5e",
+     "yara|capability_filesystem_read|requests/sessions.py|96fbb30bbbf06a59",
+     "yara|capability_filesystem_read|requests/utils.py|657fd02343b2586b",
+     "yara|capability_network_download|requests/__init__.py|311157e7fa4aa916",
+     "yara|capability_network_outbound|requests/__init__.py|311157e7fa4aa916",
+     "yara|capability_process_spawn|requests/help.py|723519bb1884da18"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete requests/utils.py",
+     "capability_filesystem_read:capability_filesystem_read requests/models.py",
+     "capability_filesystem_read:capability_filesystem_read requests/sessions.py",
+     "capability_filesystem_read:capability_filesystem_read requests/utils.py",
+     "capability_network_download:capability_network_download requests/__init__.py",
+     "capability_network_outbound:capability_network_outbound requests/__init__.py",
+     "capability_process_spawn:capability_process_spawn requests/help.py"
+    ]
+   },
+   "version": "2.34.2"
+  }
+ }
+}

@@ -192,6 +192,28 @@ def _validate_arguments(args, schema: dict) -> None:
     if error is not None:
         raise error
 
+
+def _argument_refusal(args, schema: dict) -> tuple[str, list] | None:
+    """``(message, path)`` of the arguments' first schema violation, else
+    None. Without jsonschema the handlers check their own arguments, but
+    not the ones they do not know: a strict schema's
+    (``additionalProperties: false``) unknown arguments are refused here,
+    as jsonschema refuses them - a misspelt option was ignored silently."""
+    if _JSONSCHEMA_AVAILABLE:
+        try:
+            _validate_arguments(args, schema)
+        except jsonschema.ValidationError as exc:
+            return exc.message, list(exc.absolute_path)
+        return None
+    if isinstance(args, dict) and isinstance(schema, dict) \
+            and schema.get("additionalProperties") is False:
+        unknown = [key for key in args if key not in (schema.get("properties") or {})]
+        if unknown:
+            names = ", ".join(repr(key) for key in unknown)
+            verb = "was" if len(unknown) == 1 else "were"
+            return f"Additional properties are not allowed ({names} {verb} unexpected)", []
+    return None
+
 # Separate logger for write-tool audit trail. Operators typically
 # route this to a different sink (append-only file, SIEM) than the
 # general-purpose log. Every successful OR refused write lands
@@ -1159,6 +1181,39 @@ def _enforce_root_entry(path: str, root: str) -> str:
     return op.join(parent, name)
 
 
+#: Places under the home folder a tool never writes, moves or deletes,
+#: whatever the root: changed, they run code or widen the agent's rights
+#: with no prompt (its own settings and MCP servers, shell start files,
+#: autostart entries, user services, SSH and GnuPG keys and configs).
+_PROTECTED_HOME_DIRS = (".config/axross", ".local/share/axross", ".local/state/axross",
+                        ".config/autostart", ".config/systemd", ".config/environment.d",
+                        ".config/fish", ".ssh", ".gnupg", ".local/share/applications")
+_PROTECTED_HOME_FILES = (".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile",
+                         ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".xprofile", ".xsessionrc",
+                         ".xinitrc", ".pam_environment", ".inputrc")
+
+
+def _refuse_protected(path: str, *, entry: bool = False) -> str:
+    """*path* unless it is (or lies in) a protected place of the home
+    folder (_PROTECTED_HOME_*); PermissionError otherwise. *entry*: the
+    path's entry is removed or moved, so a folder holding a protected
+    place is refused too (deleting ~/.config takes ~/.config/autostart)."""
+    import os.path as op
+
+    home = op.realpath(op.expanduser("~"))
+    protected = [op.join(home, rel) for rel in _PROTECTED_HOME_DIRS + _PROTECTED_HOME_FILES]
+    candidates = {op.abspath(path), op.realpath(path),
+                  op.join(op.realpath(op.dirname(op.abspath(path))), op.basename(path))}
+    for candidate in candidates:
+        for place in protected:
+            if candidate == place or candidate.startswith(place + op.sep):
+                raise PermissionError(f"{path}: the agent does not change {place} (it could "
+                                      "run code or widen its own rights from there)")
+            if entry and place.startswith(candidate.rstrip(op.sep) + op.sep):
+                raise PermissionError(f"{path} holds {place}, which the agent does not change")
+    return path
+
+
 def _refuse_configured_root(path: str, root: str, operation: str) -> None:
     """Refuse write operations that target the MCP root object itself."""
     import os.path as op
@@ -1353,6 +1408,26 @@ def _build_tools(
             raise PermissionError(f"{path} is in a read-only folder")
         return path
 
+    def _refuse_read_only_below(path: str) -> str:
+        """An entry removed or moved with its subtree may not hold a
+        read-only extra folder: deleting or moving ``main/sub`` would take
+        ``main/sub/keep`` along."""
+        import os.path as op
+
+        if not extras:
+            return path
+        entry = op.abspath(path).rstrip(op.sep) or op.sep
+        # The entry itself is acted on (a symlink is not followed); the
+        # folders on the way to it may be links.
+        here = {entry, op.join(op.realpath(op.dirname(entry)), op.basename(entry))}
+        for folder, writable in extras:
+            if writable:
+                continue
+            for base in {op.abspath(folder), op.realpath(folder)}:
+                if any(base.startswith(h.rstrip(op.sep) + op.sep) for h in here):
+                    raise PermissionError(f"{path} holds a read-only folder")
+        return path
+
     def _write_path(path: str, active_backend) -> str:
         """Confine a path a mutating tool writes, moves or deletes. On a
         remote backend of a production-flagged profile every mutation
@@ -1360,7 +1435,7 @@ def _build_tools(
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
             return _groups.check_remote_path(path)
-        return _refuse_read_only(_confined(path, write_roots))
+        return _refuse_protected(_refuse_read_only(_confined(path, write_roots)))
 
     def _entry_path(path: str, active_backend) -> str:
         """Confine a path whose directory entry itself is removed or
@@ -1368,7 +1443,8 @@ def _build_tools(
         if _is_remote(active_backend):
             remote_registry.refuse_production(active_backend)
             return _groups.check_remote_path(path)
-        return _refuse_read_only(_confined(path, write_roots, _enforce_root_entry))
+        return _refuse_protected(_refuse_read_only_below(
+            _refuse_read_only(_confined(path, write_roots, _enforce_root_entry))), entry=True)
 
     def _refuse_root(path: str, active_backend, operation: str) -> None:
         """Refuse a mutation of the configured root object itself."""
@@ -3967,16 +4043,14 @@ def _dispatch(
             # Validate against the tool's schema — same guard as
             # synchronous tools/call. A malformed task that would
             # immediately fail in the worker is rejected upfront.
-            if _JSONSCHEMA_AVAILABLE:
-                try:
-                    _validate_arguments(args, tool.schema)
-                except jsonschema.ValidationError as exc:
-                    return _err(
-                        req_id,
-                        ERR_INVALID_PARAMS,
-                        f"tool {name!r} arguments failed schema: {exc.message}",
-                        data={"type": "ValidationError", "path": list(exc.absolute_path)},
-                    )
+            refusal = _argument_refusal(args, tool.schema)
+            if refusal is not None:
+                return _err(
+                    req_id,
+                    ERR_INVALID_PARAMS,
+                    f"tool {name!r} arguments failed schema: {refusal[0]}",
+                    data={"type": "ValidationError", "path": refusal[1]},
+                )
             # A task is a tools/call that returns early: the same rate
             # limit applies, and the running ones are capped per session.
             if rate_limiter is not None and not rate_limiter.try_acquire():
@@ -4107,19 +4181,17 @@ def _dispatch(
         # Validate the supplied arguments against the tool's declared
         # inputSchema before we call the handler. jsonschema is an
         # optional dep — when absent we fall back to the handler's
-        # own ValueError-raising checks.
-        if _JSONSCHEMA_AVAILABLE:
-            try:
-                _validate_arguments(args, tool.schema)
-            except jsonschema.ValidationError as exc:
-                if cancels is not None and req_id is not None:
-                    cancels.unregister(req_id)
-                return _err(
-                    req_id,
-                    ERR_INVALID_PARAMS,
-                    f"tool {name!r} arguments failed schema: {exc.message}",
-                    data={"type": "ValidationError", "path": list(exc.absolute_path)},
-                )
+        # own ValueError-raising checks (and refuse unknown arguments).
+        refusal = _argument_refusal(args, tool.schema)
+        if refusal is not None:
+            if cancels is not None and req_id is not None:
+                cancels.unregister(req_id)
+            return _err(
+                req_id,
+                ERR_INVALID_PARAMS,
+                f"tool {name!r} arguments failed schema: {refusal[0]}",
+                data={"type": "ValidationError", "path": refusal[1]},
+            )
         # Wall-clock timeout enforcement. Two parallel mechanisms:
         #
         # 1. A threading.Timer flips ``cancel_event`` at the deadline.

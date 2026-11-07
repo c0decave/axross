@@ -1,0 +1,70 @@
+{
+ "name": "tftpy",
+ "versions": {
+  "0.8.7": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|tftpy/TftpContexts.py|3eb9ad7df6e3cb60",
+    "yara|capability_filesystem_read|tftpy/TftpStates.py|9bc3d2fe3a79d4ea",
+    "yara|capability_network_outbound|tftpy/TftpContexts.py|3eb9ad7df6e3cb60"
+   ],
+   "archives": {
+    "tftpy-0.8.7-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "tftpy-0.8.7.dist-info/METADATA": "b576574e79c31e71ad426cf1dd069d2746ee5a28ac3c73259d76b8c32926ccd5",
+      "tftpy-0.8.7.dist-info/RECORD": "3f11e69cfc18f866ba7dba4b61591f1e3d39bc17428f0e85a465f2cbc2fd197f",
+      "tftpy-0.8.7.dist-info/WHEEL": "c14c80f0e6ae95195b7f032d990b2f367806af140702f90a72f466762ce5262d",
+      "tftpy-0.8.7.dist-info/licenses/LICENSE": "4616f0c71e62ce2e0f6cdd3aef6d3c285f8730c9304b88a9f3ce3f14c2e6f756",
+      "tftpy-0.8.7.dist-info/top_level.txt": "0824e7a4348764fc0d416754679b43c29576b0b2bb406d286d2104593e0ea052",
+      "tftpy/TftpClient.py": "1b55975187c398768a09ce570db16892dfb3f1f61cda72a3770520c4333ac19f",
+      "tftpy/TftpContexts.py": "3eb9ad7df6e3cb600349b47a382ac6f86512214f713975720ad75a97ed09ac9d",
+      "tftpy/TftpPacketFactory.py": "e0cbb1f2948039d70e729ee8c042e47f2ffd9d41cf2c4f47adbceb1c9553b6c2",
+      "tftpy/TftpPacketTypes.py": "998d597a118f2e4e008ba416f3126a4dbb7d6c38d6dc6dd8c08bb09204d106a9",
+      "tftpy/TftpServer.py": "fbdd3220cd0be86073144d189eaee73a578ac08ec3618f6e6c2d9352c163561d",
+      "tftpy/TftpShared.py": "e24bc87b6ef8b467717de39522e36dd74b054841714a62b06a67a67202152366",
+      "tftpy/TftpStates.py": "9bc3d2fe3a79d4ea342d8e03b8bdad4d6a162229e717bf392f83b71fd3d4a5dc",
+      "tftpy/__init__.py": "bbc758d07f87c9d5449eaa85bfaf509101de8735ea0f4e06e58cc41813018b5d"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2cc3bd681095c2bc219ccf4239889d1e425bf13e83b42bbf1536b479cfbece87",
+     "native": {},
+     "pth": {},
+     "sha256": "59289b269ed6e0a7c8762301f99b56814026758b3137a90c9c3e677881efc853"
+    }
+   },
+   "name": "tftpy",
+   "provenance": {
+    "tftpy-0.8.7-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Michael Soulier <msoulier@digitaltorque.ca>",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/msoulier/tftpy",
+     "Issues": "https://github.com/msoulier/tftpy/issues"
+    },
+    "summary": "A TFTP protocol library for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|tftpy/TftpContexts.py|3eb9ad7df6e3cb60",
+     "yara|capability_filesystem_read|tftpy/TftpStates.py|9bc3d2fe3a79d4ea",
+     "yara|capability_network_outbound|tftpy/TftpContexts.py|3eb9ad7df6e3cb60"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete tftpy/TftpContexts.py",
+     "capability_filesystem_read:capability_filesystem_read tftpy/TftpStates.py",
+     "capability_network_outbound:capability_network_outbound tftpy/TftpContexts.py"
+    ]
+   },
+   "version": "0.8.7"
+  }
+ }
+}

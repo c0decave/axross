@@ -296,6 +296,35 @@ def test_happy_file_type_finds_no_mismatch_in_a_correctly_named_container(name, 
         assert info.verdict == FT.MATCH
 
 
+@pytest.mark.parametrize(
+    "name, head, database_says",
+    [
+        ("vm.vmdk", b"KDMV" + b"\0" * 60, "application/x-vmdk"),
+        ("VM.VHD", b"conectix" + b"\0" * 56, "text/x-vhdl"),
+    ],
+)
+def test_edge_a_correctly_named_container_matches_whatever_the_mime_database_calls_it(
+        monkeypatch, name, head, database_says):
+    """Qt's own MIME database - Windows, macOS, a Linux without
+    shared-mime-info - calls .vmdk application/x-vmdk and .vhd VHDL source:
+    Identify File Type called every correctly named VMDK and VHD a mismatch.
+    The container's own suffixes decide."""
+    from core import file_type as FT
+
+    monkeypatch.setattr(FT, "_claimed_mime", lambda _name: database_says)
+    info = FT.identify_bytes(bytes(bytearray(head).ljust(64 * 1024, b"\0")), name=name)
+    assert info.engine == "disk image" and info.extension_mime == database_says
+    assert info.verdict == FT.MATCH
+
+
+def test_sad_a_container_under_another_containers_suffix_is_still_a_mismatch(monkeypatch):
+    from core import file_type as FT
+
+    monkeypatch.setattr(FT, "_claimed_mime", lambda _name: "application/x-vhd-disk")
+    info = FT.identify_bytes((b"KDMV").ljust(64 * 1024, b"\0"), name="vm.vhd")
+    assert info.verdict == FT.MISMATCH
+
+
 def test_sad_file_type_still_flags_a_container_under_a_foreign_extension():
     from core import file_type as FT
 

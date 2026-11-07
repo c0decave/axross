@@ -1,0 +1,54 @@
+{
+ "name": "intervaltree",
+ "versions": {
+  "3.2.1": {
+   "accepted_findings": [],
+   "archives": {
+    "intervaltree-3.2.1-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "intervaltree-3.2.1.dist-info/METADATA": "ce717105c2229d323bc8e61cbf9a6442d6824b7bec9ca86cabed0f1d8e8027ff",
+      "intervaltree-3.2.1.dist-info/RECORD": "fc054133284759195f4960d404492b44d451afaeb71824bbc83348ff0cfe7158",
+      "intervaltree-3.2.1.dist-info/WHEEL": "6a16b456bad8be00c9dd7c65ddd6ff83f303216f997b10ddadcfe6f8793c618e",
+      "intervaltree-3.2.1.dist-info/licenses/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "intervaltree/__init__.py": "60ecc9dc39ac442e3c4c67b309607b5bf09fd296f587bfae7a198de24dbc736c",
+      "intervaltree/interval.py": "b91c8f378b66a7916ebd555df0eafa88ea225759d8a8ac2bd4256f80c2c02083",
+      "intervaltree/intervaltree.py": "e9e81044e52ebc4022f33496416bfd11dcec479e527c85af994883ee8333da7b",
+      "intervaltree/node.py": "4c50417da85afc269715a921feb6656570a9820f3b7ad00d31d80afbc0d1a5d9"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f3244a57ee962ee70ea3b0649d9d5aee25cae52f825dae801f1c2f36329da240",
+     "native": {},
+     "pth": {},
+     "sha256": "a8a8381bbd35d48ceebee932c77ffc988492d22fb1d27d0ba1d74a7694eb8f0b"
+    }
+   },
+   "name": "intervaltree",
+   "provenance": {
+    "intervaltree-3.2.1-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Konstantin Tretyakov",
+    "author_email": "Chaim Leib Halbert <chaim.leib.halbert@gmail.com>",
+    "license_expression": "Apache-2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/chaimleib/intervaltree",
+     "Issues": "https://github.com/chaimleib/intervaltree/issues"
+    },
+    "summary": "Editable interval tree data structure for Python 2 and 3"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "3.2.1"
+  }
+ }
+}

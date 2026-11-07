@@ -1,0 +1,60 @@
+{
+ "name": "google-auth-httplib2",
+ "versions": {
+  "0.4.4": {
+   "accepted_findings": [
+    "yara|capability_network_download|google_auth_httplib2.py|cc55c06e78b16081"
+   ],
+   "archives": {
+    "google_auth_httplib2-0.4.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "google_auth_httplib2-0.4.4.dist-info/METADATA": "caad437e4fb898af38e99d65a9d2657c0a55a6eb63b6626ad09efbb38630c340",
+      "google_auth_httplib2-0.4.4.dist-info/RECORD": "72b3b9e85fd6f8ff6474b3945b91b45594539499ed54cf414d494cc08874cf47",
+      "google_auth_httplib2-0.4.4.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "google_auth_httplib2-0.4.4.dist-info/licenses/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "google_auth_httplib2-0.4.4.dist-info/top_level.txt": "c50af85fdd42b0d5abd66c37aeb387f262a760b396fd486be54ee6a18c64ab81",
+      "google_auth_httplib2.py": "cc55c06e78b160816c683a98a4750e484139878389e9a171d03f48864b1e626c"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "32820787135a09fb067edbba618875dff76de692433bd62aa98868af3f9692dd",
+     "native": {},
+     "pth": {},
+     "sha256": "bbe5d7b2401bb3a4017f4720e1e91bd273ab9a2bb60b84e65edbc0de127852da"
+    }
+   },
+   "name": "google-auth-httplib2",
+   "provenance": {
+    "google_auth_httplib2-0.4.4-py3-none-any.whl": {
+     "kind": "Google"
+    }
+   },
+   "pypi": {
+    "author": "Google Cloud Platform",
+    "author_email": "googleapis-packages@google.com",
+    "home_page": "https://github.com/googleapis/google-cloud-python/tree/main/packages/google-auth-httplib2",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/googleapis/google-cloud-python/tree/main/packages/google-auth-httplib2"
+    },
+    "summary": "Google Authentication Library: httplib2 transport"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_download; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_download|google_auth_httplib2.py|cc55c06e78b16081"
+    ],
+    "yara": [
+     "capability_network_download:capability_network_download google_auth_httplib2.py"
+    ]
+   },
+   "version": "0.4.4"
+  }
+ }
+}

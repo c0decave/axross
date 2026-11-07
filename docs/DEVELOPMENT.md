@@ -176,6 +176,21 @@ allow-list, SMB `socket.gethostname` patch behaviour, atomic temp
 prefix, ADB pubkey scrub. A change that reverts one of them
 re-introduces a fingerprint; call it out in the PR description.
 
+## Translations
+
+The interface strings go through `core.i18n.tr()`; the catalogues are
+`resources/i18n/<code>.json` (English source text → translation), one per
+language in `core.i18n.SUPPORTED`. German (`de.json`) is the translated
+one. `es`, `fr`, `nb`, `pl` and `sv` are deliberately empty (`{}`): each
+supported language has its file, so a translator fills an existing
+catalogue instead of guessing its name, and `tests/test_i18n.py` tells a
+missing file (an oversight) from an empty one (not translated yet). A
+catalogue is offered in *Settings > General > Language*, and picked from
+the locale or the time zone, only from `MIN_CATALOGUE_ENTRIES` (200)
+usable entries on, so an empty or half-done one never shows a
+half-English menu. They ship in the wheel and the bundles (a few bytes
+each).
+
 ## Packaging
 
 PyInstaller bundle (slim or full flavour), AppImage, and the
@@ -187,11 +202,30 @@ headless MCP Docker image: [PACKAGING.md](PACKAGING.md).
 scripts/build_release.sh --tarball
 ```
 
-Runs identity / secret / PEM scrub gates, copies the public-release
-file set to `../axross-release/`, produces `axross-<version>.tar.gz`
-+ `.sha256` + `.sha512`, and verifies the tarball round-trips
-byte-for-byte against the source tree. See the script's `--help`
-for safety guards and exit codes.
+Packages the committed files of `HEAD` only - never untracked or
+uncommitted ones. In the public repository the tree is
+`git archive HEAD`; in a private source tree that carries
+`scripts/export-public.py`, the script runs `export-public.py --mirror`
+into a temporary directory and packages that scrubbed tree (its
+`MIRROR_EXCLUDE_PREFIXES` is the one exclude list). It then runs the
+excluded-path / secret-filename / identity / PEM gates on the staged
+tree, copies it to `../axross-release/`, produces
+`axross-<version>.tar.gz` + `.sha256` + `.sha512`, and verifies the
+tarball round-trips byte-for-byte against the copied tree.
+
+The identity terms the gate looks for are kept outside the repository,
+one per line (`#` starts a comment), in
+`~/.config/axross/release-identity-terms` (or `$XDG_CONFIG_HOME/...`),
+or in the file `AXROSS_IDENTITY_TERMS_FILE` names. Without that file,
+or with one inside the work tree, the script refuses. `--dry-run`
+runs every gate and writes nothing but its log; set
+`AXROSS_RELEASE_LIST=<file>` to get the candidate file list.
+`<version>` is
+`__version__` in `axross/_version.py`, the one place the version is
+kept (pyproject.toml declares it dynamic, see
+[PACKAGING.md](PACKAGING.md#versioning)); the script reads it the way
+setuptools does. See the script's `--help` for safety guards and exit
+codes.
 
 ## Supply-chain audit
 

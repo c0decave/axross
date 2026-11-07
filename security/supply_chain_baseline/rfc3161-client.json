@@ -1,0 +1,95 @@
+{
+ "name": "rfc3161-client",
+ "versions": {
+  "1.0.9": {
+   "accepted_findings": [],
+   "archives": {
+    "rfc3161_client-1.0.9-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "rfc3161_client-1.0.9.dist-info/METADATA": "422194bfd587158c826d990282605a62c58cc7008d0f031ba4614d951d85c75d",
+      "rfc3161_client-1.0.9.dist-info/RECORD": "26a162f38a17cb568a7b7854d7cd54a7ee79430d8bed30ac2130924427b09c30",
+      "rfc3161_client-1.0.9.dist-info/WHEEL": "5d2d6ed787029819739feeb120bd326d8ef46f56e9370c5508d5a423755ddc6c",
+      "rfc3161_client-1.0.9.dist-info/licenses/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "rfc3161_client-1.0.9.dist-info/sboms/rfc3161-client.cyclonedx.json": "4ca6c343717dac10c513020a276e258096cb4e75dddc96ec3900622c830eec4c",
+      "rfc3161_client/__init__.py": "604cb6db8e6841f778964dfad56bb11b88d342267740e1b35eb8135a29e42bfb",
+      "rfc3161_client/_rust.abi3.so": "cec5ada79a8754fbbf000fec318f8d54bc902029ea65cc31e720840a01930cf3",
+      "rfc3161_client/_rust/__init__.pyi": "482460848bce33449773f1564e5a0a7fa58eb5efe66e45b1ad56c89b8c7dc460",
+      "rfc3161_client/_rust/verify/__init__.pyi": "7fe7a3b64b736ae0d2711fdf6f9d433d6e14cda956b2ad1e691aaa05804efdf7",
+      "rfc3161_client/base.py": "473efdea560af93a213de4c45ad7dba13d6ce417974d274eeb7d424f44b79cb7",
+      "rfc3161_client/errors.py": "ba972d0573c6ada5121b756b23055c5f20e7e3835ad0e484c44ac64e2d0c7131",
+      "rfc3161_client/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rfc3161_client/tsp.py": "c28e1232451559e239e4256e77e55812d6afffe58fbd8df5c2ffbd89345d24f1",
+      "rfc3161_client/verify.py": "1bf15482c9f705075a992a50899e5c10b41b39d86f4be847855048877bae71bd"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b87e04f446337faa82a9918220102d7db6ceac50f2cec5b1a59c90ae1009a08f",
+     "native": {
+      "rfc3161_client/_rust.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "fac3f440a507555e684dc5daba75e33dc08f0f45fdefa48448f19001233a6b21"
+    }
+   },
+   "name": "rfc3161-client",
+   "provenance": {
+    "rfc3161_client-1.0.9-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "trailofbits/rfc3161-client",
+     "workflow": "CI.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Trail of Bits <opensource@trailofbits.com>",
+    "project_urls": {
+     "Documentation": "https://trailofbits.github.io/rfc3161-client/",
+     "Homepage": "https://pypi.org/project/rfc3161-client",
+     "Issues": "https://github.com/trailofbits/rfc3161-client/issues",
+     "Source": "https://github.com/trailofbits/rfc3161-client"
+    }
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (trailofbits/rfc3161-client)."
+   },
+   "scans": {
+    "capa": {
+     "cec5ada79a8754fbbf000fec318f8d54bc902029ea65cc31e720840a01930cf3": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "rfc3161_client/_rust.abi3.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libpthread.so.0",
+        "librt.so.1"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://github.com/PyO3/pyo3/issues/576typesSimpleNamespacebase",
+        "https://github.com/dot-asm>"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.0.9"
+  }
+ }
+}

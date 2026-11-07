@@ -18,6 +18,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -87,6 +88,13 @@ class MoveFolderCleanupTest(unittest.TestCase):
         self.addCleanup(os.chmod, self.src / "tree" / "keep.txt", 0o600)
         if os.access(self.src / "tree" / "keep.txt", os.R_OK):
             self.skipTest("running as root: an unreadable file cannot be simulated")
+        # On one file system a move renames, and a rename needs no read
+        # permission (as mv); the copy - another file system - does.
+        from core.transfer_worker import TransferWorker
+
+        renames = mock.patch.object(TransferWorker, "_move_by_rename", return_value=None)
+        renames.start()
+        self.addCleanup(renames.stop)
         jobs = self._move("tree")
         self.assertIn(TransferStatus.ERROR, {j.status for j in jobs})
         # The unreadable file stays, so its folder does; the emptied subfolder goes.

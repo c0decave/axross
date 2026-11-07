@@ -1,0 +1,73 @@
+{
+ "name": "pluggy",
+ "versions": {
+  "1.7.0": {
+   "accepted_findings": [],
+   "archives": {
+    "pluggy-1.7.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pluggy-1.7.0.dist-info/METADATA": "20ac8237e37f1d6e7e75500cd663015177ba80c1a1a595ff6bae18a539ff8a2c",
+      "pluggy-1.7.0.dist-info/RECORD": "e845d814db0107943f3c8f8a139407bce04809e575569bbb089b0f1c015e0b77",
+      "pluggy-1.7.0.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "pluggy-1.7.0.dist-info/licenses/LICENSE": "d6b65e6c213a5d0b577911d34d6e5949b9f59d76c238c5071a2f3fc16cfb2606",
+      "pluggy-1.7.0.dist-info/top_level.txt": "c4a4824616a2faff4c724bccb96a8dcf5e9cd6d6ec98e820a0c4b04e07296071",
+      "pluggy/__init__.py": "f94737c0d72ae5af0bb2f2602a231b4e61adfab5567d16e4746141a4badd1465",
+      "pluggy/_caller.py": "66f8a8a3b73e98d74bdaf5d1df3427f560f67e9edb3394b202d3967c8cecdf30",
+      "pluggy/_callers.py": "9098c0a3beea7e84e3ae823e38f5222730d4f5378e6c6195c97f9a7351d4628d",
+      "pluggy/_compat.py": "608f8682e4f185674b9b89b4eb2ee8779025ac93b6830c141700ff256ce208f2",
+      "pluggy/_config.py": "1025531b0838e290069ef5fdc34418a00bb5a4170738761afac087451cfc99c4",
+      "pluggy/_decorators.py": "17badfeaaa9d302f5bb8659113af76c1efd17c0ced6ea9ce49439b0745a7426f",
+      "pluggy/_execution.py": "44eeb36a49fdc6e73ce06e77c4f295d712a7532225fb49b86a04459a9047854d",
+      "pluggy/_hooks.py": "90514abb063ea1bf612e523966c45e64c45d9616e742bb6850dbffd03b424f43",
+      "pluggy/_impl.py": "7f394ac6e01e6e11245eec9f560fb286f83365c404c38150002e9f31c1a17b03",
+      "pluggy/_manager.py": "95b8787e4ca8882afea9b97e1ef670febbd3eb411a94fc85ba43ad76a0272c1d",
+      "pluggy/_result.py": "f2668b485954c9e3f74a995bc4710d9f0390d012ac48a889a266864151aa5d4c",
+      "pluggy/_tracing.py": "e9d26c29eef8f1270bbcc9b88dc08ef6a0ffffc27e5b2d5d3d517e3a8ade578a",
+      "pluggy/_warnings.py": "b5dd00bd90697da9ab8820b73aab0bc31321f92cc03237e399ce7c4f9bcfde5c",
+      "pluggy/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "904f21291feee57b42151e7539b62244dfe6d2ce68207a7f99e2fcb3d6fb25b0",
+     "native": {},
+     "pth": {},
+     "sha256": "7dd7b0d8832ba3cb632c306926ded123429211b83641b35dc5c41ad2d34f9bec"
+    }
+   },
+   "name": "pluggy",
+   "provenance": {
+    "pluggy-1.7.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "pytest-dev/pluggy",
+     "workflow": "deploy.yml"
+    }
+   },
+   "pypi": {
+    "author": "Holger Krekel",
+    "license": "MIT",
+    "maintainer_email": "pytest core team <core@pytest.org>",
+    "project_urls": {
+     "Changelog": "https://pluggy.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://pluggy.readthedocs.io/",
+     "Funding": "https://tidelift.com/subscription/pkg/pypi-pluggy",
+     "Homepage": "https://github.com/pytest-dev/pluggy",
+     "Issues": "https://github.com/pytest-dev/pluggy/issues",
+     "Repository": "https://github.com/pytest-dev/pluggy"
+    },
+    "summary": "plugin and hook calling mechanisms for python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (pytest-dev/pluggy)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.7.0"
+  }
+ }
+}

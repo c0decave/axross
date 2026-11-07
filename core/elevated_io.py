@@ -365,6 +365,47 @@ def elevated_write(backend, path: str, data: bytes) -> None:
     _check_exit(proc, f"write {abs_path!r}")
 
 
+#: A move as root may take as long as the copy across file systems does;
+#: the polkit prompt's own timeout still applies to the authentication.
+ELEVATED_MOVE_TIMEOUT_SECS: int = 24 * 3600
+
+
+def elevated_move(backend, sources: list[str], dest_dir: str) -> None:
+    """Move *sources* into the folder *dest_dir* as root: ``pkexec mv
+    --no-clobber -- SRC... DEST``. One authentication for all of them.
+
+    For a source the user may not remove (feedback: a move failing with
+    ``[Errno 13]`` when the source was deleted). Nothing is replaced in the
+    destination (``--no-clobber``); a name that is already there stays
+    with its source, and the caller sees that from what is left. ``mv``
+    keeps owner, mode and times; no permission is changed, neither of the
+    source nor anywhere else.
+    """
+    _require_local(backend)
+    if not sources:
+        return
+    targets = [_validate_path(p) for p in sources]
+    folder = _validate_path(dest_dir)
+    helpers = _resolve_helpers()
+    mv = _trusted_which("mv")
+    if helpers is None or mv is None:
+        raise ElevatedNotAvailable("pkexec or mv is not installed")
+    argv = [helpers.binary, "--disable-internal-agent", mv, "--no-clobber",
+            f"--target-directory={folder}", "--", *targets]
+    env = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
+    try:
+        proc = subprocess.run(argv, capture_output=True, env=env,
+                              timeout=ELEVATED_MOVE_TIMEOUT_SECS, check=False)
+    except subprocess.TimeoutExpired as exc:
+        raise ElevatedIOError("elevated_io: the move as root did not finish") from exc
+    _check_exit(proc, f"move {len(targets)} item(s) to {folder!r}")
+    log.info("Moved %d item(s) to %s as root", len(targets), folder)
+
+
+def is_elevated_move_available() -> bool:
+    return _resolve_helpers() is not None and _trusted_which("mv") is not None
+
+
 def elevated_stat(backend, path: str) -> dict:
     """Return a small dict ``{mode, size, uid, gid, mtime}`` for a
     path the user can't normally stat. The format string is fixed
@@ -404,6 +445,7 @@ def elevated_stat(backend, path: str) -> dict:
 
 
 __all__ = [
+    "ELEVATED_MOVE_TIMEOUT_SECS",
     "ELEVATED_TIMEOUT_SECS",
     "ElevatedCancelled",
     "ElevatedIOError",
@@ -412,9 +454,11 @@ __all__ = [
     "MAX_OUTPUT_SIZE",
     "MAX_PATH_LEN",
     "MAX_WRITE_SIZE",
+    "elevated_move",
     "elevated_read",
     "elevated_stat",
     "elevated_write",
+    "is_elevated_move_available",
     "is_pkexec_available",
     "trusted_which",
 ]

@@ -1,0 +1,140 @@
+{
+ "name": "elementpath",
+ "versions": {
+  "5.1.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|elementpath/regex/unicode_subsets.py|f310bb33e3781fbc",
+    "yara|capability_filesystem_read|elementpath/xpath30/_xpath30_functions.py|89f9bf212fea5860",
+    "yara|capability_filesystem_read|elementpath/xpath31/_xpath31_functions.py|1e4bfcb8cb7ccb21",
+    "yara|capability_network_outbound|elementpath/extras/pathnodes.py|608d4057929cd3fc",
+    "yara|capability_network_outbound|elementpath/xpath30/_xpath30_functions.py|89f9bf212fea5860"
+   ],
+   "archives": {
+    "elementpath-5.1.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "elementpath-5.1.4.dist-info/METADATA": "75abcd4238e90f966725140e3aa165a1d1146f7d06c834c9057c12fa40ead809",
+      "elementpath-5.1.4.dist-info/RECORD": "480a25d17ea13e425969536c81f5e7b138bbe0c63785640f4189f0a5297f20ea",
+      "elementpath-5.1.4.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "elementpath-5.1.4.dist-info/licenses/LICENSE": "01a603b5de335fa4db21d918bfb868981e894b768d9b4e6a201488ae2ef3b9ea",
+      "elementpath-5.1.4.dist-info/top_level.txt": "ee654e5b7381c1119c105da422e9c5fbaa723de47fec9d125ae0a74529bcd7be",
+      "elementpath/__init__.py": "32b1749bd5b9461ebe084abe1b3b79ceb0df50f9bcc39088f47504f748b74382",
+      "elementpath/aliases.py": "1a49c6975c518fa5aacd8a8828df19e027a57373ea0bceb168dd716725290335",
+      "elementpath/collations.py": "9a31eb59c661a6b89f1264babb47f5a3174f19532771d6447397c7ec56f3f57e",
+      "elementpath/compare.py": "2a00f0108c83999d65807c930d93ed6bb52862b47a469c0787ce5aa33708a94d",
+      "elementpath/datatypes/__init__.py": "04ff3bef25ed1eb514d09bbbcea7302c84c77a497f4fb5e418b3c446235c8a41",
+      "elementpath/datatypes/any_types.py": "06f1d4dc2ec818d5e35211618db1e07af22b14f75ce0c4640120c8616910c26d",
+      "elementpath/datatypes/binary.py": "fae47ec7d868ce21dc1db12c96dfe7c9ee116d9467aab424f5f642e549f45040",
+      "elementpath/datatypes/datetime.py": "18df4ecca044d50176028489e2518f284f699b52e2260d4b28a88970fac9fb50",
+      "elementpath/datatypes/lists.py": "99239a0f87aab635bd7d5b9cc193332f09fd701acdfa07e3cf63e751a76896fb",
+      "elementpath/datatypes/numeric.py": "f289e37aa2f27848df398c00e08f0249c3a5e2c0898a5164fafcca5422fbd763",
+      "elementpath/datatypes/proxies.py": "8114be76a28f283643c925d07803d470a4a5c22c09602609ce4091886882bf77",
+      "elementpath/datatypes/qname.py": "e9589754c24d50fa24873d72e3c3b67b25c6de39ee182e1c2545429205c4dbf7",
+      "elementpath/datatypes/string.py": "b197fcae02aadcd61df91e8e1da77762bdd43a4fe4403a25bdeaef8b23d9cc93",
+      "elementpath/datatypes/untyped.py": "56ce15692b9663f9bb189d65ef0eece4c32b5c0f8189167fe39d8fc86f85b5c6",
+      "elementpath/datatypes/uri.py": "8395759f00d1fc065717c40a12e31550bbf564595eab1ddf6e6e68965f120909",
+      "elementpath/decoder.py": "d728e31a90778a444b59506486d759366bd8632d38fc67bd47604b8907729ba5",
+      "elementpath/etree.py": "26cb5f16ea7d1f692d1a7b638248e25c3b6649b2f140462f577cecd4b9e3e39a",
+      "elementpath/exceptions.py": "75eb264ab71bf866e080e01eb961264f32c8b76119d84892c52b7a3de875d7d4",
+      "elementpath/extras/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "elementpath/extras/pathnodes.py": "608d4057929cd3fcd4ab7db3d7ab6b4943aeddea5bffed598135131982eada4c",
+      "elementpath/helpers.py": "636e90f71df6e0b57c157bb608c727dca43c88ff238722dfeabdd0e61ccb2c19",
+      "elementpath/namespaces.py": "a8d86a58db91c0df92f5eb1e91eef1cca83c6f7f7ab990d7d5216bd3f20976a0",
+      "elementpath/protocols.py": "495029a89a89db13b496043d465b5f0f0a471bdbe78490ee20055645675df3bb",
+      "elementpath/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "elementpath/regex/__init__.py": "3ae7e0f54a9443f49d29e6d580dfb38c03c64c5cc48355f8b1d90bce3b9cb9c5",
+      "elementpath/regex/categories_fallback.py": "444d4d494f4e3f95b691d75a729bd328ada92daa86d8c77626c87c936fea10d1",
+      "elementpath/regex/character_classes.py": "cd2086adf444bcee669fc3d9587f52884bd7bf6a1d2ea0b44792efb7a31691e4",
+      "elementpath/regex/codepoints.py": "762dbe6ea4313989f5a61dd25c7f4eee30ff1376f5b6af4ac7139de4b6dd1c28",
+      "elementpath/regex/patterns.py": "84e7303e854d578e9c23175d562a38816b63ecba52fa6b9ac7fccd4db8cd1590",
+      "elementpath/regex/unicode_blocks.py": "dd7e69f65617d577dc876770aca804f000108ebd733068a290eea9983dfd0dde",
+      "elementpath/regex/unicode_categories.py": "f3e4e40732633d832537a6900fd0f361233ab640c5c313d51ac9a9ccb086dcc6",
+      "elementpath/regex/unicode_subsets.py": "f310bb33e3781fbcf9329f4180ddc497ac604b2adba8cbdbbadc1b16d488060c",
+      "elementpath/schema_proxy.py": "b7d5932d07af6dd6ef5d7dfae22ca4faab5a96ec2c9a9401a12f3a139ef9e750",
+      "elementpath/sequence_types.py": "e024728e7bfe300a3a01dd1e668ab4a4c2ffbc780f39169ed411462fbcba84ee",
+      "elementpath/sequences.py": "4d2df7d0417d55697abcc3733b54fe68e8b993e6f272fcd70c39276911eaf0f9",
+      "elementpath/serialization.py": "dd9638a6415b67a61721d1ea587803a16626c25a099f709fd9e10309dfe34a74",
+      "elementpath/tdop.py": "fcb57c6e247f4aef9efd42851ac31f9f21e33983674c8d42e7596b1434d6d047",
+      "elementpath/tree_builders.py": "44a054416fee09e0070941e01774557c57fd38b6c146221fe54e7eccca163e52",
+      "elementpath/validators/__init__.py": "6d69d2b3a41222445c2225af034571ac711c4d3d3143a5aebaa2a3d24008b6e5",
+      "elementpath/validators/analyze-string.xsd": "901c16ddffe588f4ab909196124bb7439998aa79bb04963817871bc58da7ece6",
+      "elementpath/validators/schema-for-json.xsd": "e79d95d56ec7fbeb7e90347d48f69927f79f8b8d1ffb2dd892f12f5cf20080b7",
+      "elementpath/xpath1/__init__.py": "7c9e1586c1279f9c261bcc280311ee2f9191f9e89159894918b900cc6e666615",
+      "elementpath/xpath1/_xpath1_axes.py": "45e379de328978eb86ed755333102de96f73b0c890eae8dc21482121781f502d",
+      "elementpath/xpath1/_xpath1_functions.py": "19ce1a35e38a87952855747aaaa773aa12caeac09aa00f468c4e4e4fdb3d4356",
+      "elementpath/xpath1/_xpath1_operators.py": "7b5e09bd937eab817d83dbf4615d3b01cf706ef071d5e47c56684bab8f2b679b",
+      "elementpath/xpath1/xpath1_parser.py": "60cdd792caf98dda30996a05d00a2c4c0fa11ba82a0f89fbd2dea44a40b52408",
+      "elementpath/xpath2/__init__.py": "75c256138cb868d190cf5bcca8adb15baf8d89740cd100b28e3a520bf880a631",
+      "elementpath/xpath2/_xpath2_constructors.py": "3bc9c7b7c432f6eab0715073db0c90a1138d1a777a84c056f8c27c37fecb89b8",
+      "elementpath/xpath2/_xpath2_functions.py": "bd334c404c730adb27c8b29e86b61d9c1bb60bb4d8cc11a228397e816f3a4ad8",
+      "elementpath/xpath2/_xpath2_operators.py": "f5718800bc73619556b2da60a60c23f247e861355e83b890873a9ae4c94227f3",
+      "elementpath/xpath2/xpath2_parser.py": "a5f64e6358e3a270a812a45354c392aef28527ebd185bd130debc20b07a25c67",
+      "elementpath/xpath3.py": "8e81f01f42c27088c3f256144c34612e54c62fe92f80ce42af79179e156d5357",
+      "elementpath/xpath30/__init__.py": "4e6d86d7cf4716edcacc2769c72221fa2d7b7d716aca5b1808da5e9a77558824",
+      "elementpath/xpath30/_translation_maps.py": "1d15da3df48e7d5929fd5bdb9f44f254059292c718ea36c135374611de0d81ec",
+      "elementpath/xpath30/_xpath30_functions.py": "89f9bf212fea5860afd3eef75bfecba26f9001d3a9e1604b7860d8ca56ed88b2",
+      "elementpath/xpath30/_xpath30_operators.py": "99594f2d42a9cde01354cf5bb3de0c9db21cfd63b43f36148ac052243e8c477d",
+      "elementpath/xpath30/xpath30_helpers.py": "46d3c5a45928a2e4453088fdc83032c87a29399735371ae2918810e0579a507b",
+      "elementpath/xpath30/xpath30_parser.py": "2d9cb8211e166f894f08c4b2177e3868e1c2142c8f5d5fb0a857d5a9ebf6d4d7",
+      "elementpath/xpath31/__init__.py": "e6257998a2db93327c06d34e65b660e4afbd42a5283dc719a70c6df91ec3dd77",
+      "elementpath/xpath31/_xpath31_functions.py": "1e4bfcb8cb7ccb211315ee9573b06eaa5a3de2c097fec448c5306280299cebd2",
+      "elementpath/xpath31/_xpath31_operators.py": "2e4da91f9941644466193afda8ec5823cf71036fc58d26e70119560ccd8b88ee",
+      "elementpath/xpath31/xpath31_parser.py": "aab6b079fb3fd47de8b1daf29aa38d8283dfc8a26eb0d76495f71089fa4dbc36",
+      "elementpath/xpath_context.py": "838ba17a86ffa49d6b58f5c6c9e89e47b558eb0f3126a95fe8960e169beb3ca0",
+      "elementpath/xpath_nodes.py": "cc77bb0a00ed8d5884593ccd84a7630c0bc4176e6b462dff47f8aac5d6d63c48",
+      "elementpath/xpath_selectors.py": "84d410a6eb6920749dae0eb7fb0ea73d589b033b2a8c8ea7f860df8623dbafeb",
+      "elementpath/xpath_tokens/__init__.py": "076a36ac5e9c7819023cf6a76a45b3a5c4051c9855404ab26721d044aed4a672",
+      "elementpath/xpath_tokens/arrays.py": "7ba49432c4140cbebecb5a1646c23c68ab810f5fdf65639243891d892d59aab3",
+      "elementpath/xpath_tokens/axes.py": "16a7b935faaaf8c233d8e7f862d11480dca8bd095b634507443145b0a6deedd7",
+      "elementpath/xpath_tokens/base.py": "a3c919f3fd17d07f01d24bdfa8b24ddffa4ef485acabaf9dd86b62813a02a056",
+      "elementpath/xpath_tokens/contructors.py": "934b33719026b997f28c04f677870efc201141893728457631132f0bcbf6a885",
+      "elementpath/xpath_tokens/functions.py": "3a17a69089a6d09b0b620607742d7938fe4cc40f196410471c069e8277ccf7ea",
+      "elementpath/xpath_tokens/maps.py": "d8aa44a9244feae9fbe30c1a99ace12d0595b52358f8d7c8d016426c1ba8fdd7",
+      "elementpath/xpath_tokens/tokens.py": "c4a34f222ad6f14b1e9a0ac251b721329ef477a0d21506560816ee07ef071f98"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "3c818478a9d226764a5b70aae89a1d8a80705417793dfe70380437c7ee8eb09c",
+     "native": {},
+     "pth": {},
+     "sha256": "5ec8d7bb44b16c98414a6a95e20cb150f3cbfc3cac65edc14773288c7a937376"
+    }
+   },
+   "name": "elementpath",
+   "provenance": {
+    "elementpath-5.1.4-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Davide Brunato <brunato@sissa.it>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/sissaschool/elementpath"
+    },
+    "summary": "XPath 1.0/2.0/3.0/3.1 parsers and selectors for ElementTree and lxml"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|elementpath/regex/unicode_subsets.py|f310bb33e3781fbc",
+     "yara|capability_filesystem_read|elementpath/xpath30/_xpath30_functions.py|89f9bf212fea5860",
+     "yara|capability_filesystem_read|elementpath/xpath31/_xpath31_functions.py|1e4bfcb8cb7ccb21",
+     "yara|capability_network_outbound|elementpath/extras/pathnodes.py|608d4057929cd3fc",
+     "yara|capability_network_outbound|elementpath/xpath30/_xpath30_functions.py|89f9bf212fea5860"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read elementpath/regex/unicode_subsets.py",
+     "capability_filesystem_read:capability_filesystem_read elementpath/xpath30/_xpath30_functions.py",
+     "capability_filesystem_read:capability_filesystem_read elementpath/xpath31/_xpath31_functions.py",
+     "capability_network_outbound:capability_network_outbound elementpath/extras/pathnodes.py",
+     "capability_network_outbound:capability_network_outbound elementpath/xpath30/_xpath30_functions.py"
+    ]
+   },
+   "version": "5.1.4"
+  }
+ }
+}

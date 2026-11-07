@@ -1,5 +1,7 @@
 """Edit > Settings… > Logging: what axross writes to its log, and how much.
 
+* **Logging on** - off writes nothing at all (file, terminal, Log dock)
+  from the moment it is applied; --debug / --verbose keep their run logging.
 * **Overall level** - DEBUG, INFO (the default), WARNING or ERROR.
 * **Areas** - a level per area (core.log_areas): *Inherit* (the parent
   area's level, at the top the overall level), a level, or *Off*. A tree:
@@ -48,8 +50,8 @@ from ui.column_fit import ColumnFitter
 log = logging.getLogger(__name__)
 
 TITLE = "Logging"
-KEYWORDS = ("logging", "log", "log file", "debug", "verbose", "level", "areas", "terminal",
-            "stderr", "rotation", "repeated", "third-party", "paramiko")
+KEYWORDS = ("logging", "log", "off", "disable", "log file", "debug", "verbose", "level",
+            "areas", "terminal", "stderr", "rotation", "repeated", "third-party", "paramiko")
 CHOICE_LABELS = {"inherit": "Inherit", "DEBUG": "DEBUG", "INFO": "INFO", "WARNING": "WARNING",
                  "ERROR": "ERROR", "off": "Off"}
 
@@ -78,6 +80,12 @@ class LoggingPage(QWidget):
         self.floor_note = _note("")
         self.floor_note.hide()
         layout.addWidget(self.floor_note)
+
+        self.enabled_check = QCheckBox(tr("Logging on"))
+        self.enabled_check.setToolTip(tr(
+            "Off writes nothing at all - log file, terminal, Log dock - until it is "
+            "switched on again. Applied at once."))
+        layout.addWidget(self.enabled_check)
 
         form = QFormLayout()
         self.level_combo = QComboBox()
@@ -169,6 +177,7 @@ class LoggingPage(QWidget):
     # -- values ----------------------------------------------------------------
 
     def _show(self, settings: LC.LogSettings) -> None:
+        self.enabled_check.setChecked(settings.enabled)
         self.level_combo.setCurrentIndex(self.level_combo.findData(settings.level))
         for area_id, combo in self.area_combos.items():
             combo.setCurrentIndex(combo.findData(settings.area_choice(area_id)))
@@ -193,6 +202,7 @@ class LoggingPage(QWidget):
 
     def values(self) -> LC.LogSettings:
         out = LC.LogSettings()
+        out.set("enabled", self.enabled_check.isChecked())
         out.set("level", self.level_combo.currentData())
         for area_id, combo in self.area_combos.items():
             out.set_area(area_id, combo.currentData())

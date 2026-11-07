@@ -433,7 +433,33 @@ def dns_reverse(ip: str, *, resolver: str | None = None, timeout: float = 3.0) -
 # ---------------------------------------------------------------------------
 
 
-def _streaming_gunzip_partial(data: bytes) -> bytes:
+def _decode_bounded(raw: bytes, encoding: str, limit: int) -> bytes:
+    """*raw* decoded by its Content-Encoding, at most *limit* bytes of
+    output: zeros compress about 1000:1, so 8 MiB on the wire would be
+    8 GiB decoded at once. An unknown encoding, or one the decoder cannot
+    bound, stays as it came."""
+    import zlib
+
+    if encoding == "gzip":
+        return _streaming_gunzip_partial(raw, limit)
+    if encoding == "deflate":
+        for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):  # zlib-wrapped, else raw deflate
+            try:
+                return zlib.decompressobj(wbits).decompress(raw, limit)
+            except zlib.error:
+                continue
+        return raw
+    if encoding == "br":
+        try:
+            import brotli  # type: ignore
+
+            return brotli.Decompressor().process(raw, output_buffer_limit=limit)
+        except Exception:  # noqa: BLE001 - no brotli, or one without a limit
+            return raw
+    return raw
+
+
+def _streaming_gunzip_partial(data: bytes, limit: int = 0) -> bytes:
     """Decompress as much of a gzip stream as possible without
     requiring an EOF marker. Used by :func:`http_probe` when
     ``raw_cap`` clipped the wire bytes mid-stream — the gzip-bomb
@@ -445,6 +471,8 @@ def _streaming_gunzip_partial(data: bytes) -> bytes:
     # tells zlib to expect that header.
     decomp = zlib.decompressobj(31)
     try:
+        if limit:
+            return decomp.decompress(data, limit)
         return decomp.decompress(data) + decomp.flush()
     except zlib.error:
         return b""
@@ -523,35 +551,7 @@ def http_probe(
     raw_truncated = len(raw_compressed) > raw_cap
     raw_compressed = raw_compressed[:raw_cap]
     encoding = resp.headers.get("Content-Encoding", "").lower()
-    if encoding == "gzip":
-        import gzip
-
-        try:
-            decoded = gzip.decompress(raw_compressed)
-        except (OSError, EOFError):
-            # Truncated by raw_cap → no clean EOF marker. Return what
-            # decompresses incrementally rather than raising; we
-            # still flag truncation below.
-            decoded = _streaming_gunzip_partial(raw_compressed)
-    elif encoding == "deflate":
-        import zlib
-
-        try:
-            decoded = zlib.decompress(raw_compressed)
-        except zlib.error:
-            try:
-                decoded = zlib.decompress(raw_compressed, -zlib.MAX_WBITS)
-            except zlib.error:
-                decoded = raw_compressed
-    elif encoding == "br":
-        try:
-            import brotli  # type: ignore
-
-            decoded = brotli.decompress(raw_compressed)
-        except Exception:  # noqa: BLE001
-            decoded = raw_compressed
-    else:
-        decoded = raw_compressed
+    decoded = _decode_bounded(raw_compressed, encoding, body_cap + 1)
     truncated = len(decoded) > body_cap or raw_truncated
     body_bytes = bytes(decoded[:body_cap])
     chain = [r.url for r in resp.history] + [resp.url]
@@ -615,7 +615,7 @@ def _host_name(entry: str) -> str | None:
     if len(entry) > 253 or entry.endswith("."):
         return None
     labels = entry.split(".")
-    if not all(_HOST_LABEL.match(label) for label in labels):
+    if not all(_HOST_LABEL.fullmatch(label) for label in labels):
         return None
     # All-numeric dotted names are addresses, and a bad one ("999.1.1.1")
     # must not slip through as a host name.
@@ -639,8 +639,8 @@ def _entry_hosts(entry: str, budget: int) -> list[str] | int:
         if count > budget:
             return count
         return [str(ip) for ip in (net if net.num_addresses <= 2 else net.hosts())]
-    if _IPV4_RANGE.match(entry):
-        short = _SHORT_RANGE.match(entry)
+    if _IPV4_RANGE.fullmatch(entry):
+        short = _SHORT_RANGE.fullmatch(entry)
         first_text, last_text = (
             (short.group(1), short.group(1).rsplit(".", 1)[0] + "." + short.group(2))
             if short else entry.split("-", 1)
@@ -1122,7 +1122,13 @@ def _time_skew_http(
         if not date_hdr:
             last_exc = OSError(f"{url} returned no Date: header")
             continue
-        remote = parsedate_to_datetime(date_hdr).timestamp()
+        try:
+            remote = parsedate_to_datetime(date_hdr).timestamp()
+        except (TypeError, ValueError, OverflowError, OSError) as exc:
+            # A garbled or impossible date ("4294967296:00:00") is the
+            # server's answer, not a bug: OSError, as documented.
+            last_exc = OSError(f"{url} sent an unreadable Date: header {date_hdr!r}: {exc}")
+            continue
         # The Date header was generated at approximately
         # start_wall + rtt/2 in our clock — half the RTT is the
         # one-way travel time on each leg.

@@ -206,11 +206,14 @@ FEATURES: tuple[Feature, ...] = (
     _f(
         "Connections & backends",
         "backend-nfs-iscsi",
-        "NFS / iSCSI (mount wrappers)",
-        ["core/nfs_client.py", "core/iscsi_client.py", "core/private_mount_dir.py"],
+        "NFS / iSCSI (mount wrappers; NFSv3 client of its own for chosen sender information)",
+        ["core/nfs_client.py", "core/iscsi_client.py", "core/private_mount_dir.py",
+         "core/nfs3_rpc.py", "core/nfs4_rpc.py", "core/nfs_user_client.py"],
         [
             ("tests/test_protocols.py::TestNfs::test_nfs_write_read_cycle", "lab"),
             ("tests/test_protocols.py::TestIscsi::test_iscsi_write_read_cycle", "lab"),
+            ("tests/test_nfs_user_client.py::test_happy_every_call_carries_the_profile_s_sender_information",
+             "fake-server"),
         ],
     ),
     _f(
@@ -253,6 +256,34 @@ FEATURES: tuple[Feature, ...] = (
                 "fake-server",
             ),
             ("tests/test_protocols.py::TestImap::test_imap_write_read_cycle", "lab"),
+        ],
+    ),
+    _f(
+        "System",
+        "arcade",
+        "Arcade: Byte Chase, Tilt Maze, Rockfall, Trail Runner",
+        ["core/arcade/__init__.py", "core/arcade/chase.py", "core/arcade/rockfall.py", "core/arcade/trails.py",
+         "core/arcade/sound.py", "core/arcade/tilt.py", "core/arcade/tilt_levels.py",
+         "core/arcade/rockfall_campaign.py", "core/arcade/trails_arena.py", "ui/arcade_window.py",
+         "ui/arcade_audio.py", "ui/arcade_tilt_view.py", "ui/arcade_rockfall_view.py", "ui/arcade_trails_view.py",
+         "ui/arcade_chase_view.py", "ui/arcade_common.py", "ui/arcade_picker.py",
+         "resources/extensions/arcade.py"],
+        [("tests/test_arcade_window.py::test_happy_every_game_starts_ticks_paints_and_steers", "ui")],
+    ),
+    _f(
+        "Communication",
+        "mail-analysis",
+        "Mail: analysis, projects, mail docks (agents per mailbox), SMTP and drafts",
+        ["core/cfb.py", "core/mail_message.py", "core/mail_analyse.py", "core/mail_project.py",
+         "core/mail_dns.py", "core/mail_html.py", "core/pst.py",
+         "core/mail_send.py", "core/mail_dock.py", "core/mail_dock_runner.py", "ui/mail_docks.py",
+         "ui/mail_project.py"],
+        [
+            ("tests/test_mail_dock.py::test_happy_a_run_reads_new_mail_and_saves_a_reply_draft",
+             "fake-server"),
+            ("tests/test_mail_send.py::test_happy_a_message_goes_out_with_bcc_only_in_the_envelope",
+             "fake-server"),
+            ("tests/test_mail_docks_ui.py::test_happy_a_waiting_mail_is_sent_only_after_the_click", "ui"),
         ],
     ),
     _f(
@@ -385,6 +416,7 @@ FEATURES: tuple[Feature, ...] = (
             "ui/column_fit.py",
             "ui/column_prefs.py",
             "ui/pane_drag.py",
+            "ui/drag_autoscroll.py",
             "core/pane_activation.py",
             "ui/disconnected_pane.py",
         ],
@@ -403,6 +435,7 @@ FEATURES: tuple[Feature, ...] = (
         [
             "ui/layout_presets.py",
             "ui/workspaces.py",
+            "ui/dock_bindings.py",
             "ui/window_prefs.py",
             "ui/window_move.py",
             "ui/dock_titlebar.py",
@@ -445,6 +478,7 @@ FEATURES: tuple[Feature, ...] = (
             "core/transfer_worker.py",
             "core/transfer_pool.py",
             "core/transfer_conflicts.py",
+            "core/move_permissions.py",
             "core/adaptive_io.py",
             "core/read_spool.py",
             "core/server_ops.py",
@@ -583,7 +617,7 @@ FEATURES: tuple[Feature, ...] = (
         "Transfers & file operations",
         "duplicates",
         "Duplicate Finder (CAS)",
-        ["core/cas.py", "ui/cas_dialog.py", "ui/cas_history_dialog.py"],
+        ["core/cas.py", "core/cas_folders.py", "ui/cas_dialog.py", "ui/cas_history_dialog.py"],
         [
             (
                 "tests/test_cas_finder_e2e.py::EndToEndTest::test_happy_hotkey_rebuild_mark_all_trash_restore",
@@ -795,6 +829,7 @@ FEATURES: tuple[Feature, ...] = (
             "ui/text_editor.py",
             "ui/code_editor.py",
             "ui/editor_window.py",
+            "ui/off_gui.py",
             "core/text_document.py",
             "core/open_limits.py",
             "ui/viewer_file_actions.py",
@@ -851,6 +886,7 @@ FEATURES: tuple[Feature, ...] = (
         "Media Player extension",
         [
             "resources/extensions/media_player.py",
+            "ui/media_player_app.py",
             "core/multimedia_env.py",
             "core/multimedia_probe.py",
         ],
@@ -1094,6 +1130,7 @@ FEATURES: tuple[Feature, ...] = (
         [
             "ui/analysis_dock.py",
             "core/analysis_worker.py",
+            "core/analysis_sandbox.py",
             "core/file_analysis.py",
             "core/analysis_settings.py",
             "ui/analysis_settings_page.py",
@@ -1120,10 +1157,14 @@ FEATURES: tuple[Feature, ...] = (
             "core/voice_worker.py",
             "core/audio_route.py",
             "core/audio_settings.py",
+            "core/audio_eq.py",
+            "core/system_mixer.py",
             "ui/voice.py",
             "ui/voice_lens.py",
             "ui/voice_settings_page.py",
             "ui/audio_settings_page.py",
+            "ui/system_mixer_page.py",
+            "resources/extensions/audio_mixer.py",
         ],
         [
             (
@@ -1136,12 +1177,32 @@ FEATURES: tuple[Feature, ...] = (
             ),
         ],
     ),
+    # ------------------------------------------------------------------ chat
+    _f(
+        "Communication",
+        "chat",
+        "Chat panels: IRC (TLS, SASL, channels), Matrix and XMPP (end-to-end encrypted, device verification)",
+        ["core/chat.py", "core/chat_irc.py", "core/chat_matrix.py", "core/chat_xmpp.py", "ui/chat_panel.py",
+         "ui/chat_security.py", "resources/extensions/irc.py", "resources/extensions/matrix.py",
+         "resources/extensions/xmpp.py", "core/chat_servers.py", "ui/chat_server_box.py",
+         "ui/chat_rooms.py"],
+        [
+            ("tests/test_chat_irc.py::test_happy_the_panel_shows_messages_escaped_and_completes_nicks", "ui"),
+            ("tests/test_chat_matrix.py::test_happy_verification_with_matching_emoji", "ui"),
+            ("tests/test_chat_xmpp.py::test_happy_login_contacts_and_an_omemo_chat", "ui"),
+        ],
+    ),
     # ------------------------------------------------------------------ system
     _f(
         "System",
         "bluetooth",
-        "Bluetooth panel: scan, pair, connect, audio output",
-        ["core/bluetooth.py", "resources/extensions/bluetooth.py"],
+        "Bluetooth panel: scan, identify, pair, connect, audio output, presence log, streams",
+        ["core/bluetooth.py", "core/bluetooth_link.py", "core/bluetooth_adv.py",
+         "core/bluetooth_companies.py", "core/bluetooth_direct.py", "core/bluetooth_presence.py",
+         "core/bluetooth_stream.py",
+         "core/bluetooth_vendor.py", "resources/extensions/bluetooth.py",
+         "ui/bluetooth_add.py", "ui/bluetooth_details.py", "ui/bluetooth_map.py",
+         "ui/bluetooth_presence.py", "ui/bluetooth_streams.py"],
         [
             (
                 "tests/test_bluetooth_panel.py::test_happy_scan_pair_connect_and_use_as_output_e2e",
@@ -1165,10 +1226,18 @@ FEATURES: tuple[Feature, ...] = (
             "resources/extensions/image_batch.py",
             "resources/extensions/markdown_preview.py",
             "resources/extensions/virtualbox.py",
+            "resources/extensions/system_info.py",
+            "core/system_info.py",
+            "ui/system_info_window.py",
+            "ui/system_info_app.py",
         ],
         [
             (
                 "tests/test_extension_host.py::test_e2e_a_single_folder_action_shows_for_one_selected_folder_only",
+                "ui",
+            ),
+            (
+                "tests/test_system_info_window.py::test_e2e_tools_menu_switches_the_extension_on_and_opens_the_window",
                 "ui",
             ),
             (
@@ -1183,6 +1252,13 @@ FEATURES: tuple[Feature, ...] = (
         "Self-update",
         ["core/self_update.py", "ui/update_ui.py", "core/frozen_archive.py"],
         [("tests/test_self_update_ui.py::test_happy_e2e_notice_download_install_restart", "ui")],
+    ),
+    _f(
+        "System",
+        "packs",
+        "Packs: units an axross-base adds from its release",
+        ["core/packs.py", "core/units.py", "ui/packs_dialog.py"],
+        [("tests/test_packs.py::test_happy_the_packs_dialog_lists_adds_and_removes", "ui")],
     ),
     _f(
         "System",
@@ -1291,6 +1367,8 @@ INFRASTRUCTURE: dict[str, str] = {
     "core/answer_fields.py": "typed reads of server JSON, used by the cloud backends",
     "core/append_helpers.py": "read-modify-write append shared by backends",
     "core/desktop_open.py": "hands files and links to the desktop",
+    "ui/about_dialog.py": "Help > About, a dialog that fits the screen",
+    "ui/screen_fit.py": "fits windows and dialogs to the screen they open on",
     "core/posix_compat.py": "POSIX-only os calls made safe on other platforms",
     "core/process_launcher.py": "starts long-lived children from a long-lived thread",
     "core/qt_exit.py": "deletes Python-owned Qt objects before PyQt's exit clean-up",
@@ -1299,9 +1377,20 @@ INFRASTRUCTURE: dict[str, str] = {
     "core/subprocess_env.py": "the environment handed to child processes",
     "core/thread_lifetime.py": "lets a worker thread outlive its starter",
     "ui/thread_lifetime.py": "lets a worker QThread outlive its starter",
+    "core/thread_relay.py": "worker-thread calls into the GUI thread, safe from a deleted receiver",
     "ui/close_corner.py": "the close corner every dialog gets",
+    "ui/title_bar.py": "axross's own title bar of every window (frameless), or the window manager's",
+    "ui/state_files.py": "the window's state files, read bounded and written privately",
+    "core/json_store.py": "a JSON store read before it is written back: broken files set aside",
+    "ui/standalone_app.py": "what a tool needs to run as a program of its own",
+    "core/conn_security.py": "how a connection is protected (cleartext, TLS, encrypted, end-to-end)",
+    "ui/security_badge.py": "the icon showing how a connection is protected, wherever it is named",
+    "ui/window_dock_bar.py": "the bar the close corner's _ button docks windows into",
     "ui/format_utils.py": "size and date formatting",
     "ui/layout_utils.py": "splitter helpers",
+    "ui/markup_guard.py": "no label, tooltip, message box or text view makes Qt read a file",
+    "ui/plain_text.py": "outside text shown as text in tooltips, labels and message boxes",
+    "ui/qt_translations.py": "Qt's own standard buttons in the interface language",
 }
 
 #: Where the measured modules live (the ``--cov`` roots of cov_scope.sh).

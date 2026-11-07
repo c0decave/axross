@@ -291,6 +291,17 @@ def _confined(env: GroupEnv, backend, path: str) -> str | None:
         return None
 
 
+def _removable(path: str, backend, env: GroupEnv, *, entry: bool = True) -> bool:
+    """Whether a tool walking a folder may change *path* in it: confined for
+    writing (*entry*: removed or moved as an entry) - a read-only extra
+    folder below the folder the call names stays untouched."""
+    try:
+        (env.entry_path if entry else env.write_path)(path, backend)
+    except (PermissionError, ValueError):
+        return False
+    return True
+
+
 def _split_name(name: str) -> tuple[str, str]:
     """``report.json`` -> (``report``, ``.json``); a dot file has no suffix."""
     stem, ext = posixpath.splitext(name)
@@ -457,6 +468,9 @@ def _build_metadata(env: GroupEnv) -> list:
                 targets, truncated = _metadata_targets(
                     env, backend, path, recursive, max_files, cancel
                 )
+                # The cleaned copy is written next to each file: none in a
+                # read-only folder below *path*.
+                targets = [t for t in targets if _removable(t, backend, env, entry=False)]
             else:
                 if not backend.exists(path):
                     raise FileNotFoundError(f"no such file: {path}")
@@ -882,6 +896,10 @@ def _build_duplicates(env: GroupEnv) -> list:
             backend = env.resolve_backend(args)
             folder, bid, groups = _groups(args, backend)
             env.write_path(folder, backend)
+            # A copy in a read-only folder inside *folder* is neither moved
+            # to the trash nor counted on to stay.
+            groups = [g for g in ([e for e in group if _removable(e.path, backend, env)]
+                                  for group in groups) if len(g) > 1]
             trash_root = None
             if backend is env.default_backend and env.root:
                 trash_root = env.write_path(os.path.join(env.root, ".axross-trash"), backend)

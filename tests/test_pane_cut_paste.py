@@ -466,14 +466,23 @@ def win(tmp_path):
 
 
 def settle(window) -> None:
+    """Wait until the paste is through: its destination check, its walk
+    (a worker thread; no job exists until it is done), every job, and the
+    manager's own end of them. A worker marks its job DONE before the GUI
+    thread hears of it, and the emptied source folders of a move are removed
+    only then (TransferManager._on_job_finished); waiting for the job status
+    alone missed that on a busy host ("sub" still there)."""
     from core.transfer_worker import TransferStatus
 
     def idle() -> bool:
         if getattr(window, "_conflict_checks", None):
             return False
+        manager = window._transfer_manager
+        if manager._walks or manager._active_count or manager._queued_count:
+            return False
         return all(
             j.status not in (TransferStatus.PENDING, TransferStatus.ACTIVE)
-            for j in window._transfer_manager._jobs.values()
+            for j in manager._jobs.values()
         )
 
     assert wait_for(idle)

@@ -1041,6 +1041,26 @@ class FtpSession(SessionLifecycle):
         proto = "FTPS" if self._tls else "FTP"
         return f"{self._username}@{self._host} ({proto})"
 
+    def security_info(self):
+        """The negotiated protection of the control connection (TLS version,
+        cipher, whether the certificate was checked) and whether the data
+        channel is protected too (PROT P); None when not connected."""
+        from core import conn_security as CS
+
+        ftp = self._ftp
+        sock = getattr(ftp, "sock", None) if ftp is not None else None
+        if sock is None:
+            return None
+        if not self._tls:
+            return CS.SecurityInfo(CS.LEVEL_CLEARTEXT, "FTP - cleartext - anyone on the network can "
+                                   "read it, the password too", True)
+        data = "data channel protected (PROT P)" if getattr(ftp, "_prot_p", False) \
+            else "data channel NOT protected"
+        info = CS.tls_socket(sock, verified=self._verify_tls, what="FTPS", extra=(data,))
+        if info is not None and not getattr(ftp, "_prot_p", False):
+            return CS.SecurityInfo(CS.LEVEL_TLS_WEAK, info.summary + "; " + data, True, info.details)
+        return info
+
     def _ensure_connected(self) -> FTP:
         if self._ftp is not None and self._recently_verified():
             return self._ftp

@@ -153,6 +153,11 @@ class VoiceWorker:
         # The frozen child reuses this process's extraction folder and its
         # libraries: the loader variables stay (core.subprocess_env.worker_env).
         env = worker_env()
+        # onnxruntime (Piper's voices) carries Microsoft's telemetry client,
+        # on by default: usage events, a device id and model names to
+        # mobile.events.data.microsoft.com (found by the supply-chain review,
+        # security/supply_chain_baseline/onnxruntime.json). Off, always.
+        env["ORT_DISABLE_TELEMETRY"] = "1"
         root = _package_root()
         env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         proc = subprocess.Popen(
@@ -400,6 +405,7 @@ class _Child:
         if key not in self._voices:
             from piper import PiperVoice
 
+            disable_onnx_telemetry()   # piper imported onnxruntime: its own switch too
             self._voices = {key: PiperVoice.load(model, config_path=config)}  # one voice kept
         return self._voices[key]
 
@@ -453,7 +459,7 @@ class _Child:
     def handle(self, line: bytes) -> None:
         try:
             req = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             self._send({"id": None, "ok": False, "error": "the request is no JSON"})
             return
         if not isinstance(req, dict):
@@ -474,10 +480,24 @@ class _Child:
             self._send({"id": rid, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
+def disable_onnx_telemetry() -> None:
+    """onnxruntime's telemetry off in this process, as far as it offers a
+    switch (the environment variable is set before it is imported)."""
+    os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+    module = sys.modules.get("onnxruntime")
+    off = getattr(module, "disable_telemetry_events", None) if module is not None else None
+    if off is not None:
+        try:
+            off()
+        except Exception:  # noqa: BLE001 - the variable already keeps it off
+            pass
+
+
 def _child_main() -> int:
     import logging
 
     logging.disable(logging.CRITICAL)  # nothing about what is said or heard is logged
+    disable_onnx_telemetry()
     child = _Child()
     for line in sys.stdin.buffer:
         if line.strip():

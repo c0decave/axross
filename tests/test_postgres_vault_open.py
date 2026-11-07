@@ -77,7 +77,7 @@ def connect(monkeypatch):
             return made[-1]
 
         monkeypatch.setattr(P.psycopg, "connect", fake_connect)
-        return P.PostgresFsSession(url="postgres://reader:pw@db.lab:5432/vault"), made
+        return P.PostgresFsSession(url="postgres://reader:pw@db.example.invalid:5432/vault"), made
 
     run.made = made
     return run

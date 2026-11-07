@@ -56,7 +56,10 @@ class _ZeroSize(LocalFS):
 def _app():
     from PyQt6.QtCore import QCoreApplication
 
-    yield QCoreApplication.instance() or QCoreApplication([])
+    from PyQt6.QtWidgets import QApplication
+
+    # QApplication: later widget tests of the same worker need one
+    yield QCoreApplication.instance() or QApplication([])
 
 
 def _move(tmp_path, source_backend, dest_backend=None, *, size=SIZE):

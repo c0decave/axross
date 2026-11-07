@@ -1,0 +1,96 @@
+{
+ "name": "propcache",
+ "versions": {
+  "0.5.4": {
+   "accepted_findings": [],
+   "archives": {
+    "propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "propcache-0.5.4.dist-info/METADATA": "6ed3bac0ad43050ceaf8bd09878ba3d673c94c4da0d4498f903f86c36cc6fb57",
+      "propcache-0.5.4.dist-info/RECORD": "cae001fd1bbe2132ebf09e627afae74316a8f82e06b493e27c55f44c3fe437bf",
+      "propcache-0.5.4.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "propcache-0.5.4.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "propcache-0.5.4.dist-info/licenses/NOTICE": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838",
+      "propcache-0.5.4.dist-info/top_level.txt": "a5517f19ba920084cf3225f6ee47d4dd03fdfae7e146f9000e6b9d0f159d177c",
+      "propcache/__init__.py": "c7fc9c8f9cfa822b3622c1f1c796641373dbe39b63da68f9f62e3486f15f198e",
+      "propcache/_helpers.py": "ebc4909ba9044cdf0c9edf4e976e8b25880782607498acb5b69f76f3cf333789",
+      "propcache/_helpers_c.cpython-312-x86_64-linux-gnu.so": "1b7513ea693a5e70b5f70f33242553ea3d1c0b33dbfcbd0dd4e3e4d46c57d1e4",
+      "propcache/_helpers_c.pyx": "7f76385add56f95c527456d013f6394f04db06328ce963b4d7c09d07ddb8d864",
+      "propcache/_helpers_py.py": "1b6f699775c9f13d0baa5790c5831387d4b0237fd4746eebf4a19c4306e2d297",
+      "propcache/api.py": "c2f801fb2a64908e6e7fbd9555897634519cfd39f35100360b10bb75394be5a9",
+      "propcache/py.typed": "6b2e4e30ee3be4f95c67f15bba7f666875bb63a3014e4d145cbe33b47c7722e8"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ee7d4cbe45df4cc4271724f6bb655a06d9a05ab95388621ecd1d78ce1fd8f25f",
+     "native": {
+      "propcache/_helpers_c.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "2814ecd8e818f487bee4b0f921bc4d1c176cc5fc71ac0f072d0fa67eda4ac14b"
+    }
+   },
+   "name": "propcache",
+   "provenance": {
+    "propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/propcache",
+     "workflow": "ci-cd.yml"
+    }
+   },
+   "pypi": {
+    "author": "Andrew Svetlov",
+    "author_email": "andrew.svetlov@gmail.com",
+    "home_page": "https://github.com/aio-libs/propcache",
+    "license": "Apache-2.0",
+    "maintainer": "aiohttp team <team@aiohttp.org>",
+    "maintainer_email": "team@aiohttp.org",
+    "project_urls": {
+     "CI: GitHub Workflows": "https://github.com/aio-libs/propcache/actions?query=branch:master",
+     "Chat: Matrix": "https://matrix.to/#/#aio-libs:matrix.org",
+     "Chat: Matrix Space": "https://matrix.to/#/#aio-libs-space:matrix.org",
+     "Code of Conduct": "https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+     "Coverage: codecov": "https://codecov.io/github/aio-libs/propcache",
+     "Docs: Changelog": "https://propcache.readthedocs.io/en/latest/changes/",
+     "Docs: RTD": "https://propcache.readthedocs.io",
+     "GitHub: issues": "https://github.com/aio-libs/propcache/issues",
+     "GitHub: repo": "https://github.com/aio-libs/propcache",
+     "Homepage": "https://github.com/aio-libs/propcache"
+    },
+    "summary": "Accelerated property cache"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (aio-libs/propcache)."
+   },
+   "scans": {
+    "capa": {
+     "1b7513ea693a5e70b5f70f33242553ea3d1c0b33dbfcbd0dd4e3e4d46c57d1e4": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "propcache/_helpers_c.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.5.4"
+  }
+ }
+}

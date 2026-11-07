@@ -199,6 +199,9 @@ def _env(home: Path) -> dict:
         XDG_CONFIG_HOME=str(home / ".config"),
         QT_QPA_PLATFORM="offscreen",
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        # The standalone tools run a check script only with this set
+        # (ui.standalone_app.BUNDLE_CHECK_ENV); axross ignores it.
+        AXROSS_BUNDLE_SMOKE="1",
     )
     return env
 

@@ -178,6 +178,10 @@ def _window():
 
     win = MainWindow()
     win._reconnect_timer.stop()
+    # The window reads this worker's real profile store, which other test
+    # modules may have filled: start from exactly the profiles below.
+    for name in list(win._profile_manager.list_names()):
+        win._profile_manager.remove(name)
     win._profile_manager.add(
         ConnectionProfile(name="alpha", protocol="sftp", host="alpha.lab", username="u")
     )
@@ -191,6 +195,8 @@ def _window():
     yield win
     for term in list(win._terminal_panes):
         win._close_terminal_pane(term)
+    for name in ("alpha", "share"):
+        win._profile_manager.remove(name)
     win.close()
     win.deleteLater()
     pump()

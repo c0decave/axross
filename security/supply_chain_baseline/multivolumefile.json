@@ -1,0 +1,61 @@
+{
+ "name": "multivolumefile",
+ "versions": {
+  "0.2.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|multivolumefile/__init__.py|dd945bff28f86a26"
+   ],
+   "archives": {
+    "multivolumefile-0.2.3-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "multivolumefile-0.2.3.dist-info/LICENSE": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "multivolumefile-0.2.3.dist-info/METADATA": "34e839bab4776d92f210cd96fb0b1d308a6e11bae080c7a9eefa98807193dbc5",
+      "multivolumefile-0.2.3.dist-info/RECORD": "e55fb3919c821431b588ef8b9b950436607e701c3a785415cbb4337b8b10b7b6",
+      "multivolumefile-0.2.3.dist-info/WHEEL": "3aa464174798e461ecb0ca2b16395b4c8ab4ef6be91e917ad1f21003a952f710",
+      "multivolumefile-0.2.3.dist-info/top_level.txt": "54382706879d1f1eba1c56faefeab01f7a7fa553cf99b61fa8330aaea365e5b3",
+      "multivolumefile/__init__.py": "dd945bff28f86a26ff95f68c36431c556b00413a329e2e59760dea78839c2c9d",
+      "multivolumefile/__init__.pyi": "7e7362caaa516369a6521b2fadba7303a1fd1f46d2fde20b74200f4a8adf15f5",
+      "multivolumefile/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "multivolumefile/stat.py": "3bd6118257342c2cb49d09c8b3e8eec7b2a51e6562b0eaff66e2695f049fc6de"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "5e16389f7f588949c2af0248fed611113b7b35a19141eb10e16da01969171814",
+     "native": {},
+     "pth": {},
+     "sha256": "237f4353b60af1703087cf7725755a1f6fcaeeea48421e1896940cd1c920d678"
+    }
+   },
+   "name": "multivolumefile",
+   "provenance": {
+    "multivolumefile-0.2.3-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Hiroshi Miura",
+    "author_email": "miurahr@linux.com",
+    "home_page": "https://github.com/miurahr/multivolume",
+    "license": "LGPL-2.1+",
+    "project_urls": {
+     "Homepage": "https://github.com/miurahr/multivolume"
+    },
+    "summary": "multi volume file wrapper library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|multivolumefile/__init__.py|dd945bff28f86a26"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read multivolumefile/__init__.py"
+    ]
+   },
+   "version": "0.2.3"
+  }
+ }
+}

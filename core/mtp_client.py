@@ -294,7 +294,7 @@ class MtpSession(LocalFS):
         # (b) render attacker-controlled text into log lines and
         # status bars. Gate on a strict allowlist — all supported
         # mounters only emit digits / colons / dots / dashes.
-        if not _DEVICE_ID_SAFE.match(device_id or ""):
+        if not _DEVICE_ID_SAFE.fullmatch(device_id or ""):
             raise ValueError(
                 f"MTP device_id must match {_DEVICE_ID_SAFE.pattern!r}; got {device_id!r}",
             )

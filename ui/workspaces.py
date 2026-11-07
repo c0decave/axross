@@ -21,6 +21,9 @@ splits, restored sessions, layout presets) lands there unchanged.
 * Extension panels are on all workspaces (the dock area) until one is
   moved to a workspace - from its title bar or Add Extension Panel - where
   it is laid out like a pane (:mod:`ui.extension_panels`).
+* Any dock of the dock area can instead be shown only on one workspace
+  (its title bar's pin, *Show Only on Workspace*): it stays a dock and
+  hides on the others (:mod:`ui.dock_bindings`).
 * The tab bar hides while there is only one workspace, so the default
   window looks as it always did.
 * All panes stay in ``MainWindow._panes`` whichever workspace holds them:
@@ -51,6 +54,7 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from ui.pane_drag import PANE_MIME_TYPE
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -237,6 +241,7 @@ class WorkspaceWindow(QMainWindow):
 
     def __init__(self, owner, workspace: Workspace) -> None:
         super().__init__(owner, Qt.WindowType.Window)
+        set_window_icon(self, "workspace")
         self._owner = owner
         self.workspace = workspace
         self.shutting_down = False
@@ -245,6 +250,9 @@ class WorkspaceWindow(QMainWindow):
         # fires in every window its action is added to.
         self.addActions(window_shortcut_actions(owner))
         self.retitle()
+        from ui.close_corner import add_title_bar
+
+        add_title_bar(self)
 
     def __getattr__(self, name: str):
         owner = self.__dict__.get("_owner")
@@ -386,6 +394,8 @@ class WorkspaceMixin:
         if hasattr(self, "_park_extension_panels"):
             self._park_extension_panels(ws.root)
             self._forget_panel_homes(ws)
+        if hasattr(self, "_forget_dock_bindings"):
+            self._forget_dock_bindings(ws)
         if ws in self._workspaces:
             self._workspaces.remove(ws)
         if ws.window is not None:
@@ -449,6 +459,10 @@ class WorkspaceMixin:
         caller) and its own source/target pair comes back."""
         if ws not in self._workspaces:
             return
+        # a tab came back or a pane moved: the tabs' security badges follow
+        from ui.security_badge import schedule_workspace_tabs
+
+        schedule_workspace_tabs(self)
         old = self._current_ws
         if old is not None and old is not ws:
             old.last_active, old.last_target = self._active_pane, self._target_pane
@@ -459,6 +473,8 @@ class WorkspaceMixin:
                 self._workspace_tabs.setCurrentWidget(ws.root)
             finally:
                 self._workspace_tabs.blockSignals(False)
+        if hasattr(self, "apply_dock_bindings"):
+            self.apply_dock_bindings()  # docks shown only on some workspace (ui.dock_bindings)
         if old is ws and self.workspace_of(self._active_pane) is ws:
             return
         files = self._widgets_of(ws)[0]
@@ -494,6 +510,8 @@ class WorkspaceMixin:
                     self._workspace_tabs.setCurrentWidget(ws.root)
                 finally:
                     self._workspace_tabs.blockSignals(False)
+            if hasattr(self, "apply_dock_bindings"):
+                self.apply_dock_bindings()
 
     def next_workspace(self, *, forward: bool = True) -> None:
         tabs = self._workspace_tabs

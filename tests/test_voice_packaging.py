@@ -17,6 +17,10 @@ sys.path.insert(0, str(ROOT))
 
 from core import features as F  # noqa: E402
 
+from tests.bundle_sources import require_bundle_sources  # noqa: E402
+
+require_bundle_sources()
+
 LOCK = (ROOT / "build" / "requirements-bundle.txt").read_text(encoding="utf-8")
 SPEC = (ROOT / "build" / "axross.spec").read_text(encoding="utf-8")
 BUNDLE = (ROOT / "scripts" / "build_bundle.sh").read_text(encoding="utf-8")
@@ -24,7 +28,7 @@ LICENSES = (ROOT / "THIRD_PARTY_LICENSES.md").read_text(encoding="utf-8")
 OFFER = ROOT / "build" / "licenses" / "voice" / "SOURCE-OFFER.txt"
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 PINS = {"piper-tts": "1.8.0", "onnxruntime": "1.31.0", "faster-whisper": "1.2.1",
-        "ctranslate2": "4.8.4"}
+        "ctranslate2": "4.8.3"}
 
 
 def _full_block() -> str:
@@ -62,7 +66,7 @@ def test_happy_the_full_spec_collects_the_voice_packages_and_their_data():
 
 
 def test_sad_slim_excludes_the_voice_packages():
-    slim = re.search(r'if FLAVOR == "slim":\n    excludes \+= \[(.*?)\n    \]', SPEC, re.S)
+    slim = re.search(r'if FLAVOR (?:== "slim"|in \("slim", "base"\)):\n    excludes \+= \[(.*?)\n    \]', SPEC, re.S)
     for module in ("piper", "faster_whisper", "ctranslate2", "onnxruntime"):
         assert f'"{module}"' in slim.group(1), module
 

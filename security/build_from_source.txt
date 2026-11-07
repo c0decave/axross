@@ -1,0 +1,3 @@
+# Packages the release build compiles from their sdist instead of using the
+# wheel (security/supply_chain_gate.py reviews the sdist too):
+pyinstaller

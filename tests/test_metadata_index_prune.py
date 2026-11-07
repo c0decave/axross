@@ -203,7 +203,7 @@ class DialogTests(_Base):
         bid = M._backend_id_for(_Pane.backend)
         self.assertNotIn(str(root / "a.txt"), self.paths(bid))
         self.assertIn(str(root / "b.txt"), self.paths(bid))
-        self.assertIn("Removed 1 that no longer exist", text)
+        self.assertIn("Removed 1 entry that no longer exists", text)
 
 
 if __name__ == "__main__":

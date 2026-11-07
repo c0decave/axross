@@ -1,0 +1,84 @@
+{
+ "name": "pyparsing",
+ "versions": {
+  "3.3.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|pyparsing/__init__.py|1044324626b725bd",
+    "yara|capability_filesystem_read|pyparsing/core.py|e84663e68207f710",
+    "yara|capability_filesystem_read|pyparsing/tools/cvt_pyparsing_pep8_names.py|1fc0281dd62ceeb5",
+    "yara|capability_process_spawn|pyparsing/results.py|944655c903d659aa"
+   ],
+   "archives": {
+    "pyparsing-3.3.3-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pyparsing-3.3.3.dist-info/METADATA": "f2ca34052d720622d300023472ef8ae94fe5b57d69acbb28a8667f6dd0e13497",
+      "pyparsing-3.3.3.dist-info/RECORD": "81e8e348785106d8cfae6d5ce3b1f76f0fb17d2f7842a1e868a6f28482bc194c",
+      "pyparsing-3.3.3.dist-info/WHEEL": "96a37c8d7b7f425a05386731f644adbd66ebca17c45e8236176cfe614466df9d",
+      "pyparsing-3.3.3.dist-info/licenses/LICENSE": "a5425f9dc14ac74d4c5f0b679e941f2442e32cca7452a4418d5b1a49893ebe4e",
+      "pyparsing/__init__.py": "1044324626b725bd5b0a58ef95f1477e99720a7665dca42ba93d142d9be458f0",
+      "pyparsing/actions.py": "a435badd59168794ea47a00a38cc830a86c8d0917e42e05ce39008fa82240fcc",
+      "pyparsing/ai/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pyparsing/ai/best_practices.md": "aa53ca4e679311869a005446930477133ba43fe4de2052f3a18389ce85417086",
+      "pyparsing/ai/show_best_practices/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pyparsing/ai/show_best_practices/__main__.py": "c465da0aa0534d66716dd2cdcf91bdcba70c2b53e99bb6dc8156200f501c2a61",
+      "pyparsing/common.py": "968900729a4983416c871f5489f1fee41d8248f009a87777c02c46b14957006c",
+      "pyparsing/core.py": "e84663e68207f710f8f49d970931685a13ac008694ec96b9ff430017fa46999a",
+      "pyparsing/diagram/__init__.py": "340b69d195a8937ec92754d5444bd9683e02ab3bc84094541ce0051e5fdaba80",
+      "pyparsing/exceptions.py": "66df7ebeb038b9357c2752252550b48254206a4c1104e61c0ec3774dfc2a41ea",
+      "pyparsing/helpers.py": "1a08dbad6dbc7ebdede21980605cc553fd8fa2454fd719c9a9f5e49e1ad99db0",
+      "pyparsing/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pyparsing/results.py": "944655c903d659aaf39f063f25fff6b7de07bc623b7950f367c812e297f47934",
+      "pyparsing/testing.py": "91cabab0b3f2036de1af00f3074345e57eb5286cf42110e39e139b0badbf98e9",
+      "pyparsing/tools/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pyparsing/tools/cvt_pyparsing_pep8_names.py": "1fc0281dd62ceeb53c6b4451178ce3bab8c6ff167ca4e2d5061022d3e16054e6",
+      "pyparsing/unicode.py": "8e6b33a519dfca10905a5d9187ff78753fe5c5033a7782a249ff62bd8f5bfe6e",
+      "pyparsing/util.py": "54b22b72a221e70ea7f7eb760b3c11008b3f8f4750eff0166e7d9e688c851f15",
+      "pyparsing/warnings.py": "c1058d33b29a975d0e4011c7706f5281dc1a05e15b51eddf0c41777dc1c11c21"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "aca3260dc63304fde85d8c505e43176718306dacf4b59a8a0105fe47bc363eb2",
+     "native": {},
+     "pth": {},
+     "sha256": "ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4"
+    }
+   },
+   "name": "pyparsing",
+   "provenance": {
+    "pyparsing-3.3.3-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Paul McGuire <ptmcg.gm+pyparsing@gmail.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Documentation": "https://pyparsing-docs.readthedocs.io/en/latest/",
+     "Homepage": "https://github.com/pyparsing/pyparsing/",
+     "Source": "https://github.com/pyparsing/pyparsing.git"
+    },
+    "summary": "pyparsing - Classes and methods to define and execute parsing grammars"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|pyparsing/__init__.py|1044324626b725bd",
+     "yara|capability_filesystem_read|pyparsing/core.py|e84663e68207f710",
+     "yara|capability_filesystem_read|pyparsing/tools/cvt_pyparsing_pep8_names.py|1fc0281dd62ceeb5",
+     "yara|capability_process_spawn|pyparsing/results.py|944655c903d659aa"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read pyparsing/__init__.py",
+     "capability_filesystem_read:capability_filesystem_read pyparsing/core.py",
+     "capability_filesystem_read:capability_filesystem_read pyparsing/tools/cvt_pyparsing_pep8_names.py",
+     "capability_process_spawn:capability_process_spawn pyparsing/results.py"
+    ]
+   },
+   "version": "3.3.3"
+  }
+ }
+}

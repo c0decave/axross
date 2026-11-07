@@ -65,6 +65,7 @@ class _Win:
     _start_transfer_between = MainWindow._start_transfer_between
     _transfer_direction = staticmethod(MainWindow._transfer_direction)
     _apply_sync = MainWindow._apply_sync
+    _queue_sync = MainWindow._queue_sync
     _copy_compared = MainWindow._copy_compared
     if hasattr(MainWindow, "_transfer_compared"):
         _transfer_compared = MainWindow._transfer_compared
@@ -96,6 +97,7 @@ def _sync_item(rel: str, kind: str = "copy") -> dict:
 def test_happy_a_root_level_sync_goes_to_the_compared_root():
     win, left, right = _Win(), _Pane("/l"), _Pane("/r")
     win._apply_sync(left, right, [_sync_item("a.txt")])
+    _drain_sync(win)
     assert win._transfer_manager.calls == [(["/l/a.txt"], "/r")]
 
 
@@ -104,6 +106,7 @@ def test_sad_a_nested_sync_goes_to_its_subfolder_not_the_root():
     win._apply_sync(
         left, right, [_sync_item("sub", "mkdir"), _sync_item("sub/readme.txt"), _sync_item("x.txt")]
     )
+    _drain_sync(win)
     assert sorted(win._transfer_manager.calls) == [
         (["/l/sub/readme.txt"], "/r/sub"),
         (["/l/x.txt"], "/r"),
@@ -120,4 +123,20 @@ def test_edge_a_pane_that_browsed_away_does_not_redirect_the_copy():
     win, left, right = _Win(), _Pane("/l"), _Pane("/r/elsewhere")
     win._copy_compared(left, right, "to_right", [("/l/a.txt", "/r/a.txt")])
     win._apply_sync(left, right, [_sync_item("b.txt")])
+    _drain_sync(win)
     assert win._transfer_manager.calls == [(["/l/a.txt"], "/r"), (["/l/b.txt"], "/r")]
+
+
+def _drain_sync(win, timeout: float = 10.0) -> None:
+    """The folders of a sync plan are made on a worker (0.14.167)."""
+    import time as _time
+
+    from PyQt6.QtWidgets import QApplication as _QApp
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        _QApp.processEvents()
+        if not any(j.running for j in getattr(win, "_sync_jobs", [])):
+            _QApp.processEvents()
+            return
+        _time.sleep(0.01)

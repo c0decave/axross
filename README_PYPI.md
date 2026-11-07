@@ -10,7 +10,7 @@ and MCP workflows.**
 - **30+ protocols in one window** — SFTP, SMB, S3, WebDAV, cloud drives, IMAP, Git, databases and more.
 - **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
 - **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
-- **Workspaces** — named pane layouts as tabs, detachable into their own window, restored on the next start.
+- **Workspaces** — named pane layouts as tabs, detachable into their own window, restored on the next start, any dock shown only on one workspace.
 - **An LLM agent built in** — Agent dock with tabs and sandboxes for LM Studio, Ollama, vLLM or llama.cpp, read-only by default.
 - **Talk to the agent** — push-to-talk, spoken answers in German and English, speech recognition locally or on the LLM server.
 - **MCP server and client** — LLMs drive axross over stdio or HTTP, and the agent uses the tools of further MCP servers.
@@ -19,14 +19,27 @@ and MCP workflows.**
 - **Find Files** — by name, type, content, size or tag, inside archives too, kept as a Smart Folder.
 - **Coloured tags** — on any file, following renames and moves, a filter in Find Files.
 - **Disk images and forensics** — partitions and file systems, read-only loop mount, hashes, The Sleuth Kit, PhotoRec.
-- **Media Player** — playlist, M3U, shuffle/repeat, 10-band equalizer and spectrum.
+- **Media Player and Audio Mixer** — eighteen visualizations, a sleep timer; per-source volume and output, one equalizer, PipeWire/PulseAudio.
 - **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
 - **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
 - **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
 - **Resumable transfers** — survive Ctrl-C and VPN drops, resume from the last verified segment.
 - **Archives as folders** — browse ZIP, TAR and 7z, nested ones too, extract only what you pick, zip-bomb-safe.
-- **Extensions** — Media Player, Forensic Tools, Treemap, VirtualBox and more, each off until you switch it on.
+- **Extensions** — Bluetooth (Classic, BLE map, add a headset in one go), System Information, Forensic Tools, Treemap and more, each off until you switch it on.
 - **Install in one line** — `pip install axross`, or a single-file binary for Linux, macOS and Windows.
+
+> **Checked for malicious code.** Every dependency a release is built from - 254 pinned
+> packages: the application's, the binaries', the build tools' - passes axross's own
+> supply-chain gate before anything is built: OSV (advisories and the malicious-packages
+> feed), YARA (GuardDog's and axross's rules), an inspection of every file without running
+> it, native binaries profiled and analysed with capa, Sigstore provenance, typosquatting,
+> a 14-day minimum age. **Result of the review of 2026-11-05: no malicious code found.**
+> Every YARA hit was read in the code and is benign; two findings were handled -
+> onnxruntime's telemetry (switched off by axross) and a process-wide TLS bypass in
+> `impacket.examples` (never imported). Still running: capa's full analysis of 200 large
+> native binaries (mostly Qt's libraries) in night sessions. The tool, its method and every
+> finding: [docs/SUPPLY_CHAIN_GATE.md](https://github.com/c0decave/axross/blob/main/docs/SUPPLY_CHAIN_GATE.md) (`security/supply_chain_gate.py`); each
+> dist carries its report as `SUPPLY-CHAIN.md`.
 
 Axross is a multi-protocol file manager and security toolkit built
 with Python and PyQt6. It gives you a split-pane desktop UI, a
@@ -35,6 +48,29 @@ Python scripting API from the same package.
 
 The project is currently beta: useful, broad, and actively hardened,
 but still moving quickly.
+
+## Binaries: which axross?
+
+Every [release](https://github.com/c0decave/axross/releases/latest) carries single-file programs - download, `chmod +x`,
+start; no Python needed - and the Python package:
+
+| File | What is in it | Runs on |
+|---|---|---|
+| `axross-full` | everything: every backend (with Google Drive, OneDrive, Dropbox, Azure, Exchange, WinRM/WMI), every extension, Matrix/XMPP chat, the Media Player's equalizer and spectrum, the Bluetooth stick mode, voice and analysis | Linux x86-64 with glibc 2.34 or newer (RHEL / Alma / Rocky 9, Ubuntu 22.04, Debian 12, Fedora 35 and later) |
+| `axross-slim` | the same without the cloud SDKs, the Windows protocols, Matrix/XMPP, voice, analysis and numpy - SFTP, SMB, WebDAV, S3, FTP, Android and the rest are in it; about half the size | the same |
+| `axross-base` | the core only: local files, SFTP / SCP / FTP, the panes, the editor, the terminal, the settings. Everything else - each backend, each extension - is a *pack* you add from *Help → Features… → Packs…*: fetched from the same release, signature and SHA-256 checked before anything is unpacked | the same |
+| `axross-full-glibc2.36`, `axross-slim-glibc2.36`, `axross-base-glibc2.36` | the same three, built with Debian 12's (newer) libraries | Linux x86-64 with glibc 2.36 or newer (Debian 12+, Ubuntu 22.10+, Fedora 37+) |
+| `axross-slim-macos-arm64` | slim | macOS on Apple silicon (not notarized: [first start](https://github.com/c0decave/axross/blob/main/docs/PACKAGING.md#macos-binary-the-first-start)) |
+| `axross-slim-windows-x64.exe` | slim | Windows 10 / 11, x64 |
+| `axross-media-player`, `axross-system-info` (and `-glibc2.36`) | the Media Player and System Information as programs of their own ([docs/STANDALONE.md](https://github.com/c0decave/axross/blob/main/docs/STANDALONE.md)) | Linux x86-64 |
+| `axross-X.Y.Z.tar.gz`, `axross-X.Y.Z-py3-none-any.whl` | the Python package, the same as on PyPI (this page) | every system with Python 3.11+ |
+| `packs-X.Y.Z.json` and the wheels beside it | the packs an `axross-base` adds | - |
+| `SHA256SUMS`, `SHA256SUMS.sig` | the checksums of every file, signed with the axross release key (Ed25519) | - |
+
+Which glibc you have: `ldd --version`. The glibc 2.34 build runs on newer systems
+too; the glibc 2.36 one brings newer libraries along. Every binary updates
+itself to the next release of exactly its own kind (*Help → Check for
+Updates…*, signature checked), an `axross-base` with the packs it has.
 
 ## Install
 

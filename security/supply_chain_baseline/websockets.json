@@ -1,0 +1,162 @@
+{
+ "name": "websockets",
+ "versions": {
+  "17.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|websockets/cli.py|7d87f462aad6231f",
+    "yara|capability_filesystem_read|websockets/legacy/http.py|e51bb9a87d5dc09f",
+    "yara|capability_filesystem_read|websockets/legacy/protocol.py|dcc4e1d7ed24b564",
+    "yara|capability_filesystem_read|websockets/sync/client.py|0265d98a4c558359",
+    "yara|capability_network_outbound|websockets/sync/client.py|0265d98a4c558359",
+    "yara|capability_process_spawn|websockets/cli.py|7d87f462aad6231f",
+    "yara|capability_process_spawn|websockets/version.py|1e36665a17699ab0"
+   ],
+   "archives": {
+    "websockets-17.3-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl": {
+     "entry_points": [
+      "websockets = websockets.cli:main"
+     ],
+     "files": {
+      "websockets-17.3.dist-info/METADATA": "009da5d5f96cd7290c0095c4f87e6cdf18e1ea0da5f3b34d8d5cdfac44ffaf72",
+      "websockets-17.3.dist-info/RECORD": "573d1be9858604e8ba6ea8b52cd954f6dbc002bc8b155f9ac199c6153e33ae3f",
+      "websockets-17.3.dist-info/WHEEL": "326bb69b88d2da8f19ac2097b314f75406511204c9237db4f1799b47052fa5af",
+      "websockets-17.3.dist-info/entry_points.txt": "0e7867e1d9b912c23864c02c1e574617a0b005766b1979d1edc9cadbe5d1ef36",
+      "websockets-17.3.dist-info/licenses/LICENSE": "3d6a0c050d8bec52fabad502e45fb25bd02bcadbd70dea34d447b6a0ff4e6da8",
+      "websockets-17.3.dist-info/top_level.txt": "08ca5d2a49712acbd980283296dc5458e1e26d95d9d6e60856971af71b10f079",
+      "websockets/__init__.py": "ce6042263ec421ae99244403a787487739dfcc025403c756e35fa3ec49be4034",
+      "websockets/__main__.py": "c2ee4ddb093c9af060cafaf68219907f8a6b7b301ed3f8bea75db7555adec987",
+      "websockets/asyncio/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "websockets/asyncio/client.py": "581192ec6ae3781ac4968b6ec38e64502ff1acfe38f72ba2a7d4c2066d7216b1",
+      "websockets/asyncio/connection.py": "f2eb6ad56371fab33839a7ad2694e4b5610bea839bf92ae1f76e6d0a63f1e346",
+      "websockets/asyncio/messages.py": "c103ab74e22f1c4b9c59936f2a8bfe09e0b4faf447cb65b534eb09357fc48d3a",
+      "websockets/asyncio/router.py": "2453543482e4001e4ff5fb7a3cba2035a66aea9f765b3d7dbc89717f1d434e58",
+      "websockets/asyncio/server.py": "df978af9c191841999655480f71d062bc4c6b92e0095ba3d5b6503ec7aff46d2",
+      "websockets/auth.py": "53f2709a7e7d65143a11e7293af322cd0086fd96c0be051fd6293b85a6510b77",
+      "websockets/cli.py": "7d87f462aad6231fe224303e45675cce1e6f8cef69e99c59be613beb56d4420d",
+      "websockets/client.py": "eaf4e66220a92297bc794adc98494e63ea0aae21fa394c72a7e846a535af3cc7",
+      "websockets/connection.py": "38b88c56435ddb9ffceac07c43b0ab0b00685f2f6703438281d80b440f16511f",
+      "websockets/datastructures.py": "5c64efbe015d6527af355fd3ebe2e8f83c66d951f125c80a9789750cd43a7d4f",
+      "websockets/exceptions.py": "b69d3f132a907ddec260d3879b102278e1fc11df4f49016dd7c7be0ae45e4ce6",
+      "websockets/extensions/__init__.py": "42466cc5a255965552a75ba1743e6e3c689b75bc7fd3dd46ad555f4b92d7729c",
+      "websockets/extensions/base.py": "24d7f2939e370bb56e3c7d103a86e2a8aa06af38c920b8deeaccf920bbce3e5e",
+      "websockets/extensions/permessage_deflate.py": "d97d5fdd3e47b8e4176d89e61d7f8c937ab5b76d67f94fc585f8d2ea81c189bc",
+      "websockets/frames.py": "62cb106e8c23dbadf19bb5e74006a18dc4650381ddcb5592058b61b1fc7c10fb",
+      "websockets/headers.py": "c7f645f6743ec5190c351e78072373cf1f06b11812ac97e8093a7b7f165c9912",
+      "websockets/http11.py": "0f35057be3e1db6a7c8650c67863dc6897a4f764fab9e17a4482f9139eab65d0",
+      "websockets/imports.py": "4ff07d4d4987a1c78a310f8f36985d410007d97771031c1240d790120a882e41",
+      "websockets/legacy/__init__.py": "c10e7344810d1944bfe5e28d017f42444ef1d53c0a6a92a29ab40515637d4b1b",
+      "websockets/legacy/auth.py": "0dc41c09279578ff7725c1fcbc5584d072092fe5fe7f6dcb6740ec2696afd52a",
+      "websockets/legacy/client.py": "e6826ead47333dd7578bc45d7b97c0da10f7578a67bfffd9eb8a514573fa1c1b",
+      "websockets/legacy/exceptions.py": "562123a684f4f5fcf1fd9a9fd1a3460d5b510cd8d768ec3481d0ad6b72e48c57",
+      "websockets/legacy/framing.py": "6f4c0cc7cdd74c85d56683bad299770226ca1db4250dbeeb040ca114491a3029",
+      "websockets/legacy/handshake.py": "d8dcebe40376c6f0c2e4474d3fe901de539cac069436562e8fffa1aff8efee93",
+      "websockets/legacy/http.py": "e51bb9a87d5dc09f440c0879f82089688eca021ae4e63edf554ffadf2e4a7de2",
+      "websockets/legacy/protocol.py": "dcc4e1d7ed24b564ad4425f4d252d5ebd80bcc5ffd8009fc60b144fdb664cd8c",
+      "websockets/legacy/server.py": "8529389c54ec23778c45bbb925c2388177a2f546f0d3b452ad28ed2f878cda07",
+      "websockets/protocol.py": "dc7b8204c2d324cc69f491dde49301aad4c5f384ac636f62b871f4cb39ee0ff4",
+      "websockets/proxy.py": "83276f75aa0972dc7219166e91dd6f2a29aec65e046214f579ef5a3c7aa39193",
+      "websockets/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "websockets/server.py": "ee41092f540414ef294c1f74c0fe1f51b9336060dc6e44daee34ef762499b509",
+      "websockets/speedups.c": "bbf767711e0cdfc117e877bf7f36f54d8e83dc791eebb669a072cb85967486f4",
+      "websockets/speedups.cpython-312-x86_64-linux-gnu.so": "6dd047825d5ae244a6e8cd4b72e4544d447f6e62dae9318f256ccaf6f52f76a8",
+      "websockets/speedups.pyi": "ba78ef04d83eb96e1cef3fbd396e16892cd993f407d9b2c472360032ea128012",
+      "websockets/streams.py": "ac9ac33522fd872dc42587353c51e3631e2b75dd6f10b0ae6b40b074588737ff",
+      "websockets/sync/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "websockets/sync/client.py": "0265d98a4c558359b7f727e5d4ebe6f4a637c5a4dfcd7797350dfacaf60c1ea4",
+      "websockets/sync/connection.py": "00756866900ceca20bf9383b2a66015f9c4d659b2710b4fbcd088ec221a0c2a5",
+      "websockets/sync/messages.py": "abc2b5bf176ba959356ef9f7cd6d49c74f5395a908592c9870e1c2eee7854269",
+      "websockets/sync/router.py": "c0e180bc66cac17caa98d1050425993f77da1efcbfd8c28deced977842fc9c62",
+      "websockets/sync/server.py": "fb98217246d4384723942292cd55668f1ccf9e990f48b6f2e97c52926ea09f23",
+      "websockets/sync/utils.py": "4ed5be9dc605bc99a2496da03bcea7804d8156c9e705d2fee07f3c91634361b8",
+      "websockets/trio/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "websockets/trio/client.py": "951e2e225679024d6027c09b720f371b7a773db90ed3400c2500ae9f9d8505b6",
+      "websockets/trio/connection.py": "abdd21a83c492ab90ec6f1e8502f61af847b3473c0b1129b707e11314015881f",
+      "websockets/trio/messages.py": "e5d02819c33c8fb3ab2996b99c911376d494c14f30bebd37491db1c2b9e30b35",
+      "websockets/trio/router.py": "a992fdfb8e268bd48e393194dc22c13ee68237369f406a99f9f265f61569bfeb",
+      "websockets/trio/server.py": "0275d2a1425c780c854caa937060db6a3ac406ddaf9033289305af5925d4bb7f",
+      "websockets/trio/utils.py": "035d8d6143ce8d06a21aeb1a938de85b33c8702c618a429390024b5ed649bdc6",
+      "websockets/typing.py": "72ef3d9ff5d05e7a3f83da8fa459a12db6f39c4f8c2956b3500a30b36bb926a5",
+      "websockets/uri.py": "4cd1600ef343a207c44b0fbbf17f140e487da49174dda7be76e8eda7113c04eb",
+      "websockets/utils.py": "59db6c876a908872eb5d40449e9dcb6ad30b253663076084adb78e16fadd5ef1",
+      "websockets/version.py": "1e36665a17699ab03e70866b3914ffc1e027c09be43be6ea3aeb7503d63da1e6"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c48af0de34bf4d8a776f8434db915613c1e0ee85421e766199e18a27f826cf81",
+     "native": {
+      "websockets/speedups.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "a7f391838e8adcf1f2fe71561d9e5a9f74ea7ffa5052eb2db329aac677383136"
+    }
+   },
+   "name": "websockets",
+   "provenance": {
+    "websockets-17.3-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "python-websockets/websockets",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Aymeric Augustin <aymeric.augustin@m4x.org>",
+    "license_expression": "BSD-3-Clause",
+    "project_urls": {
+     "Changelog": "https://websockets.readthedocs.io/en/stable/project/changelog.html",
+     "Documentation": "https://websockets.readthedocs.io/",
+     "Funding": "https://tidelift.com/subscription/pkg/pypi-websockets?utm_source=pypi-websockets&utm_medium=referral&utm_campaign=readme",
+     "Homepage": "https://github.com/python-websockets/websockets",
+     "Tracker": "https://github.com/python-websockets/websockets/issues"
+    },
+    "summary": "An implementation of the WebSocket Protocol (RFC 6455 & 7692)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_outbound, process_spawn; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (python-websockets/websockets)."
+   },
+   "scans": {
+    "capa": {
+     "6dd047825d5ae244a6e8cd4b72e4544d447f6e62dae9318f256ccaf6f52f76a8": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "websockets/speedups.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|websockets/cli.py|7d87f462aad6231f",
+     "yara|capability_filesystem_read|websockets/legacy/http.py|e51bb9a87d5dc09f",
+     "yara|capability_filesystem_read|websockets/legacy/protocol.py|dcc4e1d7ed24b564",
+     "yara|capability_filesystem_read|websockets/sync/client.py|0265d98a4c558359",
+     "yara|capability_network_outbound|websockets/sync/client.py|0265d98a4c558359",
+     "yara|capability_process_spawn|websockets/cli.py|7d87f462aad6231f",
+     "yara|capability_process_spawn|websockets/version.py|1e36665a17699ab0"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read websockets/cli.py",
+     "capability_filesystem_read:capability_filesystem_read websockets/legacy/http.py",
+     "capability_filesystem_read:capability_filesystem_read websockets/legacy/protocol.py",
+     "capability_filesystem_read:capability_filesystem_read websockets/sync/client.py",
+     "capability_network_outbound:capability_network_outbound websockets/sync/client.py",
+     "capability_process_spawn:capability_process_spawn websockets/cli.py",
+     "capability_process_spawn:capability_process_spawn websockets/version.py"
+    ]
+   },
+   "version": "17.3"
+  }
+ }
+}

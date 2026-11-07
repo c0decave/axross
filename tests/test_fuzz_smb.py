@@ -40,7 +40,7 @@ from smbprotocol.exceptions import (  # noqa: E402
 
 from core import smb_client  # noqa: E402
 
-NAMES = ["a.txt", "", ".", "..", "../x", "a\\b", "nul\x00", "caf�", "x" * 4096, "‮.exe"]
+NAMES = ["a.txt", "", ".", "..", "../x", "a\\b", "nul\x00", "caf�", "x" * 4096, "\u202e.exe"]
 TIMES = [
     datetime(2024, 1, 2, tzinfo=timezone.utc),
     datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc),

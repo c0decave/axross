@@ -252,6 +252,23 @@ def open_url(url: str, **kwargs: Any) -> FileBackend:
             proxy_port=1080,
         )
 
+    Any other keyword that names a :class:`ConnectionProfile` field sets
+    it, as in a saved profile. iSCSI, for instance - the target and what
+    the initiator sends about itself (empty: the system's
+    ``/etc/iscsi/initiatorname.iscsi`` and any interface)::
+
+        b = axross.open_url(
+            "iscsi://192.0.2.10/",
+            iscsi_target_iqn="iqn.2026-10.example:disk1",
+            iscsi_initiator_name="iqn.2026-11.org.example:client1",
+            iscsi_initiator_interface="eth1",
+        )
+
+    NFS the same way: ``nfs_machine_name``, ``nfs_uid``, ``nfs_gid`` and
+    ``nfs_gids`` ("27, 100") are what the client sends (AUTH_SYS); any of
+    them set makes axross speak NFS itself (v3, or v4 with ``nfs_version=4``
+    or ``"4.1"`` and ``nfs_client_id``, the NFSv4 client id) instead of mounting.
+
     Recognised schemes match registered backend protocol IDs, with
     a few ergonomic aliases: ``http://`` / ``https://`` open WebDAV,
     ``gophers://`` opens TLS Gopher, ``nntps://`` opens TLS NNTP,
@@ -610,7 +627,9 @@ def _open_url_via_cm(
             "/" + "/".join(segments) if segments else "/",
         )
         if "nfs_version" in kwargs:
-            profile.nfs_version = int(kwargs.pop("nfs_version"))
+            version = str(kwargs.pop("nfs_version"))   # 3, 4, "4.0" or "4.1"
+            profile.nfs_version = 4 if version.startswith("4") else int(version)
+            profile.nfs_minor = 1 if version == "4.1" else 0
     elif proto_id == "imap":
         if raw_scheme in {"imap", "imap+plain"}:
             profile.imap_ssl = bool(kwargs.pop("imap_ssl", False))

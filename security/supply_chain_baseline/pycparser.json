@@ -1,0 +1,64 @@
+{
+ "name": "pycparser",
+ "versions": {
+  "3.11": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|pycparser/__init__.py|a78bf364bc0be541"
+   ],
+   "archives": {
+    "pycparser-3.11-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pycparser-3.11.dist-info/METADATA": "e3a74c846648bb55f4f907284b745e2003b87b96d9c9d17a8a50cf37804541c9",
+      "pycparser-3.11.dist-info/RECORD": "45073e4baabce80228b1bf043515f6868f964a702b1c0163bc7114f7dabe0cc7",
+      "pycparser-3.11.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "pycparser-3.11.dist-info/licenses/LICENSE": "0a9e78156ae8b96caf1b4f11ac2df424b83de29736f9e757630548a6272fdf90",
+      "pycparser-3.11.dist-info/top_level.txt": "73e94f712ef82fff0aa07ec813a3d0179a1fca2ad140d57856191b48520f7963",
+      "pycparser/__init__.py": "a78bf364bc0be541872ee109193d3e852d569cc82bd6715c8716d99808b190ff",
+      "pycparser/_ast_gen.py": "f3ee67c4806e366f89c8a081fb6a96b25e7daf5eb789e6719dd09878ecc1307a",
+      "pycparser/_c_ast.cfg": "9b0d422a7a039ea02d37bb411f1b8a4188303bbc1a7a16e8aa203e452c1c76e8",
+      "pycparser/ast_transforms.py": "be8a97e579b7864abc9bb62b78fed044fdeb9d1ad542d2e3ad7c86b3e295c071",
+      "pycparser/c_ast.py": "ea7da69073a22bf4f97a4ac8ba0651a2ebe63d50debc4da67d051402cd8c3be4",
+      "pycparser/c_generator.py": "68211cc34c0a18462061e5c21ab14f8e9005c1662ce886e5a2e393538f7bb1b6",
+      "pycparser/c_lexer.py": "f390447cdc32939eb727cd5ae4e87e276acf7454a414b06a8507d2657b2e6e75",
+      "pycparser/c_parser.py": "ceb19bdbc09e5ebc8fc8bd1050d7103adf57ce7fc3bfce17815ea67b723b2579"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "1da64af468ff0e18854db1b22fb7fcde319822e2729312767620e11028296b7d",
+     "native": {},
+     "pth": {},
+     "sha256": "51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80"
+    }
+   },
+   "name": "pycparser",
+   "provenance": {
+    "pycparser-3.11-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Eli Bendersky <eliben@gmail.com>",
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "Eli Bendersky <eliben@gmail.com>",
+    "project_urls": {
+     "Homepage": "https://github.com/eliben/pycparser"
+    },
+    "summary": "C parser in Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|pycparser/__init__.py|a78bf364bc0be541"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read pycparser/__init__.py"
+    ]
+   },
+   "version": "3.11"
+  }
+ }
+}

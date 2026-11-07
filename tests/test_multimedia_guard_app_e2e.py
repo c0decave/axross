@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 from tests import hanging_gpu_driver as HGD  # noqa: E402
 from tests.test_multimedia_probe import DeafAudioServer  # noqa: E402
 
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 FFMPEG_VARS = ("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", "QT_FFMPEG_ENCODING_HW_DEVICE_TYPES")
 SHOWN = "gui smoke: window shown"

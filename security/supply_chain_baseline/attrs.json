@@ -1,0 +1,94 @@
+{
+ "name": "attrs",
+ "versions": {
+  "26.1.0": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|attr/_make.py|1fb387d9e592e429"
+   ],
+   "archives": {
+    "attrs-26.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "attr/__init__.py": "7ce608bedd5e192a90adee2e092dec256299d26c00b82f140faa9b6b9392f7f5",
+      "attr/__init__.pyi": "a55188980515a2fab6fd3625febfc72189c697239aa02b84871a3e12fb279d27",
+      "attr/_cmp.py": "dcd9f54e3c659546225ff9c9a159c4917a0393484cd4360a8f90c4ec665ee22d",
+      "attr/_cmp.pyi": "53efd153f5193b23d4110cd713a44c61041c8e4651636e704c7f7db0dd2cecc3",
+      "attr/_compat.py": "c7483b88450e9c15490bbdb3c850a06f578aab2c52fbb7f62c69cdc99febf79b",
+      "attr/_config.py": "746ab7c51e9f819105e9406dfcbd13f9e507201e22e37911987d0fdbcb09570f",
+      "attr/_funcs.py": "231e481134dfcf9174d45fb5d8c17f0921689889f687c6faec4555cf6802b411",
+      "attr/_make.py": "1fb387d9e592e429c1ccb5233451355b299f3eb985d6bf1fbf644f76df4cb980",
+      "attr/_next_gen.py": "050b42525cf08368161d3617050beb118067cc152b0ef3b9eeed0fcba5023e17",
+      "attr/_typing_compat.pyi": "5c33f9e13527f992a10fad9339079b9b3af0172a268540a8191a5c95be9a9510",
+      "attr/_version_info.py": "c3847e1580b734afe43241945899583f87150251fd1d1682fae9b77dc8d89073",
+      "attr/_version_info.pyi": "c7f3372f75ae07baff50b5c05a3c7de7db9d290e072c1f25fa1b1cd450c636f9",
+      "attr/converters.py": "1a50de3b33de4c581e0412db8fd1b9ec4cf994093af2e85200b45827f7b17bce",
+      "attr/converters.pyi": "a2b5366df7fe56341ada4303caf9cc415ef7a094f6591c90bb0e19475ca6d5b1",
+      "attr/exceptions.py": "6f8bcc6e7a10dd5a7059986aad88bfb2c5d508af28d9ce074124b4f5c49433da",
+      "attr/exceptions.pyi": "cd9abc6c2527280cbd983b41130e366613e1014207a1329e7434089c90fcf373",
+      "attr/filters.py": "64188a58ba774742df099b2aed7d75a67f565fc36c952db05cce23b272ce19cf",
+      "attr/filters.pyi": "dc9e411be753c65b41935ffe46e351507aefdaabb5bfcbf868334043bfe689f0",
+      "attr/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "attr/setters.py": "e7e75c4fadc640adf938d1334a07d70a46c1ee93e4691faabf5e669b83d54b34",
+      "attr/setters.pyi": "367564685535041e0907c13826e5f2af34d482fb4ca63f29df005d258eee8b1e",
+      "attr/validators.py": "9b7411cd94c036be1fd82e1e55d528160d753605d66a4f166ade2a4131a1bdcb",
+      "attr/validators.pyi": "80cd59987681724c98588d848aba51373aa6dc1d7d730e48aba0782a7a3d6023",
+      "attrs-26.1.0.dist-info/METADATA": "4cd40e690f23bf37cbcad34efd6758e062df1df07c86833f7e3ce95bf1fa38cc",
+      "attrs-26.1.0.dist-info/RECORD": "ece8bf0367609a064951bcf56a1697d8c61b674d0ce7a7d57e0a93777d86b4af",
+      "attrs-26.1.0.dist-info/WHEEL": "41c708c5adba6e097513ab8ccb9f1d7865a2fb469e22491a9e01dcc64da459fc",
+      "attrs-26.1.0.dist-info/licenses/LICENSE": "882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f",
+      "attrs/__init__.py": "47168064dc1888487e7dcbc72d936943f0d62a78bbdccfe3c443c47ed8aad597",
+      "attrs/__init__.pyi": "da057bf60f54c49a69192338f2101927a87f3076fbd1d66824bdf564d25e6582",
+      "attrs/converters.py": "f244258eb5707d24d1bbc20dc0493c488d1e1abce659fb6c4fbaccd04ab2a213",
+      "attrs/exceptions.py": "0020829a0d7dfaf0c56833d8f6f165d7df523d709030dfdb10db380c02e3ce6b",
+      "attrs/filters.py": "54e50c66e83db8453a754b80d1d1758c89d42b43cbddf2e03f45414b977e0831",
+      "attrs/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "attrs/setters.py": "78bd5889d6105774f687dfd2608652651d4501c1c66f54ee093cb41342efd925",
+      "attrs/validators.py": "c5ccbac03e53b5391d086d5fe1759ba1c3d23b47da06393921f5497cfe92523d"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "daa511294a968ffbedf6a0f4aa3c7ab0892f14aec299bf7332874f55a7047f64",
+     "native": {},
+     "pth": {},
+     "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+    }
+   },
+   "name": "attrs",
+   "provenance": {
+    "attrs-26.1.0-py3-none-any.whl": {
+     "environment": "release-pypi",
+     "kind": "GitHub",
+     "repository": "python-attrs/attrs",
+     "workflow": "pypi-package.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Hynek Schlawack <hs@ox.cx>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://www.attrs.org/en/stable/changelog.html",
+     "Documentation": "https://www.attrs.org/",
+     "Funding": "https://github.com/sponsors/hynek",
+     "GitHub": "https://github.com/python-attrs/attrs",
+     "Tidelift": "https://tidelift.com/subscription/pkg/pypi-attrs?utm_source=pypi-attrs&utm_medium=pypi"
+    },
+    "summary": "Classes Without Boilerplate"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; attestation verifies (python-attrs/attrs)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|attr/_make.py|1fb387d9e592e429"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn attr/_make.py"
+    ]
+   },
+   "version": "26.1.0"
+  }
+ }
+}

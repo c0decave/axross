@@ -52,6 +52,7 @@ from core import scripting, security_mode
 from core.i18n import tr
 from ui.dock_frame import BOTTOM_DOCK_HINT_PX, framed
 from ui.script_editor import CodeEditor
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -246,6 +247,7 @@ class ScriptsDock(QDockWidget):
         scheduled_jobs: Callable[[], dict[str, list[str]]] | None = None,
     ):
         super().__init__(tr("Scripts"), parent)
+        set_window_icon(self, "scripts")
         self.setObjectName("axScriptsDock")
         self.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
@@ -356,6 +358,7 @@ class ScriptsDock(QDockWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle(tr("Run Example {name}").format(name=name))
+        set_window_icon(dialog, "scripts")
         layout = QVBoxLayout(dialog)
         note = QLabel(tr(
             "{name} defines functions; this code calls them after it. Adjust paths, hosts "

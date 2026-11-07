@@ -1,0 +1,149 @@
+{
+ "name": "google-api-core",
+ "versions": {
+  "2.42.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|google/api_core/bidi_async.py|f70134bdd6fa4078",
+    "yara|capability_filesystem_read|google/api_core/grpc_helpers_async.py|95f428a3ced6a4fc",
+    "yara|capability_filesystem_read|google/api_core/operations_v1/transports/rest_asyncio.py|3809b8367d470af6",
+    "yara|capability_filesystem_read|google/api_core/resumable_transfer/upload_async.py|dd3160eeaa006c6a",
+    "yara|capability_network_download|google/api_core/timeout.py|85e8a5d04eac72ec",
+    "yara|capability_network_outbound|google/api_core/_observability.py|8102b06d5001e62e",
+    "yara|capability_network_outbound|google/api_core/timeout.py|85e8a5d04eac72ec"
+   ],
+   "archives": {
+    "google_api_core-2.42.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "google/api_core/__init__.py": "4d8d15b64318487e926fa0046ff21a855850f56ba1049db52158046ef1962757",
+      "google/api_core/_feature_gating_helpers.py": "5de3b9b34323d94d63432953bb837a9504b43391ac29577a752ef44b2dbbf048",
+      "google/api_core/_observability.py": "8102b06d5001e62ec7d12e5f00d2fb2245eebcf4bb9299105cda775ede00be0d",
+      "google/api_core/_python_package_support.py": "e8d51929eec633f9c4f468e7cbbfa08df99f81189869c5404cacc1212c1ad742",
+      "google/api_core/_python_version_support.py": "448c858012d3754d75012fc94d57fccf725e66c726761125a1202d03f67b0d4a",
+      "google/api_core/_rest_streaming_base.py": "9d1c23dffb2e99be25fb9f7711c8f3c996396e30cfa85f3d4aff85446392c5bd",
+      "google/api_core/bidi.py": "3b1074808d1fb633ad99318fb6937d883be26d73745fd75d4db19e76680c5b8a",
+      "google/api_core/bidi_async.py": "f70134bdd6fa4078d431fcfe3fbb398b3f1346ec816cd223266bb86cfbffc190",
+      "google/api_core/bidi_base.py": "0b9592b619c8def2b92be2edafafd86afc86622d4c0228d3c3e6589e2e552255",
+      "google/api_core/client_info.py": "b0fb9a9ef7a25c403cd29953a350858eb938cb76f0568831561da78658ec7288",
+      "google/api_core/client_logging.py": "0f02d0d9a0b6739d52e1ac68ba12d8b25d617ff7bb88dc1503ec801b1d89c79e",
+      "google/api_core/client_options.py": "d141e3404d25152d804897529b605503bef0dcce37a5239b0159d201c0462489",
+      "google/api_core/datetime_helpers.py": "0cf57cce1ee3f920de6f90c5a61637bdf71501f13bcc3d6efd724f5cf608d3f9",
+      "google/api_core/exceptions.py": "d85afcc24fc8f30df321facad71ac67e54ca0852f5260ab1d07b30fe7d6588a2",
+      "google/api_core/extended_operation.py": "afdc5239b94d177e65c27da1aeb8d443e7f7243a28d1ae19f31c0ecbf564bcbd",
+      "google/api_core/future/__init__.py": "eec4e8c4d36ef5cff1a9ca663bc75badc48b38ec6996760e3925e3397f50217c",
+      "google/api_core/future/_helpers.py": "4de7a7fbb512bf8a6ba22f5e825aa8d580400dcba0e1c23d233a96d29317d57c",
+      "google/api_core/future/async_future.py": "73c57d039d3f5873a728db3c74fa5e4780283d32b1fb4540609dcc9fa22a5653",
+      "google/api_core/future/base.py": "487cae75a992591ec4c94b18690f97ac61a42de6029527d77ec1c81d2a832182",
+      "google/api_core/future/polling.py": "dbd5c7a4a547b16cebc33334d99f4451415eaf002e5d169e2c4ab8bc98ba591b",
+      "google/api_core/gapic_v1/__init__.py": "30ea2dbca6fef8c6cf36762edc0794080ff70a4fc983d652170de8728b0fad66",
+      "google/api_core/gapic_v1/client_info.py": "c4e22adb43872bc1013084ed19ff04440e6a59b7f6bd52030133c0e735a2505f",
+      "google/api_core/gapic_v1/config.py": "125c1af35b432ee7cc79e3a9806e74ac939acbcc298302d47da2caea2172f951",
+      "google/api_core/gapic_v1/config_async.py": "fe3ac1e58bfaaf1c5253a2b0ccec5643e1bfc799978a5a5214082743fea4b6b5",
+      "google/api_core/gapic_v1/method.py": "62c11613b3f196aa7543627910b91b0542ebda92e30c7755f79993478ce078ba",
+      "google/api_core/gapic_v1/method_async.py": "2c39a65a7f5b2e955fed977bb97efe3951bb6465e88ef8c80f2efd229b0432f2",
+      "google/api_core/gapic_v1/requests.py": "618895f3aa0e3c95ec8ba0acc67c700618bf22689178d7944739e240a3021dea",
+      "google/api_core/gapic_v1/routing_header.py": "90928e629352da681265ae10b7c21bd90e4e35f370a49c1b365a1527c7b6c0cb",
+      "google/api_core/general_helpers.py": "186830bdd60c2c8891bd4aa88dddee28130e3c82e92bbf19539c1ef95447b701",
+      "google/api_core/grpc_helpers.py": "2d474300727ad9e57d20e7c99c8ae3f1b6a35a88a7c03374b59ea12e49bad81e",
+      "google/api_core/grpc_helpers_async.py": "95f428a3ced6a4fc87f3e6f7cc0cc175aba4133ac54624d5c16f518abf85c2e6",
+      "google/api_core/iam.py": "046cfadc7b4e3f9ff9a07f59b3ddd13f463a42c86dcb678e8451188ff0a813ae",
+      "google/api_core/operation.py": "50ff5aa0dd03acb2c55fe73b13f8a60d02d76149a82cf52fb5ef889938640041",
+      "google/api_core/operation_async.py": "8d4aaa7c9113c8d2ed2e92b9ae25f25312debd0f5b6d97b690dea51a58e77436",
+      "google/api_core/operations_v1/__init__.py": "ac25397df339c5b93e53574ba688e90937dfb6da24ee1ed9c4078e4d643d4a6b",
+      "google/api_core/operations_v1/abstract_operations_base_client.py": "ef7a5da8f6d1e938b336e40ae709573ac90faf4a2e6dcee3b860c88ff3ab8c70",
+      "google/api_core/operations_v1/abstract_operations_client.py": "798c643bc4203b2d00c465bdf69384ecab6125aea24ba08e06eb3ef7a9175b71",
+      "google/api_core/operations_v1/operations_async_client.py": "6fabef8ec93c9d27e700892c970c3a256430e0540f8443ddc10ab0547ed7b750",
+      "google/api_core/operations_v1/operations_client.py": "92c420e2ce6f7b9ae4b53b89e9533c79c9f0705ca9d0f4866569ea559b35d3eb",
+      "google/api_core/operations_v1/operations_client_config.py": "bfb07416255ce69f47867a4f635ff7148a2615d03e27ee258a5a267a80bd4a44",
+      "google/api_core/operations_v1/operations_rest_client_async.py": "f02731d40a3c6250bbc3faa8d2b3dcf10b577c3f37d34a66fb5fac63d5ea4f25",
+      "google/api_core/operations_v1/pagers.py": "ba630f02580741905b4511c8c6f9c3ff7ef4b83790af7f7d1dcb4e92d0e7f65b",
+      "google/api_core/operations_v1/pagers_async.py": "38503378c850c9190086c3c50aa75f2d8dab558bf105cf9d45cf122834fb2e12",
+      "google/api_core/operations_v1/pagers_base.py": "c2e171dd4b48f9da6dca32a7b768d2fcbbe1c8b4a33b21167f194104856e8e2a",
+      "google/api_core/operations_v1/transports/__init__.py": "8f0db214df3f9072cf5d9a7abfd4d31c0e7b7f39586b257a3942895c1b9a74d6",
+      "google/api_core/operations_v1/transports/base.py": "7eddc783d258170c0e3b95f7d57c1c8741cfed39a3098ef762f4557717cc334a",
+      "google/api_core/operations_v1/transports/rest.py": "2755d9793fc50a9b68fd8a7d1d2f0d151b1db2637e9d570cab0d4583bf871bf8",
+      "google/api_core/operations_v1/transports/rest_asyncio.py": "3809b8367d470af657e1e0e7055d187df452ab3513fa26ab284b53ee9f1eca40",
+      "google/api_core/page_iterator.py": "15731fa9b865558004563a688f2b58022525b95358015482e3531d7c0847017e",
+      "google/api_core/page_iterator_async.py": "4dbb97a2b4613f5c1c4130f7ada04985681224fd49c093bf9c2289a6109b55dc",
+      "google/api_core/path_template.py": "90c61841b807f57aac84854e3597c46a85a44048bb5ba2287f523eec35d171f6",
+      "google/api_core/protobuf_helpers.py": "d3d0a5c97035bcb394f19d062c8303fd0a85c5c48f7fb476afc8be0a81ffcd8c",
+      "google/api_core/py.typed": "abc7601fd9759a85178ae7c70558ea23432e272e017bd6b7acd1fc665fec2020",
+      "google/api_core/rest_helpers.py": "fc9942d0c2b5ea88a71c175e6b91de628d319d01bc394d6eccb555c7e6ab0c41",
+      "google/api_core/rest_streaming.py": "2920ff6e370c2c6421d3c7bde7f28cca078765d2923c1fece8ab12ddeb7d7ba5",
+      "google/api_core/rest_streaming_async.py": "c5c18a1b37d385ffb39e4b9fb0d8335cb40e27e76f0234e0e86494c7885d31cf",
+      "google/api_core/resumable_transfer/__init__.py": "d0046da510d4ee9198b8ae8a4e461007c319b50b0e1e3b22430b3fb33ab2ab99",
+      "google/api_core/resumable_transfer/common.py": "59170fe638a0e47452bcacdb4a542a82001d18bef9c8b3b87ef145d2a8824754",
+      "google/api_core/resumable_transfer/upload.py": "5d1802edcb228984fbb88edb8818f3e7cb5d9d0d2528d26f8fdbe745be7f3b20",
+      "google/api_core/resumable_transfer/upload_async.py": "dd3160eeaa006c6a9fa3d704302928c106c72e4200d54559f6711fae1cab2f3f",
+      "google/api_core/resumable_transfer/upload_state.py": "c0f15519e4b0ed9dd6d618f943da9efa073d6bb14a0ea27889978d6e699ba0b5",
+      "google/api_core/retry/__init__.py": "98f1d210239ad36f08332e60778d28f358059c1aaf155b6017ea79876b259675",
+      "google/api_core/retry/retry_base.py": "b4859c1fa97416d79c874ef2b8cd90984a782605e91ee0ff0a17c466681783c9",
+      "google/api_core/retry/retry_streaming.py": "a3219d4579f6d2f168a7f6036d2599a46565fb6bf6afe77e0596f514eb6d3430",
+      "google/api_core/retry/retry_streaming_async.py": "6c1db01ed5fa56697f755431d637dc3e93695b2bab3d4573dc50d85f1ff55bbe",
+      "google/api_core/retry/retry_unary.py": "13eb82696a60daff4b82e1e61da48b66bcd13690f068825c6307265c93355eb0",
+      "google/api_core/retry/retry_unary_async.py": "f36bf9de68e2d63cea37485fdfbfd32bb9b2351687c2e35384db359b6ce75c36",
+      "google/api_core/retry_async.py": "51378632c934c03041c030f1a989437b05b6f94df7bcd4532e4db7abc1690cb0",
+      "google/api_core/timeout.py": "85e8a5d04eac72ec8590cbf299b4766c0df76662526af1ff4a644d2bd929a9c3",
+      "google/api_core/universe.py": "ab374611acd8bf114eb1c0293cac42f1763dbe7bf0919762a3fd730cf44ce126",
+      "google/api_core/version.py": "62f12efc63f1f97858b66368276d1f1ac6944bc252014b8d350b0f42453f4abf",
+      "google/api_core/version_header.py": "b84157a2c0a9f141fb5e1ce71b9190b1e4d8b563682475d13c0e79ec35ac5310",
+      "google_api_core-2.42.0.dist-info/METADATA": "1d9c5641a46cb86af469ce7b5c6610c170e47cc8ace987cb4efe5441e8c27c13",
+      "google_api_core-2.42.0.dist-info/RECORD": "38e7046e3e2554a8684ff72c8b23425fd83de57f68c4a7b3b85a628b340551e3",
+      "google_api_core-2.42.0.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "google_api_core-2.42.0.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "google_api_core-2.42.0.dist-info/top_level.txt": "ff542f48922114019fc5befd0fa0e107b494c365fa4f8af09f3fcb2eb6dc0f77"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fb011bd8357575713856bce931da1cb5d0e87f86c42b50095423bddddc4adbe5",
+     "native": {},
+     "pth": {},
+     "sha256": "b1bdf4f72dc4f910736ce4ba49038352effbbc309579215107649b22973a1317"
+    }
+   },
+   "name": "google-api-core",
+   "provenance": {
+    "google_api_core-2.42.0-py3-none-any.whl": {
+     "kind": "Google"
+    }
+   },
+   "pypi": {
+    "author_email": "Google LLC <googleapis-packages@google.com>",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Documentation": "https://googleapis.dev/python/google-api-core/latest/",
+     "Homepage": "https://github.com/googleapis/google-cloud-python/tree/main/packages/google-api-core",
+     "Repository": "https://github.com/googleapis/google-cloud-python"
+    },
+    "summary": "Google API client core library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_download, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|google/api_core/bidi_async.py|f70134bdd6fa4078",
+     "yara|capability_filesystem_read|google/api_core/grpc_helpers_async.py|95f428a3ced6a4fc",
+     "yara|capability_filesystem_read|google/api_core/operations_v1/transports/rest_asyncio.py|3809b8367d470af6",
+     "yara|capability_filesystem_read|google/api_core/resumable_transfer/upload_async.py|dd3160eeaa006c6a",
+     "yara|capability_network_download|google/api_core/timeout.py|85e8a5d04eac72ec",
+     "yara|capability_network_outbound|google/api_core/_observability.py|8102b06d5001e62e",
+     "yara|capability_network_outbound|google/api_core/timeout.py|85e8a5d04eac72ec"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read google/api_core/bidi_async.py",
+     "capability_filesystem_read:capability_filesystem_read google/api_core/grpc_helpers_async.py",
+     "capability_filesystem_read:capability_filesystem_read google/api_core/operations_v1/transports/rest_asyncio.py",
+     "capability_filesystem_read:capability_filesystem_read google/api_core/resumable_transfer/upload_async.py",
+     "capability_network_download:capability_network_download google/api_core/timeout.py",
+     "capability_network_outbound:capability_network_outbound google/api_core/_observability.py",
+     "capability_network_outbound:capability_network_outbound google/api_core/timeout.py"
+    ]
+   },
+   "version": "2.42.0"
+  }
+ }
+}

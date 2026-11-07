@@ -1,0 +1,133 @@
+{
+ "name": "jsonschema",
+ "versions": {
+  "4.26.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|jsonschema/validators.py|97f171b995b4b0ca",
+    "yara|capability_network_download|jsonschema/validators.py|97f171b995b4b0ca",
+    "yara|capability_network_outbound|jsonschema/_legacy_keywords.py|dad5aec113d66d84",
+    "yara|capability_network_outbound|jsonschema/_utils.py|5efebfc0a2ac9412",
+    "yara|capability_network_outbound|jsonschema/tests/test_deprecations.py|c86ea6911247a531",
+    "yara|capability_network_outbound|jsonschema/tests/test_validators.py|bb397e6a0c8ba193",
+    "yara|capability_network_outbound|jsonschema/validators.py|97f171b995b4b0ca",
+    "yara|capability_process_spawn|jsonschema/benchmarks/import_benchmark.py|d834483954baa7e6",
+    "yara|capability_process_spawn|jsonschema/tests/test_cli.py|03cf6be4b387cbea",
+    "yara|capability_process_spawn|jsonschema/tests/test_deprecations.py|c86ea6911247a531"
+   ],
+   "archives": {
+    "jsonschema-4.26.0-py3-none-any.whl": {
+     "entry_points": [
+      "jsonschema = jsonschema.cli:main"
+     ],
+     "files": {
+      "jsonschema-4.26.0.dist-info/METADATA": "05b189866ca98a96da3934bf6b83687ced3ff85325273b77e16b705f6d8b26d2",
+      "jsonschema-4.26.0.dist-info/RECORD": "382a461bc5151888cac603114697e4522c3cd6ee2622e4c23929e372556ae180",
+      "jsonschema-4.26.0.dist-info/WHEEL": "58b82a17209f9bf2804afe161f2632d0fde933f9bb2792fd936b2474a2e2ac2f",
+      "jsonschema-4.26.0.dist-info/entry_points.txt": "bceeeb5f816cff1215272da99c0b4a8134b17e99e8cc0550d038c29a93319d61",
+      "jsonschema-4.26.0.dist-info/licenses/COPYING": "4f92a015a13c4d1a040bef018aa13430b4f1bc73b41b16bb846c346766de7439",
+      "jsonschema/__init__.py": "a7e470e134bfd0e3c76482722260d6b1d5a099de823d61cc5cbabb06e4314c67",
+      "jsonschema/__main__.py": "88bb197f6ba9501de294129394c9f22be1c7b760a79df930c318bf73a80bbd20",
+      "jsonschema/_format.py": "96bb3553b892076657f59d846a5b113987909b577d91e7f0d822e8d3c1bc3f8b",
+      "jsonschema/_keywords.py": "afcfc3aea01f9fa40bc109e65c4820bde89253e51a20bda9da7b8f20d7a57c57",
+      "jsonschema/_legacy_keywords.py": "dad5aec113d66d84bb10097cc01202feb69b1aebf527875f60ba8d10fa528610",
+      "jsonschema/_types.py": "7ff9e44c36eb8dadc4ddfb083530bbdf2fe03174d4db5d08fc7eea2b434ddf47",
+      "jsonschema/_typing.py": "a572e71b2de336d2144ead37ee451fab4c1ed7bd3ce5e1ed2700c9dadfbe9901",
+      "jsonschema/_utils.py": "5efebfc0a2ac941265c328fdfa3d9cf090c5c3ee33e1a5859d57b6a57f21ed4e",
+      "jsonschema/benchmarks/__init__.py": "034b10af10c15474b243ef2bbb72f5d613177f7abd815b81f71fd88076f847d3",
+      "jsonschema/benchmarks/const_vs_enum.py": "0d5162dd60ea05a95914e89b9e3a57d6e4d2af74716b670f805728c1ded492bb",
+      "jsonschema/benchmarks/contains.py": "81ec50a14ac23b0102a1f6edd7d05ea2c419ed614be8f0dd917e3d0d6c0194e8",
+      "jsonschema/benchmarks/import_benchmark.py": "d834483954baa7e6ea2e7ffcdb607f5f9164211bec2765750989d5d9daeecc3b",
+      "jsonschema/benchmarks/issue232.py": "dcb2d82c89411909d5bb2ca8da202ffb1932e4fe8f4451c0371e3ecc82103a81",
+      "jsonschema/benchmarks/issue232/issue.json": "79a3ce663311bb9bbc4692abb00f6e93bb9c3d94b9b64286e03fe190e4d0dc79",
+      "jsonschema/benchmarks/json_schema_test_suite.py": "3ef7da6e9518705e3fedcb180d37136ae103f2b9c510661b758e51a935c3d3cb",
+      "jsonschema/benchmarks/nested_schemas.py": "9a8d3b771f82220992388eb608db38839c6ed45cc79252c1a644280f159870ab",
+      "jsonschema/benchmarks/subcomponents.py": "7c4ca2333b1678ada977b0c4182bae63ebf31ae9f08477334415849c144b288a",
+      "jsonschema/benchmarks/unused_registry.py": "87047038d73d71e7cfb58ce4a17fd36113b71b25288eb8afd3e61068adef9e3d",
+      "jsonschema/benchmarks/useless_applicator_schemas.py": "1159b9f84b4e105a0b3ff56dda3e12ac2c25c74e4d84fa8db9943a2c830fd437",
+      "jsonschema/benchmarks/useless_keywords.py": "6e3ff32abd6855cb4596ac9968e6c2b184e01638a23603f30b486bd58f3af261",
+      "jsonschema/benchmarks/validator_creation.py": "52451094b027bacb27aff29d08875a77ac71da95f140b998b6c5e88a2aca7964",
+      "jsonschema/cli.py": "6aff743ada52c6e8a4a37140c841edc6923e352b97dd632da10a48c74f686c96",
+      "jsonschema/exceptions.py": "6f8da150339f3c5729ac8e1994da630de2cabfc93dbce86059cb768f20e5c739",
+      "jsonschema/protocols.py": "960cabc951ea1628d2151033f79721dd5376173fa84c5ca18fd39b732e4ffc22",
+      "jsonschema/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jsonschema/tests/_suite.py": "da4d17f7537b74e1e141ce66ad8bf8d0e29fd707a2a23e91301a9680b4faf8f2",
+      "jsonschema/tests/fuzz_validate.py": "7d403bc932488a1682c09a659147a165ec81f381dc5c472ab58e683c95c83bb2",
+      "jsonschema/tests/test_cli.py": "03cf6be4b387cbea5e2cf640e580e439a3135aacd03bfc364eef16173fefa613",
+      "jsonschema/tests/test_deprecations.py": "c86ea6911247a531db5a8c692c2e72e47edf93c7ab18eb3c7fff55e2d081121f",
+      "jsonschema/tests/test_exceptions.py": "aec12a763927533ddd13225bebf0e232874f1d7b094c45b30ebc54b1c83c1b9a",
+      "jsonschema/tests/test_format.py": "7959b948c69617694e3cedbc6cf03036f92242f1c240acbe327b808047217c47",
+      "jsonschema/tests/test_jsonschema_test_suite.py": "b407f192733ae4e47d2f20cf1eed699046a899b2e08d12e727a14f8963ddc638",
+      "jsonschema/tests/test_types.py": "705e752930e676cc74e8cac87387d72add17f5f22c560c39ba14fc09a9956bc5",
+      "jsonschema/tests/test_utils.py": "b1aa3be28d4fc9833105fab07a8910378f021524baca1264e459027cc2793ec2",
+      "jsonschema/tests/test_validators.py": "bb397e6a0c8ba193d3b9fa2e2074b114f7cf62b7487633708c7703ff93725381",
+      "jsonschema/tests/typing/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jsonschema/tests/typing/test_all_concrete_validators_match_protocol.py": "2395d4979658512668dc03e4175d25f0c9df934f685caaaf5d6b6d186777b039",
+      "jsonschema/validators.py": "97f171b995b4b0ca05530a9366a1252fb1753f99f3cb7b1068b6d9aab1096fa5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "0f98d886c2cc682fb097872d40fc0e71498f93fab30c6daa2a7901253d6daf2a",
+     "native": {},
+     "pth": {},
+     "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce"
+    }
+   },
+   "name": "jsonschema",
+   "provenance": {
+    "jsonschema-4.26.0-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "python-jsonschema/jsonschema",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Julian Berman <Julian+jsonschema@GrayVines.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://github.com/python-jsonschema/jsonschema/blob/main/CHANGELOG.rst",
+     "Documentation": "https://python-jsonschema.readthedocs.io/",
+     "Funding": "https://github.com/sponsors/Julian",
+     "Homepage": "https://github.com/python-jsonschema/jsonschema",
+     "Issues": "https://github.com/python-jsonschema/jsonschema/issues/",
+     "Source": "https://github.com/python-jsonschema/jsonschema",
+     "Tidelift": "https://tidelift.com/subscription/pkg/pypi-jsonschema?utm_source=pypi-jsonschema&utm_medium=referral&utm_campaign=pypi-link"
+    },
+    "summary": "An implementation of JSON Schema validation for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, network_download, network_outbound, process_spawn; attestation verifies (python-jsonschema/jsonschema)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|jsonschema/validators.py|97f171b995b4b0ca",
+     "yara|capability_network_download|jsonschema/validators.py|97f171b995b4b0ca",
+     "yara|capability_network_outbound|jsonschema/_legacy_keywords.py|dad5aec113d66d84",
+     "yara|capability_network_outbound|jsonschema/_utils.py|5efebfc0a2ac9412",
+     "yara|capability_network_outbound|jsonschema/tests/test_deprecations.py|c86ea6911247a531",
+     "yara|capability_network_outbound|jsonschema/tests/test_validators.py|bb397e6a0c8ba193",
+     "yara|capability_network_outbound|jsonschema/validators.py|97f171b995b4b0ca",
+     "yara|capability_process_spawn|jsonschema/benchmarks/import_benchmark.py|d834483954baa7e6",
+     "yara|capability_process_spawn|jsonschema/tests/test_cli.py|03cf6be4b387cbea",
+     "yara|capability_process_spawn|jsonschema/tests/test_deprecations.py|c86ea6911247a531"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read jsonschema/validators.py",
+     "capability_network_download:capability_network_download jsonschema/validators.py",
+     "capability_network_outbound:capability_network_outbound jsonschema/_legacy_keywords.py",
+     "capability_network_outbound:capability_network_outbound jsonschema/_utils.py",
+     "capability_network_outbound:capability_network_outbound jsonschema/tests/test_deprecations.py",
+     "capability_network_outbound:capability_network_outbound jsonschema/tests/test_validators.py",
+     "capability_network_outbound:capability_network_outbound jsonschema/validators.py",
+     "capability_process_spawn:capability_process_spawn jsonschema/benchmarks/import_benchmark.py",
+     "capability_process_spawn:capability_process_spawn jsonschema/tests/test_cli.py",
+     "capability_process_spawn:capability_process_spawn jsonschema/tests/test_deprecations.py"
+    ]
+   },
+   "version": "4.26.0"
+  }
+ }
+}

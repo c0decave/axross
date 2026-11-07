@@ -153,23 +153,35 @@ def detect_language(
     configured: str | None = None,
     env: dict | None = None,
     timezone: str | None = "",
+    available=None,
 ) -> str:
     """The language to use, following the documented precedence.
 
     ``timezone`` defaults to the sentinel ``""`` meaning "read
     /etc/localtime"; pass ``None`` to skip the timezone step entirely,
     which is what the tests do to isolate the earlier signals.
+
+    Only a language in *available* (default: :func:`available_languages`)
+    is picked: a locale or a time zone asking for a language whose
+    catalogue translates a handful of labels gives English, not menus
+    that are half one language and half the other.
     """
-    explicit = normalise_language(configured)
+    usable = set(available_languages() if available is None else available)
+    usable.add(DEFAULT_LANGUAGE)
+
+    def ok(lang: str | None) -> str | None:
+        return lang if lang in usable else None
+
+    explicit = ok(normalise_language(configured))
     if explicit is not None:
         return explicit
 
-    from_locale = language_from_locale(env)
+    from_locale = ok(language_from_locale(env))
     if from_locale is not None:
         return from_locale
 
     zone = timezone_from_localtime() if timezone == "" else timezone
-    from_zone = language_from_timezone(zone)
+    from_zone = ok(language_from_timezone(zone))
     if from_zone is not None:
         return from_zone
 
@@ -193,7 +205,7 @@ def stored_language(path: str | Path | None = None) -> str | None:
     target = Path(path or SETTINGS_FILE)
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
     window = data.get("window") if isinstance(data, dict) else None
     if not isinstance(window, dict):
@@ -203,14 +215,12 @@ def stored_language(path: str | Path | None = None) -> str | None:
 
 def store_language(language: str, path: str | Path | None = None) -> None:
     """Persist the picked language, merging into the existing settings."""
+    from core.json_store import read_for_merge
+
     target = Path(path or SETTINGS_FILE)
-    data: dict = {}
-    try:
-        loaded = json.loads(target.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict):
-            data = loaded
-    except (OSError, ValueError):
-        pass
+    # A broken file is set aside, an unreadable one (OSError) not written:
+    # the window's layout, panes and preferences share it.
+    data = read_for_merge(target)
     window = data.get("window")
     if not isinstance(window, dict):
         window = {}
@@ -266,7 +276,7 @@ class Translator:
         except FileNotFoundError:
             log.debug("i18n: no catalogue for %s at %s", self.language, path)
             return {}
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             log.warning("i18n: ignoring unusable catalogue %s: %s", path, exc)
             return {}
         if not isinstance(raw, dict):
@@ -287,6 +297,42 @@ class Translator:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+
+#: A catalogue with fewer usable entries than this is not offered in
+#: Settings > General > Language and not picked from the locale or the
+#: time zone. Below it not even the menu bar (some 170 labels) can be
+#: translated, and a half-translated interface is harder to use than an
+#: English one. A catalogue that grows past it is offered by itself.
+MIN_CATALOGUE_ENTRIES = 200
+
+
+def catalogue_size(language: str, catalogue_dir: str | Path | None = None) -> int:
+    """How many usable entries the shipped catalogue of *language* has."""
+    if language == DEFAULT_LANGUAGE:
+        return 0
+    return len(Translator(language, catalogue_dir))
+
+
+def available_languages(catalogue_dir: str | Path | None = None) -> dict[str, str]:
+    """The languages worth offering - code -> display name, in picker order.
+
+    English always; any other supported language only when its catalogue
+    reaches :data:`MIN_CATALOGUE_ENTRIES`.
+    """
+    key = str(Path(catalogue_dir or CATALOGUE_DIR))
+    cached = _AVAILABLE.get(key)
+    if cached is None:
+        cached = {
+            code: name for code, name in SUPPORTED.items()
+            if code == DEFAULT_LANGUAGE
+            or catalogue_size(code, catalogue_dir) >= MIN_CATALOGUE_ENTRIES
+        }
+        _AVAILABLE[key] = cached
+    return dict(cached)
+
+
+_AVAILABLE: dict[str, dict[str, str]] = {}
 
 
 #: Process-wide translator. Replaced once at startup by ``install``.
@@ -315,8 +361,32 @@ def tr(text: str) -> str:
     return _ACTIVE.tr(text)
 
 
+def tr_n(n: int, singular: str, plural: str, **fields) -> str:
+    """*singular* for one, *plural* otherwise - translated, then formatted
+    with ``n`` and *fields*: ``tr_n(3, "{n} file", "{n} files")``.
+
+    Rather than "{n} file(s)": "1 connection(s)" reads as a bug. The two
+    catalogue entries let a language put the number where it belongs.
+    """
+    return tr(singular if n == 1 else plural).format(n=n, **fields)
+
+
+#: The thousands separator of each language ("1,000,000" / "1.000.000").
+_THOUSANDS = {"de": ".", "es": ".", "fr": "\u202f", "pl": "\u00a0", "sv": "\u00a0",
+              "nb": "\u00a0"}
+
+
+def format_count(n: int) -> str:
+    """*n* with the active language's thousands separator."""
+    return f"{int(n):,}".replace(",", _THOUSANDS.get(active().language, ","))
+
+
 __all__ = [
     "CATALOGUE_DIR",
+    "format_count",
+    "MIN_CATALOGUE_ENTRIES",
+    "available_languages",
+    "catalogue_size",
     "DEFAULT_LANGUAGE",
     "SUPPORTED",
     "detect_language",
@@ -331,4 +401,5 @@ __all__ = [
     "stored_language",
     "timezone_from_localtime",
     "tr",
+    "tr_n",
 ]

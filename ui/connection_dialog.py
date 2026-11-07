@@ -7,7 +7,8 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QRegularExpression, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -44,6 +45,8 @@ from ui.network_proxy_dialog import (
     transport_index,
 )
 from ui.scan_job import ScanJob
+from ui.screen_fit import FitScrollArea, fit_size, fit_window
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +102,7 @@ class ConnectionDialog(QDialog):
         profile: ConnectionProfile | None = None,
     ):
         super().__init__(parent)
+        set_window_icon(self, "connection-manager")
         self._profile_manager = profile_manager
         self._result_profile: ConnectionProfile | None = None
         self._result_password: str = ""
@@ -160,6 +164,15 @@ class ConnectionDialog(QDialog):
         profile_layout.addWidget(self._btn_delete_profile)
 
         layout.addLayout(profile_layout)
+
+        # The groups scroll when the screen is too short for them (947 px
+        # with a custom proxy: OK and Cancel were off a 768 px screen).
+        form_page = QWidget()
+        form_layout = QVBoxLayout(form_page)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        self._form_scroll = FitScrollArea(form_page, reserve=110)
+        layout.addWidget(self._form_scroll, stretch=1)
+        outer, layout = layout, form_layout
 
         # Connection settings
         conn_group = QGroupBox("Connection")
@@ -255,8 +268,50 @@ class ConnectionDialog(QDialog):
         conn_form.addRow("Export:", self._nfs_export)
 
         self._nfs_version = QComboBox()
-        self._nfs_version.addItems(["NFSv3", "NFSv4"])
+        self._nfs_version.addItems(["NFSv3", "NFSv4", "NFSv4.1"])
         conn_form.addRow("Version:", self._nfs_version)
+
+        # What the client sends about itself (AUTH_SYS). Any of them set:
+        # axross speaks NFSv3 itself instead of mounting through the kernel.
+        sender_tip = (
+            "What axross sends the NFS server about itself (AUTH_SYS) - the server "
+            "believes it and decides access by it. Fill in any of these and axross "
+            "speaks NFS itself - v3 or v4, as chosen above (no mount, no root); the fields left empty are this "
+            "computer's name, your UID and GID and no extra groups. Empty: the system's "
+            "NFS mount, which always sends this computer's name and your IDs."
+        )
+        self._nfs_machine_name = QLineEdit()
+        self._nfs_machine_name.setPlaceholderText("this computer's name")
+        self._nfs_machine_name.setToolTip(sender_tip)
+        conn_form.addRow("Machine Name:", self._nfs_machine_name)
+        id_validator = QRegularExpressionValidator(QRegularExpression(r"[0-9]{0,10}"))
+        self._nfs_uid = QLineEdit()
+        self._nfs_uid.setPlaceholderText("your UID")
+        self._nfs_uid.setValidator(id_validator)
+        self._nfs_uid.setToolTip(sender_tip)
+        conn_form.addRow("Send UID:", self._nfs_uid)
+        self._nfs_gid = QLineEdit()
+        self._nfs_gid.setPlaceholderText("your GID")
+        self._nfs_gid.setValidator(id_validator)
+        self._nfs_gid.setToolTip(sender_tip)
+        conn_form.addRow("Send GID:", self._nfs_gid)
+        self._nfs_gids = QLineEdit()
+        self._nfs_gids.setPlaceholderText("extra GIDs, e.g. 27, 100 (at most 16)")
+        self._nfs_gids.setToolTip(sender_tip)
+        conn_form.addRow("Extra GIDs:", self._nfs_gids)
+        self._nfs_client_id = QLineEdit()
+        self._nfs_client_id.setPlaceholderText("NFSv4: axross:<machine name>")
+        self._nfs_client_id.setToolTip(
+            "NFSv4 only: the client id string axross registers with the server (SETCLIENTID) - "
+            "what the server knows this client as. " + sender_tip
+        )
+        conn_form.addRow("NFSv4 Client ID:", self._nfs_client_id)
+        self._nfs_privileged_port = QCheckBox("Send from a privileged port (< 1024, needs root)")
+        self._nfs_privileged_port.setToolTip(
+            "For exports with the 'secure' option, which accept only source ports below 1024. "
+            "Only with axross's own client (a sender field filled in)."
+        )
+        conn_form.addRow("", self._nfs_privileged_port)
 
         # --- Azure fields ---
         self._azure_container = QLineEdit()
@@ -340,6 +395,24 @@ class ConnectionDialog(QDialog):
         self._iscsi_mount_point.setPlaceholderText("/mnt/iscsi (auto if empty)")
         conn_form.addRow("Mount Point:", self._iscsi_mount_point)
 
+        # What the initiator sends about itself (freely chosen; empty =
+        # the system's initiatorname.iscsi / any interface).
+        self._iscsi_initiator_name = QLineEdit()
+        self._iscsi_initiator_name.setPlaceholderText("system default (/etc/iscsi/initiatorname.iscsi)")
+        self._iscsi_initiator_name.setToolTip(
+            "The initiator name (IQN) this connection sends to the target - in the "
+            "login and the discovery. Any name the target accepts, e.g. "
+            "iqn.2026-11.org.example:client1. Empty: the system's."
+        )
+        conn_form.addRow("Initiator Name:", self._iscsi_initiator_name)
+
+        self._iscsi_initiator_interface = QLineEdit()
+        self._iscsi_initiator_interface.setPlaceholderText("any (e.g. eth0, wlan0)")
+        self._iscsi_initiator_interface.setToolTip(
+            "The network interface the iSCSI connection leaves through. Empty: any."
+        )
+        conn_form.addRow("Send From Interface:", self._iscsi_initiator_interface)
+
         # --- IMAP fields ---
         self._imap_ssl = QCheckBox("Use SSL/TLS (IMAPS, port 993)")
         self._imap_ssl.setChecked(True)
@@ -358,6 +431,16 @@ class ConnectionDialog(QDialog):
 
         self._simple_store_pw = QCheckBox("Save in keyring")
         conn_form.addRow("", self._simple_store_pw)
+
+        # The production countdown (core.safety_tarpit, docs/DAILY_DRIVER.md):
+        # before, it could only be switched on in Python.
+        self._production = QCheckBox(tr("Production (confirm destructive operations with a "
+                                        "countdown)"))
+        self._production.setToolTip(tr(
+            "The first delete, move or overwrite on this connection in a pane waits a few "
+            "seconds with a countdown that Cancel or Esc stops - for servers where a slip "
+            "costs something."))
+        conn_form.addRow("", self._production)
 
         layout.addWidget(conn_group)
 
@@ -421,7 +504,8 @@ class ConnectionDialog(QDialog):
         proxy_form = QFormLayout(self._proxy_group)
 
         self._proxy_mode = QComboBox()
-        self._proxy_mode.addItem("Default proxy (Tools > Network && Proxy)", "default")
+        # A combo box shows "&" as it is: "&&" showed up doubled.
+        self._proxy_mode.addItem(tr("Default proxy (Tools > Network & Proxy)"), "default")
         self._proxy_mode.addItem("Custom proxy for this profile", "custom")
         proxy_form.addRow("Use:", self._proxy_mode)
 
@@ -466,6 +550,8 @@ class ConnectionDialog(QDialog):
         proxy_form.addRow("ProxyCommand:", self._proxy_command)
 
         layout.addWidget(self._proxy_group)
+        layout.addStretch(1)
+        layout = outer
         self._proxy_mode.currentIndexChanged.connect(self._update_proxy_fields)
         self._proxy_type.currentIndexChanged.connect(self._update_proxy_fields)
         self._proxy_group.toggled.connect(self._update_proxy_fields)
@@ -594,6 +680,9 @@ class ConnectionDialog(QDialog):
         # NFS
         self._set_form_row_visible(self._nfs_export, is_nfs)
         self._set_form_row_visible(self._nfs_version, is_nfs)
+        for w in (self._nfs_machine_name, self._nfs_uid, self._nfs_gid, self._nfs_gids,
+                  self._nfs_client_id, self._nfs_privileged_port):
+            self._set_form_row_visible(w, is_nfs)
 
         # Azure
         self._set_form_row_visible(self._azure_container, is_azure_blob)
@@ -622,6 +711,8 @@ class ConnectionDialog(QDialog):
         # iSCSI
         self._set_form_row_visible(self._iscsi_target_iqn, is_iscsi)
         self._set_form_row_visible(self._iscsi_mount_point, is_iscsi)
+        self._set_form_row_visible(self._iscsi_initiator_name, is_iscsi)
+        self._set_form_row_visible(self._iscsi_initiator_interface, is_iscsi)
 
         # IMAP
         self._set_form_row_visible(self._imap_ssl, is_imap)
@@ -670,6 +761,28 @@ class ConnectionDialog(QDialog):
         info = get_backend(proto)
         if info:
             self._port.setValue(info.default_port)
+        self._grow_to_content()
+
+    def _grow_to_content(self) -> None:
+        """Rows shown for a protocol or a custom proxy: a dialog on screen
+        grows to show them, as far as the screen allows (then it scrolls)."""
+        if self.isVisible():
+            QTimer.singleShot(0, self._grow_now)
+
+    def _grow_now(self) -> None:
+        from PyQt6 import sip
+
+        if sip.isdeleted(self) or not self.isVisible():
+            return
+        self._form_scroll.widget().adjustSize()
+        self._form_scroll.updateGeometry()
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        want = self.sizeHint().height()
+        if want > self.height():
+            self.resize(self.width(), want)
+            fit_window(self)
 
     def _show_oauth_help(self, proto: str) -> None:
         from html import escape
@@ -793,7 +906,13 @@ class ConnectionDialog(QDialog):
         self._rsync_ssh_key.setText(p.rsync_ssh_key)
         # NFS
         self._nfs_export.setText(p.nfs_export)
-        self._nfs_version.setCurrentIndex(0 if p.nfs_version == 3 else 1)
+        self._nfs_version.setCurrentIndex(0 if p.nfs_version != 4 else (2 if p.nfs_minor else 1))
+        self._nfs_machine_name.setText(p.nfs_machine_name)
+        self._nfs_uid.setText(str(p.nfs_uid) if p.nfs_uid >= 0 else "")
+        self._nfs_gid.setText(str(p.nfs_gid) if p.nfs_gid >= 0 else "")
+        self._nfs_gids.setText(p.nfs_gids)
+        self._nfs_privileged_port.setChecked(p.nfs_privileged_port)
+        self._nfs_client_id.setText(p.nfs_client_id)
         # Azure
         self._azure_container.setText(p.azure_container)
         self._azure_share.setText(p.azure_share)
@@ -813,9 +932,12 @@ class ConnectionDialog(QDialog):
         # iSCSI
         self._iscsi_target_iqn.setText(p.iscsi_target_iqn)
         self._iscsi_mount_point.setText(p.iscsi_mount_point)
+        self._iscsi_initiator_name.setText(p.iscsi_initiator_name)
+        self._iscsi_initiator_interface.setText(p.iscsi_initiator_interface)
         # IMAP
         self._imap_ssl.setChecked(p.imap_ssl)
         self._nntp_ssl.setChecked(p.nntp_ssl)
+        self._production.setChecked(bool(p.production))
 
         mode = getattr(p, "proxy_mode", "custom")
         self._reset_proxy_fields()
@@ -861,10 +983,26 @@ class ConnectionDialog(QDialog):
         self._update_proxy_fields()
 
     def _update_proxy_fields(self) -> None:
-        """Custom fields apply only to a custom proxy; auth only to HTTP(S)."""
+        """Custom fields apply only to a custom proxy; auth only to HTTP(S).
+        An unticked proxy group folds to its title, the default proxy shows
+        its one-line summary only: the dialog fits a 768 px screen."""
         custom = self._proxy_mode.currentIndex() == 1
         transport = TRANSPORT_CHOICES[self._proxy_type.currentIndex()][1]
-        self._proxy_default_hint.setVisible(not custom)
+        used = self._proxy_group.isChecked()
+        self._set_form_row_visible(self._proxy_mode, used)
+        self._set_form_row_visible(self._proxy_default_hint, used and not custom)
+        for widget in (
+            self._proxy_type,
+            self._proxy_auth,
+            self._proxy_host,
+            self._proxy_port,
+            self._proxy_username,
+            self._proxy_password,
+            self._store_proxy_pw,
+            self._proxy_command,
+        ):
+            self._set_form_row_visible(widget, used and custom)
+        self._grow_to_content()
         self._proxy_type.setEnabled(custom)
         self._proxy_auth.setEnabled(custom and transport in ("http", "https"))
         for widget in (
@@ -906,6 +1044,9 @@ class ConnectionDialog(QDialog):
         self._rsync_ssh_key.clear()
         self._nfs_export.clear()
         self._nfs_version.setCurrentIndex(0)
+        for w in (self._nfs_machine_name, self._nfs_uid, self._nfs_gid, self._nfs_gids, self._nfs_client_id):
+            w.clear()
+        self._nfs_privileged_port.setChecked(False)
         self._azure_container.clear()
         self._azure_share.clear()
         self._azure_connection_string.clear()
@@ -920,8 +1061,11 @@ class ConnectionDialog(QDialog):
         self._dropbox_app_secret.clear()
         self._iscsi_target_iqn.clear()
         self._iscsi_mount_point.clear()
+        self._iscsi_initiator_name.clear()
+        self._iscsi_initiator_interface.clear()
         self._imap_ssl.setChecked(True)
         self._nntp_ssl.setChecked(True)
+        self._production.setChecked(False)
 
     def _build_profile(self) -> ConnectionProfile:
         """Build a ConnectionProfile from current field values."""
@@ -1031,6 +1175,13 @@ class ConnectionDialog(QDialog):
             # NFS
             nfs_export=self._nfs_export.text().strip(),
             nfs_version=3 if self._nfs_version.currentIndex() == 0 else 4,
+            nfs_minor=1 if self._nfs_version.currentIndex() == 2 else 0,
+            nfs_machine_name=self._nfs_machine_name.text().strip(),
+            nfs_uid=int(self._nfs_uid.text()) if self._nfs_uid.text().strip() else -1,
+            nfs_gid=int(self._nfs_gid.text()) if self._nfs_gid.text().strip() else -1,
+            nfs_gids=self._nfs_gids.text().strip(),
+            nfs_privileged_port=self._nfs_privileged_port.isChecked(),
+            nfs_client_id=self._nfs_client_id.text().strip(),
             # Azure
             azure_container=self._azure_container.text().strip(),
             azure_connection_string=self._azure_connection_string.text().strip(),
@@ -1050,14 +1201,17 @@ class ConnectionDialog(QDialog):
             # iSCSI
             iscsi_target_iqn=self._iscsi_target_iqn.text().strip(),
             iscsi_mount_point=self._iscsi_mount_point.text().strip(),
+            iscsi_initiator_name=self._iscsi_initiator_name.text().strip(),
+            iscsi_initiator_interface=self._iscsi_initiator_interface.text().strip(),
             # IMAP
             imap_ssl=self._imap_ssl.isChecked(),
             nntp_ssl=self._nntp_ssl.isChecked(),
+            production=self._production.isChecked(),
         )
         if self._loaded_profile is None:
             return ConnectionProfile(**fields)
         # Editing: the form overrides what it shows; everything else the
-        # profile carries (production, ftps_verify_tls, terminal_theme, ...)
+        # profile carries (ftps_verify_tls, terminal_theme, ...)
         # is kept. A session-only proxy password override is not.
         return dataclasses.replace(
             self._loaded_profile, _proxy_password_override=None, **fields
@@ -1105,6 +1259,21 @@ class ConnectionDialog(QDialog):
         )
         return False
 
+    def _profile_from_form_nfs_sender(self) -> str | None:
+        """What is wrong with the NFS sender fields, or None."""
+        from core.nfs3_rpc import AuthSys, parse_gids
+
+        try:
+            uid = int(self._nfs_uid.text()) if self._nfs_uid.text().strip() else 0
+            gid = int(self._nfs_gid.text()) if self._nfs_gid.text().strip() else 0
+            AuthSys(machine_name=self._nfs_machine_name.text().strip(), uid=uid, gid=gid,
+                    gids=parse_gids(self._nfs_gids.text()))
+        except ValueError as exc:
+            return str(exc)
+        if any(c < " " for c in self._nfs_client_id.text()) or len(self._nfs_client_id.text().encode()) > 1024:
+            return "The NFSv4 client id must be one line of at most 1024 bytes."
+        return None
+
     def _validate(self) -> bool:
         if not self._validate_backend_available():
             return False
@@ -1140,6 +1309,10 @@ class ConnectionDialog(QDialog):
                 return False
             if not self._nfs_export.text().strip():
                 QMessageBox.warning(self, "Validation", "NFS export path is required.")
+                return False
+            sender = self._profile_from_form_nfs_sender()
+            if sender is not None:
+                QMessageBox.warning(self, "Validation", sender)
                 return False
         elif proto in ("azure_blob", "azure_files"):
             cs = self._azure_connection_string.text().strip()
@@ -1185,6 +1358,14 @@ class ConnectionDialog(QDialog):
             if not self._iscsi_target_iqn.text().strip():
                 QMessageBox.warning(self, "Validation", "Target IQN is required.")
                 return False
+            from core.iscsi_client import validate_initiator_name, validate_interface
+
+            try:
+                validate_initiator_name(self._iscsi_initiator_name.text())
+                validate_interface(self._iscsi_initiator_interface.text())
+            except ValueError as exc:
+                QMessageBox.warning(self, "Validation", str(exc))
+                return False
         elif proto == "webdav":
             url = self._webdav_url.text().strip()
             if not url:
@@ -1201,7 +1382,7 @@ class ConnectionDialog(QDialog):
             is_url = any(bucket.startswith(p) for p in ("https://", "http://", "s3://"))
             is_hostname = ".amazonaws.com" in bucket or ".s3." in bucket
             if not is_url and not is_hostname:
-                if not re.match(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", bucket):
+                if not re.fullmatch(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", bucket):
                     QMessageBox.warning(
                         self,
                         "Validation",
@@ -1404,6 +1585,14 @@ class ConnectionDialog(QDialog):
 
         self.accept()
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt
+        super().showEvent(event)
+        if not getattr(self, "_sized_once", False):
+            # Qt opens a dialog at most 2/3 of the screen high: the form
+            # scrolled while the screen had room for all of it.
+            self._sized_once = True
+            self.resize(fit_size(self.sizeHint().expandedTo(self.size()), self))
+
     def done(self, result: int) -> None:  # noqa: D102 - Qt override
         self._label_job.abandon()  # an answer still coming relabels no closed dialog
         # A test still running must neither report to the closed dialog nor
@@ -1566,79 +1755,97 @@ class ConnectionDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Could not read {pub_key_path}:\n{e}")
             return
 
-        # Connect and deploy
+        # Connect and deploy - on a worker (ui.off_gui): the connect, the
+        # look at ~/.ssh and the write are round trips that froze every
+        # window. The host-key question comes back to this thread
+        # (core.connect_worker.HostKeyPrompt), as for every connect.
+        from PyQt6.QtCore import Qt as _Qt
+
+        from core.connect_worker import HostKeyPrompt
+        from ui.off_gui import run_off_gui
+
         profile = self._build_profile()
+        password = self._password.text()
+        key_passphrase = self._key_passphrase.text()
         self._btn_deploy_key.setEnabled(False)
         self._btn_deploy_key.setText("Deploying...")
-        session: SSHSession | None = None
+        bridge = HostKeyPrompt()
+        bridge.set_prompt(self._confirm_unknown_host)
+        bridge.request.connect(bridge.handle_request, _Qt.ConnectionType.QueuedConnection)
 
-        try:
+        def deploy() -> str:
             session = SSHSession(profile)
-            session.connect(
-                password=self._password.text(),
-                key_passphrase=self._key_passphrase.text(),
-                on_unknown_host=self._confirm_unknown_host,
-            )
-
-            ssh_dir = session.join(session.home(), ".ssh")
-            authorized_keys = session.join(ssh_dir, "authorized_keys")
-            pub_key_bytes = pub_key_content.encode("utf-8")
-
-            if not session.exists(ssh_dir):
-                session.mkdir(ssh_dir)
-                log.info("Created remote .ssh directory: %s", ssh_dir)
-
             try:
-                session.chmod(ssh_dir, 0o700)
-            except OSError as e:
-                log.warning("Could not chmod %s to 700: %s", ssh_dir, e)
-
-            if session.exists(authorized_keys):
-                with session.open_read(authorized_keys) as f:
-                    existing = f.read()
-            else:
-                existing = b""
-
-            if pub_key_bytes in existing.splitlines():
-                log.info("SSH key %s already present on %s", choice, profile.host)
-                QMessageBox.information(
-                    self, "Deploy Key", f"Key {choice} is already deployed on this server."
+                session.connect(
+                    password=password,
+                    key_passphrase=key_passphrase,
+                    on_unknown_host=bridge.ask,
                 )
-                return
+                ssh_dir = session.join(session.home(), ".ssh")
+                authorized_keys = session.join(ssh_dir, "authorized_keys")
+                pub_key_bytes = pub_key_content.encode("utf-8")
 
-            new_content = bytearray(existing)
-            if new_content and not new_content.endswith(b"\n"):
+                if not session.exists(ssh_dir):
+                    session.mkdir(ssh_dir)
+                    log.info("Created remote .ssh directory: %s", ssh_dir)
+
+                try:
+                    session.chmod(ssh_dir, 0o700)
+                except OSError as e:
+                    log.warning("Could not chmod %s to 700: %s", ssh_dir, e)
+
+                if session.exists(authorized_keys):
+                    with session.open_read(authorized_keys) as f:
+                        existing = f.read()
+                else:
+                    existing = b""
+
+                if pub_key_bytes in existing.splitlines():
+                    return "present"
+
+                new_content = bytearray(existing)
+                if new_content and not new_content.endswith(b"\n"):
+                    new_content.extend(b"\n")
+                new_content.extend(pub_key_bytes)
                 new_content.extend(b"\n")
-            new_content.extend(pub_key_bytes)
-            new_content.extend(b"\n")
 
-            from core.atomic_io import atomic_write
+                from core.atomic_io import atomic_write
 
-            atomic_write(session, authorized_keys, bytes(new_content))
+                atomic_write(session, authorized_keys, bytes(new_content))
 
-            try:
-                session.chmod(authorized_keys, 0o600)
-            except OSError as e:
-                log.warning("Could not chmod %s to 600: %s", authorized_keys, e)
-
-            QMessageBox.information(
-                self,
-                "Deploy Key",
-                f"Successfully deployed {choice} to {profile.host}.\n\n"
-                "You can now switch to SSH Key authentication.",
-            )
-            log.info("Deployed SSH key %s to %s", choice, profile.host)
-        except Exception as e:
-            QMessageBox.critical(self, "Deploy Key Failed", str(e))
-            log.error("SSH key deployment failed: %s", e)
-        finally:
-            if session is not None:
+                try:
+                    session.chmod(authorized_keys, 0o600)
+                except OSError as e:
+                    log.warning("Could not chmod %s to 600: %s", authorized_keys, e)
+                return "deployed"
+            finally:
                 try:
                     session.disconnect()
                 except Exception:
                     log.debug("Failed to disconnect deploy-key session cleanly", exc_info=True)
+
+        try:
+            outcome = run_off_gui(deploy)
+        except Exception as e:
+            QMessageBox.critical(self, "Deploy Key Failed", str(e))
+            log.error("SSH key deployment failed: %s", e)
+            return
+        finally:
             self._btn_deploy_key.setEnabled(True)
             self._btn_deploy_key.setText("Deploy SSH Key")
+        if outcome == "present":
+            log.info("SSH key %s already present on %s", choice, profile.host)
+            QMessageBox.information(
+                self, "Deploy Key", f"Key {choice} is already deployed on this server."
+            )
+            return
+        QMessageBox.information(
+            self,
+            "Deploy Key",
+            f"Successfully deployed {choice} to {profile.host}.\n\n"
+            "You can now switch to SSH Key authentication.",
+        )
+        log.info("Deployed SSH key %s to %s", choice, profile.host)
 
     def _confirm_unknown_host(self, error: UnknownHostKeyError) -> bool:
         reply = QMessageBox.question(

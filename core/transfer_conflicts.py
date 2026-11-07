@@ -225,7 +225,9 @@ def _children(
 
 
 class ConflictPlan:
-    """The user's answer per conflicting destination path.
+    """The user's answer per conflict: per source and destination path -
+    two selected files of one name (``x/a.txt``, ``y/a.txt``) share a
+    destination but each has an answer of its own.
 
     A destination path without an answer was free when the scan looked;
     its job is queued with ``if_exists="fail"``.
@@ -234,7 +236,11 @@ class ConflictPlan:
     def __init__(self, dest_backend: FileBackend, scan: ConflictScan) -> None:
         self._backend = dest_backend
         self._taken = {folder: set(names) for folder, names in scan.taken.items()}
-        self._decisions: dict[str, tuple[str | None, str]] = {}
+        #: (source path, destination path) -> (target or None, if_exists)
+        self._decisions: dict[tuple[str, str], tuple[str | None, str]] = {}
+        #: destination path -> the last answer for it, for a caller that
+        #: names no source
+        self._by_dest: dict[str, tuple[str | None, str]] = {}
 
     @classmethod
     def never_replace(cls, dest_backend: FileBackend) -> ConflictPlan:
@@ -244,32 +250,44 @@ class ConflictPlan:
         compare window's one-sided rows, a sync's "missing" files)."""
         return cls(dest_backend, ConflictScan())
 
+    @classmethod
+    def only_newer(cls, dest_backend: FileBackend, pairs) -> ConflictPlan:
+        """A plan for ``(source, destination)`` pairs a comparison found
+        newer at the source: each job replaces its destination only when
+        that is still older when the job runs (IF_EXISTS_NEWER). The
+        comparison is a moment's view - a file edited since must not be
+        replaced by the copy that was newer then."""
+        plan = cls(dest_backend, ConflictScan())
+        for source, dest in pairs:
+            plan._decisions[(source, dest)] = (dest, IF_EXISTS_NEWER)
+            plan._by_dest[dest] = (dest, IF_EXISTS_NEWER)
+        return plan
+
     def decide(self, conflict: TransferConflict, action: ConflictAction) -> None:
         if action is ConflictAction.SKIP:
-            self._decisions[conflict.dest_path] = (None, "")
+            answer: tuple[str | None, str] = (None, "")
         elif action is ConflictAction.RENAME:
             taken = self._taken.setdefault(conflict.dest_dir, set())
             new_name = unique_name(conflict.name, taken, is_dir=conflict.source_is_dir)
             taken.add(new_name)
-            self._decisions[conflict.dest_path] = (
-                safe_join(self._backend, conflict.dest_dir, new_name),
-                IF_EXISTS_FAIL,
-            )
+            answer = (safe_join(self._backend, conflict.dest_dir, new_name), IF_EXISTS_FAIL)
         elif conflict.type_mismatch:
             # Overwriting a folder with a file (or the reverse) is not
             # offered; an "all" answer that reaches one leaves it alone.
-            self._decisions[conflict.dest_path] = (None, "")
+            answer = (None, "")
         elif action is ConflictAction.OVERWRITE:
-            self._decisions[conflict.dest_path] = (conflict.dest_path, IF_EXISTS_OVERWRITE)
+            answer = (conflict.dest_path, IF_EXISTS_OVERWRITE)
         elif action is ConflictAction.OVERWRITE_IF_NEWER:
             src, dst = conflict.source_mtime, conflict.dest_mtime
             if src is not None and dst is not None and src <= dst:
-                self._decisions[conflict.dest_path] = (None, "")
+                answer = (None, "")
             else:
                 # Unknown or newer: the worker compares again when it runs.
-                self._decisions[conflict.dest_path] = (conflict.dest_path, IF_EXISTS_NEWER)
+                answer = (conflict.dest_path, IF_EXISTS_NEWER)
         else:  # pragma: no cover - exhaustive over ConflictAction
             raise ValueError(f"unknown conflict action: {action!r}")
+        self._decisions[(conflict.source_path, conflict.dest_path)] = answer
+        self._by_dest[conflict.dest_path] = answer
 
     def keeps_inside(self, folder: str) -> bool:
         """True when an answer skips a destination below *folder*: that
@@ -278,12 +296,18 @@ class ConflictPlan:
         prefix = folder.rstrip(sep) + sep
         return any(
             target is None and path.startswith(prefix)
-            for path, (target, _mode) in self._decisions.items()
+            for (_source, path), (target, _mode) in self._decisions.items()
         )
 
-    def resolve(self, dest_path: str) -> tuple[str, str] | None:
-        """``(dest_path, if_exists)`` for the job, or ``None`` to skip it."""
-        target, mode = self._decisions.get(dest_path, (dest_path, IF_EXISTS_FAIL))
+    def resolve(self, dest_path: str, source_path: str | None = None) -> tuple[str, str] | None:
+        """``(dest_path, if_exists)`` for the job copying *source_path* to
+        *dest_path*, or ``None`` to skip it. Without *source_path* (or for
+        a source the scan named differently) the answer for *dest_path*."""
+        answer = self._decisions.get((source_path, dest_path)) if source_path is not None \
+            else None
+        if answer is None:
+            answer = self._by_dest.get(dest_path, (dest_path, IF_EXISTS_FAIL))
+        target, mode = answer
         if target is None:
             return None
         return target, mode

@@ -30,6 +30,7 @@ from core.media_collect import IMAGE, PDF, VIDEO, MediaItem  # noqa: E402
 from tests.media_testkit import (  # noqa: E402
     MemoryBackend,
     encrypted_pdf_bytes,
+    requires_qtpdf,
     video_bytes,
     write_image,
     write_pdf,
@@ -256,6 +257,7 @@ def test_happy_local_image_thumbnail_and_prepare(tmp_path):
     prepared.release()
 
 
+@requires_qtpdf
 def test_happy_local_pdf_prepare_counts_pages_and_thumbnail_renders(tmp_path):
     p = write_pdf(tmp_path / "doc.pdf", pages=3)
     item = _local_item(p, PDF)
@@ -269,6 +271,7 @@ def test_happy_local_pdf_prepare_counts_pages_and_thumbnail_renders(tmp_path):
     assert thumb.pixelColor(thumb.width() // 2, thumb.height() // 2).red() > 200
 
 
+@requires_qtpdf
 def test_sad_encrypted_pdf_gives_a_reason(tmp_path):
     p = tmp_path / "locked.pdf"
     p.write_bytes(encrypted_pdf_bytes())
@@ -278,6 +281,7 @@ def test_sad_encrypted_pdf_gives_a_reason(tmp_path):
         ML.thumbnail(LocalFS(), _local_item(p, PDF), cancel=threading.Event())
 
 
+@requires_qtpdf
 def test_sad_broken_pdf_gives_a_reason(tmp_path):
     p = tmp_path / "broken.pdf"
     p.write_bytes(b"%PDF-1.4\nnot really")
@@ -356,6 +360,7 @@ def test_happy_remote_image_goes_through_a_temp_copy_that_is_removed(tmp_path, m
     assert all(not os.path.exists(c.tmpdir) for c in made)
 
 
+@requires_qtpdf
 def test_happy_remote_pdf_keeps_its_copy_until_released(tmp_path):
     data = write_pdf(tmp_path / "src.pdf", pages=2).read_bytes()
     backend = MemoryBackend({"/r/doc.pdf": data})

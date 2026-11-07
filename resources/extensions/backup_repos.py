@@ -47,7 +47,7 @@ MAX_LISTED = 20000
 _DUP = re.compile(
     r"^duplicity-(?P<kind>full|inc|full-signatures|new-signatures)\."
     r"(?P<a>\d{8}T\d{6}Z)(?:\.to\.(?P<b>\d{8}T\d{6}Z))?\."
-    r"(?P<rest>.+)$"
+    r"(?P<rest>.+)\Z"
 )
 
 
@@ -388,6 +388,9 @@ def activate(api):
     class RepoDialog(QDialog):
         def __init__(self, ctx, folder, info: RepoInfo):
             super().__init__(api.window)
+            from ui.icon_provider import set_window_icon
+
+            set_window_icon(self, "archive")
             self.setWindowTitle(f"{info.kind} repository")
             self.resize(760, 460)
             from ui.close_corner import add_close_corner

@@ -290,7 +290,12 @@ class UdpEchoServer:
                 data, addr = self._sock.recvfrom(65535)
             except OSError:
                 return
-            self._sock.sendto(b"ECHO:" + data, addr)
+            if addr is None:  # shut down by close(): recvfrom returns (b"", None)
+                return
+            try:
+                self._sock.sendto(b"ECHO:" + data, addr)
+            except OSError:
+                return
 
     def close(self) -> None:
         close_socket(self._sock)

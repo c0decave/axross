@@ -1,0 +1,131 @@
+{
+ "name": "xeddsa",
+ "versions": {
+  "1.2.0": {
+   "accepted_findings": [],
+   "archives": {
+    "xeddsa-1.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "_libxeddsa.abi3.so": "81f611025124b5d14d554753efb98821db5cf9ed427796e4960d06490800234e",
+      "xeddsa-1.2.0.dist-info/METADATA": "09eeb62d1db18a3108490861bb5c083f92d94755252e4116cb454cbc3a817ac0",
+      "xeddsa-1.2.0.dist-info/RECORD": "4e43aefaa733abca1da72841ddb551398300e142b12e9b7e0965b29791afc014",
+      "xeddsa-1.2.0.dist-info/WHEEL": "cb567827c7ed8d1e981a157469b7649908f7ba68adf07a6720f76f3158a31997",
+      "xeddsa-1.2.0.dist-info/licenses/LICENSE": "32bcc74db2e8d577be4c5367053ab10538889befd30d745271ae11c6e9ac42ee",
+      "xeddsa-1.2.0.dist-info/top_level.txt": "1c8f878421c6353564d51f04f6f7e76885d8b7208fb8aa041452ed6ff9b52a15",
+      "xeddsa.libs/libsodium-f5304dcb.so.23.3.0": "d840f19200c67bfa8c30c19b5512759e357d901009a0217b82a457277cdd4166",
+      "xeddsa/__init__.py": "9081e74c8dcea26f5ab7da4cfd150d618743a0c2ae47debb33380e5af848700d",
+      "xeddsa/bindings.py": "6e9f97f00ca217f0f3e43a389168cc3ae83909ab1660ce027c9c3860c65e2300",
+      "xeddsa/libxeddsa_emscripten.py": "ceba1978b5e1b51ff35d2320b1f415b8b33c853c8dc727643475990c89b0c38d",
+      "xeddsa/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "xeddsa/version.py": "9754fd82225e93f367848c76e7ece88db79da82e90c30903555b0eb918ed73ad"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "db0efaf2c96d87c9269eb850118a77491632310bffaaa506bc5785998d385f6f",
+     "native": {
+      "_libxeddsa.abi3.so": "elf",
+      "xeddsa.libs/libsodium-f5304dcb.so.23.3.0": "elf"
+     },
+     "pth": {},
+     "sha256": "0e5867f3cb40441b1512572078a04dc3c132e31710684d5376d81e72e434bde3"
+    }
+   },
+   "name": "xeddsa",
+   "provenance": {
+    "xeddsa-1.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "Syndace/python-xeddsa",
+     "workflow": "test-and-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "license_expression": "MIT",
+    "maintainer_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "project_urls": {
+     "Changelog": "https://github.com/Syndace/python-xeddsa/blob/main/CHANGELOG.md",
+     "Documentation": "https://python-xeddsa.readthedocs.io/",
+     "Issues": "https://github.com/Syndace/python-xeddsa/issues",
+     "Repository": "https://github.com/Syndace/python-xeddsa"
+    },
+    "summary": "Python bindings to libxeddsa."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 2 native binaries profiled, none with network/process imports or addresses; attestation verifies (Syndace/python-xeddsa)."
+   },
+   "scans": {
+    "capa": {
+     "81f611025124b5d14d554753efb98821db5cf9ed427796e4960d06490800234e": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "_libxeddsa.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "libsodium-f5304dcb.so.23.3.0"
+       ],
+       "rpath": [
+        "$ORIGIN/xeddsa.libs"
+       ],
+       "urls": []
+      }
+     },
+     "d840f19200c67bfa8c30c19b5512759e357d901009a0217b82a457277cdd4166": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "change memory permission on Linux",
+       "contain loop",
+       "contain obfuscated stackstrings",
+       "create or open file",
+       "encode data using ADD XOR SUB operations",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using AES via x86 extensions",
+       "encrypt data using Curve25519",
+       "encrypt data using RC4 PRGA",
+       "encrypt data using Salsa20 or ChaCha",
+       "execute syscall",
+       "get current PID on Linux",
+       "get system information on Linux",
+       "hash data using SHA256",
+       "hash data using SHA512",
+       "linked against libsodium",
+       "map or unmap memory on Linux",
+       "read file on Linux"
+      ],
+      "note": "",
+      "path": "xeddsa.libs/libsodium-f5304dcb.so.23.3.0",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "mprotect"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.2.0"
+  }
+ }
+}

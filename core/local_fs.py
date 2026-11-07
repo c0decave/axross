@@ -7,13 +7,12 @@ import shutil
 import stat as stat_module
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import IO
 
 from core import removal_cancel
 from core.backend import SessionLifecycle
-from models.file_item import FileItem
+from models.file_item import FileItem, local_time
 
 try:
     import grp
@@ -105,6 +104,28 @@ def copy_file_onto(src: str, dst: str) -> None:
     shutil.copy2(src, dst)
 
 
+def unstattable_item(entry: os.DirEntry, error: OSError) -> FileItem:
+    """An entry the listing names but lstat refuses (EACCES on a mount
+    point the user may not enter, ...). Shown, never dropped: a recursive
+    delete or move over a listing without it would report success while the
+    entry stays behind. Whether it is a folder comes from the directory
+    entry's type (d_type), which needs no stat."""
+    try:
+        is_dir = entry.is_dir(follow_symlinks=False)
+    except OSError:
+        is_dir = False
+    try:
+        is_link = entry.is_symlink()
+    except OSError:
+        is_link = False
+    return FileItem(
+        name=entry.name,
+        is_dir=is_dir,
+        is_link=is_link,
+        stat_error=error.strerror or str(error),
+    )
+
+
 def entry_stat(path: str, *, follow: bool = False) -> os.stat_result | None:
     """``os.lstat`` (``os.stat`` with ``follow``) of *path*, or None when
     nothing is there.
@@ -155,6 +176,7 @@ class LocalFS(SessionLifecycle):
                         items.append(self._entry_to_item(entry))
                     except OSError as e:
                         log.warning("Cannot stat %s: %s", entry.path, e)
+                        items.append(unstattable_item(entry, e))
         except OSError as e:
             log.error("Cannot list %s: %s", path, e)
             raise
@@ -328,18 +350,18 @@ class LocalFS(SessionLifecycle):
         owner = owner_name(st.st_uid) if hasattr(st, "st_uid") else ""
         group = group_name(st.st_gid) if hasattr(st, "st_gid") else ""
 
-        accessed = datetime.fromtimestamp(st.st_atime) if getattr(st, "st_atime", 0) else None
+        accessed = local_time(st.st_atime) if getattr(st, "st_atime", 0) else None
         created = None
         # On Linux st_ctime is inode-change-time; on macOS/Windows it
         # is birthtime. Prefer explicit birthtime when the platform
         # exposes it.
         birth = getattr(st, "st_birthtime", 0)
         if birth:
-            created = datetime.fromtimestamp(birth)
+            created = local_time(birth)
         return FileItem(
             name=name,
             size=st.st_size,
-            modified=datetime.fromtimestamp(st.st_mtime),
+            modified=local_time(st.st_mtime),
             permissions=st.st_mode & 0o7777,
             is_dir=is_dir,
             is_link=is_link,

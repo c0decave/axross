@@ -34,7 +34,7 @@ class ImapTest(unittest.TestCase):
 
     def test_ssl_context_is_passed_and_verifying(self) -> None:
         session = self._session()
-        with mock.patch.object(imap_client.imaplib, "IMAP4_SSL") as ctor:
+        with mock.patch.object(imap_client, "_IMAP4_SSL") as ctor:
             ctor.return_value.login.return_value = ("OK", [b""])
             try:
                 session._connect()
@@ -46,7 +46,7 @@ class ImapTest(unittest.TestCase):
 
     def test_opt_out_reaches_constructor(self) -> None:
         session = self._session(verify_tls=False)
-        with mock.patch.object(imap_client.imaplib, "IMAP4_SSL") as ctor:
+        with mock.patch.object(imap_client, "_IMAP4_SSL") as ctor:
             try:
                 session._connect()
             except Exception:  # noqa: BLE001

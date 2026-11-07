@@ -1,0 +1,114 @@
+{
+ "name": "libusb-package",
+ "versions": {
+  "1.0.26.4": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|libusb_package/__init__.py|e0901f16719309f0"
+   ],
+   "archives": {
+    "libusb_package-1.0.26.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [
+      "hook-dirs = libusb_package.__pyinstaller:get_hook_dirs"
+     ],
+     "files": {
+      "libusb_package-1.0.26.4.dist-info/METADATA": "449b016ee5b9f0a4d330975c92fca4979d47c941f12bdbddfa357a4b1757994d",
+      "libusb_package-1.0.26.4.dist-info/RECORD": "11c5bc46ff19c162d6b669e19f8b69f1605ff371604a27a422c87626de3e14b3",
+      "libusb_package-1.0.26.4.dist-info/WHEEL": "1ed8a40976ba1033429e126b8f607c9c9881b03c144e58b55ab5a90457055883",
+      "libusb_package-1.0.26.4.dist-info/entry_points.txt": "41acef68d704dd0ab23bdb0d2605ee594b18fa7c2f01b0c4d6b36f49d9b8c7c9",
+      "libusb_package-1.0.26.4.dist-info/licenses/LICENSE": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+      "libusb_package-1.0.26.4.dist-info/top_level.txt": "d20e6f14c285da75113c043dfead9396320331841fbebbbc8f331959eb3e3d6e",
+      "libusb_package/__init__.py": "e0901f16719309f01269291a75b8a9a9c3a35971f0efec06d069238ef463df44",
+      "libusb_package/__pyinstaller/__init__.py": "a1b4f44a68bc42094c71c550ae5795aae262e8ddc1758f9bd47fbab3c8fad76d",
+      "libusb_package/__pyinstaller/hook-libusb_package.py": "7b4c387d9c719d81e78ae3a08bad54e51b502d96676db5b7d50bc8a73426e3b8",
+      "libusb_package/_version.py": "5ae5e499dd2065623a4d420dfe5b7d911802d4f36a56a846733991fb53c7dbff",
+      "libusb_package/libusb-1.0.so": "7822d5ac42f0d69a20a5cf8a3a34fd1609ad3a01b81863961fc5e16b7380b985",
+      "libusb_package/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "9eac5d0ffe9261a2423b6a0ef233fb40419f010fe6b119d6e5e5c6cb5c28cfd9",
+     "native": {
+      "libusb_package/libusb-1.0.so": "elf"
+     },
+     "pth": {},
+     "sha256": "44baf60d639f97e61d2091212295b9f34e7ca58082c355f5fab44ad46ac4595e"
+    }
+   },
+   "name": "libusb-package",
+   "provenance": {
+    "libusb_package-1.0.26.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": null
+   },
+   "pypi": {
+    "author": "Chris Reed",
+    "author_email": "flit@me.com",
+    "home_page": "https://github.com/pyocd/libusb-package",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/pyocd/libusb-package/issues",
+     "Changelog": "https://github.com/pyocd/libusb-package/releases",
+     "Discussions": "https://github.com/pyocd/libusb-package/discussions",
+     "Homepage": "https://github.com/pyocd/libusb-package"
+    },
+    "summary": "Package containing libusb so it can be installed via Python package managers"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "libusb's bind/socket imports are its netlink hotplug monitor (Linux). Content review only."
+   },
+   "scans": {
+    "capa": {
+     "7822d5ac42f0d69a20a5cf8a3a34fd1609ad3a01b81863961fc5e16b7380b985": {
+      "capabilities": [
+       "communicate with kernel module via Netlink socket on Linux",
+       "contain loop",
+       "create or open file",
+       "create thread",
+       "enumerate files on Linux",
+       "execute syscall",
+       "get file system information on Linux",
+       "get kernel version",
+       "map or unmap memory on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "receive data",
+       "receive data on socket",
+       "set socket configuration",
+       "set thread name on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "libusb_package/libusb-1.0.so",
+      "profile": {
+       "categories": {
+        "network": [
+         "bind",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libatomic.so.1",
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://libusb.info"
+       ]
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_process_spawn|libusb_package/__init__.py|e0901f16719309f0"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn libusb_package/__init__.py"
+    ]
+   },
+   "version": "1.0.26.4"
+  }
+ }
+}

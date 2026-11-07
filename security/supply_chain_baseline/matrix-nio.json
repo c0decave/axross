@@ -1,0 +1,112 @@
+{
+ "name": "matrix-nio",
+ "versions": {
+  "0.26.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|nio/client/async_client.py|d028b5e56a26af24",
+    "yara|capability_filesystem_read|nio/crypto/async_attachments.py|735fea52cd068592",
+    "yara|capability_filesystem_read|nio/crypto/attachments.py|bf2a44c39dc1dc03",
+    "yara|capability_filesystem_read|nio/crypto/key_export.py|284813134f2c3b5b"
+   ],
+   "archives": {
+    "matrix_nio-0.26.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "matrix_nio-0.26.0.dist-info/METADATA": "135b72e59dd60e6e87a34244185eb97a68231e09869999c6447582a713eae184",
+      "matrix_nio-0.26.0.dist-info/RECORD": "5e0ed5c61524f4685e0ef6705558fea2e7c8165a562ab43da24c3c4e9330adac",
+      "matrix_nio-0.26.0.dist-info/WHEEL": "2b6eb4118ce7cd7b09601406aa623c553c4476265836f0d9c16f5c061f7efcc0",
+      "matrix_nio-0.26.0.dist-info/licenses/LICENSE.md": "87ada86080b62c06a3cae886c5058972688a61cc080d26acfbc46327dcbbc30a",
+      "matrix_nio-0.26.0.dist-info/top_level.txt": "14eb826639937711b36d18e38f5bbf7b375791aaef24682b6e24a90ea53ab507",
+      "nio/__init__.py": "8216b2544464cd8275ab7a0ffb7060bf84c5769553b98e109919a2091f428c5c",
+      "nio/_compat.py": "66588def3081e1f695eddbe92471d909213add5b512b5a273048dce7834084ac",
+      "nio/api.py": "f78af2aa4fe174b8ca766de63c40e5abba0e11849c1e5725cac68116a29542c1",
+      "nio/client/__init__.py": "e6c3c20cd669b923813ecf2fae948f5821683f6210cca4e4c3f22a8a8c961430",
+      "nio/client/async_client.py": "d028b5e56a26af24bfc33f4be071e7a8f94528597cf301e16ba6e2a54fba733a",
+      "nio/client/base_client.py": "98a5ddc5eb9e57e7ad4761650459587c1658894d0147edcbd66cf40c9a5f237f",
+      "nio/client/http_client.py": "18c5cd488e512157c2cb3ea2c4e3304857526dcbe1fe043a3f479ad929039593",
+      "nio/crypto/__init__.py": "e4b5c55b98f785257a609d09799ef57fae8a9f76d10a2315b492242d8e0d7671",
+      "nio/crypto/async_attachments.py": "735fea52cd068592806037d782b4f9745aade15f11097495b6dbd8fd218c72f2",
+      "nio/crypto/attachments.py": "bf2a44c39dc1dc036418e70294dc5c5cb7bb9a9ed389b65f359c9ef389af7d0e",
+      "nio/crypto/device.py": "379c89b8c40fa95bbfe1b1df787d934bf599d6db3bc6a292d12d8616a8fa6dd2",
+      "nio/crypto/key_export.py": "284813134f2c3b5bc8dbb06a1e3713bfbf86f761c4d243df542e6c4122dde630",
+      "nio/crypto/key_request.py": "eaf1932730aca8fa999a753c11cb8eb8bfa46b6724ab4afe170c973f002569a7",
+      "nio/crypto/log.py": "a9bb32ab5707e798f0656fd41f2ea473be2ccc1e3329ae5a1ea439488c0c5e31",
+      "nio/crypto/memorystores.py": "bc804a85b9b874249daad8ee1ad3b7d93ce1ee809ae585b498b427536d6ba325",
+      "nio/crypto/olm_machine.py": "1d64c2b52f5f69c2c2b251924d66d077473203f0067b294f648ae2cece428e85",
+      "nio/crypto/sas.py": "64315edb3cda348e40fb1a518a36b465b2241d8d31a07e979ace5c6d73b03cf9",
+      "nio/crypto/sessions.py": "d6135c9bb415fe0e1406278ddd19e95c482c426ee5815a6399519cdd7cccf34f",
+      "nio/event_builders/__init__.py": "ead7181deb203c2194efd563dca2357ad05c7c4d99d8869e3a91fc2ad97b5b25",
+      "nio/event_builders/direct_messages.py": "1e2d2d25a243f16d4b5cd95d812a819061c0719047a98a9cf24a848abd02f27f",
+      "nio/event_builders/event_builder.py": "edc1987b9221d7d5564236737fcc564bb4274fa52b2232a24dede9f621093546",
+      "nio/event_builders/state_events.py": "c3652c85f173539f25446e35a24305923176e8871659864e3b97fc40b2eccee5",
+      "nio/events/__init__.py": "32e12f520adb2e0354d9a06f58ddfaec40364afa97c013e72b8b4f735de8c389",
+      "nio/events/account_data.py": "f57345c0f19e2a2489c085ed86f26d55fa7b1d27efcbac5131f37ba515adaee1",
+      "nio/events/common.py": "044beaa2b2f095c067bbaddd2adbb9d4a8346f53d099a138f879fb8821bbe7bc",
+      "nio/events/ephemeral.py": "9130d471771cdda35bda1dff6c0ac0e343b3d7bbb665bf011014a33b3adda7c2",
+      "nio/events/invite_events.py": "55e2d8f6959305ba144a073eb3f7a582b28dca9f68ddf3d7eef62546239c3559",
+      "nio/events/misc.py": "e3b9b3bfb8ca684d774eb3227c5bc1e1c12e7ca9d0ed77c8c1fda0e5df2ced06",
+      "nio/events/presence.py": "24bc6bc8e733984da88a9d1ae1a1840b367f5104a667476c56dd25b906696025",
+      "nio/events/room_events.py": "43fa5cc5f4eb1a0d61f44adffcee2441961de3bfc22b402f6db4e74042e0749b",
+      "nio/events/to_device.py": "838fdc401de8d1540219edd5ae84f8b5cd15f1f8b53dc593e4554446342af507",
+      "nio/exceptions.py": "486143a19ca966f19184f558aed87d8e68e82d95fb206907d62615fcb21e1d1b",
+      "nio/http.py": "2d7e4cf47b8b9b4f55d1909c60672eb426dba2ee56a201aeeea7892527a9d693",
+      "nio/monitors.py": "f20891d163f74c64514a8dd6522c38448fde7bcedc0c25597cc4d5b45c636c64",
+      "nio/responses.py": "3abcfcd771cb674737282bcbd0d12b469e621d6a1e61b273a251eb6725a7f1d8",
+      "nio/rooms.py": "a5916ca47e1478823e63d891520346b490541ae9d3869815c62db552a5bbd67b",
+      "nio/schemas.py": "8109a0784d48e9ad3d69e8e7ee2ca5a4b832df614a27d8d9670fef4c83f22d5e",
+      "nio/store/__init__.py": "7c7fb96a4bd0ad958d42a7949fee4172872a9c5f5771b0fc35e6ef164eae8eba",
+      "nio/store/database.py": "cd16c71698a7bd7501af1ac67b8114941534c94f582719a23d457d117f087199",
+      "nio/store/file_trustdb.py": "afa30a7524318767327029058ff3b464d23f06c97dbe6a90490a9b0780a0d117",
+      "nio/store/log.py": "5d4102ebd1e36c1a21f1c60bde5411ed5caf3f83f9317d547a15f27fdd7e9a61",
+      "nio/store/models.py": "4dfe9fcddae2da28a9c5e04bab8a5c7c8086a4a914479ebe4dd54f5c4402aba9"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "96718d6cb413647841fc90af0bedac3652bbcebebb26b89bb70e311212cc3580",
+     "native": {},
+     "pth": {},
+     "sha256": "1803d7ba6dbc54a101a02695a5a767a1fb53632e46aced9d116990f4a98eadf3"
+    }
+   },
+   "name": "matrix-nio",
+   "provenance": {
+    "matrix_nio-0.26.0-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "matrix-nio/matrix-nio",
+     "workflow": "pypi-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Damir Jeli\u0107 <poljar@termina.org.uk>, Paarth Shah <mail@shahpaarth.com>",
+    "license": "Internet Systems Consortium license\n        ===================================\n        \n        Copyright (c) `2018`, `Damir Jeli\u0107 <poljar@termina.org.uk>`\n        \n        Permission to use, copy, modify, and/or distribute this software for any purpose\n        with or without fee is hereby granted, provided that the above copyright notice\n        and this permission notice appear in all copies.\n        \n        THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH\n        REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND\n        FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,\n        INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS\n        OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER\n        TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF\n        THIS SOFTWARE.\n        ",
+    "project_urls": {
+     "Documentation": "https://matrix-nio.readthedocs.io/en/latest/",
+     "Source": "https://github.com/matrix-nio/matrix-nio"
+    },
+    "summary": "A Python Matrix client library, designed according to sans I/O principles."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; attestation verifies (matrix-nio/matrix-nio)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|nio/client/async_client.py|d028b5e56a26af24",
+     "yara|capability_filesystem_read|nio/crypto/async_attachments.py|735fea52cd068592",
+     "yara|capability_filesystem_read|nio/crypto/attachments.py|bf2a44c39dc1dc03",
+     "yara|capability_filesystem_read|nio/crypto/key_export.py|284813134f2c3b5b"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read nio/client/async_client.py",
+     "capability_filesystem_read:capability_filesystem_read nio/crypto/async_attachments.py",
+     "capability_filesystem_read:capability_filesystem_read nio/crypto/attachments.py",
+     "capability_filesystem_read:capability_filesystem_read nio/crypto/key_export.py"
+    ]
+   },
+   "version": "0.26.0"
+  }
+ }
+}

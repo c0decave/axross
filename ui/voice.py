@@ -19,6 +19,7 @@ import base64
 import threading
 from typing import Callable
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from core import audio_route as AR
@@ -30,6 +31,7 @@ from core import voice_text as VT
 from core import voice_worker as VW
 from core.i18n import tr
 from core.multimedia_env import prime_notify_lookups
+from core.thread_relay import GuiCall
 
 #: Longest recording; then it ends by itself.
 MAX_RECORD_SECONDS = 60.0
@@ -132,6 +134,8 @@ def _qt_sink(rate: int, device_id: str | None = None, volume: float | None = Non
     _audio_ready()
     from PyQt6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 
+    if device_id is None:  # the voice: its own output in the Audio Mixer, else the output's
+        device_id = AR.source_output_id("voice")
     device = AR.output_device(device_id) or QMediaDevices.defaultAudioOutput()
     if device.isNull():
         raise OSError(tr("No audio output found"))
@@ -146,7 +150,7 @@ def _qt_sink(rate: int, device_id: str | None = None, volume: float | None = Non
     sink = QAudioSink(device, fmt)
     prime_notify_lookups(sink)
     sink.setBufferSize(fmt.sampleRate() * 2 // 4)  # 250 ms
-    sink.setVolume(AR.output_gain() if volume is None else volume)
+    sink.setVolume(AR.source_gain("voice") if volume is None else volume)
     io = sink.start()
     if io is None or sink.error() != QAudio.Error.NoError:
         sink.deleteLater()
@@ -163,9 +167,16 @@ class QtPlayer(QObject):
     drained = pyqtSignal()
     failed = pyqtSignal(str)
 
-    def __init__(self, sink_factory=None) -> None:
+    def __init__(self, sink_factory=None, *, equalize: bool | None = None) -> None:
         super().__init__()
         self._sink_factory = sink_factory or _qt_sink
+        #: through axross's equalizer (core.audio_eq): the voice is; a test
+        #: tone on a device of its own (a sink_factory) is not, unless asked
+        self._equalize = sink_factory is None if equalize is None else bool(equalize)
+        if sink_factory is None:
+            # the voice: the Audio Mixer's volume and mute reach a sentence
+            # already playing (its device and equalizer the next one)
+            AR.notifier().changed.connect(self._mixer_changed)
         self._sink = None
         self._io = None
         self._rate = 0  # the rate of the chunks the open sink plays
@@ -217,6 +228,11 @@ class QtPlayer(QObject):
                     return
             self._queue.pop(0)
             self._pending = VA.resample(pcm, rate, self._device_rate)
+            gains = AR.eq_gains() if self._equalize else None
+            if gains is not None:
+                from core.audio_eq import equalize_int16
+
+                self._pending = equalize_int16(self._pending, self._device_rate, gains)
         if self._pending and self._io is not None:
             free = self._sink.bytesFree()
             if free > 0:
@@ -234,6 +250,11 @@ class QtPlayer(QObject):
             self._sink.deleteLater()
         self._sink = self._io = None
         self._rate = self._device_rate = 0
+
+    def _mixer_changed(self, _saved) -> None:
+        sink = self._sink
+        if sink is not None and not sip.isdeleted(sink):
+            sink.setVolume(AR.source_gain("voice"))
 
     def stop(self) -> None:
         self._queue.clear()
@@ -274,12 +295,6 @@ def speak_request(model: VM.VoiceModel, lang: str, sentences: list, tuning: dict
 
 
 # -- the controller ------------------------------------------------------------------------------
-
-
-class _Bridge(QObject):
-    audio = pyqtSignal(int, bytes, int)
-    spoken = pyqtSignal(int, str)  # generation, error ("" = done)
-    heard = pyqtSignal(int, str, str)  # generation, text, error
 
 
 class VoiceController(QObject):
@@ -338,10 +353,13 @@ class VoiceController(QObject):
             from core.voice_stt import transcribe_server as server_transcribe
         self._server_transcribe = server_transcribe
         self._lexicon = VT.load_lexicon()
-        self._bridge = _Bridge()
-        self._bridge.audio.connect(self._on_audio)
-        self._bridge.spoken.connect(self._on_spoken)
-        self._bridge.heard.connect(self._on_heard)
+        # The speech and recognition threads report through these, not
+        # through signals of a bridge object: the exit clean-up deletes every
+        # Python-owned QObject while a server transcription or the speech
+        # worker may still report (core/thread_relay.py).
+        self._audio_call = GuiCall(self._on_audio)
+        self._spoken_call = GuiCall(self._on_spoken)
+        self._heard_call = GuiCall(self._on_heard)
         self._state = "idle"
         self._generation = 0
         #: One step per recording that is dropped (Stop): its text is not used.
@@ -475,7 +493,7 @@ class VoiceController(QObject):
                 # Slower and lower, as if played at rate x factor - in
                 # software, since not every sound device takes any rate.
                 pcm = VA.resample(pcm, rate, int(rate / rate_factor))
-            self._bridge.audio.emit(generation, pcm, rate)
+            self._audio_call(generation, pcm, rate)
 
         def work() -> None:
             error = ""
@@ -488,7 +506,7 @@ class VoiceController(QObject):
                 error = ""
             except VW.VoiceWorkerError as exc:
                 error = str(exc)
-            self._bridge.spoken.emit(generation, error)
+            self._spoken_call(generation, error)
 
         threading.Thread(target=work, name="axross-voice-speak", daemon=True).start()
 
@@ -686,9 +704,9 @@ class VoiceController(QObject):
 
         def run() -> None:
             try:
-                self._bridge.heard.emit(generation, work(), "")
+                self._heard_call(generation, work(), "")
             except Exception as exc:  # noqa: BLE001 - shown to the user, never logged
-                self._bridge.heard.emit(generation, "", str(exc))
+                self._heard_call(generation, "", str(exc))
 
         threading.Thread(target=run, name="axross-voice-listen", daemon=True).start()
 
@@ -756,9 +774,10 @@ class VoicePreview(QObject):
         self._probe_cached = probe_cached or MPROBE.cached
         self._probe_async = probe_async or MPROBE.probe_async
         self._lexicon = lexicon
-        self._bridge = _Bridge()
-        self._bridge.audio.connect(self._on_audio)
-        self._bridge.spoken.connect(self._on_spoken)
+        # As in VoiceController: no bridge object the exit clean-up could
+        # delete while the sample is being spoken (core/thread_relay.py).
+        self._audio_call = GuiCall(self._on_audio)
+        self._spoken_call = GuiCall(self._on_spoken)
         self._generation = 0
         self._model: VM.VoiceModel | None = None
         self._synth_running = False
@@ -822,7 +841,8 @@ class VoicePreview(QObject):
         name = self._model.title if self._model is not None else ""
         self.message.emit(tr("Speaking the sample of {name}…").format(name=name))
         self._synth_running = True
-        cancel, bridge, tts = self._cancel, self._bridge, self._tts
+        cancel, tts = self._cancel, self._tts
+        audio, spoken = self._audio_call, self._spoken_call
 
         def on_event(event: dict) -> None:
             try:
@@ -830,7 +850,7 @@ class VoicePreview(QObject):
                 rate = int(event.get("rate") or 22050)
             except (ValueError, TypeError):
                 return
-            bridge.audio.emit(generation, pcm, rate)
+            audio(generation, pcm, rate)
 
         def work() -> None:
             error = ""
@@ -843,7 +863,7 @@ class VoicePreview(QObject):
                 error = ""
             except VW.VoiceWorkerError as exc:
                 error = str(exc)
-            bridge.spoken.emit(generation, error)
+            spoken(generation, error)
 
         threading.Thread(target=work, name="axross-voice-listen-sample", daemon=True).start()
 

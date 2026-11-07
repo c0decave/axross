@@ -91,6 +91,10 @@ def effect_backups(ctx, win, value) -> None:
     assert LC.file_handler().backupCount == value
 
 
+def effect_enabled(ctx, win, value) -> None:
+    assert logging.getLogger("core.transfer_worker").isEnabledFor(logging.ERROR) is value
+
+
 def effect_terminal(ctx, win, value) -> None:
     assert (LC.terminal_handler() is not None) is value
 
@@ -138,6 +142,10 @@ ROWS = [
         SMX._page_attr("logging", "backups_spin", "value"), _loaded("file_backups"),
         _edit("file_backups"), (0, 21, "3"), effect_backups,
         widgets=("logging.backups_spin",)),
+    Row("logging_enabled", "logging", "logging.json enabled", (False,), True,
+        SMX._set_check("logging", "enabled_check"),
+        SMX._page_attr("logging", "enabled_check"), _loaded("enabled"),
+        _edit("enabled"), ("no", 0), effect_enabled, widgets=("logging.enabled_check",)),
     Row("logging_terminal", "logging", "logging.json terminal", (True,), False,
         SMX._set_check("logging", "terminal_check"),
         SMX._page_attr("logging", "terminal_check"), _loaded("terminal"),

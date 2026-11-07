@@ -24,7 +24,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -46,8 +46,9 @@ from PyQt6.QtWidgets import (
 
 from core import llm_profiles as LP
 from core.i18n import tr
+from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
-
+from ui.icon_provider import set_window_icon
 
 #: The item role of the model drop-down that holds an entry's label (size,
 #: parameters, quantisation, loaded); the item text stays the model id, so
@@ -69,6 +70,21 @@ def model_label(entry) -> str:
     return f"{entry.id}  —  " + " · ".join(parts)
 
 
+def _loaded_icon():
+    """A green dot: the model is loaded on the server."""
+    from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+
+    pix = QPixmap(12, 12)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(QColor("#2ea043"))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(1, 1, 10, 10)
+    painter.end()
+    return QIcon(pix)
+
+
 class _ModelLabelDelegate(QStyledItemDelegate):
     """Paints an entry's label in the drop-down instead of the bare id."""
 
@@ -77,10 +93,6 @@ class _ModelLabelDelegate(QStyledItemDelegate):
         label = index.data(MODEL_LABEL_ROLE)
         if isinstance(label, str) and label:
             option.text = label
-
-
-class _ModelFetcher(QObject):
-    done = pyqtSignal(int, object, str)  # token, models, error
 
 
 class _LLMProfilesForm:
@@ -105,8 +117,6 @@ class _LLMProfilesForm:
         self._new_keys: dict[int, str] = {}
         self._current: LP.LLMProfile | None = None
         self._loading = False
-        self._fetcher = _ModelFetcher()
-        self._fetcher.done.connect(self._on_models)
         self._fetch_token = 0
 
         self.profile_list = QListWidget()
@@ -128,7 +138,15 @@ class _LLMProfilesForm:
         self.name_edit = QLineEdit()
         self.provider_combo = QComboBox()
         self.provider_combo.addItems(LP.PROVIDERS)
-        self.endpoint_edit = QLineEdit()
+        # An editable drop-down of the endpoints already in use and the
+        # usual local servers (reported: every new profile meant typing the
+        # same host again). endpoint_edit is its line: everything that set
+        # or read the plain field before still does.
+        self.endpoint_combo = QComboBox()
+        self.endpoint_combo.setEditable(True)
+        self.endpoint_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.endpoint_combo.setToolTip(tr("Type an endpoint or pick one already used"))
+        self.endpoint_edit = self.endpoint_combo.lineEdit()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         self.model_combo.setItemDelegate(_ModelLabelDelegate(self.model_combo))
@@ -137,8 +155,15 @@ class _LLMProfilesForm:
             tr("Ask the server for its models: size, parameters, quantisation and which one "
                "is loaded, as far as the server reports them"))
         self.fetch_button.clicked.connect(self.fetch_models)
+        self.size_order_check = QCheckBox(tr("by size"))
+        self.size_order_check.setToolTip(tr(
+            "Order the fetched models by size (smallest first) instead of by name; "
+            "loaded models stay on top"))
+        self.size_order_check.toggled.connect(self._reorder_models)
+        self._fetched_models: list = []
         model_row = QHBoxLayout()
         model_row.addWidget(self.model_combo, 1)
+        model_row.addWidget(self.size_order_check)
         model_row.addWidget(self.fetch_button)
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -178,7 +203,7 @@ class _LLMProfilesForm:
         form = QFormLayout()
         form.addRow(tr("Name"), self.name_edit)
         form.addRow(tr("Provider"), self.provider_combo)
-        form.addRow(tr("Endpoint"), self.endpoint_edit)
+        form.addRow(tr("Endpoint"), self.endpoint_combo)
         form.addRow(tr("Model"), model_row)
         form.addRow(tr("API key"), self.key_edit)
         self.advanced_button = QPushButton(tr("Advanced ▸"))
@@ -292,8 +317,9 @@ class _LLMProfilesForm:
             self.form_widget.setEnabled(True)
             self.name_edit.setText(p.name)
             self.provider_combo.setCurrentText(p.provider)
-            self.endpoint_edit.setText(p.endpoint)
+            self._fill_endpoints(p.endpoint)
             self.endpoint_edit.setPlaceholderText(LP.DEFAULT_ENDPOINTS.get(p.provider, ""))
+            self._fetched_models = []
             self.model_combo.clear()
             self.model_combo.setEditText(p.model)
             self.key_edit.setText(self._new_keys.get(id(p), ""))
@@ -350,6 +376,29 @@ class _LLMProfilesForm:
                 "Remote transcription server: what you say into the microphone is sent to "
                 "{host}.").format(host=target.host() or target.resolved_endpoint()))
         self.stt_remote_label.setVisible(remote)
+
+    def known_endpoints(self) -> list[str]:
+        """The endpoints to offer: those of the profiles (as typed), then
+        the providers' usual local servers; each once, in that order."""
+        seen: list[str] = []
+        for value in [*(p.endpoint for p in self._settings.profiles),
+                      *LP.DEFAULT_ENDPOINTS.values()]:
+            value = (value or "").strip()
+            if value and value not in seen:
+                seen.append(value)
+        return seen
+
+    def _fill_endpoints(self, current: str) -> None:
+        combo = self.endpoint_combo
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItems(self.known_endpoints())
+            combo.setCurrentIndex(-1)
+        finally:
+            combo.blockSignals(False)
+        # The line's own signals run: the remote warning follows the text.
+        self.endpoint_edit.setText(current)
 
     def _on_provider(self, provider: str) -> None:
         self.endpoint_edit.setPlaceholderText(LP.DEFAULT_ENDPOINTS.get(provider, ""))
@@ -409,18 +458,20 @@ class _LLMProfilesForm:
         self._fetch_token += 1
         token = self._fetch_token
         self.status_label.setText(tr("Asking the server for its models…"))
+        # Not a signal of a bridge object: Settings is deleted when it closes
+        # and the exit clean-up deletes every Python-owned QObject, while the
+        # server may still be answering (core/thread_relay.py).
+        done = GuiCall(self._on_models)
 
         def work() -> None:
             from core.agent import AgentError, model_inventory
 
             try:
-                self._fetcher.done.emit(token, model_inventory(profile, key), "")
+                done(token, model_inventory(profile, key), "")
             except AgentError as exc:
-                self._fetcher.done.emit(
-                    token, None, tr("Listing models failed: {error}").format(error=str(exc))
-                )
+                done(token, None, tr("Listing models failed: {error}").format(error=str(exc)))
             except Exception as exc:  # noqa: BLE001 - shown to the user
-                self._fetcher.done.emit(
+                done(
                     token,
                     None,
                     tr("Listing models failed: {error}").format(
@@ -437,25 +488,54 @@ class _LLMProfilesForm:
             self.status_label.setText(error)
             return
         models = list(models or [])
+        self._fetched_models = models
         combo = self.model_combo
         current = combo.currentText()
-        combo.blockSignals(True)
-        try:
-            combo.clear()
-            for i, entry in enumerate(models):
-                label = model_label(entry)
-                combo.addItem(entry.id)
-                combo.setItemData(i, label, MODEL_LABEL_ROLE)
-                combo.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
-            combo.setEditText(current or (combo.itemText(0) if models else ""))
-        finally:
-            combo.blockSignals(False)
+        self._fill_models(current or None)
         self._store_form()
         self.status_label.setText(self._models_status(models))
         if models and combo.isVisible():
             view = combo.view()
             view.setMinimumWidth(max(combo.width(), view.sizeHintForColumn(0) + 32))
             combo.showPopup()
+
+    def ordered_models(self) -> list:
+        """The fetched models as the drop-down lists them: the loaded ones
+        first, then the rest by name - or, with "by size", by size (smallest
+        first, unreported sizes last)."""
+        def by_name(m):
+            return (str(m.id).lower(), str(m.id))
+
+        def by_size(m):
+            return (m.size is None, m.size or 0, *by_name(m))
+
+        key = by_size if self.size_order_check.isChecked() else by_name
+        loaded = sorted((m for m in self._fetched_models if m.loaded), key=key)
+        rest = sorted((m for m in self._fetched_models if not m.loaded), key=key)
+        return [*loaded, *rest]
+
+    def _fill_models(self, current: str | None) -> None:
+        combo = self.model_combo
+        models = self.ordered_models()
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            dot = _loaded_icon()
+            for i, entry in enumerate(models):
+                label = model_label(entry)
+                combo.addItem(entry.id)
+                combo.setItemData(i, label, MODEL_LABEL_ROLE)
+                combo.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
+                if entry.loaded:
+                    combo.setItemData(i, dot, Qt.ItemDataRole.DecorationRole)
+            combo.setEditText(current if current is not None
+                              else (combo.itemText(0) if models else ""))
+        finally:
+            combo.blockSignals(False)
+
+    def _reorder_models(self, *_args) -> None:
+        if self._fetched_models:
+            self._fill_models(self.model_combo.currentText())
 
     @staticmethod
     def _models_status(models) -> str:
@@ -601,6 +681,7 @@ class LLMSettingsDialog(_LLMProfilesForm, QDialog):
 
     def __init__(self, parent=None, *, settings_path: Path | None = None) -> None:
         QDialog.__init__(self, parent)
+        set_window_icon(self, "bot")
         self.setWindowTitle(tr("LLM Profiles"))
         self.resize(720, 460)
         top = self._build_form(settings_path)

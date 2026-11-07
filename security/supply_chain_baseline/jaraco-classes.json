@@ -1,0 +1,55 @@
+{
+ "name": "jaraco-classes",
+ "versions": {
+  "3.4.0": {
+   "accepted_findings": [],
+   "archives": {
+    "jaraco.classes-3.4.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "jaraco.classes-3.4.0.dist-info/LICENSE": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741",
+      "jaraco.classes-3.4.0.dist-info/METADATA": "2e6b102232edd45ae1bb8a6b4091fd40cf3201a6bb6fd4bc97c5e8cd765a44b8",
+      "jaraco.classes-3.4.0.dist-info/RECORD": "7dd99b43a0bf99c30ca6d884b244dffe90785dbcd6c1a6222311e60f705274cc",
+      "jaraco.classes-3.4.0.dist-info/WHEEL": "189eedfe4581172c1b6a02b97a8f48a14c0b5baa3239e4ca990fbd8871553714",
+      "jaraco.classes-3.4.0.dist-info/top_level.txt": "d099cddcb7d71f82c845f5cbf9014e18227341664edc42f1e11d5dfe5a2ea103",
+      "jaraco/classes/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jaraco/classes/ancestry.py": "16453b93238ef9338c830477a1b729a81f771edf9fd32c631a74f172f7c12c1d",
+      "jaraco/classes/meta.py": "bb3d739adb1eff49fb72cd8cda17f3f2222aa1edbfdaf648fbf26216f42e0f01",
+      "jaraco/classes/properties.py": "7fef3c28248179e0a58b0c5f5cec1eed4aa4f7f7a51268bd652c0e87aff206ae",
+      "jaraco/classes/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "16de5bceb6f0e2e36eaa848bc289d075712e7b84fbd0271aefd92215326c87be",
+     "native": {},
+     "pth": {},
+     "sha256": "f662826b6bed8cace05e7ff873ce0f9283b5c924470fe664fff1c2f00f581790"
+    }
+   },
+   "name": "jaraco-classes",
+   "provenance": {
+    "jaraco.classes-3.4.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Jason R. Coombs",
+    "author_email": "jaraco@jaraco.com",
+    "home_page": "https://github.com/jaraco/jaraco.classes",
+    "project_urls": {
+     "Homepage": "https://github.com/jaraco/jaraco.classes"
+    },
+    "summary": "Utility functions for Python class constructs"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "3.4.0"
+  }
+ }
+}

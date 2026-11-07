@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 from core.path_policy import hidden_sibling_name
 from core.server_ops import rename_target_taken
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -53,6 +54,7 @@ class BatchRenameDialog(QDialog):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
+        set_window_icon(self, "edit")
         self._backend = backend
         self._base_path = base_path
         self._items = items
@@ -241,6 +243,48 @@ class BatchRenameDialog(QDialog):
                     f"Refusing unsafe rename '{old_name}' -> '{new_name}':\n{exc}",
                 )
                 return
+
+        # The server's part on a worker (ui.off_gui): five or so round trips
+        # a file held the window - a thousand remote files for minutes. The
+        # dialog says how far it is; clicks wait until it is done, so the
+        # batch is never left half staged under its temporary names.
+        from PyQt6.QtCore import QTimer
+
+        from ui.off_gui import run_off_gui
+
+        progress = {"done": 0, "total": len(to_rename), "phase": "Checking"}
+        ticker = QTimer(self)
+        ticker.setInterval(150)
+        ticker.timeout.connect(lambda: self._status.setText(
+            f"{progress['phase']} {progress['done']} of {progress['total']}…"))
+        ticker.start()
+        try:
+            outcome = run_off_gui(lambda: self._rename_all(to_rename, selected_old_names, progress))
+        finally:
+            ticker.stop()
+        if outcome[0] == "conflict":
+            QMessageBox.warning(
+                self,
+                "Conflict",
+                f"Target '{outcome[1]}' already exists and is not part of the rename set.",
+            )
+            self._update_preview()
+            return
+        _kind, renamed, errors = outcome
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Rename Errors",
+                f"Renamed {renamed}, failed {len(errors)}:\n" + "\n".join(errors[:10]),
+            )
+        self.accept()
+
+    def _rename_all(self, to_rename, selected_old_names, progress) -> tuple:
+        """On a worker: ("conflict", name) before anything moved when a new
+        name is taken by an entry outside the set; else ("done", renamed,
+        errors) - each entry staged under a hidden temporary name first,
+        then given its new one (a chain a -> b, b -> c works)."""
+        for old_name, new_name in to_rename:
             new_path = self._backend.join(self._base_path, new_name)
             old_path = self._backend.join(self._base_path, old_name)
             # Case-aware: on a case-insensitive backend "Report.txt" for
@@ -248,17 +292,13 @@ class BatchRenameDialog(QDialog):
             if new_name not in selected_old_names and rename_target_taken(
                 self._backend, old_path, new_path
             ):
-                QMessageBox.warning(
-                    self,
-                    "Conflict",
-                    f"Target '{new_name}' already exists and is not part of the rename set.",
-                )
-                return
+                return ("conflict", new_name)
 
         errors = []
         renamed = 0
         staged: list[tuple[str, str, str]] = []
-        for old_name, new_name in to_rename:
+        progress["phase"] = "Preparing"
+        for done, (old_name, new_name) in enumerate(to_rename, 1):
             old_path = self._backend.join(self._base_path, old_name)
             try:
                 temp_path = self._unique_temp_path(old_name)
@@ -267,6 +307,10 @@ class BatchRenameDialog(QDialog):
             except OSError as e:
                 log.error("Batch rename staging failed: %s -> %s: %s", old_name, new_name, e)
                 errors.append(f"{old_name}: {e}")
+            progress["done"] = done
+        # Renaming counts each entry once more; one that failed staging is
+        # done already.
+        progress["phase"], progress["done"] = "Renaming", len(to_rename) - len(staged)
 
         for old_name, new_name, temp_path in staged:
             new_path = self._backend.join(self._base_path, new_name)
@@ -282,11 +326,5 @@ class BatchRenameDialog(QDialog):
                 note = self._roll_back(old_name, temp_path)
                 if note:
                     errors[-1] += f" ({note})"
-
-        if errors:
-            QMessageBox.warning(
-                self,
-                "Rename Errors",
-                f"Renamed {renamed}, failed {len(errors)}:\n" + "\n".join(errors[:10]),
-            )
-        self.accept()
+            progress["done"] += 1
+        return ("done", renamed, errors)

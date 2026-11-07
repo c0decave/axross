@@ -46,6 +46,22 @@ def backend():
     return LocalFS()
 
 
+@pytest.fixture(autouse=True)
+def _qt_reads_no_tiff(monkeypatch):
+    """These tests are about the Pillow fallback: a Qt without a TIFF
+    plugin. A Qt with one (the PyQt6 wheels ship it) decodes the TIFFs
+    itself, so its reader is told it cannot."""
+    import PyQt6.QtGui as QtGui
+
+    class _Reader(QtGui.QImageReader):
+        def canRead(self) -> bool:
+            if self.fileName().lower().endswith((".tif", ".tiff")):
+                return False
+            return super().canRead()
+
+    monkeypatch.setattr(QtGui, "QImageReader", _Reader)
+
+
 def _noise(mode: str, size=(96, 64), seed: int = 1) -> Image.Image:
     rng = np.random.default_rng(seed)
     w, h = size

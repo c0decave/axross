@@ -1,0 +1,367 @@
+{
+ "name": "pygit2",
+ "versions": {
+  "1.18.2": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|pygit2/_run.py|2eb7f6f5a068a8ba",
+    "yara|capability_filesystem_read|pygit2/blob.py|cc9bf56d67b1adb5",
+    "yara|capability_filesystem_read|pygit2/repository.py|0154d28f78d6afe1",
+    "yara|capability_filesystem_write_executable|pygit2/repository.py|0154d28f78d6afe1",
+    "yara|capability_network_download|pygit2/remotes.py|fe0f3af74a77f212",
+    "yara|capability_network_outbound|pygit2/_pygit2.pyi|e7cccae235b5e7c7",
+    "yara|capability_network_outbound|pygit2/branches.py|170c5d39624611ab",
+    "yara|capability_network_outbound|pygit2/remotes.py|fe0f3af74a77f212",
+    "yara|capability_network_outbound|pygit2/repository.py|0154d28f78d6afe1",
+    "yara|threat_filesystem_read|pygit2/enums.py|0882213ee6aac7e6",
+    "yara|threat_filesystem_read|pygit2/submodules.py|d67a7365d13b9165"
+   ],
+   "archives": {
+    "pygit2-1.18.2-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "pygit2-1.18.2.dist-info/METADATA": "8637bcb1adebca1a5db7f3c9b217ece4d044cf0d8b01453f3a46f796fbc261a9",
+      "pygit2-1.18.2.dist-info/RECORD": "0eeb38ee6bd4d705f818c9b91a02d5fe526d0e60a46332278f5a67dc9b091cde",
+      "pygit2-1.18.2.dist-info/WHEEL": "d6b93d5a420d3b921877f746ca87131d5ea1b607b7236ef0bbf55ac7c58269d0",
+      "pygit2-1.18.2.dist-info/licenses/AUTHORS.md": "4ecad3164600b3c7a216cdd636288d1434afd6307737cfeba8fc1372dc04ba20",
+      "pygit2-1.18.2.dist-info/licenses/COPYING": "3f2a642de5f24ed216404873b875e9d1c5dd112a4e0ae27a42f7303583f69683",
+      "pygit2-1.18.2.dist-info/top_level.txt": "a5a7d0edacc3f3f4ff8137e23d1e174f2279ecb1e2c3ff5585a163f164d73fe9",
+      "pygit2.libs/libcrypto-909d00cf.so.3": "1575db132810e3e254385d8d43e54224b2e23bc34d36d4832622ccd748d8aaba",
+      "pygit2.libs/libgit2-39727f45.so.1.9.1": "1bf5d57e7adb486fe31efdfb438a282e1ab80e7886532fdc815122571803f1a9",
+      "pygit2.libs/libpcre-0dd207b5.so.1.2.10": "c4d82a68f6e22ca9a40c1d1a4e720f811f8031d4ee33146c7e3af0dccd86ab82",
+      "pygit2.libs/libssh2-7af77739.so.1.0.1": "eb207489ed5f921c117e8ce1ad755eb4dd2609a8a67a521e34390240f9deac85",
+      "pygit2.libs/libssl-fb7fb2a0.so.3": "fbf601c7308c24df4b3660ce57831d03a7ac6c2a11ee3d1c830e25c0e5482d9a",
+      "pygit2/__init__.py": "4ba089f203891e4b27673d94471fa8105602f9d4bbeb11b126a5ca224e693573",
+      "pygit2/_build.py": "939f9acb0cae2d0b0e3540ef17f6b292f6c8a3a6bbcbd08b608e720fdb3cddfe",
+      "pygit2/_libgit2.abi3.so": "db0fb7370cb97f2f9029076e828a86e6fb17c9f9d53cefea3e797758bef21de6",
+      "pygit2/_pygit2.cpython-312-x86_64-linux-gnu.so": "d94f1d2e288e49eb92d369facb91a7f1026d16a08f736f6a4620d6c754d51383",
+      "pygit2/_pygit2.pyi": "e7cccae235b5e7c7d476b284a356ef1b792352a11147bf32e06ca4a10e748f29",
+      "pygit2/_run.py": "2eb7f6f5a068a8ba146fa734c78e9a86d1cb7d0d8b9b8825b091b1b2ba7a6b18",
+      "pygit2/blame.py": "e7d347fc6f68b252b5b826451df91bc7efe2b88b93e25d4b8f21ece59e0e7d2f",
+      "pygit2/blob.py": "cc9bf56d67b1adb52c08f686ac03e550dd9b6b3b08f519d25b8b7920e3b074c0",
+      "pygit2/branches.py": "170c5d39624611abfaccdbaa9882d72fee5cd1f0896cddd9475ba4d91aa52e41",
+      "pygit2/callbacks.py": "448db771b648f39282b9676c71eb2a5c7c6fa822d3506a00c39ed3e7f27e999d",
+      "pygit2/config.py": "0a1ae37beccfbafa2068d567829da83c3c385ed9ab8beb277f6c430cef0f8603",
+      "pygit2/credentials.py": "d4b34f968bbc424ff9495e540a790a74ea1122bc4080d3088e6ee1cc272ef5b0",
+      "pygit2/decl/attr.h": "30b4d96fa7a9ac8d2157e9a16e22d82bfcecadc7177025fd8388bceee98a2432",
+      "pygit2/decl/blame.h": "f7fe3af36e9d554b596c0464fdbdaeb14da391dce1c2d2863a7e8934b08b3fdf",
+      "pygit2/decl/buffer.h": "ee80d836a3fa79cd79ff9ef40efe273712c1a060428818ca6fcde12dd1695cb7",
+      "pygit2/decl/callbacks.h": "66157700122e8061af8b6de3b89c4eb1879dab1e1b9ec5fb698f487e244d87e0",
+      "pygit2/decl/checkout.h": "c24dd7a40dcf55d85e5173043d76cf634cd6e0cffa4194492acf3e9a1291210b",
+      "pygit2/decl/clone.h": "304dd7055c0f0ddf765f3905febcea48cac093b9ed15d001d013bebd6072bf7f",
+      "pygit2/decl/commit.h": "096a0e3ca7c318c8e0c23bf4c02b7e1895974516d20aefc704a54b12a3124c1f",
+      "pygit2/decl/common.h": "5e72209dbe99a0355cbc6b59804ef32bac46958fb2953698b1b59d8a1481fd02",
+      "pygit2/decl/config.h": "28c8a3f6107f849b190b00fa57246054bf24d2709cfa525f26b23c4a42e1ccb2",
+      "pygit2/decl/describe.h": "f2358a2a6a1fd70b66f7018270ec229e9907f02cffd2de9657bc0fe06900598f",
+      "pygit2/decl/diff.h": "c916a1e9a1c2b633126544d442443846a308ff1794ee28d2e1acefebcf6de571",
+      "pygit2/decl/errors.h": "91042ed2a139740314fe6b3d28c050757b71dacb431de76bdcefcdbd6db175dd",
+      "pygit2/decl/graph.h": "63e63f896ee2591f30b1e7db8d3c281476b0c72c85a7e75ec934807c5aeed867",
+      "pygit2/decl/index.h": "c1ad762d7cbe6e4527b20fc378e459ff8dd1499929f15b896e315661ae6ed336",
+      "pygit2/decl/indexer.h": "610a83da0b78f01678d4777533d0444be6f4516983c3cc0e7b23cf1a10bbce76",
+      "pygit2/decl/merge.h": "39b5f3764eaaebfc186821d81e746ad315a0f369d9c1fa53023d0bf732b97546",
+      "pygit2/decl/net.h": "14229a81dde0bb34c94860a21dbc3d73bca798d5bcb9dd52e401791e4685a89a",
+      "pygit2/decl/oid.h": "d1f693dd132a229892533b3f47b6bc5831db589cf0faec839a273fd0f72e60ab",
+      "pygit2/decl/options.h": "9a789bf414e46b812fd44bf1f52ca8309a5fe1fbb891786f4f4b9a2eb4d17c3d",
+      "pygit2/decl/pack.h": "8f2fd66ead41ec7b7677666007cb5515d06f573d6cc0f94d36e5846c1c407fd8",
+      "pygit2/decl/proxy.h": "e202ff12a2e37c86cf3515ef92fcff723bd36bbfeee13004a40d2ffbd1129ad4",
+      "pygit2/decl/refspec.h": "d3d75a5cd4374b50729b0e9b1beff6f9cb5047a82d61d4aa99042c1463b60f0e",
+      "pygit2/decl/remote.h": "a6da24e8aa4628d60a62f3b3233fdcb82ab3add063f087255bf3d20b474da567",
+      "pygit2/decl/repository.h": "d9834c58c3296035ab4287f57c5d2fce23c6c17a55b1109cbc258b9a826fbf50",
+      "pygit2/decl/revert.h": "d98d5a387e901a7a6fafb4dc4fb179fb512f01a337872778ab67097e3d13efd3",
+      "pygit2/decl/stash.h": "2219552a3ed8d79ed29baa6c85c89f2c46c7167c8bbbbb45b52f973a82a4c2e8",
+      "pygit2/decl/strarray.h": "5eba8aab2093608238d4f7d6b8450cee7933d046f9a6dd82029dece4b3bfca32",
+      "pygit2/decl/submodule.h": "86557fcaa5cd37ae8c7e7befbdf995664785b55ca3c9d9121318230bb0a69c87",
+      "pygit2/decl/transport.h": "ff91d86faab7c4e551d18a9909f58dc5d5d76add38c1ff138ebbc533e2cecc72",
+      "pygit2/decl/types.h": "425151d86ea770e78d2f431f7e85210a6b0cd64ed85bd5645a9fd4cf5b4a5312",
+      "pygit2/enums.py": "0882213ee6aac7e6a8cd2814badcea9711ddcf4621d2de3b2811f023c94d002d",
+      "pygit2/errors.py": "8c3a47f117b90318f921a5da5ce1b12432a1f8d987f95a1374519ce1cbe1447f",
+      "pygit2/ffi.py": "98f771976f58359f44f7d67ddae13027b20f9ba9d8e73d22547991bc77fd4b46",
+      "pygit2/filter.py": "7c4d2134b9d927b61d6b4921e1e4b6ac0f3361e484b988ff487f12e48853d698",
+      "pygit2/index.py": "2ddb9f4a41bd1842f2bc01add64d3c2f2fea89e3e44aac63794b1dd306faac6d",
+      "pygit2/legacyenums.py": "f7780ba7313cd07f40d69f5cc66d630d198c0a702a86ab5707b5e5f4b048238d",
+      "pygit2/options.py": "680f6dffb33d106117a04773d4faed6724716aaa39924716df6448ad7d267129",
+      "pygit2/packbuilder.py": "e99cb2eb651abf4d069c038b7093eff6f37e57ea8132b2ae14839aeb4509998a",
+      "pygit2/py.typed": "d509e613f475345f53c60db976089cededee872f57f7c3bd47d822b4870334b1",
+      "pygit2/references.py": "a0721083680fd1e326272fa157938200cbd9e46289ad424f34afdad3325bfcc4",
+      "pygit2/refspec.py": "b0c67d2631dd148d5558565f9a9e5d04c23f766e112c0f7b74655b2fedb22c1e",
+      "pygit2/remotes.py": "fe0f3af74a77f212236133a9a5b8e40081a1449600f46fbada5d3fb292ed4c51",
+      "pygit2/repository.py": "0154d28f78d6afe1d2a3c56a566d5ed38accf6c56a8d3fcc4f73a1f4c168a74a",
+      "pygit2/settings.py": "ede6ba55303015d631c9b30e416f0e45f53673b8c7598e85a76b177acd55b923",
+      "pygit2/submodules.py": "d67a7365d13b9165c3f51824bc0e6cd630c1016a12c01e42a642a68356c940f2",
+      "pygit2/utils.py": "f510a2029242f8ab49726582b0283877bab81ce72246ad568e010e1ef240fe09"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a131eab0d75966c79fa57ba0c0db8415b096bde405e670be70b7ff51e1ee226e",
+     "native": {
+      "pygit2.libs/libcrypto-909d00cf.so.3": "elf",
+      "pygit2.libs/libgit2-39727f45.so.1.9.1": "elf",
+      "pygit2.libs/libpcre-0dd207b5.so.1.2.10": "elf",
+      "pygit2.libs/libssh2-7af77739.so.1.0.1": "elf",
+      "pygit2.libs/libssl-fb7fb2a0.so.3": "elf",
+      "pygit2/_libgit2.abi3.so": "elf",
+      "pygit2/_pygit2.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "12ae4ed05b48bb9f08690c3bb9f96a37a193ed44e1a9a993509a6f1711bb22ae"
+    }
+   },
+   "name": "pygit2",
+   "provenance": {
+    "pygit2-1.18.2-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl": null
+   },
+   "pypi": {
+    "home_page": "https://github.com/libgit2/pygit2",
+    "license": "GPLv2 with linking exception",
+    "maintainer": "J. David Ib\u00e1\u00f1ez",
+    "maintainer_email": "jdavid.ibp@gmail.com",
+    "project_urls": {
+     "Changelog": "https://github.com/libgit2/pygit2/blob/master/CHANGELOG.md",
+     "Documentation": "https://www.pygit2.org/",
+     "Funding": "https://github.com/sponsors/jdavid",
+     "Homepage": "https://github.com/libgit2/pygit2"
+    },
+    "summary": "Python bindings for libgit2."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Hits read: .git/config and .gitconfig are git's own files; libgit2 / libssh2 / libcrypto import what a git client needs (SSH, HTTPS, the ssh / askpass helpers). Attestation verifies."
+   },
+   "scans": {
+    "capa": {
+     "1575db132810e3e254385d8d43e54224b2e23bc34d36d4832622ccd748d8aaba": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "pygit2.libs/libcrypto-909d00cf.so.3",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "accept",
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "gethostbyname",
+         "listen",
+         "recvfrom",
+         "sendto",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libdl.so.2",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "1bf5d57e7adb486fe31efdfb438a282e1ab80e7886532fdc815122571803f1a9": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "pygit2.libs/libgit2-39727f45.so.1.9.1",
+      "profile": {
+       "categories": {
+        "network": [
+         "SSL_connect",
+         "connect",
+         "getaddrinfo",
+         "recv",
+         "send",
+         "socket"
+        ],
+        "process": [
+         "execve",
+         "fork"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcrypto-909d00cf.so.3",
+        "libpcre-0dd207b5.so.1.2.10",
+        "libpthread.so.0",
+        "librt.so.1",
+        "libssh2-7af77739.so.1.0.1",
+        "libssl-fb7fb2a0.so.3",
+        "libz.so.1"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "c4d82a68f6e22ca9a40c1d1a4e720f811f8031d4ee33146c7e3af0dccd86ab82": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "get system information on Linux",
+       "map or unmap memory on Linux"
+      ],
+      "note": "",
+      "path": "pygit2.libs/libpcre-0dd207b5.so.1.2.10",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d94f1d2e288e49eb92d369facb91a7f1026d16a08f736f6a4620d6c754d51383": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "pygit2/_pygit2.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libgit2-39727f45.so.1.9.1",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/../pygit2.libs"
+       ],
+       "urls": []
+      }
+     },
+     "db0fb7370cb97f2f9029076e828a86e6fb17c9f9d53cefea3e797758bef21de6": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "pygit2/_libgit2.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libgit2-39727f45.so.1.9.1",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/../pygit2.libs"
+       ],
+       "urls": []
+      }
+     },
+     "eb207489ed5f921c117e8ce1ad755eb4dd2609a8a67a521e34390240f9deac85": {
+      "capabilities": [
+       "connect socket",
+       "contain loop",
+       "create or open file",
+       "encode data using Base64",
+       "encrypt data using RC4 PRGA",
+       "encrypt data using Salsa20 or ChaCha",
+       "encrypt data using blowfish",
+       "query environment variable",
+       "read file on Linux",
+       "receive data",
+       "receive data on socket",
+       "reference Base64 string",
+       "send data on socket",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pygit2.libs/libssh2-7af77739.so.1.0.1",
+      "profile": {
+       "categories": {
+        "network": [
+         "connect",
+         "recv",
+         "send",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcrypto-909d00cf.so.3",
+        "libz.so.1"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "fbf601c7308c24df4b3660ce57831d03a7ac6c2a11ee3d1c830e25c0e5482d9a": {
+      "capabilities": [
+       "calculate modulo 256 via x86 assembly",
+       "contain loop",
+       "create thread",
+       "encode data using XOR",
+       "get current PID on Linux",
+       "linked against wolfSSL"
+      ],
+      "note": "",
+      "path": "pygit2.libs/libssl-fb7fb2a0.so.3",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcrypto-909d00cf.so.3",
+        "libdl.so.2",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|pygit2/_run.py|2eb7f6f5a068a8ba",
+     "yara|capability_filesystem_read|pygit2/blob.py|cc9bf56d67b1adb5",
+     "yara|capability_filesystem_read|pygit2/repository.py|0154d28f78d6afe1",
+     "yara|capability_filesystem_write_executable|pygit2/repository.py|0154d28f78d6afe1",
+     "yara|capability_network_download|pygit2/remotes.py|fe0f3af74a77f212",
+     "yara|capability_network_outbound|pygit2/_pygit2.pyi|e7cccae235b5e7c7",
+     "yara|capability_network_outbound|pygit2/branches.py|170c5d39624611ab",
+     "yara|capability_network_outbound|pygit2/remotes.py|fe0f3af74a77f212",
+     "yara|capability_network_outbound|pygit2/repository.py|0154d28f78d6afe1",
+     "yara|threat_filesystem_read|pygit2/enums.py|0882213ee6aac7e6",
+     "yara|threat_filesystem_read|pygit2/submodules.py|d67a7365d13b9165"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read pygit2/_run.py",
+     "capability_filesystem_read:capability_filesystem_read pygit2/blob.py",
+     "capability_filesystem_read:capability_filesystem_read pygit2/repository.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable pygit2/repository.py",
+     "capability_network_download:capability_network_download pygit2/remotes.py",
+     "capability_network_outbound:capability_network_outbound pygit2/_pygit2.pyi",
+     "capability_network_outbound:capability_network_outbound pygit2/branches.py",
+     "capability_network_outbound:capability_network_outbound pygit2/remotes.py",
+     "capability_network_outbound:capability_network_outbound pygit2/repository.py",
+     "threat_filesystem_read:threat_filesystem_read pygit2/enums.py",
+     "threat_filesystem_read:threat_filesystem_read pygit2/submodules.py"
+    ]
+   },
+   "version": "1.18.2"
+  }
+ }
+}

@@ -32,6 +32,15 @@ protokollspezifische Optionen. Sensible Felder (Passwörter,
 OAuth-Secrets, Azure-Connection-Strings) gehen in den OS-Keyring; die
 Profil-JSON selbst enthält nie Klartext-Credentials.
 
+- **Wie eine Verbindung geschützt ist.** Ein Symbol neben jeder Verbindung -
+  im Pane-Kopf, im Workspace-Tab (seine schwächste Verbindung), an
+  Bookmarks, in Quick Connect - zeigt Klartext, nur signiert, TLS (mit einer
+  Schwäche), SSH-verschlüsselt oder Ende-zu-Ende; der Tooltip sagt genau was
+  und ob es auf der laufenden Verbindung ausgehandelt oder nur konfiguriert
+  ist (FTP Klartext, FTPS TLS 1.3 mit geprüftem Zertifikat, SMB 3.1.1
+  verschlüsselt oder nur signiert, WebDAV http oder https, NFS AUTH_SYS
+  Klartext ...).
+
 - **Fehlende Features.** *Help > Features…* listet jedes optionale
   Feature - Verbindungen, Dateianalyse und Archive, externe Tools wie
   ripgrep, rsync oder qemu-img, Sleuth Kit, TestDisk / PhotoRec und
@@ -67,6 +76,12 @@ Profil-JSON selbst enthält nie Klartext-Credentials.
   `proxy_password` transportieren. Requests-basierte SDK-Sessions, die
   Axross kontrolliert, ignorieren `HTTP_PROXY` / `HTTPS_PROXY` aus der
   Prozess-Umgebung; das Profil ist die Quelle der Route.
+- **Produktionsserver.** *Produktion (destruktive Operationen mit
+  Countdown bestätigen)* in der Gruppe Connection von Connect to Server
+  markiert das Profil: das erste Löschen, Verschieben, Umbenennen oder
+  Überschreiben darauf in einem Pane wartet ein paar Sekunden mit einem
+  Countdown, den Cancel oder Esc abbricht. Siehe
+  [DAILY_DRIVER_de.md](DAILY_DRIVER_de.md#production-tarpit).
 - **OpSec-Overrides.** Profil-Felder steuern SSH-Keepalive,
   SMB-Workstation-Name, Telnet-NAWS, rsync-Metadaten-Stripping. Siehe
   [OPSEC.md](OPSEC.md) für das Threat-Modell.
@@ -126,7 +141,9 @@ PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
   to Workspace*) bietet jeden Workspace (der, auf dem es liegt, mit
   Haken), **New Workspace** und **All Workspaces**, und
   **Workspace → Add Extension Panel** (auch im Rechtsklick-Menü des Tabs)
-  holt ein Panel in einen Workspace. Dort ist es ein Pane: es erscheint
+  holt ein Panel in einen Workspace - auch das **Agent**-Dock, das dort
+  wie ein Extension-Panel ein Pane wird (**Ctrl+Shift+A** holt seinen
+  Workspace nach vorn). Dort ist es ein Pane: es erscheint
   nur mit seinem Workspace, geht mit, wenn der Workspace abgelöst wird,
   lässt sich an der Titelleiste auf ein anderes Pane ziehen und nimmt
   gezogene Panes an, wird über den Splitter in der Größe geändert und von
@@ -136,6 +153,19 @@ PgUp** schalten durch, und jeder behält sein eigenes Quell- und Ziel-Pane.
   auf All Workspaces (ausgeblendet, mit ihrem Zustand); wird die
   Extension ausgeschaltet, gehen ihre Panels heraus, eingeschaltet kommen
   sie zurück.
+- **Show Only on Workspace** lässt ein Dock ein Dock bleiben, bindet es
+  aber an einen Workspace - jedes Dock: Agent, Log, Transfers, Terminal,
+  Console, Scripts, Bookmarks und Analysis ebenso wie die Extension-Panels
+  im Dock-Bereich (Media Player, Bluetooth …). Die Stecknadel in seiner
+  Titelleiste (oder ein Rechtsklick darauf) bietet **All Workspaces**,
+  jeden Workspace und **New Workspace**; die Nadel leuchtet, solange das
+  Dock gebunden ist, und ihr Tooltip nennt den Workspace. Ein gebundenes
+  Dock behält seinen Platz, erscheint aber nur, solange sein Workspace im
+  Fenster ist (ein abgelöster Workspace: solange er der aktuelle ist);
+  wird es auf einem anderen Workspace geöffnet (View → Panels, sein
+  Toolbar-Knopf), kommt sein Workspace nach vorn. Auf seinem Workspace
+  geschlossen bleibt es zu; schließt der Workspace, gilt es wieder für
+  alle. Die Bindung kommt beim nächsten Start wieder.
 - **Close Workspace** schließt ihn mit seinen Panes (nach Rückfrage);
   schließt das letzte Pane eines Workspace, geht der Workspace mit. Ein
   Workspace bleibt immer.
@@ -227,7 +257,10 @@ abgelehnt. Sobald der Move in der Queue ist, ist der Cut erledigt.
 Jeder pane-übergreifende Copy/Move geht in die Transfer-Queue. Das
 untere Dock zeigt Fortschritt, Throughput und ETA. Transfers laufen in
 Worker-Threads und überleben einen abgewiesenen Dialog oder ein
-geschlossenes Pane.
+geschlossenes Pane. Beenden, während Transfers laufen oder warten,
+fragt vorher (Beenden bricht sie ab); ein Ordner, der beim Durchlaufen
+nicht lesbar ist, wird eine fehlgeschlagene Zeile der Liste, und ein
+Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
 
 - **Atomare Semantik.** Jeder Schreibvorgang geht in eine versteckte
   Sibling-Tempdatei (`.<name>.part-<job>-<fingerprint>`) und wird am
@@ -292,10 +325,14 @@ native Protokoll sie nicht kennt.
 | Neuer Symlink… | Rechtsklick | Zwei Prompts. Sichtbar nur auf Backends mit `supports_symlinks=True`. |
 | Neuer Hardlink… | Rechtsklick | Gleiche Form; Cross-Device → `OSError(EXDEV)`. |
 | Find in Index | `Strg+Shift+F` | Suche im Offline-Metadaten-Index. |
+| Find in This Folder… | Rechtsklick (auch auf freie Fläche) | Find Files mit diesem (oder dem gewählten) Ordner angehakt — siehe *Find Files*. |
 | Calculate Size (N dirs) | Rechtsklick auf Ordner | Gesamtgröße, Datei- und Ordnerzahl jedes gewählten Ordners, im Hintergrund über die Connection gezählt (*Cancel* in der Statuszeile); die Ergebnistabelle sortiert, und die Größen stehen in der Size-Spalte des Panes, bis der Ordner neu geladen wird. **Hidden Files zählen mit**: Dotfiles, versteckte Ordner und Einträge mit Hidden-Flag des Backends werden wie jeder andere Eintrag summiert — wie bei `du` —, egal ob das Pane sie anzeigt. Ein Link zählt mit seiner eigenen Größe und wird nie verfolgt; ein Ordner, der sich nicht lesen lässt, wird im Ergebnis genannt und übersprungen. |
 | Identify Files in This Folder… | Rechtsklick (auch auf freie Fläche); der Button im Fenster *Identify File Type* | Jede Datei direkt im Ordner (ein gewählter Ordner, sonst der angezeigte; Unterordner werden gezählt, nicht betreten; Hidden Files eingeschlossen) wie bei *Identify File Type…* am Inhalt erkannt, im Hintergrund und über die Connection — also auch in Remote-Panes. Begrenzt: höchstens 2000 Dateien, 64 KiB je Datei, 15 s Timeout je Lesevorgang, *Cancel*; `file(1)` wird nicht gefragt. Die Spalten sortieren: Name, erkannter Typ, MIME-Type, *mismatch*-Verdict, Größe, eine Notiz — bei einem Disk-Image Container, Partitionstabelle und Partitionszahl (`Raw disk image, MBR, 2 partitions, 4.0 MiB`; dafür höchstens 4 MiB gelesen) — und für lokale Dateien mit installiertem `sift`-Extra die Art laut sift. Eine Zeile öffnet *Disk Image…* (Disk-Images) oder *Properties…*; Doppelklick nimmt das Passende. |
 | Analyse with sift / Analyse Folder with sift | Rechtsklick (der Ordner-Eintrag auch auf freie Fläche), das Actions-Menü, *Tools → Analyse with sift* | Öffnet das Dock *Analysis (sift)* (sifts Sieb-Icon, `Ctrl+Shift+I`) und erklärt die Datei dort ohne Modell. Mehrere gewählte Dateien oder ein Ordner (der gewählte, sonst der angezeigte) werden als ein Batch für das aktive LLM-Profil angeboten; *Tools → Analyse with sift* nimmt die Auswahl, ohne Auswahl den angezeigten Ordner. sifts eigene Directory-Zusammenfassung (`sift --dir-summary`, ab sift 0.1.96) gehört nicht zum Dock: ein Ordner wird Datei für Datei analysiert. Ohne sift (axross-slim oder eine Source-Installation ohne das Extra `sift`) sagt jeder Eintrag, dass sift in axross-full oder im Extra `axross[sift]` steckt, mit Link auf *Help → Features…*. |
-| Duplicate Finder | View-Menü | Gruppieren nach Content-Hash, `ax-cas://…`-URLs kopieren; markierte Kopien in den axross-Trash verschieben, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. |
+| Identify File Type… | Rechtsklick (Auswahl) | Eine Zeile pro Eintrag: der echte Typ laut Inhalt (Magic Bytes über Qts MIME-Datenbank, puremagic, eine eingebaute Signaturtabelle), der MIME-Type, was die Endung behauptet, und ein hervorgehobenes *mismatch*, wenn sie sich widersprechen, Größe, bei Text Encoding und Zeilenenden. Liest höchstens 64 KiB je Datei über das Backend, außerhalb des GUI-Threads, mit 15 s Timeout je Datei — ein toter Remote gibt eine „timed out"-Zeile. Lokale Dateien zeigen auch die Beschreibung von `file(1)`, wenn es installiert ist. Scripting: `axross.file_type(b, path)`. |
+| Open Terminal Here | Rechtsklick (auch auf freie Fläche) | Öffnet eine Shell im Terminal-Dock im Ordner: ein gewählter Ordner, sonst der angezeigte. Lokale Panes bekommen eine lokale Shell, die in dem Ordner startet; SFTP-/SCP-Panes eine Shell auf derselben SSH-Verbindung, gefolgt von `cd -- '<ordner>'` (mit `shlex.quote` gequotet). Ausgegraut, mit dem Grund als Tooltip, bei Protokollen ohne Shell. |
+| Open External Terminal Here | Rechtsklick (lokale Panes) | Startet `$TERMINAL`, sonst das erste installierte von x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm, xterm — mit dem Ordner als Arbeitsverzeichnis, abgelöst, ohne Shell dazwischen. |
+| Duplicate Finder | View-Menü | Gruppiert indizierte Dateien nach Content-Hash, die größte Verschwendung zuerst: jede Gruppe zeigt den Platz, den sie freigäbe, die Statuszeile die Summe. Leere Dateien und Gruppen, die nur Hardlinks einer Datei sind, bleiben verborgen, solange *Empty files* / *Hard links* nicht angehakt ist. *Filter* (Text oder Muster wie `*.jpg *.png`; `Ctrl+F`), *At least* (eine Größe) und *Sort* (freizugebender Platz, Größe, Kopien, Name, Ordner) grenzen die Liste ein; die Kopien einer Gruppe bleiben in Survivor-Reihenfolge (die erste bleibt). *Rebuild from Active Pane…* hasht den Ordner im Hintergrund mit Anzahl, Bytes und *Cancel*: Unveränderte Dateien werden nicht neu gehasht, seit dem letzten Scan verschwundene Dateien verlassen den Index, und der Bericht nennt Dateien, die nicht lesbar waren, Ordner, die sich nicht auflisten ließen, und übersprungene FIFOs, Sockets oder Geräte (nie gelesen: das könnte hängen). Ein Backend ohne eigene Content-Prüfsumme (SMB, einfaches FTP, WebDAV nur mit ETags) lässt seine Dateien stattdessen lesen — nur die, deren Größe eine andere Datei teilt, und nur so weit, wie ihre ersten 64 KiB übereinstimmen; ein ETag zählt nie als Hash. *Mark All Duplicates (keep first)* behält die älteste Kopie; *Mark, Keeping…* (auch im Kontextmenü) behält die neueste Kopie, den kürzesten Pfad oder eine Kopie in einem Ordner, oder markiert die Kopien in einem Ordner; ein Hardlink einer behaltenen Kopie wird nie markiert, und Hardlinks zählen nicht als freizugebender Platz. *Move Selected to Trash…* (`Del`) verschiebt die markierten Kopien in den axross-Trash, nachdem live geprüft ist, dass eine echte andere Kopie bleibt. `Enter` öffnet den enthaltenden Ordner, die Zeile unter der Liste zeigt die aktuelle Zeile vollständig (exakte Größe, Hash, Hardlinks), und `ax-cas://…`-URLs lassen sich kopieren. Tausende Gruppen erscheinen stückweise, während das Fenster bedienbar bleibt. |
 | View Media… / View Selected Media… | Rechtsklick, View-Menü | Bilder, PDFs und Videos des Ordners (optional rekursiv) oder der Auswahl als Overview-Grid, Viewer zum Durchklicken oder Slideshow — siehe *Editoren und Viewer*. |
 | Show / Remove / Export Metadata… | Rechtsklick | EXIF / GPS / XMP / IPTC, Office-Properties, PDF-Info, Audio-/Video-Tags der Auswahl — oder des ganzen Ordners, wenn nichts ausgewählt ist (Unterordner optional) — siehe *Datei-Metadata*. |
 | Cut / Paste | Rechtsklick (Paste auch auf freier Fläche), `Ctrl+X` / `Ctrl+V` | Cut merkt sich die Auswahl und entfernt nichts (die Einträge sind abgeblendet); Paste in einem beliebigen Pane verschiebt sie über die Transfer-Queue in dessen Ordner - siehe *Transfers*. Ein Cut ohne Paste lässt alles, wo es ist. |
@@ -311,6 +348,112 @@ native Protokoll sie nicht kennt.
 | Mount as FUSE (read-only / read-write)… | Rechtsklick | Zwei Menü-Einträge, damit der Mount-Modus upfront sichtbar ist. Toggelt zu „Unmount FUSE" wenn aktiv. |
 | Batch-Umbenennen… | Rechtsklick (Mehrfachauswahl) | Find/Replace oder Regex mit Live-Preview + atomarer Rename. |
 | Berechtigungen… | Rechtsklick | chmod-Dialog mit Checkbox-Grid + Oktal-Eingabe. |
+
+## Find Files
+
+**Edit → Find Files…** (`Alt+F7` oder `Ctrl+Alt+F`; im Rechtsklick eines
+Panes *Find in This Folder…*) durchsucht Ordner auf allen offenen
+Verbindungen gleichzeitig — lokal, SFTP, SMB, S3, … — und auf Wunsch den
+Offline-Index. `Ctrl+F` bleibt der Live-Filter des Panes.
+
+| Feld | Was es tut |
+|---|---|
+| Name | Text ohne `* ? [ ]` passt irgendwo im Namen (`report` findet `Q3-report.pdf`); ein Muster (`*.jpg`, `IMG_????.*`) auf den ganzen Namen. Groß-/Kleinschreibung zählt nicht. *Regex* nimmt stattdessen einen regulären Ausdruck. |
+| Contains | Text in der Datei, Zeile für Zeile, in den ersten 32 MiB jeder Datei; *Regex* und *Case-sensitive* wie üblich. |
+| Types | Eine der angehakten Vorlagen: Bilder, Videos, Audio, Dokumente, Archive, Disk- & VM-Images (dd / raw / img, ISO, qcow2, VDI, VMDK, VHD(X), E01 / AFF, DMG, LUKS…), Krypto-Wallets (Bitcoin Core / Litecoin `wallet.dat`, Electrum, Ethereum-`UTC--…`-Keystores, Exodus, Monero, MultiBit / Armory, Wasabi, Atomic, Ledger Live, MetaMask / Phantom / … Browser-Wallets), Schlüssel & Zertifikate (PEM / DER, `.p12` / `.pfx`, Java-Keystores, SSH- und PuTTY-Schlüssel, KeePass), Quellcode, E-Mail, Datenbanken. Entschieden nach Name und Ordner; bei lokalen Dateien, deren Endung nichts sagt (`blob`, `wallet.dat`, `UTC--…`), auch nach den ersten Bytes und — mit dem Extra `sift` (`axross[sift]`) — durch sift. Types benennen Datei-*Arten*: nichts sucht in Dateien nach Passwörtern oder Schlüsseln. |
+| Size / Modified | `10K`, `1.5M`, `2G`; ein Zeitraum. |
+| Inside archives | Sucht auch in zip, tar, tar.gz / .bz2 / .xz / .zst, einzelnen .gz / .bz2 / .xz / .zst-Dateien und darin verschachtelten Archiven (3 Ebenen); in 7z und rar nach Member-Namen. Ein Treffer heißt `archive.zip!/ordner/datei.txt`. Begrenzt: 10 000 Member und 1 GiB entpackt pro Archiv, 64 MiB pro verschachteltem Archiv, das 100:1-Zip-Bomb-Verhältnis des Entpackens; ein entferntes Archiv wird zuerst (höchstens 256 MiB) in eine private Temp-Datei kopiert. |
+| Tag | Nur Dateien mit dem gewählten Tag (Rechtsklick → *Tags*); ein getaggtes Archiv gilt für seine Member. Ein Smart Folder behält den Tag. Offline-Index-Treffer werden ebenso gefiltert. |
+| Hidden files, Skip .git / node_modules / caches, depth | Was der Durchlauf einschließt. Symlink-Ordnern wird nie gefolgt. |
+| Look in | Der Ordner jedes offenen Panes (der aktive angehakt), *Add Folder…* und *Also search the offline index* (Namen, Größen, Daten; kein Inhalt). |
+
+Treffer erscheinen, während die Suche läuft; *Stop* oder Schließen des
+Fensters bricht sie ab. Die Spalten sortieren; Doppelklick oder `Enter`
+zeigt die Datei markiert in einem Pane (ein Archiv-Member öffnet die
+Archiv-Ansicht), das Kontextmenü hat *Open*, *Reveal in Pane*, *Copy Path*
+und *Send to Agent*.
+
+In einem lokalen Ordner listet die Suche Dateien mit
+[`fd`](https://github.com/sharkdp/fd) und durchsucht ihren Inhalt mit
+[`ripgrep`](https://github.com/BurntSushi/ripgrep) (`rg`), wenn sie
+installiert sind (im `PATH`, `fdfind` unter Debian / Ubuntu, oder `bin/`
+neben einem gefrorenen Build); ohne sie liefert ein eingebauter Walker
+dieselben Ergebnisse, nur langsamer. Entfernte Ordner werden über die
+Verbindung durchlaufen.
+
+**Save as Smart Folder…** legt die Suche bei den Bookmarks ab (Sidebar und
+Bookmarks-Menü, mit Lupen-Icon); ein Klick führt sie erneut auf den
+Ordnern aus, deren Verbindung offen ist. Gespeichert wird sie in
+`bookmarks.json` bei den anderen Bookmarks.
+
+**Edit → Index Active Folder…** trägt Namen, Größen und Daten unterhalb
+des Ordners des aktiven Panes in den Offline-Index ein — nur so wird er
+gefüllt. *View → Find in Index…* (`Ctrl+Shift+F`) durchsucht ihn; das
+Fenster zeigt die Index-Datei.
+
+### Der Offline-Index
+
+- **Was er speichert.** Eine SQLite-Datei mit einer Zeile pro Datei und
+  Ordner: die Verbindung, der volle Pfad, Name, Größe, Ordner oder nicht,
+  Endung, Änderungszeit und wann indiziert wurde. Kein Dateiinhalt und
+  keine Prüfsummen — die liegen im Duplikat-Index (`cas.sqlite`, daneben).
+- **Wo.** `$AXROSS_METADATA_DB`; sonst `$XDG_DATA_HOME/axross/metadata.sqlite`,
+  wenn `XDG_DATA_HOME` ein absoluter Pfad ist; sonst
+  `~/.local/share/axross/metadata.sqlite`. Ein Index am alten Ort bleibt in
+  Gebrauch, solange es am neuen keinen gibt — `XDG_DATA_HOME` zu setzen
+  verwaist also nichts. `cas.sqlite` folgt denselben Regeln
+  (`$AXROSS_CAS_DB`). *Edit → Settings… → Search* zeigt beide Pfade.
+- **Wie er gefüllt und aktualisiert wird.** *Edit → Index Active Folder…*
+  (oder *Index Current Pane…* in *Find in Index*) durchläuft den Ordner des
+  aktiven Panes rekursiv über seine Verbindung — jedes Backend, versteckte
+  Einträge eingeschlossen, höchstens 50 Ebenen und 1 000 000 Einträge pro
+  Lauf, in Paketen zu 500 geschrieben, abbrechbar (was indiziert ist,
+  bleibt). Browsen indiziert nie. Denselben Ordner erneut zu indizieren
+  aktualisiert seine Zeilen; Zeilen inzwischen gelöschter Dateien entfernt
+  die GUI **nicht** (das MCP-Tool `index_build` mit `prune` tut es).
+- **Wie er durchsucht wird.** Teilstring im Namen (ohne Groß/Klein),
+  Endung, Größen- und Zeitraum, eine Verbindung. Endung, Größe und Datum
+  nutzen SQLite-Indizes; ein Namens-Teilstring (`LIKE '%…%'`) kann keinen
+  nutzen und liest jede Zeile.
+- **Wie schnell — gemessen** auf dem Entwicklungsrechner mit `/usr`
+  (290 872 Einträge, lokale Platte, Rechner unter anderer Last): erster Lauf
+  125 s (etwa 2 300 Einträge/s), zweiter Lauf über denselben Baum 53 s,
+  Index-Datei 98 MiB; eine Namenssuche 0,4–1,2 s (jede Zeile wird gelesen;
+  viele Treffer dauern länger), eine Endungssuche 37 ms. Gut für „wo war
+  diese Datei" über Verbindungen, die gerade offline sind; keine
+  Inhaltssuche (das ist *Find Files → Contains*, live).
+
+### Find Files und sift
+
+sift (das optionale Extra `sift`) ist ein Datei-*Analysierer*, keine
+Suchmaschine: es baut keinen Index und hat keine Suche — seine
+Kommandozeile und API fassen Dateien zusammen, und sein einziger Speicher
+ist ein Cache dieser Zusammenfassungen, nach dem Inhalts-Hash der Datei.
+Ordner durchsuchen, nach Art und in Archiven, ist axross' eigenes Find
+Files (`core.file_search`, `core.file_categories`, `core.archive`).
+
+- **Wofür Find Files sift nutzt.** Mit installiertem Extra fragt der Filter
+  *Types* `sift.detect` nach lokalen Dateien, deren Name nichts sagt (keine
+  Endung, die eine Vorlage beansprucht), und ordnet die erkannte Art —
+  Bild, PDF, DOCX, Archiv, SQLite, E-Mail, Quellcode, … — einer Vorlage zu.
+  Entfernte Dateien und Archiv-Member werden nur nach Name und Ordner
+  eingeordnet. Es gibt keinen Schalter: Find Files nutzt sift, wenn es da ist.
+- **In Archiven.** sift listet die Member eines Archivs in seiner
+  Zusammenfassung (das Analysis-Dock), durchsucht sie aber nicht. *Find
+  Files → Inside archives* tut es: zip, tar.*, Einzeldatei-Kompressoren und
+  darin verschachtelte Archive (3 Ebenen), 7z und rar nach Member-Namen.
+- **Wo sifts Optionen und Funktionen sind.** *View → Panels → Analysis (sift)*
+  (`Ctrl+Shift+I`; Rechtsklick → *Analyse with sift*) erklärt die gewählte
+  Datei: ohne Modell automatisch, mit dem aktiven LLM-Profil über *Analyse
+  with LLM*. Der Knopf *LLM…* des Docks öffnet *Edit → Settings… → LLM
+  Profiles*, wo die Modell-Server eingestellt werden; *Edit → Settings… →
+  Analysis (sift)* hält sifts eigene Optionen (automatische Analyse,
+  Lese-Limit, Zeitbudget, Vision, Kontext, Tags, Kategorien, den Cache) und
+  das Profil, das die Analyse nutzt. *Help → Features…* zeigt, ob das Extra
+  sift installiert ist, und bietet die Installation an
+  (`pip install axross[sift]`; ein gefrorener Build bietet stattdessen den
+  axross-full-Download an). *Identify Files in This Folder…* zeigt sifts
+  Art lokaler Dateien als eigene Spalte.
 
 ## Pfadleiste
 
@@ -350,8 +493,14 @@ native Protokoll sie nicht kennt.
 
 ## Editoren und Viewer
 
-Jeder Viewer, Editor und Dialog hat oben rechts zwei Buttons: [x]
-schließt ihn, der Button links daneben maximiert ihn über den ganzen
+Jeder Viewer, Editor, Dialog und jedes Zusatzfenster hat seine eigene
+Titelleiste: Symbol und Name, dann `_` (in die Dock-Leiste legen), den
+Maximize-Button und [x]. Der Fenstermanager zeichnet keine eigene (das
+Fenster ist rahmenlos): Ziehen an der Titelleiste verschiebt das Fenster,
+ein Doppelklick maximiert oder stellt es wieder her, die schmalen Ränder
+ändern die Größe. *Settings → Appearance → Eigene Titelleisten von axross*
+schaltet zurück auf Titelleiste und Knöpfe des Fenstermanagers, für offene
+Fenster sofort. [x] schließt das Fenster, der Button links daneben maximiert ihn über den ganzen
 Bildschirm und stellt die vorherige Größe wieder her. `Ctrl+M` tut
 dasselbe, ebenso der Maximize-Button der Titelleiste. Im Dialog
 verschiebt ein Ziehen mit der linken Maustaste auf dem Rest dieser
@@ -424,7 +573,9 @@ eines floating Panels dockt es wieder an.
   Bild-Viewer.
 - **Media Player** (mitgelieferte Extension, *Extensions → Manage
   Extensions…*) — ein Dock, das MP3, WAV, Ogg Vorbis, FLAC, Opus, AAC
-  und mehr abspielt. Tracks kommen per Rechtsklick → *Play in Media
+  und mehr abspielt - und Internetradio: *URL…* fügt einen Stream über
+  seine http-/https-Adresse hinzu (die .m3u-Playlist eines Senders nennt
+  sie auch; in einem Stream gibt es keine Position zum Spulen). Tracks kommen per Rechtsklick → *Play in Media
   Player*, *Add…* oder per Drag & Drop von Dateien und Ordnern aus
   einem Datei-Pane oder vom Desktop auf die Playlist dazu (Ordner
   liefern ihre Audiodateien sortiert, höchstens 2000, 6 Ebenen tief,
@@ -439,9 +590,9 @@ eines floating Panels dockt es wieder an.
   oder Ziehen, `1:23 / 4:56`). ⏮ startet den Track nach 3 s neu,
   sonst geht es zurück; Shuffle spielt jeden Track einmal pro Runde,
   Repeat ist off / all / one. Ein nicht abspielbarer Track wird
-  markiert und übersprungen. *Load…* / *Save…* lesen und schreiben
+  markiert und übersprungen. *M3U* → *Load Playlist…* / *Save Playlist…* lesen und schreiben
   M3U-/M3U8-Playlists (UTF-8, relative Pfade für Tracks unter dem
-  Ordner der Playlist, `#EXTINF`-Titel und -Längen; URLs, fehlende
+  Ordner der Playlist, `#EXTINF`-Titel und -Längen; http-/https-Streams bleiben, andere URLs, fehlende
   oder Nicht-Audio-Einträge werden übersprungen, Dateien über 1 MiB
   oder mit NUL-Bytes abgelehnt; temporäre Kopien von Remote-Tracks
   werden nicht gespeichert). Liste, aktueller Track samt Position,
@@ -459,7 +610,15 @@ eines floating Panels dockt es wieder an.
   Strg+Links / Strg+Rechts vorheriger / nächster Track, M Mute,
   + / - Lautstärke. Mit numpy: 10-Band-Equalizer mit Presets (der
   Pfeil links von *Equalizer* klappt die Band-Slider ein und gibt der
-  Playlist den Platz) und eine animierte Visualisierung: Spektrum,
+  Playlist den Platz; es ist der eine Equalizer von axross - auch die
+  Stimme des Agents läuft hindurch, er steht in `audio.json` und kommt
+  beim nächsten Start wieder). Der Knopf **…** rechts der Lautstärke:
+  *Output* spielt den Media Player auf einem eigenen Gerät (*Same as the
+  output*, oder z. B. das Headset, während die Stimme auf den
+  Lautsprechern bleibt - sein Kanal im Audio Mixer), *Sleep Timer* pausiert
+  nach 15 bis 90 Minuten mit 8 Sekunden Ausblenden oder am Ende des Tracks
+  (die Restzeit steht neben der Lautstärke), *Audio Mixer…* öffnet den
+  Mixer. Dazu eine animierte Visualisierung: Spektrum,
   gespiegeltes Spektrum, radiales Spektrum, Oszilloskop, Stereo-VU-
   Meter, Linien-Spektrum (logarithmische Frequenzachse), Waterfall
   (Spektrogramm), Polar-Spektrum, Stereo-Scope (Goniometer: L gegen R),
@@ -489,14 +648,83 @@ eines floating Panels dockt es wieder an.
   weiter, und auf das Panel gezogene Dateien landen weiterhin in der
   Playlist. Visualisierung, ihre Farben und Optionen, eingeklappter
   Equalizer und eingeklappte Playlist kommen beim nächsten Start wieder.
+- **Chat** (mitgelieferte Extensions IRC, Matrix und XMPP, *Extensions →
+  Manage Extensions…*) — der Konto-Editor bietet bekannte öffentliche Server
+  in einer editierbaren Liste an (eigene jederzeit eintippbar): ein Stand
+  liegt axross bei, *Refresh list* holt die öffentlichen Verzeichnisse
+  (irssis Netzwerkliste, joinmatrix.org, die XMPP-Providers-Liste) über den
+  Proxy und speichert sie. Verbunden öffnet *Channel List* / *Room
+  Directory* / *Group Chats* rechts die öffentlichen Kanäle des Servers -
+  Filter, Sortierung, Doppelklick tritt bei (IRC LIST in Portionen, höchstens
+  100 000 Kanäle). Ein Schloss an jedem Konto und Gespräch zeigt den Schutz:
+  TLS zum Server, Ende-zu-Ende verschlüsselt (alle Schlüssel geprüft oder
+  nicht) oder Klartext.
 - **Bluetooth** (mitgelieferte Extension, *Extensions → Manage
   Extensions…*) — ein Panel, um Lautsprecher, Kopfhörer und andere
   Bluetooth-Geräte über BlueZ (`bluetoothd`) am System-D-Bus zu
   verbinden; es startet kein Programm. Es zeigt den Adapter (bei
   mehreren: auswählen) mit dem Schalter *Powered*, und *Scan* listet, was
   in Reichweite ist: Name, Adresse, Typ (Lautsprecher, Headset, Telefon,
-  Tastatur …), Signalstärke in dBm während des Scans, Akkustand, wo das
-  Gerät ihn meldet, und Connected / Paired / Trusted. Ein Scan endet nach
+  Tastatur, Uhr, Tracker, Sensor …), Funk (Classic, BLE oder beides),
+  Signalstärke in dBm während des Scans, den Hersteller, den ein
+  BLE-Gerät aussendet, Akkustand, wo das Gerät ihn meldet, wann es
+  zuletzt zu hören war (*now*, *12 s ago*) und Connected / Paired /
+  Trusted. **Add Device…** fügt ein neues Gerät in einem Zug hinzu: schaltet
+  den Adapter auf Nachfrage ein, scannt, solange der Dialog offen ist,
+  listet die neuen Geräte in der Nähe (benannte zuerst, stärkstes Signal
+  oben, *Show unnamed* für Beacons), und *Add* pairt, vertraut und verbindet
+  das gewählte Gerät und macht einen Lautsprecher oder ein Headset mit
+  angehaktem *Use as audio output* zum Ausgang von axross - jeder Schritt
+  wird abgehakt oder scheitert mit Grund; *Cancel* bricht ein Pairing ab,
+  Schließen stoppt den gestarteten Scan. Neben *Scan* wählst du, wonach ein
+  Scan sucht - *Classic +
+  BLE*, *Classic only* (Lautsprecher, Telefone, Tastaturen) oder *BLE
+  only* (Uhren, Tracker, Sensoren) - und das schwächste Signal, das er
+  listet (*-70 dBm or stronger* bleibt bei den Geräten in der Nähe); ein
+  laufender Scan behält seine Wahl. Die Zeile darunter filtert die Liste
+  ohne neuen Scan: Wörter gegen Name, Adresse, Typ, Hersteller und
+  Dienste, *All radios* / *Classic* / *BLE* und *Named only* (blendet die
+  namenlosen Beacons und Tracker aus, die ein BLE-Scan dutzendweise
+  findet). Der Tooltip eines Geräts nennt seine Dienste. *Details…* (oder
+  ein Doppelklick) zeigt alles, was BlueZ über ein Gerät weiß - Adresse
+  und ihren Typ, Art, Funk, Hersteller, Klasse und Appearance, Signal und
+  Sendeleistung, Akku, wann es zuletzt zu hören war, seinen Zustand und
+  die rohen Advertising-Daten - und unter *Services* die Dienste und
+  Profile, die es anbietet. Für ein verbundenes BLE-Gerät (*Connect*
+  steht gleich daneben) kartiert es die GATT-Dienste, die BlueZ
+  aufgelöst hat, mit ihren Characteristics: *Read* oder *Read All* holt
+  ihre Werte, *Watch* zeigt jeden neuen Wert einer meldenden
+  Characteristic (Puls, Sensor) bis *Stop Watching* oder bis der Dialog
+  schließt. Bekannte Werte werden dekodiert (Gerätename, Akkustand,
+  Appearance, Puls, Temperatur, Luftfeuchte, Luftdruck), andere als Text
+  oder Hex. Der Tab *Map* neben *List* zeichnet die Geräte in der Nähe
+  um diesen Computer herum in ihrer geschätzten Entfernung - aus dem
+  Signal und, wo ein Gerät sie aussendet, seiner Sendeleistung, geglättet
+  über die letzten Messungen; Ringe markieren 1, 3, 10 und 30 m.
+  Bluetooth verrät keine Richtung, der Winkel eines Geräts ist nur sein
+  fester Platz auf der Karte. Die Farbe ist der Funk (Classic, BLE,
+  beides), ein gefüllter Punkt ein gepairtes Gerät, ein Ring ein
+  verbundenes; die nächsten Geräte mit Namen sind beschriftet, Hovern
+  zeigt Signal und Entfernung jedes Geräts, ein Klick wählt es in der
+  Liste und ein Doppelklick öffnet seine Details (deren *Signal history*
+  die letzten Messungen zeigt). Die Filterzeile gilt auch für die Karte.
+  Eine Entfernung ist eine grobe Schätzung - Wände und Körper halbieren
+  oder verdoppeln sie leicht. *Test…* (oder der Tab *Connection* der
+  Details) enthält die Verbindungsoptionen und Tests: ein einzelnes Profil
+  verbinden oder trennen (*Audio playback (A2DP)*, *Headset with
+  microphone (HFP)*, *Media controls*, HID, PAN, serielle Schnittstelle -
+  die das Gerät anbietet); *Reconnect automatically when the connection
+  drops* (axross verbindet das Gerät nach 2, 5, 15, 30 und 60 s wieder,
+  solange es läuft; ein Trennen, das du auslöst, ist kein Abbruch;
+  gespeichert in `~/.config/axross/bluetooth.json`); *Test Connection* -
+  verbindet bei Bedarf und berichtet, jeweils mit Zeit: die Verbindung,
+  das Auflösen der Dienste, die Antwortzeit einiger GATT-Lesezugriffe
+  (BLE) und bei Lautsprecher oder Headset das Erscheinen seines
+  Audioausgangs; für Lautsprecher und Headsets *Play Test Sound* (zwei
+  kurze Töne auf dem eigenen Ausgang des Geräts, egal welcher Ausgang in
+  axross gewählt ist) und *Test Microphone* (Pegelanzeige für 5 s - das
+  Mikrofon eines Headsets gibt es nur in seinem Headset-Profil, das Panel
+  sagt, welches zu verbinden ist). Ein Scan endet nach
   2 Minuten von selbst. Für das gewählte Gerät: *Pair* (*Cancel Pairing*,
   solange es läuft), *Trust* / *Untrust* (ein Trusted-Gerät darf sich
   selbst wieder verbinden), *Connect*, *Disconnect*, *Remove* (nach einer
@@ -514,6 +742,65 @@ eines floating Panels dockt es wieder an.
   nicht verfügbar). Ohne System-D-Bus, ohne laufenden `bluetoothd` oder
   ohne Adapter sagt das Panel das und bietet nichts weiter an; es merkt,
   wenn der Dienst startet oder ein Adapter eingesteckt wird. Nur Linux.
+- **Audio Mixer** (mitgelieferte Extension, **Tools → Audio Mixer**
+  bietet an, sie einzuschalten) — alle Sound-Einstellungen in einem Panel.
+  *axross*: die Master-Lautstärke mit Mute und Ausgabegerät und je Quelle
+  — Media Player, Agent voice, Media preview — ein Kanal mit eigener
+  Lautstärke, Mute und Ausgang (*Same as the output* oder ein eigenes
+  Gerät: die Stimme auf das Headset, die Musik auf die Lautsprecher).
+  *Equalizer*: der eine 10-Band-Equalizer von axross mit Presets (die
+  Equalizer-Zeile des Media Players zeigt dieselbe Einstellung, die
+  Stimme des Agents läuft hindurch; hörbar mit numpy). *System*: der
+  Soundserver über `pactl` (PipeWire oder PulseAudio) — Outputs und Inputs
+  mit Lautstärke (bis 150 %), Mute und *Default*, die Programme, die
+  abspielen oder aufnehmen, mit Lautstärke und Gerät (ein anderes wählen
+  verschiebt sie; die eigenen Streams von axross sind markiert), und das
+  Profil jeder Karte (ein Bluetooth-Headset: A2DP für Musik, das
+  Headset-Profil für sein Mikrofon). Ohne `pactl` oder Soundserver sagt
+  der Tab warum und bietet *Try Again*. Alles steht in `audio.json` wie
+  bei **Edit → Settings… → Audio** (dort bleiben Backend, Eingabegerät und
+  die Tests), laufende Player folgen sofort.
+- **System Information** (mitgelieferte Extension, **Tools → System
+  Information…** bietet an, sie einzuschalten; danach auch *Extensions →
+  System Information…*) — ein Fenster mit allem über den Rechner, auf dem
+  axross läuft. *Overview*: Name, Hersteller, Modell und OS des Rechners
+  mit seinen Eckdaten (CPU-Threads, Speicher, Storage, Displays), und
+  Kacheln mit Ringen für CPU-Last, Speicher, Swap, das Root-Dateisystem
+  und den Akku (Ladung und Health), die heißesten Temperaturen auf einer
+  Farbskala (grün bis 60 °C, gelb, orange ab 80 °C oder der eigenen
+  High-Marke des Sensors, rot ab 90 °C oder Critical), Grafik mit den
+  angeschlossenen Displays und die Netzwerk-Interfaces mit ihrem
+  Live-Durchsatz; CPU und Speicher haben eine Sparkline der letzten zwei
+  Minuten. Ein Klick auf eine Kachel öffnet ihre Seite. Die Liste links
+  hat je eine Seite für *CPU* (Last je logischer CPU, P- und E-Cores,
+  Frequenzen, Caches, Befehlssatz-Features als Chips, die Sicht des
+  Kernels auf die CPU-Vulnerabilities), *Memory* (belegt, Cache und frei
+  als ein Balken, Swap), *Storage* (ein Balken je Disk mit ihren
+  Partitionen, Mount-Points und Belegung; Disks und Dateisysteme als
+  Tabellen), *Graphics & Displays* (Adapter, Ausgänge mit Name,
+  Auflösung, Bildrate und Größe des Monitors aus seiner EDID, eine Skizze
+  der Bildschirme), *Network* (Interfaces mit Art, Zustand, Speed oder
+  WLAN-Signal, Treiber und Traffic; Bluetooth-Adapter; Funkschalter),
+  *Audio* (Soundkarten, Codecs, PCM-Devices), *USB & Peripherals* (der
+  USB-Baum und die Eingabegeräte), *PCI* (der PCI-Baum, Namen aus
+  `pci.ids`), *Battery & Power*, *Sensors* (Temperaturen, Lüfter,
+  Spannungen), *System & OS* (Hersteller, Modell, Firmware, Secure Boot,
+  Kernel, Desktop, Versionen) und *Virtualisation* (Bare Metal, eine
+  virtuelle Maschine oder ein Container, mit den Indizien). Alles wird
+  ohne root und ohne ein Programm zu starten aus `/proc` und `/sys`
+  gelesen (unter Windows und macOS weniger: was Python und das optionale
+  psutil sagen); jede Quelle hat eine Frist, und ein Abschnitt, der sich
+  nicht lesen lässt, sagt warum - die anderen warten nicht darauf. Das
+  Suchfeld (`/`) filtert alle Seiten zugleich, die Liste zählt die
+  Treffer je Seite. *Copy Section*, *Copy All* und *Save Report…* (Text
+  oder JSON) exportieren das Gesammelte; *JSON Export* speichert alles als
+  JSON-Datei oder kopiert alles bzw. die gezeigte Seite als JSON (jeder
+  Wert, jede Tabelle, jeder Rohwert). Seriennummern, MAC- und
+  IP-Adressen und UUIDs sind auf dem Bildschirm und in jeder Kopie
+  verborgen, bis *Show identifiers* angehakt ist - solche Berichte landen
+  oft öffentlich. Live-Werte werden einmal pro Sekunde gelesen, solange
+  das Fenster zu sehen ist, nie im Hintergrund; *Refresh* sammelt alles
+  neu. Das Fenster behält seine Größe.
 - **SSH-Terminal** — Tab-Dock neben der Transfer-Queue. Lokales PTY
   (`pty.fork()`) und remote-SSH-über-paramiko stehen beide bereit;
   die SSH-Variante reused die bestehende Verbindung.
@@ -600,8 +887,9 @@ Skripte: `axross.metadata`, `axross.remove_metadata`,
 ## Scripting & eingebettete REPL
 
 Axross liefert ein kuratiertes Python-Surface (``axross.*``) mit
-89 öffentlichen Namen (Verben + 9 Result-Klassen für Network-
-Helper). Drei Wege zum gleichen Surface:
+122 öffentlichen Namen (111 Funktionen + 11 Klassen: die Result-Typen
+der Network-, Grep- und Archiv-Helper, NonInteractiveError). Drei Wege zum
+gleichen Surface:
 
 - **Console-Dock** (View-Menü) — REPL mit Multi-Line-Input,
   History, Tab-Completion, Seitenpanel mit jeder Funktion + Docstring.
@@ -624,17 +912,73 @@ probe = axross.http_probe("https://example.com")
 ips = axross.dns_resolve("example.com")
 ```
 
-API-Browser:
-- ``axross.help()`` — Cheat-Sheet nach Kategorie
-- ``axross.docs("backend")`` / ``"scripts"`` / ``"slash"`` —
-  Markdown-Referenz pro Topic
-- ``docs/SCRIPTING_REFERENCE.md`` — vollständige Verb-/Klassen-Doku
+### Die API durchsuchen
 
-REPL-Slash-Commands: ``.help``, ``.scripts``, ``.save <name>``,
-``.load <name>``, ``.run <name>``, ``.delete <name>``, ``.open``.
+- ``axross.help()`` — Cheat-Sheet nach Kategorie.
+- ``axross.docs("backend")`` / ``axross.docs("scripts")`` /
+  ``axross.docs("slash")`` — Markdown-Referenz pro Thema.
+- Tab-Completion auf ``axross.<TAB>`` in der REPL.
+- ``docs/SCRIPTING_REFERENCE.md`` — jedes Verb und jede Result-Klasse mit
+  voller Signatur und Docstring.
 
-Detaillierte Verb-Listen siehe **[USAGE.md](USAGE.md)** (EN) oder
-``docs/SCRIPTING_REFERENCE.md``.
+### REPL-Slash-Commands
+
+| Befehl | Wirkung |
+|---|---|
+| ``.help`` | Slash-Commands auflisten |
+| ``.scripts`` | Gespeicherte Skripte in ``~/.config/axross/scripts/`` |
+| ``.save <name>`` | Den in DIESER Sitzung abgeschickten Code speichern; ein vorhandenes Skript gleichen Namens wird nie ersetzt (erst ``.delete``) |
+| ``.load <name>`` | Den Code eines gespeicherten Skripts ausgeben |
+| ``.run <name>`` | Ein gespeichertes Skript im laufenden Namensraum ausführen |
+| ``.delete <name>`` | Ein gespeichertes Skript entfernen |
+| ``.open`` | Den Pfad des Skript-Ordners ausgeben |
+
+### Proxy in Skripten
+
+``axross.open(profile_name)`` und ``axross.open_url(url, **kw)`` reichen
+die Proxy-Einstellungen durch dieselbe ConnectionManager-Logik wie die GUI.
+``open()`` liest sie aus dem gespeicherten Profil; ``open_url()`` nimmt sie
+als Keyword-Argumente:
+
+```python
+b = axross.open_url(
+    "sftp://alice@gateway.example.com/",
+    password="hunter2",
+    proxy_type="socks5",          # "socks5" / "socks4" / "http" / "https" (+ "+ntlm" ...)
+    proxy_host="proxy.example.com",
+    proxy_port=1080,
+    proxy_username="puser",       # optional
+    proxy_password="ppass",       # optional
+)
+```
+
+Ist `proxy_type` nicht `"none"`, sind `proxy_host` und ein `proxy_port`
+ungleich 0 Pflicht. Ein halb konfigurierter Proxy schlägt fehl, statt
+direkt zu verbinden. Ohne `proxy_*`-Keyword nimmt `open_url` den
+Standard-Proxy aus *Tools → Network & Proxy…* (seine Bypass-Liste und das
+PAC-Skript gelten); ein PAC-Skript, das sich nicht auswerten lässt, wirft
+`ProxyResolutionError`, statt direkt zu verbinden. Welche Backends den Proxy
+unterstützen und welche nicht (UDP, Kernel-/USB-Transporte, lokale
+Backends) steht in **[USAGE.md](USAGE.md)** (EN) und
+**[PROXY_SUPPORT.md](PROXY_SUPPORT.md)**.
+
+### Kategorien (jeder öffentliche Name: `axross.api_schema()`)
+
+| Gruppe | Verben |
+|---|---|
+| Verbinden / Backend | ``open``, ``open_url``, ``localfs``, ``ramfs``, ``list_backends``, ``available_backends`` |
+| Profile | ``list_profiles``, ``get_profile``, ``save_profile``, ``delete_profile`` |
+| Datei-I/O | ``copy``, ``move``, ``checksum``, ``read_bytes`` / ``write_bytes`` / ``read_text`` / ``write_text``, ``hash_bytes`` / ``hash_file`` |
+| Krypto / Archive | ``encrypt``, ``decrypt``, ``extract_archive``, ``is_archive``, ``archive_inspect`` |
+| Bookmarks | ``list_bookmarks``, ``add_bookmark``, ``remove_bookmark`` |
+| Skripte | ``script_dir``, ``list_scripts``, ``save_script``, ``load_script``, ``delete_script``, ``run_script`` |
+| Pro Protokoll | ``find_tftp_files``, ``slp_discover``, ``nntp_post``, ``git_push``, ``exec``, ``interactive_shell``, ``query``, ``tables``, ``imap_search`` / ``imap_move`` / ``imap_set_flags``, ``share``, ``ldap_search`` |
+| DNS / Netz | ``dns_resolve`` / ``dns_records`` / ``dns_reverse``, ``port_open``, ``port_scan``, ``subnet_hosts`` |
+| Netzwerk-Helfer | ``ping`` / ``PingResult``, ``mac_lookup`` / ``OuiInfo``, ``whois`` / ``WhoisInfo``, ``time_skew`` / ``TimeSkew``, ``tcp_banner``, ``tls_cert`` / ``TlsCert``, ``ssh_hostkey`` / ``SshHostKey``, ``http_probe`` / ``HttpProbe`` |
+| SNMP | ``snmp_get``, ``snmp_walk``, ``snmp_set``, ``SnmpVar`` |
+| Suche über Backends | ``find_files``, ``grep`` / ``GrepHit``, ``diff_files`` |
+| Datei-Metadaten | ``metadata``, ``remove_metadata``, ``export_metadata`` |
+| UI-Helfer | ``message``, ``confirm``, ``toast`` (modal + Toast mit SVG-Status-Icons; ohne GUI stdout/stdin), ``is_interactive``, ``NonInteractiveError`` |
 
 ### UI-Helfer — message / confirm / toast
 
@@ -825,6 +1169,15 @@ remote commands*, eine Zeile `mcp:<name>` je MCP-Server und `ext:<id>`
 je Extension mit Agent-Tools. Immer dabei: `ask_user` (der Agent fragt
 dich etwas) und `update_plan` (eine Checkliste über dem Eingabefeld).
 
+**Nie vom Agenten geändert**, egal welche Wurzel und welcher Zugriff:
+axross' eigene Einstellungen und Daten (`~/.config/axross`,
+`~/.local/share/axross`, `~/.local/state/axross` - seine Rechte, seine
+MCP-Server), Shell-Startdateien (`~/.bashrc`, `~/.profile`, `~/.zshrc`,
+…), `~/.config/autostart`, `~/.config/systemd`, `~/.ssh` und `~/.gnupg`:
+geändert, würde jede davon Code ausführen oder die Rechte des Agenten
+ohne Rückfrage erweitern. Ein Ordner, der eine davon enthält, wird auch
+nicht gelöscht oder verschoben.
+
 **Files read-only** (in der oberen Zeile des Tabs, und für jeden Tab in
 Agent Settings > Access): der Agent liest Dateien, ändert aber keine —
 kein Schreiben, Löschen oder Verschieben, keine Remote Commands (ein
@@ -967,6 +1320,14 @@ einen Level:
 | high | nur Allowed Hosts | wie eingestellt | read-only |
 | paranoid | nur das LLM | read-only | read-only |
 
+*lax* mit bubblewrap erreicht das Internet über einen eigenen
+Netzwerk-Namespace, wenn `pasta` (passt) installiert ist; ohne es teilt
+die Sandbox das Netzwerk des Hosts - auch seine abstrakten Sockets
+(X-Server, D-Bus) - und das Log sagt es. Ein MCP-Server aus der
+`.mcp.json` eines Projekts (oder den Einstellungen eines anderen
+Clients), der ein Programm startet, fragt vor dem Einschalten und nennt
+den ganzen Befehl und die Datei, aus der er stammt.
+
 Die Anfragen ans Modell, der API-Key und die Zustimmung bleiben
 draußen: die Sandbox hat kein eigenes Netzwerk, axross sendet für sie.
 Allowed Hosts (`host:port`) erreicht sie über axross, geprüft bei jeder
@@ -1002,9 +1363,15 @@ installiert einen Server in **rootless podman**; nichts davon läuft auf
 dem Host:
 
 - **Quellen** (Agent Settings → MCP Sources, jede abschaltbar): der
-  mitgelieferte Katalog (offizielle Referenz-Server aus Dockers
-  kuratiertem `mcp/*`-Namespace plus zwei Security-Server, per Digest
-  gepinnt, geht offline), Docker Hubs `mcp`-Namespace, die offizielle
+  mitgelieferte Katalog (geht offline: die MCP-Referenz-Server fetch,
+  filesystem, git, memory, sequentialthinking, time und everything; die
+  eigenen Server der Hersteller für GitHub - nur lesend, Repositories,
+  Issues und Pull Requests -, Playwright, MarkItDown und Brave Search;
+  DuckDuckGo-Suche; drei Security-Server, vuln-nist, shodan und rea.
+  Images sind per Digest gepinnt und kommen nur aus Dockers kuratiertem
+  `mcp/*`-Namespace und von GitHubs eigenem
+  `ghcr.io/github/github-mcp-server`; npm- und PyPI-Pakete sind auf eine
+  exakte Version gepinnt), Docker Hubs `mcp`-Namespace, die offizielle
   MCP Registry (`registry.modelcontextprotocol.io`) und eigene
   Katalogdateien oder `https://`-URLs. *Check* liest eine und nennt, was
   sie enthält oder warum sie abgelehnt wird (falsches Schema, größer als
@@ -1032,7 +1399,7 @@ dem Host:
 - **Install**: ein Image wird per Digest gepullt (bei Docker Hub wird der
   Digest des Tags vorher erfragt; andere werden auf den Digest gepinnt,
   den podman meldet). Ein npm- oder pypi-Paket wird in einem Container
-  eines gepinnten `node:22-slim`- / `python:3.13-slim`-Images installiert
+  eines gepinnten `node:24-slim`- / `python:3.13-slim`-Images installiert
   (`npm --ignore-scripts`, `pip --only-binary=:all:`), dessen einziges
   Netz die Paket-Registry ist, und als `localhost/axross-mcp:<name>-<version>`
   committet - nie npx, uvx, npm oder pip auf dem Host. Ein Remote-Server
@@ -1045,10 +1412,12 @@ dem Host:
   noexec-`/tmp`, Prozess- und Speicherlimits. Netz standardmäßig
   **None**; **Allowlist** erreicht nur die angegebenen `host:port` über
   einen Proxy in axross (für Programme, die `HTTPS_PROXY` beachten; die
-  anderen haben gar keine Route); **Full** jeden Host. Ordner nur wie
-  gewählt, read-only, solange *Writable* nicht angehakt ist. Umgebungswerte
-  und Secrets (im Keyring) erreichen den Container über eine Pipe, nie auf
-  der Kommandozeile oder in einer Datei.
+  anderen haben gar keine Route - Nodes eigenes `fetch` nur mit
+  `NODE_USE_ENV_PROXY=1`, das der Eintrag Brave Search setzt); **Full**
+  jeden Host. Ordner nur wie gewählt, read-only, solange *Writable*
+  nicht angehakt ist. Umgebungswerte und Secrets (im Keyring) erreichen
+  den Container über eine Pipe, nie auf der Kommandozeile oder in einer
+  Datei.
 - **Uninstall** entfernt den Server und beim Speichern sein Image per ID
   (`podman rmi`, nie erzwungen: ein Image in Benutzung, anders getaggt
   oder schon vor der Installation vorhanden bleibt). **Check for Update**
@@ -1167,6 +1536,51 @@ bevor er eine Aufnahme hört). Antworten spricht eine lokale Piper-Stimme.
   paranoiden Security Mode ist das Mikrofon aus; Audio und Transkripte
   bleiben im Speicher.
 
+## Mail-Docks und Mail-Projekte
+
+**Tools → Mail-Docks…** richtet Agenten ein, die je ein Postfach beobachten (ein
+gespeichertes IMAP-, POP3- oder Exchange-Profil und ein Ordner). Jedes Dock hat ein
+eigenes Panel: was es beobachtet, wann es wieder läuft, sein Log, *Jetzt ausführen*,
+*Pause*, *Settings…*. Einstellungen: Intervall, die **Anweisungen** für jeden Lauf,
+LLM-Profil, **Sandbox**-Profil (Modell und Agent laufen darin, die Zugangsdaten des
+Postfachs nie), die **Sende-Regel** und der SMTP-Server.
+
+- *Nie senden - nur Entwürfe*: Antworten landen im Entwürfe-Ordner (IMAP APPEND mit
+  \Draft; POP3: im Entwurfsordner des Docks).
+- *Vor jeder Mail fragen*: eine Mail wartet im Panel auf *Senden* / *Nicht senden*
+  (nach 30 Minuten ohne Antwort nicht gesendet).
+- *Dem Absender ohne Nachfrage antworten*: Antworten an den Absender der beantworteten
+  Mail (und an die *erlaubten Empfänger*, Adressen oder `@domain`) gehen sofort raus;
+  alle anderen warten auf dein Ja.
+
+Der Agent eines Docks hat nur die Mail-Werkzeuge (`mail_list_new`, `mail_list`,
+`mail_read`, `mail_analyse`, `mail_draft`, `mail_send`, `dock_report`) und schreibt keine
+Dateien. Mail-Inhalt ist in jedem Ergebnis als nicht vertrauenswürdig markiert; eine
+Mail kann weder Empfänger hinzufügen noch die Regel ändern. `dock_report` hinterlässt
+einem anderen Dock eine Notiz, die es beim nächsten Lauf liest - die Notiz allein
+startet ihn. Ein Lauf ohne neue Mail und ohne Notiz fragt das Modell nichts. SMTP:
+STARTTLS oder TLS mit geprüftem Zertifikat, unverschlüsselt nur zu diesem Rechner; das
+Passwort liegt im Schlüsselbund.
+
+**Tools → Mail-Projekt…** importiert `.eml`- und Outlook-`.msg`-Dateien, Outlook-Datendateien
+(`.pst`, `.ost`, auch die von Outlook 2013; jede Nachricht als `.eml` mit ihren originalen
+Transport-Headern), mbox, Maildir,
+ganze Ordner oder den Ordner eines Postfach-Profils in einen Projektordner und analysiert
+jede Nachricht offline: Received-Kette mit Verzögerungen, SPF/DKIM/DMARC wie
+aufgezeichnet, ein From-Name mit fremder Adresse, abweichende Reply-To- und
+DKIM-Domains, Links, deren Text woanders hinzeigt als der Link, und Anhänge (Programme,
+Makros, doppelte Endungen, Rechts-nach-links-Zeichen, Inhalt passt nicht zum Namen). Die
+Liste ist nach Verdacht sortiert; der Tab *Message* zeigt die Mail selbst mit entschärftem
+HTML (keine Skripte, Styles, Frames, Formulare, nichts wird geladen, jeder Link mit seinem
+echten Ziel daneben, geöffnet erst nach Nachfrage). *Check SPF / DKIM / DMARC in DNS*
+(aus, solange nicht gewählt - die Abfragen verraten, welche Domains du ansiehst) prüft
+live: SPF für die Adresse des einliefernden Servers, jede DKIM-Signatur gegen den
+veröffentlichten Schlüssel, die DMARC-Regel und ihre Ausrichtung; ein Mail-Dock hat
+denselben Schalter. *Agent fragen…* öffnet einen Agent-Tab auf dem
+Projektordner, nur lesend, mit einem Analyse-Prompt. Im Ordner: jede Nachricht wie
+importiert (`messages/<sha256>`), ihr Bericht (`reports/<sha256>.json`), `index.sqlite`,
+`index.csv` und `PROJECT.md`.
+
 ## Settings
 
 **Edit → Settings…** (**Strg+,**; unter macOS im Application-Menü) bündelt
@@ -1265,6 +1679,14 @@ gespeichert, wie die Seite.
 
 ## Updates
 
+**axross-base und Packs.** `axross-base` enthält nur den Kern; jedes pip-Extra, jede
+mitgelieferte Erweiterung und die Feature-Gruppen sind *Units*, die es aus seinem eigenen
+Release nachlädt: *Hilfe → Features… → Packs…* listet sie mit Downloadgröße; *Add* holt
+die Wheels der Unit (aus dem Release, sonst dieselbe Datei von PyPI) und prüft Signatur,
+Pack-Manifest und die SHA-256 jedes Wheels, bevor etwas entpackt wird; *Remove* löscht,
+was keine andere Unit braucht; wirksam beim nächsten Start. Ein Update des Binaries
+bringt die installierten Units des neuen Releases mit, bevor das Binary geholt wird.
+
 Die One-File-Binaries (`axross-full`, `axross-slim`, das macOS- und das
 Windows-`axross-slim`) aktualisieren sich aus den GitHub-Releases von
 `c0decave/axross`:
@@ -1357,6 +1779,10 @@ Environment. Der Check beim Start läuft nicht mit
   sonst `/dev/shm`) statt auf die Platte: nichts landet auf der Platte, aber
   es kostet RAM, daher standardmäßig aus. Ein im Environment gesetztes
   `TMPDIR` gewinnt immer.
+- Eine Konfigurationsdatei, die kein gültiges JSON ist (eine misslungene
+  Handänderung), wird nie überschrieben: axross behält sie als
+  `NAME.unreadable-<Zeit>-<id>` daneben und beginnt die Datei neu; eine,
+  die es gar nicht lesen kann (Rechte), wird nicht geschrieben.
 - `~/.config/axross/logging.json` — die Logging-Settings: Gesamt-Level, Level je Area,
   Größe und Rotation des Logfiles, Terminal, Zusammenfassen wiederholter Messages
   (`0o600`).

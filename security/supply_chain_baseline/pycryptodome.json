@@ -1,0 +1,1400 @@
+{
+ "name": "pycryptodome",
+ "versions": {
+  "4.1.0": {
+   "accepted_findings": [
+    "secret-paths|Crypto/PublicKey/ECC.py|4c81a98d3877c773",
+    "secret-paths|Crypto/PublicKey/RSA.py|2fe1b54750c775a7",
+    "ssh-keys|Crypto/PublicKey/ECC.py|4c81a98d3877c773",
+    "ssh-keys|Crypto/PublicKey/RSA.py|2fe1b54750c775a7",
+    "yara|capability_filesystem_read|Crypto/Hash/KMAC128.py|13402924871e165d",
+    "yara|capability_filesystem_read|Crypto/Hash/KangarooTwelve.py|e038c744dcb66a96",
+    "yara|capability_filesystem_read|Crypto/Hash/TupleHash128.py|5e30ddea8e9d57de",
+    "yara|capability_filesystem_read|Crypto/PublicKey/ECC.py|cebd3c40c4f3873c",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CBC.py|095951b11f1206e9",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CCM.py|2c57ca234c325019",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CFB.py|3bd416454cc5dac0",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CTR.py|20be3c0538110a0a",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_ChaCha20_Poly1305.py|7cefe3d6ea02aa94",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_EAX.py|1b386eb89a5f4e41",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_GCM.py|361c43e5f3d7d3dc",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_OCB.py|25c17a75e1909cd5",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_OFB.py|e92c70a1cc836aae",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_OpenPGP.py|ea34153c36dd0e5b",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_SIV.py|42358d4f0d31482e",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_CMAC.py|7ba6375c8c9e2495",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_KangarooTwelve.py|bfc7a98003f1f87f",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_SHAKE.py|84c908e3cb59ebde",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_TurboSHAKE.py|99fbcd8e0e0a6380",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_cSHAKE.py|a2f77c62106107ac",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_shared_objects.py|f688840a75faf735",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Protocol/test_SecretSharing.py|0cf890feab633eec",
+    "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_MLDSA.py|51dffa7fff02c01f",
+    "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_Curve25519.py|0d79a0661ca5aa80",
+    "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_Curve448.py|7eff30089159eabb",
+    "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_ECC.py|6079ffce399a3644",
+    "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_MLDSA.py|7448b8349f54bed5",
+    "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_RSA.py|67e41b46e3b84bf2",
+    "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_passphrase.py|fc82ce07a4d38aa2",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Random/test_random.py|11a20824d4f1ae9b",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Signature/test_mldsa.py|7731290a2d296999",
+    "yara|capability_filesystem_read|Crypto/SelfTest/Util/test_raw_api.py|2902f9824b04488e",
+    "yara|capability_filesystem_read|Crypto/SelfTest/loader.py|b374b3fc791890be",
+    "yara|capability_filesystem_read|Crypto/Signature/eddsa.py|ee48044cb8f3a104",
+    "yara|capability_filesystem_read|Crypto/Signature/mldsa.py|9f12a3fcd69fbbdb",
+    "yara|capability_filesystem_read|Crypto/Util/asn1.py|a7d1c647f4804d4f",
+    "yara|capability_filesystem_write_executable|Crypto/SelfTest/Cipher/test_AES.py|cb7bac6418f6c203",
+    "yara|capability_filesystem_write_executable|Crypto/SelfTest/Cipher/test_OCB.py|25c17a75e1909cd5",
+    "yara|capability_filesystem_write_executable|Crypto/SelfTest/Protocol/test_ecdh.py|a7434b701847f03a",
+    "yara|capability_filesystem_write_executable|Crypto/SelfTest/PublicKey/test_import_DSA.py|b730211b9deec2e6",
+    "yara|capability_filesystem_write_executable|Crypto/SelfTest/Signature/test_dss.py|6e8336214cec7957",
+    "yara|capability_filesystem_write_executable|Crypto/SelfTest/Signature/test_eddsa.py|b175dc0ff25abd5e",
+    "yara|capability_filesystem_write_executable|Crypto/Util/number.py|af389d621b9bb78c",
+    "yara|capability_process_spawn|Crypto/SelfTest/Cipher/test_DES.py|6e0e5271100ee0f5",
+    "yara|threat_filesystem_read|Crypto/PublicKey/ECC.py|cebd3c40c4f3873c",
+    "yara|threat_filesystem_read|Crypto/PublicKey/RSA.py|03fbf13cc8984404"
+   ],
+   "archives": {
+    "pycryptodome-4.1.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "Crypto/Cipher/AES.py": "ca98601f61376cdea2307d007516ada3fb8232209511b94a90889c34ad038004",
+      "Crypto/Cipher/ARC2.py": "b0eee9568e46205fcfb9ec5a447b9f7e40d3bf3e1eb48a57295339c7c8bd7065",
+      "Crypto/Cipher/ARC4.py": "4c76a87011e488179ebc15f8c21c0ad5d69a3d1ab9e2743dd883a63e9ef81e8c",
+      "Crypto/Cipher/Blowfish.py": "71b99190a9605640ff072405308bb4e4ea35b69cabd130b7fc89578d7322edff",
+      "Crypto/Cipher/CAST.py": "4567f70e55b6d72a60be09ba72bcffec3e7a473a0c6959cc2cac6c9b9b67ad86",
+      "Crypto/Cipher/ChaCha20.py": "e9e11197254ac794805b248e32c245cd3e848db2ce5a130e1b54079d331f8233",
+      "Crypto/Cipher/ChaCha20_Poly1305.py": "6ff23385a9e95f05606ce1d2b20ac0b87dac50430429dcef2d1208033d62c755",
+      "Crypto/Cipher/DES.py": "460f071bb3a7646e6c15f967ea8ab0b6783e8b3b22bc6418faa7ea41a4139d36",
+      "Crypto/Cipher/DES3.py": "c39f0feee4bad5a1c72a7250a85ddc42410cd5daf0ef9701d38073c90f349c0c",
+      "Crypto/Cipher/PKCS1_OAEP.py": "65080332cc8182bf9bcb1a4fd75f791f115d87267a435fd874b95832a89e5f3a",
+      "Crypto/Cipher/PKCS1_v1_5.py": "acf1e598a7a4005f9ebb47d04ce062a146f4c50605b4296207cf2d3707bee907",
+      "Crypto/Cipher/Salsa20.py": "209e179b09fabb60333ccf14f5af7d7764241817a48278e5f8e43794f4f0d58e",
+      "Crypto/Cipher/_ARC4.abi3.so": "2adb90541769f14a6f05824794ea1287ff228645e363046d4ba4e47df4a99455",
+      "Crypto/Cipher/_EKSBlowfish.py": "50080d3eb4d65a81d5f8009264536a32947a7112281d5c128d08a7fb751819fc",
+      "Crypto/Cipher/_Salsa20.abi3.so": "9800665627ed14bad46600f1126f73d394acf15ca45d25916b01038a9f583288",
+      "Crypto/Cipher/__init__.py": "150d837296ff2d07acd120b1c881f061215601c6065533cf254ebbfa19762275",
+      "Crypto/Cipher/_chacha20.abi3.so": "d9e9cbfb6b5ee5915d0ffeb79dfd454fa0a070bfa23bd7b38140c4f56822ce81",
+      "Crypto/Cipher/_mode_cbc.py": "d483f69d87f4e865e6d850d61a352a93e02422660221bb15d6f79e740c34e739",
+      "Crypto/Cipher/_mode_ccm.py": "2af80c36c40790c4380a8accebd2456a620710bd41f5d121f5beb5203be7dd23",
+      "Crypto/Cipher/_mode_cfb.py": "8acc07c853daa220c77d272a29484cbdfa1d90d4d0389378d45297c6f164529f",
+      "Crypto/Cipher/_mode_ctr.py": "5d633452d27996162b25fa90951a91c887bfe5da517c5d3412021fac81788d9a",
+      "Crypto/Cipher/_mode_eax.py": "851288de8fe8929403829649f016e16b4e23ab90e2ec13b8415a0b011afedd03",
+      "Crypto/Cipher/_mode_ecb.py": "5216ecaab9f4f634a59ffaf59f646d2eaafe302536d14cb3b0a77852ebe219f2",
+      "Crypto/Cipher/_mode_gcm.py": "69524944b276db13d287f693d726d63fb12832d774f14611a61d6099335a70a8",
+      "Crypto/Cipher/_mode_kw.py": "4197a124d254dbcb48916fbe8109d03264b13c7aab23b0d84a24bec3bb1ffbfd",
+      "Crypto/Cipher/_mode_kwp.py": "5eb802f88b4f2bc9f39da0e3d55507a9c3646e004bb396bf6a7cd82f8361997d",
+      "Crypto/Cipher/_mode_ocb.py": "c51e4f586e07fd467187cf2a5aadbc6d3167b43c9649a11cef12c384505728e3",
+      "Crypto/Cipher/_mode_ofb.py": "340a2e91f10d7166ff54d6fb8ef7026db90d8a41cc9ec48e5fcfdc79a9bf83ba",
+      "Crypto/Cipher/_mode_openpgp.py": "57138436f7d0db9329c29a1655c26fc9a36ceb07da341a293c6078d26c2362fd",
+      "Crypto/Cipher/_mode_siv.py": "ca104690cc87b0384c3833b960d7667c8799e485056094e38bf13dfe8429e535",
+      "Crypto/Cipher/_pkcs1_decode.abi3.so": "fb092b3ec1bb3ec482fb55234e20e9d75cca3102ee402c7db65f012d30be3dc9",
+      "Crypto/Cipher/_pkcs1_oaep_decode.py": "21cc9f0d0fde182f64c0517275e58b03a524fa1d1ad91284f1c3d671f42582a2",
+      "Crypto/Cipher/_raw_aes.abi3.so": "7e4e7f7fe66f072ca92f24c0a7e8768a3503d71353f6f4b3f29fc38ffc1f540d",
+      "Crypto/Cipher/_raw_aesni.abi3.so": "3e52bd2e97999642fc849410eefd2f8a3d63093a910dd0b851ea6ad1e5ba667d",
+      "Crypto/Cipher/_raw_arc2.abi3.so": "6792c5b218525ce69e0929d5e76a6dc1a3fd60ad894a52e406c53f1dd82536c8",
+      "Crypto/Cipher/_raw_blowfish.abi3.so": "e05e358ef1ee296085da041a01f2caeb6a02da89f5c1ec13a2a06964df606581",
+      "Crypto/Cipher/_raw_cast.abi3.so": "1913bfe7b0141903162e1f5ea0ee007718035ffb1aea85999373a154aa228aed",
+      "Crypto/Cipher/_raw_cbc.abi3.so": "f496066077bd8e426aa2c5231adeac2555c724b254e7b4f7cc37f87c07f97a5f",
+      "Crypto/Cipher/_raw_cfb.abi3.so": "3a88d44eb3f473eb1e9362bde545a2a61d0425426149d7e9c7fefe6e71662cd4",
+      "Crypto/Cipher/_raw_ctr.abi3.so": "8f3a10b92e9edf1e2946a55998f6b2044ddbd235e4e15e7938d615a97dc495f9",
+      "Crypto/Cipher/_raw_des.abi3.so": "50eb094191d6e45f0206d9016b974ba11863e4e878c670f096003dc50133f491",
+      "Crypto/Cipher/_raw_des3.abi3.so": "07ba2fe122dbb9939977ba32bef7d5e8c7481de1826b5188d5e02c8bedfd89e3",
+      "Crypto/Cipher/_raw_ecb.abi3.so": "ad6e2d7c7ec5c906123ba62699641c6fbbba8fb1aa7c3b5c24c3b7b8d747317d",
+      "Crypto/Cipher/_raw_eksblowfish.abi3.so": "bc2d487c41688c3ce4fe3d11592b71747dc9b88c7b15438fc836a6b00c595795",
+      "Crypto/Cipher/_raw_ocb.abi3.so": "67ccd2ef8a03f7e3cb44dfb4c796ad7c561691381247cfcd18d7580cc9b9605e",
+      "Crypto/Cipher/_raw_ofb.abi3.so": "449987d9cf7d0d7c3e3f695a26ccfbbd99144d9a480b28bb290169ef8479632e",
+      "Crypto/Cipher/_state_machine.py": "5afe640ce35da40cfa653dd4c8a24fcf6cec6adc60bdbb1471ab4c07651455b7",
+      "Crypto/Cipher/oaep.py": "62f9c00a464976e40f4d105572306ce27be2fc3da980cef3677b0483e28d98a5",
+      "Crypto/Hash/BLAKE2b.py": "735d75d9360ca6beae5b6d4a47d2aa44fe2494018a44bfa60e321a441dcd94f1",
+      "Crypto/Hash/BLAKE2s.py": "b5540f2d61035eaa0b285cb385ef73b673c281147db7864dbdc127869334f618",
+      "Crypto/Hash/CMAC.py": "e1b51786414c23baa47e82a5e36be9e6626f2173fc8a184775ff8a49882a8665",
+      "Crypto/Hash/HMAC.py": "047723a2d2d8a6eec5daf80345e73b1e72167d7614985fcd35073065d80dc912",
+      "Crypto/Hash/KMAC128.py": "13402924871e165d9cad01af8c0360464e24f3e07c489587efc2209b025c870a",
+      "Crypto/Hash/KMAC256.py": "291ef8be847846c900f7e438e47fc5824eb1a8b04371f2e1de4237231a7d4720",
+      "Crypto/Hash/KangarooTwelve.py": "e038c744dcb66a967dce3ca8c8ff30ccb1d315ebb7b9bcd099b923507e863ae6",
+      "Crypto/Hash/MD2.py": "3c387d0e8eb64b33afa9388ccc17b3f0a79f451aa89c21049a47261ab4c09090",
+      "Crypto/Hash/MD4.py": "696efdf8eeac2ea57bdac24efa83f5624072155ab7be8ce6c6929d8b25abd040",
+      "Crypto/Hash/MD5.py": "88a64ca030837ba6360989f29c19bdc9b5c02f02f8a664da3594e8e59f7593d0",
+      "Crypto/Hash/Poly1305.py": "8bc811dfab25cc053b27a607f062fe9a10468554720d1bf08125065caf598de9",
+      "Crypto/Hash/RIPEMD.py": "09a83fe062f6d6ed124cb137f7fdb7cf64be3988999202551402f74953e2a1c5",
+      "Crypto/Hash/RIPEMD160.py": "3c5b916dc613764df6a42591b2c35d5f5f641564cbc04980fc532beac9cb41e3",
+      "Crypto/Hash/SHA.py": "eab53a80ea16f648213e2ae4214406b6ad090c01c4f7094b771af48f8922cb10",
+      "Crypto/Hash/SHA1.py": "c1b12328c24a9f59f4eabedf11e792134628db8058ea88191cb816e179f845a9",
+      "Crypto/Hash/SHA224.py": "0c1af9c6d788d25fcddadc7afd38487a26ad1be440a87961c7dd9a968944ce52",
+      "Crypto/Hash/SHA256.py": "45b3192f9ddf8d7a62ff87b1c32efdf60ec552f6369af824d82d4da601460368",
+      "Crypto/Hash/SHA384.py": "36209eba1c190b40d1f6b0ac1a6d101371a33d3c138e5b1d5dcbfcf97a43a59f",
+      "Crypto/Hash/SHA3_224.py": "d13211fc24ceb3b22c3ccd7e0ee154a2a2bb23ce6470c5b718a4c1195ccd7fcd",
+      "Crypto/Hash/SHA3_256.py": "b0079f9f349bb80737497b8309dcb78a19b6945fa83bb2f3c7024b23471bc7df",
+      "Crypto/Hash/SHA3_384.py": "34eb2b748ef9f3d4d85dcb77a3af0470d742a1c4bfcf1f072e80e2558f80b460",
+      "Crypto/Hash/SHA3_512.py": "b1f842a19855f2d33cf2fa76d496d4bcfea9d72ba49ac4142e60d3b4eed10ed8",
+      "Crypto/Hash/SHA512.py": "5aa9ff70b6fabdcce824c8434fe10798a309be798b60a6987fda8981274a60bc",
+      "Crypto/Hash/SHAKE128.py": "dd014b2103892bfd8b5267c7b47b6de61e49737b6aed3acd6381821f87a91570",
+      "Crypto/Hash/SHAKE256.py": "a7a8befcf99dcb9f97ff78924bd3482fdb26867d8d226f87b733b3d4b625cfc3",
+      "Crypto/Hash/TupleHash128.py": "5e30ddea8e9d57de035a8e955a39bf6a9e12aad2602180939fb3906ecddddf29",
+      "Crypto/Hash/TupleHash256.py": "2e303bfd37b101cf9f7cffe9d999122753915ad03c87fbaa21a224463e59d90e",
+      "Crypto/Hash/TurboSHAKE128.py": "d647788f7e23a3f00f93f8680a985fb15b27c9d021c1805f052882bd137710d4",
+      "Crypto/Hash/TurboSHAKE256.py": "2d91255fbfa475cf9d653462dd16688912ab0fd0b0a910f1eedbd695b3714947",
+      "Crypto/Hash/_BLAKE2b.abi3.so": "13373334a6f4ca101ee0a956449aae19c6aa49a740122a45333b7f67e5cf7098",
+      "Crypto/Hash/_BLAKE2s.abi3.so": "97f342967d7f0942b84d45ae220e79850c8dad0ee1d5b35a6bc12935f36834c2",
+      "Crypto/Hash/_MD2.abi3.so": "80e1250e904f1d8a7e15d2ab33aa44363c8598f5f4f3a5e087ba5c80c1a5ae2f",
+      "Crypto/Hash/_MD4.abi3.so": "5623b98ffb5e27c9c3e7faf6fe1b32fb3f8744df2f37c938cd97272ad57ece4e",
+      "Crypto/Hash/_MD5.abi3.so": "e37d73cfba8074bf92f8ae885b6879381d4b0fa43651474dec642f9f2a8b738b",
+      "Crypto/Hash/_RIPEMD160.abi3.so": "f3182d242a4b20c9683ad840fe63fbd2514f657ce350695844a3b806aa789b46",
+      "Crypto/Hash/_SHA1.abi3.so": "aad57f67ab52966bfcbd025e69df8714f587c9aea7d6f3af4ad9c1a24d915d5c",
+      "Crypto/Hash/_SHA224.abi3.so": "265bf96fa845eb646b129837a52800156a2fc1a946bd2461299f2f26b09e4a90",
+      "Crypto/Hash/_SHA224_shani.abi3.so": "e73c117657e030d99c355d45bf6a78dea961ac0258a54710b18149cf558e9bc9",
+      "Crypto/Hash/_SHA256.abi3.so": "881668b94cea5cfd854e4598afa8547b5c3ecf7f71b4b7b95fba8984119859a9",
+      "Crypto/Hash/_SHA256_shani.abi3.so": "a011e1eba76674ba98c7c18b3135a3f6fe00bbe469ea490413ae019302115399",
+      "Crypto/Hash/_SHA384.abi3.so": "3140772edf23ae9245c723c0c35c2e876239db1ad0664c06089527ec81955c5f",
+      "Crypto/Hash/_SHA512.abi3.so": "a9e2ef37c4f860c863ad51e0a1244ec957875d1ef7c3b1567c7356917f6fa150",
+      "Crypto/Hash/__init__.py": "d0ee9f503b904f78b5378a1682da5fa800608a4301849576bfeb6e885913c62d",
+      "Crypto/Hash/_ghash_clmul.abi3.so": "03b5217129ec881ab2a4b6c0950d5fd5390b884baa2a85f3e6c36b9204cda5cb",
+      "Crypto/Hash/_ghash_portable.abi3.so": "c1da184ea6ffbf84093fd9b8f0cc889aef0ef2ae74b5cbf1f8c306bafe20e753",
+      "Crypto/Hash/_k12.abi3.so": "08d68b06ebe887d7b6df1bdd61826787a4b75f4a469152fb64e270cae8c1e2eb",
+      "Crypto/Hash/_keccak.abi3.so": "6f5accf976317af46c5369fdafe8848b914e2343ec65a6750e51e4a08d91f270",
+      "Crypto/Hash/_poly1305.abi3.so": "3d608829c98af840209260f3cad5a04523ebe19d1acadd75deb257929b58ec5c",
+      "Crypto/Hash/cSHAKE128.py": "df647dedb69c46ee839d639cf7923c878ca38a5fa9065ba6be69dc8316b3954c",
+      "Crypto/Hash/cSHAKE256.py": "c2e07535d927840eeffcfda39331e3a8c302c3c9e525a70c19f565b69b4ecfaa",
+      "Crypto/Hash/keccak.py": "50ad83e2b7936c37f50b02a48ef5c304c3f2225ee9467cbe7baa229ec3bada78",
+      "Crypto/IO/PEM.py": "dfed992b76ddfa5868a83cedf54b5b4a4a8b6d5be79544275aeb2fbef8fbeaad",
+      "Crypto/IO/PKCS8.py": "c01bb70eb284656bf4d6ddb4252f001abf738a1d68daf9125c88700554a57cb3",
+      "Crypto/IO/_PBES.py": "794ff09c0251d26e66ad0b9e8d441cb6c76e645422b96809432120e75bbc23e3",
+      "Crypto/IO/__init__.py": "deb6490f76fa91eddb4085d69e4704072ed8c646ae5d7bad59b5a7df57f5986d",
+      "Crypto/Math/Numbers.py": "760f38fc74b508d0039c9244b488a7f2e5e710bc9a77429d76f542a04751e771",
+      "Crypto/Math/Primality.py": "05d4f913149cb62b38f7e9fcc3496f347e88203a953328010dc3aee20f67ddd1",
+      "Crypto/Math/_IntegerBase.py": "c06a0d1dd57af945fa0b07c264a9735577eacd60ca4189ff2a0ce7807d507168",
+      "Crypto/Math/_IntegerNat.py": "cf2607e1a6b77ca0d7dd1cf3baa835f05452cf38671405fca7294cbe3d497bc3",
+      "Crypto/Math/_IntegerNative.py": "10b28f5ab5e69cc5d930ac826200ee192afb99ca0e5cb31023dcae35bb2615e3",
+      "Crypto/Math/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Crypto/Math/_nat.abi3.so": "49322234ef58a14f90887da7a2e763bfb4aa20ee5c3aa7834f5b58bb7d14ece5",
+      "Crypto/Math/_nat_bmi2_adx.abi3.so": "02fd5b12b07a55c995cf27a67eedd5c62b519ff9018e220ad1e9d56d2cbfd654",
+      "Crypto/Protocol/DH.py": "eef6d7617e8e34e03c7c1671cecdd0fa415fb1595eb3c3380a6d6067a3fecc10",
+      "Crypto/Protocol/HPKE.py": "1de697a6dbf6ed81b76cbf5e635d020106508c1b425ba2eeb6a4635a001815f7",
+      "Crypto/Protocol/KDF.py": "c4d1a8dc0f21ef8b0e6c446c8551b9c8cb3fab4654a012df87a862b327e383d7",
+      "Crypto/Protocol/SecretSharing.py": "1f36483e6bb7b5534301e9a96b068c20e4759672230d4b9faec22a1a38148764",
+      "Crypto/Protocol/__init__.py": "41cc730e17cbb3319608b004eb31391d158f636fa73fbedcc74f957a55dd6462",
+      "Crypto/Protocol/_scrypt.abi3.so": "6597fc25b1c5eb55b666b97384a93fd211abd6bb2653c3623e298c48f5ecd433",
+      "Crypto/PublicKey/DSA.py": "b66b391f2daa079d8aa3ebe9601ba9df90b235f38dbf106f4146c9b7ac8f4d3a",
+      "Crypto/PublicKey/ECC.py": "cebd3c40c4f3873c68cd6bf996ebb0c0e6e0821ce620edf4e25d2dbe09da2da3",
+      "Crypto/PublicKey/ElGamal.py": "b0af248b80d18fee3752bbb0126294727daac9b656c7b839bfc045cc3653700b",
+      "Crypto/PublicKey/MLDSA.py": "c6763a7f3ff1b4bfd37b72e76063a451744a819ad9102ce3ba89f62599a3135a",
+      "Crypto/PublicKey/RSA.py": "03fbf13cc89844045bf0990eaf082e9aba6bea5927e2192e3770023e66610db7",
+      "Crypto/PublicKey/__init__.py": "97891c80b523e194bb0b4eb6df1a2a13ae167be96cadc390c0e5cd0f28c9aa8e",
+      "Crypto/PublicKey/_curve.py": "45bf514da6bae56578bf0f3573a82bae88860eb52943914e6c2bdc24c4775abf",
+      "Crypto/PublicKey/_curve25519.abi3.so": "024e300dff2c30197bb7e2855349ef31e32023773ed392e968c29d4b8e3a3fde",
+      "Crypto/PublicKey/_ec_lib.py": "6796e657d8bce90958c5f382538690f0a6ed307e3bc37319247d6e478c75b7cf",
+      "Crypto/PublicKey/_ec_nat.abi3.so": "24a413ab3e765701881889b28eba3dd3ca547819feefaad4f95c2f0e7923c1fa",
+      "Crypto/PublicKey/_ec_nat_bmi2_adx.abi3.so": "c2491b13e96e77f081c0ff5e61db3fc4a4878d2288b2bc05e02987d2d78973f3",
+      "Crypto/PublicKey/_ed25519.abi3.so": "7a1c70d9b728544ff3bcfc0d8d78106df400f335fe96c364fbfadaceff7f5fec",
+      "Crypto/PublicKey/_edwards.py": "d1f88e85d824448755b1c282c99c98a5c2128f7002c0067c2d721bafd2dd4440",
+      "Crypto/PublicKey/_mldsa.abi3.so": "042a15fb7156f439b4b8b162e7f7c4187e720004f054e33bfab92100cddc0202",
+      "Crypto/PublicKey/_montgomery.py": "94dcc0cdbdadc67ee7e7c745da435d53fb64c7c6bbd406b8973e622a2e0d3a82",
+      "Crypto/PublicKey/_nist_ecc.py": "32a5a614d3a9076fa7215a03724a2fc8c6b5896508a3f74214d79d89cb7e052c",
+      "Crypto/PublicKey/_openssh.py": "15875a99dcf79f4cefb9e1ab6679ccafef0903f0c14b3b71ffec36552822cbe3",
+      "Crypto/PublicKey/_point.py": "76a12e498a44bbcb50da0cd3bfd3996ca314b5cfca3ef67d44ea414ec1dfef26",
+      "Crypto/Random/__init__.py": "adbe9aa8f051114319df13d634f938da80e3756f7304df15fa57dbfe350bedca",
+      "Crypto/Random/random.py": "c4c17d9c0c4c0f68710ded57f11611998dea05ed3a0b0861dc25c6eca5ea47df",
+      "Crypto/SelfTest/Cipher/__init__.py": "e040bd722206af78632f5c033a08641113414ee227dc12cef6ee52c9232a02df",
+      "Crypto/SelfTest/Cipher/common.py": "752c547c688416c58bcc81b8dfd10e9bde4ec9d3fcc59b428f53b34df3a600ad",
+      "Crypto/SelfTest/Cipher/test_AES.py": "cb7bac6418f6c20368696856c845d31f0dcda922a728820fc90e06af51b46ed2",
+      "Crypto/SelfTest/Cipher/test_ARC2.py": "e36bf367e70c89213df1cffb4fbce8859deac342e9699f43a829c8a448acdeb9",
+      "Crypto/SelfTest/Cipher/test_ARC4.py": "fbdae8e8ab14a5c34d6137229dc18ea79bdf375577f607cbbda6c327c69b772a",
+      "Crypto/SelfTest/Cipher/test_Blowfish.py": "81450196fda7fc824b62b6f6bc6ab6db346a2e3f481d3cd1a9510560d325c17e",
+      "Crypto/SelfTest/Cipher/test_CAST.py": "a71ef4fc7f4973cb971640f0017200af698a59df7d6aa7ddea24c751d9cb30a2",
+      "Crypto/SelfTest/Cipher/test_CBC.py": "095951b11f1206e93f0c035c3019ef1bbc858c0d45a19f2f54ea7ecd9c68530a",
+      "Crypto/SelfTest/Cipher/test_CCM.py": "2c57ca234c32501977b9608436fe48e76edd510b14e4f894357a3e6439821854",
+      "Crypto/SelfTest/Cipher/test_CFB.py": "3bd416454cc5dac089554709d6c9246902775733362fbec2014a39b7722a1063",
+      "Crypto/SelfTest/Cipher/test_CTR.py": "20be3c0538110a0aa2c914ca819783422a5e28a2021b0e0c1c4a5e91b19e6d5c",
+      "Crypto/SelfTest/Cipher/test_ChaCha20.py": "cb5c2cafe21ee236d15b4018fc2b566b1cef6f9e3266da963edfb4b708ca579e",
+      "Crypto/SelfTest/Cipher/test_ChaCha20_Poly1305.py": "7cefe3d6ea02aa940f7aaad9143ab328d03fadb8eda910fbc873a42878a3ddc2",
+      "Crypto/SelfTest/Cipher/test_DES.py": "6e0e5271100ee0f58acd61d7707f7926d01422e5d4c67f167df34cf8279e5199",
+      "Crypto/SelfTest/Cipher/test_DES3.py": "be8ab4d89e65ba84facdebc0562035871a352c1bc80bfc05074467383d466af8",
+      "Crypto/SelfTest/Cipher/test_EAX.py": "1b386eb89a5f4e4159162855101e2dc293e174903d1359fbe0bcd9021489cd27",
+      "Crypto/SelfTest/Cipher/test_GCM.py": "361c43e5f3d7d3dce6f99dcb3d5c78f1f3580719b702babac1b2f81f764881b5",
+      "Crypto/SelfTest/Cipher/test_KW.py": "817c36ab7755436b951ba779a1179db64fa8c05e925a16a85aeeed96059c460a",
+      "Crypto/SelfTest/Cipher/test_OCB.py": "25c17a75e1909cd5ac68abe62ccd5ad91d18fda771df04cf337137712a55b047",
+      "Crypto/SelfTest/Cipher/test_OFB.py": "e92c70a1cc836aae2ec9ab9d35b7edd9b99f9a71813c829fbaae577df2eb43b7",
+      "Crypto/SelfTest/Cipher/test_OpenPGP.py": "ea34153c36dd0e5b56ad379971f860f3048f9988c9c58bc935ccb958dc0e9ec9",
+      "Crypto/SelfTest/Cipher/test_SIV.py": "42358d4f0d31482e89797520b9ee65dda3d39bd252a1a7172c439ef19f931c23",
+      "Crypto/SelfTest/Cipher/test_Salsa20.py": "c9aca15ab75351fd260c7a2088931ffd4dc66e352b5000fdfb1f95d94ef2504b",
+      "Crypto/SelfTest/Cipher/test_message_too_long.py": "fb91f3c2e67b5d2b2982b821d862b7619ba07dfd473721c32c88bb61ff4d310b",
+      "Crypto/SelfTest/Cipher/test_pkcs1_15.py": "cdedded038720f31409f3decca69a22c12870299b671f072eebfd83ff5abbb22",
+      "Crypto/SelfTest/Cipher/test_pkcs1_oaep.py": "d8f4497b65acacbc5a99fe0b9855f1fc89e5361e3febac874edc83d6b320e3e4",
+      "Crypto/SelfTest/Cipher/test_shared_objects.py": "222de7bb40e418cc6ff03de2935cd62d455d2a68d8837b3e644c76983d01eec0",
+      "Crypto/SelfTest/Hash/__init__.py": "3507b991e6e890acd3c0fe986c3cfc5acc18145a875475a64e45ce71a6130960",
+      "Crypto/SelfTest/Hash/common.py": "e12481a7952fbc31b41e551162c474f87898689bf74f265d4b286f5eae5f5d5b",
+      "Crypto/SelfTest/Hash/test_BLAKE2.py": "9eb21b9ec85e7eeeb958f0114b0a23f5b217b8d474acef7fd46c7ef62e8800a1",
+      "Crypto/SelfTest/Hash/test_CMAC.py": "7ba6375c8c9e2495c0dfd1fae9f1d9dcfa2a134a7340fe9073d591c974f718b9",
+      "Crypto/SelfTest/Hash/test_HMAC.py": "469a6d1f3570161d5553366245d8a9c209a3e7aeaad12b1ebd70081419961c5e",
+      "Crypto/SelfTest/Hash/test_KMAC.py": "c7bc1799ae5f7dce5ec25fa487adb293efc1668197c9f40538264dd2068061b0",
+      "Crypto/SelfTest/Hash/test_KangarooTwelve.py": "bfc7a98003f1f87f6d0d584772d624a844e092e2c381d61a9129680d7c403f45",
+      "Crypto/SelfTest/Hash/test_MD2.py": "fbb0ecb5f7ba91170a2f478e4a4964ef3c7b6ed80744834e667d9d7d768ed88e",
+      "Crypto/SelfTest/Hash/test_MD4.py": "fa55a8ebc7074cbbbe3429dca8acef45a1b03162da9eef35a594064fbe030c51",
+      "Crypto/SelfTest/Hash/test_MD5.py": "be8f9f081f2ba3642d9615b46eac9867553023b542815a2d367d639f8acbe1f5",
+      "Crypto/SelfTest/Hash/test_Poly1305.py": "fceaf0cafcfc1f45614c28e75948de05d3c693c9ee524086f471e7b09e152c82",
+      "Crypto/SelfTest/Hash/test_RIPEMD160.py": "3db9d4ab5ab95e991d10f8da6f71b792cb35dc7b0510661d925b52962c61bb40",
+      "Crypto/SelfTest/Hash/test_SHA1.py": "d120a96db379fefab8a047610b86785488803b5d6abc298cddf91c5499f58925",
+      "Crypto/SelfTest/Hash/test_SHA224.py": "74f93acec3a5ff420fc4ae58aae82779131adb6bedb43e918a6dd8a72e241e08",
+      "Crypto/SelfTest/Hash/test_SHA256.py": "432355f5f2549e44f97604c9d8fb675f97a3aae5a175fc4d0bcbc853c57d2d22",
+      "Crypto/SelfTest/Hash/test_SHA384.py": "359ad0c075bc56cb6f4cc186684a742d7c875474478a7e26b03d65a38aaf8d91",
+      "Crypto/SelfTest/Hash/test_SHA3_224.py": "51200d034237f60862cb0b35cd9db6dffc19771d5c5745d209ff70b31d2d9422",
+      "Crypto/SelfTest/Hash/test_SHA3_256.py": "4612939d3491468296f9b311dbb18488e51cc6fc5cedb1db97795c1f094228aa",
+      "Crypto/SelfTest/Hash/test_SHA3_384.py": "81cdb3cc1a17ae0552bbfff0afbfd16bcf470adafaf9a3bba7f4a24f05a41fa2",
+      "Crypto/SelfTest/Hash/test_SHA3_512.py": "899a73f7aed1daea0cd1ee5ae9d8b681e9cbd16969ea305fac7068411dc5eec0",
+      "Crypto/SelfTest/Hash/test_SHA512.py": "76c826d2b22ae14e3f6425096d64e18b5bdcb575bc86727be4016aac441bf8cf",
+      "Crypto/SelfTest/Hash/test_SHAKE.py": "84c908e3cb59ebde133dea2e76d21fcfa129a311c31b20f3b0d8e10e874fe41c",
+      "Crypto/SelfTest/Hash/test_TupleHash.py": "b6971b64242726a057c2670d9161b9037e263e010ab86e8abcd567c8b5c7636d",
+      "Crypto/SelfTest/Hash/test_TurboSHAKE.py": "99fbcd8e0e0a6380a0bbfa106be066fa2ec3069e1275f0690e54df9c433c70bc",
+      "Crypto/SelfTest/Hash/test_cSHAKE.py": "a2f77c62106107ac131ed758421005c50e7fbbd2fb95c431bc27a30cb537f0ab",
+      "Crypto/SelfTest/Hash/test_keccak.py": "129daedad0a3d6c2c75ec79db30f481cfab70d770ac94cb8371a4cc574b6de2e",
+      "Crypto/SelfTest/Hash/test_oneshot_digest.py": "bce42823f223ccb07226407409ca4c4fc9a5674bae14ba535f309f52f0413823",
+      "Crypto/SelfTest/Hash/test_shared_objects.py": "f688840a75faf735b94142e56470e20db1508f5e8b6f832367e2d2a3461e9107",
+      "Crypto/SelfTest/IO/__init__.py": "4a03133ec2f6df7f1243b05f5eed4981d6b33e8befb727675217ff10b2141ffe",
+      "Crypto/SelfTest/IO/test_PBES.py": "28d7fb6d5ea4be1acddd9832290149cab414b7711aafd62521c119f059b340d3",
+      "Crypto/SelfTest/IO/test_PKCS8.py": "fb35178e451e74663ff15ec7d741c0648373ee7f65a98320a9c6a5d40f01b75b",
+      "Crypto/SelfTest/Math/__init__.py": "f196e02cba23c9a1f18483beffac8bf25e3e823595de063919b7c46e8426b085",
+      "Crypto/SelfTest/Math/test_Numbers.py": "704e02a349c817675f6d65668eb0e637a73f42278a81a4235d10772a9228d89b",
+      "Crypto/SelfTest/Math/test_Primality.py": "cf98978002d79d4879f874330cf7e31b5b8b74e06b6f7f7cde0d383d38a0a237",
+      "Crypto/SelfTest/Math/test_nat.py": "9121fc6db7ed68349614c5277350007a7618034618064a740d052b75861d7f39",
+      "Crypto/SelfTest/Protocol/__init__.py": "f86b5011d8d9326d3c043f152ee434b4fc366fdc1edf0074ee7b4060cace9e57",
+      "Crypto/SelfTest/Protocol/test_HPKE.py": "0e83b9acc4fd2e9d6d55b5d01c9fdf37668bf1d05f6599aff44f92eda1163c39",
+      "Crypto/SelfTest/Protocol/test_KDF.py": "8eab69a5925b7f3a5f2ad3a6eda80a5a03028ec12d5d09c1c5d40dd096a4f551",
+      "Crypto/SelfTest/Protocol/test_SecretSharing.py": "0cf890feab633eec39d36adacf5a3d98623bcd672a5ac51ff86a4f9c1241d77a",
+      "Crypto/SelfTest/Protocol/test_ecdh.py": "a7434b701847f03a413f6dc89c645efae655cbbef58fc0d93483b782ef417c9e",
+      "Crypto/SelfTest/Protocol/test_rfc1751.py": "95cbf7875bef4ec01230e4e692af60aeb8e5cf4274872ed3c416b85143086d67",
+      "Crypto/SelfTest/PublicKey/__init__.py": "ef932a2201f783441b027257d73d4d989dabf15304661365db95559ac76d5dd7",
+      "Crypto/SelfTest/PublicKey/test_DSA.py": "ada909a3fec43699196a9e779f67ccf35bfb4d7320a4b999bfa3d8273c2cc2ae",
+      "Crypto/SelfTest/PublicKey/test_ECC_Curve25519.py": "4a4ce44e11c937c396381962b10dd5c77db0bd681a2b75063a59831856ffdddf",
+      "Crypto/SelfTest/PublicKey/test_ECC_Curve448.py": "9f68716adf2be50c7a57d034f726b01a028be9add9cf120e2c40f6f8e1cdc268",
+      "Crypto/SelfTest/PublicKey/test_ECC_Ed25519.py": "3be383d97cc543d4b008078ff07b2b5c4f2cbb78a269de224442195d1ba356cd",
+      "Crypto/SelfTest/PublicKey/test_ECC_Ed448.py": "c9d9eeba7998139c6a867d37fad3b2f4ce4220784f99fed761d0d1c99a97b97d",
+      "Crypto/SelfTest/PublicKey/test_ECC_NIST.py": "4d7c4bf514a416d388c616778caefca12c47c6dd58912328274aebe794715846",
+      "Crypto/SelfTest/PublicKey/test_ElGamal.py": "f1116112fa19745a2448b331376cf05001c6c06c60b1273b66b63f6b7454ead6",
+      "Crypto/SelfTest/PublicKey/test_MLDSA.py": "51dffa7fff02c01fa1e4480e42ec92c06dcdf8753a7d42d0d0d91f296b3c566c",
+      "Crypto/SelfTest/PublicKey/test_RSA.py": "fc4e1449a22f1c7406be42ed2d533a595665ad609357b000295be1c1a76e7598",
+      "Crypto/SelfTest/PublicKey/test_import_Curve25519.py": "0d79a0661ca5aa80e5eda1a62d46dc173c3942425281b48768763ae93746acd2",
+      "Crypto/SelfTest/PublicKey/test_import_Curve448.py": "7eff30089159eabb1118e415d44a3fad1284ed0f1fe65793b0a073392be6c498",
+      "Crypto/SelfTest/PublicKey/test_import_DSA.py": "b730211b9deec2e61954561eee02ce316ae0b85a60a7b94527c218ea407d8972",
+      "Crypto/SelfTest/PublicKey/test_import_ECC.py": "6079ffce399a364497b3324752951a43c43ae612003ad5f772bd9e6f18eb4010",
+      "Crypto/SelfTest/PublicKey/test_import_MLDSA.py": "7448b8349f54bed5fdaaf339b1959373a6b16a3992c1454fcad410f7aa983106",
+      "Crypto/SelfTest/PublicKey/test_import_RSA.py": "67e41b46e3b84bf2e284002d714c5b34d9cbb7851b70ce17f71fbc017beb7099",
+      "Crypto/SelfTest/PublicKey/test_import_passphrase.py": "fc82ce07a4d38aa2ad591d7395ec2ea3224dc9ba2bd8697028db5faf060e7da2",
+      "Crypto/SelfTest/Random/__init__.py": "3c9cc275e491850f0907259ab2916feb355fcb5ab3ace7c5b09a487922d66f0f",
+      "Crypto/SelfTest/Random/test_random.py": "11a20824d4f1ae9b303629b26d716d5f6acfda24239a49ecf10c17dece54850d",
+      "Crypto/SelfTest/Signature/__init__.py": "43095f4173f93e9c98d8e8be9f642e9a35030cbff6fa445e5d7e1773f00d05f7",
+      "Crypto/SelfTest/Signature/test_dss.py": "6e8336214cec79573da8b53bfd03052fe6f545418d93ed0af6a610cfff7e9349",
+      "Crypto/SelfTest/Signature/test_eddsa.py": "b175dc0ff25abd5eeb70b6a5b86287a611e8751ae60df700be602d2d74c60c33",
+      "Crypto/SelfTest/Signature/test_mldsa.py": "7731290a2d29699990ac4ad6dd77c27d19c31f4e50174356dd66ebd36c6e60bc",
+      "Crypto/SelfTest/Signature/test_pkcs1_15.py": "60da7c8960b62086f9229a0ae7c4d3fa8b195ed9dbb8dd25b90c8b64681ec17a",
+      "Crypto/SelfTest/Signature/test_pss.py": "980366f85df8f2d0e58db6f2d92ae49f5bde2fced70ac0640e2b6b88ee119eaa",
+      "Crypto/SelfTest/Util/__init__.py": "0119b530aebb816b6d94dee23e9ce64fa1638b1858a9cc3e9c87c00d70bbbe70",
+      "Crypto/SelfTest/Util/test_Counter.py": "5c42590a93173f5e1d0f7b253bf545c3a8dbba5d0106e247b7beac41d0a85023",
+      "Crypto/SelfTest/Util/test_Padding.py": "5cacab982c8300f1a435acc10d8596ab9ed3f1e435e94b11f647f86d73983ef3",
+      "Crypto/SelfTest/Util/test_asn1.py": "a5d26dd79255e14c1a66953ebcefd249bcc6cf4fd84c1d3d733d1d7a372ddd4d",
+      "Crypto/SelfTest/Util/test_cpu_features.py": "1501373a2ac485c1af05d77901418ea29427a5a728eaba4c2f0738f6898a9ae5",
+      "Crypto/SelfTest/Util/test_number.py": "e03fb6890ab98b4b5f82b202cea15d6bd1c034fa2393aa1b09a216718a92f072",
+      "Crypto/SelfTest/Util/test_raw_api.py": "2902f9824b04488eda684e8cf38cc99f633b3511792762b4bf65a47a99fd24b5",
+      "Crypto/SelfTest/Util/test_rfc1751.py": "c6b4c55343d0ad4ba58f86312022630922e28af54ac58e37412a2d0f100200b8",
+      "Crypto/SelfTest/Util/test_strxor.py": "b8c370e4a74ad7ced6e50fda59d1f892977d0e5717ed99ed45e8668ed85b2765",
+      "Crypto/SelfTest/Util/test_threads.py": "818aa8f8c2c1048d40c3e68f3424aa4afded8ec3755a9586295b45a81ce8905c",
+      "Crypto/SelfTest/__init__.py": "918128654ef7e270f1c2d97bd615c8a7630b83182ae8a59a914faa443fde4174",
+      "Crypto/SelfTest/__main__.py": "d2ac687b617f94ad9fd6a4fe98d41226bf51e09d86cd1d4eb78d369aa2a3c0ed",
+      "Crypto/SelfTest/loader.py": "b374b3fc791890be8862e699b62a43376cceafc4523c5fa3905cd0103faca9ab",
+      "Crypto/SelfTest/plugin.py": "c5fc7e8bbaf85b187895941d8e61ac8dd8c200de4e10d61013e00dd8b9422333",
+      "Crypto/SelfTest/st_common.py": "9e172ab4d0b9625085223d1225d60e3135271af65d92155edb6359e09d291fb7",
+      "Crypto/Signature/DSS.py": "430d948fbb88084c8db020231d4baa0a209b5c97098631c7bc526400d6473b6d",
+      "Crypto/Signature/PKCS1_PSS.py": "3ffc1ba614d43d069a82b0b569a108748cfb9cd3a0acfb19a277e55ebbd52a12",
+      "Crypto/Signature/PKCS1_v1_5.py": "11b3f3f2450c698c8f6be14bfee63c8aa034d8d78d891c690dd64103bdcf27bc",
+      "Crypto/Signature/__init__.py": "58971e468f64bc46cbf50ca7feeca442878ab808cd45c04a4c577f475579856e",
+      "Crypto/Signature/eddsa.py": "ee48044cb8f3a104a9267276b620419695a7ec72ed7bcf6fb139b35722f1e990",
+      "Crypto/Signature/mldsa.py": "9f12a3fcd69fbbdbc8e8df27f4bb2c7866893875be50e65a847d7759f100a35d",
+      "Crypto/Signature/pkcs1_15.py": "2c62a37d51b355ebadc95d15aa89f0a534788e9579df24400378b30d37deb8d7",
+      "Crypto/Signature/pss.py": "ba86e653ef2f4ca8700ba1c23792c57ae12323fbd728db6bc41af78d3b702b67",
+      "Crypto/Util/Counter.py": "f19eef4a7b85cffbf6d5566cfb82c4358588436dfd71fd24b9faff2505474170",
+      "Crypto/Util/Padding.py": "a4451493bba929a7d3bfc1cff34ccdecc3147bd457152963b9800eccb5e1225b",
+      "Crypto/Util/RFC1751.py": "538345978da6eede8200a05b308b630f674ccd50c2bf284198fc050252001411",
+      "Crypto/Util/__init__.py": "337a6a0fdf3dd78aa32ad29d8f768992c9fb22d2a435f359f24f99436f5d7980",
+      "Crypto/Util/_bytes.py": "9f320bffb9e8aa1d8c1bb00137958f484f2fbf19c286fd4378ea5a517e2f3afa",
+      "Crypto/Util/_cpu_features.py": "9d7cb3dd10db85f44b1a3c272667067519456b453b126d936362bf031c7d953a",
+      "Crypto/Util/_cpuid_c.abi3.so": "8fca8425e8c79b3c0cb219670d3f256f22344ea9728a9d7823cffa158337391d",
+      "Crypto/Util/_file_system.py": "df98979ac23ae07dd3b3e354a0f81dcf73efd0b382127e0d437869bfb3648b5b",
+      "Crypto/Util/_raw_api.py": "4fa43236cb16bc473a7b012906ee86ed9297256df2f3c52241b3354d78bed6be",
+      "Crypto/Util/_strxor.abi3.so": "81b046cf71a9fdfad4935d9af67f85dcb16dc911c9364b3caa0a44e453f795f9",
+      "Crypto/Util/_threads.py": "6721d6d41c426a177c615a57d68a77782be1332bacc15fc9caa5269290d3ab9d",
+      "Crypto/Util/asn1.py": "a7d1c647f4804d4f8a8075a22a8d936eea6ea9ad871b29c707788f5643cd77e2",
+      "Crypto/Util/number.py": "af389d621b9bb78cc26debe41be540c3249addc0263c4bf3d1f24a5a76a41920",
+      "Crypto/Util/strxor.py": "876c9e55352781c3230c8c92175aedf0d7a9af368bf97f355f47374cd6bec826",
+      "Crypto/__init__.py": "3428b7e37d9060d03d21571f63e683963b65e6a7bf22db0b417cb6da4f30b69e",
+      "Crypto/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pycryptodome-4.1.0.dist-info/METADATA": "f669f9a48766e13c08f2fc7f700aed45bbe78c0448c4a282317500a33dfbea02",
+      "pycryptodome-4.1.0.dist-info/RECORD": "708b63297ac5e2a61b49edad2ec039f7b35b9530b269481bbbb09f1112a6d49c",
+      "pycryptodome-4.1.0.dist-info/WHEEL": "156b5a6793b8f1de01cdbffe082ed1c90ced69d616f8639f080496c15d14bdba",
+      "pycryptodome-4.1.0.dist-info/licenses/LICENSE.rst": "2e066558628eb4d6b28b72cc1471dc3aba02cecb2f962e40aa049c6460e20858",
+      "pycryptodome-4.1.0.dist-info/licenses/src/mldsa-native/LICENSE": "22f7173776d0a36d3f13ec1f45d51e0502e67d17e384bddf39690d833974ff93",
+      "pycryptodome-4.1.0.dist-info/top_level.txt": "f96db04ed9317354273d43d1a816746ccc2b843f31443d771c8a1b157fb00ceb"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ca1e00c32190bcac1efa53add014022e3cfdb63800a373965a5f6567749ca82e",
+     "native": {
+      "Crypto/Cipher/_ARC4.abi3.so": "elf",
+      "Crypto/Cipher/_Salsa20.abi3.so": "elf",
+      "Crypto/Cipher/_chacha20.abi3.so": "elf",
+      "Crypto/Cipher/_pkcs1_decode.abi3.so": "elf",
+      "Crypto/Cipher/_raw_aes.abi3.so": "elf",
+      "Crypto/Cipher/_raw_aesni.abi3.so": "elf",
+      "Crypto/Cipher/_raw_arc2.abi3.so": "elf",
+      "Crypto/Cipher/_raw_blowfish.abi3.so": "elf",
+      "Crypto/Cipher/_raw_cast.abi3.so": "elf",
+      "Crypto/Cipher/_raw_cbc.abi3.so": "elf",
+      "Crypto/Cipher/_raw_cfb.abi3.so": "elf",
+      "Crypto/Cipher/_raw_ctr.abi3.so": "elf",
+      "Crypto/Cipher/_raw_des.abi3.so": "elf",
+      "Crypto/Cipher/_raw_des3.abi3.so": "elf",
+      "Crypto/Cipher/_raw_ecb.abi3.so": "elf",
+      "Crypto/Cipher/_raw_eksblowfish.abi3.so": "elf",
+      "Crypto/Cipher/_raw_ocb.abi3.so": "elf",
+      "Crypto/Cipher/_raw_ofb.abi3.so": "elf",
+      "Crypto/Hash/_BLAKE2b.abi3.so": "elf",
+      "Crypto/Hash/_BLAKE2s.abi3.so": "elf",
+      "Crypto/Hash/_MD2.abi3.so": "elf",
+      "Crypto/Hash/_MD4.abi3.so": "elf",
+      "Crypto/Hash/_MD5.abi3.so": "elf",
+      "Crypto/Hash/_RIPEMD160.abi3.so": "elf",
+      "Crypto/Hash/_SHA1.abi3.so": "elf",
+      "Crypto/Hash/_SHA224.abi3.so": "elf",
+      "Crypto/Hash/_SHA224_shani.abi3.so": "elf",
+      "Crypto/Hash/_SHA256.abi3.so": "elf",
+      "Crypto/Hash/_SHA256_shani.abi3.so": "elf",
+      "Crypto/Hash/_SHA384.abi3.so": "elf",
+      "Crypto/Hash/_SHA512.abi3.so": "elf",
+      "Crypto/Hash/_ghash_clmul.abi3.so": "elf",
+      "Crypto/Hash/_ghash_portable.abi3.so": "elf",
+      "Crypto/Hash/_k12.abi3.so": "elf",
+      "Crypto/Hash/_keccak.abi3.so": "elf",
+      "Crypto/Hash/_poly1305.abi3.so": "elf",
+      "Crypto/Math/_nat.abi3.so": "elf",
+      "Crypto/Math/_nat_bmi2_adx.abi3.so": "elf",
+      "Crypto/Protocol/_scrypt.abi3.so": "elf",
+      "Crypto/PublicKey/_curve25519.abi3.so": "elf",
+      "Crypto/PublicKey/_ec_nat.abi3.so": "elf",
+      "Crypto/PublicKey/_ec_nat_bmi2_adx.abi3.so": "elf",
+      "Crypto/PublicKey/_ed25519.abi3.so": "elf",
+      "Crypto/PublicKey/_mldsa.abi3.so": "elf",
+      "Crypto/Util/_cpuid_c.abi3.so": "elf",
+      "Crypto/Util/_strxor.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "f282f3f30725e4889a70543efeaa1ad67f8ca52329aa3b5fa1cd2575dc8c3cfc"
+    }
+   },
+   "name": "pycryptodome",
+   "provenance": {
+    "pycryptodome-4.1.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+   },
+   "pypi": {
+    "author_email": "Helder Eijs <helderijs@gmail.com>",
+    "license_expression": "BSD-2-Clause AND Unlicense AND MIT",
+    "project_urls": {
+     "Changelog": "https://www.pycryptodome.org/src/changelog",
+     "Homepage": "https://www.pycryptodome.org",
+     "Source": "https://github.com/Legrandin/pycryptodome/"
+    },
+    "summary": "Cryptographic library for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Hits read: ~/.ssh/id_ecdsa named in ECC/RSA import_key docstrings. Content review only."
+   },
+   "scans": {
+    "capa": {
+     "024e300dff2c30197bb7e2855349ef31e32023773ed392e968c29d4b8e3a3fde": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/PublicKey/_curve25519.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "02fd5b12b07a55c995cf27a67eedd5c62b519ff9018e220ad1e9d56d2cbfd654": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Math/_nat_bmi2_adx.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "03b5217129ec881ab2a4b6c0950d5fd5390b884baa2a85f3e6c36b9204cda5cb": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_ghash_clmul.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "042a15fb7156f439b4b8b162e7f7c4187e720004f054e33bfab92100cddc0202": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using speck"
+      ],
+      "note": "",
+      "path": "Crypto/PublicKey/_mldsa.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "07ba2fe122dbb9939977ba32bef7d5e8c7481de1826b5188d5e02c8bedfd89e3": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using DES",
+       "encrypt data using chaskey"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_des3.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "08d68b06ebe887d7b6df1bdd61826787a4b75f4a469152fb64e270cae8c1e2eb": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using speck"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_k12.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "13373334a6f4ca101ee0a956449aae19c6aa49a740122a45333b7f67e5cf7098": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA512"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_BLAKE2b.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "1913bfe7b0141903162e1f5ea0ee007718035ffb1aea85999373a154aa228aed": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_cast.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "24a413ab3e765701881889b28eba3dd3ca547819feefaad4f95c2f0e7923c1fa": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/PublicKey/_ec_nat.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "265bf96fa845eb646b129837a52800156a2fc1a946bd2461299f2f26b09e4a90": {
+      "capabilities": [
+       "contain loop",
+       "hash data using murmur3"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_SHA224.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "2adb90541769f14a6f05824794ea1287ff228645e363046d4ba4e47df4a99455": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_ARC4.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3140772edf23ae9245c723c0c35c2e876239db1ad0664c06089527ec81955c5f": {
+      "capabilities": [
+       "contain loop",
+       "hash data using SHA384",
+       "hash data using SHA512"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_SHA384.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3a88d44eb3f473eb1e9362bde545a2a61d0425426149d7e9c7fefe6e71662cd4": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_cfb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3d608829c98af840209260f3cad5a04523ebe19d1acadd75deb257929b58ec5c": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_poly1305.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "3e52bd2e97999642fc849410eefd2f8a3d63093a910dd0b851ea6ad1e5ba667d": {
+      "capabilities": [
+       "contain loop",
+       "decrypt data using AES via x86 extensions",
+       "encrypt data using AES via x86 extensions"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_aesni.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "449987d9cf7d0d7c3e3f695a26ccfbbd99144d9a480b28bb290169ef8479632e": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_ofb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "49322234ef58a14f90887da7a2e763bfb4aa20ee5c3aa7834f5b58bb7d14ece5": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Math/_nat.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "50eb094191d6e45f0206d9016b974ba11863e4e878c670f096003dc50133f491": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using DES",
+       "encrypt data using chaskey"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_des.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "5623b98ffb5e27c9c3e7faf6fe1b32fb3f8744df2f37c938cd97272ad57ece4e": {
+      "capabilities": [
+       "contain loop",
+       "hash data using murmur3"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_MD4.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "6597fc25b1c5eb55b666b97384a93fd211abd6bb2653c3623e298c48f5ecd433": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Protocol/_scrypt.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "6792c5b218525ce69e0929d5e76a6dc1a3fd60ad894a52e406c53f1dd82536c8": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_arc2.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "67ccd2ef8a03f7e3cb44dfb4c796ad7c561691381247cfcd18d7580cc9b9605e": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_ocb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "6f5accf976317af46c5369fdafe8848b914e2343ec65a6750e51e4a08d91f270": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using speck"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_keccak.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "7a1c70d9b728544ff3bcfc0d8d78106df400f335fe96c364fbfadaceff7f5fec": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/PublicKey/_ed25519.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "7e4e7f7fe66f072ca92f24c0a7e8768a3503d71353f6f4b3f29fc38ffc1f540d": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using AES",
+       "reference AES constants"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_aes.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "80e1250e904f1d8a7e15d2ab33aa44363c8598f5f4f3a5e087ba5c80c1a5ae2f": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_MD2.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "81b046cf71a9fdfad4935d9af67f85dcb16dc911c9364b3caa0a44e453f795f9": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Util/_strxor.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "881668b94cea5cfd854e4598afa8547b5c3ecf7f71b4b7b95fba8984119859a9": {
+      "capabilities": [
+       "contain loop",
+       "hash data using SHA256",
+       "hash data using murmur3"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_SHA256.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8f3a10b92e9edf1e2946a55998f6b2044ddbd235e4e15e7938d615a97dc495f9": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_ctr.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "8fca8425e8c79b3c0cb219670d3f256f22344ea9728a9d7823cffa158337391d": {
+      "capabilities": [],
+      "note": "",
+      "path": "Crypto/Util/_cpuid_c.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "97f342967d7f0942b84d45ae220e79850c8dad0ee1d5b35a6bc12935f36834c2": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "hash data using SHA256"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_BLAKE2s.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "9800665627ed14bad46600f1126f73d394acf15ca45d25916b01038a9f583288": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using Salsa20 or ChaCha"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_Salsa20.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a011e1eba76674ba98c7c18b3135a3f6fe00bbe469ea490413ae019302115399": {
+      "capabilities": [
+       "contain loop",
+       "hash data using SHA256",
+       "hash data using sha256 via x86 extensions"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_SHA256_shani.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a9e2ef37c4f860c863ad51e0a1244ec957875d1ef7c3b1567c7356917f6fa150": {
+      "capabilities": [
+       "contain loop",
+       "hash data using SHA512"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_SHA512.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "aad57f67ab52966bfcbd025e69df8714f587c9aea7d6f3af4ad9c1a24d915d5c": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_SHA1.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "ad6e2d7c7ec5c906123ba62699641c6fbbba8fb1aa7c3b5c24c3b7b8d747317d": {
+      "capabilities": [],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_ecb.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "bc2d487c41688c3ce4fe3d11592b71747dc9b88c7b15438fc836a6b00c595795": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using blowfish"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_eksblowfish.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c1da184ea6ffbf84093fd9b8f0cc889aef0ef2ae74b5cbf1f8c306bafe20e753": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_ghash_portable.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "c2491b13e96e77f081c0ff5e61db3fc4a4878d2288b2bc05e02987d2d78973f3": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/PublicKey/_ec_nat_bmi2_adx.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "d9e9cbfb6b5ee5915d0ffeb79dfd454fa0a070bfa23bd7b38140c4f56822ce81": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using Salsa20 or ChaCha"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_chacha20.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e05e358ef1ee296085da041a01f2caeb6a02da89f5c1ec13a2a06964df606581": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "encrypt data using blowfish"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_blowfish.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e37d73cfba8074bf92f8ae885b6879381d4b0fa43651474dec642f9f2a8b738b": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_MD5.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e73c117657e030d99c355d45bf6a78dea961ac0258a54710b18149cf558e9bc9": {
+      "capabilities": [
+       "contain loop",
+       "hash data using sha256 via x86 extensions"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_SHA224_shani.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f3182d242a4b20c9683ad840fe63fbd2514f657ce350695844a3b806aa789b46": {
+      "capabilities": [
+       "contain loop",
+       "hash data using murmur3"
+      ],
+      "note": "",
+      "path": "Crypto/Hash/_RIPEMD160.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f496066077bd8e426aa2c5231adeac2555c724b254e7b4f7cc37f87c07f97a5f": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_raw_cbc.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "fb092b3ec1bb3ec482fb55234e20e9d75cca3102ee402c7db65f012d30be3dc9": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR"
+      ],
+      "note": "",
+      "path": "Crypto/Cipher/_pkcs1_decode.abi3.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|Crypto/Hash/KMAC128.py|13402924871e165d",
+     "yara|capability_filesystem_read|Crypto/Hash/KangarooTwelve.py|e038c744dcb66a96",
+     "yara|capability_filesystem_read|Crypto/Hash/TupleHash128.py|5e30ddea8e9d57de",
+     "yara|capability_filesystem_read|Crypto/PublicKey/ECC.py|cebd3c40c4f3873c",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CBC.py|095951b11f1206e9",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CCM.py|2c57ca234c325019",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CFB.py|3bd416454cc5dac0",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_CTR.py|20be3c0538110a0a",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_ChaCha20_Poly1305.py|7cefe3d6ea02aa94",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_EAX.py|1b386eb89a5f4e41",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_GCM.py|361c43e5f3d7d3dc",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_OCB.py|25c17a75e1909cd5",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_OFB.py|e92c70a1cc836aae",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_OpenPGP.py|ea34153c36dd0e5b",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Cipher/test_SIV.py|42358d4f0d31482e",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_CMAC.py|7ba6375c8c9e2495",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_KangarooTwelve.py|bfc7a98003f1f87f",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_SHAKE.py|84c908e3cb59ebde",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_TurboSHAKE.py|99fbcd8e0e0a6380",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_cSHAKE.py|a2f77c62106107ac",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Hash/test_shared_objects.py|f688840a75faf735",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Protocol/test_SecretSharing.py|0cf890feab633eec",
+     "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_MLDSA.py|51dffa7fff02c01f",
+     "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_Curve25519.py|0d79a0661ca5aa80",
+     "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_Curve448.py|7eff30089159eabb",
+     "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_ECC.py|6079ffce399a3644",
+     "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_MLDSA.py|7448b8349f54bed5",
+     "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_RSA.py|67e41b46e3b84bf2",
+     "yara|capability_filesystem_read|Crypto/SelfTest/PublicKey/test_import_passphrase.py|fc82ce07a4d38aa2",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Random/test_random.py|11a20824d4f1ae9b",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Signature/test_mldsa.py|7731290a2d296999",
+     "yara|capability_filesystem_read|Crypto/SelfTest/Util/test_raw_api.py|2902f9824b04488e",
+     "yara|capability_filesystem_read|Crypto/SelfTest/loader.py|b374b3fc791890be",
+     "yara|capability_filesystem_read|Crypto/Signature/eddsa.py|ee48044cb8f3a104",
+     "yara|capability_filesystem_read|Crypto/Signature/mldsa.py|9f12a3fcd69fbbdb",
+     "yara|capability_filesystem_read|Crypto/Util/asn1.py|a7d1c647f4804d4f",
+     "yara|capability_filesystem_write_executable|Crypto/SelfTest/Cipher/test_AES.py|cb7bac6418f6c203",
+     "yara|capability_filesystem_write_executable|Crypto/SelfTest/Cipher/test_OCB.py|25c17a75e1909cd5",
+     "yara|capability_filesystem_write_executable|Crypto/SelfTest/Protocol/test_ecdh.py|a7434b701847f03a",
+     "yara|capability_filesystem_write_executable|Crypto/SelfTest/PublicKey/test_import_DSA.py|b730211b9deec2e6",
+     "yara|capability_filesystem_write_executable|Crypto/SelfTest/Signature/test_dss.py|6e8336214cec7957",
+     "yara|capability_filesystem_write_executable|Crypto/SelfTest/Signature/test_eddsa.py|b175dc0ff25abd5e",
+     "yara|capability_filesystem_write_executable|Crypto/Util/number.py|af389d621b9bb78c",
+     "yara|capability_process_spawn|Crypto/SelfTest/Cipher/test_DES.py|6e0e5271100ee0f5",
+     "yara|threat_filesystem_read|Crypto/PublicKey/ECC.py|cebd3c40c4f3873c",
+     "yara|threat_filesystem_read|Crypto/PublicKey/RSA.py|03fbf13cc8984404"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read Crypto/Hash/KMAC128.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/Hash/KangarooTwelve.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/Hash/TupleHash128.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/PublicKey/ECC.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_CBC.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_CCM.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_CFB.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_CTR.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_ChaCha20_Poly1305.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_EAX.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_GCM.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_OCB.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_OFB.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_OpenPGP.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Cipher/test_SIV.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Hash/test_CMAC.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Hash/test_KangarooTwelve.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Hash/test_SHAKE.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Hash/test_TurboSHAKE.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Hash/test_cSHAKE.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Hash/test_shared_objects.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Protocol/test_SecretSharing.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/PublicKey/test_MLDSA.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/PublicKey/test_import_Curve25519.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/PublicKey/test_import_Curve448.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/PublicKey/test_import_ECC.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/PublicKey/test_import_MLDSA.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/PublicKey/test_import_RSA.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/PublicKey/test_import_passphrase.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Random/test_random.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Signature/test_mldsa.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/Util/test_raw_api.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/SelfTest/loader.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/Signature/eddsa.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/Signature/mldsa.py",
+     "capability_filesystem_read:capability_filesystem_read Crypto/Util/asn1.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable Crypto/SelfTest/Cipher/test_AES.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable Crypto/SelfTest/Cipher/test_OCB.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable Crypto/SelfTest/Protocol/test_ecdh.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable Crypto/SelfTest/PublicKey/test_import_DSA.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable Crypto/SelfTest/Signature/test_dss.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable Crypto/SelfTest/Signature/test_eddsa.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable Crypto/Util/number.py",
+     "capability_process_spawn:capability_process_spawn Crypto/SelfTest/Cipher/test_DES.py",
+     "threat_filesystem_read:threat_filesystem_read Crypto/PublicKey/ECC.py",
+     "threat_filesystem_read:threat_filesystem_read Crypto/PublicKey/RSA.py"
+    ]
+   },
+   "version": "4.1.0"
+  }
+ }
+}

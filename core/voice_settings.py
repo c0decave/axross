@@ -237,7 +237,7 @@ class VoiceSettings:
     def load(cls, path: Path | None = None) -> VoiceSettings:
         try:
             raw = json.loads(Path(path or settings_file()).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return cls()
         return cls.from_dict(raw)
 

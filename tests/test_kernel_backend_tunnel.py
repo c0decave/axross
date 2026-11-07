@@ -147,10 +147,15 @@ class NfsTunnelTest(unittest.TestCase):
 
 class IscsiTunnelTest(unittest.TestCase):
     def _session(self, run: _Recorder, **kwargs):
+        # The session's disk is the "sdb" the fake iscsiadm names: it exists
+        # whether or not this machine has a second disk.
+        real_exists = iscsi_client.os.path.exists
         patches = [
             mock.patch.object(iscsi_client.subprocess, "run", run),
             mock.patch.object(iscsi_client.shutil, "which", return_value="/sbin/iscsiadm"),
             mock.patch.object(iscsi_client.glob, "glob", return_value=[]),
+            mock.patch.object(iscsi_client.os.path, "exists",
+                              side_effect=lambda p: p == "/dev/sdb" or real_exists(p)),
         ]
         for p in patches:
             p.start()

@@ -81,6 +81,26 @@ PRESET_ORDER: list[str] = [
     "shells-quad",
 ]
 
+#: The name a menu shows for each preset; the ids above stay the keys of
+#: the saved state and the cycle order.
+PRESET_LABELS: dict[str, str] = {
+    "single": "One File Pane",
+    "dual": "Two File Panes",
+    "quad-files": "Four File Panes",
+    "commander": "Commander (Two File Panes)",
+    "dev-shells": "File Pane and Two Shells",
+    "triage": "Two File Panes over a Shell",
+    "shells-quad": "Four Shells",
+}
+
+
+def preset_label(name: str) -> str:
+    """The translated, human name of the preset *name* (the id if unknown)."""
+    from core.i18n import tr
+
+    label = PRESET_LABELS.get(name)
+    return tr(label) if label else name
+
 
 # --- Builder ----------------------------------------------------------------
 

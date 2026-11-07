@@ -136,7 +136,8 @@ def write_atomically(path: Path, data: bytes) -> None:
         raise
 
 
-def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = False) -> Path:
+def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = False,
+                 version: str | None = None) -> Path:
     """Sign *sums_path* with the key in *key_path*; returns the .sig path."""
     key = load_private_key(read_key_file(key_path))
     public = public_key_b64(key)
@@ -146,6 +147,17 @@ def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = Fals
                       "TRUSTED_KEYS: installed binaries would refuse this release "
                       "(--allow-unpinned signs anyway)")
     data = read_sums(sums_path)
+    text = data.decode("utf-8", errors="replace")
+    named = SU.release_of_sums(text)
+    if version is not None and named is None:
+        data = f"{SU.RELEASE_LINE_PREFIX}{version}\n".encode() + data
+        named = version
+    if named is None:
+        raise Refused(f"{sums_path} names no release version (a first line "
+                      f"'{SU.RELEASE_LINE_PREFIX}X.Y.Z', which --version adds): the updater "
+                      "refuses a release without it")
+    if version is not None and named != version:
+        raise Refused(f"{sums_path} is for {named}, not {version}")
     signature = sign(key, data)
     try:
         SU.verify_signature(data, signature, keys=(public,))
@@ -153,6 +165,8 @@ def sign_release(key_path: Path, sums_path: Path, *, allow_unpinned: bool = Fals
         raise Refused(f"the new signature does not verify, nothing written: {exc}") from None
     target = sums_path.with_name(SU.SIG_NAME)
     try:
+        if data != read_sums(sums_path):
+            write_atomically(sums_path, data)  # with the release line it is signed with
         write_atomically(target, signature)
     except OSError as exc:
         raise Refused(f"cannot write {target}: {exc.strerror}") from None
@@ -168,9 +182,12 @@ def main(argv=None) -> int:
     parser.add_argument("sums", type=Path, help="the release's SHA256SUMS")
     parser.add_argument("--allow-unpinned", action="store_true",
                         help="sign with a key that core/self_update.py does not pin")
+    parser.add_argument("--version", default=None,
+                        help="the release's version: added as the first line of SHA256SUMS "
+                             "when it has none (the updater requires it)")
     args = parser.parse_args(argv)
     try:
-        sign_release(args.key, args.sums, allow_unpinned=args.allow_unpinned)
+        sign_release(args.key, args.sums, allow_unpinned=args.allow_unpinned, version=args.version)
     except Refused as exc:
         print(f"sign_release: refused: {exc}", file=sys.stderr)
         return 1

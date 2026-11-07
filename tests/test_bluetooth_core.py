@@ -628,3 +628,15 @@ class TestDeviceOperations:
         client.shutdown()
         assert wait_until(lambda: fake.calls("StopDiscovery"), 3)
         assert fake.command("agents") == {}
+
+
+def test_sad_a_pairing_canceled_before_it_went_out_is_not_sent(made, fake):
+    """Cancel while the agent is still being registered: BlueZ has no
+    pairing to cancel yet, and a Pair sent after it would wait for the
+    device for minutes. The Pair is not sent; the pairing ends canceled."""
+    client, rec = made(devices=[speaker(behaviour={"pair": "hang"})])
+    client.pair(dev_path(SPEAKER))
+    client.cancel_pairing(dev_path(SPEAKER))  # in the same event-loop pass
+    assert "canceled" in rec.wait(dev_path(SPEAKER), "pair").lower()
+    assert client.busy(dev_path(SPEAKER)) is None
+    assert not fake.calls("Pair")

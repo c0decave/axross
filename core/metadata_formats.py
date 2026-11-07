@@ -149,7 +149,7 @@ def kind_of(name: str) -> str | None:
 # Bounded values
 # ---------------------------------------------------------------------------
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f‎‏‪-‮⁦-⁩]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
 def bounded(value) -> str:
@@ -1782,7 +1782,7 @@ def av_fields(
         )
     try:
         doc = json.loads(out.decode("utf-8", "replace"))
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         return [], f"ffprobe output unreadable: {exc}", False
     if not isinstance(doc, dict):
         return [], "ffprobe output unreadable", False

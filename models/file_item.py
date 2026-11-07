@@ -17,6 +17,21 @@ def _local_wall_clock(value):
         return value.replace(tzinfo=None)
 
 
+def local_time(seconds, default=None):
+    """``datetime.fromtimestamp(seconds)`` - or *default* (the epoch when
+    None) for a time no datetime holds: a file stamped in the year 33658
+    (mtime 1e12) or before year 1 made fromtimestamp raise ValueError, and
+    the whole folder could not be listed, compared or copied."""
+    try:
+        return datetime.fromtimestamp(seconds)
+    except (ValueError, OverflowError, OSError, TypeError):
+        return datetime.fromtimestamp(0) if default is None else default
+
+
+#: The rows a file pane puts in front of a listing (FilePaneWidget._fetch_listing).
+NAV_NAMES = frozenset({".", ".."})
+
+
 @dataclass(frozen=True)
 class FileItem:
     """Represents a single file or directory entry, local or remote.
@@ -57,12 +72,26 @@ class FileItem:
     # carries; a backend that cannot know leaves it False and the dot
     # rule of :attr:`is_hidden` decides alone.
     attr_hidden: bool = False
+    # The entry is there (the directory listing names it) but its
+    # attributes could not be read: a mount point the user may not stat
+    # (a FUSE mount without allow_other, a root-only NFS export), a name
+    # that vanished in between. The listing still shows it - an entry
+    # left out of a listing is one a recursive copy, move or delete never
+    # sees - and this holds why its size, time and mode are unknown.
+    stat_error: str = ""
 
     def __post_init__(self) -> None:
         for name in ("modified", "accessed", "created"):
             value = getattr(self, name)
             if getattr(value, "tzinfo", None) is not None:
                 object.__setattr__(self, name, _local_wall_clock(value))
+
+    @property
+    def is_nav(self) -> bool:
+        """The pane's own rows "." (this folder) and ".." (the parent):
+        navigation and drop targets, never an entry to select, copy, rename
+        or delete."""
+        return self.name in NAV_NAMES
 
     @property
     def is_hidden(self) -> bool:
@@ -101,12 +130,16 @@ class FileItem:
 
     @property
     def mode_str(self) -> str:
+        if self.stat_error:
+            return f"{self.type_char}?????????"
         return f"{self.type_char}{self.permissions_str}"
 
     @property
     def size_human(self) -> str:
         if self.is_dir:
             return ""
+        if self.stat_error:
+            return "?"
         size: float = self.size
         for unit in ("B", "KB", "MB", "GB", "TB"):
             if abs(size) < 1024:

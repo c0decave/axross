@@ -15,7 +15,6 @@ import re
 import shutil
 import stat as stat_module
 import subprocess
-from datetime import datetime
 from typing import IO
 
 from core import posix_compat, removal_cancel
@@ -24,7 +23,7 @@ from core.local_fs import copy_file_onto, entry_stat
 from core.path_policy import confined_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
-from models.file_item import FileItem
+from models.file_item import FileItem, local_time
 from security.protocol_line_split import split_lf_only_stream
 
 log = logging.getLogger(__name__)
@@ -66,6 +65,7 @@ class NfsSession(SessionLifecycle):
         export_path: str,
         port: int = 2049,
         version: int = 3,
+        minor: int = 0,
         mount_point: str = "",
         proxy_type: str = "none",
         proxy_host: str = "",
@@ -105,6 +105,7 @@ class NfsSession(SessionLifecycle):
         self._export = export_path.rstrip("/") or "/"
         self._port = port
         self._version = version
+        self._minor = int(minor) if version >= 4 else 0
         self._own_mount = False
 
         if mount_point:
@@ -145,7 +146,8 @@ class NfsSession(SessionLifecycle):
         # mount.nfs to reject the request ("Protocol not supported").
         port = self._mount_port
         if self._version >= 4:
-            opts = f"vers={self._version},port={port},nolock,tcp"
+            vers = f"{self._version}.{self._minor}" if self._minor else str(self._version)
+            opts = f"vers={vers},port={port},nolock,tcp"
         else:
             opts = f"vers={self._version},port={port},mountport={port},nolock,tcp"
         # Mounted as root: without these a set-uid binary on the export is
@@ -213,15 +215,15 @@ class NfsSession(SessionLifecycle):
                 try:
                     st = os.stat(entry_path, follow_symlinks=False)
                     atime = (
-                        datetime.fromtimestamp(st.st_atime) if getattr(st, "st_atime", 0) else None
+                        local_time(st.st_atime) if getattr(st, "st_atime", 0) else None
                     )
                     birth = getattr(st, "st_birthtime", 0)
-                    ctime = datetime.fromtimestamp(birth) if birth else None
+                    ctime = local_time(birth) if birth else None
                     items.append(
                         FileItem(
                             name=entry_name,
                             size=st.st_size,
-                            modified=datetime.fromtimestamp(st.st_mtime),
+                            modified=local_time(st.st_mtime),
                             is_dir=stat_module.S_ISDIR(st.st_mode),
                             permissions=st.st_mode & 0o7777,
                             accessed=atime,
@@ -229,7 +231,11 @@ class NfsSession(SessionLifecycle):
                         )
                     )
                 except OSError as e:
-                    log.debug("Cannot stat %s: %s", entry_path, e)
+                    # Listed, never dropped (as LocalFS): a recursive delete
+                    # or move would not see it. os.listdir has no d_type, so
+                    # whether it is a folder is unknown.
+                    log.warning("Cannot stat %s: %s", entry_path, e)
+                    items.append(FileItem(name=entry_name, stat_error=e.strerror or str(e)))
         except OSError as e:
             raise OSError(f"Cannot list {path}: {e}") from e
         return sorted(items, key=lambda i: (not i.is_dir, i.name.lower()))
@@ -239,13 +245,13 @@ class NfsSession(SessionLifecycle):
         try:
             st = os.stat(full, follow_symlinks=False)
             name = os.path.basename(path.rstrip("/")) or "/"
-            accessed = datetime.fromtimestamp(st.st_atime) if getattr(st, "st_atime", 0) else None
+            accessed = local_time(st.st_atime) if getattr(st, "st_atime", 0) else None
             birth = getattr(st, "st_birthtime", 0)
-            created = datetime.fromtimestamp(birth) if birth else None
+            created = local_time(birth) if birth else None
             return FileItem(
                 name=name,
                 size=st.st_size,
-                modified=datetime.fromtimestamp(st.st_mtime),
+                modified=local_time(st.st_mtime),
                 is_dir=stat_module.S_ISDIR(st.st_mode),
                 permissions=st.st_mode & 0o7777,
                 accessed=accessed,

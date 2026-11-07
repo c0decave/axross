@@ -16,10 +16,9 @@ cancels a running download; nothing half-downloaded stays.
 from __future__ import annotations
 
 import logging
-
 import threading
 
-from PyQt6.QtCore import QObject, QProcess, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QProcess, Qt, QUrl
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -38,8 +37,10 @@ from PyQt6.QtWidgets import (
 
 from core import features as F
 from core.i18n import tr
+from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -67,11 +68,6 @@ def _qprocess_runner(owner):
     return run
 
 
-class _DownloadBridge(QObject):
-    progress = pyqtSignal(str, object, object)  # model id, bytes done, total
-    finished = pyqtSignal(str, str)  # model id, error ("" = done)
-
-
 def _voice_download(model, progress, cancel):
     from core import voice_models as VM
 
@@ -82,12 +78,10 @@ class FeaturesDialog(QDialog):
     def __init__(self, parent=None, *, runner=None, version: str | None = None,
                  downloader=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "features")
         #: ``downloader(model, progress(done, total), cancel_event)``
         self._downloader = downloader or _voice_download
         self._download_cancel: threading.Event | None = None
-        self._downloads = _DownloadBridge()
-        self._downloads.progress.connect(self._on_download_progress)
-        self._downloads.finished.connect(self._on_download_finished)
         self.setWindowTitle(tr("Features"))
         self.resize(980, 620)
         self._runner = runner or _qprocess_runner(self)
@@ -141,10 +135,14 @@ class FeaturesDialog(QDialog):
         self.download_models_button.setToolTip(tr(
             "Download the selected voices and speech recognition models (pinned SHA-256)"))
         self.download_models_button.clicked.connect(self.download_selected)
+        # A binary adds units from its own signed release (ui/packs_dialog.py).
+        self.packs_button = QPushButton(tr("Packs…"))
+        self.packs_button.setToolTip(tr("Add or remove parts of axross from this release's packs"))
+        self.packs_button.clicked.connect(self._open_packs)
         close = QPushButton(tr("Close"))
         close.clicked.connect(self.close)
         for button in (self.install_button, self.download_models_button, self.copy_button,
-                       self.download_button):
+                       self.download_button, self.packs_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
         buttons.addWidget(close)
@@ -152,6 +150,7 @@ class FeaturesDialog(QDialog):
         add_close_corner(self)
         self._can_pip, self._why_not = F.can_pip_install()
         self.download_button.setVisible(F.is_frozen())
+        self.packs_button.setVisible(F.is_frozen())
         if not self._can_pip:
             self.status.setText(self._why_not)
         self.reload()
@@ -278,7 +277,12 @@ class FeaturesDialog(QDialog):
         if not models or self._download_cancel is not None:
             return
         cancel = self._download_cancel = threading.Event()
-        bridge, downloader = self._downloads, self._downloader
+        downloader = self._downloader
+        # Not signals of a bridge object: the exit clean-up deletes every
+        # Python-owned QObject while this thread may still report
+        # (core/thread_relay.py). Dropped once the dialog is gone.
+        progress = GuiCall(self._on_download_progress)
+        finished = GuiCall(self._on_download_finished)
         self.log.clear()
         self.status.setText(tr("Downloading…"))
         self._update_buttons()
@@ -287,10 +291,10 @@ class FeaturesDialog(QDialog):
             for model in models:
                 if cancel.is_set():
                     break
-                bridge.progress.emit(model.id, 0, model.size)
+                progress(model.id, 0, model.size)
                 try:
-                    downloader(model, lambda done, total, i=model.id: bridge.progress.emit(
-                        i, done, total), cancel)
+                    downloader(model, lambda done, total, i=model.id: progress(i, done, total),
+                               cancel)
                     error = ""
                 except VM.DownloadCancelled:
                     error = "cancelled"
@@ -298,8 +302,8 @@ class FeaturesDialog(QDialog):
                     error = str(exc) or "failed"
                 except Exception as exc:  # noqa: BLE001 - shown in the window
                     error = f"{type(exc).__name__}: {exc}"
-                bridge.finished.emit(model.id, error)
-            bridge.finished.emit("", "")
+                finished(model.id, error)
+            finished("", "")
 
         threading.Thread(target=work, name="axross-model-download", daemon=True).start()
 
@@ -328,6 +332,11 @@ class FeaturesDialog(QDialog):
         else:
             self.log.appendPlainText(tr("{name}: downloaded and verified").format(name=name))
             self.status.setText(tr("Downloaded: {name}").format(name=name))
+
+    def _open_packs(self) -> None:
+        from ui.packs_dialog import PacksDialog
+
+        PacksDialog(self).exec()
 
     def copy_command(self) -> None:
         lines = [F.how_to_get(f, family=self._family) for f in self._selected() if not f.available]

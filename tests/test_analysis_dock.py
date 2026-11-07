@@ -956,6 +956,10 @@ class MainWindowAnalysisTest(_Qt):
         from ui.main_window import MainWindow
 
         cls.win = MainWindow()
+        # These tests check the window's wiring, not sift: the dock acts as
+        # with sift installed (the tests stub what would reach it), so a
+        # build without the optional sift extra runs them the same way.
+        cls.win._analysis_dock._available = lambda: True
         cls.win.show()
         cls.app.processEvents()
 

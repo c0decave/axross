@@ -30,19 +30,29 @@ from core import agent_net as N  # noqa: E402
 from core.llm_profiles import LLMProfile  # noqa: E402
 from tests.test_agent_loop import _no_proxy, fake  # noqa: E402,F401
 
+# Python 3.12 added http.client._create_https_context, and urllib's
+# HTTPSHandler makes its context with it in the constructor - the cost this
+# handler defers. Python 3.11 has neither: the connection makes the context.
+_URLLIB_MAKES_THE_CONTEXT = hasattr(http.client, "_create_https_context")
+_needs_urllibs_context = pytest.mark.skipif(
+    not _URLLIB_MAKES_THE_CONTEXT,
+    reason="Python < 3.12: urllib's handler makes no TLS context, the connection does")
+
 
 @pytest.fixture
 def contexts(monkeypatch):
-    """Every TLS context urllib's way of making one made."""
+    """Every TLS context urllib's way of making one made: the handler's
+    (Python 3.12+, through http.client._create_https_context) and the
+    connection's own (Python 3.11) both come from this one function."""
     made: list = []
-    original = http.client._create_https_context
+    original = ssl._create_default_https_context
 
-    def counted(version):
-        context = original(version)
+    def counted(*args, **kwargs):
+        context = original(*args, **kwargs)
         made.append(context)
         return context
 
-    monkeypatch.setattr(http.client, "_create_https_context", counted)
+    monkeypatch.setattr(ssl, "_create_default_https_context", counted)
     return made
 
 
@@ -69,6 +79,7 @@ def test_happy_a_plain_opener_and_a_cuttable_one_make_none_until_https(contexts)
     assert contexts == []
 
 
+@_needs_urllibs_context
 def test_happy_an_https_request_gets_the_context_urllib_makes(contexts, monkeypatch):
     seen: list = []
 
@@ -110,6 +121,7 @@ def test_sad_a_redirect_is_still_refused(fake):
 # -- edge -------------------------------------------------------------------------------------
 
 
+@_needs_urllibs_context
 def test_edge_a_given_context_and_check_hostname_are_kept(contexts):
     given = ssl.create_default_context()
     handler = N._LazyHTTPSHandler(context=given, check_hostname=False)
@@ -131,7 +143,7 @@ def test_edge_only_one_https_handler_serves_an_opener(contexts):
 def test_edge_without_urllibs_helper_the_connection_makes_its_own(monkeypatch):
     # Python 3.10/3.11 have no http.client._create_https_context: urllib
     # left the context to HTTPSConnection then, and so does the handler.
-    monkeypatch.delattr(http.client, "_create_https_context")
+    monkeypatch.delattr(http.client, "_create_https_context", raising=False)
     assert N._LazyHTTPSHandler()._context is None
 
 

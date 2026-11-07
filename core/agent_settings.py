@@ -234,7 +234,7 @@ class AgentSettings:
     def load(cls, path: Path | None = None) -> AgentSettings:
         try:
             raw = json.loads(Path(path or settings_file()).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return cls()
         return cls.from_dict(raw)
 
@@ -249,9 +249,11 @@ class AgentSettings:
 
     def mcp_wrap(self, server):
         """What runs a stdio MCP server in its sandbox profile: argv -> argv,
-        or None without one. A profile that no longer exists refuses the
-        start (core.mcp_client.McpClientError) - never a run without it. A
-        container server is its own sandbox (podman)."""
+        or None without one. A profile that no longer exists, or "auto" on a
+        machine without bubblewrap, podman or docker, refuses the start
+        (core.mcp_client.McpClientError: an error line of this server, the
+        others still start) - never a run without it. A container server is
+        its own sandbox (podman)."""
         if not server.sandbox or server.container:
             return None
         from core.mcp_client import McpClientError
@@ -259,6 +261,11 @@ class AgentSettings:
         profile = self.sandbox_profile(server.sandbox)
         if profile is None:
             raise McpClientError(f"its sandbox profile {server.sandbox!r} does not exist")
+        if not profile.resolved_engine():
+            raise McpClientError(
+                f"its sandbox profile {server.sandbox!r} needs bubblewrap, podman or docker, "
+                "and none is installed"
+            )
         home = agent_dir() / "mcp" / server.name
         home.mkdir(parents=True, exist_ok=True)
         os.chmod(home, 0o700)

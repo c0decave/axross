@@ -1,0 +1,78 @@
+{
+ "name": "httplib2",
+ "versions": {
+  "0.32.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|httplib2/__init__.py|a0bce58f4e262efc",
+    "yara|capability_filesystem_read|httplib2/__init__.py|a0bce58f4e262efc",
+    "yara|capability_network_download|httplib2/__init__.py|a0bce58f4e262efc",
+    "yara|capability_network_outbound|httplib2/__init__.py|a0bce58f4e262efc"
+   ],
+   "archives": {
+    "httplib2-0.32.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "httplib2-0.32.0.dist-info/METADATA": "65d47cdcf4c7c3a31b79e06c60b55c467f67d8253599ce4724fee4b71330d462",
+      "httplib2-0.32.0.dist-info/RECORD": "4faf3cbe34defe9de1134430d6626c4d870a12d116905329c456c8f8f9b8eaf3",
+      "httplib2-0.32.0.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "httplib2-0.32.0.dist-info/licenses/LICENSE": "589eec38f72df2be203711d3b8cbece9b908c5e7ff00bc3cab7f63bae9e366b4",
+      "httplib2-0.32.0.dist-info/top_level.txt": "04463c0a12b06a05169aef71f3237d24e6c9a5928d7960abd44fac20409be7a2",
+      "httplib2/__init__.py": "a0bce58f4e262efc1d48acef3f087043ee00210660852e83a16f5cfee5032d69",
+      "httplib2/auth.py": "6f0d70393d1c6e29561ac375300ba977d9a94bf4bcbcb0e5f2f80aacf747d26d",
+      "httplib2/cacerts.txt": "01b9983f9e2219e29143500fb5f42f1e5a3dc2e9768d59b39e66d3cf2d9f4d5e",
+      "httplib2/certs.py": "82e85f8cc3610dd2891326016f96722f154ee6ad48ed8fcffb8046f0c9e2064f",
+      "httplib2/decode.py": "7fe6b9735a86de38b24a4cc719fe39509de5f4293e0a3c8a413a79a780e041e9",
+      "httplib2/error.py": "1b2a8f52f65e29d54bab47f7c60d2e5f8ae3b6fee354626e3deac077273e8df9",
+      "httplib2/iri2uri.py": "3e1233133791e82ef797ba62c2b34026556f95682cab1b494e515e5e0ce7cd0a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "33530e1c9a8c17aa9bcb4a508b22818737958daa114da19a963fd6364d0096e3",
+     "native": {},
+     "pth": {},
+     "sha256": "dc6705cacdf3fb0a2aba7629fa33c90fd93e30035db0c157325826be177e4816"
+    }
+   },
+   "name": "httplib2",
+   "provenance": {
+    "httplib2-0.32.0-py3-none-any.whl": {
+     "environment": "pypi-public",
+     "kind": "GitHub",
+     "repository": "httplib2/httplib2",
+     "workflow": "publish.yaml"
+    }
+   },
+   "pypi": {
+    "author": "Joe Gregorio",
+    "author_email": "joe@bitworking.org",
+    "home_page": "https://github.com/httplib2/httplib2",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/httplib2/httplib2"
+    },
+    "summary": "A comprehensive HTTP client library."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, network_download, network_outbound; attestation verifies (httplib2/httplib2)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|httplib2/__init__.py|a0bce58f4e262efc",
+     "yara|capability_filesystem_read|httplib2/__init__.py|a0bce58f4e262efc",
+     "yara|capability_network_download|httplib2/__init__.py|a0bce58f4e262efc",
+     "yara|capability_network_outbound|httplib2/__init__.py|a0bce58f4e262efc"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete httplib2/__init__.py",
+     "capability_filesystem_read:capability_filesystem_read httplib2/__init__.py",
+     "capability_network_download:capability_network_download httplib2/__init__.py",
+     "capability_network_outbound:capability_network_outbound httplib2/__init__.py"
+    ]
+   },
+   "version": "0.32.0"
+  }
+ }
+}

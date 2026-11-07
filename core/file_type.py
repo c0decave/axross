@@ -461,6 +461,11 @@ def identify_bytes(
             _is_textual(mime) or (mime == OCTET_STREAM and _looks_like_text(data))
         )
         verdict = _verdict(mime, claimed)
+        if verdict == MISMATCH and engine == "disk image":
+            from core.disk_image import named_as_container
+
+            if named_as_container(mime, name):
+                verdict = MATCH
     encoding = line_endings = ""
     if textual:
         encoding, line_endings = _text_properties(data, truncated)

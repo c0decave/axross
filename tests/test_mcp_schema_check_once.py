@@ -162,5 +162,37 @@ class SchemaCheckedOnceTest(unittest.TestCase):
             self.assertLessEqual(len(M._SCHEMA_VALIDATORS), 4)
 
 
+class WithoutJsonschemaTest(unittest.TestCase):
+    """jsonschema is optional; without it the handlers check their own
+    arguments, but an argument a strict schema (``additionalProperties:
+    false``, every capability group tool) does not know was ignored
+    silently - a misspelt option ran the call with its default."""
+
+    def setUp(self) -> None:
+        patcher = mock.patch.object(M, "_JSONSCHEMA_AVAILABLE", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.seen: list = []
+        self.tool = M._Tool(
+            name="strict", description="",
+            schema={"type": "object", "properties": {"path": {"type": "string"}},
+                    "additionalProperties": False},
+            handler=lambda args, ctx: self.seen.append(args) or {"ok": True})
+
+    def test_sad_an_unknown_argument_of_a_strict_schema_is_refused(self) -> None:
+        for method in ("tools/call", "tasks/start"):
+            error = _call([self.tool], "strict", {"path": "/", "max_file": 3},
+                          method=method)["error"]
+            self.assertEqual(error["code"], M.ERR_INVALID_PARAMS, method)
+            self.assertIn("'max_file' was unexpected", error["message"])
+        self.assertEqual(self.seen, [])
+
+    def test_happy_known_arguments_and_an_open_schema_still_pass(self) -> None:
+        self.assertNotIn("error", _call([self.tool], "strict", {"path": "/"}))
+        self.tool.schema.pop("additionalProperties")
+        self.assertNotIn("error", _call([self.tool], "strict", {"path": "/", "x": 1}))
+        self.assertEqual(self.seen, [{"path": "/"}, {"path": "/", "x": 1}])
+
+
 if __name__ == "__main__":
     unittest.main()

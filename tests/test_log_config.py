@@ -551,8 +551,8 @@ def test_sad_a_record_whose_arguments_do_not_fit_never_raises_into_the_caller(co
     # A wrong %-argument count raised inside the filter, past the handler's
     # handleError: the caller's log line would have thrown.
     logger, _h, _f, stream = collapse()
-    logger.warning("two %s %s", "only-one")  # no exception here
-    logger.warning("two %s %s", "only-one")
+    logger.warning("two %s %s", "only-one")  # noqa: PLE1206 - no exception here
+    logger.warning("two %s %s", "only-one")  # noqa: PLE1206 - the wrong count is the test
     assert "only-one" not in stream.getvalue()  # the handler could not format it either
     assert "Logging error" in capsys.readouterr().err  # reported the usual way
 
@@ -570,3 +570,44 @@ def test_edge_an_exception_whose_str_raises_is_still_keyed(collapse):
             logger.error("odd failure", exc_info=True)
     filt.flush()
     assert stream.getvalue().count("odd failure") == 2  # the line and its count
+
+
+# -- the master switch ------------------------------------------------------------------------
+
+
+def test_happy_logging_off_writes_nothing_and_on_again_resumes(tmp_path):
+    """Reported wish: switch the logs off completely at runtime."""
+    log_file = tmp_path / "axross.log"
+    LC.configure(log_file, settings=LC.LogSettings())
+    on = LC.LogSettings()
+    off = on.copy()
+    off.set("enabled", False)
+    LC.apply(off)
+    logging.getLogger("core.transfer_worker").error("while off")
+    assert not logging.getLogger("core.x").isEnabledFor(logging.CRITICAL)
+    LC.apply(on)
+    logging.getLogger("core.transfer_worker").warning("on again")
+    lines = _file_lines(log_file)
+    assert any("Logging switched off" in line for line in lines)
+    assert not any("while off" in line for line in lines)
+    assert any("on again" in line for line in lines)
+
+
+def test_edge_debug_run_keeps_logging_although_switched_off(tmp_path):
+    s = LC.LogSettings()
+    s.set("enabled", False)
+    LC.configure(tmp_path / "axross.log", debug=True, settings=s)
+    assert logging.getLogger("core.x").isEnabledFor(logging.DEBUG)
+
+
+def test_edge_switch_round_trips_and_teardown_switches_on(tmp_path):
+    path = tmp_path / "logging.json"
+    s = LC.LogSettings()
+    s.set("enabled", False)
+    s.save(path)
+    assert LC.LogSettings.load(path).enabled is False
+    with pytest.raises(ValueError):
+        s.set("enabled", "no")
+    LC.configure(tmp_path / "axross.log", settings=s)
+    LC.teardown()
+    assert logging.getLogger("x").isEnabledFor(logging.ERROR)

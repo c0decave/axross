@@ -50,6 +50,12 @@ class _Dovecot:
         self.dead_flags = dead_flags
         self.deleted: list[str] = []
 
+    @staticmethod
+    def _name(arg: str) -> str:
+        """The mailbox of a command argument: axross sends a quoted string."""
+        assert arg.startswith('"') and arg.endswith('"'), f"unquoted mailbox {arg!r}"
+        return arg[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+
     def _children(self, name):
         return [b for b in self.boxes if b.startswith(name + self.sep)]
 
@@ -63,11 +69,13 @@ class _Dovecot:
         return "OK", rows
 
     def status(self, name, what):
+        name = self._name(name)
         if name not in self.boxes:
             return "NO", [b"Mailbox doesn't exist"]
         return "OK", [f'"{name}" (MESSAGES {self.boxes[name]})'.encode()]
 
     def delete(self, name):
+        name = self._name(name)
         if name not in self.boxes:
             return "NO", [f"Mailbox doesn't exist: {name}".encode()]
         del self.boxes[name]
@@ -77,6 +85,7 @@ class _Dovecot:
         return "OK", [b"Delete completed."]
 
     def select(self, name, readonly=True):
+        name = self._name(name)
         if name not in self.boxes:
             return "NO", [f"Mailbox doesn't exist: {name}".encode()]
         return "OK", [str(self.boxes[name]).encode()]

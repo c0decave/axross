@@ -1,0 +1,112 @@
+{
+ "name": "httpx",
+ "versions": {
+  "0.28.1": {
+   "accepted_findings": [
+    "secret-paths|httpx/_auth.py|5e6ccaea24667f5a",
+    "yara|capability_filesystem_read|httpx/_auth.py|62bdd0c1a5122b5e",
+    "yara|capability_filesystem_read|httpx/_client.py|c43f941baefe58c9",
+    "yara|capability_filesystem_read|httpx/_content.py|2c61b3ac94d1dceb",
+    "yara|capability_filesystem_read|httpx/_main.py|0a0f4631a6e24d3f",
+    "yara|capability_filesystem_read|httpx/_models.py|e3ffc6bb2bf580bc",
+    "yara|capability_filesystem_read|httpx/_multipart.py|28e1c465997aa288",
+    "yara|capability_filesystem_read|httpx/_transports/base.py|9194bf54c6d58987",
+    "yara|capability_filesystem_read|httpx/_transports/mock.py|3d3a34779ebb4484",
+    "yara|capability_filesystem_read|httpx/_transports/wsgi.py|35c3d7dd76a9fc4c",
+    "yara|capability_network_outbound|httpx/_models.py|e3ffc6bb2bf580bc"
+   ],
+   "archives": {
+    "httpx-0.28.1-py3-none-any.whl": {
+     "entry_points": [
+      "httpx = httpx:main"
+     ],
+     "files": {
+      "httpx-0.28.1.dist-info/METADATA": "febb9b0f8f3e80d57c8199c304f35c4336e8581d1d18d7983c92766b82793b25",
+      "httpx-0.28.1.dist-info/RECORD": "0ecebd0f1f2f26e90b04b235c20c996fe53f9fbf24cf0a84c8cd2e668d3b0ec5",
+      "httpx-0.28.1.dist-info/WHEEL": "0b615483066088b6f39d1fa4d1bff9937022ff568048e5c3b2cde5cc252c52e8",
+      "httpx-0.28.1.dist-info/entry_points.txt": "da55647509b12c0d6934c812376795f3da3dd070997b3866370b32eabc8a0d20",
+      "httpx-0.28.1.dist-info/licenses/LICENSE.md": "4ec59d544f12b5f539a3a716fd321ac58ccd8030b465221f2c880200cdf28d8d",
+      "httpx/__init__.py": "0ac6997bac998f4ac783adf6d8058a587193315afdb718047c3e4fdff46bcfad",
+      "httpx/__version__.py": "2e853261e3974e2786cee3ffeb850bd30c5db718eebbf41b3af13b34e83e22a5",
+      "httpx/_api.py": "aff660b388c8a5c3c92ea2b975b6d26b2aa8fe254c2856b164277ea0e1f12c4b",
+      "httpx/_auth.py": "62bdd0c1a5122b5eeb198c7eee3f85762705233cf863d14557ed45e3eed15d7e",
+      "httpx/_client.py": "c43f941baefe58c91e96d00039e1868fe719d91453026d7db1647194563bff8d",
+      "httpx/_config.py": "a4fa7653ec2271f70ab05f8a6111352d876dddee84446788a1767c1a3a372d67",
+      "httpx/_content.py": "2c61b3ac94d1dcebcde0c6f519554d2d7917247fbaa0a97002db4ef69e70ff28",
+      "httpx/_decoders.py": "a74757f08d0d1077b1b37506a784ac66eb62321b17aeb5a5ebe1a7a956f488a3",
+      "httpx/_exceptions.py": "6f15bb7f1ce054c01d3536f04f4567ab4e202435b5fe023f1858903ee3328cbd",
+      "httpx/_main.py": "0a0f4631a6e24d3fecc1a0df5202118ad4b0c4b44c4b05033a6ecb7521aa940e",
+      "httpx/_models.py": "e3ffc6bb2bf580bc6e6428708a6f247d036220e709f5a72b785392babbd97e6b",
+      "httpx/_multipart.py": "28e1c465997aa28860f663da2b2caedf8e6aab5ac92e0df94d41b7600cd70776",
+      "httpx/_status_codes.py": "0d89fedae7c180c797cb9b3cc77fd307bc2302e00031ec136a43eb9b9ad712c7",
+      "httpx/_transports/__init__.py": "19b52805200ea7bcfe97ef63e5884c851dc3308727e8554b863d3bd8edcd9e7a",
+      "httpx/_transports/asgi.py": "1d17e20d830fb78c101f6805807660e1cfa2dec6e5a3a6cbe464ea7044fec73f",
+      "httpx/_transports/base.py": "9194bf54c6d58987c5e7bd29a205022756ee973fb26df2f9d4faacf7292d79b5",
+      "httpx/_transports/default.py": "03379a454c95c0271c4f2c8d25ec437f49f57457f3cf2769748420bf0ecf2e79",
+      "httpx/_transports/mock.py": "3d3a34779ebb4484d7c46ae48ba90deffebbc300317f088c0dcb972626428c4a",
+      "httpx/_transports/wsgi.py": "35c3d7dd76a9fc4c0215958efce692c9036e227098c7540c35b3bc1807a2ea36",
+      "httpx/_types.py": "272878d4642aec039ebfc20e58a0c083bcc26ef1c07ee7e65b983f3e24ed12b6",
+      "httpx/_urlparse.py": "640987e3b38d7e4c6bae3f8f3d88467a21e36fa0232824be00d58837838bfca6",
+      "httpx/_urls.py": "757f7d551d4348e1e9828f40abb3f360ee0529dc6a2a3c32369f20adff1d1cdd",
+      "httpx/_utils.py": "fd355ea802afc4990a1ddcfb74579be2cd0b66a41781e1645d281f88704aff5a",
+      "httpx/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e05340cba58e2aaabfc2e3113cc83dc80bb367a74f6a4c579452fa5cb1acb1d9",
+     "native": {},
+     "pth": {},
+     "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
+    }
+   },
+   "name": "httpx",
+   "provenance": {
+    "httpx-0.28.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Tom Christie <tom@tomchristie.com>",
+    "license": "BSD-3-Clause",
+    "project_urls": {
+     "Changelog": "https://github.com/encode/httpx/blob/master/CHANGELOG.md",
+     "Documentation": "https://www.python-httpx.org",
+     "Homepage": "https://github.com/encode/httpx",
+     "Source": "https://github.com/encode/httpx"
+    },
+    "summary": "The next generation HTTP client."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 medium findings (capability patterns) seen; capabilities: filesystem_read, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|httpx/_auth.py|62bdd0c1a5122b5e",
+     "yara|capability_filesystem_read|httpx/_client.py|c43f941baefe58c9",
+     "yara|capability_filesystem_read|httpx/_content.py|2c61b3ac94d1dceb",
+     "yara|capability_filesystem_read|httpx/_main.py|0a0f4631a6e24d3f",
+     "yara|capability_filesystem_read|httpx/_models.py|e3ffc6bb2bf580bc",
+     "yara|capability_filesystem_read|httpx/_multipart.py|28e1c465997aa288",
+     "yara|capability_filesystem_read|httpx/_transports/base.py|9194bf54c6d58987",
+     "yara|capability_filesystem_read|httpx/_transports/mock.py|3d3a34779ebb4484",
+     "yara|capability_filesystem_read|httpx/_transports/wsgi.py|35c3d7dd76a9fc4c",
+     "yara|capability_network_outbound|httpx/_models.py|e3ffc6bb2bf580bc"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read httpx/_auth.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_client.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_content.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_main.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_models.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_multipart.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_transports/base.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_transports/mock.py",
+     "capability_filesystem_read:capability_filesystem_read httpx/_transports/wsgi.py",
+     "capability_network_outbound:capability_network_outbound httpx/_models.py"
+    ]
+   },
+   "version": "0.28.1"
+  }
+ }
+}

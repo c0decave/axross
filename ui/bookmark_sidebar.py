@@ -48,7 +48,7 @@ from core.bookmarks import KIND_TERMINAL, LOCAL_SHELL, Bookmark, BookmarkGroup, 
 from core.i18n import tr
 from ui.bookmark_edit_dialog import BookmarkEditDialog, GroupEditDialog
 from ui.file_pane import TRANSFER_MIME_TYPE, _drop_action, decode_transfer_payload
-from ui.icon_provider import icon
+from ui.icon_provider import icon, set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -379,7 +379,49 @@ class BookmarkTreeEditing:
                     f"{_html_escape(node.name)}<br>{_html_escape(node.path)}"
                     f"<br>({_html_escape(node.backend_name)})",
                 )
+            self._show_security(item, node)
             self._decorate_item(item, node)
+
+    def _bookmark_security(self, node):
+        """How the connection of bookmark *node* is protected, from its
+        profile's settings (core.conn_security); None for a smart folder."""
+        from core import conn_security as CS
+
+        if isinstance(node, BookmarkGroup) or node.is_smart_folder:
+            return None
+        if node.is_terminal and node.is_host_terminal:
+            return CS.SecurityInfo(CS.LEVEL_ENCRYPTED, "Terminal over SSH, encrypted, host key checked")
+        if node.profile_name == LOCAL_SHELL or (node.is_terminal and not node.profile_name):
+            return CS.SecurityInfo(CS.LEVEL_LOCAL, "Local shell - no network", True)
+        if not node.profile_name:
+            if node.backend_name in ("", "Local"):
+                return CS.LOCAL
+            return CS.SecurityInfo(CS.LEVEL_UNKNOWN, f"{node.backend_name}: no saved connection - "
+                                   "how it is protected is not known")
+        lookup = getattr(self, "_profile_lookup", None)
+        profile = lookup(node.profile_name) if lookup is not None else None
+        if profile is None:
+            return CS.SecurityInfo(CS.LEVEL_UNKNOWN, f"The connection {node.profile_name} is not "
+                                   "known (any more)")
+        return CS.from_profile(profile)
+
+    def _show_security(self, item: QTreeWidgetItem, node) -> None:
+        """A remote bookmark's icon carries the security badge of its
+        connection; its tooltip says what protects it."""
+        info = self._bookmark_security(node)
+        if info is None:
+            return
+        from core import conn_security as CS
+        from ui.security_badge import tooltip_lines, with_badge
+
+        if not getattr(self, "_badge_in_name", True):
+            return
+        if info.level != CS.LEVEL_LOCAL:
+            item.setIcon(0, with_badge(item.icon(0), info))
+        tip = item.toolTip(0)
+        body = tip[4:-5] if tip.startswith("<qt>") and tip.endswith("</qt>") else tip
+        lines = "<br>".join(_html_escape(line) for line in tooltip_lines(info))
+        item.setToolTip(0, f"<qt>{body}<br>{lines}</qt>")
 
     # ------------------------------------------------------------------
     # Clicks
@@ -774,12 +816,16 @@ class BookmarkSidebar(BookmarkTreeEditing, QDockWidget):
     transfer_drop_requested = pyqtSignal(list, str, object, bool)
 
     def __init__(
-        self, bookmark_manager: BookmarkManager, parent=None, *, terminal_profiles=None
+        self, bookmark_manager: BookmarkManager, parent=None, *, terminal_profiles=None,
+        profile_lookup=None,
     ) -> None:
-        super().__init__("Bookmarks", parent)
+        super().__init__(tr("Bookmarks"), parent)
+        set_window_icon(self, "bookmark")
         self._manager = bookmark_manager
         # () -> the connection profile names a terminal bookmark may use.
         self._terminal_profiles = terminal_profiles or (lambda: [])
+        # name -> the connection profile (for the security badge), or None
+        self._profile_lookup = profile_lookup
         self._rebuilding = False
         self.setObjectName("BookmarkSidebar")
         self.setAllowedAreas(

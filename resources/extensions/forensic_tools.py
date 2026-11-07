@@ -371,7 +371,7 @@ def activate(api):
         def done(written):
             api.notify(f"wrote {written}")
             if ctx.pane is not None:
-                ctx.pane.refresh()
+                getattr(ctx.pane, "refresh_after_change", ctx.pane.refresh)()  # not blocking
 
         api.run_in_background(lambda: convert_to_raw(path, target), on_done=done,
                               on_error=warn("Convert to Raw Image"))
@@ -413,6 +413,9 @@ def activate(api):
     class BrowseDialog(QDialog):
         def __init__(self, image, sector, entries):
             super().__init__(api.window)
+            from ui.icon_provider import set_window_icon
+
+            set_window_icon(self, "forensics")
             self.image, self.sector, self.entries = image, sector, entries
             self.setWindowTitle("Sleuth Kit - " + os.path.basename(image))
             self.resize(820, 520)

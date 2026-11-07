@@ -441,8 +441,14 @@ def test_happy_capabilities(monkeypatch):
     assert caps[MF.IMAGE].read and caps[MF.IMAGE].remove
     assert caps[MF.OFFICE].read and caps[MF.OFFICE].remove
     monkeypatch.setattr(MF, "have_pypdf", lambda: False)
+    # Without pypdf, QtPdf reads: whether this host has it (PyQt6 6.12 wheels
+    # ship no QtPdf) is no matter here, both cases are set.
+    monkeypatch.setattr(MF, "have_qtpdf", lambda: True)
     caps = MT.capabilities()
     assert caps[MF.PDF].read and not caps[MF.PDF].remove and "pypdf" in caps[MF.PDF].reason
+    monkeypatch.setattr(MF, "have_qtpdf", lambda: False)
+    caps = MT.capabilities()
+    assert not caps[MF.PDF].read and "pypdf or QtPdf" in caps[MF.PDF].reason
 
 
 def test_sad_capabilities_without_ffmpeg_and_in_paranoid_mode(monkeypatch):

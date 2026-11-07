@@ -67,20 +67,87 @@ def publish(saved: AudioSettings) -> None:
 
 def notifier():
     """The app-wide QObject whose ``changed(AudioSettings)`` fires when the
-    audio settings were saved. Made on first use - from the GUI thread."""
+    audio settings were saved. Made on first use - from the GUI thread.
+
+    It is owned by C++ (sip.transferto), so main.py's exit clean-up
+    (core.qt_exit.delete_python_owned_qobjects, which deletes every
+    parentless Python-owned QObject) leaves it alone; one deleted all the
+    same is made anew - a player connecting to it after that got
+    "wrapped C/C++ object ... has been deleted"."""
     global _notifier
-    if _notifier is None:
+    from PyQt6 import sip
+
+    if _notifier is None or sip.isdeleted(_notifier):
         from PyQt6.QtCore import QObject, pyqtSignal
 
         class _AudioNotifier(QObject):
             changed = pyqtSignal(object)
 
-        _notifier = _AudioNotifier()
+        made = _AudioNotifier()
+        sip.transferto(made, None)
+        _notifier = made
     return _notifier
 
 
+#: axross's sound sources with a volume, mute and output of their own in
+#: the Audio Mixer: the Media Player, the Agent's voice, the media preview.
+SOURCES = ("media", "voice", "preview", "games")
+SOURCE_LABELS = {"media": "Media Player", "voice": "Agent voice", "preview": "Media preview",
+                 "games": "Arcade"}
+
+
 def output_gain() -> float:
-    return settings().output_volume / 100.0
+    """The master volume as 0.0-1.0 (0 while the master is muted)."""
+    saved = settings()
+    return 0.0 if saved.output_muted else saved.output_volume / 100.0
+
+
+def source_gain(source: str) -> float:
+    """What *source* plays at, 0.0-1.0: the master volume times the
+    source's own (0 when either is muted)."""
+    if source not in SOURCES:
+        raise ValueError(f"no audio source {source!r}")
+    saved = settings()
+    if getattr(saved, f"{source}_muted"):
+        return 0.0
+    return output_gain() * getattr(saved, f"{source}_volume") / 100.0
+
+
+def source_output_id(source: str) -> str:
+    """The device id *source* plays on: its own, else the output's ("" -
+    the system's default)."""
+    if source not in SOURCES:
+        raise ValueError(f"no audio source {source!r}")
+    saved = settings()
+    return getattr(saved, f"{source}_output") or saved.output_device
+
+
+def source_device(source: str):
+    """The QAudioDevice of :func:`source_output_id` (None: the default)."""
+    return output_device(source_output_id(source))
+
+
+def eq_gains() -> list[float] | None:
+    """The equalizer's gains when it is on and not flat, else None (play
+    the sound as it is)."""
+    from core.audio_eq import is_flat
+
+    saved = settings()
+    if not saved.eq_enabled or is_flat(saved.eq_gains):
+        return None
+    return list(saved.eq_gains)
+
+
+def update(path=None, **changes) -> AudioSettings:
+    """Change some settings: saved like the Audio page saves (OSError on a
+    disk error, ValueError for a bad value - then nothing is saved) and
+    published to everything that plays."""
+    saved = AudioSettings.load(path)
+    for name, value in changes.items():
+        saved.set(name, value)
+    saved.save(path)
+    publish(saved)
+    return saved
 
 
 def input_gain() -> float:
@@ -144,5 +211,15 @@ def input_device(wanted: str | None = None):
     return find_device(settings().input_device if wanted is None else wanted, _inputs, "input")
 
 
-__all__ = ["device_id", "find_device", "forget", "input_device", "input_gain", "notifier",
-           "output_device", "output_gain", "publish", "settings"]
+def qt_audio_outputs() -> list[tuple[str, str]]:
+    """Qt's audio outputs as ``(id, description)`` - only after
+    core.multimedia_probe answered ok (its rule for every device list)."""
+    from PyQt6.QtMultimedia import QMediaDevices
+
+    return [(device_id(d), d.description()) for d in QMediaDevices.audioOutputs()]
+
+
+__all__ = ["SOURCES", "SOURCE_LABELS", "device_id", "eq_gains", "find_device", "forget",
+           "input_device", "input_gain", "notifier", "output_device", "output_gain", "publish",
+           "qt_audio_outputs", "settings", "source_device", "source_gain", "source_output_id",
+           "update"]

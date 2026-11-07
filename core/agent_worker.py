@@ -81,7 +81,7 @@ class _Channel:
             return None
         try:
             message = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             log.warning("agent worker: a line that is no JSON")
             return {}
         return message if isinstance(message, dict) else {}

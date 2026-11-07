@@ -47,7 +47,8 @@ class _ProxyCase(unittest.TestCase):
 
 
 class _FakeRedis:
-    """Answers PING with +PONG and every other command with +OK."""
+    """A server before Redis 6: answers PING with +PONG, refuses HELLO as an
+    unknown command and every other command with +OK."""
 
     def __init__(self) -> None:
         self._listener = socket.socket()
@@ -55,6 +56,7 @@ class _FakeRedis:
         self._listener.listen(8)
         self.port = self._listener.getsockname()[1]
         self.clients: list[tuple] = []
+        self.commands: list[bytes] = []
         threading.Thread(target=self._serve, daemon=True).start()
 
     def _serve(self) -> None:
@@ -78,7 +80,14 @@ class _FakeRedis:
                 for _ in range(count):
                     length = int(reader.readline()[1:])
                     args.append(reader.read(length + 2)[:-2])
-                conn.sendall(b"+PONG\r\n" if args[0].upper() == b"PING" else b"+OK\r\n")
+                command = args[0].upper()
+                self.commands.append(command)
+                if command == b"PING":
+                    conn.sendall(b"+PONG\r\n")
+                elif command == b"HELLO":
+                    conn.sendall(b"-ERR unknown command 'HELLO'\r\n")
+                else:
+                    conn.sendall(b"+OK\r\n")
         except (OSError, ValueError):
             return
         finally:
@@ -117,6 +126,22 @@ class RedisProxyTest(_ProxyCase):
         session = RedisFsSession(host="127.0.0.1", port=self.fake.port)
         self.addCleanup(session.close)
         self.assertEqual(len(self.fake.clients), 1)
+
+    def test_edge_a_server_before_redis_6_is_spoken_to_in_resp2(self) -> None:
+        """redis-py 8 opens a connection with HELLO 3 unless told otherwise; a
+        server before Redis 6 refuses HELLO and the connect failed (redis-py
+        5-7 spoke RESP2 by default). The session asks for RESP2 itself, so it
+        connects - directly and through a proxy - whatever redis-py says."""
+        from core.redis_fs_client import RedisFsSession
+
+        session = RedisFsSession(host="127.0.0.1", port=self.fake.port)
+        self.addCleanup(session.close)
+        socks = self.socks({("redis.internal", 6379): ("127.0.0.1", self.fake.port)})
+        proxied = RedisFsSession(host="redis.internal", port=6379, **socks_kwargs(socks))
+        self.addCleanup(proxied.close)
+        self.assertEqual(len(self.fake.clients), 2)
+        self.assertNotIn(b"HELLO", self.fake.commands)
+        self.assertIn(b"PING", self.fake.commands)
 
     def test_tls_connection_class_keeps_ssl_wrapping(self) -> None:
         import redis.connection as rc

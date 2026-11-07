@@ -1,0 +1,53 @@
+{
+ "name": "cxxfilt",
+ "versions": {
+  "0.3.0": {
+   "accepted_findings": [],
+   "archives": {
+    "cxxfilt-0.3.0-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "cxxfilt-0.3.0.dist-info/LICENSE": "7de8ceb6e7c13ad5ba40f555a837a7cc87e5ff0b360cce71303166a8f547a21a",
+      "cxxfilt-0.3.0.dist-info/METADATA": "103c18920961d37f7667d8388b2500c0dd6c7c257e32c8471eefa582047aa008",
+      "cxxfilt-0.3.0.dist-info/RECORD": "e967edce9904035ac127a30455fae4ae24e18ba573d6fefbd56d7c0f51669391",
+      "cxxfilt-0.3.0.dist-info/WHEEL": "5b367c7308e1f25d23b542cd8d8ab51e9afe582a824603ebfbe4d7e0fe48d56a",
+      "cxxfilt-0.3.0.dist-info/top_level.txt": "de481ad2c507f8c39c8042244f163934ce0f0e63cbbdf912fc3aa7876ea10cd9",
+      "cxxfilt/__init__.py": "7d972fff111783834b125d67033cc3bb1c106b0e44d8ecc5ecfdfb04ed144bb6",
+      "cxxfilt/version.py": "df0544b36403ffb39c4e50fdedc65d09e8b37768546c927419e20ef304088eb9"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c3fc8f81fa513c38550c48badd4d2d017a73fc62c13dec7b2d1b3b82ff5268c3",
+     "native": {},
+     "pth": {},
+     "sha256": "774e85a8d0157775ed43276d89397d924b104135762d86b3a95f81f203094e07"
+    }
+   },
+   "name": "cxxfilt",
+   "provenance": {
+    "cxxfilt-0.3.0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "afq984",
+    "author_email": "afg984@gmail.com",
+    "home_page": "https://github.com/afq984/python-cxxfilt",
+    "license": "BSD",
+    "project_urls": {
+     "Homepage": "https://github.com/afq984/python-cxxfilt"
+    },
+    "summary": "Python interface to c++filt / abi::__cxa_demangle"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.3.0"
+  }
+ }
+}

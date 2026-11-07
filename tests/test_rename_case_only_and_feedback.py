@@ -32,6 +32,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from core.local_fs import LocalFS  # noqa: E402
 from core.server_ops import rename_target_taken, server_side_move  # noqa: E402
 from models.file_item import FileItem  # noqa: E402
+from tests.off_gui_wait import _drain_op  # noqa: E402
 
 
 class CaseInsensitiveFS:
@@ -196,6 +197,7 @@ class _PaneBase(unittest.TestCase):
             "PyQt6.QtWidgets.QInputDialog.getText", return_value=(new_name, True)
         ), mock.patch("ui.file_pane.QMessageBox.warning") as warning:
             pane._rename_selected()
+            _drain_op(pane)
         return warning
 
 

@@ -225,7 +225,7 @@ def test_e2e_the_title_bar_menu_moves_a_panel_to_a_workspace_and_back(window):
     pump()
     bar = dock.titleBarWidget()
     button = bar.move_button
-    assert button.isVisible() and button.toolTip() == "Send to Workspace"
+    assert button.isVisible() and button.toolTip().startswith("Send to Workspace")
     menu = bar.move_menu
     texts = menu_texts(menu)
     assert texts[:2] == ["1: Workspace 1", "2: B"]
@@ -294,7 +294,8 @@ def test_happy_the_workspace_menu_adds_an_extension_panel_to_the_one_on_screen(w
     window.switch_workspace(b)
     window._fill_workspace_menu()
     add = menu_action(window._workspace_menu, "Add Extension Panel").menu()
-    assert menu_texts(add) == ["Panel"]
+    # the Agent dock is laid out on workspaces like an extension panel too
+    assert menu_texts(add) == ["Panel", "Agent"]
     menu_action(add, "Panel").trigger()
     pump()
     assert window.extension_panel_workspace(dock) is b
@@ -489,6 +490,14 @@ def test_edge_a_panel_named_twice_in_a_session_is_placed_once(own_home):
 def test_happy_after_a_restart_the_panel_is_back_on_its_workspace_at_its_place(own_home):
     win = new_window()
     try:
+        # Within the screen, so the window comes back at this size: a larger
+        # one is fitted into the screen on restore (offscreen: 800x800), and
+        # in the narrower window the panes' smallest widths - wider with a
+        # larger font - bent the panel's share.
+        screen = win.screen().availableGeometry()
+        win.resize(min(win.width(), screen.width() * 9 // 10),
+                   min(win.height(), screen.height() * 9 // 10))
+        pump()
         dock = load_panel(win)
         a, b = two_workspaces(win)
         win.move_extension_panel(dock, b)
@@ -572,6 +581,37 @@ def test_edge_a_panel_on_all_workspaces_stays_there_after_a_restart(own_home):
         assert win.dockWidgetArea(dock) == Qt.DockWidgetArea.RightDockWidgetArea
     finally:
         close_window(win)
+
+
+def test_edge_restoring_the_dock_state_leaves_workspace_panels_in_their_splitters(window):
+    """A panel moved from the dock area onto a workspace stays in the saved
+    dock state (Qt keeps a placeholder for it), and from Qt 6.12 on
+    QMainWindow.restoreState takes every dock widget below the window that
+    the state names back into the dock area - also one sitting in a
+    workspace's splitter. Restore Last Session and the layout restored at
+    the start lost their panels' workspaces that way: the panels showed on
+    All Workspaces. restore_dock_state puts each one back at its place."""
+    first, second = load_panel(window, "two", TWO_PANELS)
+    a, b = two_workspaces(window)
+    window.move_extension_panel(second, b)
+    window.move_extension_panel(first, b)
+    pump()
+    root = b.root
+    order = [root.indexOf(first), root.indexOf(second)]
+    root.setSizes([500, 300, 200])
+    pump()
+    sizes = root.sizes()
+    state = window.saveState()
+    assert window.restore_dock_state(state)
+    pump()
+    assert window.extension_panel_workspace(first) is b
+    assert window.extension_panel_workspace(second) is b
+    assert [root.indexOf(first), root.indexOf(second)] == order
+    # In proportion: the dock state may give the central area another width.
+    got = root.sizes()
+    assert all(abs(g / sum(got) - s / sum(sizes)) < 0.02 for g, s in zip(got, sizes)), (got, sizes)
+    assert first.titleBarWidget().pane_mode and not first.isFloating()
+    assert window.dockWidgetArea(first) == Qt.DockWidgetArea.NoDockWidgetArea
 
 
 # -- switching the extension off and on ------------------------------------------------------
@@ -825,7 +865,7 @@ def test_happy_equalize_evens_out_the_workspace_on_screen_not_the_active_panes(w
 
 
 def test_edge_equalize_in_a_detached_workspace_evens_out_that_window(window):
-    a = window.current_workspace()
+    window.current_workspace()
     b = window.new_workspace("B", start="terminal")
     window.add_terminal_pane(b)
     pump(0.3)

@@ -32,6 +32,7 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 not installed")
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import tags as T  # noqa: E402
+from tests.off_gui_wait import _drain_op  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -207,7 +208,7 @@ def test_happy_tag_from_the_context_menu_filter_and_tooltip(store, tmp_path, fol
             __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.ItemDataRole.ToolTipRole)
         pane._filter_edit.setText("tag:important")
         APP.processEvents()
-        assert [n for n in _names(pane) if n != ".."] == ["a.txt"]
+        assert [n for n in _names(pane) if n not in (".", "..")] == ["a.txt"]
         pane._filter_edit.setText("")
         assert {"a.txt", "b.txt", "c.txt"} <= set(_names(pane))
         # Untick again
@@ -268,13 +269,13 @@ def test_e2e_tag_dots_are_painted_in_the_name_column(store, tmp_path, folder):
         win.deleteLater()
 
 
-def test_sad_filter_for_an_unknown_tag_shows_nothing_but_dot_dot(store, tmp_path, folder):
+def test_sad_filter_for_an_unknown_tag_shows_nothing_but_the_dot_rows(store, tmp_path, folder):
     win = _window(tmp_path)
     try:
         pane = win._active_pane
         pane.navigate(str(folder))
         pane._filter_edit.setText("tag:nothing-like-this")
-        assert [n for n in _names(pane) if n != ".."] == []
+        assert [n for n in _names(pane) if n not in (".", "..")] == []
     finally:
         win.close()
         win.deleteLater()
@@ -357,6 +358,7 @@ def test_e2e_a_tag_follows_a_rename_in_the_pane(store, tmp_path, folder, what):
         _select(pane, old.name)
         with mock.patch("PyQt6.QtWidgets.QInputDialog.getText", return_value=(new_name, True)):
             pane._rename_selected()
+            _drain_op(pane)
         assert (folder / new_name).exists()
         assert store.tags_of("Local", str(tagged_new)) == ["Important"]
         assert store.tags_of("Local", str(tagged_old)) == []
@@ -375,6 +377,7 @@ def test_sad_a_failed_rename_keeps_the_tag_where_it_was(store, tmp_path, folder)
         with mock.patch("PyQt6.QtWidgets.QInputDialog.getText", return_value=("b.txt", True)), \
                 mock.patch("ui.file_pane.QMessageBox.warning"):
             pane._rename_selected()  # b.txt exists: refused
+            _drain_op(pane)
         assert store.tags_of("Local", str(folder / "a.txt")) == ["Important"]
         assert store.tags_of("Local", str(folder / "b.txt")) == []
     finally:

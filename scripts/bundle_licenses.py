@@ -26,7 +26,7 @@ from typing import Callable, Iterable, Mapping
 
 #: File names that are licence material wherever they sit in a distribution.
 LICENCE_NAME = re.compile(
-    r"^(LICEN[CS]E|COPYING|NOTICE|COPYRIGHT|AUTHORS|THIRD[-_]?PARTY[-_]?NOTICES)([-._].*)?$",
+    r"^(LICEN[CS]E|COPYING|NOTICE|COPYRIGHT|AUTHORS|THIRD[-_]?PARTY[-_]?NOTICES)([-._].*)?\Z",
     re.IGNORECASE)
 SYSTEM_LIBRARY_DIRS = ("/usr/lib64/", "/lib64/", "/usr/lib/", "/lib/")
 

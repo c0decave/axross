@@ -10,7 +10,7 @@ surface so an LLM can drive the whole thing.**
 - **30+ protocols in one window** — SFTP, SMB, S3, WebDAV, cloud drives, IMAP, Git, databases and more.
 - **Copy between any two backends** — S3 → SFTP, WebDAV → SMB, directly, no detour via local disk.
 - **Commander-style multi-pane layout** — as many split panes as you like, layout presets, drag & drop.
-- **Workspaces** — named pane layouts as tabs, detachable into their own window, restored on the next start.
+- **Workspaces** — named pane layouts as tabs, detachable into their own window, restored on the next start, any dock shown only on one workspace.
 - **An LLM agent built in** — Agent dock with tabs and sandboxes for LM Studio, Ollama, vLLM or llama.cpp, read-only by default.
 - **Talk to the agent** — push-to-talk, spoken answers in German and English, speech recognition locally or on the LLM server.
 - **MCP server and client** — LLMs drive axross over stdio or HTTP, and the agent uses the tools of further MCP servers.
@@ -19,14 +19,27 @@ surface so an LLM can drive the whole thing.**
 - **Find Files** — by name, type, content, size or tag, inside archives too, kept as a Smart Folder.
 - **Coloured tags** — on any file, following renames and moves, a filter in Find Files.
 - **Disk images and forensics** — partitions and file systems, read-only loop mount, hashes, The Sleuth Kit, PhotoRec.
-- **Media Player** — playlist, M3U, shuffle/repeat, 10-band equalizer and spectrum.
+- **Media Player and Audio Mixer** — eighteen visualizations, a sleep timer; per-source volume and output, one equalizer, PipeWire/PulseAudio.
 - **Find duplicates, strip metadata** — content-hash duplicate finder, EXIF/GPS removal before sharing.
 - **Encryption without plaintext on disk** — `.axenc` overlay on any backend, decrypted into RAM only.
 - **Safe by default** — preview before delete/move, operation journal, `paranoid` mode, SSRF-guarded proxies.
 - **Resumable transfers** — survive Ctrl-C and VPN drops, resume from the last verified segment.
 - **Archives as folders** — browse ZIP, TAR and 7z, nested ones too, extract only what you pick, zip-bomb-safe.
-- **Extensions** — Media Player, Bluetooth, Forensic Tools, Treemap, VirtualBox and more, each off until you switch it on.
+- **Extensions** — Bluetooth (Classic, BLE map, add a headset in one go), System Information, Forensic Tools, Treemap and more, each off until you switch it on.
 - **Install in one line** — `pip install axross`, or a single-file binary for Linux, macOS and Windows.
+
+> **Checked for malicious code.** Every dependency a release is built from - 254 pinned
+> packages: the application's, the binaries', the build tools' - passes axross's own
+> supply-chain gate before anything is built: OSV (advisories and the malicious-packages
+> feed), YARA (GuardDog's and axross's rules), an inspection of every file without running
+> it, native binaries profiled and analysed with capa, Sigstore provenance, typosquatting,
+> a 14-day minimum age. **Result of the review of 2026-11-05: no malicious code found.**
+> Every YARA hit was read in the code and is benign; two findings were handled -
+> onnxruntime's telemetry (switched off by axross) and a process-wide TLS bypass in
+> `impacket.examples` (never imported). Still running: capa's full analysis of 200 large
+> native binaries (mostly Qt's libraries) in night sessions. The tool, its method and every
+> finding: [docs/SUPPLY_CHAIN_GATE.md](docs/SUPPLY_CHAIN_GATE.md) (`security/supply_chain_gate.py`); each
+> dist carries its report as `SUPPLY-CHAIN.md`.
 
 Axross is a multi-protocol file manager and security toolkit built
 with Python and PyQt6. SFTP, SMB, S3, WebDAV, Cloud drives, IMAP,
@@ -35,6 +48,12 @@ split-pane UI, all callable from the same `axross.*` Python API,
 all reachable through MCP for an LLM agent.
 
 Languages: **English** · [Deutsch](README_de.md) · [Español](README_es.md)
+
+The interface itself is in English or German: **Edit → Settings… →
+General → Language**, applied at the next start. Without a choice it
+follows the locale (`LC_ALL`, `LC_MESSAGES`, `LANG`), or the time zone
+(Europe/Berlin, Europe/Vienna) when the locale names no language;
+anything else starts in English.
 
 ---
 
@@ -56,7 +75,7 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
 
 ---
 
-## 44 highlights
+## 48 highlights
 
 1. **30+ protocols, one consistent UI.** SFTP/SCP, FTP/FTPS, SMB/CIFS,
    WebDAV, S3-compatible, Rsync, NFS, Azure Blob/Files, OneDrive,
@@ -78,7 +97,7 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
    `quad-files`, `commander`, `dev-shells`, `triage`, `shells-quad`.
    `Ctrl+Alt+L` rotates forward, `Ctrl+Alt+Shift+L` back.
 
-4. **Embedded Python REPL with 90 public scripting names.** A Console dock
+4. **Embedded Python REPL with 122 public scripting names.** A Console dock
    at the bottom of the GUI, a curated `axross.*` API with file verbs,
    ping/whois/snmp/tls/http helpers, diagnostics, recovery, safety
    previews and result-type classes, persistent history,
@@ -238,16 +257,16 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
 22. **Headless and GUI from the same source.** PyQt6 file manager,
     MCP stdio/HTTP server, or `axross --script <file>` CLI runner.
     Single-file binaries on the release page: Linux (`axross-full`,
-    `axross-slim`), macOS on Apple silicon and Windows x64 (`axross-slim`) - the macOS one is not notarized, so remove its quarantine attribute first ([docs/PACKAGING.md](docs/PACKAGING.md#macos-binary-the-first-start)); AppImage and the `Dockerfile.mcp` image build from
+    `axross-slim`, `axross-base` - [which one](#which-axross)), macOS on Apple silicon and Windows x64 (`axross-slim`) - the macOS one is not notarized, so remove its quarantine attribute first ([docs/PACKAGING.md](docs/PACKAGING.md#macos-binary-the-first-start)); AppImage and the `Dockerfile.mcp` image build from
     the source ([docs/PACKAGING.md](docs/PACKAGING.md)), and that image
     specifically excludes PyQt6 to stay copyleft-free.
 
 23. **Extensions.** Python plugins add Extensions-menu entries, right-click
     actions and panels (**Extensions → Manage Extensions…**). Every
     extension starts switched off, finding one never runs it, and
-    `paranoid` mode loads none. Twelve bundled ones, among them Media Player, Bluetooth,
-    Forensic Tools, Drives Overview, VirtualBox and Backup Repositories. See
-    [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+    `paranoid` mode loads none. Eighteen bundled ones, among them Media Player, Audio
+    Mixer, Bluetooth, IRC, Matrix, XMPP, Arcade, System Information, Forensic Tools, Drives Overview, VirtualBox and
+    Backup Repositories. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 24. **An LLM agent in its own dock.** **View → Panels → Agent** talks to
     the model you pick in **Agent Settings** (Ollama, LM Studio, MLX-LM
@@ -281,7 +300,10 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
     or side by side - and back as a tab when that window closes. A new
     workspace starts with a file list or a local terminal, panes move
     between workspaces from the menu or by drag & drop, and several shells
-    sit side by side. The workspaces are restored on the next start.
+    sit side by side. Any dock - the Agent, the Log, the Media Player -
+    can be shown only on one workspace (the pin in its title bar), and the
+    Agent dock and extension panels can be laid out inside a workspace like
+    a pane. The workspaces are restored on the next start.
 
 28. **Talk to the agent.** Push-to-talk (F9), toggle or conversation
     mode in the Agent dock. Answers are spoken in German or English with
@@ -323,7 +345,8 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
     terrain, 3D ring, kaleidoscope, bell curves) a click on them switches
     between, in colour schemes or your own colours, fullscreen like a
     screensaver or in a window of their own, a playlist that folds away,
-    title, artist and cover.
+    title, artist and cover; its own output device and a sleep timer that
+    fades out (the **…** button), and its equalizer is axross's one.
 
 34. **Bookmarks for many places.** Multi-select, groups sorted by name,
     path or age, terminal bookmarks (on a profile, a bare host or
@@ -371,7 +394,9 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
     and no network unless you allow it. **Detected on this machine** picks
     up the MCP servers your other tools have configured and installs
     downloading ones the contained way. A third-party entry such as REA
-    says who maintains it.
+    says who maintains it. The built-in catalog has the official GitHub
+    server (read-only toolsets), Playwright, MarkItDown, Brave Search and
+    DuckDuckGo next to the current reference servers.
 
 40. **Cut and Paste of files.** Ctrl+X / right-click **Cut** marks the
     entries (dimmed, in every pane); Ctrl+V / **Paste** moves them into
@@ -405,7 +430,59 @@ More screenshots, each with an explanation: **[the slideshow](slideshow.md)**.
     each reaches you, a link - from the same data file as the thanks at
     the end of this README.
 
+45. **Bluetooth, Classic and BLE.** A panel through BlueZ: scan for Classic
+    and/or BLE devices with a minimum signal, see radio, vendor, battery and
+    when each was last heard, and a map of the devices nearby by estimated
+    distance. **Add Device…** pairs, trusts, connects and makes a speaker or
+    headset the audio output in one go; *Details…* maps a BLE device's GATT
+    services (read values, watch notifications); *Test…* connects single
+    profiles (A2DP, the headset profile with its microphone), reconnects
+    automatically, times a connection test and plays a test sound on the
+    device itself.
+
+46. **Audio Mixer.** Every sound setting in one panel (**Tools → Audio
+    Mixer**): the master volume and output, a volume, mute and output per
+    source (Media Player, Agent voice, media preview), axross's one 10-band
+    equalizer, and the system's sound server through `pactl` (PipeWire or
+    PulseAudio) - devices, the programs playing and recording, defaults and
+    card profiles.
+
+47. **System Information.** **Tools → System Information…** opens a window
+    with everything about the computer: an overview with live gauges for
+    CPU, memory, swap, disks, battery and temperatures, and a page per area
+    (CPU, memory, storage, displays, network, audio, USB, PCI, battery,
+    sensors, OS, virtualisation) with search, copy and reports that hide
+    serial numbers and addresses unless asked.
+
+48. **A careful Duplicate Finder.** Groups files by content hash, biggest
+    space to reclaim first, with filters, keep rules (newest, shortest path,
+    inside a folder) and a live re-check before anything goes to the trash;
+    hard links, empty files, FIFOs and ETags are never taken for copies.
+
 ---
+
+## Which axross?
+
+Every [release](https://github.com/c0decave/axross/releases/latest) carries single-file programs - download, `chmod +x`,
+start; no Python needed - and the Python package:
+
+| File | What is in it | Runs on |
+|---|---|---|
+| `axross-full` | everything: every backend (with Google Drive, OneDrive, Dropbox, Azure, Exchange, WinRM/WMI), every extension, Matrix/XMPP chat, the Media Player's equalizer and spectrum, the Bluetooth stick mode, voice and analysis | Linux x86-64 with glibc 2.34 or newer (RHEL / Alma / Rocky 9, Ubuntu 22.04, Debian 12, Fedora 35 and later) |
+| `axross-slim` | the same without the cloud SDKs, the Windows protocols, Matrix/XMPP, voice, analysis and numpy - SFTP, SMB, WebDAV, S3, FTP, Android and the rest are in it; about half the size | the same |
+| `axross-base` | the core only: local files, SFTP / SCP / FTP, the panes, the editor, the terminal, the settings. Everything else - each backend, each extension - is a *pack* you add from *Help → Features… → Packs…*: fetched from the same release, signature and SHA-256 checked before anything is unpacked | the same |
+| `axross-full-glibc2.36`, `axross-slim-glibc2.36`, `axross-base-glibc2.36` | the same three, built with Debian 12's (newer) libraries | Linux x86-64 with glibc 2.36 or newer (Debian 12+, Ubuntu 22.10+, Fedora 37+) |
+| `axross-slim-macos-arm64` | slim | macOS on Apple silicon (not notarized: [first start](docs/PACKAGING.md#macos-binary-the-first-start)) |
+| `axross-slim-windows-x64.exe` | slim | Windows 10 / 11, x64 |
+| `axross-media-player`, `axross-system-info` (and `-glibc2.36`) | the Media Player and System Information as programs of their own ([docs/STANDALONE.md](docs/STANDALONE.md)) | Linux x86-64 |
+| `axross-X.Y.Z.tar.gz`, `axross-X.Y.Z-py3-none-any.whl` | the Python package, the same as on PyPI (`pip install "axross[all]"`, below) | every system with Python 3.11+ |
+| `packs-X.Y.Z.json` and the wheels beside it | the packs an `axross-base` adds | - |
+| `SHA256SUMS`, `SHA256SUMS.sig` | the checksums of every file, signed with the axross release key (Ed25519) | - |
+
+Which glibc you have: `ldd --version`. The glibc 2.34 build runs on newer systems
+too; the glibc 2.36 one brings newer libraries along. Every binary updates
+itself to the next release of exactly its own kind (*Help → Check for
+Updates…*, signature checked), an `axross-base` with the packs it has.
 
 ## Quick start
 
@@ -472,7 +549,7 @@ Full table of extras + system tools per protocol:
 | [INSTALL.md](INSTALL.md) | Prerequisites, per-protocol extras, OAuth setup, wheel build, dev setup. |
 | [docs/USAGE.md](docs/USAGE.md) · [USAGE_de.md](docs/USAGE_de.md) · [USAGE_es.md](docs/USAGE_es.md) | User guide — connections, panes, transfers, terminal, right-click actions. |
 | [docs/SCRIPTING.md](docs/SCRIPTING.md) · [SCRIPTING_de.md](docs/SCRIPTING_de.md) · [SCRIPTING_es.md](docs/SCRIPTING_es.md) | REPL + `axross.*` API + slash-commands + 32 bundled scripts + MCP scripting tools. |
-| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the twelve bundled extensions. |
+| [docs/EXTENSIONS.md](docs/EXTENSIONS.md) | Extensions menu — plugin API, trust model, the eighteen bundled extensions. |
 | [docs/MCP.md](docs/MCP.md) · [MCP_de.md](docs/MCP_de.md) · [MCP_es.md](docs/MCP_es.md) | MCP server reference — tools, sessions, mTLS, rate limits, hardening. |
 | [docs/LLM_GUIDE.md](docs/LLM_GUIDE.md) · [llms.txt](llms.txt) | For LLM agents: how to drive axross over MCP and the `axross.*` API correctly, with the tool catalog generated from the manifest. |
 | [docs/HANDBUCH.md](docs/HANDBUCH.md) | Full German manual (workflows, dialog reference, keyboard shortcuts). |
@@ -487,6 +564,7 @@ Full table of extras + system tools per protocol:
 | [docs/RED_TEAM_NOTES.md](docs/RED_TEAM_NOTES.md) | Adversarial review of every backend — fixed findings, known-acceptable risks, open follow-ups. |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Test suite, Docker lab, protocol coverage matrix. |
 | [docs/PACKAGING.md](docs/PACKAGING.md) | PyPI/sdist/wheel release, PyInstaller bundle, AppImage, headless MCP Docker image. |
+| [docs/SUPPLY_CHAIN_GATE.md](docs/SUPPLY_CHAIN_GATE.md) | The mandatory supply-chain gate of every dist: reviewed baseline of every dependency, OSV and malicious packages, minimum age, provenance, typosquatting, YARA, native profiles and capa. |
 | [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | PR scope, code style, contribution licensing. |
 
@@ -538,6 +616,7 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [backports.zstd](https://github.com/rogdham/backports.zstd) | Zstandard compression on Python versions before 3.14 | PSF-2.0 | axross-full, axross-slim, pip [archive] |
 | [boto3](https://github.com/boto/boto3) | Amazon S3 and S3-compatible storage | Apache-2.0 | axross-full, axross-slim, pip [s3] |
 | [Bubblewrap (bwrap)](https://github.com/containers/bubblewrap) | Agent sandbox | LGPL-2.1-or-later | on your system |
+| [Bumble](https://github.com/google/bumble) | Drives a USB Bluetooth stick directly, without BlueZ (Bluetooth panel) | Apache-2.0 | axross-full, pip [bluetooth-raw] |
 | [bzip2](https://sourceware.org/bzip2/) | bzip2 compression (Python's bz2 module) | bzip2-1.0.6 | axross-full, axross-slim |
 | [chardet](https://github.com/chardet/chardet) | Text encoding detection | 0BSD | axross-full, axross-slim, pip [encoding] |
 | [cryptography](https://github.com/pyca/cryptography) | Encrypted overlay, certificate inspection; cryptography for SSH and TLS | Apache-2.0 OR BSD-3-Clause | axross-full, axross-slim, pip |
@@ -582,6 +661,7 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [libxml2](https://gitlab.gnome.org/GNOME/libxml2) | XML library used by system libraries | MIT | axross-full, axross-slim |
 | [LZ4](https://github.com/lz4/lz4) | LZ4 compression used by system libraries | BSD-2-Clause | axross-full, axross-slim |
 | [manuf](https://github.com/coolbho3k/manuf) | MAC address vendor lookup (Wireshark OUI database) | Apache-2.0 OR GPL-3.0-or-later | axross-full, axross-slim, pip [mac] |
+| [matrix-nio](https://github.com/matrix-nio/matrix-nio) | Matrix client with end-to-end encryption (Matrix panel) | ISC | axross-full, pip [chat] |
 | [MIT Kerberos](https://web.mit.edu/kerberos/) | Kerberos / GSSAPI (libpq, system libraries) | MIT | axross-full, axross-slim |
 | [mpdecimal](https://www.bytereef.org/mpdecimal/) | Decimal arithmetic of Python's decimal module | BSD-2-Clause | axross-full, axross-slim |
 | [msal](https://github.com/AzureAD/microsoft-authentication-library-for-python) | Microsoft sign-in for OneDrive and SharePoint | MIT | axross-full, pip [onedrive] |
@@ -611,6 +691,8 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [PySocks](https://github.com/Anorov/PySocks) | SOCKS4/5 proxies for every connection | BSD-3-Clause | axross-full, axross-slim, pip |
 | [Python](https://www.python.org) | The Python interpreter and standard library inside the binaries | PSF-2.0 | axross-full, axross-slim |
 | [Python container image (python:3.12-slim)](https://hub.docker.com/_/python) | Base image of Dockerfile.mcp, Dockerfile.agent and Dockerfile.gui | PSF-2.0 AND LicenseRef-Debian-Packages | container image |
+| [python-omemo](https://github.com/Syndace/python-omemo) | OMEMO end-to-end encryption session manager (XMPP panel) | MIT | axross-full, pip [chat] |
+| [python-twomemo](https://github.com/Syndace/python-twomemo) | OMEMO 2 (urn:xmpp:omemo:2) backend | MIT | axross-full, pip [chat] |
 | [pywinpty](https://github.com/andfoy/pywinpty) | The local terminal on Windows (ConPTY) | MIT | pip |
 | [pywinrm](https://github.com/diyan/pywinrm) | WinRM backend (Windows Remote Management) | MIT | axross-full, pip [winrm] |
 | [qemu-img](https://www.qemu.org) | Opening virtual disk images | GPL-2.0-only | on your system |
@@ -624,6 +706,7 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [sift](https://github.com/c0decave/sift) | The Analysis dock's file explanations (sift-summarizer); a sister project of axross | MIT | axross-full, pip (with an extra) |
 | [sift-summarizer](https://github.com/c0decave/sift) | sift: the Analysis dock's explanation of the selected file | MIT | axross-full, pip [sift] |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | Voice activity detection model that faster-whisper ships | MIT | axross-full, pip (with an extra) |
+| [Slixmpp](https://codeberg.org/poezio/slixmpp) | XMPP client library (XMPP panel) | MIT | axross-full, pip [chat] |
 | [smbprotocol](https://github.com/jborean93/smbprotocol) | SMB / CIFS file shares | MIT | axross-full, axross-slim, pip [smb] |
 | [SQLite](https://www.sqlite.org) | Embedded database (Python's sqlite3 module) | blessing | axross-full, axross-slim |
 | [Subversion](https://subversion.apache.org) | Subversion backend | Apache-2.0 | on your system |
@@ -634,6 +717,7 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [urllib3](https://github.com/urllib3/urllib3) | HTTP connection pool (proxies, S3, WebDAV) | MIT | axross-full, axross-slim, pip [git] |
 | [util-linux libraries](https://github.com/util-linux/util-linux) | UUIDs, block device and mount information (GLib, Python's uuid module) | LGPL-2.1-or-later AND BSD-3-Clause | axross-full, axross-slim |
 | [VirtualBox (VBoxManage)](https://www.virtualbox.org) | VirtualBox disk images | GPL-3.0-only | on your system |
+| [vodozemac](https://github.com/matrix-nio/vodozemac-python) | Olm and Megolm end-to-end encryption of Matrix (used by matrix-nio) | MIT AND Apache-2.0 | axross-full, pip [chat] |
 | [watchdog](https://github.com/gorakhargosh/watchdog) | Instant refresh of local folders (inotify, FSEvents, ReadDirectoryChangesW) | Apache-2.0 | axross-full, axross-slim, pip |
 | [X.Org client libraries](https://www.x.org) | X11 display connection of Qt's xcb platform plugin | MIT AND X11 | axross-full, axross-slim |
 | [xdg-utils (xdg-open)](https://gitlab.freedesktop.org/xdg/xdg-utils) | Opening files and links with the desktop's programs | MIT | on your system |
@@ -642,7 +726,7 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [Zstandard](https://github.com/facebook/zstd) | Zstandard compression (Pillow, system libraries) | BSD-3-Clause OR GPL-2.0-only | axross-full, axross-slim |
 
 <details>
-<summary>113 more libraries that come with the projects above</summary>
+<summary>125 more libraries that come with the projects above</summary>
 
 | Project | Used by | License | Comes with |
 |---|---|---|---|
@@ -683,6 +767,7 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [huggingface_hub](https://github.com/huggingface/huggingface_hub) | faster-whisper | Apache-2.0 | axross-full, pip (with an extra) |
 | [ICU](https://icu.unicode.org) | Qt 6 | Unicode-DFS-2016 | axross-full, axross-slim, pip |
 | [idna](https://github.com/kjd/idna) | requests | BSD-3-Clause | axross-full, axross-slim, pip (with an extra) |
+| [importlib_resources](https://github.com/python/importlib_resources) | libusb-package | Apache-2.0 | axross-full, pip (with an extra) |
 | [inflate64](https://github.com/miurahr/inflate64) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (with an extra) |
 | [Intel VPL dispatcher](https://github.com/intel/libvpl) | PyAV | MIT | axross-full, pip (with an extra) |
 | [invoke](https://github.com/pyinvoke/invoke) | paramiko | BSD-2-Clause | axross-full, axross-slim, pip |
@@ -702,6 +787,8 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [libpq](https://www.postgresql.org) | psycopg-binary | PostgreSQL | axross-full, axross-slim, pip (with an extra) |
 | [LibTIFF](https://libtiff.gitlab.io/libtiff/) | Pillow | libtiff | axross-full, axross-slim, pip |
 | [libunistring](https://www.gnu.org/software/libunistring/) | PyAV | LGPL-3.0-or-later OR GPL-2.0-or-later | axross-full, pip (with an extra) |
+| [libusb](https://github.com/libusb/libusb) | libusb-package | LGPL-2.1-or-later | axross-full, pip (with an extra) |
+| [libusb-package](https://github.com/pyocd/libusb-package) | Bumble | Apache-2.0 | axross-full, pip (with an extra) |
 | [libvpx](https://chromium.googlesource.com/webm/libvpx) | PyAV | BSD-3-Clause | axross-full, pip (with an extra) |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | Pillow, Qt 6 | BSD-3-Clause | axross-full, axross-slim, pip |
 | [libxcrypt](https://github.com/besser82/libxcrypt) | libpq | LGPL-2.1-or-later | axross-full, axross-slim, pip (with an extra) |
@@ -719,6 +806,8 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [Opus](https://opus-codec.org) | PyAV | BSD-3-Clause | axross-full, pip (with an extra) |
 | [packaging](https://github.com/pypa/packaging) | onnxruntime | Apache-2.0 OR BSD-2-Clause | axross-full, pip (with an extra) |
 | [pathvalidate](https://github.com/thombashi/pathvalidate) | piper-tts | MIT | axross-full, pip (with an extra) |
+| [platformdirs](https://github.com/tox-dev/platformdirs) | Bumble | MIT | axross-full, pip (with an extra) |
+| [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) | Bumble | BSD-3-Clause | axross-full, pip (with an extra) |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | onnxruntime | BSD-3-Clause | axross-full, pip (with an extra) |
 | [psutil](https://github.com/giampaolo/psutil) | py7zr | BSD-3-Clause | axross-full, axross-slim, pip (with an extra) |
 | [pyasn1](https://github.com/pyasn1/pyasn1) | adb_shell | BSD-2-Clause | axross-full, axross-slim, pip (with an extra) |
@@ -727,14 +816,19 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [pybcj](https://github.com/miurahr/pybcj) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (with an extra) |
 | [pycparser](https://github.com/eliben/pycparser) | cffi | BSD-3-Clause | axross-full, axross-slim, pip |
 | [pycryptodomex](https://github.com/Legrandin/pycryptodome) | impacket | BSD-2-Clause AND LicenseRef-PublicDomain | axross-full, axross-slim, pip (with an extra) |
+| [pyee](https://github.com/jfhbrook/pyee) | Bumble | MIT | axross-full, pip (with an extra) |
 | [PyJWT](https://github.com/jpadilla/pyjwt) | msal | MIT | axross-full, axross-slim, pip (with an extra) |
 | [PyNaCl](https://github.com/pyca/pynacl) | paramiko | Apache-2.0 | axross-full, axross-slim, pip |
 | [pyOpenSSL](https://github.com/pyca/pyopenssl) | impacket | Apache-2.0 | axross-full, axross-slim, pip (with an extra) |
 | [pyparsing](https://github.com/pyparsing/pyparsing) | httplib2 | MIT | axross-full, pip (with an extra) |
 | [pyppmd](https://github.com/miurahr/pyppmd) | py7zr | LGPL-2.1-or-later | axross-full, axross-slim, pip (with an extra) |
 | [PyQt6_sip](https://github.com/Python-SIP/sip) | PyQt6 | BSD-2-Clause | axross-full, axross-slim, pip |
+| [pySerial](https://github.com/pyserial/pyserial) | Bumble | BSD-3-Clause | axross-full, pip (with an extra) |
+| [pyserial-asyncio](https://github.com/pyserial/pyserial-asyncio) | Bumble | BSD-3-Clause | axross-full, pip (with an extra) |
 | [pyspnego](https://github.com/jborean93/pyspnego) | smbprotocol | MIT | axross-full, axross-slim, pip (with an extra) |
 | [python-dateutil](https://github.com/dateutil/dateutil) | botocore | Apache-2.0 AND BSD-3-Clause | axross-full, axross-slim, pip (with an extra) |
+| [python-libusb1](https://github.com/vpelletier/python-libusb1) | Bumble | LGPL-2.1-or-later | axross-full, pip (with an extra) |
+| [PyUSB](https://github.com/pyusb/pyusb) | Bumble | BSD-3-Clause | axross-full, pip (with an extra) |
 | [PyYAML](https://github.com/yaml/pyyaml) | ctranslate2 | MIT | axross-full, axross-slim, pip (with an extra) |
 | [Qt 6](https://www.qt.io) | PyQt6 | LGPL-3.0-only | axross-full, axross-slim, pip |
 | [referencing](https://github.com/python-jsonschema/referencing) | jsonschema | MIT | axross-full, axross-slim |
@@ -755,6 +849,8 @@ The list is generated from [`resources/credits/third_party.json`](resources/cred
 | [tzlocal](https://github.com/regebro/tzlocal) | exchangelib | MIT | axross-full, pip (with an extra) |
 | [uritemplate](https://github.com/python-hyper/uritemplate) | google-api-python-client | BSD-3-Clause OR Apache-2.0 | axross-full, pip (with an extra) |
 | [VMAF](https://github.com/Netflix/vmaf) | PyAV | BSD-2-Clause-Patent | axross-full, pip (with an extra) |
+| [wcwidth](https://github.com/jquast/wcwidth) | prompt_toolkit | MIT | axross-full, pip (with an extra) |
+| [websockets](https://github.com/python-websockets/websockets) | Bumble | BSD-3-Clause | axross-full, pip (with an extra) |
 | [Werkzeug](https://github.com/pallets/werkzeug) | Flask | BSD-3-Clause | axross-full, pip (with an extra) |
 | [x264](https://www.videolan.org/developers/x264.html) | PyAV | GPL-2.0-or-later | axross-full, pip (with an extra) |
 | [x265](https://bitbucket.org/multicoreware/x265_git) | PyAV | GPL-2.0-or-later | axross-full, pip (with an extra) |

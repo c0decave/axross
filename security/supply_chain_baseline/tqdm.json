@@ -1,0 +1,113 @@
+{
+ "name": "tqdm",
+ "versions": {
+  "4.70.1": {
+   "accepted_findings": [
+    "discord-telegram-webhook|tqdm/contrib/telegram.py|1759305a1c99ecec",
+    "discord-telegram-webhook|tqdm/contrib/telegram.py|b5f577f86d3129cf",
+    "yara|capability_filesystem_read|tqdm/cli.py|b758ff3ea2344ae3",
+    "yara|capability_filesystem_read|tqdm/std.py|dd76d965de52c590",
+    "yara|capability_process_spawn|tqdm/std.py|dd76d965de52c590",
+    "yara|threat_network_exfiltration|tqdm/contrib/telegram.py|c9b4eb6868d4431e",
+    "yara|threat_network_outbound_shady_links|tqdm/contrib/telegram.py|c9b4eb6868d4431e"
+   ],
+   "archives": {
+    "tqdm-4.70.1-py3-none-any.whl": {
+     "entry_points": [
+      "tqdm = tqdm.cli:main"
+     ],
+     "files": {
+      "tqdm-4.70.1.dist-info/METADATA": "a5da70b966afea3a759716041bad7187f2ece02c22348cf9e7c0a512bbf15f57",
+      "tqdm-4.70.1.dist-info/RECORD": "a09accd5190caec98e08df6bd39d60015b8c56faa0cb6e032d88323430264dd4",
+      "tqdm-4.70.1.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "tqdm-4.70.1.dist-info/entry_points.txt": "45e2421fb522dd9ca1e8cd7a1383a1b19d6853b5ad31709f6eda3206118edbd6",
+      "tqdm-4.70.1.dist-info/licenses/LICENCE": "fcff87c3a47ce8028a8512aa182d4fcf0ad1c90544ee75cf9b343684cac194de",
+      "tqdm-4.70.1.dist-info/top_level.txt": "34b89424d7e673d02dd79b3b254462c2fa8c123522f46e4f30646b98c6333523",
+      "tqdm/__init__.py": "f6640d6124aa3fdf496acb9b102d4f3892cc9a1924047e9c259c4f211e46da94",
+      "tqdm/__main__.py": "6d8b7d7846a845059d7a3107143f11131f63c5511d669b44085b15ec5e3d2279",
+      "tqdm/_main.py": "f724af8268bfd92c38080a395035b44367717d3af26e8116187a217c2273d2c0",
+      "tqdm/_monitor.py": "d5571abeea2d61237a2bed636e936ecba1d8b6bde6c28e4d87f8d9310fa38370",
+      "tqdm/_tqdm.py": "2df2c2b89e9ba6c568f718a59ad057c849b5bc69d4085ae5896f398f727e9c3e",
+      "tqdm/_tqdm_gui.py": "d371dcf0a6b2c49bde89e239fb4fb6346883a4bbf0f6365e9287c9515ec20b09",
+      "tqdm/_tqdm_notebook.py": "06e1e22eec6eeae11f64568f256dd13e93dac5a55cb44400de47522520cbd61c",
+      "tqdm/_tqdm_pandas.py": "73d8e9b5482280de9ac510e145de1189ff7c4e6c5ea297359c5345848a5b1541",
+      "tqdm/_utils.py": "09f2f3b71158f9046235fc500aa01bd8df04d77b9ab8833de5149088595a12e1",
+      "tqdm/asyncio.py": "229706a3a645c1ce8a287623e6cee1e246918a881c69b27a3dca878fa8ddcb42",
+      "tqdm/auto.py": "9c365f963ea9db32a48c108d068babae14bcd7361f672d7f750bdb724add5bca",
+      "tqdm/autonotebook.py": "da9360182243b1eb0d372627992bdef013502e2192828f7b4ac3e83170ab3514",
+      "tqdm/cli.py": "b758ff3ea2344ae3328491a807130f09763e5136df8dc89a010631014fdffd5d",
+      "tqdm/completion.sh": "8fbf4a6d29a9223fc4d758df4df057ac69d44f3297569435bc6550becc83465e",
+      "tqdm/contrib/__init__.py": "d46318604f3ae960af94783931d9b33af3ec423e19b8c957cf3f317117090fad",
+      "tqdm/contrib/bells.py": "21ac42d985b9ef11c38a7c5d503407bd27a0a341d24dd0d313141010dbd207f9",
+      "tqdm/contrib/concurrent.py": "0a9c6bc1c29a4111fb9f04cf1b799562e95e1acfeed0c3615b8853b9a6e9618b",
+      "tqdm/contrib/discord.py": "2cf8f10db99f898b70dce026fd686dc1b5fd05560394f73c949f7a698dd86431",
+      "tqdm/contrib/itertools.py": "300f7e26f6f74e8b1ea69227bdebf6885e1ba2437b190cb84382e08d4c98740e",
+      "tqdm/contrib/logging.py": "d27167d82eea51488a3c1d7da931ae4bd2df8daf1a8855b4bbd9326d1746d215",
+      "tqdm/contrib/slack.py": "b02d7cdafef10647c67ed9c379499000b30e7f043353766235fd50fd70350e32",
+      "tqdm/contrib/telegram.py": "c9b4eb6868d4431e66e38dd3b17ea927b531ae9b21d66e1ae3705359597fe1ee",
+      "tqdm/contrib/utils_worker.py": "bdac722726a06303824172d431df3a6c26c8e2c3ea672b2e3066c34869af116a",
+      "tqdm/dask.py": "f448b9f1e56a4e8b2c44b8407d6c9414276e5d82a398b9b091a5c8cbe08761fb",
+      "tqdm/gui.py": "99a43b8e007995e587c313256c1bf4f21a5ee65cadbe61f4844011bb6d8645d5",
+      "tqdm/keras.py": "ba077cd3ec42c4caa7adbc7f0c43a99a3e9cd92875c6856d43c57df9bc36f5ea",
+      "tqdm/notebook.py": "eb19144dc611b05c4de3f052518619e75900808ef27274f41cba4ff47ba412a8",
+      "tqdm/rich.py": "274e32abacb652bf74d76cc2ecf91ccc0d6dedc0e37adf3c866064ac0bfeb36b",
+      "tqdm/std.py": "dd76d965de52c590819dec376644220cb35dc4831e40efb4c30944884fc57d86",
+      "tqdm/tk.py": "dd5b01d4c0c090222d696bbb0a631bd82a132cc8aa98388480d8b7ca2a90e466",
+      "tqdm/tqdm.1": "30b83daa37874e16693c441b595adfe4fe6039730a1c4fd7eb4e8548e048f5e5",
+      "tqdm/utils.py": "a3f7f4577d87ff0ae7d179919e8de3f6927dc65a79c4bd1f1d3de0b6a2fe939f",
+      "tqdm/version.py": "d2e1f84cb7bc23c1fbd71dbd7659ad11904e6cb4f76f9216fa7cad177574215c"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ff821325192b8f5b811e047c4e447d24e80f0dea4737096bab8c55feaa423a95",
+     "native": {},
+     "pth": {},
+     "sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73"
+    }
+   },
+   "name": "tqdm",
+   "provenance": {
+    "tqdm-4.70.1-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "tqdm/tqdm",
+     "workflow": "test.yml"
+    }
+   },
+   "pypi": {
+    "license": "MPL-2.0 AND MIT",
+    "maintainer_email": "tqdm developers <devs@tqdm.ml>",
+    "project_urls": {
+     "changelog": "https://tqdm.github.io/releases",
+     "homepage": "https://tqdm.github.io",
+     "repository": "https://github.com/tqdm/tqdm",
+     "wiki": "https://github.com/tqdm/tqdm/wiki"
+    },
+    "summary": "Fast, Extensible Progress Meter"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "tqdm.contrib.telegram sends progress to a Telegram bot only when given a bot token - an opt-in module axross never imports. Attestation as recorded."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|tqdm/cli.py|b758ff3ea2344ae3",
+     "yara|capability_filesystem_read|tqdm/std.py|dd76d965de52c590",
+     "yara|capability_process_spawn|tqdm/std.py|dd76d965de52c590",
+     "yara|threat_network_exfiltration|tqdm/contrib/telegram.py|c9b4eb6868d4431e",
+     "yara|threat_network_outbound_shady_links|tqdm/contrib/telegram.py|c9b4eb6868d4431e"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read tqdm/cli.py",
+     "capability_filesystem_read:capability_filesystem_read tqdm/std.py",
+     "capability_process_spawn:capability_process_spawn tqdm/std.py",
+     "threat_network_exfiltration:threat_network_exfiltration tqdm/contrib/telegram.py",
+     "threat_network_outbound_shady_links:threat_network_outbound_shady_links tqdm/contrib/telegram.py"
+    ]
+   },
+   "version": "4.70.1"
+  }
+ }
+}

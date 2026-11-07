@@ -1,0 +1,84 @@
+{
+ "name": "pybcj",
+ "versions": {
+  "1.0.8": {
+   "accepted_findings": [],
+   "archives": {
+    "pybcj-1.0.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "bcj/__init__.py": "5313e39074d2746a2667f970daff103047a0bb39d61d705570d6083de2a9fccd",
+      "bcj/_bcj.cpython-312-x86_64-linux-gnu.so": "ab82e37446669e22cfd7aba44a6286a53ff5231f870d929960cc592707d6aa07",
+      "bcj/_bcjfilter.py": "97ff688a4db80131f297c95200d360f3eab50f78c7f1b44f06c4803e6b889d71",
+      "bcj/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pybcj-1.0.8.dist-info/METADATA": "44871022ef06368336eb8a108c82bc8d10c50c646fd556f2303cbbd174d27908",
+      "pybcj-1.0.8.dist-info/RECORD": "f2cd09ce27b539b2733e5da4f27caf14288d864fef6c40480ee2902a864127d8",
+      "pybcj-1.0.8.dist-info/WHEEL": "90f7c11d409710c77dff16b3a84f9b5abae99c64ee3fcdf2795742de2d1e87a5",
+      "pybcj-1.0.8.dist-info/licenses/LICENSE": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "pybcj-1.0.8.dist-info/scm_file_list.json": "eec7a04d3c8ec7f2d3510e80a20369ce37d9eafdba3971af4ac588326ee4f4b2",
+      "pybcj-1.0.8.dist-info/scm_version.json": "a87b0ceefa89b188280a19ca07e0af02f80c0ee04b0de0bba6c62f43b2ad7d90",
+      "pybcj-1.0.8.dist-info/top_level.txt": "dabd2308a79b76502bebf4d782715062a72406170de8d94add07d6bd95ccf394"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c2b4a37088c94ade57e3b8f7a2e51535b66adb894a7ba2958d1658d3347f5e8d",
+     "native": {
+      "bcj/_bcj.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "a50b58f9b9d9978c55e3219b6816a1021a778b028a810b36aa754407591cb5ae"
+    }
+   },
+   "name": "pybcj",
+   "provenance": {
+    "pybcj-1.0.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "miurahr/pybcj",
+     "workflow": "publish-to-pypi.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Hiroshi Miura <miurahr@linux.com>",
+    "license_expression": "LGPL-2.1-or-later",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/miurahr/pybcj/issues",
+     "Changelog": "https://github.com/miurahr/pybcj/blob/main/Changelog.rst",
+     "Homepage": "https://pypi.org/project/pybcj",
+     "Source": "https://github.com/miurahr/pybcj"
+    },
+    "summary": "bcj filter library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (miurahr/pybcj)."
+   },
+   "scans": {
+    "capa": {
+     "ab82e37446669e22cfd7aba44a6286a53ff5231f870d929960cc592707d6aa07": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA"
+      ],
+      "note": "",
+      "path": "bcj/_bcj.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.0.8"
+  }
+ }
+}

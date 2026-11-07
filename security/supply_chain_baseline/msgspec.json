@@ -1,0 +1,100 @@
+{
+ "name": "msgspec",
+ "versions": {
+  "0.22.0": {
+   "accepted_findings": [],
+   "archives": {
+    "msgspec-0.22.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "msgspec-0.22.0.dist-info/METADATA": "c7e9d347d94b29c7018e92bc6b7a6d4db020d12cfadfc94015d47f0f15055d58",
+      "msgspec-0.22.0.dist-info/RECORD": "3bd2c426af583121fbfbc37bd0c00bfb1241ca6c00c88e1d61532150190fce2f",
+      "msgspec-0.22.0.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "msgspec-0.22.0.dist-info/licenses/LICENSE": "6fde8b6723885e8508808f65ac372feb97d3eee2eab2b91d34d796b75b7ac734",
+      "msgspec-0.22.0.dist-info/top_level.txt": "f18b27c5adbd40b85d3ed8cf1a3c9cd619b1de73a629ebbf380936ebcd9976f5",
+      "msgspec/__init__.py": "d5330f3406745b0ffde3a1ed17bc20dc5ec47bc5362939520138d710d2202f26",
+      "msgspec/__init__.pyi": "43f3934028f9cc136f0b43275619f1ef982b0c467426a92b4b3d1ab265397a8c",
+      "msgspec/_core.cpython-312-x86_64-linux-gnu.so": "70c65bcb64ab2aeac86b433147f8cb8572570b0189c2329b028f49fa5cff2c35",
+      "msgspec/_json_schema.py": "887a97cfc2f43db20438f5092667c73ed2e265563a9564582ed218cbb178a157",
+      "msgspec/_typing_utils.py": "aa6e8036f1f0a5e1e3e853899c660bb3bf84e23723ecce38a2a649e4d724cfb8",
+      "msgspec/_typing_utils.pyi": "125873413c0bc1233dab8a2db7ffc579432262d0d4a589c3d06953b2890327a3",
+      "msgspec/_utils.py": "0e50dee5699999112139e3752be6491a4f0253142c7f977618bdff677a555aae",
+      "msgspec/_version.py": "458083f5fa36540ea5be4efe3a9fb6fa3b8a328c85d531aa7e7610c0abdc8da4",
+      "msgspec/inspect.py": "3d4a7cc4d904a04b79a267e33ede18c7ef7027ded3c1589f18707f7c36950ad6",
+      "msgspec/json.py": "908ce99b6347b339007c06cd71e9b1abf8541cab77ab11f6f72001287d0c9d3b",
+      "msgspec/json.pyi": "205be795d24c9c3eba7a1ea5fdd176796a65e08e65a7054051c37598dc4774bf",
+      "msgspec/msgpack.py": "25244b704aa9c82830cbfc03d65a05dea1cdff2b670902dcf115f7dee0136c25",
+      "msgspec/msgpack.pyi": "4651b4f89780efee85a1d77a20c99db5e94385ec42e116668a55fa28c25ef739",
+      "msgspec/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "msgspec/structs.py": "b32a4cf9b2dc9c1ec56f71133a3423c6c1f327f133f1792adb35c9d8b7cb3659",
+      "msgspec/structs.pyi": "361847d9423b2c95012353c8a000e0670f9c99aa013852fd9a175f9b8a21021d",
+      "msgspec/toml.py": "7b43760ba6437171b146e812e22559e2936f18ab275bf42a49df4b948527c997",
+      "msgspec/yaml.py": "23f65ce600d4f7209d6ac435aebfd782e0eee7c2010b2b06961ab7dbaa7cdfca"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "8f6f92be45679a63bb63fdfce3bf36dffdbf869666f159b3d8728c0ea1efa084",
+     "native": {
+      "msgspec/_core.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "99c401861c5bb3a57f7d6423ea7ed4352cd57aa3f04f4fbe9f3e3e4564a10f08"
+    }
+   },
+   "name": "msgspec",
+   "provenance": {
+    "msgspec-0.22.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "msgspec/msgspec",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "Jim Crist-Harif <jcristharif@gmail.com>, Ofek Lev <oss@ofek.dev>, Nikita Sobolev <mail@sobolevn.me>",
+    "project_urls": {
+     "Homepage": "https://msgspec.dev",
+     "Issue Tracker": "https://github.com/msgspec/msgspec/issues",
+     "Source": "https://github.com/msgspec/msgspec"
+    },
+    "summary": "A fast serialization and validation library, with builtin support for JSON, MessagePack, YAML, and TOML."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (msgspec/msgspec)."
+   },
+   "scans": {
+    "capa": {
+     "70c65bcb64ab2aeac86b433147f8cb8572570b0189c2329b028f49fa5cff2c35": {
+      "capabilities": [
+       "contain loop",
+       "decode data using Base64 via dword translation table",
+       "encode data using Base64",
+       "encode data using XOR",
+       "hash data using murmur2",
+       "reference Base64 string"
+      ],
+      "note": "",
+      "path": "msgspec/_core.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libm.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.22.0"
+  }
+ }
+}

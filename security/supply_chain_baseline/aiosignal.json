@@ -1,0 +1,64 @@
+{
+ "name": "aiosignal",
+ "versions": {
+  "1.4.0": {
+   "accepted_findings": [],
+   "archives": {
+    "aiosignal-1.4.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "aiosignal-1.4.0.dist-info/METADATA": "09247ef1da8bc696728d47130e702e4307f6f7d101d6c485bff9f3a71ce7008d",
+      "aiosignal-1.4.0.dist-info/RECORD": "0e26d97741a4a82a3c300c391d0fe61dd15acde8a443fe4b03d22ba1857a8287",
+      "aiosignal-1.4.0.dist-info/WHEEL": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+      "aiosignal-1.4.0.dist-info/licenses/LICENSE": "6fd5243e92dd7f98ec69c7ac377728e74905709ff527a5bf98d6d0263c04f5b6",
+      "aiosignal-1.4.0.dist-info/top_level.txt": "cf8e5a34e2860ddac8d6ba2a658dc1197436da42453c706655dc2d2d82ed5c2d",
+      "aiosignal/__init__.py": "4c8926506f474c1b7875fab69c8498062662441db1c2f16d119c9d2cfd073cbe",
+      "aiosignal/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "058f971221acfbad115fff5e21f402722c32e546ccc4c06d7aaedc13e2ecbf96",
+     "native": {},
+     "pth": {},
+     "sha256": "053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"
+    }
+   },
+   "name": "aiosignal",
+   "provenance": {
+    "aiosignal-1.4.0-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/aiosignal",
+     "workflow": "ci-cd.yml"
+    }
+   },
+   "pypi": {
+    "home_page": "https://github.com/aio-libs/aiosignal",
+    "license": "Apache 2.0",
+    "maintainer": "aiohttp team <team@aiohttp.org>",
+    "maintainer_email": "team@aiohttp.org",
+    "project_urls": {
+     "CI: GitHub Actions": "https://github.com/aio-libs/aiosignal/actions",
+     "Chat: Gitter": "https://gitter.im/aio-libs/Lobby",
+     "Coverage: codecov": "https://codecov.io/github/aio-libs/aiosignal",
+     "Docs: RTD": "https://docs.aiosignal.org",
+     "GitHub: issues": "https://github.com/aio-libs/aiosignal/issues",
+     "GitHub: repo": "https://github.com/aio-libs/aiosignal",
+     "Homepage": "https://github.com/aio-libs/aiosignal"
+    },
+    "summary": "aiosignal: a list of registered asynchronous callbacks"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (aio-libs/aiosignal)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.4.0"
+  }
+ }
+}

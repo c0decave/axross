@@ -320,7 +320,14 @@ def test_edge_the_spoken_phrase_shows_the_lens_too(env):
 
 def test_happy_the_lens_is_drawn_red_and_glows_with_the_level(env):
     env.fake({"content": "ok"})
-    tab = env.dock().current_tab()
+    dock = env.dock()
+    # The lens covers its tab, which is laid out only in a shown dock: the
+    # dock's content sits in a scroll area (an ExtensionDock), and in a dock
+    # never shown its size is whatever an earlier test left (190 x 2 px).
+    dock.resize(900, 600)
+    dock.show()
+    QTest.qWait(50)
+    tab = dock.current_tab()
     lens = tab.lens
 
     def heart():

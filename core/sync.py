@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
-from core.tree_compare import ComparedEntry, Status
+from core.tree_compare import MTIME_TOLERANCE_S, ComparedEntry, Status
 
 log = logging.getLogger(__name__)
 
@@ -90,8 +90,30 @@ def _depth(rel_path: str) -> int:
     return rel_path.count("/")
 
 
+#: Why a folder against a file is left to the user under every policy.
+TYPE_MISMATCH = ("a folder on one side, a file on the other — a sync does not replace "
+                 "one with the other; rename or remove one of them first")
+
+
+def _type_mismatch(entry: ComparedEntry) -> bool:
+    left, right = entry.left, entry.right
+    return left is not None and right is not None and \
+        bool(getattr(left, "is_dir", False)) != bool(getattr(right, "is_dir", False))
+
+
+def _below(rel_path: str, folders: set[str]) -> bool:
+    """True when *rel_path* lies inside one of *folders* (relative paths)."""
+    parts = rel_path.split("/")
+    return any("/".join(parts[:n]) in folders for n in range(1, len(parts)))
+
+
 def _resolve_conflict(entry: ComparedEntry, policy: ConflictPolicy) -> Action | Conflict:
     left, right = entry.left, entry.right
+
+    if _type_mismatch(entry):
+        # "Copy" a folder over a file (or a file over a folder) is no copy;
+        # the transfer conflict window refuses it too.
+        return Conflict(entry.rel_path, TYPE_MISMATCH)
 
     if policy is ConflictPolicy.LEFT_WINS:
         return Action(entry.rel_path, "copy", "to_right", True, "left side wins")
@@ -102,8 +124,11 @@ def _resolve_conflict(entry: ComparedEntry, policy: ConflictPolicy) -> Action | 
         if left is None or right is None:
             return Conflict(entry.rel_path, "one side is missing its metadata")
         try:
-            left_newer = left.modified > right.modified
-            right_newer = right.modified > left.modified
+            # Within the comparison's tolerance two times are one moment
+            # (FAT keeps 2 s, S3 and WebDAV round): a tie, not "newer".
+            gap = (left.modified - right.modified).total_seconds()
+            left_newer = gap > MTIME_TOLERANCE_S
+            right_newer = gap < -MTIME_TOLERANCE_S
         except TypeError:
             # FileItem converts aware times to local wall clock time (its
             # timestamp contract), so two FileItems always order. Anything
@@ -122,8 +147,8 @@ def _resolve_conflict(entry: ComparedEntry, policy: ConflictPolicy) -> Action | 
         # and picking a side would be a coin flip with someone's work.
         return Conflict(
             entry.rel_path,
-            "the two copies differ but carry the same timestamp — "
-            "'newer wins' cannot choose",
+            "the two copies differ but carry the same timestamp (within "
+            f"{MTIME_TOLERANCE_S:g} s) — 'newer wins' cannot choose",
         )
 
     return Conflict(entry.rel_path, "both sides changed; choose which one to keep")
@@ -140,9 +165,20 @@ def plan_sync(
 
     actions: list[Action] = []
     conflicts: list[Conflict] = []
+    # Paths that are a folder on one side and a file on the other: what the
+    # folder holds has nowhere to go on the file's side.
+    mismatched = {e.rel_path for e in entries
+                  if e.status == Status.DIFFERS and _type_mismatch(e)}
 
     for entry in entries:
         if entry.status == Status.SAME:
+            continue
+
+        if mismatched and entry.status in (Status.LEFT_ONLY, Status.RIGHT_ONLY) \
+                and _below(entry.rel_path, mismatched):
+            conflicts.append(Conflict(
+                entry.rel_path,
+                "inside a folder the other side has as a file — " + TYPE_MISMATCH))
             continue
 
         if entry.status == Status.UNKNOWN:

@@ -60,7 +60,9 @@ from core import analysis_settings as AS
 from core import llm_profiles as LP
 from core.file_analysis import AnalysisResult, FileAnalyzer, Target
 from core.i18n import tr
+from core.thread_relay import GuiCall
 from ui.dock_frame import framed
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -213,6 +215,22 @@ class _Lane(QObject):
         self._job_cancel: threading.Event | None = None
         self._stop = False
         self._thread: threading.Thread | None = None
+        # The lane's thread reaches the GUI thread through these and the
+        # signals are emitted there: never an emit on the lane from its
+        # thread, since the exit clean-up deletes this parentless object
+        # while a job may still run (core/thread_relay.py).
+        self._post_started = GuiCall(self._emit_started)
+        self._post_event = GuiCall(self._emit_event)
+        self._post_finished = GuiCall(self._emit_finished)
+
+    def _emit_started(self, token: int) -> None:
+        self.started.emit(token)
+
+    def _emit_event(self, token: int, event) -> None:
+        self.event.emit(token, event)
+
+    def _emit_finished(self, token: int, result) -> None:
+        self.finished.emit(token, result)
 
     def request(
         self,
@@ -277,7 +295,7 @@ class _Lane(QObject):
                 token, target, force, llm, options = self._waiting.popleft()
                 self._busy_since = time.monotonic()
                 cancel = self._job_cancel = threading.Event()
-            self.started.emit(token)
+            self._post_started(token)
             try:
                 if self.analyzer is None:
                     self.analyzer = self._factory()
@@ -285,7 +303,7 @@ class _Lane(QObject):
                     target,
                     force=force,
                     llm=llm,
-                    on_event=(lambda e, t=token: self.event.emit(t, e)) if llm else None,
+                    on_event=(lambda e, t=token: self._post_event(t, e)) if llm else None,
                     cancel=cancel,
                     options=options,
                 )
@@ -297,7 +315,7 @@ class _Lane(QObject):
                 self._job_cancel = None
                 if self._stop:
                     return  # the dock is gone: nobody to tell
-            self.finished.emit(token, result)
+            self._post_finished(token, result)
 
     def shutdown(self) -> None:
         """Stop for good: no signal is sent after this, the job in flight is ended."""
@@ -366,6 +384,7 @@ class AnalysisDock(QDockWidget):
         analysis_settings_loader: Callable[[], AS.AnalysisSettings] | None = None,
     ) -> None:
         super().__init__(tr(DOCK_TITLE), parent)
+        set_window_icon(self, "analysis")
         self.setObjectName("axAnalysisDock")
         from core.analysis_worker import sift_available
 
@@ -861,7 +880,14 @@ class _Lister(QObject):
 
     listed = pyqtSignal(int, object, str)
 
+    def _emit_listed(self, token: int, targets, error: str) -> None:
+        self.listed.emit(token, targets, error)
+
     def list(self, backend, path: str, token: int) -> None:
+        # Not an emit on the lister from the thread: the exit clean-up
+        # deletes it while a listing may still run (core/thread_relay.py).
+        listed = GuiCall(self._emit_listed)
+
         def work() -> None:
             try:
                 items = backend.list_dir(path)
@@ -886,8 +912,8 @@ class _Lister(QObject):
                             mtime=mtime,
                         )
                     )
-                self.listed.emit(token, sorted(targets, key=lambda t: t.name.lower()), "")
+                listed(token, sorted(targets, key=lambda t: t.name.lower()), "")
             except Exception as exc:  # noqa: BLE001 - shown to the user
-                self.listed.emit(token, [], f"{type(exc).__name__}: {exc}")
+                listed(token, [], f"{type(exc).__name__}: {exc}")
 
         threading.Thread(target=work, name="axross-analysis-list", daemon=True).start()

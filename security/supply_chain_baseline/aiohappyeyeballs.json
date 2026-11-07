@@ -1,0 +1,69 @@
+{
+ "name": "aiohappyeyeballs",
+ "versions": {
+  "2.7.1": {
+   "accepted_findings": [
+    "yara|capability_process_schedule|aiohappyeyeballs/_staggered.py|6a3ddc4b01c40d7f"
+   ],
+   "archives": {
+    "aiohappyeyeballs-2.7.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "aiohappyeyeballs-2.7.1.dist-info/METADATA": "e68d1bf48aec9dcc2767343dedec25e12860085cba180e10bc3d3bdd031602ba",
+      "aiohappyeyeballs-2.7.1.dist-info/RECORD": "2f3b3c859a9e2782f2b1a98f3e4ba1e52110a768e01339b7f53ed23c1dda22e7",
+      "aiohappyeyeballs-2.7.1.dist-info/WHEEL": "10612f4a984562a5cab36dfe91005ec8da093f59eb4fc649290a22e69e4360bf",
+      "aiohappyeyeballs-2.7.1.dist-info/licenses/LICENSE": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+      "aiohappyeyeballs/__init__.py": "f30fbf99f793ec71ad6db3c5283821a6bf0e1ac436537ff27d9097027674442b",
+      "aiohappyeyeballs/_staggered.py": "6a3ddc4b01c40d7f3c50c7cef5b51abbdb5fad102cce18e0f7d76910c8803863",
+      "aiohappyeyeballs/impl.py": "eb32b7ba4aa27993fe187deb56cf16af8dfcb4fbfe63b4f5846802ca02a64bb2",
+      "aiohappyeyeballs/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "aiohappyeyeballs/types.py": "ffc2661c58b1e8c78cd5eee144fec195e11a1b2f771acc06b7342fd3af33298f",
+      "aiohappyeyeballs/utils.py": "c051d5f1ea4632a22b0bda6aa1f4cee2a968065775e063ef55be52a5bdb91c92"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "d1eac8bc3613c0c7ca9bc4a0c9452f87d3ba55583e94504610ab222926ab8f06",
+     "native": {},
+     "pth": {},
+     "sha256": "9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472"
+    }
+   },
+   "name": "aiohappyeyeballs",
+   "provenance": {
+    "aiohappyeyeballs-2.7.1-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/aiohappyeyeballs",
+     "workflow": "ci-cd.yml"
+    }
+   },
+   "pypi": {
+    "author": "J. Nick Koston",
+    "author_email": "nick@koston.org",
+    "license": "PSF-2.0",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/aio-libs/aiohappyeyeballs/issues",
+     "Changelog": "https://github.com/aio-libs/aiohappyeyeballs/blob/main/CHANGELOG.md",
+     "Documentation": "https://aiohappyeyeballs.readthedocs.io",
+     "Repository": "https://github.com/aio-libs/aiohappyeyeballs"
+    },
+    "summary": "Happy Eyeballs for asyncio"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_schedule; attestation verifies (aio-libs/aiohappyeyeballs)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_schedule|aiohappyeyeballs/_staggered.py|6a3ddc4b01c40d7f"
+    ],
+    "yara": [
+     "capability_process_schedule:capability_process_schedule aiohappyeyeballs/_staggered.py"
+    ]
+   },
+   "version": "2.7.1"
+  }
+ }
+}

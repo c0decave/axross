@@ -27,13 +27,17 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import pytest
+
+# the sinks' engine (EqEngine) runs on numpy; without it the player uses Qt's
+np = pytest.importorskip("numpy", reason="numpy is not installed")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+
+from tests.media_testkit import need_multimedia_backend  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -190,6 +194,7 @@ def test_happy_e2e_the_engine_plays_into_a_mono_int16_card(tmp_path):
 
 
 def test_happy_e2e_a_card_at_another_rate_gets_the_track_resampled(tmp_path):
+    need_multimedia_backend()
     sink = MP.MemorySink()
     engine = MP.EqEngine(sink_factory=lambda fmt: sink,
                          negotiate=lambda fmt: MP.qt_format(16000, 1, "Int16"))
@@ -205,6 +210,7 @@ def test_happy_e2e_a_card_at_another_rate_gets_the_track_resampled(tmp_path):
 
 
 def test_edge_position_and_seek_count_in_the_cards_rate(tmp_path):
+    need_multimedia_backend()
     sink = MP.MemorySink()
     engine = MP.EqEngine(sink_factory=lambda fmt: sink,
                          negotiate=lambda fmt: MP.qt_format(16000, 1, "Int16"))

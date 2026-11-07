@@ -171,6 +171,11 @@ def write_encrypted(backend, path: str, data: bytes, passphrase: str) -> str:
     """
     final = _ensure_enc_suffix(path)
     blob = encrypt_bytes(data, passphrase)
+    if len(blob) > MAX_ENCRYPTED_SIZE:
+        # read_encrypted refuses a blob this large: written, it could never
+        # be decrypted here - and the plaintext may be deleted after this.
+        raise OSError(f"{path} is too large to encrypt: the encrypted file may be at most "
+                      f"{MAX_ENCRYPTED_SIZE // (1024 * 1024)} MiB")
     from core.atomic_io import atomic_write
 
     atomic_write(backend, final, blob)

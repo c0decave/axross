@@ -260,8 +260,12 @@ class TestSharesThroughImpacket:
 
 
 def _session_error(status_name: str):
-    from impacket import nt_errors
-    from impacket.smbconnection import SessionError
+    """A real impacket SessionError: the status names come from impacket
+    itself, so a test that needs one skips where the optional wmi extra
+    (impacket) is not installed."""
+    nt_errors = pytest.importorskip("impacket.nt_errors", reason="impacket is not installed")
+    SessionError = pytest.importorskip(
+        "impacket.smbconnection", reason="impacket is not installed").SessionError
 
     return SessionError(getattr(nt_errors, status_name))
 

@@ -1,0 +1,64 @@
+{
+ "name": "certifi",
+ "versions": {
+  "2026.10.19": {
+   "accepted_findings": [],
+   "archives": {
+    "certifi-2026.10.19-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "certifi-2026.10.19.dist-info/METADATA": "a5c0be3a42daeef0edfaf58e6ea5b7550f3e4e8eb35420f72e902df9bcf00f5c",
+      "certifi-2026.10.19.dist-info/RECORD": "523b5d397037027a10e2b02a5b6c152449281698c65c75641920959a78087982",
+      "certifi-2026.10.19.dist-info/WHEEL": "6beb9d2f69b857fe989fc6feb8acd66f5d918d1c70c0ca3aa21605336e2da5a6",
+      "certifi-2026.10.19.dist-info/licenses/LICENSE": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+      "certifi-2026.10.19.dist-info/top_level.txt": "28cbb8bd409fb232eb90f6d235d81d7a44bea552730402453bffe723c345ebe5",
+      "certifi/__init__.py": "f8ccfc10235998c7edd340f2f305b5f3d71aed978aea82a02af30d7877bee902",
+      "certifi/__main__.py": "c410688fdd394d45812d118034e71fee88ba7beddd30fe1c1281bd3b232cd758",
+      "certifi/cacert.pem": "50f79f98dac192b20dbf73f35c56f0b0c557ab267ff5199d1117cc1180b70785",
+      "certifi/core.py": "5c55f2727746e697f7edac9e17c377d8752e0da7ecca191531b3b80403d61dad",
+      "certifi/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "certifi/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "certifi/tests/test_certify.py": "7c179d1edf37f7e912b133663735fb46c6338d5d0e5f8915d11c3bc287d227b8"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2c767a9e937fd9442efd24413649e1d9b8b241208880b8cabf3cb552619a1730",
+     "native": {},
+     "pth": {},
+     "sha256": "42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b"
+    }
+   },
+   "name": "certifi",
+   "provenance": {
+    "certifi-2026.10.19-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "certifi/python-certifi",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author": "Kenneth Reitz",
+    "author_email": "me@kennethreitz.com",
+    "home_page": "https://github.com/certifi/python-certifi",
+    "license": "MPL-2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/certifi/python-certifi",
+     "Source": "https://github.com/certifi/python-certifi"
+    },
+    "summary": "Python package for providing Mozilla's CA Bundle."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (certifi/python-certifi)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2026.10.19"
+  }
+ }
+}

@@ -475,6 +475,8 @@ def test_e2e_folder_show_recursive_export_remove_undo(window, tree, tmp_path, mo
         if a.shortcut().toString() == "Ctrl+Z"
     )
     undo.trigger()  # Edit -> Undo Last Operation (Ctrl+Z)
+    # It finds and carries out the entry on a worker (0.14.161): wait.
+    assert wait_until(lambda: not getattr(window, "_undo_busy", False))
     assert infos == []
     for p, data in originals.items():
         assert p.read_bytes() == data, p

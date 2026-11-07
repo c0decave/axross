@@ -1,0 +1,106 @@
+{
+ "name": "pycares",
+ "versions": {
+  "5.2.1": {
+   "accepted_findings": [],
+   "archives": {
+    "pycares-5.2.1-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "pycares-5.2.1.dist-info/METADATA": "e436452ab9d8528029284bcb323416057c114e9b04506480121715062130b12b",
+      "pycares-5.2.1.dist-info/RECORD": "1ff81cd1231e26528e7c8feba9892904eb25f9873a03da1296460c0cbc9f904f",
+      "pycares-5.2.1.dist-info/WHEEL": "ac17086cae0d0c6caff029a60772f36985dad9c2d6bd4c5385144c74c23bc2f6",
+      "pycares-5.2.1.dist-info/licenses/LICENSE": "427bb3a5372024a26e2c290b24382512bcc7ca123431c4dd178dd613beea7eee",
+      "pycares-5.2.1.dist-info/top_level.txt": "9c87a8ecbd9751505064ed9813aa47eed94a6815937e69917176ea7bf356602c",
+      "pycares/__init__.py": "85be52580805d1dba3444942ccfb674003900f99b74f717e2f363982c1f7faab",
+      "pycares/__main__.py": "a26cfdd62053fbb9e59368e825cf918087ebf4d17768aafad8b4443477cf64cd",
+      "pycares/_cares.abi3.so": "f91d123fda0b457a66d780589ba8cf6d3f35d6dfe6ce6bf5a19e1b8c48939d59",
+      "pycares/_version.py": "a56ff384580ac314420aff71bcddd2443b09615a9a8a3c46ba63e22341f964e5",
+      "pycares/errno.py": "5e5c432c5bc25eb1819eab0d801c18cfdfeae6507dc2767e2537c2b416d6963d",
+      "pycares/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pycares/utils.py": "57607c6101de9fece937fa6f382ec3a2a606bdef94ceea8d6e5e0a02afdb2740"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "66872cbd0080a27cc9de03e06d0b32fe26630bb9b4d0ee677a5beaed8d8c210b",
+     "native": {
+      "pycares/_cares.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "8616a510b3f726588f11c02187fa5d7087b091b80402514df404776699318c24"
+    }
+   },
+   "name": "pycares",
+   "provenance": {
+    "pycares-5.2.1-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl": null
+   },
+   "pypi": {
+    "author_email": "Sa\u00fal Ibarra Corretg\u00e9 <s@saghul.net>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "http://github.com/saghul/pycares"
+    },
+    "summary": "Python interface for c-ares"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "c-ares, a DNS resolver: its socket imports and 127.0.0.1 are its job (aiodns uses it). Attestation as recorded."
+   },
+   "scans": {
+    "capa": {
+     "f91d123fda0b457a66d780589ba8cf6d3f35d6dfe6ce6bf5a19e1b8c48939d59": {
+      "capabilities": [
+       "connect socket",
+       "contain loop",
+       "create or open file",
+       "create thread",
+       "encode data using XOR",
+       "get hostname",
+       "get local IPv4 addresses",
+       "get networking interfaces",
+       "get socket information",
+       "get socket status",
+       "parse credit card information",
+       "query environment variable",
+       "read file on Linux",
+       "receive data",
+       "receive data on socket",
+       "send data on socket",
+       "set socket configuration",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "pycares/_cares.abi3.so",
+      "profile": {
+       "categories": {
+        "network": [
+         "bind",
+         "connect",
+         "recvfrom",
+         "send",
+         "sendto",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [
+        "127.0.0.1"
+       ],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0",
+        "librt.so.1"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "5.2.1"
+  }
+ }
+}

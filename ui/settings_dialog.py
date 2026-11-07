@@ -105,6 +105,7 @@ from PyQt6.QtWidgets import (
 from core.i18n import tr
 from ui import themes, window_prefs
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -227,7 +228,9 @@ class GeneralPage(_FormPage):
         form = QFormLayout()
         self.language_combo = QComboBox()
         self.language_combo.addItem(tr("Automatic (system locale)"), "")
-        for code, name in i18n.SUPPORTED.items():
+        # Only the languages whose catalogue covers the interface: one
+        # that translates a few labels gives menus in two languages.
+        for code, name in i18n.available_languages().items():
             self.language_combo.addItem(name, code)
         stored = i18n.stored_language() or ""
         self.language_combo.setCurrentIndex(max(0, self.language_combo.findData(stored)))
@@ -303,6 +306,12 @@ class AppearancePage(_FormPage):
         self.monochrome_check = QCheckBox(tr("Monochrome icons"))
         self.monochrome_check.setChecked(prefs.monochrome_icons)
         form.addRow("", self.monochrome_check)
+        self.title_bars_check = QCheckBox(tr("axross's own title bars (off: the window manager's)"))
+        self.title_bars_check.setToolTip(tr(
+            "On: each window's top row - its icon, name and _ [] x - is its title bar; the window "
+            "manager draws none. Off: the window manager's title bar and buttons."))
+        self.title_bars_check.setChecked(prefs.own_title_bars)
+        form.addRow("", self.title_bars_check)
         self.icon_colours_combo = QComboBox()
         for mode, label in ICON_COLOUR_LABELS.items():
             self.icon_colours_combo.addItem(tr(label), mode)
@@ -438,6 +447,7 @@ class AppearancePage(_FormPage):
             "theme": self.theme_combo.currentData(),
             "compact": self.compact_check.isChecked(),
             "monochrome": self.monochrome_check.isChecked(),
+            "title_bars": self.title_bars_check.isChecked(),
             "icon_colours": self.icon_colours(),
             "font_size": self.font_size(),
             "highlight": self.highlight_check.isChecked(),
@@ -459,6 +469,8 @@ class AppearancePage(_FormPage):
             win.set_icon_colours(*changed["icon_colours"])
         if "monochrome" in changed:
             win.set_monochrome_icons(changed["monochrome"])
+        if "title_bars" in changed:
+            win.set_own_title_bars(changed["title_bars"])
         if "font_size" in changed:
             win.set_font_size(changed["font_size"])
         if "highlight" in changed:
@@ -873,7 +885,7 @@ _BUILTIN: dict[str, tuple[str, Callable, tuple[str, ...], Callable | None]] = {
     "general": ("General", lambda p, w: GeneralPage(w, p),
                 ("language", "restore", "layout", "start", "activate", "hover", "click"), None),
     "appearance": ("Appearance", lambda p, w: AppearancePage(w, p),
-                   ("theme", "compact", "monochrome", "icons", "icon colours", "font", "zoom", "hidden", "colour",
+                   ("theme", "compact", "monochrome", "icons", "icon colours", "title bar", "frameless", "window manager", "font", "zoom", "hidden", "colour",
                     "color", "dark", "light"), None),
     "toolbar": ("Toolbar", lambda p, w: ToolbarPage(w, p),
                 ("toolbar", "icon bar", "buttons", "category", "categories", "group",
@@ -943,6 +955,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None, *, window) -> None:
         super().__init__(parent)
+        set_window_icon(self, "settings")
         self.setWindowTitle(tr("Settings"))
         self.resize(980, 660)
         self._window = window

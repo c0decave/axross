@@ -47,3 +47,41 @@ jobs:
         # The full suite needs the protocol lab (tests/docker); this job runs
         # what a plain install must pass on the oldest supported Python.
         pytest -q tests/test_cross_platform_smoke.py tests/test_windows_import_surface.py tests/test_terminal_winpty.py tests/test_readme_front_page.py tests/test_pypi_packaging.py
+
+  # The release artefacts and the generated files, on every Python axross
+  # supports: sdist + wheel build, their metadata (twine --strict), the
+  # wheel's content, the lint gate of CONTRIBUTING.md (`ruff check .`, the
+  # rule set in pyproject.toml) and the two generated documents.
+  # tests/test_ci_workflow.py holds these steps in place.
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.11", "3.12", "3.13", "3.14" ]
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install the dev tools
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r dev-requirements.txt
+    - name: Build sdist and wheel
+      run: python -m build --sdist --wheel --outdir dist .
+    - name: twine check
+      run: python -m twine check --strict dist/*
+    - name: The wheel carries every runtime file
+      run: |
+        AXROSS_TEST_WHEEL="$(ls dist/axross-*.whl)" \
+          python -m pytest -q -p no:cacheprovider \
+          tests/test_pypi_packaging.py::test_built_wheel_contains_runtime_resources
+    - name: Lint with ruff
+      run: python -m ruff check .
+    - name: The test coverage matrix is current
+      run: python scripts/coverage_matrix.py --check
+    - name: The LLM guide is current
+      run: python -m core.llm_guide --check

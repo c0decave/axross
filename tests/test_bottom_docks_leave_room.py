@@ -57,9 +57,10 @@ def own_home(tmp_path, monkeypatch):
 
 def _window(monkeypatch, width: int, height: int):
     from core import multimedia_probe
-    from tests.test_media_player_late_engine import OK
     from ui.main_window import MainWindow
 
+    OK = multimedia_probe.ProbeResult(ok=True)  # not the media player's tests:
+    # they need Qt Multimedia, a window does not
     monkeypatch.setattr(multimedia_probe, "probe", lambda *a, **k: OK)
     win = MainWindow()
     win._reconnect_timer.stop()

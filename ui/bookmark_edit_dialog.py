@@ -33,7 +33,7 @@ from core.bookmarks import (
 )
 from core.i18n import tr
 from ui.close_corner import add_close_corner
-from ui.icon_provider import BOOKMARK_COLORS, bookmark_icon_names, has_icon, icon
+from ui.icon_provider import BOOKMARK_COLORS, bookmark_icon_names, has_icon, icon, set_window_icon
 
 
 class _IconGridPicker(QWidget):
@@ -179,6 +179,7 @@ class BookmarkEditDialog(QDialog):
         terminal_profiles: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "bookmark")
         self._bookmark = bookmark or Bookmark(name="", path="")
         self._is_new = bookmark is None or new
         self._groups = groups
@@ -424,6 +425,7 @@ class GroupEditDialog(QDialog):
 
     def __init__(self, group: BookmarkGroup | None = None, *, parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "folder")
         self._group = group or BookmarkGroup(name="")
         self.setWindowTitle("New Group" if group is None else "Edit Group")
         self.resize(540, 420)

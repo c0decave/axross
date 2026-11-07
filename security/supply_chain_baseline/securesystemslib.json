@@ -1,0 +1,122 @@
+{
+ "name": "securesystemslib",
+ "versions": {
+  "1.6.0": {
+   "accepted_findings": [
+    "gpg-keys|securesystemslib/_gpg/functions.py|345362071bb23730",
+    "yara|capability_filesystem_delete|securesystemslib/storage.py|8c35f334a1cc8027",
+    "yara|capability_filesystem_read|securesystemslib/hash.py|b28771967a480995",
+    "yara|capability_filesystem_read|securesystemslib/signer/_crypto_signer.py|7300238b50f2922d",
+    "yara|capability_filesystem_write_executable|securesystemslib/storage.py|8c35f334a1cc8027",
+    "yara|capability_process_spawn|securesystemslib/_gpg/constants.py|4fa85f155329bef8",
+    "yara|capability_process_spawn|securesystemslib/_gpg/functions.py|0ec4201d43765619"
+   ],
+   "archives": {
+    "securesystemslib-1.6.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "securesystemslib-1.6.0.dist-info/METADATA": "01f1ade44083135d777e3aed7f906e002573ed462eb8b84cc59b667695964de9",
+      "securesystemslib-1.6.0.dist-info/RECORD": "87728fa429881cd3e8dfc84ff4eae668453da0d6ed47a43a7b4b1df24f7e1dcd",
+      "securesystemslib-1.6.0.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
+      "securesystemslib-1.6.0.dist-info/licenses/LICENSE": "6357addf59ba70a824bc678c35e0936916e1cc38182f503372147191ed227bd3",
+      "securesystemslib/__init__.py": "9648903fb3c234f71b42e1a442a7308a9032947e34b4f89798247acbcbd158ff",
+      "securesystemslib/_gpg/__init__.py": "10e1b0e9f6627db01b72200fe19cc80d275111ebd3d3296b6063421309a8463c",
+      "securesystemslib/_gpg/common.py": "8706cb6f1130aa62740075d7ba535202a247b5078aee8d8f0798b3963b55d760",
+      "securesystemslib/_gpg/constants.py": "4fa85f155329bef827b8ee771b2626606f6123074a9ddf5395f5954e8566e185",
+      "securesystemslib/_gpg/dsa.py": "56ca59fd90d1cf679f7b2d78b6ce5aa99612939bb15d378279c5842e3aaddb6f",
+      "securesystemslib/_gpg/eddsa.py": "1033befa665796c724e2c749ccc47ea94f890631f6a3eb2393931daa8ee35bb9",
+      "securesystemslib/_gpg/exceptions.py": "985caaf83f0670214851d13a73066f6fec243d750368a582b76aff1679b86815",
+      "securesystemslib/_gpg/functions.py": "0ec4201d43765619f96075e911e55d3c72fab09fb2b9c555967609f94c641497",
+      "securesystemslib/_gpg/handlers.py": "96c96c91ccc087094c3e2b85c9fdabd278f715256986c4a376afd6fa96246d20",
+      "securesystemslib/_gpg/rsa.py": "db1c3a66804f7966d1eb8edb26ffa92c777405662d564ee585d7264855c1e22c",
+      "securesystemslib/_gpg/util.py": "7e5e5f86833475172cc9cc75530571c215461cb300891382586b20c0ddaf0bbf",
+      "securesystemslib/_internal/utils.py": "f48b642f6a0f21aa86c10c59b877f419ab313a0122812eebc1b023d5165aa389",
+      "securesystemslib/_vendor/README.md": "6bb1c96d0d2a741d0aea054cf1cfe26d3bab4f347dd966f003496c8e10dc267c",
+      "securesystemslib/_vendor/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "securesystemslib/_vendor/ed25519/.gitignore": "2fd00b8b5c2d591d74f069c888726fbe9b226b7b5e05b74c11d3b4a2bf8e6124",
+      "securesystemslib/_vendor/ed25519/LICENSE": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "securesystemslib/_vendor/ed25519/README.rst": "7c9478c683a7a771eeb9868c5bcd522c388534306cffc24056f1c63fc6e245a8",
+      "securesystemslib/_vendor/ed25519/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "securesystemslib/_vendor/ed25519/ed25519.py": "8021f85b12579c88a677f8f379fd922805f55e55f4ef8493d0e79c9c7060ce93",
+      "securesystemslib/_vendor/ed25519/science.py": "8f555ce77b1c6d288a10507d0d107e1b8b6f63e67c4a2d48061a58d4cdbbcad9",
+      "securesystemslib/_vendor/ed25519/test_data/ed25519": "8db1fea94f4e78958aac6e839b483cdd79096d1fe478285f15164f9e58361baf",
+      "securesystemslib/_vendor/ed25519/test_ed25519.py": "93607fe69e1fec24b0ec550c01d8fb8387e188839252c7c26e3c4b885759ab44",
+      "securesystemslib/_vendor/test-ed25519-upstream.sh": "0c3db130fc20398ce717d3773f4d2b5d3919ef69332f69f58e0cad55d45eda11",
+      "securesystemslib/dsse.py": "71f7677e1eda67901c07223785f8fdf7fd01f18ff138945e818a774533945dc4",
+      "securesystemslib/exceptions.py": "5ca5814d5c88aa3f997935e3ad7e6c9d04f57c696ebc53693f5598b44eb1fac6",
+      "securesystemslib/formats.py": "b80f2cf7a48f8e670efe930f2f0607aca9bf5528cdd83fbe6fe43eaf8a58ffdb",
+      "securesystemslib/hash.py": "b28771967a48099582313959115972e617ab20d0816bb96a45b5e8e1c4ef78a8",
+      "securesystemslib/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "securesystemslib/signer/__init__.py": "7026f858c3a4be8fd482c4ae8fe5bb68904dffe18a668285d55643070accc56f",
+      "securesystemslib/signer/_aws_signer.py": "9b38709462df8e835f7f32c5a3ecc2e704b3363ebfdede679002daae9f4b4ef2",
+      "securesystemslib/signer/_azure_signer.py": "5a97e27bc1765967bb9660a9d400f62b13bf86e9f4766d3bbf20623ee0043b73",
+      "securesystemslib/signer/_constants.py": "8e9ec26ba1af9eeebea3ec8b36f21b137fdb46d7638ed3b5a40270f68883d227",
+      "securesystemslib/signer/_crypto_signer.py": "7300238b50f2922d898a5e8e2a36b987ad305dd176661a2fd5649feefd478d35",
+      "securesystemslib/signer/_crypto_utils.py": "34df9106ec0d05b8127f9f99e2ea4b8c304dd504016c84eb09097b09c18afca7",
+      "securesystemslib/signer/_gcp_signer.py": "1c5bc6170495e7a93aaa675c3ea553fffb16ccadada2bb686c64ae95a721b023",
+      "securesystemslib/signer/_gpg_signer.py": "353cedf2fe3260c77b3d7a8893767fbb975655fe9c5c3016a2b6e7df5798e5c8",
+      "securesystemslib/signer/_hsm_signer.py": "0270732cdc3a65f714b99ea268e7ea7677556e338c2afec0e496ab18e65fae1e",
+      "securesystemslib/signer/_key.py": "dedeca5e78f369bf91f3ec9a115501003407aa5efa842e6dd48fb799030a6c59",
+      "securesystemslib/signer/_signature.py": "c13886ed2d91b162071bcc1230d65e3ff20f94dc5d593c74d6eae06c77e1f0aa",
+      "securesystemslib/signer/_signer.py": "dbdf943134a731b07653c7d0f6c92a3d4178442a34678b6041b8fa8ad6b2dbe4",
+      "securesystemslib/signer/_sigstore_signer.py": "7d86138ae89f3bd9d399c5e5301ccdbbf247125b7e57416b61458ee277ecdd8a",
+      "securesystemslib/signer/_tkey_signer.py": "80c1e8b71cba25f92a5f9e30caea771eae4bde5f67d31ceb2bcc026e8e7f90e0",
+      "securesystemslib/signer/_utils.py": "0320cc7b5058f51434aeee98532b891c440ea1adf05060487479c48740e8ec5b",
+      "securesystemslib/signer/_vault_signer.py": "3454159440da2d7beddb87efe7d04988ebf5e3228694ffe50003cfa61f86b4f9",
+      "securesystemslib/storage.py": "8c35f334a1cc8027c38f2efd3367bef30f0c056392077fa7c5550ae19e02af57"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c2122dbfd2fde1653469135e3f12facf3024fd7656d8c0ba7f6f9d00bc69f41e",
+     "native": {},
+     "pth": {},
+     "sha256": "1c1aa00f058f4851f038d409c8ca4a727db854a91f07ec3a0fa047bb93e43e0e"
+    }
+   },
+   "name": "securesystemslib",
+   "provenance": {
+    "securesystemslib-1.6.0-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "secure-systems-lab/securesystemslib",
+     "workflow": "cd.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"https://www.updateframework.com\" <theupdateframework@googlegroups.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/secure-systems-lab/securesystemslib",
+     "Issues": "https://github.com/secure-systems-lab/securesystemslib/issues",
+     "Source": "https://github.com/secure-systems-lab/securesystemslib"
+    },
+    "summary": "A library that provides cryptographic and general-purpose routines for Secure Systems Lab projects at NYU"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One 'gpg-keys' hit: a gnupg-devel mailing-list link in a comment of its GPG signature parser. Scanner venv only (tuf). Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|securesystemslib/storage.py|8c35f334a1cc8027",
+     "yara|capability_filesystem_read|securesystemslib/hash.py|b28771967a480995",
+     "yara|capability_filesystem_read|securesystemslib/signer/_crypto_signer.py|7300238b50f2922d",
+     "yara|capability_filesystem_write_executable|securesystemslib/storage.py|8c35f334a1cc8027",
+     "yara|capability_process_spawn|securesystemslib/_gpg/constants.py|4fa85f155329bef8",
+     "yara|capability_process_spawn|securesystemslib/_gpg/functions.py|0ec4201d43765619"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete securesystemslib/storage.py",
+     "capability_filesystem_read:capability_filesystem_read securesystemslib/hash.py",
+     "capability_filesystem_read:capability_filesystem_read securesystemslib/signer/_crypto_signer.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable securesystemslib/storage.py",
+     "capability_process_spawn:capability_process_spawn securesystemslib/_gpg/constants.py",
+     "capability_process_spawn:capability_process_spawn securesystemslib/_gpg/functions.py"
+    ]
+   },
+   "version": "1.6.0"
+  }
+ }
+}

@@ -4532,53 +4532,26 @@ def test_ftp_disk_full_raises():
         s.disconnect()
 
 
-@_label("Quota 15.2 LocalFS disk-full: tempfile-backed tiny volume")
+@_label("Quota 15.2 LocalFS disk-full: /dev/full")
 def test_local_fs_disk_full_raises():
-    """Equivalent on the local filesystem backend: point LocalFS at a
-    tiny tmpfs-backed dir and try to write > capacity. Exercises the
-    ENOSPC path in LocalFS.open_write."""
-    import os as _os
-    import tempfile
+    """A full disk surfaces as OSError(ENOSPC) from LocalFS.open_write.
+
+    /dev/full answers every write with ENOSPC. The test used to fill a
+    tmpfs at /dev/shm until it was full: tmpfs is RAM, so each run took
+    1 GiB of memory (up to 8 GiB where /dev/shm is larger), and a worker
+    killed meanwhile left the file behind for good - on a sandbox with a
+    memory limit the OOM killer then took the largest processes, the
+    other xdist workers ("Not properly terminated")."""
+    import errno
 
     from core.local_fs import LocalFS
 
-    # Use Linux-specific fallocate on a backing file to create a bounded
-    # "disk" — works everywhere tmpfs-with-size doesn't fit the harness.
-    # Simpler alternative: write until the docker tmpfs at /tmp hits
-    # memory pressure. Not portable — instead we synthesize a tiny fs
-    # via a sparse file + loopback? Too privileged.
-    #
-    # Pragmatic alternative: if test runs on Linux with /dev/shm bounded,
-    # use that. Otherwise skip.
-    if not _os.path.exists("/dev/shm"):
-        pytest.skip("test needs /dev/shm (Linux tmpfs)")
-
-    # /dev/shm is usually tmpfs. We write until we hit its cap OR a
-    # sensible limit (if /dev/shm is huge, we'd write forever).
-    # Instead: create a tempdir there, write until we see OSError.
-    with tempfile.TemporaryDirectory(dir="/dev/shm", prefix="axxtiny-") as tmp:
-        fs = LocalFS()
-        target = _os.path.join(tmp, "fill.bin")
-        chunk = b"x" * (1024 * 1024)
-        raised = False
-        try:
-            with fs.open_write(target) as f:
-                # Write at most 8 GB to avoid infinite loop on huge tmpfs
-                for i in range(8192):
-                    try:
-                        f.write(chunk)
-                    except OSError:
-                        raised = True
-                        break
-        except OSError:
-            raised = True
-        # We either hit ENOSPC (likely) or succeeded on a very large
-        # tmpfs — latter is a non-bug; only fail if tmpfs claimed
-        # infinite capacity but our write somehow corrupted silently.
-        if not raised:
-            # Rare: /dev/shm was huge. Accept as inconclusive.
-            pytest.skip("tmpfs at /dev/shm larger than 8 GB probe — cannot exercise ENOSPC here")
-        # If we got here, ENOSPC surfaced correctly.
+    if not os.path.exists("/dev/full"):
+        pytest.skip("test needs /dev/full (Linux)")
+    with pytest.raises(OSError) as caught:
+        with LocalFS().open_write("/dev/full") as f:
+            f.write(b"x" * (1024 * 1024))
+    assert caught.value.errno == errno.ENOSPC
 
 
 # ════════════════════════════════════════════════════════════
@@ -8723,6 +8696,8 @@ def _tier2_internet_reachable() -> bool:
     that's not reachable (the lab box might be air-gapped)."""
     import socket as _s
 
+    if os.environ.get("AXROSS_TEST_ACCEPT_ALL_NET") == "1":
+        return False  # every connect succeeds there (tests/conftest.py): no signal
     try:
         with _s.create_connection(("8.8.8.8", 443), timeout=1.5):
             return True
@@ -8895,6 +8870,9 @@ def test_tier2_http_probe_gzip_bomb_capped(tmp_path):
         srv.server_close()
 
 
+@pytest.mark.skipif(os.environ.get("AXROSS_TEST_ACCEPT_ALL_NET") == "1",
+                    reason="this network accepts every connection (tests/conftest.py), "
+                           "so nothing is unreachable here")
 def test_tier2_ping_unreachable_host():
     from core.net_helpers import ping
 

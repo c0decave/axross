@@ -1,0 +1,54 @@
+{
+ "name": "ida-netnode",
+ "versions": {
+  "3.0": {
+   "accepted_findings": [],
+   "archives": {
+    "ida_netnode-3.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "ida_netnode-3.0.dist-info/LICENSE": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "ida_netnode-3.0.dist-info/METADATA": "ced7797ab0ab92085095070eb2d6af97db213e48df054f33313b4b07d4598c1a",
+      "ida_netnode-3.0.dist-info/RECORD": "edb45909a982894543c8e5e0950e753dd4df4e4fd9a566bb4deb10c82ed029ae",
+      "ida_netnode-3.0.dist-info/WHEEL": "8389ccb3b77e5e5f7ec42f57a2f52bb031c65edf854f4135ed8aa8f760c47ef6",
+      "ida_netnode-3.0.dist-info/top_level.txt": "08fdc79c2ffcc9109263afc83d1cd4a41a5a1ceaa7c3adcf7283304c96e217d4",
+      "netnode/__init__.py": "aaa25c408cf6a4b8528f0232f51ee1280baae70439eae3007c617ef24a5a6dd7",
+      "netnode/netnode.py": "674ffd2b4b11f5790725dc666c294f0db18b686cf46923c966a05f56872ac15a",
+      "netnode/test_netnode.py": "48a4b1b6aceccdd5aa93f209cb80cf259c2a81bb830bb7126866cc9444b65fee"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "4bc502c4a45b0ca9b4ee442cac4cf06baac5bf5e91542939126b4ab1da81c974",
+     "native": {},
+     "pth": {},
+     "sha256": "b9d117703e076c9d219c9337d0b43d935b5102b5cb677835f7c9776a9f0340a5"
+    }
+   },
+   "name": "ida-netnode",
+   "provenance": {
+    "ida_netnode-3.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Willi Ballenthin",
+    "author_email": "william.ballenthin@fireeye.com",
+    "home_page": "https://github.com/williballenthin/ida-netnode",
+    "license": "Apache License (2.0)",
+    "project_urls": {
+     "Homepage": "https://github.com/williballenthin/ida-netnode"
+    },
+    "summary": "Humane API for storing and accessing persistent data in IDA Pro databases"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "3.0"
+  }
+ }
+}

@@ -1,0 +1,125 @@
+{
+ "name": "filelock",
+ "versions": {
+  "4.2.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|filelock/_read_write.py|e5ed20b421df2c0a",
+    "yara|capability_filesystem_delete|filelock/_soft.py|7d72e5090287cc31",
+    "yara|capability_filesystem_delete|filelock/_soft_rw/_protocol.py|3be10dbff5ecb51a",
+    "yara|capability_filesystem_delete|filelock/_soft_rw/_storage.py|49b86113c1d0a7b4",
+    "yara|capability_filesystem_delete|filelock/_strict.py|89a1271b84264844",
+    "yara|capability_filesystem_delete|filelock/_util.py|5d6dcad8935f25aa",
+    "yara|capability_filesystem_read|filelock/_identity.py|b362a4e12408d02e",
+    "yara|capability_filesystem_read|filelock/_read_write.py|e5ed20b421df2c0a",
+    "yara|capability_filesystem_read|filelock/_soft.py|7d72e5090287cc31",
+    "yara|capability_filesystem_read|filelock/_soft_rw/_protocol.py|3be10dbff5ecb51a",
+    "yara|capability_filesystem_read|filelock/_soft_rw/_storage.py|49b86113c1d0a7b4",
+    "yara|capability_filesystem_read|filelock/_strict.py|89a1271b84264844",
+    "yara|capability_filesystem_write_executable|filelock/_api.py|394ba074edbb81c7",
+    "yara|capability_filesystem_write_executable|filelock/_strict.py|89a1271b84264844"
+   ],
+   "archives": {
+    "filelock-4.2.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "filelock-4.2.4.dist-info/METADATA": "d99c0f72a7ab84c924b734018a28a5001505fe0f96280c4462b864313edddb50",
+      "filelock-4.2.4.dist-info/RECORD": "36b46c396364fce7b3d34fcd3131cc8a84e1a5ced0724a7caa9f288aa8c1f02b",
+      "filelock-4.2.4.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
+      "filelock-4.2.4.dist-info/licenses/LICENSE": "608c89d5060ae9921adccf3236695bc654a9946e12323ef6c021dfa04e294d48",
+      "filelock/__init__.py": "2da5e009b744ae9fae81baf7a396f3a5824c0708b5860d3f84ee3fbebc0fd659",
+      "filelock/_api.py": "394ba074edbb81c73f81d7d5389628d02e81bfa96f5cbf05bfce2f4fb95edfbf",
+      "filelock/_async.py": "8d2a9bf985337bc72329a36b949daa94c75f37db350d96e044c9e8ce9e240d9b",
+      "filelock/_async_read_write.py": "4ece8dfe9e7e5102c3a181c9284ebb35f155e99a487295f472ebb74b9e5d5f34",
+      "filelock/_descriptor.py": "67cd71f7c47b45b37968781a473bb8f22edcd0ab6c85ecdee98839baf5ab5346",
+      "filelock/_error.py": "b1935f155df069c9eb182ae73a2a6e70f6e71cdefc34fb752039e58359ce3759",
+      "filelock/_identity.py": "b362a4e12408d02e5e9fd947b0f916395bc6ceec98ff081997c25148e9fadfff",
+      "filelock/_lease.py": "78ad315e9b9c71534cf28d415d2401c811384da21561049b4af7db6d2e9d45e6",
+      "filelock/_marker.py": "7558da943a5ca70a88445ed552f14adad915678382b618e69888a72b2f638451",
+      "filelock/_read_write.py": "e5ed20b421df2c0ad234a607d2319d057b83eb49bbb2d415f0a86e62052fa905",
+      "filelock/_soft.py": "7d72e5090287cc31da5c2bb053c6d7670eaa8261752c429159589fc674614729",
+      "filelock/_soft_protocol.py": "0fae299d732533bcac2a9771d1f35784926088c712f53d90c2cbb61a93ecda2d",
+      "filelock/_soft_rw/__init__.py": "240305e0d034d74fc9abe9c48071d98161d9ece7fdc08dcf287836e260dd5f9d",
+      "filelock/_soft_rw/_async.py": "bf7ab669d7ea6fdbd0470aa195cb5874a658965b49e17bad65c27b217b83cb83",
+      "filelock/_soft_rw/_protocol.py": "3be10dbff5ecb51a482038781a71683cd7e4220fb1b0373cb55a6c7c186b9250",
+      "filelock/_soft_rw/_storage.py": "49b86113c1d0a7b45c3e8ec13e750d4848bc762d9be8cec9c171c1878124b927",
+      "filelock/_soft_rw/_sync.py": "a9582ea751948a0f1f0d258b925d7acfcffd517a2301c3c9fe765697907321a2",
+      "filelock/_strict.py": "89a1271b84264844a3b9b648873d1aab816ae5c5a6072dd24de8a6fbc17a019b",
+      "filelock/_unix.py": "04ba2d32134b14a4eb5bacd0feaa08f6a646a3762a61f8463bfa8fe56fe9e8bc",
+      "filelock/_util.py": "5d6dcad8935f25aa5e912ed88146011a238561c49ff00d5c06a9ca7d4ea3c736",
+      "filelock/_windows.py": "70316f24df1d26d7436231d83edfe4a65bc90a4943ff223bfd489a26457e57cd",
+      "filelock/asyncio.py": "c77fa5b0504acc49cf411ff66d00e8483f44add995ff7970e6b3f246aec065ce",
+      "filelock/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "filelock/version.py": "bf7e54c2bc3e200a54d8003ed81efbc82bcebcd435561ee05efc5f689f55775e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "019b8389a5ade92325b47ec2b0ce5c514b7936e8fa15330a37a093cd5e29c359",
+     "native": {},
+     "pth": {},
+     "sha256": "301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e"
+    }
+   },
+   "name": "filelock",
+   "provenance": {
+    "filelock-4.2.4-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "tox-dev/filelock",
+     "workflow": "release.yaml"
+    }
+   },
+   "pypi": {
+    "license_expression": "MIT",
+    "maintainer_email": "Bern\u00e1t G\u00e1bor <gaborjbernat@gmail.com>",
+    "project_urls": {
+     "Documentation": "https://py-filelock.readthedocs.io",
+     "Homepage": "https://github.com/tox-dev/py-filelock",
+     "Source": "https://github.com/tox-dev/py-filelock",
+     "Tracker": "https://github.com/tox-dev/py-filelock/issues"
+    },
+    "summary": "A platform independent file lock."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable; attestation verifies (tox-dev/filelock)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|filelock/_read_write.py|e5ed20b421df2c0a",
+     "yara|capability_filesystem_delete|filelock/_soft.py|7d72e5090287cc31",
+     "yara|capability_filesystem_delete|filelock/_soft_rw/_protocol.py|3be10dbff5ecb51a",
+     "yara|capability_filesystem_delete|filelock/_soft_rw/_storage.py|49b86113c1d0a7b4",
+     "yara|capability_filesystem_delete|filelock/_strict.py|89a1271b84264844",
+     "yara|capability_filesystem_delete|filelock/_util.py|5d6dcad8935f25aa",
+     "yara|capability_filesystem_read|filelock/_identity.py|b362a4e12408d02e",
+     "yara|capability_filesystem_read|filelock/_read_write.py|e5ed20b421df2c0a",
+     "yara|capability_filesystem_read|filelock/_soft.py|7d72e5090287cc31",
+     "yara|capability_filesystem_read|filelock/_soft_rw/_protocol.py|3be10dbff5ecb51a",
+     "yara|capability_filesystem_read|filelock/_soft_rw/_storage.py|49b86113c1d0a7b4",
+     "yara|capability_filesystem_read|filelock/_strict.py|89a1271b84264844",
+     "yara|capability_filesystem_write_executable|filelock/_api.py|394ba074edbb81c7",
+     "yara|capability_filesystem_write_executable|filelock/_strict.py|89a1271b84264844"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete filelock/_read_write.py",
+     "capability_filesystem_delete:capability_filesystem_delete filelock/_soft.py",
+     "capability_filesystem_delete:capability_filesystem_delete filelock/_soft_rw/_protocol.py",
+     "capability_filesystem_delete:capability_filesystem_delete filelock/_soft_rw/_storage.py",
+     "capability_filesystem_delete:capability_filesystem_delete filelock/_strict.py",
+     "capability_filesystem_delete:capability_filesystem_delete filelock/_util.py",
+     "capability_filesystem_read:capability_filesystem_read filelock/_identity.py",
+     "capability_filesystem_read:capability_filesystem_read filelock/_read_write.py",
+     "capability_filesystem_read:capability_filesystem_read filelock/_soft.py",
+     "capability_filesystem_read:capability_filesystem_read filelock/_soft_rw/_protocol.py",
+     "capability_filesystem_read:capability_filesystem_read filelock/_soft_rw/_storage.py",
+     "capability_filesystem_read:capability_filesystem_read filelock/_strict.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable filelock/_api.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable filelock/_strict.py"
+    ]
+   },
+   "version": "4.2.4"
+  }
+ }
+}

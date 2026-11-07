@@ -206,7 +206,10 @@ def test_happy_one_tick_in_the_tab_and_the_model_gets_its_tools(env, keyring_sto
     assert "Cursor" in item.toolTip() and TOKEN not in item.toolTip()
     _click_check(tab.groups, item)
     _wait(lambda: "mcp:fake" in _items(tab))
-    assert asked and "keyring" in asked[0]
+    # first the program and where it was found (a project's .mcp.json could
+    # name anything), then its secrets
+    assert "runs this program" in asked[0] and "Found in:" in asked[0]
+    assert "keyring" in asked[1]
     assert "detected:fake" not in _items(tab)
     assert _group_item(tab, "mcp:fake").checkState() == Qt.CheckState.Checked
     assert "mcp:fake" in tab.session.groups

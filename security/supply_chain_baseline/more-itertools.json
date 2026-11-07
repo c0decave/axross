@@ -1,0 +1,56 @@
+{
+ "name": "more-itertools",
+ "versions": {
+  "11.2.1": {
+   "accepted_findings": [],
+   "archives": {
+    "more_itertools-11.2.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "more_itertools-11.2.1.dist-info/METADATA": "8c558bfab61818450e78db4018281f8f7b22115e681cd53ae1d9d4931be54f15",
+      "more_itertools-11.2.1.dist-info/RECORD": "e67cf647cc68fbfa407a6ebe070a59e2ca018b6782ea0ca74e85de4d6cd3d6c2",
+      "more_itertools-11.2.1.dist-info/WHEEL": "96a37c8d7b7f425a05386731f644adbd66ebca17c45e8236176cfe614466df9d",
+      "more_itertools-11.2.1.dist-info/licenses/LICENSE": "09f1c8c9e941af3e584d59641ea9b87d83c0cb0fd007eb5ef391a7e2643c1a46",
+      "more_itertools/__init__.py": "e7988a22d707340f59eb4cc01a4a534994fdcfb8420c01f768b42fd5e9caeccc",
+      "more_itertools/__init__.pyi": "e41dde4f338dd4106e38ba1bd6f09f97211bda549deaeb17410f82bfe85791e0",
+      "more_itertools/more.py": "1bdc5f323ea18906436a42268b942d5b4d15ac8b3ff17c1211a59fb192fa068e",
+      "more_itertools/more.pyi": "e4952b7a6230e27bee49265fd9af08ae8353946e2d5a78ce60c55d2f5efe5514",
+      "more_itertools/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "more_itertools/recipes.py": "468ab191bbb5fd62e8603d741e6983acdfa9d697d0ff9252b0c56ffdd24ca9bc",
+      "more_itertools/recipes.pyi": "2dd48ac5ef0b502f989bd2e13923c402994244ee50a4187e2f0d59c348bf2583"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "34226d9493987d5bb1dcae16980ccb3f56b0dbfc0cbf2501150319a9d57c5e72",
+     "native": {},
+     "pth": {},
+     "sha256": "35a7377edd1dd6608dcb2cdf534ded55ea32d49448875ad042cd3f879fb1ded0"
+    }
+   },
+   "name": "more-itertools",
+   "provenance": {
+    "more_itertools-11.2.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Erik Rose <erikrose@grinchcentral.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Documentation": "https://more-itertools.readthedocs.io/en/stable/",
+     "Homepage": "https://github.com/more-itertools/more-itertools"
+    },
+    "summary": "More routines for operating on iterables, beyond itertools"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "11.2.1"
+  }
+ }
+}

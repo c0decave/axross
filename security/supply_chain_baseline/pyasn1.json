@@ -1,0 +1,98 @@
+{
+ "name": "pyasn1",
+ "versions": {
+  "0.6.5": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|pyasn1/codec/ber/decoder.py|cce9bdc26f2ef086",
+    "yara|capability_filesystem_read|pyasn1/codec/streaming.py|569f950e1d12940e"
+   ],
+   "archives": {
+    "pyasn1-0.6.5-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pyasn1-0.6.5.dist-info/METADATA": "946d39d6bba28dee7adb2c06f3087268281e9e801fbd0ee7b4405b440b3de304",
+      "pyasn1-0.6.5.dist-info/RECORD": "27b032a8ba1518700737c4e0d49f1de0ceefa940a84b3cfe0a15cffe2ec06ae2",
+      "pyasn1-0.6.5.dist-info/WHEEL": "98e75747d0b7c0c568bfb71263c3d8f970b3a374a6996087bc642be5cb09a1aa",
+      "pyasn1-0.6.5.dist-info/licenses/LICENSE.rst": "2aad5fc00f705c4a1addb83eed10a6a75d286a3779f0cf8519d87e62bc4735fd",
+      "pyasn1-0.6.5.dist-info/top_level.txt": "76734442dde720320ee6648208e079a1b407ae30ce52c47271d06e8dcdafad61",
+      "pyasn1-0.6.5.dist-info/zip-safe": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "pyasn1/__init__.py": "9b427b053fb83d9fb50a6e50c98e7bdb50577816185e0938bafa18c296c6f84d",
+      "pyasn1/codec/__init__.py": "1040e52584b5ef6107dfd19489d37ff056e435c598f4e555f1edf4015e7ca67d",
+      "pyasn1/codec/ber/__init__.py": "1040e52584b5ef6107dfd19489d37ff056e435c598f4e555f1edf4015e7ca67d",
+      "pyasn1/codec/ber/decoder.py": "cce9bdc26f2ef0865e9fd270f2aab6f7f3dd5dba09237e5ac08d089132f39ecc",
+      "pyasn1/codec/ber/encoder.py": "964b55bfd1489151e1f4f45dcc8f5b44c5f08900919e5690fb9db2fd953815ab",
+      "pyasn1/codec/ber/eoo.py": "76ca4b29cdb1aff5b94db72bd9671f2ddfdb24b84e8e8b6ad58c4a9f70c240d2",
+      "pyasn1/codec/cer/__init__.py": "1040e52584b5ef6107dfd19489d37ff056e435c598f4e555f1edf4015e7ca67d",
+      "pyasn1/codec/cer/decoder.py": "fa65fd94f7afb7912b3c7485fce59d24393d81cb4a53214f9ed68505e7aced98",
+      "pyasn1/codec/cer/encoder.py": "47feb32d6543a9041d491e83ae55d07296fb5556b4b7c8365ea603c93f51bd71",
+      "pyasn1/codec/der/__init__.py": "1040e52584b5ef6107dfd19489d37ff056e435c598f4e555f1edf4015e7ca67d",
+      "pyasn1/codec/der/decoder.py": "86a03127ab48e1ff3407aeceab998ca14a6dc831ff8abc95419f0c10657f15f5",
+      "pyasn1/codec/der/encoder.py": "32cda1aa485ba4f3e3f822ba5dd0f4669657d59252b00fb418f2971e8808df38",
+      "pyasn1/codec/native/__init__.py": "1040e52584b5ef6107dfd19489d37ff056e435c598f4e555f1edf4015e7ca67d",
+      "pyasn1/codec/native/decoder.py": "6505c75eedf46ac6ae7850bded2dfd86fc109c99e98ab4effbf8a77df0f1d23e",
+      "pyasn1/codec/native/encoder.py": "603d94ce455550d0b08b2e1e334e9d7a17b7f37c66f6132a4c5a58ffcdefa1c8",
+      "pyasn1/codec/streaming.py": "569f950e1d12940e61ed3d77deb9def54365265aafda88695335654821a3ab6e",
+      "pyasn1/compat/__init__.py": "fbd14e255d524c505ab5fda955188e627d781a608a0bc458dd3602c4ea9f4576",
+      "pyasn1/compat/integer.py": "94c5ea6c9053ca3837e11871e89945717ca84310da7971b185a20869bf3a857f",
+      "pyasn1/debug.py": "bbe5a62057dec2aa74d38d5ecefb538ef859714f4ad78388ea9d3402b5d9eb78",
+      "pyasn1/error.py": "7b7e76a2a5b7dec79e87631b205dbbb054a0a627a08ecb5a6c2305c76a624743",
+      "pyasn1/type/__init__.py": "1040e52584b5ef6107dfd19489d37ff056e435c598f4e555f1edf4015e7ca67d",
+      "pyasn1/type/base.py": "b63051bd72104a21c44b9f9ee6b05bb279f90ad22f0600ae7e5ba30db76bb643",
+      "pyasn1/type/char.py": "46f8f9ca940b3cd5dc74791f515f27ba5d575fae91fc0927d20d875322e3d6a6",
+      "pyasn1/type/constraint.py": "8e6aede5eb0b6b4f795dd7d2d1b7aa6a846e5239ee1e24ca7644dd09c2b1d452",
+      "pyasn1/type/error.py": "da4c186246ddda35c8544139e9384b46604438665f69fc288043a8fbd455fc66",
+      "pyasn1/type/namedtype.py": "8e74c29485284598b4db919363d1a5325308fa3e5da8472ffe297367b8b48544",
+      "pyasn1/type/namedval.py": "f38bbac0a39fb5eed4e3b696ac5a88651337b4edabca2be9b01a956e53decee7",
+      "pyasn1/type/opentype.py": "8e3a926d3800682c6548749feba61c2dbaf1b5f87ff7c9c0c76bfcc335b7e4c5",
+      "pyasn1/type/tag.py": "4bc9adfaf8b2ba6ce082707d3b5f3cd1187c5d61945c1293ff28006b35130641",
+      "pyasn1/type/tagmap.py": "6a527d65f0c64c0b0f7b28074fac8e3536a05240a39608a3f36617a4f690ffef",
+      "pyasn1/type/univ.py": "9b025b1fbe2f713f274887da492ff8684244cddd8ca95ea4a87628152a7298f3",
+      "pyasn1/type/useful.py": "c1aaab6322af1f7d6b75162f3e748bc40377474de716ac5c0f964e99b4578db2"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "86b99da4dc421ff3e28586aab8082e661f56410393eb4176446066658a056c75",
+     "native": {},
+     "pth": {},
+     "sha256": "4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587"
+    }
+   },
+   "name": "pyasn1",
+   "provenance": {
+    "pyasn1-0.6.5-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Ilya Etingof <etingof@gmail.com>",
+    "license": "BSD-2-Clause",
+    "maintainer": "pyasn1 maintenance organization",
+    "maintainer_email": "Christian Heimes <christian@python.org>",
+    "project_urls": {
+     "Changelog": "https://pyasn1.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://pyasn1.readthedocs.io",
+     "Homepage": "https://github.com/pyasn1/pyasn1",
+     "Issues": "https://github.com/pyasn1/pyasn1/issues",
+     "Source": "https://github.com/pyasn1/pyasn1"
+    },
+    "summary": "Pure-Python implementation of ASN.1 types and DER/BER/CER codecs (X.208)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "A reviewed young release: 0.6.5 fixes GHSA-2qm8-x737-gmw5 and three more (build/young-release-exceptions.txt). Nothing flagged in the code. Content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|pyasn1/codec/ber/decoder.py|cce9bdc26f2ef086",
+     "yara|capability_filesystem_read|pyasn1/codec/streaming.py|569f950e1d12940e"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read pyasn1/codec/ber/decoder.py",
+     "capability_filesystem_read:capability_filesystem_read pyasn1/codec/streaming.py"
+    ]
+   },
+   "version": "0.6.5",
+   "young_release": "0.6.5 fixes GHSA-2qm8-x737-gmw5 GHSA-9m75-vc3g-4x39 GHSA-fm9c-5rcf-2q5p GHSA-mm57-4v3p-rchx (quadratic CPU decoding crafted ASN.1)"
+  }
+ }
+}

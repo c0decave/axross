@@ -28,13 +28,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.i18n import tr
 from core.subprocess_env import clean_child_env
 
 EXTENSION = {
     "name": "Drives Overview",
     "version": "1.0",
-    "description": "A panel with every local and mounted drive - size, used, free - as a table, "
-    "a pie of the selected drive and bars of all drives; double-click opens a drive.",
+    "description": "A panel with every local and mounted drive - name, type, size, used, free - "
+    "as a table, a pie of the selected drive and bars of all drives; double-click opens a drive.",
     "author": "axross",
 }
 
@@ -42,8 +43,9 @@ EXTENSION = {
 TIMEOUT = 2.0
 USED_COLOUR = "#d9534f"
 FREE_COLOUR = "#5cb85c"
-COLUMNS = ("Mount", "Device", "Type", "Size", "Used", "Free", "Use")
-COL_MOUNT, COL_DEVICE, COL_TYPE, COL_SIZE, COL_USED, COL_FREE, COL_USE = range(len(COLUMNS))
+COLUMNS = ("Mount", "Name", "Device", "Type", "Size", "Used", "Free", "Use")
+(COL_MOUNT, COL_NAME, COL_DEVICE, COL_TYPE, COL_SIZE, COL_USED, COL_FREE,
+ COL_USE) = range(len(COLUMNS))
 
 NETWORK_FS = frozenset({
     "cifs", "smb3", "smbfs", "nfs", "nfs4", "afpfs", "webdav", "davfs", "fuse.sshfs", "sshfs",
@@ -67,6 +69,9 @@ class Drive:
     used: int | None = None
     free: int | None = None
     error: str = ""
+    #: The file system's label ("Backup 2TB"), "" when it has none or the
+    #: platform does not say.
+    label: str = ""
 
     @property
     def percent(self) -> float | None:
@@ -81,6 +86,12 @@ def _kind(device: str, mount: str, fstype: str) -> str:
         return "network"
     if fstype in MEMORY_FS:
         return "memory"
+    if mount == "/" and fstype != "rootfs":
+        # The machine's root is a drive also where it is no block device of
+        # its own: an overlay (live systems, containers) or a ZFS dataset.
+        # Not the kernel's initial rootfs, which older kernels list before
+        # the real root on "/": the root showed twice.
+        return "local"
     if fstype in LOCAL_FS and (device.startswith("/dev/") or fstype in ("apfs", "hfs")):
         if mount.startswith(_REMOVABLE_ROOTS):
             return "removable"
@@ -141,12 +152,45 @@ def windows_drives(roots: list[str], drive_type) -> list[Drive]:
     return [Drive(root, root, "", _WIN_KINDS.get(drive_type(root), "system")) for root in roots]
 
 
+def volume_labels(folder: str = "/dev/disk/by-label") -> dict[str, str]:
+    """Device -> label from udev's by-label links (Linux). udev writes a
+    space and other bytes as ``\\xNN`` in the link name."""
+    labels: dict[str, str] = {}
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return labels
+    for name in names:
+        try:
+            device = os.path.realpath(os.path.join(folder, name))
+        except OSError:
+            continue
+        label = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), name)
+        labels[device] = label
+    return labels
+
+
+def with_labels(drives: list[Drive], labels: dict[str, str]) -> list[Drive]:
+    """*drives* with the label of their device, where it has one."""
+    out = []
+    for drive in drives:
+        device = drive.device
+        if device.startswith("/dev/"):
+            try:
+                device = os.path.realpath(device)
+            except OSError:
+                pass
+        label = labels.get(device) or labels.get(drive.device, "")
+        out.append(replace(drive, label=label) if label else drive)
+    return out
+
+
 def list_drives() -> list[Drive]:
     """The drives of this machine, by platform."""
     if sys.platform.startswith("linux"):
         try:
             with open("/proc/self/mounts", encoding="utf-8", errors="replace") as fh:
-                return parse_proc_mounts(fh.read())
+                return with_labels(parse_proc_mounts(fh.read()), volume_labels())
         except OSError:
             return [Drive("/", "", "", "local")]
     if sys.platform == "win32":
@@ -392,7 +436,8 @@ class DrivesPanel(QWidget):
             use = (f"{drive.percent:.0f} %" if drive.percent is not None
                    else (drive.error or "unknown"))
             cells = (
-                QTableWidgetItem(drive.mount), QTableWidgetItem(drive.device),
+                QTableWidgetItem(drive.mount), QTableWidgetItem(drive.label),
+                QTableWidgetItem(drive.device),
                 QTableWidgetItem(f"{drive.fstype} ({drive.kind})" if drive.fstype else drive.kind),
                 _Number(human(drive.total), drive.total), _Number(human(drive.used), drive.used),
                 _Number(human(drive.free), drive.free), _Number(use, drive.percent),
@@ -453,5 +498,5 @@ def activate(api):
         ctx.pane.navigate_async(path)
 
     panel = DrivesPanel(refresh=refresh, open_folder=open_folder)
-    api.add_dock("Drives Overview", panel)
+    api.add_dock(tr("Drives Overview"), panel, icon="drives")
     refresh()

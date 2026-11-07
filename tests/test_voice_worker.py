@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 
 from core import voice_settings as VS  # noqa: E402
 from core import voice_worker as VW  # noqa: E402
+from tests.optional_deps import need_numpy  # noqa: E402
 
 FAKE = textwrap.dedent(r'''
     import base64, json, os, sys, time
@@ -348,6 +349,7 @@ def child(monkeypatch):
 
 
 def _speak(child, lang="en", sentences=2, **params):
+    need_numpy()  # the fake voice's tone, like Piper's audio, is a numpy array
     req = {"id": 7, "op": "speak", "voice": "/v.onnx", "config": "/v.onnx.json", "lang": lang,
            "sentences": [[[lang, "ab"]]] * sentences, **params}
     child.handle(json.dumps(req).encode())
@@ -427,7 +429,7 @@ def test_happy_expressiveness_and_rhythm_scale_the_noise(child):
 
 
 def test_happy_volume_is_a_share_of_the_full_level(child):
-    import numpy as np
+    np = need_numpy()
 
     full, _ = _speak(child, sentences=1, volume=1.0)
     half, _ = _speak(child, sentences=1, volume=0.5)

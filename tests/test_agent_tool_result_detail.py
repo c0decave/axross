@@ -95,7 +95,7 @@ def test_edge_a_long_multi_line_text_is_cut_to_its_first_line():
 
 
 def test_edge_control_characters_are_removed():
-    assert A.tool_result_detail("declined", "declined:\x1b[31m red\x07 ‮evil") == \
+    assert A.tool_result_detail("declined", "declined:\x1b[31m red\x07 \u202eevil") == \
         "declined: red evil"
 
 

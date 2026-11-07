@@ -186,13 +186,15 @@ class FolderMoveUndoTest(_WindowBase):
     def test_edge_the_transfer_back_never_replaces_a_file(self) -> None:
         self.move_folder()
         calls = []
-        real = self.win._transfer_manager.transfer_files
+        real = self.win._transfer_manager.transfer_files_in_background
 
-        def spy(**kw):
+        def spy(*args, **kw):
             calls.append(kw)
-            return real(**kw)
+            return real(*args, **kw)
 
-        with mock.patch.object(self.win._transfer_manager, "transfer_files", side_effect=spy):
+        # The folder is walked on a worker (0.14.173): the background variant.
+        with mock.patch.object(self.win._transfer_manager, "transfer_files_in_background",
+                               side_effect=spy):
             self.undo()
         [kw] = calls
         plan = kw["conflict_plan"]

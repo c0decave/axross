@@ -1,0 +1,77 @@
+{
+ "name": "atomicwrites",
+ "versions": {
+  "1.4.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|atomicwrites-1.4.1/atomicwrites/__init__.py|9b2bf1bca4416fbb",
+    "yara|capability_filesystem_read|atomicwrites-1.4.1/setup.py|d81c87876f94fbc3",
+    "yara|capability_filesystem_read|atomicwrites-1.4.1/tests/test_atomicwrites.py|913b40ae401cea02"
+   ],
+   "archives": {
+    "atomicwrites-1.4.1.tar.gz": {
+     "entry_points": [],
+     "files": {
+      "atomicwrites-1.4.1/LICENSE": "878329f0bd878ad015129ce8bda82f481e86ec2e80831e909c0d67171d922e73",
+      "atomicwrites-1.4.1/MANIFEST.in": "318349c9ab60d7af28a12bf38f0bd830d279fd693200d6ce15e2ce816dc35a71",
+      "atomicwrites-1.4.1/PKG-INFO": "48f525af6d5a3602e8d228b5ee769c231c6a6791cf54c6d5ed67cf939c193428",
+      "atomicwrites-1.4.1/README.rst": "d201ad0c117e6a302e1fee298e945f18c984753ffb708f8e4341058b750c1feb",
+      "atomicwrites-1.4.1/atomicwrites.egg-info/PKG-INFO": "48f525af6d5a3602e8d228b5ee769c231c6a6791cf54c6d5ed67cf939c193428",
+      "atomicwrites-1.4.1/atomicwrites.egg-info/SOURCES.txt": "e70a4e66729a5606151fc6caae62989b22701c836a9fbf1f9176763041c16959",
+      "atomicwrites-1.4.1/atomicwrites.egg-info/dependency_links.txt": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "atomicwrites-1.4.1/atomicwrites.egg-info/top_level.txt": "92ceb8cca55492b97666bacfd38e82b32b5795219ff202c6f887285e93727a87",
+      "atomicwrites-1.4.1/atomicwrites/__init__.py": "9b2bf1bca4416fbbde6cf4d2522028a6c46bbec9ba5688e202f113d71a214fee",
+      "atomicwrites-1.4.1/docs/Makefile": "df3c15b375c381a1f1f50a74a8317a03b7bdf244a982e1ba704c8b00fb4fe6bc",
+      "atomicwrites-1.4.1/docs/conf.py": "764edcdfc9777a9fbb892842d8ed7a091acb721793be7d9324d90faeadd88530",
+      "atomicwrites-1.4.1/docs/index.rst": "f043dbc2c736aeb1bbf6b6d801deb4510b157805165870378e9c136a56faceac",
+      "atomicwrites-1.4.1/docs/make.bat": "a1f95fee91d13cf3048a572ea391479ae75aeeb562455dfe3f3452d31a4124f9",
+      "atomicwrites-1.4.1/setup.cfg": "ad22d133e72b98e92a6b74d8f41e7be99a3f87486a1519d25ec761c4e76155c8",
+      "atomicwrites-1.4.1/setup.py": "d81c87876f94fbc33ac92c78ecfcf73bf5a7ca5fc58500506b9f8cf8469558c7",
+      "atomicwrites-1.4.1/tests/test_atomicwrites.py": "913b40ae401cea024395a0a334433ca3985def508c5c1c12f7173bacc804000d"
+     },
+     "hooks": [
+      "atomicwrites-1.4.1/setup.cfg",
+      "atomicwrites-1.4.1/setup.py"
+     ],
+     "kind": "sdist",
+     "manifest": "89c9411ba230d05dddf31f5f541f9aa9d7919448fdb6b9b4c48c54103e235bc1",
+     "native": {},
+     "pth": {},
+     "sha256": "81b2c9071a49367a7f770170e5eec8cb66567cfbbc8c73d20ce5ca4a8d71cf11"
+    }
+   },
+   "name": "atomicwrites",
+   "provenance": {
+    "atomicwrites-1.4.1.tar.gz": null
+   },
+   "pypi": {
+    "author": "Markus Unterwaditzer",
+    "author_email": "markus@unterwaditzer.net",
+    "home_page": "https://github.com/untitaker/python-atomicwrites",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/untitaker/python-atomicwrites"
+    },
+    "summary": "Atomic file writes."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "sdist; setup.py reads __version__ with ast/re from the package and calls setup() - nothing else. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|atomicwrites-1.4.1/atomicwrites/__init__.py|9b2bf1bca4416fbb",
+     "yara|capability_filesystem_read|atomicwrites-1.4.1/setup.py|d81c87876f94fbc3",
+     "yara|capability_filesystem_read|atomicwrites-1.4.1/tests/test_atomicwrites.py|913b40ae401cea02"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete atomicwrites-1.4.1/atomicwrites/__init__.py",
+     "capability_filesystem_read:capability_filesystem_read atomicwrites-1.4.1/setup.py",
+     "capability_filesystem_read:capability_filesystem_read atomicwrites-1.4.1/tests/test_atomicwrites.py"
+    ]
+   },
+   "version": "1.4.1"
+  }
+ }
+}

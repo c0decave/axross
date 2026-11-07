@@ -1,0 +1,139 @@
+{
+ "name": "invoke",
+ "versions": {
+  "3.0.3": {
+   "accepted_findings": [
+    "hidden-process|invoke/runners.py|7153396f7521324d",
+    "yara|capability_filesystem_read|invoke/completion/complete.py|8f74efda836b2b2b",
+    "yara|capability_filesystem_read|invoke/runners.py|74ce8ff64811fb46",
+    "yara|capability_filesystem_read|invoke/vendor/yaml/reader.py|d1d9b38ab3a20c6e",
+    "yara|capability_network_outbound|invoke/vendor/yaml/composer.py|fcaa37d16afa7835",
+    "yara|capability_network_outbound|invoke/vendor/yaml/resolver.py|6755bc00e300e8fa",
+    "yara|capability_network_outbound|invoke/vendor/yaml/serializer.py|0a1b85826854d358",
+    "yara|capability_process_schedule|invoke/runners.py|74ce8ff64811fb46",
+    "yara|capability_process_spawn|invoke/runners.py|74ce8ff64811fb46",
+    "yara|threat_runtime_dynamic_loader|invoke/vendor/yaml/constructor.py|90d8247da78b524c"
+   ],
+   "archives": {
+    "invoke-3.0.3-py3-none-any.whl": {
+     "entry_points": [
+      "inv = invoke.main:program.run",
+      "invoke = invoke.main:program.run"
+     ],
+     "files": {
+      "invoke-3.0.3.dist-info/METADATA": "3aa7e6bc583c04b62f77455f519b49be6529bf8ef165eb52022b0da7fac9d4ab",
+      "invoke-3.0.3.dist-info/RECORD": "3b441b158c4280712e13d7a95f1dbf03667b1e01fcb07c47ba3356532a9bb212",
+      "invoke-3.0.3.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "invoke-3.0.3.dist-info/entry_points.txt": "7f3ee50cf8a9c3f5759e7ba4e3508dc5aef7f5d06927c4cef5ca4ab945d50cfb",
+      "invoke-3.0.3.dist-info/licenses/LICENSE": "7922f97f896f1d161e1ebf47083e304a23638361b255c6902b5e4f34eeda0dad",
+      "invoke-3.0.3.dist-info/top_level.txt": "6654e501531df25ce7dec5f20210918b42cdb2509ab00eeb96e7111eaf70efdc",
+      "invoke/__init__.py": "ef0a747ba2d0ff27f5b93bbe6bed5317d4ddc8fbae969fab91770d13acdc0fdb",
+      "invoke/__main__.py": "9f0c9e3c097c75e75c7ad8350a2110342d3e0871123740c9cb9b4ad9812a19ea",
+      "invoke/collection.py": "d10bfd6e77ca7946e401a4cb20dc6bcc6f4c06b863c2b85ded1bfabfa5a074a2",
+      "invoke/completion/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "invoke/completion/bash.completion": "3af251551be85bb68c0dfe6a30a89d8bcc7e343f8a908339252e7eea22777871",
+      "invoke/completion/complete.py": "8f74efda836b2b2b901cf8b9b5abc0518379be8f2fe2f001365fd3f6dff460e6",
+      "invoke/completion/fish.completion": "1b6f20d5da40f90f7e43a2a695c19dffa5ccc3c87b1311e3009ea7cb4e2e7ebf",
+      "invoke/completion/zsh.completion": "6227a4292ed90c222a2e6942df51edf47f794b69fc68db1f9e7e1b8c170544b4",
+      "invoke/config.py": "97f2c5ab9bab1bc26466b35ef32b7647faabd96cfa72ea9eb891b3f8ae6af70e",
+      "invoke/context.py": "beb757ddc97360a2d1e818fc68235edb7e1052f75089ddd08db30169b5d80d5c",
+      "invoke/env.py": "4ff7a3b2c6fe966759c0f1c58c9187eb62a78502a29bece289607133ef1e8d6f",
+      "invoke/exceptions.py": "7b9bf0a7d7094bcb5e40adf458b638202294f1ab5e4947b153a06e1671259430",
+      "invoke/executor.py": "4a1d1207f3b94f44a6a5a0182adbf5b483c11fdbe6f81c2510f58bbef5f35c45",
+      "invoke/loader.py": "e956a5790612dfc1f990612433a4cbc1bb15948acb4602addeb997f99f65fa51",
+      "invoke/main.py": "9e3618a366a72b892b004e26095f59f48d5b44915a382a7e5012f5bd113e5aae",
+      "invoke/parser/__init__.py": "1e9481fecc76699ac2394cb90a5fcb3327c206e1b0ac1f7e775392e3cdb50f3b",
+      "invoke/parser/argument.py": "7b220668eb63c84cf633604c888cf472f9fc27ace29e9521831a177b12731e99",
+      "invoke/parser/context.py": "35aaaf70de04f56fbb126b38f2d27321e741a9cad99db478d5303fad2139246a",
+      "invoke/parser/parser.py": "83df4d720cc719f123b0dcf0c85980a3f31186a9467fcd925d70733995ebe91c",
+      "invoke/program.py": "6bbdff7de79c7593fc126e9562416eb0c1ff39c4115d3380dc67b8c77ef3a5eb",
+      "invoke/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "invoke/runners.py": "74ce8ff64811fb46e2eeae6e5c7e6fa18dcce1e9ca9907f2fec64929e86c5b28",
+      "invoke/tasks.py": "ecefc487fd8e9791640db8ed4be00f95582dd4a15da8a760a910e3a6333fdcee",
+      "invoke/terminals.py": "08eb332629b31b203b15c3e8f2480e9950e5e2fe64722536c37f93b372cea388",
+      "invoke/util.py": "34a8c9a190384dbf15cc0bebe7c808016bd005a4c50ca460ddb8d14b175e31cb",
+      "invoke/vendor/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "invoke/vendor/fluidity/__init__.py": "7f9485dec318a3bd7cd3c9d7fbd6c9b74a5be7e042676b2b8a45f5682a9cce9c",
+      "invoke/vendor/fluidity/backwardscompat.py": "3ffa82d5d221207aba2d06031b159e77e57ca37be231c3ce62fe26c74358e765",
+      "invoke/vendor/fluidity/machine.py": "f5987398083edd0ff98c25873a28755ada133002a19204f611e3e45d6fb6e7c3",
+      "invoke/vendor/lexicon/__init__.py": "885b2c3f659f2f25b9a66a7810316f77feb7cef03267fed82a1da7adf6ef9476",
+      "invoke/vendor/lexicon/_version.py": "185804ade447813fbc525c0cf7be1560421dd568f5f5fa8c024fa1a4e6c08de2",
+      "invoke/vendor/lexicon/alias_dict.py": "82c4a554fcb7c2de471894b38e174188c55c3e722e54b5374a5d556f26d5b39c",
+      "invoke/vendor/lexicon/attribute_dict.py": "8f69b2a266e9dd91f77d33b2e11855032657acfffed62c15a9d7a712f636bbe4",
+      "invoke/vendor/yaml/__init__.py": "81fa7609b4558739278219228890f697a674a48fa6bff8991cf489e1a8f4fa76",
+      "invoke/vendor/yaml/composer.py": "fcaa37d16afa783594794a5ab94193dcb720f503c19ce3d59539c8311189f453",
+      "invoke/vendor/yaml/constructor.py": "90d8247da78b524c10618fd0e857f54f3d97570fe91b5c5513d024ef3faf88b0",
+      "invoke/vendor/yaml/cyaml.py": "e99ac01bd7c062f7557b614aff0d21997a06ed962ca185306a91bc0a20bbd87d",
+      "invoke/vendor/yaml/dumper.py": "3cb72d66563064ba7b5e679477046ebf89d8399d940670c8532f3e94a7cb17ea",
+      "invoke/vendor/yaml/emitter.py": "8e086d694ede170837d5b1b407b45979aff6f40762f422a65eafd08e04290a44",
+      "invoke/vendor/yaml/error.py": "021f73fada072546c4f63f8cf18a7181244ce4280b09cc15cc980b2d1176171a",
+      "invoke/vendor/yaml/events.py": "e74fd392c810884e2ea7e94aa3f57e9c1cbeb402319083d0c58e6a0e1282787c",
+      "invoke/vendor/yaml/loader.py": "5156becc8aa6905482218abf3e04869b835226db4763645fff3438fdbd5f1cdd",
+      "invoke/vendor/yaml/nodes.py": "80f28d8fca4a09d87677882bde021820d9cf39a3b11a12405226211919cf13ce",
+      "invoke/vendor/yaml/parser.py": "8a55a9e6fbe0a07146cef3990c8b45a068c3e83e369e1959ad9ca30306b4a09a",
+      "invoke/vendor/yaml/reader.py": "d1d9b38ab3a20c6e17a38d519ee412ecaf6b918df18c78956ac7c330d4ea08dc",
+      "invoke/vendor/yaml/representer.py": "f3650cdd9c5440aaac28017896d58ec424ba8c63c816d5e91acee6beacafe17b",
+      "invoke/vendor/yaml/resolver.py": "6755bc00e300e8fae8cb88083b63a150ee083d2fdb14d025d026b7af00a1a4f8",
+      "invoke/vendor/yaml/scanner.py": "29e4082863654b23c4f100f08a89c7c72f4281ba84e6d789133d39151f7e9c08",
+      "invoke/vendor/yaml/serializer.py": "0a1b85826854d35863e31808f0668abfabdf33606e8f06bd8bb7761401e3edc0",
+      "invoke/vendor/yaml/tokens.py": "953408cd2570f0c83dc2fe39f7e4e388e41eeb05738aa69196a5f6ffcf6ba79e",
+      "invoke/watchers.py": "13c081f229225c5c3ed79b27b059db663c2af9ec4532a36a14eaa41a072ca8bb"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a05926fdbcd4e8dae93d5d6fb85a28d762fa7a8a24a52f0e75b1c26b62b73f6a",
+     "native": {},
+     "pth": {},
+     "sha256": "f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053"
+    }
+   },
+   "name": "invoke",
+   "provenance": {
+    "invoke-3.0.3-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Jeff Forcier <jeff@bitprophet.org>",
+    "license_expression": "BSD-2-Clause",
+    "project_urls": {
+     "CI": "https://app.circleci.com/pipelines/github/pyinvoke/invoke",
+     "Changelog": "https://www.pyinvoke.org/changelog.html",
+     "Docs": "https://docs.pyinvoke.org",
+     "Issues": "https://github.com/pyinvoke/invoke/issues",
+     "Source": "https://github.com/pyinvoke/invoke"
+    },
+    "summary": "Pythonic task execution"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One hit: its vendored PyYAML constructor (python/object tags: __import__, getattr) - PyYAML's full loader, used by invoke's config only. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|invoke/completion/complete.py|8f74efda836b2b2b",
+     "yara|capability_filesystem_read|invoke/runners.py|74ce8ff64811fb46",
+     "yara|capability_filesystem_read|invoke/vendor/yaml/reader.py|d1d9b38ab3a20c6e",
+     "yara|capability_network_outbound|invoke/vendor/yaml/composer.py|fcaa37d16afa7835",
+     "yara|capability_network_outbound|invoke/vendor/yaml/resolver.py|6755bc00e300e8fa",
+     "yara|capability_network_outbound|invoke/vendor/yaml/serializer.py|0a1b85826854d358",
+     "yara|capability_process_schedule|invoke/runners.py|74ce8ff64811fb46",
+     "yara|capability_process_spawn|invoke/runners.py|74ce8ff64811fb46",
+     "yara|threat_runtime_dynamic_loader|invoke/vendor/yaml/constructor.py|90d8247da78b524c"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read invoke/completion/complete.py",
+     "capability_filesystem_read:capability_filesystem_read invoke/runners.py",
+     "capability_filesystem_read:capability_filesystem_read invoke/vendor/yaml/reader.py",
+     "capability_network_outbound:capability_network_outbound invoke/vendor/yaml/composer.py",
+     "capability_network_outbound:capability_network_outbound invoke/vendor/yaml/resolver.py",
+     "capability_network_outbound:capability_network_outbound invoke/vendor/yaml/serializer.py",
+     "capability_process_schedule:capability_process_schedule invoke/runners.py",
+     "capability_process_spawn:capability_process_spawn invoke/runners.py",
+     "threat_runtime_dynamic_loader:threat_runtime_dynamic_loader invoke/vendor/yaml/constructor.py"
+    ]
+   },
+   "version": "3.0.3"
+  }
+ }
+}

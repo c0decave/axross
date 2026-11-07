@@ -350,3 +350,71 @@ def test_edge_the_catch_up_covers_every_event():
     from ui import extension_host as EH
 
     assert sorted(EH._CATCH_UP_ORDER) == sorted(EH.EVENTS)
+
+
+# --- only extensions that follow the panes can be paused (product review) ---
+# Every extension panel had a Pause button and a "Pause <name>" entry, the
+# Media Player's too - pausing holds back folder and selection changes, so
+# there it did nothing, and "Pause Media Player" did not pause the music.
+
+PLAYER = """
+from PyQt6.QtWidgets import QLabel
+
+def activate(api):
+    api.add_dock("Player", QLabel("music"))
+"""
+
+LATE = """
+from PyQt6.QtWidgets import QLabel
+
+EVENTS = []
+API = []
+
+def activate(api):
+    API.append(api)
+    api.add_dock("Late", QLabel("late"))
+
+def subscribe():
+    API[0].on("path_changed", lambda ctx: EVENTS.append(ctx.folder))
+"""
+
+
+def test_happy_a_panel_without_pane_events_has_no_pause(window):
+    write_ext("player", PLAYER)
+    EX.set_enabled("user:player", True)
+    host = window.extension_host
+    host.reload()
+    (dock,) = host.docks("user:player")
+    assert getattr(dock.titleBarWidget(), "_pause_btn", None) is None
+    entries = [a for a in window.extensions_menu.actions()
+               if a.property("axPauseExtension") == "user:player"]
+    assert entries == []
+    # its show/hide entry is still there
+    assert dock.toggleViewAction() in window.extensions_menu.actions()
+
+
+def test_happy_a_panel_that_follows_the_panes_keeps_its_pause(window):
+    _host, dock, _module = _load_watcher(window)
+    assert dock.titleBarWidget()._pause_btn is not None
+    assert _pause_action(window, "user:watcher").text() == "Pause Watcher"
+
+
+def test_edge_a_subscription_after_activate_offers_pause_once(window, folders):
+    write_ext("late", LATE)
+    EX.set_enabled("user:late", True)
+    host = window.extension_host
+    host.reload()
+    (dock,) = host.docks("user:late")
+    module = host.module("user:late")
+    assert getattr(dock.titleBarWidget(), "_pause_btn", None) is None
+    module.subscribe()
+    module.subscribe()
+    bar = dock.titleBarWidget()
+    assert bar._pause_btn is not None
+    entries = [a for a in window.extensions_menu.actions()
+               if a.property("axPauseExtension") == "user:late"]
+    assert len(entries) == 1
+    bar._pause_btn.click()
+    _navigate(window._active_pane, folders[0])
+    assert module.EVENTS == []
+

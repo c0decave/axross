@@ -271,11 +271,12 @@ class TerminalPaneWidget(QWidget):
             self._release_refs()
             try:
                 log.info("Terminal pane reconnecting to %s", self._label_text)
-                password = self._profile.get_password() or ""
-                session = self._connection_manager.connect(
-                    self._profile,
-                    password=password,
-                )
+                from ui.off_gui import connect_off_gui
+
+                # Off the GUI thread - the keyring read too: a reconnect or
+                # a restored terminal froze the window for the handshake.
+                session = connect_off_gui(
+                    self._connection_manager, self._profile, password_from_keyring=True)
             except Exception as e:
                 log.error("Terminal pane reconnect failed: %s", e)
                 return None

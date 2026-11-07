@@ -390,13 +390,14 @@ def test_edge_the_scan_stops_by_itself(env, fake, monkeypatch):
 def test_happy_activate_adds_the_panel_and_deactivate_cleans_up(fake, monkeypatch):
     fake.command("add_adapter", name="hci0", props={"Powered": True})
     conn = fake.qt_connection()
-    monkeypatch.setattr(BTX, "make_client", lambda: BT.BluezClient(bus=conn))
+    monkeypatch.setattr(BTX, "make_client", lambda source="bluez": BT.BluezClient(bus=conn))
+    monkeypatch.setattr(BTX, "read_source", lambda: "bluez")
 
     class Api:
         window = None
         docks: list = []
 
-        def add_dock(self, title, widget):
+        def add_dock(self, title, widget, **_kw):
             self.docks.append((title, widget))
             return None
 

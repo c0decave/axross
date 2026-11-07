@@ -1,0 +1,63 @@
+{
+ "name": "h11",
+ "versions": {
+  "0.16.0": {
+   "accepted_findings": [],
+   "archives": {
+    "h11-0.16.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "h11-0.16.0.dist-info/METADATA": "28f326098ac09fcba79b8f180f96087c841fe2456215cb7b872a9c7d5cd19d64",
+      "h11-0.16.0.dist-info/RECORD": "1f1d4d9080c9f2a995417616ead6ea614da41b477958ed0ba0e45a82c6212721",
+      "h11-0.16.0.dist-info/WHEEL": "0a6c85234931e5c7443132e238d4116c64308c8a11d5a21807b782010e0a3c9d",
+      "h11-0.16.0.dist-info/licenses/LICENSE.txt": "37db5bb85926db28a427a25867f10b1232003aea1be69ccb851138adb8e6f361",
+      "h11-0.16.0.dist-info/top_level.txt": "17b742e23977cde87c4c61c43da589acc6deba859b4b7efd1b0762f98bdd722b",
+      "h11/__init__.py": "88ed4ace448ee36c99e9f7e0f953206f1fd9553586518d349d16045a7facde46",
+      "h11/_abnf.py": "c9b8b1af4c6cba99e403a18503232e6ee5c5e9373595bfe117cf743600ac7cd7",
+      "h11/_connection.py": "93d61155fea4a19a9bb6d056dfac5259a26959d6706bec50554f401c4a3d0ee2",
+      "h11/_events.py": "23deda5e86a5d56bbb7642f9e3c04034150290e21b7bec790a2a1803d201635e",
+      "h11/_headers.py": "3fb0fe9413711f074b64f2e29a6630acf1bef59923125bef25925d6408123fee",
+      "h11/_readers.py": "6b8472a4e454082dddd2afe4c4fb8120cee34c3f222ede57f754c7d05b1db8de",
+      "h11/_receivebuffer.py": "c6bb29b1db0d81617145f41c4d7c51f11add8d15d74cad08a39710616a49d56b",
+      "h11/_state.py": "ff92c6fc1191f0509c1507813c7f93307826ffe07e1147160a74287fff578c51",
+      "h11/_util.py": "2d69248d7c89685940cba2eddfdc3bdd44ad925153e68bdcbe8d13918ed162e9",
+      "h11/_version.py": "1954ac6cf48f0dc3ae17aa6d7c88979d52686849b7ca05db327aa5aff1a26a1c",
+      "h11/_writers.py": "a052a6e8fb637877db8f844b5fb541eca0dcd60218e778171b7fc747d96d9930",
+      "h11/py.typed": "b28c3db284f03fd4ff80401049587b19bf3ce79874e0dc2686cd967be2518193"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "470e0d13d8eee9a07c1f5f8b0aa4e38bb72823551a2bf3c3f85f13481b64d378",
+     "native": {},
+     "pth": {},
+     "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+    }
+   },
+   "name": "h11",
+   "provenance": {
+    "h11-0.16.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Nathaniel J. Smith",
+    "author_email": "njs@pobox.com",
+    "home_page": "https://github.com/python-hyper/h11",
+    "license": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/python-hyper/h11"
+    },
+    "summary": "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.16.0"
+  }
+ }
+}

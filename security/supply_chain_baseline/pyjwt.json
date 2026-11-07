@@ -1,0 +1,77 @@
+{
+ "name": "pyjwt",
+ "versions": {
+  "2.15.1": {
+   "accepted_findings": [
+    "yara|capability_network_outbound|jwt/jwks_client.py|f67fdc9d770d0686",
+    "yara|capability_process_spawn|jwt/help.py|1c1dd9b2b2557254"
+   ],
+   "archives": {
+    "pyjwt-2.15.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "jwt/__init__.py": "d3a4446591308befe70cbc989428dbfa0dfe7ec7eee5d35a57a22043451c253c",
+      "jwt/algorithms.py": "31e174916a77d17f4ed9dbcd3b869e9264a146aaf8d97f02d9b43bf828fe0441",
+      "jwt/api_jwk.py": "ed5a1f0f48e3a56b92fc94707af7772bc932fb90181440cea1c6c6c4d51e6c47",
+      "jwt/api_jws.py": "80e83b3a4089f6a19692bb5b2f56784edc3bd65bf74043bad7a230f9c5bdcf12",
+      "jwt/api_jwt.py": "a2af9f3593c8cf9133163cb0b5b08223281b8292d5db5665309bc23c212cac76",
+      "jwt/exceptions.py": "3540f48760343221d5e94f933edfc0af4a6b9c01f1c892748ba2c7216cddf154",
+      "jwt/help.py": "1c1dd9b2b2557254745d8fac0c7f8bbe5e4aeda7b9422746894e96c93027621b",
+      "jwt/jwk_set_cache.py": "64868576dc64be9b4411f9b9d485c123b4f9f68f136ea4a6055d935fec2a18f4",
+      "jwt/jwks_client.py": "f67fdc9d770d0686d807fddff7da0ac8ca18ca4446a12053ce4e164881b12a57",
+      "jwt/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jwt/types.py": "478e81927a35574f1faaec6756bef502f5bab843e2947265aa4817e8e6d9167c",
+      "jwt/utils.py": "b9d89ca2f37984f3779d6a85029b9acd535fa2a776444ffc32d2211b83853aaf",
+      "jwt/warnings.py": "8904ef3fe34f0d003eb6e84f86389f124611a8c520b5ef7d88e3cc25cfc32c99",
+      "pyjwt-2.15.1.dist-info/METADATA": "1ea0c9f139b8c928276b3628af165955f6f764491448a6ad8f103cdcbb382da3",
+      "pyjwt-2.15.1.dist-info/RECORD": "b40a03882675414725e9a67d130050f894e6f41dbb82c2b2a0552b5cf9ad0b22",
+      "pyjwt-2.15.1.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "pyjwt-2.15.1.dist-info/licenses/AUTHORS.rst": "925ce43461029eedbf558ec0b7cf7fc4b045def5120ebb97937c70814071cf07",
+      "pyjwt-2.15.1.dist-info/licenses/LICENSE": "797a7a20231d4c433e9f1911db1731d06b5828b98f499819a034f7c0f56f5ce5",
+      "pyjwt-2.15.1.dist-info/top_level.txt": "44fe431cdc896ccab691ad0599f4e0a12690ce1ededebe57b825823bc6b4d24f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b55a9e0a5cb95b5c360f9ea0e8a8f4d2e2d4f77649bb9a860ed98dee9a0c1dde",
+     "native": {},
+     "pth": {},
+     "sha256": "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
+    }
+   },
+   "name": "pyjwt",
+   "provenance": {
+    "pyjwt-2.15.1-py3-none-any.whl": {
+     "environment": "release-pypi",
+     "kind": "GitHub",
+     "repository": "jpadilla/pyjwt",
+     "workflow": "pypi-package.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Jose Padilla <hello@jpadilla.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/jpadilla/pyjwt"
+    },
+    "summary": "JSON Web Token implementation in Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_outbound, process_spawn; attestation verifies (jpadilla/pyjwt)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_outbound|jwt/jwks_client.py|f67fdc9d770d0686",
+     "yara|capability_process_spawn|jwt/help.py|1c1dd9b2b2557254"
+    ],
+    "yara": [
+     "capability_network_outbound:capability_network_outbound jwt/jwks_client.py",
+     "capability_process_spawn:capability_process_spawn jwt/help.py"
+    ]
+   },
+   "version": "2.15.1"
+  }
+ }
+}

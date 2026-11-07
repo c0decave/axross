@@ -1,0 +1,74 @@
+{
+ "name": "dncil",
+ "versions": {
+  "1.0.2": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|dncil/cil/body/__init__.py|9e68a9642ff48930",
+    "yara|capability_filesystem_read|dncil/cil/body/reader.py|f3d49759605d02bf"
+   ],
+   "archives": {
+    "dncil-1.0.2-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "dncil-1.0.2.dist-info/LICENSE.txt": "525eeef1d2b742f2ec268278d5f135882b4b726b941cbe969019a56f405ffc90",
+      "dncil-1.0.2.dist-info/METADATA": "cdfa27a046a442fa936aae26778fb8912b2688ef07c65f1dd49d78d911edd896",
+      "dncil-1.0.2.dist-info/RECORD": "7c620d15991eac1e023c7720fc0257db16aed00fbd4993b67989dec7651e13a8",
+      "dncil-1.0.2.dist-info/WHEEL": "db07a93359e4e034b8785a58ad6d534ea3dca0635f1e184efe2e66e1c3a299ba",
+      "dncil-1.0.2.dist-info/top_level.txt": "1d3d77e39ca7ebe54138acaae143c948c9be14b42e7b6f14529650d05cc71465",
+      "dncil/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "dncil/cil/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "dncil/cil/body/__init__.py": "9e68a9642ff48930d252d21ca58538548bf0acfe8d7b90122b4fed7578cccfbd",
+      "dncil/cil/body/flags.py": "48a47288a5e59903ec972734f77e8cda522e1e6dcf9dac3cb3e3d6aa5fcede61",
+      "dncil/cil/body/reader.py": "f3d49759605d02bf340e04443877348ff964f610dc77bd46105bbca41a7856d1",
+      "dncil/cil/enums.py": "8984c359a3a5ed001180cbe070521ace9319e8d560ea1cf427a11c6bc4923678",
+      "dncil/cil/error.py": "d7f2d04f26d2a7065df6e5053553b9b7ba5b149918b4239f7521725eb34561fe",
+      "dncil/cil/exception.py": "fd86eda0e064283420b16f0e7563c977f198eca38ca17dc4bf75b2ccd228dc2e",
+      "dncil/cil/instruction.py": "c4e52a0e6098517d8a92e40c48287e503267bde1de9bbd051346ddca2a58329d",
+      "dncil/cil/opcode.py": "e9f026df04dd8b4d45709a819bfc85e0eef19b05b6d368e78510f98e283341d4",
+      "dncil/clr/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "dncil/clr/argument.py": "b9798ad84d4736ac2f1b07c0383a949dc0ccbf584cd00cd17d35982288a9f852",
+      "dncil/clr/local.py": "d389967b8ae5972f5dc639312ddc63b60fce986f0e85e9c2bdf3de94eaaab16a",
+      "dncil/clr/token.py": "aedadcbd41b5faf49660417eedbd71c5e3794bff876a46cd305a6e83cf4d2195",
+      "dncil/version.py": "6372d27d18a84a5db1721ef4a6afd42e5bf21025f212d37792b55a59e1b26b19"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e1fec54e2e4422e7ba144ce039359a973330ef7ad3920a70c294364c6ae9121e",
+     "native": {},
+     "pth": {},
+     "sha256": "69d389e9b850fa9afa2e37ca252b01476379991eee88fd33ab76f924d36dd68d"
+    }
+   },
+   "name": "dncil",
+   "provenance": {
+    "dncil-1.0.2-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Mike Hunhoff",
+    "author_email": "michael.hunhoff@mandiant.com",
+    "home_page": "https://www.github.com/mandiant/dncil",
+    "project_urls": {
+     "Homepage": "https://www.github.com/mandiant/dncil"
+    },
+    "summary": "The FLARE team's open-source library to disassemble Common Intermediate Language (CIL) instructions."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|dncil/cil/body/__init__.py|9e68a9642ff48930",
+     "yara|capability_filesystem_read|dncil/cil/body/reader.py|f3d49759605d02bf"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read dncil/cil/body/__init__.py",
+     "capability_filesystem_read:capability_filesystem_read dncil/cil/body/reader.py"
+    ]
+   },
+   "version": "1.0.2"
+  }
+ }
+}

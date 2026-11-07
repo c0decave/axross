@@ -112,6 +112,13 @@ class ProbeResult:
     output_devices: tuple[AudioDeviceInfo, ...] = ()
     input_devices: tuple[AudioDeviceInfo, ...] = ()
     step: str = ""  # the step a failed child stopped at ("" when ok)
+    #: Whether Qt Multimedia can decode any audio codec here. False with
+    #: Qt Multimedia but no backend plugin ("No QtMultimedia backends
+    #: found": its FFmpeg plugin missing) - sound still plays (voice, the
+    #: audio route), files do not decode, and a started QAudioDecoder that
+    #: is deleted crashes the process when its thread ends. True when the
+    #: child did not say (an older one).
+    decoding: bool = True
 
 
 #: The steps that talk to the audio server: only a failure there is worth
@@ -263,7 +270,7 @@ def _parse(stdout: str) -> tuple[str, dict | None]:
             continue  # a library's stray print
         try:
             message = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if not isinstance(message, dict):
             continue
@@ -291,7 +298,8 @@ def _result_from_reply(reply: dict, seconds: float) -> ProbeResult:
     backend = reply.get("backend") if isinstance(reply.get("backend"), str) else ""
     return ProbeResult(True, "", seconds, _count(reply, "outputs"), _count(reply, "inputs"),
                        backend=backend, output_devices=_devices(reply, "output_devices"),
-                       input_devices=_devices(reply, "input_devices"))
+                       input_devices=_devices(reply, "input_devices"),
+                       decoding=reply.get("decoding") is not False)
 
 
 def _descendants(pid: int) -> list[int]:
@@ -571,18 +579,23 @@ _RELAYS: set = set()
 _relay_class = None
 
 
-def _relay():
-    """A QObject whose signal carries a result to the GUI thread (made in
-    the calling thread, so a worker's emit is queued there)."""
+def _relay(deliver: Callable):
+    """A QObject made in the calling (GUI) thread whose ``deliver(value)``
+    calls *deliver*: the worker reaches it through a GuiCall."""
     global _relay_class
     if _relay_class is None:
-        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtCore import QObject
 
         class _Relay(QObject):
-            done = pyqtSignal(object)
+            def __init__(self, callback) -> None:
+                super().__init__()
+                self._callback = callback
+
+            def deliver(self, value) -> None:
+                self._callback(value)
 
         _relay_class = _Relay
-    return _relay_class()
+    return _relay_class(deliver)
 
 
 def probe_async(on_done: Callable[[ProbeResult], None], context=None) -> None:
@@ -596,8 +609,7 @@ def probe_async(on_done: Callable[[ProbeResult], None], context=None) -> None:
         return
     from PyQt6 import sip
 
-    relay = _relay()
-    _RELAYS.add(relay)
+    from core.thread_relay import GuiCall
 
     def deliver(value) -> None:
         _RELAYS.discard(relay)
@@ -606,7 +618,12 @@ def probe_async(on_done: Callable[[ProbeResult], None], context=None) -> None:
             return
         on_done(value)
 
-    relay.done.connect(deliver)
+    relay = _relay(deliver)
+    _RELAYS.add(relay)
+    # Not a signal of the relay: it is deleted right after the delivery, and
+    # by the exit clean-up, while the worker may still be inside an emit
+    # (core/thread_relay.py).
+    done = GuiCall(relay.deliver)
 
     def work() -> None:
         try:
@@ -615,10 +632,7 @@ def probe_async(on_done: Callable[[ProbeResult], None], context=None) -> None:
             log.exception("Qt Multimedia probe failed")
             value = ProbeResult(False, tr("the Qt Multimedia check failed: {error}")
                                 .format(error=exc))
-        try:
-            relay.done.emit(value)
-        except RuntimeError:  # the application is gone
-            pass
+        done(value)
 
     threading.Thread(target=work, name="multimedia-probe", daemon=True).start()
 
@@ -721,6 +735,7 @@ def _child_main() -> int:
             QAudioDecoder,
             QAudioOutput,
             QMediaDevices,
+            QMediaFormat,
             QMediaPlayer,
         )
 
@@ -742,11 +757,13 @@ def _child_main() -> int:
         output = QAudioOutput()
         player.setAudioOutput(output)
         outputs, inputs = list(outputs), list(inputs)
+        # Asked of the backend: QAudioDecoder.isSupported() is True without one.
+        decoding = bool(QMediaFormat().supportedAudioCodecs(QMediaFormat.ConversionMode.Decode))
         del decoder, player, output
     except Exception as exc:  # noqa: BLE001 - reported to the parent
         _say({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
         return 1
-    _say({"ok": True, "outputs": len(outputs), "inputs": len(inputs),
+    _say({"ok": True, "outputs": len(outputs), "inputs": len(inputs), "decoding": decoding,
           "backend": os.environ.get("QT_AUDIO_BACKEND", ""),
           "output_devices": _device_entries(outputs), "input_devices": _device_entries(inputs)})
     return 0

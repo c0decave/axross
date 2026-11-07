@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from core.scheduler import Job, JobStore, next_run_at, script_target
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ class SchedulerDialog(QDialog):
 
     def __init__(self, store: JobStore, parent: QWidget | None = None):
         super().__init__(parent)
+        set_window_icon(self, "clock")
         self.store = store
         self._jobs: list[Job] = []
 

@@ -535,7 +535,11 @@ def test_e2e_a_utf16_file_with_a_cut_last_byte_opens_in_a_tab(window, tmp_path):
 # typing pause at 117 KB, 38-43 s at 1.9 MB, on the GUI thread) -----------------
 
 
-def _wait(cond, timeout=30.0):
+def _wait(cond, timeout=180.0):
+    """Pump until *cond* holds. A lex of the 20 000-line text takes 2-3 s on
+    a quiet host and ten times that and more on a busy one (full parallel
+    runs ran out of the former 30 s); a condition that does not come still
+    fails, later."""
     import time
 
     end = time.time() + timeout
@@ -570,9 +574,33 @@ def test_happy_a_large_file_is_lexed_off_the_gui_thread():
     blocked = time.perf_counter() - start
     hl = editor.highlighter
     assert hl.lexing  # the work runs elsewhere
+    start = time.perf_counter()
     assert _wait(lambda: not hl.lexing)
+    lexed = time.perf_counter() - start
     assert _formats_of(editor, 0)  # "def" is coloured once the result is in
-    assert blocked < 2.0, blocked  # setPlainText itself, never the lexing
+    # setPlainText itself, never the lexing: 0.3 s against 2-3 s of lexing
+    # on a quiet host; a busy one stretched both (5.6 s against a fixed 2 s).
+    assert blocked < max(2.0, lexed), (blocked, lexed)
+
+
+def test_sad_an_editor_deleted_while_its_text_is_lexed_drops_the_result():
+    """Closing an editor tab deletes the highlighter. Its lexer thread used to
+    emit a signal of the highlighter when done - a use-after-free when the
+    two met (core/thread_relay.py); the result now goes nowhere."""
+    import threading
+
+    from PyQt6 import sip
+
+    from ui.code_editor import CodeEditor
+
+    before = {t for t in threading.enumerate() if t.name == "axross-lex"}
+    editor = CodeEditor()
+    editor.set_language("Python")
+    editor.setPlainText(_big_python())
+    assert editor.highlighter.lexing
+    sip.delete(editor)
+    assert _wait(lambda: not ({t for t in threading.enumerate()
+                               if t.name == "axross-lex"} - before))
 
 
 def test_edge_a_stale_result_is_dropped():

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.format_utils import measured_bytes as size_text
+from ui.icon_provider import set_window_icon
 
 #: Shown for a share that has no meaning (nothing measured at all).
 DASH = "—"
@@ -183,6 +184,7 @@ class DirSizeDialog(QDialog):
 
     def __init__(self, rows: list[SizeRow], folder: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "disk-usage")
         self.setWindowTitle(tr("Directory Size") + f" — {folder}")
         self.resize(640, 360)
         layout = QVBoxLayout(self)

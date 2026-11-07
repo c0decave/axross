@@ -3,7 +3,9 @@
 # it in an AppImage.
 #
 # Usage:
-#   scripts/build_bundle.sh [slim|full] [--appimage]
+#   scripts/build_bundle.sh [slim|full|base] [--appimage]
+#   scripts/build_bundle.sh media-player|system-info   axross's tools as programs
+#       of their own (scripts/export_standalone.py, build/standalone.spec)
 #
 # Examples:
 #   scripts/build_bundle.sh                   # full, ELF only
@@ -16,11 +18,13 @@
 #
 # Requires:
 #   PyInstaller in .venv (auto-installed if missing)
-#   appimagetool in PATH (for --appimage; auto-downloaded if absent)
+#   appimagetool in PATH (for --appimage; else the pinned release is
+#   downloaded and its SHA-256 checked: scripts/fetch_appimagetool.sh)
 #
-# Temp build artifacts go to /tmp/axross-build-<flavor> because a
-# full build needs ~3 GB of scratch space and /tmp is usually
-# tmpfs-backed.
+# Temp build artifacts go to $TMPDIR/axross-build-<flavor> (TMPDIR
+# defaults to /tmp); a full build needs ~3 GB of scratch space. On a
+# tmpfs that is memory: set TMPDIR to a disk folder where memory is
+# limited (scripts/build_dist.sh does).
 
 set -euo pipefail
 
@@ -35,10 +39,13 @@ for arg in "$@"; do
     esac
 done
 
-if [[ "$FLAVOR" != "slim" && "$FLAVOR" != "full" ]]; then
-    echo "Flavor must be 'slim' or 'full', got: $FLAVOR" >&2
-    exit 1
-fi
+STANDALONE=0
+case "$FLAVOR" in
+    slim|full|base) ;;
+    media-player|system-info) STANDALONE=1 ;;
+    *) echo "Flavor must be 'slim', 'full', 'base', 'media-player' or 'system-info', got: $FLAVOR" >&2
+       exit 1 ;;
+esac
 
 # Locate project root from the script's own dir.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -126,12 +133,19 @@ FULL_MODS=(
     "manuf:axross.mac_lookup IEEE OUI database"
     "sift:Analysis dock file explainer (pip: sift-summarizer)"
     "numpy:Media Player equalizer and spectrum"
+    "bumble:Bluetooth panel, a stick used directly (pip: bumble)"
     "piper:Agent dock speech output (pip: piper-tts, GPL-3.0-or-later)"
     "faster_whisper:Agent dock speech recognition (pip: faster-whisper)"
 )
 
 if [[ "$FLAVOR" == "full" ]]; then
     CHECK_MODS=("${REQUIRED_MODS[@]}" "${FULL_MODS[@]}")
+elif [[ "$FLAVOR" == "media-player" ]]; then
+    # Not PyQt6.QtMultimedia: it loads libpulse, which the target system
+    # provides (bundle_options.HOST_PROVIDED) and the build machine need not have.
+    CHECK_MODS=("PyQt6:GUI toolkit" "PyQt6.QtSvg:SVG icons" "numpy:the equalizer and the spectrum")
+elif [[ "$FLAVOR" == "system-info" ]]; then
+    CHECK_MODS=("PyQt6:GUI toolkit" "PyQt6.QtSvg:SVG icons")
 else
     CHECK_MODS=("${REQUIRED_MODS[@]}")
 fi
@@ -161,27 +175,39 @@ if (( ${#missing[@]} > 0 )); then
 fi
 echo "    ✓ all ${#CHECK_MODS[@]} required modules importable"
 
-# Pre-flight: is /tmp big enough?
-TMP_AVAIL_MB=$(df -Pm /tmp | awk 'NR==2 {print $4}')
+# Pre-flight: is the scratch folder big enough?
+SCRATCH="${TMPDIR:-/tmp}"
+TMP_AVAIL_MB=$(df -Pm "$SCRATCH" | awk 'NR==2 {print $4}')
 if (( TMP_AVAIL_MB < 3000 )); then
-    echo "WARNING: /tmp has only ${TMP_AVAIL_MB} MB free — a full build"
-    echo "wants ~3 GB of scratch. Symlinking /tmp/axross-build- into the"
+    echo "WARNING: $SCRATCH has only ${TMP_AVAIL_MB} MB free — a full build"
+    echo "wants ~3 GB of scratch. Putting axross-build- into the"
     echo "project dir instead."
     WORK_DIR="$PROJECT_ROOT/build-tmp"
 else
-    WORK_DIR="/tmp/axross-build-${FLAVOR}"
+    WORK_DIR="${SCRATCH%/}/axross-build-${FLAVOR}"
 fi
 
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR/dist" "$WORK_DIR/work"
 
 echo ">>> Building axross-${FLAVOR} (temp=${WORK_DIR})"
+if (( STANDALONE )); then
+    # From the exported project: only the modules the tool runs on.
+    "$VENV_PY" -I scripts/export_standalone.py "$FLAVOR" "$WORK_DIR/export"
+    AXROSS_STANDALONE_APP="$FLAVOR" AXROSS_STANDALONE_SRC="$WORK_DIR/export/src" \
+        "$VENV_PY" -m PyInstaller \
+        --clean --noconfirm \
+        --distpath "$WORK_DIR/dist" \
+        --workpath "$WORK_DIR/work" \
+        build/standalone.spec
+else
 AXROSS_BUNDLE_FLAVOR="$FLAVOR" \
     "$VENV_PY" -m PyInstaller \
     --clean --noconfirm \
     --distpath "$WORK_DIR/dist" \
     --workpath "$WORK_DIR/work" \
     build/axross.spec
+fi
 
 mkdir -p "$PROJECT_ROOT/dist"
 cp "$WORK_DIR/dist/axross-${FLAVOR}" "$PROJECT_ROOT/dist/"
@@ -196,6 +222,40 @@ echo ">>> Built $ELF_PATH ($BINARY_SIZE)"
 # Run with QT_QPA_PLATFORM=offscreen so headless build hosts don't
 # need a display server.
 # ----------------------------------------------------------------------
+if (( STANDALONE )); then
+    # The window opens and the program ends by itself (AXROSS_SMOKE_MS), its
+    # multimedia probe child answers, and the system libraries are checked.
+    echo ">>> Smoke-testing $ELF_PATH (start, window, clean exit)"
+    SMOKE_HOME="$WORK_DIR/smoke-home"
+    mkdir -p "$SMOKE_HOME"
+    if ! HOME="$SMOKE_HOME" AXROSS_SMOKE_MS=2000 QT_QPA_PLATFORM=offscreen timeout 120 "$ELF_PATH" \
+            >"$WORK_DIR/smoke.log" 2>&1; then
+        tail -30 "$WORK_DIR/smoke.log" >&2
+        echo "ERROR: $ELF_PATH did not start and end cleanly" >&2
+        exit 3
+    fi
+    if grep -q "Unhandled exception" "$WORK_DIR/smoke.log"; then
+        tail -30 "$WORK_DIR/smoke.log" >&2
+        exit 3
+    fi
+    echo "    ✓ starts and ends cleanly"
+    if [[ "$FLAVOR" == "system-info" ]]; then
+        HOME="$SMOKE_HOME" QT_QPA_PLATFORM=offscreen timeout 120 "$ELF_PATH" --json "$WORK_DIR/report.json" \
+            >/dev/null 2>&1 && "$VENV_PY" -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['sections']" \
+            "$WORK_DIR/report.json" || { echo "ERROR: --json wrote no report" >&2; exit 3; }
+        echo "    ✓ --json writes the report"
+    fi
+    echo ">>> Checking the system libraries $ELF_PATH needs"
+    if ! QT_QPA_PLATFORM=offscreen timeout 300 python scripts/bundle_smoke.py --system-libs "$ELF_PATH"; then
+        echo "ERROR: $ELF_PATH needs a system library it does not bundle" >&2
+        exit 6
+    fi
+    echo "    ✓ system libraries bundled or host-provided"
+    rm -rf "$WORK_DIR"
+    echo ">>> Bundle ready: $ELF_PATH"
+    exit 0
+fi
+
 echo ">>> Smoke-testing $ELF_PATH --help"
 if ! QT_QPA_PLATFORM=offscreen timeout 30 "$ELF_PATH" --help >/dev/null 2>&1; then
     echo "ERROR: bundled binary failed --help smoke test" >&2
@@ -250,13 +310,10 @@ if (( BUILD_APPIMAGE == 1 )); then
         if command -v appimagetool >/dev/null 2>&1; then
             APPIMAGETOOL=$(command -v appimagetool)
         else
+            # The pinned release, its SHA-256 checked on every build (a
+            # cached copy too); a mismatch stops the build.
             DL="$PROJECT_ROOT/build/appimagetool-x86_64.AppImage"
-            if [[ ! -x "$DL" ]]; then
-                echo ">>> Downloading appimagetool (one-time, ~70 MB)"
-                curl -L -o "$DL" \
-                    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
-                chmod +x "$DL"
-            fi
+            bash "$SCRIPT_DIR/fetch_appimagetool.sh" "$DL"
             APPIMAGETOOL="$DL"
         fi
     fi

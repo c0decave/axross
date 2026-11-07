@@ -187,3 +187,27 @@ def test_edge_a_record_from_elsewhere_after_ours_is_the_newest_line(window) -> N
     pump()
     assert _bottom_text(dock._log_view).endswith("a record from another thread's work")
     assert _at_newest(dock), _bottom_text(dock._log_view)
+
+
+@pytest.mark.parametrize("width", [10, 400], ids=["short", "wrapped"])
+def test_sad_auto_scroll_off_holds_the_view_past_the_line_cap(window, width) -> None:
+    """Reported: with Auto-Scroll off the log could not be read - past the
+    line cap every record dropped the first lines and the text slid up
+    under the reader by as many (wrapped) lines."""
+    dock = window._log_dock
+    view = dock._log_view
+    view.setMaximumBlockCount(150)
+    _emit(0, 200)
+    QTest.mouseClick(dock._btn_scroll, Qt.MouseButton.LeftButton)  # off
+    bar = view.verticalScrollBar()
+    for i in range(200, 260):
+        LOG.info("x" * width + " record %d", i)
+    pump()
+    bar.setValue(bar.maximum() // 2)
+    pump()
+    top = view.cursorForPosition(QPoint(2, 2)).block().text()
+    for i in range(260, 300):
+        LOG.info("x" * width + " record %d", i)
+        pump(0.02)
+    assert view.document().blockCount() <= 150
+    assert view.cursorForPosition(QPoint(2, 2)).block().text() == top

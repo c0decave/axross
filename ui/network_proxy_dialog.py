@@ -34,6 +34,7 @@ from core import proxy_settings
 from core.i18n import tr
 from core.proxy import compose_proxy_type, parse_proxy_type
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -425,6 +426,7 @@ class NetworkProxyDialog(_ProxyForm, QDialog):
         self, profile_manager=None, parent: QWidget | None = None, path: Path | None = None
     ):
         QDialog.__init__(self, parent)
+        set_window_icon(self, "vpn")
         self.setWindowTitle(tr("Network & Proxy"))
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)

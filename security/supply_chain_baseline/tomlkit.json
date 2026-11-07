@@ -1,0 +1,73 @@
+{
+ "name": "tomlkit",
+ "versions": {
+  "0.15.2": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|tomlkit/api.py|5c6cb9ffb73b6ad1",
+    "yara|capability_filesystem_read|tomlkit/toml_file.py|d14e26e415728ee4"
+   ],
+   "archives": {
+    "tomlkit-0.15.2-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "tomlkit-0.15.2.dist-info/METADATA": "a2e59805b99c14685196efea6e2f17438853c9f18658a9b98370a883abcb2963",
+      "tomlkit-0.15.2.dist-info/RECORD": "faa8fc0ae90d1799c65cac4e3985f941eb088ef68d1706ea1e4a7239ed0c4248",
+      "tomlkit-0.15.2.dist-info/WHEEL": "2fe5af2dd481bc95875efe73ad0c43bcd467220a01ccb52971bba2c35f4a0ae4",
+      "tomlkit-0.15.2.dist-info/licenses/LICENSE": "f2f9b460ba719da6626add264d3782f275a4ff7aab677beda08b330911e23adb",
+      "tomlkit/__init__.py": "2a4876d4ff9d0050d76808f1cc06a6be09228127abf5b99c5ce6bdb307d7ed7d",
+      "tomlkit/_compat.py": "7a1521d5d7466e4e9f65cfd586de32fa6c87abef5c20ad14558063efd5c790e4",
+      "tomlkit/_types.py": "0611c08906a898981bfcd5511e777c50c656e9940ca4c20bddf7ddeae2486853",
+      "tomlkit/_utils.py": "4e26e09f3eef396610f4c228c1815b51021066d4fd9c9d9c76acecbd7e9f81ac",
+      "tomlkit/api.py": "5c6cb9ffb73b6ad19ccbe9fc498be363a9a5ec327582e516768b00ee358d36e3",
+      "tomlkit/container.py": "8d4315ba9d10e7fbc5b5460d124cf27cb73ff66a31b4b4dfdb8a66cebe93fcb6",
+      "tomlkit/exceptions.py": "d5b58a0f077b65c93919b4d523380931f927c51a1a0752e570e900e598556e05",
+      "tomlkit/items.py": "434e1d1cf2ccee906015062e216c268820dea5734c8153e7980dde3cb170a409",
+      "tomlkit/parser.py": "a74abeff54ea1222a5bc113c29a2e824a4cc4778ebabdad36b9e91d004c8b92f",
+      "tomlkit/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tomlkit/source.py": "2be326699043ae118d762fc4293ccdbf9e49d88f529af367cc9caf5bef45cefb",
+      "tomlkit/toml_document.py": "3824e45977773f9f04653e120fcfdd75cd58a6431aaad952e7fb2d1d306630e2",
+      "tomlkit/toml_file.py": "d14e26e415728ee41dd2dd2bfa653e92879fa976e69ec3dd00de8a7bbd56e5d0"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "c4eb63f536557228395f5d6542dd6b6447021688ca1e987aa8a0a29611f0ab3f",
+     "native": {},
+     "pth": {},
+     "sha256": "05562412163a3037b94497385fb7f9204c637bc605af7a48199e41cf2272f437"
+    }
+   },
+   "name": "tomlkit",
+   "provenance": {
+    "tomlkit-0.15.2-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "S\u00e9bastien Eustace",
+    "author_email": "sebastien@eustace.io",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://github.com/python-poetry/tomlkit/blob/master/CHANGELOG.md",
+     "Homepage": "https://github.com/python-poetry/tomlkit",
+     "Repository": "https://github.com/python-poetry/tomlkit"
+    },
+    "summary": "Style preserving TOML library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|tomlkit/api.py|5c6cb9ffb73b6ad1",
+     "yara|capability_filesystem_read|tomlkit/toml_file.py|d14e26e415728ee4"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read tomlkit/api.py",
+     "capability_filesystem_read:capability_filesystem_read tomlkit/toml_file.py"
+    ]
+   },
+   "version": "0.15.2"
+  }
+ }
+}

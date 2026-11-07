@@ -57,6 +57,7 @@ from core.i18n import tr
 from core.search_federation import SearchQuery
 from ui.close_corner import add_close_corner
 from ui.scan_job import BusyStrip, ScanJob, shorten
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.find_files_dialog")
 
@@ -170,6 +171,7 @@ class FindFilesDialog(QDialog):
         index_db=None,
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "find-files")
         self.setWindowTitle(tr("Find Files"))
         self.resize(1100, 760)
         self._index_db = index_db

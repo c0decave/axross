@@ -1,0 +1,121 @@
+{
+ "name": "boto3",
+ "versions": {
+  "1.43.117": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|boto3/compat.py|6254155cebdd24dd",
+    "yara|capability_filesystem_read|boto3/docs/service.py|e723962d2ad2573d",
+    "yara|capability_filesystem_read|boto3/s3/inject.py|12b2d07d057bd797"
+   ],
+   "archives": {
+    "boto3-1.43.117-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "boto3-1.43.117.dist-info/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "boto3-1.43.117.dist-info/METADATA": "05c69b643675ea665d31f78ed47b67228881e4beb7554cc3dded34b5d8fba82a",
+      "boto3-1.43.117.dist-info/NOTICE": "04fb1e61484a7810f1ba09bb42bc01ca58c9af33927d7c5a21556e4c4d1c7fa4",
+      "boto3-1.43.117.dist-info/RECORD": "2b088ff82b19d24f57d335ae225ae0f31e66e39adad10e0494a1ac77b8f10228",
+      "boto3-1.43.117.dist-info/WHEEL": "195f5a3138703ffe28342b6f102d9e737a9462eb6059e033925ae8ff49b85894",
+      "boto3-1.43.117.dist-info/top_level.txt": "30febf488d4670fb1e5e875ddd892de45fe6081b2b524b22ce22f18c464a1945",
+      "boto3/__init__.py": "bb06b1a029cca5b86fb3328a7a2e58d0c409ca052e59f98fddcee320f88f96bb",
+      "boto3/compat.py": "6254155cebdd24ddfd9b5de04bc59f549a876f30b0ddf1259db62bb756de3588",
+      "boto3/crt.py": "c7f8d98fe40c239643d03dadbbdd6082a9ec1a9e292181075475aa5657dc91cc",
+      "boto3/data/cloudformation/2010-05-15/resources-1.json": "e6615528956d6d5a07c8f7474b235f6799a9920080c2ce4f867bde4aee2acdd2",
+      "boto3/data/cloudwatch/2010-08-01/resources-1.json": "ab802013c178a5bb1c77ed94dcd612180ccae79ce93323901abf37254c5b6572",
+      "boto3/data/dynamodb/2012-08-10/resources-1.json": "8412dad49b7b6dd4f9e7b53d03b51c4a2f120a938d2b375bb43453ce3335f98d",
+      "boto3/data/ec2/2014-10-01/resources-1.json": "b4c1b500c60fda4b273d663afb797c0c1f8484ab1236d00ef581e1bc7a812aed",
+      "boto3/data/ec2/2015-03-01/resources-1.json": "b4c1b500c60fda4b273d663afb797c0c1f8484ab1236d00ef581e1bc7a812aed",
+      "boto3/data/ec2/2015-04-15/resources-1.json": "b4c1b500c60fda4b273d663afb797c0c1f8484ab1236d00ef581e1bc7a812aed",
+      "boto3/data/ec2/2015-10-01/resources-1.json": "48e7d85f67352a0be7c4c3b6142749a55e36ac958d33056194501786f50f4f30",
+      "boto3/data/ec2/2016-04-01/resources-1.json": "48e7d85f67352a0be7c4c3b6142749a55e36ac958d33056194501786f50f4f30",
+      "boto3/data/ec2/2016-09-15/resources-1.json": "48e7d85f67352a0be7c4c3b6142749a55e36ac958d33056194501786f50f4f30",
+      "boto3/data/ec2/2016-11-15/resources-1.json": "bf1ed888bfac52f0457a8e1267cd46ed06b61f2fb2eb1638cf66254b1effc04c",
+      "boto3/data/glacier/2012-06-01/resources-1.json": "193e6a5902c6797b6b1e04c3346db732ba72c1e83a3b451d81dd77f41b8d4d5b",
+      "boto3/data/iam/2010-05-08/resources-1.json": "3ec393f7206a489b65b8114709546c83a93a2f2d9591260e0e76314a5d0354e7",
+      "boto3/data/s3/2006-03-01/resources-1.json": "55e2802e1311aafedfc831cc2ce339fd1cd7504b83760fe7e8e2118b7b1d07ea",
+      "boto3/data/sns/2010-03-31/resources-1.json": "ef398a42169f82c443bb8535ca2c373571f3fb32611caace9adba8625c503feb",
+      "boto3/data/sqs/2012-11-05/resources-1.json": "2d1208af90487775037ae05f2e7faf4625ac49908cf7fca7a9dc45f2ecc7832f",
+      "boto3/docs/__init__.py": "40ce4e2bc0d2f2e80a244d877c8d4163d80546f8fba7b47219054dd4c2cb6482",
+      "boto3/docs/action.py": "9825bd214bd94b5792b40d03ad2a83d41fe1641cfa61376b4266c8e5dd89cdba",
+      "boto3/docs/attr.py": "0671b7b51d4a290bef639f1a7898964395b90e232727ff63523986ead0db1625",
+      "boto3/docs/base.py": "9cead048279448864f927f88e7da3b09f8c4b6181d9290adfeb5ed13dcd09d77",
+      "boto3/docs/client.py": "1de34c326d28282969933635cb2553fc96d2164185f769fb367bf6279bb76c98",
+      "boto3/docs/collection.py": "97cc76a96d471e742c4436d1d327949da3866e0a36a00ab10f2872adb7f96deb",
+      "boto3/docs/docstring.py": "a0fba06ae6dd01763a68d6be917188e7594fd71136b380277d3b0b8626dfefe1",
+      "boto3/docs/method.py": "3055fa2f74b35e82fc273d5f92e0cb67e39730c9cab88048da4900f3e351bcd8",
+      "boto3/docs/resource.py": "8ec16ccd77ddbe7097ee15713f2011a8f53b1f87390ffcdf5018b837cbf26d9c",
+      "boto3/docs/service.py": "e723962d2ad2573d023bee4d06d23c45f8f1fd2af3aef3d0c255ef816a28e2ec",
+      "boto3/docs/subresource.py": "5a4100e2a9906eb37b3b3f687f2a4938f7c04d72338f06a6a408b69b8df435b1",
+      "boto3/docs/utils.py": "e0576eadb67ad5b01014246ba013e4ec2947baaa1861a8d4266d56df7a78092b",
+      "boto3/docs/waiter.py": "116d0317d5c3b5b015cf15198f7908db47c2a132499c5f598da051ac220b070b",
+      "boto3/dynamodb/__init__.py": "1a44aaf96c5759f547bb548470cae525bce47f0f400a017751d08be9f3e94e66",
+      "boto3/dynamodb/conditions.py": "0076835d6d2b8b4846314fcc7afac494197c2b52ecf539b93585b950f6dfefee",
+      "boto3/dynamodb/table.py": "ba2f282fadf8a44e9474c88de8ccf9d30023450902175a65abd5ec6d41206d6c",
+      "boto3/dynamodb/transform.py": "2675b96733c87f111c0eccd2bd7294666a7fd6bc38e39b6c75d4b7146fbe2700",
+      "boto3/dynamodb/types.py": "721d2f20a68061ec632f8d92fce256caf8d631c6f451b36b9a4286733efa3b77",
+      "boto3/ec2/__init__.py": "1a44aaf96c5759f547bb548470cae525bce47f0f400a017751d08be9f3e94e66",
+      "boto3/ec2/createtags.py": "a543c93989fb9b425c721f542fe0c454681b407a3201e98408f061cf2071dbc7",
+      "boto3/ec2/deletetags.py": "29a61ca92b7c14533f4d6d20d29675e2a0e356799108f574b0c7ba0e9ac4b6fa",
+      "boto3/examples/cloudfront.rst": "2beb01599c682e30010991eba8066ce7b71879fc0f9838abd37a66e8f13f9a1e",
+      "boto3/examples/s3.rst": "6b799b4a5ec46cd6f077618a6253fd9d7ad31d922d65541174c1b781a999b52a",
+      "boto3/exceptions.py": "76b92ba70ac2fa040179aa0f960ab81501518dde2aa26e091de2a11a9b06526e",
+      "boto3/resources/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "boto3/resources/action.py": "bcf7d51d5817886aa1c298114820bb952b18def1a382c4a26215dad7808c02ac",
+      "boto3/resources/base.py": "73476a2bc3fef47de71d22169ad8fa791481be295701d4f80f43e8b360115fe0",
+      "boto3/resources/collection.py": "69589f6685151d46ab185f52e0887ca8151f76a28a38100477405a21229a2e2a",
+      "boto3/resources/factory.py": "4fbead783a644497dbb0d7a3902a5150ade4d4dd7a2df964479041c9fda87e7b",
+      "boto3/resources/model.py": "45313daecdef280bf1348d8b31890e7f367c0a0cb6fb3a52e175e3baf77d2378",
+      "boto3/resources/params.py": "bb40f6fa297a25b5e952eb3c3438f72bdc30df4e3b97cf6517af509f1c085f90",
+      "boto3/resources/response.py": "6880139327abfeb979aaca7e3850b17b7eb086f6382738e035cf6a37ebd83318",
+      "boto3/s3/__init__.py": "1a44aaf96c5759f547bb548470cae525bce47f0f400a017751d08be9f3e94e66",
+      "boto3/s3/constants.py": "2f42bf70d29429947054d42905a7a5908d5373e6eb38291e5be26d80aed8849a",
+      "boto3/s3/inject.py": "12b2d07d057bd7979e0f6aea936b09c7e932a1eb3a595b8993897cdd115ed011",
+      "boto3/s3/transfer.py": "7655070298e2aa7b1287103b0c9fae591655b069368641b0b059ab8890429a01",
+      "boto3/session.py": "c113623eabf46a1438af30940513cdd54b94ede6d7b6894743d5f7e1d18b9a78",
+      "boto3/utils.py": "f2c79c11796ccdfe43ae1e15fc8ba1532092bb36377c712d3bff969fe44f171a"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "7f5fe65411b6abab927bd494c283f3e247a4e1c50f3e24bc8b316d54983a9df6",
+     "native": {},
+     "pth": {},
+     "sha256": "a5b6cd7e67653987fcf0e212187c16f7b58af2ae192e368f7212ddab7c05b25d"
+    }
+   },
+   "name": "boto3",
+   "provenance": {
+    "boto3-1.43.117-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Amazon Web Services",
+    "home_page": "https://github.com/boto/boto3",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "Documentation": "https://docs.aws.amazon.com/boto3/latest/",
+     "Homepage": "https://github.com/boto/boto3",
+     "Source": "https://github.com/boto/boto3"
+    },
+    "summary": "The AWS SDK for Python (Boto3)"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|boto3/compat.py|6254155cebdd24dd",
+     "yara|capability_filesystem_read|boto3/docs/service.py|e723962d2ad2573d",
+     "yara|capability_filesystem_read|boto3/s3/inject.py|12b2d07d057bd797"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete boto3/compat.py",
+     "capability_filesystem_read:capability_filesystem_read boto3/docs/service.py",
+     "capability_filesystem_read:capability_filesystem_read boto3/s3/inject.py"
+    ]
+   },
+   "version": "1.43.117"
+  }
+ }
+}

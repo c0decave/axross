@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 
 class ChecksumDialog(QDialog):
@@ -29,6 +30,7 @@ class ChecksumDialog(QDialog):
         self, path: str, algo: str, value: str, source: str = "native", parent=None
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "shield")
         self._value = value
         self.setWindowTitle("Checksum")
         self.resize(640, 160)

@@ -22,6 +22,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from tests.bundle_sources import require_bundle_sources  # noqa: E402
+
+require_bundle_sources()
+
 DOCKERFILE = (REPO_ROOT / "Dockerfile.build").read_text(encoding="utf-8")
 SPEC = (REPO_ROOT / "build" / "axross.spec").read_text(encoding="utf-8")
 LICENSES = (REPO_ROOT / "THIRD_PARTY_LICENSES.md").read_text(encoding="utf-8")

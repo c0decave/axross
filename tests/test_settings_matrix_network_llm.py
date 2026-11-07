@@ -573,7 +573,8 @@ def _shown_llm_widget(attr, how):
     return shown
 
 
-def _llm_row(field, attr, how, values, bad, effect, *, seed=None, loaded=None, shown_as=None):
+def _llm_row(field, attr, how, values, bad, effect, *, seed=None, loaded=None, shown_as=None,
+             widget=None):
     default = getattr(LP.LLMProfile(name="x"), field)
     seed = {field: default, **(seed or {})}
 
@@ -589,14 +590,15 @@ def _llm_row(field, attr, how, values, bad, effect, *, seed=None, loaded=None, s
                _set_llm_widget(attr, how),
                (lambda d: shown_as(shown(d))) if shown_as else shown,
                stored, lambda c, v: _edit_profile(c, field, v), bad, effect,
-               widgets=(f"llm.{attr}",), setup=setup)
+               widgets=(f"llm.{widget or attr}",), setup=setup)
 
 
 LLM_ROWS = [
     _llm_row("provider", "provider_combo", "combo_text", ("lmstudio", "openai"), (5, None),
              effect_provider, seed={"endpoint": "ROOT"}),
+    # Typed into the line of the endpoint drop-down (its known endpoints).
     _llm_row("endpoint", "endpoint_edit", "text", ("ROOT", "ROOT/alt"), (5, None, ["x"]),
-             effect_endpoint),
+             effect_endpoint, widget="endpoint_combo"),
     _llm_row("model", "model_combo", "edit", ("model-b",), (5, None, ["model-b"]),
              _chat_effect("model", "model")),
     _llm_row("temperature", "temperature_spin", "value", (0.7, 1.5), ("hot", True, None),

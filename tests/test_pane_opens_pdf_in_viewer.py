@@ -27,7 +27,7 @@ from core import open_limits as OL  # noqa: E402
 from core import security_mode  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
 from core.media_collect import PDF  # noqa: E402
-from tests.media_testkit import write_image, write_pdf  # noqa: E402
+from tests.media_testkit import requires_qtpdf, write_image, write_pdf  # noqa: E402
 from ui import media_viewer as MV  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -100,6 +100,7 @@ def _select(pane, name: str) -> None:
 # -- happy -------------------------------------------------------------------
 
 
+@requires_qtpdf
 def test_happy_double_click_opens_the_pdf_alone_in_the_media_viewer(pane):
     with mock.patch.object(type(pane), "_open_hex_editor") as hex_editor:
         pane._on_double_click(_index_of(pane, "report.pdf"))
@@ -115,6 +116,7 @@ def test_happy_double_click_opens_the_pdf_alone_in_the_media_viewer(pane):
     assert not viewer.slideshow_active
 
 
+@requires_qtpdf
 def test_happy_f3_views_the_pdf_in_the_media_viewer_too(pane):
     _select(pane, "report.pdf")
     with mock.patch.object(type(pane), "_open_hex_editor") as hex_editor:
@@ -142,7 +144,9 @@ def test_sad_without_qtpdf_the_pdf_falls_back_to_hex_and_says_why(pane, monkeypa
     assert any("QtPdf" in r.getMessage() for r in caplog.records)
 
 
-def test_sad_a_blocking_security_mode_falls_back_to_hex_and_says_why(pane, caplog):
+def test_sad_a_blocking_security_mode_falls_back_to_hex_and_says_why(pane, caplog, monkeypatch):
+    # QtPdf is there (else that is the reason): the security mode is the one asked about.
+    monkeypatch.setattr(MV, "pdf_supported", lambda: True)
     assert not security_mode.PARANOID.allow_auto_preview
     security_mode.set_policy("paranoid")
     with (
@@ -158,6 +162,7 @@ def test_sad_a_blocking_security_mode_falls_back_to_hex_and_says_why(pane, caplo
 # -- edge --------------------------------------------------------------------
 
 
+@requires_qtpdf
 def test_edge_an_upper_case_extension_is_a_pdf_too(pane, folder):
     write_pdf(folder / "SCAN.PDF", pages=2)
     pane.refresh()

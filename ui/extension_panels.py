@@ -59,6 +59,7 @@ from core.i18n import tr
 from ui.dock_frame import PanelFrame
 from ui.dock_titlebar import DockTitleBar
 from ui.pane_drag import PANE_DRAG_THRESHOLD, PaneDropZones, start_pane_drag
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -95,10 +96,12 @@ class ExtensionDock(QDockWidget):
     #: (True) or hidden, for its menu entry to show it again (False).
     parks_visible = False
 
-    def __init__(self, title: str, owner: QWidget, ext_id: str) -> None:
+    def __init__(self, title: str, owner: QWidget | None, ext_id: str) -> None:
         super().__init__(title, owner)
+        set_window_icon(self, "extensions")
         self.ext_id = ext_id
-        self._owner = weakref.ref(owner)
+        # No owner (a panel made on its own, in a test): nothing lays it out.
+        self._owner = weakref.ref(owner) if owner is not None else (lambda: None)
         self._pane_mode = False
         self._pane_drop = PaneDropZones(self)
         self.setAcceptDrops(True)
@@ -213,13 +216,14 @@ class ExtensionPanelTitleBar(DockTitleBar):
         self.move_menu.aboutToShow.connect(self._fill_move_menu)
         self.move_button = QToolButton(self)
         self.move_button.setText("⇄")  # ⇄, as a terminal pane's button
-        self.move_button.setToolTip(tr("Send to Workspace"))
+        self.move_button.setToolTip(tr("Send to Workspace - lay the panel out inside a "
+                                       "workspace like a pane"))
         self.move_button.setAccessibleName(tr("Send to Workspace"))
         self.move_button.setAutoRaise(True)
         self.move_button.setFixedSize(QSize(22, 22))
         self.move_button.clicked.connect(self._pop_move_menu)
         layout = self.layout()
-        layout.insertWidget(layout.indexOf(self._float_btn), self.move_button)
+        layout.insertWidget(layout.indexOf(self._pin_btn), self.move_button)
 
     @property
     def pane_mode(self) -> bool:
@@ -229,6 +233,7 @@ class ExtensionPanelTitleBar(DockTitleBar):
         self._pane_mode = bool(on)
         self._float_btn.setVisible(not on)
         self._close_all_btn.setVisible(not on)
+        self._pin_btn.setVisible(not on)  # laid out on a workspace already
         self.setCursor(Qt.CursorShape.OpenHandCursor if on else Qt.CursorShape.ArrowCursor)
         self.setToolTip(tr("Drag to move the panel") if on else "")
 
@@ -247,9 +252,13 @@ class ExtensionPanelTitleBar(DockTitleBar):
         self.move_menu.exec(self.move_button.mapToGlobal(QPoint(0, self.move_button.height())))
 
     def context_menu(self) -> QMenu:
-        """The right-click menu of the bar (a new one each time)."""
+        """The right-click menu of the bar (a new one each time): Send to
+        Workspace (laid out as a pane) and, in the dock area, Show Only on
+        Workspace (stays a dock)."""
         menu = QMenu(self)
         menu.addMenu(self.move_menu)
+        if not self._pane_mode:
+            self.add_binding_menu(menu)
         return menu
 
     def show_context_menu(self, pos: QPoint) -> None:
@@ -408,6 +417,29 @@ class ExtensionPanelsMixin:
                 dock.setFloating(False)
             self.removeDockWidget(dock)
 
+    def restore_dock_state(self, state) -> bool:
+        """QMainWindow.restoreState that leaves the panels on workspaces
+        where they are. A panel taken out of the dock area for a workspace
+        stays in the saved dock state (Qt keeps a placeholder), and from Qt
+        6.12 on restoreState takes every dock widget below the window that
+        the state names back into the dock area - a restored session lost
+        its panels' workspaces. Each one goes back to its splitter."""
+        placed = []
+        for dock in self._layout_panels():
+            splitter = dock.parentWidget()
+            placed.append((splitter.indexOf(dock), dock, splitter, splitter.sizes(),
+                           dock.isHidden()))
+        ok = self.restoreState(state)
+        for index, dock, splitter, sizes, hidden in sorted(placed, key=lambda p: p[0]):
+            if not (_alive(dock) and _alive(splitter)) or dock.parentWidget() is splitter:
+                continue
+            self._lift_panel(dock)
+            dock.set_pane_mode(True)
+            splitter.insertWidget(index, dock)
+            splitter.setSizes(sizes)
+            dock.setHidden(hidden)
+        return ok
+
     def _dock_panel(self, dock: ExtensionDock, *, visible: bool) -> None:
         """Into the dock area (All Workspaces), as add_dock put it."""
         dock.set_pane_mode(False)
@@ -544,6 +576,8 @@ class ExtensionPanelsMixin:
         """A panel was just made: back on the workspace it left, if any."""
         if not isinstance(dock, ExtensionDock):
             return
+        if hasattr(self, "hook_bound_dock"):
+            self.hook_bound_dock(dock)  # shown only on one workspace (ui.dock_bindings)
         home = self._panel_homes.pop(dock.objectName(), None)
         if home is None or home.ws not in self._workspaces:
             return

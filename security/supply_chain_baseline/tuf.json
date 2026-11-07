@@ -1,0 +1,105 @@
+{
+ "name": "tuf",
+ "versions": {
+  "7.0.1": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|tuf/ngclient/updater.py|fa32bc4a416cf54b",
+    "yara|capability_filesystem_read|tuf/api/_payload.py|21cb1a5022ce9b4f",
+    "yara|capability_filesystem_read|tuf/api/metadata.py|fbc1511c7c348534",
+    "yara|capability_filesystem_read|tuf/ngclient/_internal/trusted_metadata_set.py|97ecbb5d42bf7228",
+    "yara|capability_filesystem_read|tuf/ngclient/fetcher.py|f4dadf82bad133c6",
+    "yara|capability_filesystem_read|tuf/ngclient/updater.py|fa32bc4a416cf54b",
+    "yara|capability_network_download|tuf/ngclient/fetcher.py|f4dadf82bad133c6",
+    "yara|capability_network_outbound|tuf/ngclient/fetcher.py|f4dadf82bad133c6"
+   ],
+   "archives": {
+    "tuf-7.0.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "tuf-7.0.1.dist-info/METADATA": "528e5e373529ce419a34dc3fdf988442b1a7aa2c65706ba2dbadd7a017a5b6d3",
+      "tuf-7.0.1.dist-info/RECORD": "7c5e518d5691b5d47ca0d349ea72526441e04b0b9976cb16bb3db64a49cc8a24",
+      "tuf-7.0.1.dist-info/WHEEL": "ccec20e2307acd7da453dd7437e70c6b08e2bc3ead3bc3445af135da37b56d59",
+      "tuf-7.0.1.dist-info/licenses/LICENSE": "d3174ad63e721d4c9dccb8ad4320848992d314369bc46319720b5802c9153fe9",
+      "tuf-7.0.1.dist-info/licenses/LICENSE-MIT": "ad52fe92b0d21a9b3733b484eb6f865e83855f4a6f9b9b8812b9012dc4587d27",
+      "tuf/__init__.py": "8475167bf3cc4359424022733a24ae6b7799cc07edaa1c5250e976793c500cd7",
+      "tuf/api/__init__.py": "a1ba485d5a794697d469cda6d06a260a7c638461b23d8b030486fd122a3695d0",
+      "tuf/api/_payload.py": "21cb1a5022ce9b4f6739565507f220722fde3832d16b9cbe95c55984eb550e87",
+      "tuf/api/dsse.py": "32cf807d2f2dcaac705fae9e37c12cc8b4ddc671802672df8e8d1694defedf40",
+      "tuf/api/exceptions.py": "e12c7db70e01843dcc7a7cf8e25a30547ea0174805ccbe32c50f2a60863e6a38",
+      "tuf/api/metadata.py": "fbc1511c7c3485343209857b445c10277622516000ea7fd0071ca8a18b3ab175",
+      "tuf/api/serialization/__init__.py": "f296ad3b37d0a4e38c4d7d52694e2068bc51640613b8beb3126f1f4478b081a6",
+      "tuf/api/serialization/json.py": "e52baddc411af6b23cfe8f32181dfa9e77253d5af9d7f2358740b9fc47a0b0d2",
+      "tuf/ngclient/README.md": "3d4e6d9852b3e7e4c4885fcb16fe244ce80d24b3e42cc02ead09d9b77d6f6a53",
+      "tuf/ngclient/__init__.py": "1c7dab0a984309f49c58a25533cf382716d344a23b917f9498e0767f483a18b7",
+      "tuf/ngclient/_internal/__init__.py": "6c333ead72997a14f6de868f3f3828bdb1c048ddcb9b0d0f505792713e86af2c",
+      "tuf/ngclient/_internal/proxy.py": "8637a9e60bca87ef58073f560b69b55e7efc852f03aab381555ad7bf85f67bc8",
+      "tuf/ngclient/_internal/trusted_metadata_set.py": "97ecbb5d42bf7228b56d1a65ebdebe26569470dc165e7a4386db689afbe44417",
+      "tuf/ngclient/config.py": "f6f8dbf7c18cdb08b9dbbd4cd03e19a9b14873ab757cbe2579cb28769ef0df37",
+      "tuf/ngclient/fetcher.py": "f4dadf82bad133c6f57b390976fceb38ee05edffa596deb777818d33c765b286",
+      "tuf/ngclient/requests_fetcher.py": "fc5ed3da6a673077f348205d194ce31344f5a66694f55d0081214951440c1197",
+      "tuf/ngclient/updater.py": "fa32bc4a416cf54b996b0b431df5081b68cb00f8b7c5e3e0b196f39dbe40d9f3",
+      "tuf/ngclient/urllib3_fetcher.py": "8413a6f692f5133c6219083335f0692c666c9ed409217d5da9cd4e1a98053445",
+      "tuf/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tuf/repository/__init__.py": "dd4a07d1d52db797c441c1fd650747bf5ae6389101b366c314e427f6a94e5190",
+      "tuf/repository/_repository.py": "1fefc4a8b2338f2c091fe7690989b8e944298c0d511bd852c00be21112689a18"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fc5ff8cc758a1df5c9004fa842f850fd6b8faf5cd9ff2aeed32393ceb37887dc",
+     "native": {},
+     "pth": {},
+     "sha256": "d30434bda6e079ab303fb30d1b3006d939a10ca34783b1573d61cd9b802fa45c"
+    }
+   },
+   "name": "tuf",
+   "provenance": {
+    "tuf-7.0.1-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "theupdateframework/python-tuf",
+     "workflow": "cd.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "theupdateframework@googlegroups.com",
+    "license_expression": "Apache-2.0 OR MIT",
+    "project_urls": {
+     "Documentation": "https://theupdateframework.readthedocs.io/en/stable/",
+     "Homepage": "https://www.updateframework.com",
+     "Issues": "https://github.com/theupdateframework/python-tuf/issues",
+     "Source": "https://github.com/theupdateframework/python-tuf"
+    },
+    "summary": "A secure updater framework for Python"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, network_download, network_outbound; attestation verifies (theupdateframework/python-tuf)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|tuf/ngclient/updater.py|fa32bc4a416cf54b",
+     "yara|capability_filesystem_read|tuf/api/_payload.py|21cb1a5022ce9b4f",
+     "yara|capability_filesystem_read|tuf/api/metadata.py|fbc1511c7c348534",
+     "yara|capability_filesystem_read|tuf/ngclient/_internal/trusted_metadata_set.py|97ecbb5d42bf7228",
+     "yara|capability_filesystem_read|tuf/ngclient/fetcher.py|f4dadf82bad133c6",
+     "yara|capability_filesystem_read|tuf/ngclient/updater.py|fa32bc4a416cf54b",
+     "yara|capability_network_download|tuf/ngclient/fetcher.py|f4dadf82bad133c6",
+     "yara|capability_network_outbound|tuf/ngclient/fetcher.py|f4dadf82bad133c6"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete tuf/ngclient/updater.py",
+     "capability_filesystem_read:capability_filesystem_read tuf/api/_payload.py",
+     "capability_filesystem_read:capability_filesystem_read tuf/api/metadata.py",
+     "capability_filesystem_read:capability_filesystem_read tuf/ngclient/_internal/trusted_metadata_set.py",
+     "capability_filesystem_read:capability_filesystem_read tuf/ngclient/fetcher.py",
+     "capability_filesystem_read:capability_filesystem_read tuf/ngclient/updater.py",
+     "capability_network_download:capability_network_download tuf/ngclient/fetcher.py",
+     "capability_network_outbound:capability_network_outbound tuf/ngclient/fetcher.py"
+    ]
+   },
+   "version": "7.0.1"
+  }
+ }
+}

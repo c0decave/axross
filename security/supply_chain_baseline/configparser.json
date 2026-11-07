@@ -1,0 +1,51 @@
+{
+ "name": "configparser",
+ "versions": {
+  "7.2.0": {
+   "accepted_findings": [],
+   "archives": {
+    "configparser-7.2.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "backports/configparser/__init__.py": "da6e18ac2adc9dbb569b5d2c86b0dd37421f2c5257d353d878b9d026c8956380",
+      "backports/configparser/compat.py": "3128842ce7189437b1b93d0f5bf978ed781484c68f541e2331210cdd1057db75",
+      "configparser-7.2.0.dist-info/LICENSE": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741",
+      "configparser-7.2.0.dist-info/METADATA": "ac041e9550c13815c801270a75c33f5a172cee23c453836580bec3acbf31a5c3",
+      "configparser-7.2.0.dist-info/RECORD": "3728415fced3256d4f6bd0f3994befd8ca02cae473338a22e5629b0517d12f0e",
+      "configparser-7.2.0.dist-info/WHEEL": "8c1ef367737d84833d69d5bbaa54c0cb270b616f67a5a58a2d1cdaa1570b29c3",
+      "configparser-7.2.0.dist-info/top_level.txt": "7068da2cc3a8051d452b4029a23b73595995893b49ec91882bf1f05e212cbed5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "bf25a6cd64a7a14f23115d3d4898088d1fcad9083c8d3a8356aa4e72b585cc5a",
+     "native": {},
+     "pth": {},
+     "sha256": "fee5e1f3db4156dcd0ed95bc4edfa3580475537711f67a819c966b389d09ce62"
+    }
+   },
+   "name": "configparser",
+   "provenance": {
+    "configparser-7.2.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "\u0141ukasz Langa <lukasz@langa.pl>",
+    "maintainer_email": "\"Jason R. Coombs\" <jaraco@jaraco.com>",
+    "project_urls": {
+     "Source": "https://github.com/jaraco/configparser"
+    },
+    "summary": "Updated configparser from stdlib for earlier Pythons."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "7.2.0"
+  }
+ }
+}

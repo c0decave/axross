@@ -33,6 +33,8 @@ from tests.mcp_podman_testkit import fake_podman  # noqa: E402
 from tests.test_mcp_catalog import FakeOpener, _Response  # noqa: E402
 
 DIGEST = "sha256:" + "b" * 64
+#: A shipped image entry that needs no folder and no value: the pull path.
+OCI = "vuln-nist"
 
 
 def _builtin(name: str) -> M.CatalogEntry:
@@ -113,7 +115,7 @@ def test_happy_network_modes_and_mounts(tmp_path):
 def test_happy_install_a_builtin_image(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch)
     lines = []
-    entry = _builtin("time")
+    entry = _builtin(OCI)
     config = I.install(entry, I.InstallChoice(name="time"), on_line=lines.append)
     assert ["pull", entry.image_ref] in podman.calls("pull")
     assert any("Copying blob" in line for line in lines)
@@ -122,7 +124,7 @@ def test_happy_install_a_builtin_image(tmp_path, monkeypatch):
     assert config.sandbox == "" and config.egress == ()
     pkg = config.package
     assert (pkg["kind"], pkg["source"], pkg["entry"], pkg["digest"], pkg["tag"]) == (
-        "oci", "builtin", "time", entry.digest, "latest")
+        "oci", "builtin", OCI, entry.digest, "latest")
     assert len(pkg["image"]) == 64 and pkg["network"] == "none"
     assert not config.problems()
 
@@ -219,7 +221,7 @@ def test_happy_a_remote_entry_is_an_http_server(tmp_path, monkeypatch):
 
 def test_happy_uninstall_removes_the_image_by_id(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch)
-    config = I.install(_builtin("time"), I.InstallChoice(name="time"))
+    config = I.install(_builtin(OCI), I.InstallChoice(name="time"))
     ok, message = I.uninstall(config)
     assert ok, message
     assert ["rmi", config.package["image"]] in podman.calls("rmi")
@@ -228,8 +230,8 @@ def test_happy_uninstall_removes_the_image_by_id(tmp_path, monkeypatch):
 
 def test_happy_an_image_used_by_another_server_stays(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch)
-    one = I.install(_builtin("time"), I.InstallChoice(name="time"))
-    two = I.install(_builtin("time"), I.InstallChoice(name="time2"))
+    one = I.install(_builtin(OCI), I.InstallChoice(name="time"))
+    two = I.install(_builtin(OCI), I.InstallChoice(name="time2"))
     ok, message = I.uninstall(one, others=[two])
     assert ok and "time2" in message
     assert podman.calls("rmi") == []
@@ -237,7 +239,7 @@ def test_happy_an_image_used_by_another_server_stays(tmp_path, monkeypatch):
 
 def test_happy_an_image_that_was_there_before_stays(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch)
-    entry = _builtin("time")
+    entry = _builtin(OCI)
     podman.add_image("f" * 64, [entry.image_ref], [entry.image_ref])
     config = I.install(entry, I.InstallChoice(name="time"))
     assert config.package["preexisting"] == "true"
@@ -308,7 +310,7 @@ def test_happy_settings_keep_container_servers_and_sources(tmp_path):
 
 def test_happy_the_image_index_marks_what_is_present(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch)
-    entry = _builtin("time")
+    entry = _builtin(OCI)
     podman.add_image("f" * 64, [entry.image_ref], [entry.image_ref])
     podman.add_image("e" * 64, ["docker.io/mcp/git:latest"], ["docker.io/mcp/git@" + DIGEST])
     index = I.Podman().index()
@@ -360,13 +362,13 @@ def test_sad_no_podman_is_a_clear_error(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path))
     assert not I.Podman().available
     with pytest.raises(I.InstallError, match="podman is not installed"):
-        I.install(_builtin("time"), I.InstallChoice(name="time"))
+        I.install(_builtin(OCI), I.InstallChoice(name="time"))
 
 
 def test_sad_a_failed_pull_says_why(tmp_path, monkeypatch):
     fake_podman(tmp_path, monkeypatch, fail={"pull": "Error: manifest unknown"})
     with pytest.raises(I.InstallError, match="manifest unknown"):
-        I.install(_builtin("time"), I.InstallChoice(name="time"))
+        I.install(_builtin(OCI), I.InstallChoice(name="time"))
 
 
 def test_sad_a_pull_can_be_cancelled(tmp_path, monkeypatch):
@@ -375,7 +377,7 @@ def test_sad_a_pull_can_be_cancelled(tmp_path, monkeypatch):
     threading.Timer(0.5, cancel.set).start()
     start = time.monotonic()
     with pytest.raises(I.InstallError, match="cancelled"):
-        I.install(_builtin("time"), I.InstallChoice(name="time"), cancel=cancel)
+        I.install(_builtin(OCI), I.InstallChoice(name="time"), cancel=cancel)
     assert time.monotonic() - start < 10
 
 
@@ -397,7 +399,7 @@ def test_sad_a_failing_build_reports_its_output(tmp_path, monkeypatch):
 
 def test_sad_a_refused_rmi_keeps_the_image_and_says_why(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch)
-    config = I.install(_builtin("time"), I.InstallChoice(name="time"))
+    config = I.install(_builtin(OCI), I.InstallChoice(name="time"))
     podman.update(fail={"rmi": "Error: image is in use by a container"})
     ok, message = I.uninstall(config)
     assert not ok and "in use" in message
@@ -537,10 +539,12 @@ LIVE_COMMIT_PREFIX = "localhost/axross-mcp:live-"
 
 
 def _live_refs() -> set:
-    """The references the live tests pull: their catalog images and the
-    base images of an npm/pypi build."""
-    return {_builtin("time").image_ref, _builtin("fetch").image_ref,
-            I.NODE_IMAGE, I.PYTHON_IMAGE}
+    """The references the live tests pull: the catalog images they install
+    and the base images of an npm/pypi build (time and fetch are PyPI
+    packages, built on the Python image)."""
+    images = {e.image_ref for e in M.load_builtin()[0]
+              if e.kind == "oci" and e.name in ("time", "fetch")}
+    return images | {I.NODE_IMAGE, I.PYTHON_IMAGE}
 
 
 def _made_by_live_tests(image: dict, refs: set) -> bool:
@@ -550,9 +554,9 @@ def _made_by_live_tests(image: dict, refs: set) -> bool:
 
 def test_happy_the_live_clean_up_takes_what_the_tests_pulled_or_committed():
     refs = _live_refs()
-    time_ref = _builtin("time").image_ref
-    assert _made_by_live_tests({"Names": [], "RepoDigests": [time_ref]}, refs)
+    assert _made_by_live_tests({"Names": [], "RepoDigests": [I.PYTHON_IMAGE]}, refs)
     assert _made_by_live_tests({"Names": ["localhost/axross-mcp:live-tz-0.1.0"]}, refs)
+    assert _made_by_live_tests({"Names": ["localhost/axross-mcp:live-time-2026.10.28"]}, refs)
     assert _made_by_live_tests({"RepoDigests": [I.NODE_IMAGE]}, refs)
 
 
@@ -565,7 +569,7 @@ def test_sad_an_image_another_program_built_meanwhile_stays():
 
 def test_edge_another_digest_of_the_same_repository_is_not_ours():
     refs = _live_refs()
-    repo = _builtin("time").image_ref.split("@")[0]
+    repo = I.PYTHON_IMAGE.split("@")[0]
     assert not _made_by_live_tests({"RepoDigests": [f"{repo}@sha256:{'0' * 64}"]}, refs)
     assert not _made_by_live_tests({"Names": [f"{repo}:latest"]}, refs)
 
@@ -637,7 +641,8 @@ def test_live_an_image_built_meanwhile_survives_the_clean_up(real_podman, tmp_pa
                        env=dict(os.environ))
 
 
-def test_live_the_time_image_runs_in_podman(real_podman):
+def test_live_the_time_server_runs_in_podman(real_podman):
+    """The shipped time entry, a PyPI package built into the Python image."""
     entry = _builtin("time")
     name = "live-time"
     config = I.install(entry, I.InstallChoice(name=name), podman=real_podman)

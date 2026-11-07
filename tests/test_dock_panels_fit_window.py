@@ -54,6 +54,7 @@ from PyQt6.QtWidgets import (  # noqa: E402
 )
 
 from core import extensions as EX  # noqa: E402
+from tests.font_presence import no_font_reason  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -96,9 +97,10 @@ def own_home(tmp_path, monkeypatch):
 @pytest.fixture
 def window(monkeypatch):
     from core import multimedia_probe
-    from tests.test_media_player_late_engine import OK
     from ui.main_window import MainWindow
 
+    OK = multimedia_probe.ProbeResult(ok=True)  # not the media player's tests:
+    # they need Qt Multimedia, a window does not
     monkeypatch.setattr(multimedia_probe, "probe", lambda *a, **k: OK)
     win = MainWindow()
     win._reconnect_timer.stop()
@@ -230,6 +232,10 @@ def test_e2e_floated_and_docked_again_the_panels_still_do_not_overlap(window):
 
 
 def test_e2e_panes_conversation_and_player_on_one_workspace_do_not_overlap(window):
+    # The budget is one of text in a real font: without one, the panels'
+    # and docks' title bars (their titles) alone come to 1728 px.
+    if no_font_reason():
+        pytest.skip(no_font_reason())
     agents, player = crowd(window)
     ws = window.current_workspace()
     window.move_extension_panel(agents[0], ws)

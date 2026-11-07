@@ -118,3 +118,38 @@ class StaleSessionReplaceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_edge_disconnect_all_closes_in_parallel_and_never_waits_past_its_bound():
+    """Quitting disconnected every session one after the other: a dead
+    link held the exit for its whole timeout, and each further session for
+    its own. They close together now, waited for up to a bound."""
+    import threading
+    import time
+
+    from core.connection_manager import ConnectionManager
+
+    started: list[float] = []
+    closed: list[str] = []
+
+    class Session:
+        def __init__(self, name, delay) -> None:
+            self.name, self.delay = name, delay
+
+        def disconnect(self):
+            started.append(time.monotonic())
+            time.sleep(self.delay)
+            closed.append(self.name)
+
+    manager = ConnectionManager()
+    manager._sessions = {f"k{i}": Session(f"s{i}", 0.3) for i in range(4)}
+    manager._sessions["dead"] = Session("dead", 5.0)
+    manager._ref_counts = {k: 1 for k in manager._sessions}
+    begin = time.monotonic()
+    manager.disconnect_all(timeout=1.0)
+    took = time.monotonic() - begin
+    assert sorted(closed) == ["s0", "s1", "s2", "s3"]  # the live ones are closed
+    assert took < 2.0  # not 0.3 * 4 + 5 s
+    assert max(started) - min(started) < 0.25  # together, not in turn
+    assert manager._sessions == {}
+    assert threading.active_count() >= 1

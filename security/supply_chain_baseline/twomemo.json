@@ -1,0 +1,64 @@
+{
+ "name": "twomemo",
+ "versions": {
+  "2.1.0": {
+   "accepted_findings": [],
+   "archives": {
+    "twomemo-2.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "twomemo-2.1.0.dist-info/METADATA": "e929f1f190cc9385db06de12e27caa5eb169538bb3406a5eb7c863cf9fe75b87",
+      "twomemo-2.1.0.dist-info/RECORD": "4cd473b02449adbf44df7781479734c0ffe3da8d6088d2f045eeece276a755ef",
+      "twomemo-2.1.0.dist-info/WHEEL": "c14c80f0e6ae95195b7f032d990b2f367806af140702f90a72f466762ce5262d",
+      "twomemo-2.1.0.dist-info/licenses/LICENSE": "32bcc74db2e8d577be4c5367053ab10538889befd30d745271ae11c6e9ac42ee",
+      "twomemo-2.1.0.dist-info/top_level.txt": "d2371086e8d0e95ef3a45d75842665f00c88bf0d498581c2070aa77dc8c47ded",
+      "twomemo/__init__.py": "de6b0084852d7b596cb68daedee4b966ad408eaaa067f7f103c6ec409a4e6b1b",
+      "twomemo/etree.py": "e26099f7bddbe3e80c2153201aef5fa54e4be98b389741a444882f51214830bc",
+      "twomemo/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "twomemo/twomemo.py": "69188679f0b8212271b725357aeb11305d95e9d52738d1bcf6b05cf750ec9ef8",
+      "twomemo/twomemo_pb2.py": "b5c95bc29e48d2abc5a11dac06abb2da509baf1d5b6dab4e1f7c8b256cad838b",
+      "twomemo/twomemo_pb2.pyi": "d4ffec5b1d6fcb71d0276f51f72f2b4e14589ee39e11f335eb011fd8a5ff0cc6",
+      "twomemo/version.py": "59636ca2c50f006ebfb88e609653bf1c8b421fd8690d0ccbaed6ea713b7f3dcf"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "3cb21e1519119ec959fd774911aa9998dcd58091f690e3b99a42f731d08a9667",
+     "native": {},
+     "pth": {},
+     "sha256": "dc799851d85f8badde8632511b5ad1091d9de95588a8d9c4d555764238f17f1a"
+    }
+   },
+   "name": "twomemo",
+   "provenance": {
+    "twomemo-2.1.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "Syndace/python-twomemo",
+     "workflow": "test-and-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "license_expression": "MIT",
+    "maintainer_email": "\"Tim Henkes (Syndace)\" <me@syndace.dev>",
+    "project_urls": {
+     "Changelog": "https://github.com/Syndace/python-twomemo/blob/main/CHANGELOG.md",
+     "Documentation": "https://python-twomemo.readthedocs.io/",
+     "Issues": "https://github.com/Syndace/python-twomemo/issues",
+     "Repository": "https://github.com/Syndace/python-twomemo"
+    },
+    "summary": "Backend implementation of the namespace `urn:xmpp:omemo:2` for python-omemo."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (Syndace/python-twomemo)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.1.0"
+  }
+ }
+}

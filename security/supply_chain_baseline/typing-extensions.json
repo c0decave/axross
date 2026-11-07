@@ -1,0 +1,65 @@
+{
+ "name": "typing-extensions",
+ "versions": {
+  "4.16.0": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|typing_extensions.py|4040ca1a1ecbee00"
+   ],
+   "archives": {
+    "typing_extensions-4.16.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "typing_extensions-4.16.0.dist-info/METADATA": "b05084ca1d50879865178d9fff9fabeab61bdfb1f361bfbde95421ffc8f9be46",
+      "typing_extensions-4.16.0.dist-info/RECORD": "44dcf97810bea7b84bcd83890b6674bbcc2f4c5ef899a4887f15d524bdf6bb97",
+      "typing_extensions-4.16.0.dist-info/WHEEL": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db",
+      "typing_extensions-4.16.0.dist-info/licenses/LICENSE": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+      "typing_extensions.py": "4040ca1a1ecbee00d1385c12a93084d1c5bd46f0b774f07e5ae7e91c4f55e696"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e4c4c53d655fa1ab8a950d564dd3353ba07be335271ea58fe4d1c08afd33458f",
+     "native": {},
+     "pth": {},
+     "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+    }
+   },
+   "name": "typing-extensions",
+   "provenance": {
+    "typing_extensions-4.16.0-py3-none-any.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "python/typing_extensions",
+     "workflow": "publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"Guido van Rossum, Jukka Lehtosalo, \u0141ukasz Langa, Michael Lee\" <levkivskyi@gmail.com>",
+    "license_expression": "PSF-2.0",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/python/typing_extensions/issues",
+     "Changes": "https://github.com/python/typing_extensions/blob/main/CHANGELOG.md",
+     "Documentation": "https://typing-extensions.readthedocs.io/",
+     "Home": "https://github.com/python/typing_extensions",
+     "Q & A": "https://github.com/python/typing/discussions",
+     "Repository": "https://github.com/python/typing_extensions"
+    },
+    "summary": "Backported and Experimental Type Hints for Python 3.9+"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; attestation verifies (python/typing_extensions)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|typing_extensions.py|4040ca1a1ecbee00"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn typing_extensions.py"
+    ]
+   },
+   "version": "4.16.0"
+  }
+ }
+}

@@ -38,10 +38,13 @@ from bundle_licenses import licence_datas  # noqa: E402
 from bundle_options import dropped, dropped_data, exe_options, host_owned  # noqa: E402
 
 FLAVOR = os.environ.get("AXROSS_BUNDLE_FLAVOR", "full")
-if FLAVOR not in ("full", "slim"):
+if FLAVOR not in ("full", "slim", "base"):
     raise SystemExit(
-        f"AXROSS_BUNDLE_FLAVOR must be 'full' or 'slim', got {FLAVOR!r}"
+        f"AXROSS_BUNDLE_FLAVOR must be 'full', 'slim' or 'base', got {FLAVOR!r}"
     )
+#: The target system's glibc floor ("glibc-2.34" / "glibc-2.36"), for the
+#: self-update's choice of asset (core.self_update.VARIANT_PATH).
+VARIANT = os.environ.get("AXROSS_BUNDLE_VARIANT", "glibc-2.34")
 
 # --------------------------------------------------------------------------
 # Hidden imports
@@ -152,9 +155,11 @@ hiddenimports += [
 # --------------------------------------------------------------------------
 # Excludes (per flavor)
 # --------------------------------------------------------------------------
-# The slim bundle loses cloud OAuth + Windows protocols.
+# The slim bundle loses cloud OAuth + Windows protocols; the base bundle
+# loses everything that is a unit of the packs (core.units) - it adds them
+# from its release (core.packs).
 excludes: list[str] = []
-if FLAVOR == "slim":
+if FLAVOR in ("slim", "base"):
     excludes += [
         # Cloud OAuth SDKs — each brings ~20-90 MB
         "google",
@@ -196,6 +201,17 @@ if FLAVOR == "slim":
         # numpy (Media Player equalizer/spectrum) ships in full only; slim
         # plays without them.
         "numpy",
+        # Bumble (the Bluetooth panel's stick used directly) ships in full only;
+        # slim offers BlueZ and says how to get it.
+        "bumble",
+        # matrix-nio and vodozemac (the Matrix panel, pip extra "chat") ship in
+        # full only; slim's Matrix panel says what to install.
+        "nio", "vodozemac", "peewee", "aiohttp_socks", "python_socks",
+        # slixmpp and OMEMO (the XMPP panel, the same extra)
+        "slixmpp", "omemo", "twomemo", "oldmemo", "doubleratchet", "x3dh", "xeddsa", "xmlschema",
+        "elementpath",
+        "usb1",
+        "libusb_package",
         # The Agent dock's voice (Piper, faster-whisper) ships in full only.
         "piper",
         "faster_whisper",
@@ -203,6 +219,30 @@ if FLAVOR == "slim":
         "onnxruntime",
         "av",
     ]
+
+if FLAVOR == "base":
+    sys.path.insert(0, PROJECT_ROOT)
+    from importlib import metadata as _md
+
+    from core import units as _units
+
+    _base = _units.base_distributions()
+    _unit_dists = {d for u in _units.units() for d in u.distributions} - _base
+    for _dist in sorted(_unit_dists):
+        try:
+            _files = _md.distribution(_dist).files or []
+        except _md.PackageNotFoundError:
+            continue
+        for _f in _files:
+            _path = str(_f)
+            _top = _path.split("/", 1)[0]
+            if _top.endswith((".dist-info", ".data")) or _top in ("..", "bin", "__pycache__"):
+                continue
+            if "/" not in _path and not _path.endswith((".py", ".so", ".pyd")):
+                continue        # a top-level LICENSE / README is no module
+            _mod = _top[:-3] if _top.endswith(".py") else _top.split(".", 1)[0]
+            if _mod and _mod.isidentifier() and _mod not in excludes:
+                excludes.append(_mod)
 
 # Unconditional excludes — stuff that slipped into the venv but
 # should never land in the bundled binary. NOT listed here but
@@ -240,7 +280,7 @@ _RESOURCES = os.path.join(PROJECT_ROOT, "resources")
 # three times; tests/test_packaging.py::BundledResourcesTests asserts the
 # relationship rather than trusting this list.
 for sub in ("scripts", "wordlists", "logo", "icons", "i18n", "extensions", "voice", "mcp",
-            "credits"):
+            "credits", "chat_servers"):
     src = os.path.join(_RESOURCES, sub)
     if os.path.isdir(src):
         datas.append((src, f"resources/{sub}"))
@@ -254,6 +294,10 @@ with open(_flavor_file, "w", encoding="ascii") as _fh:
 # In the first-party folder "axross": core.third_party claims the bundle
 # root for nobody, so a file there fails the release's bundle gate.
 datas.append((_flavor_file, "axross"))
+_variant_file = os.path.join(workpath, "axross-bundle-variant.txt")
+with open(_variant_file, "w", encoding="ascii") as _fh:
+    _fh.write(VARIANT + "\n")
+datas.append((_variant_file, "axross"))
 
 # Some pure-Python deps ship a runtime data file alongside their .py
 # code. PyInstaller's static analyser only follows ``import`` so any

@@ -284,7 +284,7 @@ class AnalysisSettings:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return cls()
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             log.warning("Analysis settings: cannot read %s (%s), using the defaults", path, exc)
             out = cls()
             out.file_not_fully_loaded = True

@@ -79,8 +79,20 @@ lab sections you ran locally.
 
 ## Code style
 
-- Python: `ruff` is the only style gate. `ruff check .` must pass.
-- Line length 100 (configured in `pyproject.toml`).
+- Python: `ruff` is the only style gate. `ruff check .` must pass, with
+  the rules `pyproject.toml` selects: pyflakes (`F`), syntax errors
+  (`E9`), no raw bidi characters in the source (`PLE2502`, write them as
+  `\u` escapes) and no exception repeated in the handlers of one `try`
+  (`B025`).
+- Line length 100 (configured in `pyproject.toml`; not gated yet).
+- CI (`.github/workflows/python-app.yml`, job `package`, Python 3.11 to
+  3.14) runs, besides `ruff check .`: `python -m build`,
+  `twine check --strict dist/*`, the wheel-content test
+  (`AXROSS_TEST_WHEEL=dist/axross-<version>-py3-none-any.whl pytest
+  tests/test_pypi_packaging.py::test_built_wheel_contains_runtime_resources`),
+  `python scripts/coverage_matrix.py --check` and
+  `python -m core.llm_guide --check`. Run them before a PR that touches
+  packaging, tests or the scripting API.
 - Keep dependencies minimal. New runtime deps need a justification; new
   optional extras are preferred over base-install additions.
 - Tests: mirror the module layout, one test file per module where

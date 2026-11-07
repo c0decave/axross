@@ -1,0 +1,105 @@
+{
+ "name": "importlib-resources",
+ "versions": {
+  "7.1.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|importlib_resources/_common.py|fd1c683afb6a08fb",
+    "yara|capability_filesystem_delete|importlib_resources/tests/test_path.py|1e766a61a45db3a5",
+    "yara|capability_filesystem_read|importlib_resources/abc.py|9106f9effb2ace47",
+    "yara|capability_filesystem_read|importlib_resources/tests/test_functional.py|c452b0d15cc959a2",
+    "yara|capability_filesystem_read|importlib_resources/tests/test_open.py|71e30d95064a346b",
+    "yara|capability_network_outbound|importlib_resources/_common.py|fd1c683afb6a08fb",
+    "yara|capability_network_outbound|importlib_resources/readers.py|b877fd5feb260370"
+   ],
+   "archives": {
+    "importlib_resources-7.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "importlib_resources-7.1.0.dist-info/METADATA": "ab47cc987f14054c1388b5180656d21fe9ff21a2dcd8d7a39bd7503c0e66d642",
+      "importlib_resources-7.1.0.dist-info/RECORD": "fe69601119dc8173c5da430ca1c65715f75a8d3354f24fe12f083f9a4b02d31f",
+      "importlib_resources-7.1.0.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "importlib_resources-7.1.0.dist-info/licenses/LICENSE": "e2f7bb0557e7a381499f15baa7c1d776d83d6616599179d71d3109b8e39f7b25",
+      "importlib_resources-7.1.0.dist-info/top_level.txt": "7c72231d4d46670023bdcc9da6652752b4e76ef7625a31b83845592bc6f2d134",
+      "importlib_resources/__init__.py": "17a48e31920b89ecfdea52b787d76e13f7399114c4c9dcc7bc8e83ed345c3891",
+      "importlib_resources/_adapters.py": "be9ac919b51e1db6a35fa5c2b8c3fa27794caea0a2f8ffcc4e5ce225447b8df9",
+      "importlib_resources/_common.py": "fd1c683afb6a08fba54a62bfda0543ebffe0b84f3924383c104519430bf554b1",
+      "importlib_resources/_functional.py": "9cca29f5973b8356218b2939a2aafdba4bdf25c3b1e2f9efa83ee7876e2157b6",
+      "importlib_resources/_itertools.py": "7838ac57a46a88d64ea202d25dfe8b3861ce61cefd14680faca34bcc52e60ab5",
+      "importlib_resources/abc.py": "9106f9effb2ace47ddb949f5106aabc2b865adfbe0afbbe7ab6f9f918177068e",
+      "importlib_resources/compat/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "importlib_resources/compat/py39.py": "831e4d136e571f5a50ad34490d8ed02549e06690fb3a8b6c2bd17aa59cb92a33",
+      "importlib_resources/future/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "importlib_resources/future/adapters.py": "50520cc44b8ba383ea7156eda15ddefe4f41731092fa6986db67fc53656d931e",
+      "importlib_resources/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "importlib_resources/readers.py": "b877fd5feb260370adc5d07d207587d33f8ee77dfbf7095c10c9b3036517cea1",
+      "importlib_resources/simple.py": "b70b988b3ed4d7c8aaa050bee3da201439e2683180d811b81c9f71eb470b82e3",
+      "importlib_resources/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "importlib_resources/tests/_path.py": "a61f0338b244bef5817b7796320137b6a836ef080e6b683401b30054540a19a6",
+      "importlib_resources/tests/compat/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "importlib_resources/tests/compat/py312.py": "a9c5a3a59850a36a04b1dc089514501ebb0c18396d9054e7113786edf2dd512f",
+      "importlib_resources/tests/compat/py39.py": "9ce8eeb780990ed4606446e55fd85686ea68f6f962fc2035dbbd3f270750cd1a",
+      "importlib_resources/tests/test_compatibilty_files.py": "9e22a543bf9ba82dfb11e2e95109ae7ffce90559be80c8ed4d7327748b629584",
+      "importlib_resources/tests/test_contents.py": "afc9151f593b0c7adca362554d43026ec58ad09bef8cab74ce0ae61f9e9ce158",
+      "importlib_resources/tests/test_custom.py": "7a9e66193eae4fa3b580f74cf9bde65e8f475839c22c3f74b9ce07d5b53af282",
+      "importlib_resources/tests/test_files.py": "6339b09310bc42075ff23363f50e51829e609895311531c405fd8d369449bb13",
+      "importlib_resources/tests/test_functional.py": "c452b0d15cc959a2cd9256e5d8fc18bab22f225e0edc0bf85746d935dea2bac0",
+      "importlib_resources/tests/test_open.py": "71e30d95064a346b65d5273e9abdf679cbce2c52f20df797e1046a0eaead78a6",
+      "importlib_resources/tests/test_path.py": "1e766a61a45db3a57ace70f05a59856648066955dbcc26e34e5827c7a1e2531e",
+      "importlib_resources/tests/test_read.py": "e4c07b24d1b56cc517a8c030b016cf1fcbcb01e1cec53a7d04b0b2683be67607",
+      "importlib_resources/tests/test_reader.py": "762e98babcb8c7a6387dab4ceaa365a56218cba09d3571c89cb6a1b6a485be42",
+      "importlib_resources/tests/test_resource.py": "c7a79e07e4b8652a25cf40ea682976595be34131697d5950d7ee93481610b692",
+      "importlib_resources/tests/test_util.py": "568b4b35b9e03b2160d3714a553cc864a7781b3e143be74c12bd06faf1cc8ae2",
+      "importlib_resources/tests/util.py": "35a1ad23e72c0b1eab040ebb50ea437213e52fa32b56e4243bf3c43efeeef65d",
+      "importlib_resources/tests/zip.py": "9c6f43eaeff89eeebb36b11415f32deefcdb6b4a8effe40fc8001673a5b880fe"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "bc06e01e017c585e6d0a933f971260d00ff04a3a8e2a1fbfc5eaab03b5d0e0c9",
+     "native": {},
+     "pth": {},
+     "sha256": "1bd7b48b4088eddb2cd16382150bb515af0bd2c70128194392725f82ad2c96a1"
+    }
+   },
+   "name": "importlib-resources",
+   "provenance": {
+    "importlib_resources-7.1.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Barry Warsaw <barry@python.org>",
+    "license_expression": "Apache-2.0",
+    "maintainer_email": "\"Jason R. Coombs\" <jaraco@jaraco.com>",
+    "project_urls": {
+     "Source": "https://github.com/python/importlib_resources"
+    },
+    "summary": "Read resources from Python packages"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|importlib_resources/_common.py|fd1c683afb6a08fb",
+     "yara|capability_filesystem_delete|importlib_resources/tests/test_path.py|1e766a61a45db3a5",
+     "yara|capability_filesystem_read|importlib_resources/abc.py|9106f9effb2ace47",
+     "yara|capability_filesystem_read|importlib_resources/tests/test_functional.py|c452b0d15cc959a2",
+     "yara|capability_filesystem_read|importlib_resources/tests/test_open.py|71e30d95064a346b",
+     "yara|capability_network_outbound|importlib_resources/_common.py|fd1c683afb6a08fb",
+     "yara|capability_network_outbound|importlib_resources/readers.py|b877fd5feb260370"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete importlib_resources/_common.py",
+     "capability_filesystem_delete:capability_filesystem_delete importlib_resources/tests/test_path.py",
+     "capability_filesystem_read:capability_filesystem_read importlib_resources/abc.py",
+     "capability_filesystem_read:capability_filesystem_read importlib_resources/tests/test_functional.py",
+     "capability_filesystem_read:capability_filesystem_read importlib_resources/tests/test_open.py",
+     "capability_network_outbound:capability_network_outbound importlib_resources/_common.py",
+     "capability_network_outbound:capability_network_outbound importlib_resources/readers.py"
+    ]
+   },
+   "version": "7.1.0"
+  }
+ }
+}

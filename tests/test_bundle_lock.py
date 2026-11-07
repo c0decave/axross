@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from security.dep_floor_audit import _normalise, _version_key, parse_lock  # noqa: E402
+from tests.bundle_sources import require_bundle_sources  # noqa: E402
+
+require_bundle_sources()
 
 LOCK_PATH = ROOT / "build" / "requirements-bundle.txt"
 LOCK_TEXT = LOCK_PATH.read_text(encoding="utf-8")
@@ -177,6 +180,37 @@ def test_sad_no_known_vulnerable_qt_is_locked():
     assert _ge(qt.version, "6.11.2")
     (pyqt,) = _pins("PyQt6")
     assert _ge(pyqt.version, "6.11.0")
+
+
+def _cap(spec: str) -> str | None:
+    match = _REQ_RE.match(spec)
+    cap = re.search(r"<\s*([0-9][^,\s]*)", match.group(2))
+    return cap.group(1) if cap else None
+
+
+def test_sad_no_pyqt6_without_qtpdf_is_locked():
+    """PyQt6 6.12 dropped QtPdf (now the separate PyQt6-Pdf): pyproject and the
+    lock's input cap PyQt6 below 6.12 alike, so a refresh of the lock cannot
+    ship bundles without the PDF viewer."""
+    pyproject = {_requirement(s)[0]: _cap(s) for s in _pyproject_requirements()}
+    given = {_requirement(s)[0]: _cap(s) for s in _in_requirements()}
+    assert pyproject["pyqt6"] == given["pyqt6"] == given["pyqt6-qt6"] == "6.12"
+    for name in ("PyQt6", "PyQt6-Qt6"):
+        (pin,) = _pins(name)
+        assert not _ge(pin.version, "6.12"), pin
+
+
+def test_sad_every_pyproject_cap_reaches_the_input_and_the_lock():
+    drift = []
+    given = {_requirement(s)[0]: _cap(s) for s in _in_requirements()}
+    for spec in _pyproject_requirements():
+        name, cap = _requirement(spec)[0], _cap(spec)
+        if cap is None:
+            continue
+        if given.get(name) != cap:
+            drift.append(f"{name}: input cap {given.get(name)} vs pyproject {cap}")
+        drift += [f"{p.name}=={p.version} >= {cap}" for p in _pins(name) if _ge(p.version, cap)]
+    assert drift == []
 
 
 # --- edge ------------------------------------------------------------------

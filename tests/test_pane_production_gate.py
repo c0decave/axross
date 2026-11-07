@@ -33,6 +33,7 @@ from core import safety_tarpit  # noqa: E402
 from core.local_fs import LocalFS  # noqa: E402
 from core.profiles import ConnectionProfile  # noqa: E402
 from models.file_item import FileItem  # noqa: E402
+from tests.off_gui_wait import _drain_op  # noqa: E402
 from ui import production_gate as PG  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -203,6 +204,7 @@ def test_sad_a_cancelled_countdown_keeps_the_name(pane_on_prod, monkeypatch):
         mock.patch.object(QInputDialog, "getText", return_value=("new.txt", True)),
     ):
         pane._rename_selected()
+        _drain_op(pane)
     assert (root / "old.txt").exists()
     assert not (root / "new.txt").exists()
 

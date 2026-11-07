@@ -1,0 +1,60 @@
+{
+ "name": "isodate",
+ "versions": {
+  "0.7.2": {
+   "accepted_findings": [],
+   "archives": {
+    "isodate-0.7.2-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "isodate-0.7.2.dist-info/LICENSE": "ce5fe4893fb6ab843de77b367bfa9db974d7b00ab9033fcca8d7760a97fe1b43",
+      "isodate-0.7.2.dist-info/METADATA": "90bc9d1eee7c3c97fd3a52001dece07c0f9b480cfc8fbbf767ca4ae0ab848529",
+      "isodate-0.7.2.dist-info/RECORD": "8d264c0f016b01fbc19f7d784bf63905c78c242ee8c56f17ed68babea3dce336",
+      "isodate-0.7.2.dist-info/WHEEL": "195f5a3138703ffe28342b6f102d9e737a9462eb6059e033925ae8ff49b85894",
+      "isodate-0.7.2.dist-info/top_level.txt": "26076a687070d15c7be0a9b4c59d7eea7a4e5077bfe9c287481084c7aa6955ef",
+      "isodate/__init__.py": "c1f3c8de67039cb6c49dd89d6a8cd62bf8bf5c6b4ecab1a14c5737e4fa6df483",
+      "isodate/duration.py": "0fd54b240e12f7d8bafb73976821ebac3cdcd395ac22bd884a17c84a57892fb6",
+      "isodate/isodates.py": "c5bdf9ed2b2fa0145256c114a46d9fa814a78c68f0914c6c8b95479231a31b39",
+      "isodate/isodatetime.py": "f5932783a9f86e52964ac147024d41b03ca89b45db1d3cfb3ebc695a220c3a3e",
+      "isodate/isoduration.py": "a7b4af05bc7cd32895c977434c9ecc909c6a146618e9f343492f8e44512b65b2",
+      "isodate/isoerror.py": "c7a48eeb2e1d0dc7498163a48f054d470f8e3a28a172d323e537bd74eaabaac1",
+      "isodate/isostrf.py": "97b035981e77d9b4389f458cc3639a2cab2ae7795515ee85dc54ad305925eacd",
+      "isodate/isotime.py": "ba7e1ab87f758cb8e1f7d06e1e83f5570fed8c258e6fc04dbf246cb78934217a",
+      "isodate/isotzinfo.py": "544cd352cf48ba50310b509ecff52ea62c04656da34b1a8a610d13315d6f7ee3",
+      "isodate/tzinfo.py": "36dd7944a8eacfb89807202c4fef47225c2fcaf31150259e42b5be22d6baa2e9",
+      "isodate/version.py": "4b0be43e5ec62e11b15852be1837adc6ceaa92af134ea09f9f1254349aa65ad5"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "2e038122931af399adfb51e88910d58025b49e34e35281c74739387a9bfd8ef1",
+     "native": {},
+     "pth": {},
+     "sha256": "28009937d8031054830160fce6d409ed342816b543597cece116d966c6d99e15"
+    }
+   },
+   "name": "isodate",
+   "provenance": {
+    "isodate-0.7.2-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Gerhard Weis",
+    "license": "Copyright (c) 2021, Hugo van Kemenade and contributors Copyright (c) 2009-2018, Gerhard Weis and contributors Copyright (c) 2009, Gerhard Weis All rights reserved.  Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met: * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer. * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution. * Neither the name of the <organization> nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. ",
+    "project_urls": {
+     "Homepage": "https://github.com/gweis/isodate/"
+    },
+    "summary": "An ISO 8601 date/time/duration parser and formatter"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.7.2"
+  }
+ }
+}

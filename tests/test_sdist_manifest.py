@@ -1,8 +1,10 @@
 """The sdist must not carry operator-only documents.
 
-``recursive-include docs *.md`` picks up every Markdown file in the work
-tree, tracked or not, so internal notes (handoff, plans, the open-findings
-security report) have to be excluded explicitly.
+``recursive-include docs *.md`` picked up every Markdown file in the work
+tree, tracked or not: an untracked docs/FEEDBACK_HANDOFF_2026-10-31.md
+reached an sdist built from a working copy, as only HANDOFF, BACKLOG, the
+plans and the review report were excluded by name. docs/ is an allow-list
+in MANIFEST.in now, held against the tracked public documents below.
 
 setuptools also adds every ``tests/test*.py`` by default
 (``_distutils/command/sdist.py``), so a private test file reached every
@@ -11,6 +13,7 @@ against the mirror's own exclude list.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import subprocess
@@ -19,6 +22,11 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: no lock, and no parallel builds to guard against
+    fcntl = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXPORT_SCRIPT = REPO_ROOT / "scripts" / "export-public.py"
@@ -29,8 +37,21 @@ PRIVATE = (
     "docs/BACKLOG.md",
     "docs/plans/2026-roadmap.md",
     "docs/SECURITY-REVIEW-2026-10.md",
+    # Untracked notes of any name, as an operator leaves them in docs/.
+    "docs/FEEDBACK_HANDOFF_2026-10-31.md",
+    "docs/NOTES.md",
+    "docs/USAGE_notes.md",
+    "docs/patterns/draft.md",
+    "docs/private/anything.md",
 )
-PUBLIC = ("docs/USAGE.md", "docs/PROXY_SUPPORT.md")
+PUBLIC = ("docs/USAGE.md", "docs/PROXY_SUPPORT.md", "docs/mcp-tools.json")
+#: Tracked documents that are operator-only (the public mirror drops them too).
+OPERATOR_DOCS = {"docs/HANDOFF.md", "docs/BACKLOG.md", "docs/SECURITY-REVIEW-2026-10.md"}
+
+
+def _manifest_lines() -> list[list[str]]:
+    lines = (REPO_ROOT / "MANIFEST.in").read_text().splitlines()
+    return [line.split() for line in lines if line.strip() and not line.lstrip().startswith("#")]
 
 
 def _sdist_docs() -> set[str]:
@@ -48,7 +69,8 @@ def _sdist_docs() -> set[str]:
             files.findall()
             for line in (REPO_ROOT / "MANIFEST.in").read_text().splitlines():
                 line = line.strip()
-                if line.startswith(("recursive-include docs", "prune docs", "exclude docs")):
+                if line.startswith(("recursive-include docs", "prune docs", "exclude docs",
+                                    "include docs", "graft docs", "global-")):
                     files.process_template_line(line)
             return {f.replace(os.sep, "/") for f in files.files}
         finally:
@@ -65,6 +87,41 @@ class SdistManifestTest(unittest.TestCase):
         included = _sdist_docs()
         for rel in PRIVATE:
             self.assertNotIn(rel, included)
+
+    def test_happy_the_allow_list_is_every_tracked_public_document(self) -> None:
+        """A tracked docs/ file is listed in MANIFEST.in, or operator-only."""
+        try:
+            out = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "ls-files", "-z", "docs"],
+                capture_output=True, check=True, timeout=60,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            self.skipTest("not a git checkout (an unpacked sdist)")
+        public = {
+            rel for rel in out.decode("utf-8").split("\0")
+            if rel.endswith((".md", ".json")) and not rel.startswith("docs/plans/")
+            and rel not in OPERATOR_DOCS
+        }
+        if not public:
+            self.skipTest("not a git checkout (an unpacked sdist)")
+        listed = {
+            word for words in _manifest_lines() if words[0] == "include"
+            for word in words[1:] if word.startswith("docs/")
+        }
+        self.assertEqual(sorted(public - listed), [], "public docs missing from MANIFEST.in")
+        self.assertEqual(sorted(listed - public), [], "MANIFEST.in names untracked or private docs")
+
+    def test_sad_no_pattern_over_docs_is_back(self) -> None:
+        """A glob over docs/ would take an operator's untracked notes again."""
+        for words in _manifest_lines():
+            command, args = words[0], words[1:]
+            if command in ("recursive-include", "graft"):
+                self.assertFalse(args[0].startswith("docs"), " ".join(words))
+            elif command == "include":
+                for word in args:
+                    if word.startswith("docs"):
+                        self.assertNotRegex(word, r"[*?\[]", " ".join(words))
+            self.assertNotEqual(command, "global-include", " ".join(words))
 
     def test_mirror_excludes_the_security_report(self) -> None:
         script = REPO_ROOT / "scripts" / "export-public.py"
@@ -94,16 +151,35 @@ def _private_members(members: list[str], prefixes: tuple[str, ...]) -> list[str]
 class BuiltSdistTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        # PyPA build (dev-requirements.txt). Not this tree's build/ folder,
+        # which a bare "build" also finds: it has no __main__.
+        if importlib.util.find_spec("build.__main__") is None:
+            raise unittest.SkipTest("PyPA build is not installed (dev-requirements.txt)")
         cls.prefixes = _load(EXPORT_SCRIPT, "export_public").MIRROR_EXCLUDE_PREFIXES
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
-        subprocess.run(
-            [sys.executable, "-m", "build", "--sdist", "--no-isolation",
-             "--outdir", tmp.name, str(REPO_ROOT)],
-            check=True,
-            capture_output=True,
-        )
+        # --no-isolation: this environment's setuptools builds it, so it has
+        # to meet pyproject's build-system floor (dev-requirements.txt).
+        # One build of this tree at a time: setuptools assembles the sdist in
+        # an axross-<version>/ folder inside the tree, and pytest-xdist runs
+        # this class's tests on several workers, each with its own
+        # setUpClass - two builds at once deleted each other's files.
+        lock_path = Path(tempfile.gettempdir()) / (
+            "axross-sdist-" + hashlib.sha256(str(REPO_ROOT).encode()).hexdigest()[:16] + ".lock")
+        with open(lock_path, "w") as lock:
+            if fcntl is not None:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            built = subprocess.run(
+                [sys.executable, "-m", "build", "--sdist", "--no-isolation",
+                 "--outdir", tmp.name, str(REPO_ROOT)],
+                capture_output=True,
+                text=True,
+            )
+        if built.returncode:
+            raise AssertionError(f"the sdist build failed:\n{built.stdout[-3000:]}"
+                                 f"{built.stderr[-3000:]}")
         (sdist,) = Path(tmp.name).glob("*.tar.gz")
+        cls.sdist = sdist
         with tarfile.open(sdist) as tar:
             cls.members = tar.getnames()
             cls.texts = {
@@ -119,6 +195,43 @@ class BuiltSdistTest(unittest.TestCase):
         rels = {m.split("/", 1)[1] for m in self.members if "/" in m}
         self.assertIn("tests/test_sdist_manifest.py", rels)
         self.assertIn("tests/test_packaging.py", rels)
+
+    def test_happy_the_suite_ships_with_what_it_imports_and_reads(self) -> None:
+        """Every tracked file of tests/ the mirror publishes - helper modules,
+        fixtures, tests/integration, the lab files - plus the scripts,
+        Dockerfiles and workflows the tests read. Without the helpers,
+        collecting the sdist's suite failed in 238 modules. build/ cannot be
+        in an sdist (setuptools prunes its build_base): its tests skip."""
+        rels = {m.split("/", 1)[1] for m in self.members if "/" in m}
+        tracked = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "-z", "--", "tests", "scripts",
+             "Dockerfile.*", ".github/workflows"],
+            capture_output=True, check=True,
+        ).stdout.decode().split("\0")
+        wanted = {
+            p for p in tracked
+            if p and not any(p == e or p.startswith(e) for e in self.prefixes)
+        }
+        self.assertIn("tests/fixtures/mcp/registry_time.json", wanted)
+        self.assertEqual(sorted(wanted - rels), [])
+        self.assertFalse([r for r in rels if r.startswith("build/")])
+
+    @unittest.skipUnless(os.environ.get("AXROSS_TEST_SDIST_COLLECT"),
+                         "set AXROSS_TEST_SDIST_COLLECT=1 to collect the sdist's suite (~2 min)")
+    def test_happy_the_sdist_suite_collects(self) -> None:
+        """``pytest --collect-only`` in the unpacked sdist: no errors."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with tarfile.open(self.sdist) as tar:
+                tar.extractall(tmp, filter="data")
+            (root,) = Path(tmp).iterdir()
+            done = subprocess.run(
+                [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "--collect-only",
+                 "-q"],
+                cwd=root, capture_output=True, text=True, timeout=1800,
+            )
+        errors = [line for line in done.stdout.splitlines() if line.startswith("ERROR")]
+        self.assertEqual(errors, [], done.stdout[-3000:])
+        self.assertEqual(done.returncode, 0, done.stdout[-3000:])
 
     @unittest.skipUnless(SCRUB_RULES.exists(), "scrub rules are not part of the public tree")
     def test_sad_no_operator_identity_in_any_sdist_file(self) -> None:
@@ -165,9 +278,12 @@ class BuiltSdistTest(unittest.TestCase):
                 files = FileList()
                 files.findall()
                 files.process_template_line("include tests/test*.py")  # setuptools default
+                # In order, as setuptools reads it: a graft of tests/ comes
+                # before the exclusions.
                 for line in (REPO_ROOT / "MANIFEST.in").read_text().splitlines():
-                    excluding = ("exclude", "prune", "global-exclude", "recursive-exclude")
-                    if line.strip().startswith(excluding):
+                    commands = ("graft", "exclude", "prune", "global-exclude",
+                                "recursive-exclude")
+                    if line.strip().startswith(commands):
                         files.process_template_line(line.strip())
                 included = {f.replace(os.sep, "/") for f in files.files}
             finally:

@@ -23,6 +23,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from core.json_store import read_for_merge
+
 log = logging.getLogger(__name__)
 
 MIB = 1024 * 1024
@@ -47,7 +49,7 @@ def _valid(value: object) -> bool:
 def _read_all() -> dict:
     try:
         raw = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return raw if isinstance(raw, dict) else {}
 
@@ -92,7 +94,7 @@ def write_setting(key: str, value) -> None:
     size limit, the metadata tools' write mode); the write is atomic and
     the file stays 0600."""
     with _LOCK:
-        data = _read_all()
+        data = read_for_merge(SETTINGS_PATH)
         data[key] = value
         target_dir = SETTINGS_PATH.parent
         target_dir.mkdir(parents=True, exist_ok=True)

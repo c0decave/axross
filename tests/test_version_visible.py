@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -68,17 +67,14 @@ def test_edge_the_version_stays_with_docks_open_and_after_a_theme_switch(window)
 
 
 def test_happy_help_about_names_the_version(window) -> None:
-    with mock.patch("ui.main_window.QMessageBox.about") as about:
-        window._show_about()
-    title, text = about.call_args.args[1], about.call_args.args[2]
+    dialog = window.about_dialog()
+    title, text = dialog.windowTitle(), dialog.html
     assert "axross" in title
     assert __version__ in text
 
 
 def test_edge_about_is_in_english(window) -> None:
-    with mock.patch("ui.main_window.QMessageBox.about") as about:
-        window._show_about()
-    text = about.call_args.args[2]
+    text = window.about_dialog().html
     for german in ("Unterstützte", "Warteschlange", "Tastenkombinationen", "Dateimanager"):
         assert german not in text
 

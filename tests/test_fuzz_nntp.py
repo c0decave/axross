@@ -142,3 +142,12 @@ def test_fuzz_overview_date_direct():
     for payload in mutants(corpus, 0x775, iterations(500)):
         text = payload.decode("utf-8", "replace")
         check_contract(lambda: NL.parse_overview_date(text), (OSError,), context=repr(text))
+
+
+@pytest.mark.parametrize("text", ["Thu, 1 Jan 2026 4294967296:00:00 +0000",
+                                  "1 Jan 99999999999 10:00 GMT"])
+def test_sad_an_overview_date_past_a_c_int_is_the_epoch(text):
+    """A field too big for a C int reached datetime() and raised
+    OverflowError - neither the epoch nor an OSError - out of the listing
+    of a group whose server sent it."""
+    assert NL.parse_overview_date(text) == NL.parse_overview_date("")

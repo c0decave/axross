@@ -42,17 +42,21 @@ jobs:
         QT_QPA_PLATFORM: offscreen
       run: python -m pytest -v tests/test_cross_platform_smoke.py tests/test_windows_import_surface.py tests/test_terminal_winpty.py
 
-  # One-file binaries for macOS and Windows (the Linux ones are built in the
-  # AlmaLinux 9 builder image, for the oldest glibc). Unsigned: Gatekeeper
-  # and SmartScreen warn on first start.
+  # One-file binaries for macOS and Windows, slim and full (the Linux ones:
+  # scripts/build_dist.sh, or the AlmaLinux 9 builder image). Unsigned:
+  # Gatekeeper and SmartScreen warn on first start. full carries what the
+  # lock installs on the platform (the cloud SDKs, numpy for the Media
+  # Player and the Bluetooth streams, Bumble for a Bluetooth stick used
+  # directly); voice and analysis are Linux only (their lock markers).
   bundle:
     needs: smoke
     strategy:
       fail-fast: false
       matrix:
         os: [ macos-latest, windows-latest ]
+        flavor: [ slim, full ]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -69,20 +73,24 @@ jobs:
       run: |
         python -m pip install --require-hashes --only-binary=:all: -r build/requirements-bootstrap.txt
         python -m pip install --require-hashes --only-binary=:all: --no-binary=adb-shell,manuf --no-build-isolation -r build/requirements-bundle.txt
-    - name: Build axross-slim
+    - name: Build axross-${{ matrix.flavor }}
       env:
-        AXROSS_BUNDLE_FLAVOR: slim
-      run: python -m PyInstaller --clean --noconfirm --distpath dist --workpath build-work build/axross.spec
+        AXROSS_BUNDLE_FLAVOR: ${{ matrix.flavor }}
+      # one folder per flavour: bundle_smoke.py takes the binary it finds there
+      run: python -m PyInstaller --clean --noconfirm --distpath dist/${{ matrix.flavor }} --workpath build-work build/axross.spec
     - name: Smoke-test the binary
       env:
         QT_QPA_PLATFORM: offscreen
-      run: python scripts/bundle_smoke.py dist
+      run: python scripts/bundle_smoke.py dist/${{ matrix.flavor }}
     - name: Open the main window on the native platform
       # Cocoa on macOS, the desktop on Windows: the checks above never open
       # a window, so a crash on the way to it passed every run before.
-      run: python scripts/bundle_smoke.py --native dist
+      run: python scripts/bundle_smoke.py --native dist/${{ matrix.flavor }}
+    - name: Checksum
+      # SHA-256 next to the binary (the format of sha256sum), for the release's SHA256SUMS
+      run: python -c "import hashlib,pathlib;[pathlib.Path(str(p)+'.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n') for p in pathlib.Path('dist/${{ matrix.flavor }}').glob('axross-*') if p.suffix!='.sha256']"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: axross-slim-${{ runner.os }}-${{ runner.arch }}
-        path: dist/axross-slim*
+        name: axross-${{ matrix.flavor }}-${{ runner.os }}-${{ runner.arch }}
+        path: dist/${{ matrix.flavor }}/axross-${{ matrix.flavor }}*
         if-no-files-found: error

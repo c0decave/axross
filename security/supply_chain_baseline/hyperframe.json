@@ -1,0 +1,58 @@
+{
+ "name": "hyperframe",
+ "versions": {
+  "6.1.0": {
+   "accepted_findings": [],
+   "archives": {
+    "hyperframe-6.1.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "hyperframe-6.1.0.dist-info/LICENSE": "763a9342a04df62046c9dc748a5287934eb0a5331c6863b3ca0aee20e18cb4ed",
+      "hyperframe-6.1.0.dist-info/METADATA": "a29f5792b9459b47658804988520009156ef8c2dea66022c2969a145065bad69",
+      "hyperframe-6.1.0.dist-info/RECORD": "5821a7cf3ccf0244a2feaf6c48086d9df142e886efab2562be6817f0176f763f",
+      "hyperframe-6.1.0.dist-info/WHEEL": "227f454cdc5e3fad0a9d3906c3bc24ea624f61dfdd4128c46665dd05d30223ef",
+      "hyperframe-6.1.0.dist-info/top_level.txt": "6885d6371cca17f8f013c972586e4f6aa9f944fecf0c161e82eada89afa81c91",
+      "hyperframe/__init__.py": "43f3017642040964cbbe4b0e5e0e67607517f2303c861a10b2e8fa394436e252",
+      "hyperframe/exceptions.py": "0d92eb670e72ecc2c13119310b1aea7f9121cfc0681369fb32955aa780f9bdc2",
+      "hyperframe/flags.py": "f65be969e297adf61ebb18fc5deab6d440f8d0e0d38a9a376577835225f95992",
+      "hyperframe/frame.py": "6ac62192190eaf5bd10777ee6581351c88532050f424d3965b067cbde7735b15",
+      "hyperframe/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "6abeeac2a59437076d6c083ad02220090c8b47ac11bb690468dc5ae9a6cace79",
+     "native": {},
+     "pth": {},
+     "sha256": "b03380493a519fce58ea5af42e4a42317bf9bd425596f7a0835ffce80f1a42e5"
+    }
+   },
+   "name": "hyperframe",
+   "provenance": {
+    "hyperframe-6.1.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Cory Benfield <cory@lukasa.co.uk>",
+    "license": "The MIT License (MIT)  Copyright (c) 2014 Cory Benfield  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.  THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. ",
+    "maintainer_email": "Thomas Kriechbaumer <thomas@kriechbaumer.name>",
+    "project_urls": {
+     "Bug Reports": "https://github.com/python-hyper/hyperframe/issues",
+     "Documentation": "https://python-hyper.org/",
+     "Homepage": "https://github.com/python-hyper/hyperframe/",
+     "Source": "https://github.com/python-hyper/hyperframe/"
+    },
+    "summary": "Pure-Python HTTP/2 framing"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "6.1.0"
+  }
+ }
+}

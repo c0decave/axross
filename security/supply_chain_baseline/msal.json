@@ -1,0 +1,110 @@
+{
+ "name": "msal",
+ "versions": {
+  "1.39.0": {
+   "accepted_findings": [
+    "raw-ip-url|msal/region.py|12f983dc069a106d",
+    "yara|capability_filesystem_read|msal/__main__.py|6dd42eaba0a6d9f5",
+    "yara|capability_filesystem_read|msal/application.py|aad9d7d3ac5234a9",
+    "yara|capability_filesystem_read|msal/managed_identity.py|4aec0d6af568daac",
+    "yara|capability_filesystem_read|msal/oauth2cli/authcode.py|eabba7623b668b4a",
+    "yara|capability_filesystem_read|msal/token_cache.py|be99bb2fea6aece7",
+    "yara|capability_network_outbound|msal/oauth2cli/oauth2.py|17bd99c0a349f8b4",
+    "yara|capability_process_spawn|msal/oauth2cli/authcode.py|eabba7623b668b4a",
+    "yara|threat_runtime_environment_read|msal/__main__.py|6dd42eaba0a6d9f5",
+    "yara|threat_runtime_environment_read|msal/managed_identity.py|4aec0d6af568daac"
+   ],
+   "archives": {
+    "msal-1.39.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "msal-1.39.0.dist-info/LICENSE": "a0fcbe4bd36e9df91a4b20954b8ce2bbe022ec801a76f472ef988aeea29f0460",
+      "msal-1.39.0.dist-info/METADATA": "cfda1fa5434e7d1594efab2477dfe9c7c9deda1bba9a44fd27cec73693cb6b87",
+      "msal-1.39.0.dist-info/RECORD": "69ebf309a70066d09ab0302cf818e5c27ba4eb3378e7a5c7b0ba8ba4a661bccc",
+      "msal-1.39.0.dist-info/WHEEL": "4749dceaa4f1ba82e4ed2840dbf63e51690df1975f0c11b607a12aa73d965dbb",
+      "msal-1.39.0.dist-info/top_level.txt": "93efe85959308ca385797041e5ffbb106b27ff3cba317df208cc5e1862287692",
+      "msal/__init__.py": "a4be74ac38de161395254147be545b9770736b4c310571a223c1188f4297e8d8",
+      "msal/__main__.py": "6dd42eaba0a6d9f55d2be4fb4804312305b36243c378602fc4ca8052d1f74df5",
+      "msal/application.py": "aad9d7d3ac5234a995396c2f21d59f51e7ee40a375063b0580587038ed32e6ed",
+      "msal/auth_scheme.py": "0388236a40f667606aa46f7b052fcdc8dd978bd379f1cc9da4eb3010fe7ba5a0",
+      "msal/authority.py": "63d0a9792c884234a04701ecfd4ab4eb4f6182acfad2484d41e6dbd1cd54569a",
+      "msal/broker.py": "318abddfe4730d7fd3f0b2e529ef4258210dc9a17e931adabe170920ac570800",
+      "msal/cloudshell.py": "74a009eae0983eb694d4d2285480f323af44b0965bbfa7841ed51891ad6718b0",
+      "msal/exceptions.py": "14928617da4073a2573ee32b2566ca167dd5f45284257268ea8539ef40a1a1c2",
+      "msal/individual_cache.py": "538e1e4372c22b40971d8e51ecbb975d546d74c7b71c971ef9976228c806901d",
+      "msal/managed_identity.py": "4aec0d6af568daac874d72da2e451327f5f5becd46154fa0c3e9d295c591e822",
+      "msal/mex.py": "12cb7f0a63636b420e235edd594409cb02752cac8ebcc780f582067d1e3a26a4",
+      "msal/oauth2cli/__init__.py": "cf0bc44ebcbb63c72c8385b3b72f95a41412ca81827480b9c1f409e7f9b8c9f9",
+      "msal/oauth2cli/assertion.py": "362df505c7b39d3b25bfe5f7f5aab3963ee77c96d746669a71e6f9c7ef17da27",
+      "msal/oauth2cli/authcode.py": "eabba7623b668b4a6b228eb2a6e8299a0b808ebb89bf3b9d19402154aa0cce14",
+      "msal/oauth2cli/http.py": "5e1c5be281bf5ef24028c9de0d4156ff1914169cf92cb8eb8fd5361567320d5a",
+      "msal/oauth2cli/oauth2.py": "17bd99c0a349f8b4a0559f7ad7e2e2ec09903ce7e437125b32499726d01dad18",
+      "msal/oauth2cli/oidc.py": "c24636ecddcf42148ae268884ce57199141136b1802935cd1d6193cd426dc2d7",
+      "msal/region.py": "2e883b5487d8210360d867297a2bede0e0a43066cf51a781385ed7d3c4eb7aad",
+      "msal/sku.py": "9b816b9f7ce1ac9c03f93d7d641d70d39e67de8f8590a89463d500ec4d6e9e42",
+      "msal/telemetry.py": "48abceb0f03eadc7356082c14a8108a0626b5eb42bba3e83a27eb458709ba81a",
+      "msal/throttled_http_client.py": "33db473a0797c13e51090e58803483aa87b25097ba5642a440f1e57a7bea6326",
+      "msal/token_cache.py": "be99bb2fea6aece770ea87b65b5390b65e9e0d70c6b498c628fcdbe269333ef9",
+      "msal/wstrust_request.py": "0009fdfd92fa494d86490320b2447409292b815b89862a90b0073c9d330e5356",
+      "msal/wstrust_response.py": "0953e7fce67b97d0261481265e673cd4db31a85d01471ea6c30fcb357b1220bd"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "32e9755d831303a7d074c6837d2bf751c913379a906609bad7f1a644591f6fc1",
+     "native": {},
+     "pth": {},
+     "sha256": "2d2577886906cd7293850dffa2da29119966c213bfc6ec0cecf8bf7621e1ca77"
+    }
+   },
+   "name": "msal",
+   "provenance": {
+    "msal-1.39.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Microsoft Corporation",
+    "author_email": "nugetaad@microsoft.com",
+    "home_page": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
+    "license": "MIT",
+    "project_urls": {
+     "Changelog": "https://github.com/AzureAD/microsoft-authentication-library-for-python/releases",
+     "Documentation": "https://msal-python.readthedocs.io/",
+     "Feature/Bug Tracker": "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues",
+     "Homepage": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
+     "Questions": "https://stackoverflow.com/questions/tagged/azure-ad-msal+python"
+    },
+    "summary": "The Microsoft Authentication Library (MSAL) for Python library enables your app to access the Microsoft Cloud by supporting authentication of users with Microsoft Azure Active Directory accounts (AAD) and Microsoft Accounts (MSA) using industry standard OAuth2 and OpenID Connect."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "2 hits: __main__.py reads CLIENT_SECRET for its sample CLI, managed_identity.py reads MSI_SECRET and AZURE_POD_IDENTITY_AUTHORITY_HOST - Azure's documented managed-identity variables. No attestation."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|msal/__main__.py|6dd42eaba0a6d9f5",
+     "yara|capability_filesystem_read|msal/application.py|aad9d7d3ac5234a9",
+     "yara|capability_filesystem_read|msal/managed_identity.py|4aec0d6af568daac",
+     "yara|capability_filesystem_read|msal/oauth2cli/authcode.py|eabba7623b668b4a",
+     "yara|capability_filesystem_read|msal/token_cache.py|be99bb2fea6aece7",
+     "yara|capability_network_outbound|msal/oauth2cli/oauth2.py|17bd99c0a349f8b4",
+     "yara|capability_process_spawn|msal/oauth2cli/authcode.py|eabba7623b668b4a",
+     "yara|threat_runtime_environment_read|msal/__main__.py|6dd42eaba0a6d9f5",
+     "yara|threat_runtime_environment_read|msal/managed_identity.py|4aec0d6af568daac"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read msal/__main__.py",
+     "capability_filesystem_read:capability_filesystem_read msal/application.py",
+     "capability_filesystem_read:capability_filesystem_read msal/managed_identity.py",
+     "capability_filesystem_read:capability_filesystem_read msal/oauth2cli/authcode.py",
+     "capability_filesystem_read:capability_filesystem_read msal/token_cache.py",
+     "capability_network_outbound:capability_network_outbound msal/oauth2cli/oauth2.py",
+     "capability_process_spawn:capability_process_spawn msal/oauth2cli/authcode.py",
+     "threat_runtime_environment_read:threat_runtime_environment_read msal/__main__.py",
+     "threat_runtime_environment_read:threat_runtime_environment_read msal/managed_identity.py"
+    ]
+   },
+   "version": "1.39.0"
+  }
+ }
+}

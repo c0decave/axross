@@ -7,7 +7,7 @@ and the top-level names of third-party libraries. A child logger belongs to
 its parent's area (``core.mcp_server.audit`` -> MCP server, ``paramiko.transport``
 -> paramiko). ``patterns`` catch names made at run time: an extension runs as
 ``axross_extension_<source>_<module>`` (ui.extension_host), and modules of a
-family still being written (``core.bluetooth*``) need no edit here.
+family still being written (``core.bluetooth*``, ``ui.bluetooth*``) need no edit here.
 
 Lookup order: the exact name, a pattern, then the nearest listed parent. The
 last step lets a module nobody listed yet log under its package's area at run
@@ -60,9 +60,9 @@ def _models(*names: str) -> tuple[str, ...]:
 AREAS: tuple[Area, ...] = (
     Area("app", "Application", (
         "axross", "axross.cli", "axross.__main__", "axross._version", "core",
-        *_core("features", "startup_guard", "qt_exit", "thread_lifetime", "i18n",
+        *_core("features", "startup_guard", "qt_exit", "thread_lifetime", "thread_relay", "i18n",
                "posix_compat", "frozen_archive", "process_launcher", "subprocess_env",
-               "desktop_open", "pane_activation", "open_limits", "third_party",
+               "desktop_open", "pane_activation", "open_limits", "json_store", "third_party",
                "structured_log", "log_areas", "log_config"),
     )),
     Area("protocols", "Protocols"),
@@ -72,9 +72,9 @@ AREAS: tuple[Area, ...] = (
                "net_helpers", "auth_prompt", "proxy", "proxy_http", "pac", "proxy_settings",
                "tls_context", "tls_env", "client_identity", "remote_name", "storage_identity",
                "session_lock", "server_ops", "version_stubs", "adaptive_io", "read_spool",
-               "path_policy", "answer_fields", "exec_util", "reverse_serve"),
+               "path_policy", "answer_fields", "exec_util", "reverse_serve", "conn_security"),
         *_ui("auth_prompt", "connection_dialog", "quick_connect_menu", "disconnected_pane",
-             "network_proxy_dialog"),
+             "network_proxy_dialog", "security_badge"),
     )),
     Area("protocols.ssh", "SFTP / SSH / SCP / rsync",
          _core("ssh_client", "sftp_io", "scp_client", "rsync_client", "ssh_config")),
@@ -84,9 +84,11 @@ AREAS: tuple[Area, ...] = (
     Area("protocols.cloud", "Cloud Storage (S3, Azure, Google Drive, Dropbox, OneDrive)",
          _core("s3_client", "azure_client", "gdrive_client", "dropbox_client",
                "onedrive_client", "oauth_help")),
-    Area("protocols.nfs", "NFS / iSCSI", _core("nfs_client", "iscsi_client")),
-    Area("protocols.mail", "Mail / News (IMAP, POP3, NNTP, Exchange)",
-         _core("imap_client", "pop3_client", "nntp_client", "nntp_lib", "exchange_client")),
+    Area("protocols.nfs", "NFS / iSCSI", _core("nfs_client", "nfs3_rpc", "nfs4_rpc", "nfs_user_client",
+                                               "iscsi_client")),
+    Area("protocols.mail", "Mail / News (IMAP, POP3, NNTP, Exchange, mail docks and projects)",
+         _core("imap_client", "pop3_client", "nntp_client", "nntp_lib", "exchange_client", "cfb", "pst"),
+         patterns=("core.mail_*", "ui.mail_*")),
     Area("protocols.windows", "WinRM / WMI", _core("winrm_client", "wmi_client")),
     Area("protocols.database", "Databases / LDAP",
          _core("sqlite_fs_client", "postgres_fs_client", "mongo_fs_client", "redis_fs_client",
@@ -94,7 +96,8 @@ AREAS: tuple[Area, ...] = (
     Area("protocols.vcs", "Git / SVN", _core("git_fs_client", "git_fs_writer_helper",
                                             "svn_fs_client")),
     Area("protocols.devices", "Devices (ADB, MTP, Bluetooth)", _core("adb_client", "mtp_client"),
-         patterns=("core.bluetooth*",)),
+         patterns=("core.bluetooth*", "ui.bluetooth*")),
+    Area("protocols.chat", "Chat (IRC, Matrix, XMPP)", patterns=("core.chat*", "ui.chat*")),
     Area("protocols.legacy", "Legacy (Telnet, rsh, Gopher, SLP, PJL, SNMP)",
          _core("telnet_client", "telnet_cisco", "rsh_client", "gopher_client", "slp_client",
                "slp_lib", "pjl_client", "snmp_helpers")),
@@ -113,19 +116,21 @@ AREAS: tuple[Area, ...] = (
     )),
     Area("transfers", "Transfers", (
         *_core("transfer_manager", "transfer_pool", "transfer_worker", "transfer_conflicts",
-               "copy_resume", "sync", "scheduler", "operation_journal"),
+               "copy_resume", "sync", "scheduler", "operation_journal", "move_permissions"),
         *_ui("transfer_dock", "transfer_conflict_dialog", "scheduler_dialog"),
         *_models("transfer_model"),
     )),
     Area("search", "Indexing / Search", (
-        *_core("file_search", "metadata_index", "cas", "search_federation", "remote_sweep",
+        *_core("file_search", "metadata_index", "cas", "cas_folders", "search_federation",
+               "remote_sweep",
                "tags", "file_categories", "inspect"),
         *_ui("find_files_dialog", "metadata_search_dialog", "network_search_dialog",
              "cas_dialog", "cas_history_dialog", "checksum_dialog", "tag_ui"),
     )),
     Area("analysis", "Analysis (sift) / Metadata", (
         "sift",
-        *_core("file_analysis", "analysis_worker", "analysis_settings", "file_type",
+        *_core("file_analysis", "analysis_worker", "analysis_sandbox", "analysis_settings",
+               "file_type",
                "metadata_formats", "metadata_tools"),
         *_ui("analysis_dock", "analysis_settings_page", "file_type_dialog", "metadata_dialog"),
     )),
@@ -150,13 +155,14 @@ AREAS: tuple[Area, ...] = (
         *_ui("repl_widget", "script_editor", "scripting_guide", "scripts_dock"),
     )),
     Area("media", "Media / Audio / Voice", (
-        *_core("audio_route", "audio_settings", "multimedia_env", "multimedia_probe",
+        *_core("audio_eq", "audio_route", "audio_settings", "multimedia_env", "multimedia_probe",
                "media_collect", "media_load", "previews", "voice_audio", "voice_models",
-               "voice_settings", "voice_stt", "voice_text", "voice_worker"),
-        *_ui("audio_settings_page", "voice", "voice_lens", "voice_settings_page",
+               "voice_settings", "voice_stt", "voice_text", "voice_worker", "system_mixer"),
+        *_ui("audio_settings_page", "system_mixer_page", "voice", "voice_lens",
+             "voice_settings_page",
              "media_viewer", "image_viewer"),
     )),
-    Area("update", "Update", (*_core("self_update"), *_ui("update_ui"))),
+    Area("update", "Update and packs", (*_core("self_update", "packs", "units"), *_ui("update_ui", "packs_dialog"))),
     Area("security", "Security / Credentials", (
         *_core("credentials", "secure_storage", "security_mode", "sudo_password", "redaction",
                "cred_attack", "safety_tarpit"),
@@ -169,21 +175,24 @@ AREAS: tuple[Area, ...] = (
     )),
     Area("extensions", "Extensions", (
         "axross.ext", "resources.extensions",
-        *_core("extensions"),
-        *_ui("extension_host", "extension_panels", "extensions_dialog"),
-    ), patterns=("resources.extensions.*", "axross_extension_*")),
+        *_core("extensions", "system_info"),
+        *_ui("extension_host", "extension_panels", "extensions_dialog", "system_info_window"),
+    ), patterns=("resources.extensions.*", "axross_extension_*", "ui.arcade_*", "core.arcade*")),
     Area("ui", "User Interface", (
         "ui", "models",
         *_core("bookmarks", "visit_history"),
         *_ui("bookmark_edit_dialog", "bookmark_manager_dialog", "bookmark_sidebar",
-             "close_corner", "code_editor", "column_fit", "column_prefs", "dock_fit",
-             "dock_frame", "dock_titlebar", "editor_window", "features_dialog", "file_pane",
+             "about_dialog", "close_corner", "code_editor", "column_fit", "column_prefs", "dock_fit",
+             "dock_frame", "dock_titlebar", "drag_autoscroll", "editor_window", "features_dialog",
+             "file_pane",
              "format_utils", "hex_editor", "icon_provider", "layout_presets", "layout_utils",
-             "log_dock", "logging_settings_page", "main_window", "pane_drag",
+             "log_dock", "logging_settings_page", "main_window", "markup_guard", "off_gui",
+             "pane_drag", "plain_text", "qt_translations",
              "properties_dialog", "scan_job", "settings_dialog", "shortcuts_dialog", "text_editor",
              "themes", "third_party_dialog", "thread_lifetime", "thumbnail_view",
              "toolbar_categories", "toolbar_order", "viewer_file_actions", "viewer_window",
-             "window_move", "window_prefs", "workspaces"),
+             "window_dock_bar", "window_move", "window_prefs", "title_bar", "state_files", "standalone_app", "media_player_app", "system_info_app", "workspaces", "dock_bindings",
+             "screen_fit"),
         *_models("file_item", "file_table_model", "file_version"),
     )),
     Area("third_party", "Third-Party Libraries", default="WARNING"),
@@ -201,7 +210,7 @@ AREAS: tuple[Area, ...] = (
           "tftpy", "psycopg", "redis", "pymongo", "ldap3", "pysnmp", "dns", "puremagic",
           "chardet", "pypdf", "numpy", "exchangelib", "winrm", "pypsrp", "adb_shell", "fuse",
           "manuf", "ipwhois", "ntplib", "onnxruntime", "faster_whisper", "ctranslate2", "piper",
-          "huggingface_hub", "filelock", "markdown_it")),
+          "huggingface_hub", "filelock", "markdown_it", "slixmpp", "nio", "omemo")),
 )
 
 AREAS_BY_ID: dict[str, Area] = {a.id: a for a in AREAS}

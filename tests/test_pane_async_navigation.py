@@ -347,6 +347,9 @@ class QuietRefreshTest(_Base):
     def test_a_watcher_refresh_shows_no_busy_ui(self) -> None:
         (self.root / "fresh.txt").write_text("x")
         gate = self.fs.hold(str(self.root))
+        # The watcher reported the change (after the listing shown was asked
+        # for: a report older than that is in it already and refreshes nothing).
+        self.pane._note_watch_report()
         self.pane._on_debounce_fired()
         self.assertTrue(self.pane.is_loading)
         self.assertFalse(self.pane._cancel_nav_btn.isVisible())
@@ -359,6 +362,7 @@ class QuietRefreshTest(_Base):
         gate = self.fs.hold(self.p("a"))
         self.pane.navigate_async(self.p("a"))
         calls = len(self.fs.calls)
+        self.pane._note_watch_report()  # a change was reported
         self.pane._on_debounce_fired()
         time.sleep(0.1)
         self.assertEqual(len(self.fs.calls), calls)
@@ -368,7 +372,9 @@ class QuietRefreshTest(_Base):
 
     def test_a_watcher_result_for_an_old_folder_is_dropped(self) -> None:
         gate = self.fs.hold(str(self.root))
+        self.pane._note_watch_report()  # a change was reported
         self.pane._on_debounce_fired()  # slow quiet refresh of the root
+        self.assertTrue(self.pane.is_loading)
         self.pane.navigate_async(self.p("b"))  # the user moves on
         gate.set()
         self.assertTrue(self.settle())

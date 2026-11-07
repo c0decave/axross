@@ -737,3 +737,31 @@ def test_sad_the_labels_the_docs_name_exist_in_the_code():
     for label in UI_LABELS:
         assert label.replace("Updates…", "&Updates…") in code or label in code, label
         assert label in english, label
+
+
+# -- the signature names the version (review 2026-11-06) -----------------------
+
+
+def test_sad_old_signed_checksums_under_a_new_tag_are_refused(fake, binary):
+    """A release-writer publishing an old release's signed SHA256SUMS (and
+    its binary) under a new tag: the signed line names the old version."""
+    fake.release.release_line = "0.0.1"
+    release = SU.check(opener=opener_for(fake)).release
+    with pytest.raises(SU.SignatureError, match="is for axross 0.0.1"):
+        SU.update(release, frozen_install(binary), opener=opener_for(fake))
+    assert binary.read_bytes() == OLD_BYTES and leftovers(binary.parent) == []
+
+
+def test_sad_signed_checksums_without_a_version_are_refused(fake, binary):
+    fake.release.release_line = ""
+    release = SU.check(opener=opener_for(fake)).release
+    with pytest.raises(SU.SignatureError, match="names no release version"):
+        SU.update(release, frozen_install(binary), opener=opener_for(fake))
+    assert binary.read_bytes() == OLD_BYTES and leftovers(binary.parent) == []
+
+
+def test_edge_the_release_line_is_no_checksum_line():
+    text = f"# axross-release 1.2.3\n{'a' * 64}  axross-full\n"
+    assert SU.release_of_sums(text) == "1.2.3"
+    assert SU.parse_sums(text) == {"axross-full": "a" * 64}
+    assert SU.release_of_sums(f"{'a' * 64}  axross-full\n") is None

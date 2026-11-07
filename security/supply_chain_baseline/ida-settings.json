@@ -1,0 +1,59 @@
+{
+ "name": "ida-settings",
+ "versions": {
+  "3.5.2": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|ida_settings/legacy.py|a2dff3a53dd7a318"
+   ],
+   "archives": {
+    "ida_settings-3.5.2-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "ida_settings-3.5.2.dist-info/METADATA": "435809e271c216edcbfda1512da172c719ee00fb3152c96cf2130e4e2a48d867",
+      "ida_settings-3.5.2.dist-info/RECORD": "d69c679a379e6dd83370bd916d029b0b9629d4b8034da721df724147c978b768",
+      "ida_settings-3.5.2.dist-info/WHEEL": "7a1eec6a69af5b64f2a4c30c18a82c33cdc7c80ff7a90e4b820df29e879c1f73",
+      "ida_settings/__init__.py": "f0ef15f1c9693432d456ed0d70ab791daf26868ca4dc2a55103f691c272eaed7",
+      "ida_settings/legacy.py": "a2dff3a53dd7a3186d3036d4c6a47a21a9d68c6d76261bbb71d475f38c7d652b",
+      "ida_settings/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "1a8b77a5d4fa3004f6c326d03ef126f6ef4ad0f6b419650c6375c47fd86f3ba1",
+     "native": {},
+     "pth": {},
+     "sha256": "fef4007375c83ecf3aa6e6f77c567df82da92741ffac65831db77d05e5810367"
+    }
+   },
+   "name": "ida-settings",
+   "provenance": {
+    "ida_settings-3.5.2-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "williballenthin/ida-settings",
+     "workflow": "python-publish.yml"
+    }
+   },
+   "pypi": {
+    "author": "Willi Ballenthin",
+    "author_email": "Willi Ballenthin <wballenthin@hex-rays.com>",
+    "project_urls": {},
+    "summary": "Fetch configuration values for IDA Pro plugins"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; attestation verifies (williballenthin/ida-settings)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|ida_settings/legacy.py|a2dff3a53dd7a318"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn ida_settings/legacy.py"
+    ]
+   },
+   "version": "3.5.2"
+  }
+ }
+}

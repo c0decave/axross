@@ -76,6 +76,9 @@ class UndoPlan:
     dest: str = ""
     backend: str = ""
     trash_id: str = ""
+    #: The trash folder *trash_id* is in when it is not the backend's
+    #: default one (trash(root=...)); "" for the default.
+    trash_root: str = ""
     #: Transfer direction recorded for a cross-backend move, if any.
     direction: str = ""
     #: Label of the connection a transfer-engine move took the data FROM.
@@ -193,6 +196,7 @@ def plan_undo(event: dict) -> UndoPlan:
             dest=dest,
             backend=str(event.get("backend", "")),
             trash_id=trash_id,
+            trash_root=str(details.get("trash_root") or ""),
         )
 
     if operation == "metadata_remove":
@@ -299,7 +303,8 @@ def apply_undo(
             from core import trash as trash_module  # type: ignore[no-redef]
         # Restoring to the recorded original path; core.trash.restore
         # refuses to overwrite an occupied destination itself.
-        result = trash_module.restore(backend, plan.trash_id, target=plan.source or None)
+        result = trash_module.restore(backend, plan.trash_id, root=plan.trash_root or None,
+                                      target=plan.source or None)
         log.info("undo: restored %s from trash", result)
         return result
 
@@ -458,7 +463,7 @@ def gone_reason(plan: UndoPlan, backend) -> str:
     from core import trash as trash_module
 
     try:
-        if trash_module.entry_exists(backend, plan.trash_id):
+        if trash_module.entry_exists(backend, plan.trash_id, root=plan.trash_root or None):
             return ""
     except OSError as exc:
         log.debug("undo: cannot check trash entry %s: %s", plan.trash_id, exc)

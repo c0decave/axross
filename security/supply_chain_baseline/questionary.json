@@ -1,0 +1,75 @@
+{
+ "name": "questionary",
+ "versions": {
+  "2.1.1": {
+   "accepted_findings": [],
+   "archives": {
+    "questionary-2.1.1-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "questionary-2.1.1.dist-info/LICENSE": "3a492ab6d436c5e75f54a9a556de91c4322c8ad408fe849c7da1f7352721c63a",
+      "questionary-2.1.1.dist-info/METADATA": "059db52845098a29c62ee19a27391f8ece7f9b1e677030b2cab3c2c470d0c2b6",
+      "questionary-2.1.1.dist-info/NOTICE": "1018494513f932a205f189a61e63292d67657904789ec7175b12054b33d735f7",
+      "questionary-2.1.1.dist-info/RECORD": "be3fb1d3bd4f6c9f43d71c7c341dc49a2a69b8be1c5f5bd398870dfdca7e77db",
+      "questionary-2.1.1.dist-info/WHEEL": "6f82bf85e95ffa3950a170411137f09dfe01d38602ebb2ce7afd23a387d7e66f",
+      "questionary/__init__.py": "6d06e5a8ed102e373a34039f98c5fcb6376c7d1c730a4431b4d6153381870054",
+      "questionary/constants.py": "e5494f1237ddcb19014ed85d68ddef69d0e76c618325341bc60ca43785bfb80f",
+      "questionary/form.py": "97963716ef2b5b878ed992edd28ef3ce3aae0ec8ca20fcea7e085bec5db1fb3e",
+      "questionary/prompt.py": "e8b2e42f62f92ed98b53f1fe69c3697ce985202af420a20c151a5fb598089fa1",
+      "questionary/prompts/__init__.py": "ff8aebb3d773ff353f9ff8bff910174ff7c20bfe8b980745092900bd38f062b6",
+      "questionary/prompts/autocomplete.py": "ca133f2eabfe35d602cc5216bd2dcc0b2d4e6324f927257212721ffccee53e7a",
+      "questionary/prompts/checkbox.py": "916e6c2921197ad517a4cc5dbf7c492e0a9130501a8fabd30493ef62d9d74d72",
+      "questionary/prompts/common.py": "59c1d90743095ecb92c806c316098ec33847a7d299e3250fd85c96f6407f4cd3",
+      "questionary/prompts/confirm.py": "9b349a617d7598ef690b3776328cadaa639a0ca2945c08fa353f6f52ab34af07",
+      "questionary/prompts/password.py": "08afbc7dc14c1f0d9bc0e83a8c8aa3a34c923f53f0114b4f01d8c7eadce4de29",
+      "questionary/prompts/path.py": "a797906d32d2fbda4d6950befba7841ed2d012a8995dc1f96a6f014d19d7c692",
+      "questionary/prompts/press_any_key_to_continue.py": "8cbab7aa40cb0c45e2b1f47bec800580c37c4de4481078e318f2a954bc8d55b8",
+      "questionary/prompts/rawselect.py": "a338a17d1987c4c2e10a1d027ed403abe1944caf266c324e3c29cade750474c1",
+      "questionary/prompts/select.py": "67c8cc8029e668f0a436291322fef1b5483115d5c08cb010e8c2cfe139085b92",
+      "questionary/prompts/text.py": "5750185e6458244f3e33266f12770dd796b2beb94de980b6f9019b19a5f03f99",
+      "questionary/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "questionary/question.py": "4749fdca21221ac292dad5a13d52452b14fac48a81a4ed8829074b51df65fe4d",
+      "questionary/styles.py": "de8af7521feb4ac10ee7f57682e4a61a313b934e3ecb64c5733d92f33b1f4d4a",
+      "questionary/utils.py": "53fa6f6453fd14d831f008e1914d0bd596fa84851f8267dac9c672259e3f6da5",
+      "questionary/version.py": "ccf24880f19ca123620f4aa67b5f0e9d825813703d555cad9613be5790da016d"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "cebc6e7a057c3e6c3230761739c46fca1fbbd8edc93f331616f90dff2d3eb466",
+     "native": {},
+     "pth": {},
+     "sha256": "a51af13f345f1cdea62347589fbb6df3b290306ab8930713bfae4d475a7d4a59"
+    }
+   },
+   "name": "questionary",
+   "provenance": {
+    "questionary-2.1.1-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Tom Bocklisch",
+    "author_email": "tombocklisch@gmail.com",
+    "home_page": "https://github.com/tmbo/questionary",
+    "license": "MIT",
+    "maintainer": "Tom Bocklisch",
+    "maintainer_email": "tombocklisch@gmail.com",
+    "project_urls": {
+     "Documentation": "https://questionary.readthedocs.io/",
+     "Homepage": "https://github.com/tmbo/questionary",
+     "Repository": "https://github.com/tmbo/questionary"
+    },
+    "summary": "Python library to build pretty command line user prompts \u2b50\ufe0f"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.1.1"
+  }
+ }
+}

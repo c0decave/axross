@@ -36,6 +36,7 @@ test_every_stored_input_widget_has_a_row_or_a_reason.
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
 import os
 import socket
@@ -266,6 +267,12 @@ def effect_monochrome(ctx, win, value) -> None:
     from ui.icon_provider import is_monochrome
 
     assert is_monochrome() is value
+
+
+def effect_title_bars(ctx, win, value) -> None:
+    from ui import title_bar
+
+    assert title_bar.own_title_bars() is value
 
 
 def effect_font(ctx, win, value) -> None:
@@ -575,6 +582,13 @@ def _set_analysis_profile(ctx, dialog, value) -> None:
 
 def _set_analysis_categories(ctx, dialog, value) -> None:
     dialog.page("analysis").categories_edit.setPlainText("\n".join(value))
+
+
+#: The same category twice (case aside) is refused by sift's own check
+#: (sift.categories.check_categories). Without sift (axross-slim) a stored
+#: list of names is only type-checked (core.analysis_settings), so it is a bad
+#: value only where sift is installed.
+_SIFT_REFUSES_CATEGORIES = (["a", "A"],) if importlib.util.find_spec("sift") else ()
 
 
 def _analysis_row(field, values, set_ui, bad, widget):
@@ -963,6 +977,11 @@ ROWS = [
         lambda c: _window_pref(c, "monochrome_icons"),
         lambda c, v: _edit_window(c, window_prefs.MONOCHROME_KEY, v), ("no", 1),
         effect_monochrome, new_window=True),
+    Row("own_title_bars", "appearance", "session.json window.own_title_bars", (False,), True,
+        _set_check("appearance", "title_bars_check"), _page_attr("appearance", "title_bars_check"),
+        lambda c: _window_pref(c, "own_title_bars"),
+        lambda c, v: _edit_window(c, window_prefs.OWN_TITLE_BARS_KEY, v), ("no", 0),
+        effect_title_bars, new_window=True),
     Row("font_size", "appearance", "session.json window.font_size", (14, 8), None,
         set_font, lambda d: d.page("appearance").font_size(),
         lambda c: _window_pref(c, "font_size"),
@@ -1111,7 +1130,7 @@ ROWS = [
     _analysis_row("tags", (5, 32), _set_spin("analysis", "tags_spin"), (33, -1, True),
                   "tags_spin"),
     _analysis_row("categories", (["Invoices", "Contracts"],), _set_analysis_categories,
-                  ("Invoices", ["a", "A"], [3]), "categories_edit"),
+                  ("Invoices", *_SIFT_REFUSES_CATEGORIES, [3]), "categories_edit"),
     _analysis_row("cache", (False,), _set_check("analysis", "cache_check"), ("off", 0),
                   "cache_check"),
     Row("metadata_write_mode", "metadata", "settings.json metadata_write_mode", (MT.MODE_COPY,),
@@ -1177,6 +1196,7 @@ _ROW_WIDGETS = {
     "theme": ("appearance.theme_combo",),
     "compact": ("appearance.compact_check",),
     "monochrome_icons": ("appearance.monochrome_check",),
+    "own_title_bars": ("appearance.title_bars_check",),
     "font_size": ("appearance.font_spin",),
     "highlight_hidden": ("appearance.highlight_check",),
     "hidden_color": ("appearance.theme_colour_radio", "appearance.own_colour_radio"),
@@ -1308,8 +1328,11 @@ NOT_STORED = {
     "network._test_host": "the target host of Test proxy; a probe, not stored",
     "network._test_port": "the target port of Test proxy; a probe, not stored",
     "llm.profile_list": "chooses the profile the form edits; the profiles are the rows",
+    "llm.size_order_check": "orders the fetched model list for the eye; nothing is stored",
     "agent.agent_profile_list": "chooses the agent profile the form edits",
     "agent.agent_profile_preview": "read-only: what a tab gets from the profile",
+    "analysis.cache_location": "read-only: where the analysis cache lives (a line edit so a "
+                               "long path scrolls instead of widening the page)",
     "agent.agent_profile_missing": "read-only: what the profile misses (Install from Catalog)",
     "agent.prompt_list": "chooses the prompt profile the form edits",
     "agent.sandbox_list": "chooses the sandbox profile the form edits",
@@ -1660,7 +1683,7 @@ def test_compat_old_files_load_unchanged_and_unrelated_keys_survive_a_save(ctx) 
     window = {
         "width": 900, "height": 600, "ui_theme": "hacker", "compact": True,
         "monochrome_icons": True, "show_hidden": False, "highlight_hidden": False,
-        "hidden_color": "#abcdef", "restore_layout_on_start": False, "language": "sv",
+        "hidden_color": "#abcdef", "restore_layout_on_start": False, "language": "de",
         "viewers": {"image": {"x": 1, "y": 2, "width": 300, "height": 200, "maximized": False}},
     }
     session = {"window": window, "splitter": {"type": "splitter", "children": []}}
@@ -1692,7 +1715,7 @@ def test_compat_old_files_load_unchanged_and_unrelated_keys_survive_a_save(ctx) 
     }
     assert shown == {
         "theme": "hacker", "compact": True, "mono": True, "highlight": False,
-        "colour": "#abcdef", "show_hidden": False, "restore": False, "language": "sv",
+        "colour": "#abcdef", "show_hidden": False, "restore": False, "language": "de",
         "open_limit": 64, "activation": 2, "copy": True, "confirm": True,
         "remember": False, "parallel": 8,
     }

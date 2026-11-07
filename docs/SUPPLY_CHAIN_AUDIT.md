@@ -14,6 +14,14 @@ CVEs or other hard bugs in any of them.
 
 ---
 
+**Since 0.15.164 every dist build passes the supply-chain gate first**
+([SUPPLY_CHAIN_GATE.md](SUPPLY_CHAIN_GATE.md)): every dependency reviewed and
+baselined, OSV with malicious packages, a minimum age of 14 days, provenance,
+typosquatting, YARA (GuardDog + axross rules), native profiles and capa, the
+installed venvs against their locks, the system packages.
+
+---
+
 ## How the bundles get their dependencies (2026-10-26)
 
 | Layer | What pins it | Checked by |

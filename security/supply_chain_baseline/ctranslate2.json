@@ -1,0 +1,212 @@
+{
+ "name": "ctranslate2",
+ "versions": {
+  "4.8.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|ctranslate2/converters/converter.py|c44dc260f0ef3735",
+    "yara|capability_process_spawn|ctranslate2/converters/fairseq.py|71d8f200163f1eac"
+   ],
+   "archives": {
+    "ctranslate2-4.8.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [
+      "ct2-fairseq-converter = ctranslate2.converters.fairseq:main",
+      "ct2-marian-converter = ctranslate2.converters.marian:main",
+      "ct2-openai-gpt2-converter = ctranslate2.converters.openai_gpt2:main",
+      "ct2-opennmt-py-converter = ctranslate2.converters.opennmt_py:main",
+      "ct2-opennmt-tf-converter = ctranslate2.converters.opennmt_tf:main",
+      "ct2-opus-mt-converter = ctranslate2.converters.opus_mt:main",
+      "ct2-transformers-converter = ctranslate2.converters.transformers:main"
+     ],
+     "files": {
+      "ctranslate2-4.8.3.dist-info/METADATA": "7751cd2da36de6e10a5d71f80f171903061671b0013f20fe2efd7e87cf0006b2",
+      "ctranslate2-4.8.3.dist-info/RECORD": "cda283f6a2ed780794f14d1f87087941715e340b645150e50c491ce7f040a5fc",
+      "ctranslate2-4.8.3.dist-info/WHEEL": "c58d27a294d0bb25ef5b3465c41b45d28fbc19afdbcfc665637ef1d33291c3b8",
+      "ctranslate2-4.8.3.dist-info/entry_points.txt": "6479288eeb7f4e65511e5d1b2481a6d9bf70aabf7c18026ac4df6b949b50b21b",
+      "ctranslate2-4.8.3.dist-info/top_level.txt": "d6151a5b370522e4a8d81008507140dceb20b2ee92d608aad32e91a2cbfc1ce4",
+      "ctranslate2.libs/libctranslate2-bdb19cbc.so.4.8.3": "9a28d257e726d2a3db337fa5e10f31cd190975955f6b3a9bb01801eb2f1e6975",
+      "ctranslate2.libs/libgomp-e985bcbb.so.1.0.0": "a43904e4fa297301d4640dc1bb3c8a3480b406f99e498eba9b1914b68aab604a",
+      "ctranslate2/__init__.py": "b98159455a98805e03821a0e9979f9bbd6fe7343e7dd30d5366c314eb71e4ed1",
+      "ctranslate2/_ext.cpython-312-x86_64-linux-gnu.so": "aa6cf6be37e621d70816da680eb8e632013b2c2c068d24c1c719782894149add",
+      "ctranslate2/converters/__init__.py": "4ffc89327b3f5d757aa49cb7496a53b60aef6d3d28c119f170c9ffee2e6aa29e",
+      "ctranslate2/converters/converter.py": "c44dc260f0ef37352778157f36e3c9e7d4b178d29151cc819d2fccb31383dc83",
+      "ctranslate2/converters/eole_ct2.py": "7abd11a43a653f8f886793516b087977a87b98da31e8bbb1c0b48c4916152090",
+      "ctranslate2/converters/fairseq.py": "71d8f200163f1eacb53d2eb073f9d9b3724d8740fc45cfde3c34f5ce1897b1d7",
+      "ctranslate2/converters/marian.py": "8b9a624bfe3348cf459a9d76170207ba8b74a4cf953e1ab630dc6eb7ee146bcd",
+      "ctranslate2/converters/openai_gpt2.py": "466bf1cba52a6b97fd616f514097c5e1709e35b5e1f80c3ad69e4dfc4d77f613",
+      "ctranslate2/converters/opennmt_py.py": "c55283c0947e47a26850d6231504b0f21a7980eb2b575283fae52ef96d156a45",
+      "ctranslate2/converters/opennmt_tf.py": "8227b4b7ce11f6f5171fc435cbebeeea124153c96388e3d6753f3107d2d78313",
+      "ctranslate2/converters/opus_mt.py": "5c201bdd7e1a7d10ad69912b6fb6ef22f24199f5600bd3566bf205e6d3814a64",
+      "ctranslate2/converters/transformers.py": "b91fc38c16a60094b262e030308cf860ae794542ebb8630ad028aaa90c8c0196",
+      "ctranslate2/converters/utils.py": "bb9d6383753ecd044c32130ea7e28a1ec1d69bab504384c0ae55e246f2e91324",
+      "ctranslate2/extensions.py": "69783f7663cfbd34df9c8d45301834958366d2d655015b44a96d54a5ba864745",
+      "ctranslate2/logging.py": "c66c762e5af23a100f6cc989c0c02bf89b97659a2047d8fad8e34d659d9f14e4",
+      "ctranslate2/models/__init__.py": "b2c31b866438bf40b9030918a2999837f53daed4c526f36c76579c01c0661de9",
+      "ctranslate2/specs/__init__.py": "5c4fc6c26b183696a8999c1a60981b271b1781d2aebc637bdf269fdde0429a0b",
+      "ctranslate2/specs/attention_spec.py": "85991d005ad1bec5a1c610da8b9f39ec3f822972ea146f73993429116e5e391a",
+      "ctranslate2/specs/common_spec.py": "ed4b90dd8b0ef9f2c087016e5a5e3555b34b40bccd9584df8eb652805ff88039",
+      "ctranslate2/specs/model_spec.py": "565dc4766f3e39e8f78ba994544e9175ae3a7b9e771928b603f5395289a753cb",
+      "ctranslate2/specs/transformer_spec.py": "6863845c7cefd783554b012bc7364d1c407c6c5a9068387d329f7cb420bdafc9",
+      "ctranslate2/specs/wav2vec2_spec.py": "0fa0fe37f7dbb2f38455ef34da34b4de977aa6de5b3a2ef5ca0ff531f77f8637",
+      "ctranslate2/specs/wav2vec2bert_spec.py": "34a4c2f2735dc4c793056d18fc429436b0e92a13f02faecfd65dddc264fe6b29",
+      "ctranslate2/specs/whisper_spec.py": "bf1c6b02c1d8188b580b62bd630da07851146d799e1ad72a1585c332a71ad250",
+      "ctranslate2/version.py": "2473dffd9515f05f9901ed4202e87867b76be50990c59da0cf3c5d80c3350531"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "9a9d1af171e5e540b91ae6439d8fa5f44cc2277e7b17b300f4c1eed335d1a15f",
+     "native": {
+      "ctranslate2.libs/libctranslate2-bdb19cbc.so.4.8.3": "elf",
+      "ctranslate2.libs/libgomp-e985bcbb.so.1.0.0": "elf",
+      "ctranslate2/_ext.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "7e161eb031fcf2a5d81ce3a1cd8be4954c7df758d96cfaba57aeecc69a0c00ae"
+    }
+   },
+   "name": "ctranslate2",
+   "provenance": {
+    "ctranslate2-4.8.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl": null
+   },
+   "pypi": {
+    "author": "OpenNMT",
+    "home_page": "https://opennmt.net",
+    "license": "MIT",
+    "project_urls": {
+     "Documentation": "https://opennmt.net/CTranslate2",
+     "Forum": "https://forum.opennmt.net",
+     "Gitter": "https://gitter.im/OpenNMT/CTranslate2",
+     "Homepage": "https://opennmt.net",
+     "Source": "https://github.com/OpenNMT/CTranslate2"
+    },
+    "summary": "Fast inference engine for Transformer models"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "libctranslate2's socket imports (bind/connect/listen) are linked symbols with no URL or address in the library; full capa analysis (77 MB) left to the night scan. Content review."
+   },
+   "scans": {
+    "capa": {
+     "9a28d257e726d2a3db337fa5e10f31cd190975955f6b3a9bb01801eb2f1e6975": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "ctranslate2.libs/libctranslate2-bdb19cbc.so.4.8.3",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "bind",
+         "connect",
+         "listen",
+         "sendmsg",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libgomp-e985bcbb.so.1.0.0",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1",
+        "libstdc++.so.6"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "a43904e4fa297301d4640dc1bb3c8a3480b406f99e498eba9b1914b68aab604a": {
+      "capabilities": [
+       "PEB access",
+       "access PEB ldr_data",
+       "contain loop",
+       "create or open file",
+       "create thread",
+       "execute syscall",
+       "get OS version",
+       "get kernel32 base address",
+       "get ntdll base address",
+       "get process filename",
+       "get process heap flags",
+       "get system information on Linux",
+       "link function at runtime on Linux",
+       "mark thread detached on Linux",
+       "query environment variable",
+       "terminate process",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "ctranslate2.libs/libgomp-e985bcbb.so.1.0.0",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libdl.so.2",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "aa6cf6be37e621d70816da680eb8e632013b2c2c068d24c1c719782894149add": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "ctranslate2/_ext.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libctranslate2-bdb19cbc.so.4.8.3",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libstdc++.so.6"
+       ],
+       "rpath": [
+        "$ORIGIN/../ctranslate2.libs"
+       ],
+       "urls": [
+        "https://arxiv.org/abs/2204.05424.",
+        "https://github.com/OpenNMT/CTranslate2/blob/59c7dda738892df7a064aa360d0e45a4c3840b07/python/tests/test_transformers.py#L1028)",
+        "https://github.com/OpenNMT/CTranslate2/blob/master/include/ctranslate2/generation.h>`_",
+        "https://github.com/OpenNMT/CTranslate2/blob/master/include/ctranslate2/translation.h>`_",
+        "https://github.com/facebookresearch/fairseq/tree/main/examples/wav2vec",
+        "https://github.com/openai/whisper",
+        "https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html>`_",
+        "https://numpy.org/doc/stable/reference/arrays.interface.html>`_",
+        "https://opennmt.net/CTranslate2/python/ctranslate2.TranslationResult.html"
+       ]
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_delete|ctranslate2/converters/converter.py|c44dc260f0ef3735",
+     "yara|capability_process_spawn|ctranslate2/converters/fairseq.py|71d8f200163f1eac"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete ctranslate2/converters/converter.py",
+     "capability_process_spawn:capability_process_spawn ctranslate2/converters/fairseq.py"
+    ]
+   },
+   "version": "4.8.3"
+  }
+ }
+}

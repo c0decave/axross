@@ -3,11 +3,19 @@
 # build_release.sh — package the Axross public-release tree.
 #
 # Produces a clean output directory (and optionally a tarball + hashes)
-# containing only files safe for public distribution. Internal notes
-# (HANDOFF, BACKLOG), dev artefacts (.venv, dist/, build caches) and
-# any stale project-identity strings are excluded. All scrub gates run
-# BEFORE any file is written, so the script refuses to produce a
-# contaminated bundle rather than ship one.
+# containing only files safe for public distribution: the committed
+# files of HEAD, never untracked or uncommitted ones. In the private
+# source repo the tree is the scrubbed public mirror, which
+# scripts/export-public.py --mirror writes into a temp dir (its
+# MIRROR_EXCLUDE_PREFIXES keep internal notes and tooling out); in the
+# public mirror checkout it is `git archive HEAD`. All scrub gates run
+# on that staged tree BEFORE anything is written to OUTDIR, so the
+# script refuses to produce a contaminated bundle rather than ship one.
+#
+# The identity terms the gates look for are kept outside the repo:
+# $AXROSS_IDENTITY_TERMS_FILE, default
+# ${XDG_CONFIG_HOME:-~/.config}/axross/release-identity-terms.
+# $AXROSS_RELEASE_LIST, when set, receives the candidate file list.
 #
 # Usage:
 #   scripts/build_release.sh                    # default: ../axross-release
@@ -20,7 +28,7 @@
 #   0  success
 #   1  argument error / usage
 #   2  environment error (missing tool, not in repo, version missing…)
-#   3  scrub failure (deny-listed path / secret / identity string)
+#   3  scrub failure (excluded path / secret / identity string / export refused)
 #   4  outdir collision without --force
 #   5  post-copy sanity check failed
 #   6  safety-guard refusal (outdir too close to /, $HOME, $REPO_ROOT)
@@ -103,7 +111,7 @@ fi
 # 2. Tool availability                                                 #
 # ==================================================================== #
 
-REQUIRED_CMDS=(git python3 tar grep sha256sum sha512sum du find sed awk realpath)
+REQUIRED_CMDS=(git python3 tar grep sha256sum sha512sum du find sed awk realpath mktemp sort diff)
 for cmd in "${REQUIRED_CMDS[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 \
         || die 2 "missing required command: $cmd"
@@ -121,19 +129,36 @@ cd "$REPO_ROOT"
 # 4. Resolve version                                                   #
 # ==================================================================== #
 
+# pyproject declares the version dynamic: tool.setuptools.dynamic reads
+# it from axross/_version.py (attr = "axross._version.__version__").
+# Resolve it the way setuptools does - a static [project].version if
+# there is one, else the attr's module read as source (its AST, nothing
+# imported) - so the tarball is named after the version a build gets.
+# The snippet between the PY markers is run on its own by
+# tests/test_build_release_version.py.
 VERSION="$(
     python3 - <<'PY' 2>/dev/null
-import pathlib, sys, tomllib
+import ast, pathlib, sys, tomllib
 try:
-    d = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-    v = d["project"]["version"]
+    project = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+    v = project.get("project", {}).get("version")
+    if v is None:
+        attr = project["tool"]["setuptools"]["dynamic"]["version"]["attr"]
+        module, _, name = attr.rpartition(".")
+        source = pathlib.Path(*module.split(".")).with_suffix(".py")
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in tree.body:
+            targets = node.targets if isinstance(node, ast.Assign) else (
+                [node.target] if isinstance(node, ast.AnnAssign) else [])
+            if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                v = ast.literal_eval(node.value)
     if not isinstance(v, str) or not v.strip():
         raise ValueError("empty")
     print(v.strip())
 except Exception:
     sys.exit(1)
 PY
-)" || die 2 "pyproject.toml has no usable [project].version — fix before releasing"
+)" || die 2 "no usable version (axross/_version.py __version__, as pyproject.toml's tool.setuptools.dynamic names it) — fix before releasing"
 
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
@@ -192,84 +217,150 @@ log ""
 # 7. Trap for clean exit state                                         #
 # ==================================================================== #
 
-# If we fail mid-copy (rare — pre-flight should catch everything),
-# remove a half-populated OUTDIR so a subsequent run doesn't mistake
-# it for a valid previous build.
-cleanup_on_fail() {
+# The tree is staged in a private temp dir outside the repo; it goes
+# away on every exit. If we fail mid-copy (rare — pre-flight should
+# catch everything), also remove a half-populated OUTDIR so a later run
+# doesn't mistake it for a valid previous build.
+STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/axross-release-stage.XXXXXX")"
+STAGE="$STAGE_ROOT/tree"
+cleanup() {
     local rc=$?
-    # Only act on failure, not on a clean exit 0.
     if [ $rc -ne 0 ] && [ $DRY_RUN -eq 0 ] && [ -d "$OUTDIR" ] && [ "${COPY_STARTED:-0}" = "1" ]; then
         warn "failure mid-build (rc=$rc) — removing partial $OUTDIR"
         rm -rf -- "$OUTDIR"
     fi
+    rm -rf -- "$STAGE_ROOT"
     exit $rc
 }
-trap cleanup_on_fail EXIT
+trap cleanup EXIT
 
 # ==================================================================== #
-# 8. Build candidate file list                                         #
+# 8. Identity terms (read before anything is staged)                   #
 # ==================================================================== #
 
-log "=== Collecting file list ==="
+# The terms themselves must not be published, so they live OUTSIDE the
+# repository, one per line ('#' comments allowed):
+# $AXROSS_IDENTITY_TERMS_FILE, default
+# ${XDG_CONFIG_HOME:-~/.config}/axross/release-identity-terms.
+# Without it the release refuses (fail closed); a terms file inside the
+# work tree is refused too, so it can never be committed and shipped.
+TERMS_DEFAULT="${XDG_CONFIG_HOME:-$HOME/.config}/axross/release-identity-terms"
+IDENTITY_TERMS_FILE="${AXROSS_IDENTITY_TERMS_FILE:-$TERMS_DEFAULT}"
+[ -f "$IDENTITY_TERMS_FILE" ] \
+    || die 2 "identity terms file missing: $IDENTITY_TERMS_FILE (default $TERMS_DEFAULT, or set AXROSS_IDENTITY_TERMS_FILE)"
+TERMS_REAL="$(realpath -- "$IDENTITY_TERMS_FILE")"
+case "$TERMS_REAL" in
+    "$REPO_ROOT"/*)
+        die 2 "identity terms file is inside the repository ($TERMS_REAL) — move it out, e.g. to $TERMS_DEFAULT" ;;
+esac
+TERMS_CLEAN="$STAGE_ROOT/identity-terms"
+: > "$TERMS_CLEAN"
+term_count=0
+while IFS= read -r term || [ -n "$term" ]; do
+    term="${term%%#*}"
+    term="${term#"${term%%[![:space:]]*}"}"
+    term="${term%"${term##*[![:space:]]}"}"
+    if [ -n "$term" ]; then
+        printf '%s\n' "$term" >> "$TERMS_CLEAN"
+        term_count=$((term_count + 1))
+    fi
+done < "$TERMS_REAL"
+[ "$term_count" -gt 0 ] || die 2 "identity terms file is empty: $IDENTITY_TERMS_FILE"
 
-# -c = cached (committed to index), -o = other (untracked),
-# --exclude-standard honours .gitignore, -z emits NUL-terminated paths
-# (so filenames with newlines/whitespace survive a cross-tool pipeline).
-# Filter to paths that actually exist in the working tree — a staged
-# deletion (git rm --cached without commit) otherwise lingers in -c
-# output and would be fed to tar as a missing file.
-mapfile -d '' -t FILES < <(
-    git ls-files -z -co --exclude-standard \
-        | while IFS= read -r -d '' f; do
-              if [ -f "$f" ] || [ -L "$f" ]; then
-                  printf '%s\0' "$f"
-              fi
-          done
-)
+# ==================================================================== #
+# 9. Stage the public tree                                             #
+# ==================================================================== #
+
+# Only committed files of HEAD are packaged — never untracked or
+# uncommitted ones (an operator's notes in the work tree stay out).
+#
+#   * In the private source repo (scripts/export-public.py present) the
+#     public tree is what `export-public.py --mirror --apply` writes into
+#     the stage: HEAD's tracked files minus its MIRROR_EXCLUDE_PREFIXES,
+#     run through the scrub rules and its leak gate. The exclude list is
+#     read from that script; this one keeps no copy of it.
+#   * In the public mirror checkout (export-public.py is one of the
+#     files the mirror leaves out) the tree is `git archive HEAD`.
+EXPORT_SCRIPT="$REPO_ROOT/scripts/export-public.py"
+EXCLUDES_FILE="$STAGE_ROOT/mirror-exclude-prefixes"
+: > "$EXCLUDES_FILE"
+
+log "=== Staging the public tree ==="
+if [ -f "$EXPORT_SCRIPT" ]; then
+    log "  source: private source repo, scrubbed by scripts/export-public.py --mirror"
+    # The exclude list, read as source: nothing of the script is run.
+    python3 - "$EXPORT_SCRIPT" > "$EXCLUDES_FILE" <<'PY' \
+        || die 2 "cannot read MIRROR_EXCLUDE_PREFIXES from scripts/export-public.py"
+import ast, sys
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+for node in tree.body:
+    if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "MIRROR_EXCLUDE_PREFIXES" for t in node.targets):
+        values = ast.literal_eval(node.value)
+        if not values or not all(isinstance(v, str) and v and "\n" not in v for v in values):
+            sys.exit(1)
+        for v in values:
+            print(v)
+        sys.exit(0)
+sys.exit(1)
+PY
+    log "  excludes: $(wc -l < "$EXCLUDES_FILE") MIRROR_EXCLUDE_PREFIXES entries"
+    set +e
+    python3 "$EXPORT_SCRIPT" --mirror --apply --target "$STAGE"
+    export_rc=$?
+    set -e
+    case "$export_rc" in
+        0) ;;
+        3|4|5) die 3 "export-public.py --mirror refused (rc=$export_rc) — see findings above; nothing was written" ;;
+        *) die 2 "export-public.py --mirror failed (rc=$export_rc)" ;;
+    esac
+else
+    log "  source: public mirror checkout, git archive HEAD"
+    mkdir -p -- "$STAGE"
+    git archive --format=tar HEAD | tar --extract --directory="$STAGE"
+fi
+
+mapfile -d '' -t FILES < <(cd "$STAGE" && find . \( -type f -o -type l \) -printf '%P\0' | sort -z)
 
 FILE_COUNT=${#FILES[@]}
 if [ "$FILE_COUNT" -eq 0 ]; then
-    die 2 "git ls-files returned no candidate files — wrong working directory?"
+    die 2 "the staged tree is empty — nothing committed at HEAD?"
 fi
 log "  candidates: $FILE_COUNT files"
+if [ -n "${AXROSS_RELEASE_LIST:-}" ]; then
+    # The candidate list, one path per line (tests and reviewers).
+    printf '%s\n' "${FILES[@]}" > "$AXROSS_RELEASE_LIST"
+    log "  list:       $AXROSS_RELEASE_LIST"
+fi
 
 # ==================================================================== #
-# 9. Pre-flight scrub gates                                            #
+# 10. Pre-flight scrub gates                                           #
 # ==================================================================== #
 
 log ""
 log "=== Pre-flight scrub ==="
 
-# The release-script itself references the identity terms in its
-# scrub patterns below. Skip it in content scans so it doesn't match
-# itself and create a false positive.
-SELF_REL="scripts/build_release.sh"
-
-# ---- 9a. Deny-listed path prefixes --------------------------------- #
-# Literal string match, not regex. A path is denied if it EQUALS a
-# deny entry or starts with "<deny>/".
-DENY_PATHS=(
-    "docs/HANDOFF.md"
-    "docs/BACKLOG.md"
-    ".claude"
-    ".vscode"
-    ".idea"
-    "security/reports"
-    "security/scanner_reports"
-)
-
 scrub_failed=0
 
-for f in "${FILES[@]}"; do
-    for deny in "${DENY_PATHS[@]}"; do
-        if [ "$f" = "$deny" ] || [ "${f#"$deny"/}" != "$f" ]; then
-            err "deny-listed path in candidate set: $f (matches $deny)"
-            scrub_failed=1
-        fi
+# ---- 10a. Mirror-excluded paths ------------------------------------ #
+# Belt and braces over export-public.py: no staged path is, or starts
+# with, an entry of its MIRROR_EXCLUDE_PREFIXES (its own matching).
+# The one exception is .gitignore: the source one is excluded and the
+# export writes its curated PUBLIC_GITIGNORE in its place.
+if [ -s "$EXCLUDES_FILE" ]; then
+    mapfile -t EXCLUDES < "$EXCLUDES_FILE"
+    for f in "${FILES[@]}"; do
+        [ "$f" = ".gitignore" ] && continue
+        for ex in "${EXCLUDES[@]}"; do
+            if [ "${f#"$ex"}" != "$f" ]; then
+                err "mirror-excluded path in candidate set: $f (matches $ex)"
+                scrub_failed=1
+            fi
+        done
     done
-done
+fi
 
-# ---- 9b. Secret-shaped filenames ----------------------------------- #
+# ---- 10b. Secret-shaped filenames ---------------------------------- #
 # Match on basename so directory names don't false-positive.
 SECRET_BASENAME_GLOBS=(
     "*_token.json"
@@ -297,47 +388,25 @@ for f in "${FILES[@]}"; do
     done
 done
 
-# ---- 9c. Stale identity strings (file content) --------------------- #
-# Fixed-string search (-F) so we don't accidentally match more than
-# we mean. The terms themselves must not be published, so they live in
-# an untracked file, one per line ('#' comments allowed):
-# $AXROSS_IDENTITY_TERMS_FILE, default .release-identity-terms at the
-# repo root. Without it the release refuses (fail closed).
-IDENTITY_TERMS_FILE="${AXROSS_IDENTITY_TERMS_FILE:-$REPO_ROOT/.release-identity-terms}"
-[ -f "$IDENTITY_TERMS_FILE" ] || die 2 "identity terms file missing: $IDENTITY_TERMS_FILE"
-IDENTITY_TERMS=()
-while IFS= read -r term || [ -n "$term" ]; do
-    term="${term%%#*}"
-    term="${term#"${term%%[![:space:]]*}"}"
-    term="${term%"${term##*[![:space:]]}"}"
-    [ -n "$term" ] && IDENTITY_TERMS+=("$term")
-done < "$IDENTITY_TERMS_FILE"
-[ "${#IDENTITY_TERMS[@]}" -gt 0 ] || die 2 "identity terms file is empty: $IDENTITY_TERMS_FILE"
+# ---- 10c. Stale identity strings (file content) -------------------- #
+# Fixed strings (-F), text files only (-I), every staged file - this
+# script included, as the terms are not in it.
+if (cd "$STAGE" && grep -rFIHn -f "$TERMS_CLEAN" -- .); then
+    err "stale identity string(s) in the staged tree (see lines above)"
+    scrub_failed=1
+fi
 
-for f in "${FILES[@]}"; do
-    # Don't scan binary files (grep -I) and skip the release script
-    # itself (which lists these terms as scrub targets).
-    [ "$f" = "$SELF_REL" ] && continue
-    for term in "${IDENTITY_TERMS[@]}"; do
-        if grep -FIHn -- "$term" "$f" 2>/dev/null; then
-            err "stale identity string '$term' found in $f (see line above)"
-            scrub_failed=1
-        fi
-    done
-done
-
-# ---- 9d. Private-key PEM blocks in non-test files ------------------ #
+# ---- 10d. Private-key PEM blocks in non-test files ----------------- #
 # Test fixtures can legitimately carry crafted key material; anything
 # else is almost certainly an accident.
 PEM_MARKER='-----BEGIN '
 for f in "${FILES[@]}"; do
-    [ "$f" = "$SELF_REL" ] && continue
     case "$f" in
         tests/*|*/tests/*) continue ;;
     esac
     # -Iq: binary skip + quiet; plus explicit pattern for any PEM
     # private-key header variant.
-    if grep -IqE -- "${PEM_MARKER}(RSA |OPENSSH |EC |DSA |ENCRYPTED |)PRIVATE KEY-----" "$f" 2>/dev/null; then
+    if grep -IqE -- "${PEM_MARKER}(RSA |OPENSSH |EC |DSA |ENCRYPTED |)PRIVATE KEY-----" "$STAGE/$f" 2>/dev/null; then
         err "PEM private-key block in non-test file: $f"
         scrub_failed=1
     fi
@@ -347,21 +416,20 @@ if [ "$scrub_failed" -ne 0 ]; then
     die 3 "scrub gate failed — see findings above; nothing was written"
 fi
 
-ok "no deny-listed paths"
+ok "no mirror-excluded paths"
 ok "no secret-shaped filenames"
 ok "no stale identity strings (scanned $FILE_COUNT files)"
 ok "no PEM private-key blocks outside tests/"
 
 # ==================================================================== #
-# 10. Working-tree hygiene (warnings only)                             #
+# 10e. Working-tree hygiene (warnings only)                            #
 # ==================================================================== #
 
 log ""
 log "=== Working tree ==="
 
-if [ -n "$(git status --porcelain)" ]; then
-    warn "working tree has uncommitted changes — bundling current state anyway"
-    warn "(commit first if you want a reproducible release tag)"
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    warn "working tree has uncommitted changes — they are NOT packaged (HEAD is)"
 else
     ok "working tree clean"
 fi
@@ -383,7 +451,6 @@ if [ "$DRY_RUN" -eq 1 ]; then
     log "  would copy:  $FILE_COUNT files"
     log "  would write: $OUTDIR"
     [ "$MAKE_TARBALL" -eq 1 ] && log "  would pack:  $(dirname "$OUTDIR")/axross-${VERSION}.tar.gz"
-    trap - EXIT
     exit 0
 fi
 
@@ -418,7 +485,7 @@ COPY_STARTED=1
 # permissions + symlinks + sparse regions round-trip cleanly.
 # --null / --files-from=- reads NUL-separated filenames.
 printf '%s\0' "${FILES[@]}" \
-    | tar --create --null --files-from=- \
+    | tar --create --null --directory="$STAGE" --files-from=- \
           --owner=0 --group=0 --numeric-owner \
     | tar --extract --directory="$OUTDIR"
 
@@ -451,19 +518,8 @@ fi
 ok "size: $SIZE_HUMAN (within $((SIZE_CAP_KB / 1024)) MB cap)"
 
 # 14c — re-scan output tree for identity terms as belt-and-braces.
-out_hit=0
-for term in "${IDENTITY_TERMS[@]}"; do
-    # Exclude the release script itself (same rationale as pre-flight).
-    if find "$OUTDIR" -type f \
-        ! -path "*/scripts/build_release.sh" \
-        -exec grep -FIln -- "$term" {} + 2>/dev/null | head -1 | grep -q .; then
-        err "identity string '$term' appears in output tree:"
-        find "$OUTDIR" -type f ! -path "*/scripts/build_release.sh" \
-            -exec grep -FIHn -- "$term" {} + 2>/dev/null >&2 || true
-        out_hit=1
-    fi
-done
-if [ "$out_hit" -ne 0 ]; then
+if (cd "$OUTDIR" && grep -rFIHn -f "$TERMS_CLEAN" -- . >&2); then
+    err "identity string(s) appear in the output tree (see lines above)"
     die 5 "post-copy identity scan failed"
 fi
 ok "identity re-scan clean"
@@ -543,17 +599,15 @@ if [ "$MAKE_TARBALL" -eq 1 ]; then
     # Reproducibility check: unpack the tarball to a scratch dir and
     # diff against the source tree. Catches any tar quirk that would
     # otherwise be found by the first user to download.
-    REPRO_DIR="$(mktemp -d)"
-    trap 'rm -rf -- "$REPRO_DIR"' RETURN
+    # (The scratch dir lies in STAGE_ROOT, which the EXIT trap removes.)
+    REPRO_DIR="$STAGE_ROOT/repro"
+    mkdir -p -- "$REPRO_DIR"
     tar --extract --gzip --file "$TARBALL" --directory "$REPRO_DIR"
     if ! diff -rq "$OUTDIR" "$REPRO_DIR/${STEM}" >/dev/null; then
         err "tarball does NOT round-trip to source tree — diff:"
         diff -rq "$OUTDIR" "$REPRO_DIR/${STEM}" >&2 || true
-        rm -rf -- "$REPRO_DIR"
         die 5 "tarball reproducibility failed"
     fi
-    rm -rf -- "$REPRO_DIR"
-    trap - RETURN
 
     TAR_SIZE="$(du -h -- "$TARBALL" | awk '{print $1}')"
     ok "$TARBALL ($TAR_SIZE)"
@@ -577,6 +631,5 @@ log "  version: $VERSION (git $GIT_SHA on $GIT_BRANCH)"
 log ""
 log "Upload the contents (or the tarball) to github.com/c0decave/axross."
 
-# Clean exit — disarm the EXIT trap so it doesn't think we failed.
-trap - EXIT
+# Clean exit — the EXIT trap only removes the stage.
 exit 0

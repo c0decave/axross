@@ -1,0 +1,92 @@
+{
+ "name": "python-flirt",
+ "versions": {
+  "0.10.1": {
+   "accepted_findings": [],
+   "archives": {
+    "python_flirt-0.10.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "flirt/__init__.py": "f53c71c94e154e6ab0aaa5dafdc375100cc531e5f8386e8df95e663be49475b4",
+      "flirt/flirt.cpython-312-x86_64-linux-gnu.so": "e01e55883c967b485840ef00bb67778513dc5e5d75d4533da143b03d823deb16",
+      "python_flirt-0.10.1.dist-info/METADATA": "478b3c548eca5d5a1bdcbfc7a5939f239bde055c3172d9bf2233478f7843032d",
+      "python_flirt-0.10.1.dist-info/RECORD": "14f5f56c3f001d20e17acc08b5b97a3ab67148b2ea553638aa6ba6ef1e24fa7d",
+      "python_flirt-0.10.1.dist-info/WHEEL": "71d661618d9b707f61ac372a0d51047692f4339b639a602bfa5c14ab5e4211d6",
+      "python_flirt-0.10.1.dist-info/licenses/LICENSE.txt": "275dbf7cc15d9c826b03638277eae17bb827fbdd5891a96a44708cf3abec458d",
+      "python_flirt-0.10.1.dist-info/sboms/python-flirt.cyclonedx.json": "f4b85dd7530c03530498ab0af07e259dad7a14518a03bce1a05ed8e1bbe2a732"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a0d0355199a6abbad2e4809a366187c3d9927f8d11722efd25fb6e271da7bb2f",
+     "native": {
+      "flirt/flirt.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "5ecff01f2ddc0276f311b4c8c9d17c191e0eb0fc75274e1c591455f70292b521"
+    }
+   },
+   "name": "python-flirt",
+   "provenance": {
+    "python_flirt-0.10.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "williballenthin/lancelot",
+     "workflow": "python-wheels.yaml"
+    }
+   },
+   "pypi": {
+    "author_email": "Willi Ballenthin <william.ballenthin@mandiant.com>",
+    "home_page": "https://github.com/williballenthin/lancelot/tree/master/pyflirt",
+    "maintainer_email": "Willi Ballenthin <william.ballenthin@mandiant.com>",
+    "project_urls": {
+     "Homepage": "https://github.com/williballenthin/lancelot/tree/master/pyflirt",
+     "repository": "https://github.com/williballenthin/lancelot/tree/master/pyflirt"
+    },
+    "summary": "A Python library for parsing, compiling, and matching Fast Library Identification and Recognition Technology (FLIRT) signatures."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (williballenthin/lancelot)."
+   },
+   "scans": {
+    "capa": {
+     "e01e55883c967b485840ef00bb67778513dc5e5d75d4533da143b03d823deb16": {
+      "capabilities": [
+       "check for software breakpoints",
+       "compiled with rust",
+       "contain loop",
+       "encode data using Base64",
+       "encode data using XOR",
+       "execute syscall",
+       "map or unmap memory on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "flirt/flirt.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://github.com/PyO3/pyo3/issues/576internal"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "0.10.1"
+  }
+ }
+}

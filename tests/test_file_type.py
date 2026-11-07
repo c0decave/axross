@@ -29,7 +29,9 @@ from core.ram_fs import RamFsSession  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00" * 64
 JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 64
-ELF = b"\x7fELF\x02\x01\x01" + b"\x00" * 120
+# An x86-64 executable's header (e_type ET_EXEC): a newer shared-mime-info
+# calls an ELF of no type application/x-elf, an older one an executable.
+ELF = b"\x7fELF\x02\x01\x01" + b"\x00" * 9 + b"\x02\x00\x3e\x00" + b"\x00" * 108
 GZIP = b"\x1f\x8b\x08\x00" + b"\x00" * 40
 
 
@@ -106,7 +108,9 @@ class _CountingRam(RamFsSession):
 def test_happy_png_named_png_is_a_match():
     info = FT.identify_bytes(PNG, "photo.png")
     assert info.mime == "image/png"
-    assert "PNG" in info.description
+    # The database's own name: "PNG image" (shared-mime-info) or "Portable
+    # Network Graphics" (the database built into Qt).
+    assert "PNG" in info.description or "Portable Network Graphics" in info.description
     assert info.extension == ".png"
     assert info.extension_mime == "image/png"
     assert info.verdict == FT.MATCH

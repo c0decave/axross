@@ -259,7 +259,7 @@ def test_edge_lossy_webp_and_simple_webp():
 
 
 def test_edge_values_are_bounded_and_control_characters_removed():
-    assert MF.bounded("a‮b\x00c") == "a b c"
+    assert MF.bounded("a\u202eb\x00c") == "a b c"
     long = MF.bounded("x" * 10_000)
     assert len(long) < MF.MAX_VALUE_CHARS + 30 and "10000 chars" in long
     assert MF.bounded(bytes(range(256)) * 10) == "<binary, 2560 bytes>"

@@ -176,6 +176,27 @@ class DialogTest(unittest.TestCase):
         self.assertIn("db locked", self._warning.call_args[0][2])
         self.assertFalse(self.dlg._busy_bar.isVisible())
 
+    def test_the_question_speaks_plainly_in_the_users_language(self) -> None:
+        # It asked "on backend [LocalFS:Local]? ... Depth- and entry-capped
+        # per core.metadata_index defaults.", titled "Index Pane", English only.
+        from PyQt6.QtWidgets import QMessageBox
+
+        from core import i18n
+
+        for lang, title, words in (("en", "Index Folder", "search index"),
+                                   ("de", "Ordner indizieren", "Suchindex")):
+            i18n.install(lang)
+            self.addCleanup(i18n.install, "en")
+            with mock.patch("ui.metadata_search_dialog.QMessageBox.question") as ask:
+                ask.return_value = QMessageBox.StandardButton.No
+                self.dlg._do_index_active()
+            asked_title, text = ask.call_args[0][1:3]
+            self.assertEqual(asked_title, title)
+            self.assertIn(words, text)
+            self.assertIn(str(self.tmp), text)
+            for jargon in ("backend", "core.", "capped", "LocalFS", "["):
+                self.assertNotIn(jargon, text)
+
     def test_declining_starts_nothing(self) -> None:
         from PyQt6.QtWidgets import QMessageBox
 

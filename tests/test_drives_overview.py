@@ -89,6 +89,27 @@ class TestParse:
         drives = {d.mount: d for d in DO.parse_proc_mounts(MOUNTS)}
         assert drives["/var/lib/docker/overlay2/abc/merged"].kind == "system"
 
+    def test_edge_the_root_is_a_local_drive_also_on_an_overlay_or_zfs(self):
+        """The root of a live system or a container is an overlay, and that of
+        a ZFS install a dataset (no /dev/ device): "/" counted as a system
+        mount and the panel hid it by default - the machine's own root was
+        missing from the overview. Other overlays stay system mounts."""
+        for line in ("overlay / overlay rw 0 0", "/cow / overlay rw 0 0",
+                     "rpool/ROOT/ubuntu_x1 / zfs rw 0 0"):
+            (root,) = DO.parse_proc_mounts(line)
+            assert root.mount == "/" and root.kind == "local", line
+        drives = {d.mount: d for d in DO.parse_proc_mounts(MOUNTS)}
+        assert drives["/var/lib/docker/overlay2/abc/merged"].kind == "system"
+        assert DO.parse_proc_mounts("nas:/export / nfs4 rw 0 0")[0].kind == "network"
+
+    def test_edge_the_kernels_rootfs_does_not_show_the_root_twice(self):
+        """Found in review: older kernels (RHEL / CentOS 7) list
+        "rootfs / rootfs" before the real root; since "/" is always a local
+        drive both were, and the root showed twice."""
+        lines = "rootfs / rootfs rw 0 0\n/dev/sda1 / xfs rw,relatime 0 0\n"
+        local = [d for d in DO.parse_proc_mounts(lines) if d.kind == "local"]
+        assert [(d.device, d.mount) for d in local] == [("/dev/sda1", "/")]
+
     def test_sad_garbage_lines_are_skipped(self):
         assert DO.parse_proc_mounts("garbage\n\n/dev/x\n") == []
 
@@ -282,3 +303,27 @@ def test_edge_the_table_starts_sorted_by_mount_ascending():
         assert mounts == sorted(mounts)
     finally:
         panel.close()
+
+
+def test_happy_a_drive_shows_its_label(tmp_path):
+    """Feedback: an overview of every mount point with name, size, free
+    space and file system type - the name is the volume label."""
+    folder = tmp_path / "by-label"
+    folder.mkdir()
+    dev = tmp_path / "sdb1"
+    dev.write_text("")
+    os.symlink(str(dev), str(folder / "Backup\\x202TB"))
+    labels = DO.volume_labels(str(folder))
+    assert labels == {os.path.realpath(dev): "Backup 2TB"}
+    drives = DO.with_labels([DO.Drive("/mnt/b", str(dev), "ext4", "local"),
+                             DO.Drive("/", "/dev/none", "ext4", "local")], labels)
+    assert [d.label for d in drives] == ["Backup 2TB", ""]
+    panel = _panel(drives)
+    names = {panel.table.item(r, DO.COL_MOUNT).text(): panel.table.item(r, DO.COL_NAME).text()
+             for r in range(panel.table.rowCount())}
+    assert names["/mnt/b"] == "Backup 2TB"
+    assert DO.COLUMNS[DO.COL_NAME] == "Name"
+
+
+def test_edge_no_label_folder_is_no_labels(tmp_path):
+    assert DO.volume_labels(str(tmp_path / "missing")) == {}

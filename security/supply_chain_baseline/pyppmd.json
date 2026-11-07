@@ -1,0 +1,85 @@
+{
+ "name": "pyppmd",
+ "versions": {
+  "1.3.1": {
+   "accepted_findings": [],
+   "archives": {
+    "pyppmd-1.3.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "pyppmd-1.3.1.dist-info/METADATA": "2ee435812f1a0c50364ed4296a250e2dcf3f6c304806d3ff1c55d3775926b8c9",
+      "pyppmd-1.3.1.dist-info/RECORD": "cb29aa41a3ea33ec838dfbfd61d497c304680d94cb5dc8d6a800b677e6ea4638",
+      "pyppmd-1.3.1.dist-info/WHEEL": "0f1467590cfe2a9f7ee1ae217431ec4afd0a502dc7eec37d35b79fdfef118d75",
+      "pyppmd-1.3.1.dist-info/licenses/LICENSE": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "pyppmd-1.3.1.dist-info/top_level.txt": "a08f40e934b6ef6b001e3af210a022c8526420cc02ec3c56b1f17bce516f885c",
+      "pyppmd/__init__.py": "9df51386180a913f62f305dddb49b0a602cc4f1961057d89ad61ae1d1fe81765",
+      "pyppmd/c/_ppmd.cpython-312-x86_64-linux-gnu.so": "a95230e6fcc99d22529413266583aeda501eaac74979979fa3a6aa2f7731c863",
+      "pyppmd/c/c_ppmd.py": "acb8130470de688f9ef7f3bc63c4e15c685e66fe635160a6be89b8660473baac",
+      "pyppmd/cffi/cffi_ppmd.py": "b6cb12ed2aceae66505449ba869173befc910247496e21f7858fe07daee11392",
+      "pyppmd/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a55f320e5914322eae1f1fbe1d5661a9bce13f146edf1b1d43c27dffbb5578ff",
+     "native": {
+      "pyppmd/c/_ppmd.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "1bd6d179ad39b6191ca0cbe62fb9592f33f49277b4384ad7bc5eb0e6ca27ebee"
+    }
+   },
+   "name": "pyppmd",
+   "provenance": {
+    "pyppmd-1.3.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "miurahr/pyppmd",
+     "workflow": "publish-to-pypi.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Hiroshi Miura <miurahr@linux.com>",
+    "license": "LGPL-2.1-or-later",
+    "project_urls": {
+     "Bug Tracker": "https://github.com/miurahr/pyppmd/issues",
+     "Changelog": "https://pyppmd.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://pyppmd.readthedocs.io/en/stable/",
+     "Homepage": "https://pyppmd.readthedocs.io/",
+     "Source": "https://github.com/miurahr/pyppmd"
+    },
+    "summary": "PPMd compression/decompression library"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (miurahr/pyppmd)."
+   },
+   "scans": {
+    "capa": {
+     "a95230e6fcc99d22529413266583aeda501eaac74979979fa3a6aa2f7731c863": {
+      "capabilities": [
+       "contain loop",
+       "create thread"
+      ],
+      "note": "",
+      "path": "pyppmd/c/_ppmd.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.3.1"
+  }
+ }
+}

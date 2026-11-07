@@ -1,0 +1,101 @@
+{
+ "name": "watchdog",
+ "versions": {
+  "6.0.0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|watchdog/observers/inotify_c.py|cace8dad511bc366",
+    "yara|capability_filesystem_read|watchdog/watchmedo.py|00c4d4a4d4a54260",
+    "yara|capability_process_spawn|watchdog/tricks/__init__.py|ccb16965f5cdfc0d",
+    "yara|capability_process_spawn|watchdog/utils/process_watcher.py|aa02ed1192e160b8"
+   ],
+   "archives": {
+    "watchdog-6.0.0-py3-none-manylinux2014_x86_64.whl": {
+     "entry_points": [
+      "watchmedo = watchdog.watchmedo:main [watchmedo]"
+     ],
+     "files": {
+      "watchdog-6.0.0.dist-info/AUTHORS": "253e0275f6117f5574320f516cd69a18ae8bc8ff69ced12c251e9b43e31f686f",
+      "watchdog-6.0.0.dist-info/COPYING": "39f081828db6f94c70123fa4fb30c1bce3e215a8fdece53a49991fe076a69c08",
+      "watchdog-6.0.0.dist-info/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "watchdog-6.0.0.dist-info/METADATA": "ecfde023047e7761dce06d4488abcede89e398399961a052f2fccb39b001e279",
+      "watchdog-6.0.0.dist-info/RECORD": "1fb7dce9b8542dcab5e7302150799fea1bed4726a823fdd674b7aac8879c54f5",
+      "watchdog-6.0.0.dist-info/WHEEL": "1897d0efca7796d27e0fee0277e946bbe1194149c7498331c3f366c138c6f46f",
+      "watchdog-6.0.0.dist-info/entry_points.txt": "aadfce7b65396657f3ecb340dcf1e2a67dffd7395f453a7d764df04d2dc8bdbf",
+      "watchdog-6.0.0.dist-info/top_level.txt": "395751ec690f1996a4a3cb11b55b8cd0d8acf99204971de17b784a14f6274c68",
+      "watchdog/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "watchdog/events.py": "8a0e2808d726fa649eeab2b92cfb0851c30eddd7eaf4429e81f33d2384b056ff",
+      "watchdog/observers/__init__.py": "0665ca2f55975a724ff3e591ae13f892618ad3880d00387589f25ecde66ce21b",
+      "watchdog/observers/api.py": "b723e1a83873876a6f784902551476079d52697943b2b72997c5baa22750b94b",
+      "watchdog/observers/fsevents.py": "ea1a37b20050b7a86cabfd45e9e260b68af90a3655d3d4daa13d35c5e1cd81de",
+      "watchdog/observers/fsevents2.py": "7d9f0eef3a2696d060bee70306550764858a444167e0c281df44f98848ac3ec7",
+      "watchdog/observers/inotify.py": "8b4ef900f1c8c0851d885adf7687296d8b1e754be1feedc0b4ba94ddbaa58051",
+      "watchdog/observers/inotify_buffer.py": "5565ae95e15045a24bfd93348db7001a319d8f59195169948a00b85926cf9b24",
+      "watchdog/observers/inotify_c.py": "cace8dad511bc366cf650524cec858e651a57c3653e27cf9f159a7e00e3d7a65",
+      "watchdog/observers/kqueue.py": "1d8011cdd17f365bbbdaf4da2016c8be1e5efcded139ddf7543b5973501bda87",
+      "watchdog/observers/polling.py": "07c83212dce44621e64927fc75c63fd0ff81bb45398be55641a9c1a885714ecd",
+      "watchdog/observers/read_directory_changes.py": "98a1d921f528a42014d1a7bba04f53b6482093b2df4dbf25c2070c24798e5b91",
+      "watchdog/observers/winapi.py": "ab69d36762589dbb845220724dc4a6a5bc388a22a1b4d43a51083d0963c85316",
+      "watchdog/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "watchdog/tricks/__init__.py": "ccb16965f5cdfc0de35e51f4d0e9344a96ed5b13f65b0c2cc46ef0d8f5e4c4ff",
+      "watchdog/utils/__init__.py": "f6aef01195bbca5f350dbd4270b050277df167662b1b0cb3b0ada0ccd082fa51",
+      "watchdog/utils/bricks.py": "719080e13f5ed625afaf7c98e05386b8ecc8a5d3f8738361c748a97e0ca1067a",
+      "watchdog/utils/delayed_queue.py": "5eff91728d746fad95b782e72c4999c65a6bf7731e055d995fe536fbe9c74b90",
+      "watchdog/utils/dirsnapshot.py": "49a1a7c6ad268996f12d972925c48e8f9b04f2286e9ea8dbe7e9bcc30f45d5a0",
+      "watchdog/utils/echo.py": "1802e0528b7dcd75403313302cde429074487639a2a355f7be9a554b5e0ff9e3",
+      "watchdog/utils/event_debouncer.py": "a1589f76de743e33a25789fed16d4e64e08d3b88faf3d0514558021ab26f1f41",
+      "watchdog/utils/patterns.py": "7e3cbc87f5da52e464a21e3ab852efdfb2738239a62b6573b756556cc35ad1c1",
+      "watchdog/utils/platform.py": "552378e58da4034352d4dce59abe521c1e02b74c6a2b6291972f63971ec31d28",
+      "watchdog/utils/process_watcher.py": "aa02ed1192e160b8e92fe1996b02048d5fa9fcf9cc91afe10461ffd6fc57fa09",
+      "watchdog/version.py": "82ebd033bf7cdc2b99d92e76cc4b5d86c4bf764aa16d8de6a7e190bd53380d1d",
+      "watchdog/watchmedo.py": "00c4d4a4d4a542602ac5fe4486d7ca2a1e5e6223d9a03620526d467fcc43dfe8"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e0628df545d8376fbe16ba601b6a3b14af0cc96dd49b148b85ab1c526a648223",
+     "native": {},
+     "pth": {},
+     "sha256": "20ffe5b202af80ab4266dcd3e91aae72bf2da48c0d33bdb15c66658e685e94e2"
+    }
+   },
+   "name": "watchdog",
+   "provenance": {
+    "watchdog-6.0.0-py3-none-manylinux2014_x86_64.whl": null
+   },
+   "pypi": {
+    "author": "Micka\u00ebl Schoentgen",
+    "author_email": "contact@tiger-222.fr",
+    "home_page": "https://github.com/gorakhargosh/watchdog",
+    "license": "Apache-2.0",
+    "project_urls": {
+     "Changelog": "https://github.com/gorakhargosh/watchdog/blob/master/changelog.rst",
+     "Documentation": "https://python-watchdog.readthedocs.io/en/stable/",
+     "Homepage": "https://github.com/gorakhargosh/watchdog",
+     "Issues": "https://github.com/gorakhargosh/watchdog/issues",
+     "Source": "https://github.com/gorakhargosh/watchdog/"
+    },
+    "summary": "Filesystem events monitoring"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|watchdog/observers/inotify_c.py|cace8dad511bc366",
+     "yara|capability_filesystem_read|watchdog/watchmedo.py|00c4d4a4d4a54260",
+     "yara|capability_process_spawn|watchdog/tricks/__init__.py|ccb16965f5cdfc0d",
+     "yara|capability_process_spawn|watchdog/utils/process_watcher.py|aa02ed1192e160b8"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read watchdog/observers/inotify_c.py",
+     "capability_filesystem_read:capability_filesystem_read watchdog/watchmedo.py",
+     "capability_process_spawn:capability_process_spawn watchdog/tricks/__init__.py",
+     "capability_process_spawn:capability_process_spawn watchdog/utils/process_watcher.py"
+    ]
+   },
+   "version": "6.0.0"
+  }
+ }
+}

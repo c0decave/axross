@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 np = pytest.importorskip("numpy")
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtCore import QEvent, QObject  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402

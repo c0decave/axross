@@ -1,0 +1,210 @@
+{
+ "name": "click",
+ "versions": {
+  "8.4.2": {
+   "accepted_findings": [
+    "env-dump|click/_termui_impl.py|494f49a7df0a5513",
+    "yara|capability_filesystem_delete|click/_termui_impl.py|086760db801e5e28",
+    "yara|capability_filesystem_delete|click/testing.py|4bd23ea6ca409491",
+    "yara|capability_filesystem_read|click/_compat.py|80f36d5d0f6af86e",
+    "yara|capability_filesystem_read|click/_termui_impl.py|086760db801e5e28",
+    "yara|capability_filesystem_read|click/testing.py|4bd23ea6ca409491",
+    "yara|capability_filesystem_write_executable|click/_compat.py|80f36d5d0f6af86e",
+    "yara|capability_network_outbound|click/_compat.py|80f36d5d0f6af86e",
+    "yara|capability_network_outbound|click/_termui_impl.py|086760db801e5e28",
+    "yara|capability_process_spawn|click/_termui_impl.py|086760db801e5e28",
+    "yara|capability_process_spawn|click/shell_completion.py|e6d186639a55de60"
+   ],
+   "archives": {
+    "click-8.4.2-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "click-8.4.2.dist-info/METADATA": "194c9dd81d567f9081f026c7e401060fbafa7bc147c8e0a58b3668b40a64c031",
+      "click-8.4.2.dist-info/RECORD": "d1063b8ac5f5876ce69740519e71bb439e3d7bcffc7d0a94423d97f3d013d025",
+      "click-8.4.2.dist-info/WHEEL": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db",
+      "click-8.4.2.dist-info/licenses/LICENSE.txt": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d",
+      "click/__init__.py": "1487767d7092241df27960fe7b6b8e37e9818456b661cf4cbd71a61eef0e5c6d",
+      "click/_compat.py": "80f36d5d0f6af86e908a5d9bf8c0b90ac1ec186710e2ee98496cbdfed966ba17",
+      "click/_termui_impl.py": "086760db801e5e28de192cdbbb467bc7773869a6a15458d506911b6e3850e4ae",
+      "click/_textwrap.py": "ed9d0ded59a7fbae933524d4c29e8e5c96dc5174666044fd87d736b9c0fca104",
+      "click/_utils.py": "782642b7026db180f941892435627c318ffc001223cbc31cce030cc95637dab4",
+      "click/_winconsole.py": "292c5f35b3256116ba18e26e08b82c8363dbddd56480934fa8b24f69ef8f6b5d",
+      "click/core.py": "ad9cfbea284d4c5578636b31a771fe9bddc6c4bd9a703e4faacd08a1b12f9ae9",
+      "click/decorators.py": "f5ed4d76ee2384601c3fa44674d3c0c005adb8ff6112ce044e9d6ede52a61f5a",
+      "click/exceptions.py": "1ef498df81b86ae8ff6d8451f3e4fc094f09c2aff5f8e72c454e1ecdfa337849",
+      "click/formatting.py": "f125b628692f8dfcfd43535b7a88cc1ee64137471f9d0243b389aa0cfea85e6b",
+      "click/globals.py": "80cf8d87a0383341c1fd2824685e4ce2770618c0c773f7e51d7bbdfe88781845",
+      "click/parser.py": "a09f9f53fde6bf1ba022e36d1da0804d9e7a9601261d18208c9892a84818ae30",
+      "click/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "click/shell_completion.py": "e6d186639a55de6019d7bc53db73a7b8aad6ab3132c8b56dac9df49e95318e45",
+      "click/termui.py": "567f5e866ad097ddb3dbfe91e1b5593ac1d423a8fc2eb4fcbb44733595290af6",
+      "click/testing.py": "4bd23ea6ca409491f746f6495834282576fe3349eb0042735dc533ad55ec4f7e",
+      "click/types.py": "f46e0307e9c18fea2603f5d6b18c1b4371fd064a47f36c098fe93120f49c2a60",
+      "click/utils.py": "5f0ac3c4ecd4fffae71e7fabbc9989703ede71bca950a31e0c94118cdd85f8e0"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "a628f2bc38fb2868e20c72c70673089428875e38e91ba82a1c408edb354cc312",
+     "native": {},
+     "pth": {},
+     "sha256": "e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76"
+    }
+   },
+   "name": "click",
+   "provenance": {
+    "click-8.4.2-py3-none-any.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "pallets/click",
+     "workflow": "publish.yaml"
+    }
+   },
+   "pypi": {
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "Pallets <contact@palletsprojects.com>",
+    "project_urls": {
+     "Changes": "https://click.palletsprojects.com/page/changes/",
+     "Chat": "https://discord.gg/pallets",
+     "Documentation": "https://click.palletsprojects.com/",
+     "Donate": "https://palletsprojects.com/donate",
+     "Source": "https://github.com/pallets/click/"
+    },
+    "summary": "Composable command line interface toolkit"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 medium findings (capability patterns) seen; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable, network_outbound, process_spawn; attestation verifies (pallets/click)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|click/_termui_impl.py|086760db801e5e28",
+     "yara|capability_filesystem_delete|click/testing.py|4bd23ea6ca409491",
+     "yara|capability_filesystem_read|click/_compat.py|80f36d5d0f6af86e",
+     "yara|capability_filesystem_read|click/_termui_impl.py|086760db801e5e28",
+     "yara|capability_filesystem_read|click/testing.py|4bd23ea6ca409491",
+     "yara|capability_filesystem_write_executable|click/_compat.py|80f36d5d0f6af86e",
+     "yara|capability_network_outbound|click/_compat.py|80f36d5d0f6af86e",
+     "yara|capability_network_outbound|click/_termui_impl.py|086760db801e5e28",
+     "yara|capability_process_spawn|click/_termui_impl.py|086760db801e5e28",
+     "yara|capability_process_spawn|click/shell_completion.py|e6d186639a55de60"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete click/_termui_impl.py",
+     "capability_filesystem_delete:capability_filesystem_delete click/testing.py",
+     "capability_filesystem_read:capability_filesystem_read click/_compat.py",
+     "capability_filesystem_read:capability_filesystem_read click/_termui_impl.py",
+     "capability_filesystem_read:capability_filesystem_read click/testing.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable click/_compat.py",
+     "capability_network_outbound:capability_network_outbound click/_compat.py",
+     "capability_network_outbound:capability_network_outbound click/_termui_impl.py",
+     "capability_process_spawn:capability_process_spawn click/_termui_impl.py",
+     "capability_process_spawn:capability_process_spawn click/shell_completion.py"
+    ]
+   },
+   "version": "8.4.2"
+  },
+  "8.5.0": {
+   "accepted_findings": [
+    "env-dump|click/_termui_impl.py|494f49a7df0a5513",
+    "yara|capability_filesystem_delete|click/_termui_impl.py|88b97d9b7a5b947b",
+    "yara|capability_filesystem_delete|click/testing.py|76f4e649bc53000d",
+    "yara|capability_filesystem_read|click/_compat.py|8db1da2965cf3e5d",
+    "yara|capability_filesystem_read|click/_termui_impl.py|88b97d9b7a5b947b",
+    "yara|capability_filesystem_read|click/testing.py|76f4e649bc53000d",
+    "yara|capability_filesystem_write_executable|click/_compat.py|8db1da2965cf3e5d",
+    "yara|capability_network_outbound|click/_compat.py|8db1da2965cf3e5d",
+    "yara|capability_process_spawn|click/_termui_impl.py|88b97d9b7a5b947b",
+    "yara|capability_process_spawn|click/shell_completion.py|18522f75ddffe655"
+   ],
+   "archives": {
+    "click-8.5.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "click-8.5.0.dist-info/METADATA": "e87bce0bd194de70dfb8e708e0a6b0483009f25611804eaf87bfeb63e6c20501",
+      "click-8.5.0.dist-info/RECORD": "3ac6566ea107d9a43b9756f87cfcdaa2ffd93ab2c7cf4021c21bfb7ec53c33b4",
+      "click-8.5.0.dist-info/WHEEL": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db",
+      "click-8.5.0.dist-info/licenses/LICENSE.txt": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d",
+      "click/__init__.py": "5abfc54d37d47cc788b7e7a05e9514787f8c5a0b7db429d0f24d748ac89964ca",
+      "click/_compat.py": "8db1da2965cf3e5dc66c6c53833cbc613ea1cd2440b9d0eb6aa8360eb46d4913",
+      "click/_termui_impl.py": "88b97d9b7a5b947b10a16d8ab269837bc84c7e55c28ba72ea5f2fb339112336a",
+      "click/_textwrap.py": "ed9d0ded59a7fbae933524d4c29e8e5c96dc5174666044fd87d736b9c0fca104",
+      "click/_utils.py": "782642b7026db180f941892435627c318ffc001223cbc31cce030cc95637dab4",
+      "click/_winconsole.py": "292c5f35b3256116ba18e26e08b82c8363dbddd56480934fa8b24f69ef8f6b5d",
+      "click/core.py": "4c65a613c1c407dce907a4e123b12cec5fe0f62088a8b9f86fabd4b60c4b6d78",
+      "click/decorators.py": "16069357615691fcdfc9c794bb515f6009eb35aad6f7a76c017bdce06dae8d55",
+      "click/exceptions.py": "1ef498df81b86ae8ff6d8451f3e4fc094f09c2aff5f8e72c454e1ecdfa337849",
+      "click/formatting.py": "f125b628692f8dfcfd43535b7a88cc1ee64137471f9d0243b389aa0cfea85e6b",
+      "click/globals.py": "80cf8d87a0383341c1fd2824685e4ce2770618c0c773f7e51d7bbdfe88781845",
+      "click/parser.py": "a09f9f53fde6bf1ba022e36d1da0804d9e7a9601261d18208c9892a84818ae30",
+      "click/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "click/shell_completion.py": "18522f75ddffe655e943978d1953255c447842867d3fd67fbdc1543d3df7da09",
+      "click/termui.py": "8ec8022b8e4528f873ec413194a5d1614e96da50b6c4a71f6260b326762a7e9c",
+      "click/testing.py": "76f4e649bc53000d667c8c0deff1591970fa034b0f085a207165839b2301019a",
+      "click/types.py": "1e988904a7a7f68abad630c7fb9c038a4345fa2e6701c976a6e51f10bdfb52dd",
+      "click/utils.py": "f43d5743dc07240e612feefa0a69d2b1697b6900149f8f809ffcd97ecb482dbf"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ecf25c253b7e2e5cc29e01994dbc273877eeec723798b49a149a3c4f318dd3f7",
+     "native": {},
+     "pth": {},
+     "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
+    }
+   },
+   "name": "click",
+   "provenance": {
+    "click-8.5.0-py3-none-any.whl": {
+     "environment": "publish",
+     "kind": "GitHub",
+     "repository": "pallets/click",
+     "workflow": "publish.yaml"
+    }
+   },
+   "pypi": {
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "Pallets <contact@palletsprojects.com>",
+    "project_urls": {
+     "Changes": "https://click.palletsprojects.com/page/changes/",
+     "Chat": "https://discord.gg/pallets",
+     "Documentation": "https://click.palletsprojects.com/",
+     "Donate": "https://palletsprojects.com/donate",
+     "Source": "https://github.com/pallets/click/"
+    },
+    "summary": "Composable command line interface toolkit"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 medium findings (capability patterns) seen; capabilities: filesystem_delete, filesystem_read, filesystem_write_executable, network_outbound, process_spawn; attestation verifies (pallets/click)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|click/_termui_impl.py|88b97d9b7a5b947b",
+     "yara|capability_filesystem_delete|click/testing.py|76f4e649bc53000d",
+     "yara|capability_filesystem_read|click/_compat.py|8db1da2965cf3e5d",
+     "yara|capability_filesystem_read|click/_termui_impl.py|88b97d9b7a5b947b",
+     "yara|capability_filesystem_read|click/testing.py|76f4e649bc53000d",
+     "yara|capability_filesystem_write_executable|click/_compat.py|8db1da2965cf3e5d",
+     "yara|capability_network_outbound|click/_compat.py|8db1da2965cf3e5d",
+     "yara|capability_process_spawn|click/_termui_impl.py|88b97d9b7a5b947b",
+     "yara|capability_process_spawn|click/shell_completion.py|18522f75ddffe655"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete click/_termui_impl.py",
+     "capability_filesystem_delete:capability_filesystem_delete click/testing.py",
+     "capability_filesystem_read:capability_filesystem_read click/_compat.py",
+     "capability_filesystem_read:capability_filesystem_read click/_termui_impl.py",
+     "capability_filesystem_read:capability_filesystem_read click/testing.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable click/_compat.py",
+     "capability_network_outbound:capability_network_outbound click/_compat.py",
+     "capability_process_spawn:capability_process_spawn click/_termui_impl.py",
+     "capability_process_spawn:capability_process_spawn click/shell_completion.py"
+    ]
+   },
+   "version": "8.5.0"
+  }
+ }
+}

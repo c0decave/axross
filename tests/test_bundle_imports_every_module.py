@@ -66,7 +66,8 @@ def own_modules(root: Path = ROOT) -> list[str]:
 
 def slim_excluded(spec_text: str) -> set[str]:
     """The own modules the spec's slim block excludes."""
-    block = spec_text.split('if FLAVOR == "slim":', 1)[1].split("\n# Unconditional excludes", 1)[0]
+    head = re.search(r'if FLAVOR (?:== "slim"|in \("slim", "base"\)):', spec_text)
+    block = spec_text[head.end():].split("\n# Unconditional excludes", 1)[0]
     pattern = r'"((?:' + "|".join(PACKAGES) + r')\.[\w.]+)"'
     return set(re.findall(pattern, block))
 

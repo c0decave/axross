@@ -84,28 +84,148 @@ def test_happy_the_shipped_catalog_is_valid_and_pinned():
     entries, warnings = M.load_builtin()
     assert warnings == []
     names = {e.name for e in entries}
-    assert {"git", "filesystem", "fetch", "sqlite", "memory", "sequentialthinking", "time",
-            "everything"} <= names
+    assert {"git", "filesystem", "fetch", "memory", "sequentialthinking", "time",
+            "everything", "github", "playwright", "markitdown", "brave-search"} <= names
     categories = {e.category for e in entries}
     assert {"Files & Dev", "Web & Data", "Knowledge & Reasoning", "Testing",
             "Security"} <= categories
     for e in entries:
         assert e.installable and e.repository.startswith("https://") and e.license, e.name
         assert e.source == "builtin"
-        if e.kind == "oci":  # an image: pinned by digest
-            assert e.identifier.startswith("docker.io/mcp/"), e.identifier
+        if e.kind == "oci":  # an image: pinned by digest, from an allowed place only
+            assert M.builtin_image_allowed(e.identifier), e.identifier
             assert len(e.digest) == 71 and e.digest.startswith("sha256:"), e.name
             assert e.image_ref == f"{e.identifier}@{e.digest}"
         else:  # a package: an exact version (registries never change a published one)
             assert e.kind in ("npm", "pypi") and e.version, e.name
             assert all(c.isdigit() or c == "." for c in e.version), (e.name, e.version)
-            assert e.maintainer, f"{e.name}: a package from elsewhere names its maintainer"
+        if e.network == "allowlist":
+            assert e.hosts and all(h.endswith(":443") for h in e.hosts), e.name
     assert next(e for e in entries if e.name == "fetch").network == "full"
     fs = next(e for e in entries if e.name == "filesystem")
     assert fs.mounts[0].target == "/projects/{name}" and fs.mounts[0].repeat
     assert fs.args == ("/projects",)
     shodan = next(e for e in entries if e.name == "shodan")
     assert shodan.env[0].secret and shodan.env[0].required
+
+
+def test_happy_the_reference_servers_are_the_current_releases():
+    """The MCP reference servers as npm/PyPI packages of their 2026 releases,
+    each linked to its own folder of the monorepo; git stays an image (the
+    PyPI package needs the git program, which the Python runtime image lacks)."""
+    entries = {e.name: e for e in M.load_builtin()[0]}
+    want = {
+        "filesystem": ("npm", "@modelcontextprotocol/server-filesystem", "2.1.0"),
+        "memory": ("npm", "@modelcontextprotocol/server-memory", "2.0.1"),
+        "sequentialthinking": ("npm", "@modelcontextprotocol/server-sequential-thinking",
+                               "2.0.0"),
+        "everything": ("npm", "@modelcontextprotocol/server-everything", "2.1.0"),
+        "time": ("pypi", "mcp-server-time", "2026.10.28"),
+        "fetch": ("pypi", "mcp-server-fetch", "2026.10.28"),
+    }
+    for name, (kind, package, version) in want.items():
+        e = entries[name]
+        assert (e.kind, e.identifier, e.version) == (kind, package, version), name
+    for name in [*want, "git"]:
+        e = entries[name]
+        assert e.repository == ("https://github.com/modelcontextprotocol/servers/tree/main/src/"
+                                f"{name}"), name
+        assert "MIT" in e.license and "Apache-2.0" in e.license, name
+        assert "reference" in e.tags and e.maintainer == "", name
+    assert entries["git"].kind == "oci" and "git program" in entries["git"].notes
+    memory = entries["memory"]
+    assert memory.env[0].name == "MEMORY_FILE_PATH"
+    assert memory.env[0].default.startswith("/tmp/")  # the package's own folder is read-only
+    assert entries["fetch"].args == ("--no-readability-js",)
+
+
+def test_happy_the_vendor_servers_are_pinned_and_contained():
+    """GitHub, Playwright, MarkItDown and Brave Search: what each needs is
+    declared - secrets, hosts, folders - and GitHub starts read-only."""
+    entries = {e.name: e for e in M.load_builtin()[0]}
+    github = entries["github"]
+    assert (github.kind, github.identifier) == ("oci", "ghcr.io/github/github-mcp-server")
+    assert github.args == ("stdio", "--read-only", "--toolsets", "repos,issues,pull_requests")
+    assert [(s.name, s.secret, s.required) for s in github.env] == [
+        ("GITHUB_PERSONAL_ACCESS_TOKEN", True, True)]
+    assert (github.network, github.hosts) == (
+        "allowlist", ("api.github.com:443", "raw.githubusercontent.com:443"))
+    assert github.license == "MIT"
+    playwright = entries["playwright"]
+    assert playwright.identifier == "docker.io/mcp/playwright" and playwright.network == "full"
+    assert "--isolated" in playwright.args and playwright.license == "Apache-2.0"
+    markitdown = entries["markitdown"]
+    assert markitdown.identifier == "docker.io/mcp/markitdown" and markitdown.network == "none"
+    (mount,) = markitdown.mounts
+    assert mount.target == "/workdir/{name}" and mount.repeat and mount.required
+    brave = entries["brave-search"]
+    assert (brave.kind, brave.identifier, brave.version) == (
+        "npm", "@brave/brave-search-mcp-server", "2.1.4")
+    assert (brave.network, brave.hosts) == ("allowlist", ("api.search.brave.com:443",))
+    env = {s.name: s for s in brave.env}
+    assert env["BRAVE_API_KEY"].secret and env["BRAVE_API_KEY"].required
+    # Node's fetch takes the allowlist proxy only with this switch.
+    assert env["NODE_USE_ENV_PROXY"].default == "1" and not env["NODE_USE_ENV_PROXY"].secret
+
+
+def test_sad_archived_servers_are_not_shipped():
+    """sqlite (archived upstream; axross has its own SQLite backend) and
+    Docker's archived mcp/github image are not in the catalog."""
+    entries = M.load_builtin()[0]
+    assert "sqlite" not in {e.name for e in entries}
+    assert all(e.identifier not in ("docker.io/mcp/sqlite", "docker.io/mcp/github")
+               for e in entries)
+
+
+@pytest.mark.parametrize("identifier", [
+    "docker.io/mcp/time",
+    "docker.io/mcp/vuln-nist-mcp-server",
+    "ghcr.io/github/github-mcp-server",
+])
+def test_happy_builtin_images_come_from_the_allowed_places(identifier):
+    assert M.builtin_image_allowed(identifier)
+
+
+@pytest.mark.parametrize("identifier", [
+    "docker.io/mcp/github/extra",            # deeper than the namespace
+    "docker.io/mcp/",                        # the namespace itself
+    "docker.io/mcpx/time",                   # a look-alike namespace
+    "docker.io/library/mcp",
+    "ghcr.io/github/other-server",           # only the one GitHub image
+    "ghcr.io/github/github-mcp-server-evil",
+    "ghcr.io/github/github-mcp-server/sub",
+    "ghcr.io/githubx/github-mcp-server",
+    "ghcr.io/c0decave/radare2",              # the hub's place, not the shipped catalog's
+    "quay.io/mcp/time",
+    "",
+    None,
+])
+def test_sad_builtin_images_from_elsewhere_are_not_allowed(identifier):
+    assert not M.builtin_image_allowed(identifier)
+
+
+def test_sad_the_shipped_catalog_skips_an_image_from_elsewhere(tmp_path, monkeypatch):
+    """An image the built-in catalog may not name is left out, with a reason;
+    the allowed one beside it stays."""
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(_catalog(
+        _oci(id="ok", name="ok", image="ghcr.io/github/github-mcp-server"),
+        _oci(id="bad", name="bad", image="ghcr.io/github/github-mcp-server-evil"))))
+    monkeypatch.setattr(M, "builtin_path", lambda: path)
+    entries, warnings = M.load_builtin()
+    assert [e.id for e in entries] == ["ok"]
+    assert len(warnings) == 1 and "bad" in warnings[0] and "may name" in warnings[0]
+
+
+def test_edge_a_package_in_the_shipped_catalog_is_not_an_image(tmp_path, monkeypatch):
+    """The image places do not apply to npm/PyPI entries: they are built from
+    their registry in a container (core.mcp_install)."""
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(_catalog(
+        {"id": "p", "name": "p", "kind": "npm", "package": "@scope/p", "version": "1.0.0"})))
+    monkeypatch.setattr(M, "builtin_path", lambda: path)
+    entries, warnings = M.load_builtin()
+    assert [e.id for e in entries] == ["p"] and warnings == []
 
 
 def test_happy_a_user_catalog_file_is_read(tmp_path):
@@ -121,7 +241,7 @@ def test_happy_search_filters_by_text_category_and_tag():
     entries, _ = M.load_builtin()
     assert [e.name for e in entries if e.matches("timezone")] == ["time"]
     assert {e.name for e in entries if e.matches("", category="Security")} >= {"vuln-nist"}
-    assert [e.name for e in entries if e.matches("", tag="sql")] == ["sqlite"]
+    assert [e.name for e in entries if e.matches("", tag="pdf")] == ["markitdown"]
     assert all(e.matches("") for e in entries)
 
 
@@ -520,7 +640,23 @@ def test_happy_a_third_party_server_names_its_maintainer():
     assert rea.kind == "npm" and rea.identifier == "rea-agents" and rea.version == "6.8.0"
     assert rea.args == ("mcp",) and rea.network == "none" and rea.installable
     assert "third-party" in rea.tags
-    assert all(e.maintainer == "" for e in entries if e.name != "rea")
+    by = {e.name: e.maintainer for e in entries}
+    assert (by["vuln-nist"], by["shodan"], by["duckduckgo"]) == (
+        "HaroldFinchIFT", "Cyreslab AI", "nickclyde")
+    # A third-party server (an individual or a community, not the MCP
+    # project or the vendor of what it reaches) says so and names who
+    # maintains it; the reference servers and the vendors' own do not.
+    for e in entries:
+        assert bool(e.maintainer) == ("third-party" in e.tags), e.name
+
+
+def test_edge_shodan_keeps_full_network_because_its_client_cannot_tunnel():
+    """The shodan image's axios (1.8.4) sends https requests to a proxy as a
+    plain GET; axross's allowlist proxy takes CONNECT only - so the entry
+    asks for Full and says why, instead of an allowlist that fails closed."""
+    shodan = next(e for e in M.load_builtin()[0] if e.name == "shodan")
+    assert shodan.network == "full" and shodan.hosts == ()
+    assert "CONNECT" in shodan.notes and "api.shodan.io" in shodan.notes
 
 
 @pytest.mark.parametrize("value, expected", [

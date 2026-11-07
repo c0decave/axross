@@ -45,27 +45,27 @@ def test_happy_postgres_sslmode_and_rootcert_reach_libpq(pg):
     PG, captured = pg
     with pytest.raises(_Stop):
         PG.PostgresFsSession(
-            url="postgres://alice:pw@db.example.test:5432/vault"
+            url="postgres://alice:pw@db.example.invalid:5432/vault"
             "?sslmode=verify-full&sslrootcert=/etc/ssl/ca.pem",
             port=0,
         )
     params = _pg_params(captured)
     assert params["sslmode"] == "verify-full"
     assert params["sslrootcert"] == "/etc/ssl/ca.pem"
-    assert params["host"] == "db.example.test" and params["dbname"] == "vault"
+    assert params["host"] == "db.example.invalid" and params["dbname"] == "vault"
 
 
 def test_sad_postgres_unknown_url_parameter_is_an_error(pg):
     PG, captured = pg
     with pytest.raises(OSError, match="bogus"):
-        PG.PostgresFsSession(url="postgres://alice:pw@db.example.test/vault?bogus=1", port=0)
+        PG.PostgresFsSession(url="postgres://alice:pw@db.example.invalid/vault?bogus=1", port=0)
     assert "dsn" not in captured
 
 
 def test_edge_postgres_url_without_query_and_hostaddr_with_a_tunnel(pg, monkeypatch):
     PG, captured = pg
     with pytest.raises(_Stop):
-        PG.PostgresFsSession(url="postgres://alice:pw@db.example.test/vault", port=0)
+        PG.PostgresFsSession(url="postgres://alice:pw@db.example.invalid/vault", port=0)
     assert "sslmode" not in _pg_params(captured)
 
     # A query hostaddr would send libpq around the proxy tunnel.
@@ -81,7 +81,7 @@ def test_edge_postgres_url_without_query_and_hostaddr_with_a_tunnel(pg, monkeypa
     captured.clear()
     with pytest.raises(OSError, match="hostaddr"):
         PG.PostgresFsSession(
-            url="postgres://alice:pw@db.example.test/vault?hostaddr=10.0.0.9", port=0
+            url="postgres://alice:pw@db.example.invalid/vault?hostaddr=10.0.0.9", port=0
         )
     assert "dsn" not in captured
 
@@ -109,21 +109,21 @@ def test_happy_mongo_tls_options_reach_the_driver(mongo):
     MG, captured = mongo
     with pytest.raises(_Stop):
         MG.MongoFsSession(
-            url="mongodb://alice:pw@db.example.test:27017/vault?tls=true&authSource=admin",
+            url="mongodb://alice:pw@db.example.invalid:27017/vault?tls=true&authSource=admin",
             host="",
             port=0,
         )
     kw = captured["kw"]
     assert kw["tls"] is True
     assert kw["authSource"] == "admin"
-    assert kw["host"] == "db.example.test" and kw["username"] == "alice"
+    assert kw["host"] == "db.example.invalid" and kw["username"] == "alice"
 
 
 def test_sad_mongo_unknown_or_bad_option_is_an_error(mongo):
     MG, captured = mongo
     for query in ("bogus=1", "tls=maybe"):
         with pytest.raises(OSError):
-            MG.MongoFsSession(url=f"mongodb://db.example.test/vault?{query}", port=0)
+            MG.MongoFsSession(url=f"mongodb://db.example.invalid/vault?{query}", port=0)
     assert "kw" not in captured
 
 
@@ -140,7 +140,7 @@ def test_edge_mongo_tunnel_keeps_direct_connection_and_tls(mongo, monkeypatch):
     monkeypatch.setattr(proxy_mod, "open_tunnel", lambda kw, host, port: _Tunnel())
     with pytest.raises(_Stop):
         MG.MongoFsSession(
-            url="mongodb://db.example.test/vault?tls=true&directConnection=false", port=0
+            url="mongodb://db.example.invalid/vault?tls=true&directConnection=false", port=0
         )
     kw = captured["kw"]
     assert kw["host"] == "127.0.0.1" and kw["port"] == 27018

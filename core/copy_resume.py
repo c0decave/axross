@@ -542,6 +542,18 @@ def resumable_copy(
             loaded_resume_manifest = False
 
     if manifest is None:
+        # No resume state accounts for an existing destination: refuse it
+        # before a new manifest is written - one left behind by the refusal
+        # would let the same call a second time take that file for its own
+        # partial copy and overwrite it (the check further down).
+        if not overwrite:
+            existing_size = _dst_size(dst_backend, dst_path)
+            if existing_size and existing_size > 0:
+                raise FileExistsError(
+                    f"resumable_copy: destination {dst_path!r} exists "
+                    f"({existing_size} bytes) and no resume state. "
+                    "Pass overwrite=True to replace."
+                )
         segments: list[_Segment] = []
         for i, off in enumerate(range(0, total, seg_size)):
             length = min(seg_size, total - off)

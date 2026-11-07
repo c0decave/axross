@@ -1,0 +1,64 @@
+{
+ "name": "rfc3986",
+ "versions": {
+  "2.0.0": {
+   "accepted_findings": [],
+   "archives": {
+    "rfc3986-2.0.0-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "rfc3986-2.0.0.dist-info/LICENSE": "c0ddce33bfac480a66bde40c590ede2647a4c8a729dcb0d2ce46c014473d5dd8",
+      "rfc3986-2.0.0.dist-info/METADATA": "f22029d298cf2eaea524e697d06a55f38d099cc40fb0f175ed79037effe3a8ce",
+      "rfc3986-2.0.0.dist-info/RECORD": "031ac00e608c0487c071d059d5cce5cbcc2058680a2ee5c44bb8c523668e5194",
+      "rfc3986-2.0.0.dist-info/WHEEL": "cfd8f4c406bf26650a3299b3ef62b464600b48cfe7fb04159866e5797c765478",
+      "rfc3986-2.0.0.dist-info/top_level.txt": "675d107ac6f4515f406f1953215f409ce03093edf8dd69c4f392bcc5f3783a60",
+      "rfc3986/__init__.py": "56d5c3f8cc2312873fa4d3fbaea255b89eb0dd3709dd86f6e382906b6c3e3a87",
+      "rfc3986/_mixin.py": "f397de755790662b084855a1eed1d09c1f40f384473d16f40bdd3659df2182d9",
+      "rfc3986/abnf_regexp.py": "20614b47a076c7e61a2eccf9cd657d1cf10021db8449e74582a4153e4fdd9d39",
+      "rfc3986/api.py": "73b9868769632497af3e9d3cd8a21492eda718e375ef49f91622eb00305e4fe0",
+      "rfc3986/builder.py": "fe8e22f9327c9ce78183884f4028c5f5d46e1542d1d197a0fb72005e715a8ff5",
+      "rfc3986/compat.py": "4908fb0e2342dc3d06fd977b2a3c61d61e7883c1716c5cf7d695c586f280f0a4",
+      "rfc3986/exceptions.py": "f72bd732ebd045b57047ebf6f73a63e9caaa718671ac3cd834a626b3f1be044f",
+      "rfc3986/iri.py": "c8200b08b8d464473e219931131b68f85c5da3eeac019303d6d721204c24419a",
+      "rfc3986/misc.py": "8cc68daefbe73134501043c5f773761c3faa85562d5e9ee0da88b26b8b6e6873",
+      "rfc3986/normalizers.py": "938fc1e0786ea06d1bf4bbf6c54c97ac5a48fae08a0f1c8781081c1b8193a913",
+      "rfc3986/parseresult.py": "5dd6090d7505b83c8bf0f5402863f1282be50eb619e63f2f47af277175c95b6c",
+      "rfc3986/uri.py": "7385dde38a78c852fa3f5078fc4603c2138ce64f0ea0a1dac364fd0fb27775e7",
+      "rfc3986/validators.py": "287a9a8dfcbc24c7261f3d7ab25d164ab58fd90aff0fc3d4d7cdbbc61ead6fb4"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "3418ddfb5d186d3995ee961a7250625000702072b6d5762d653152de6aca28ee",
+     "native": {},
+     "pth": {},
+     "sha256": "50b1502b60e289cb37883f3dfd34532b8873c7de9f49bb546641ce9cbd256ebd"
+    }
+   },
+   "name": "rfc3986",
+   "provenance": {
+    "rfc3986-2.0.0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Ian Stapleton Cordasco",
+    "author_email": "graffatcolmingov@gmail.com",
+    "home_page": "http://rfc3986.readthedocs.io",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Homepage": "http://rfc3986.readthedocs.io"
+    },
+    "summary": "Validating URI References per RFC 3986"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "2.0.0"
+  }
+ }
+}

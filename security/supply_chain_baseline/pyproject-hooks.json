@@ -1,0 +1,66 @@
+{
+ "name": "pyproject-hooks",
+ "versions": {
+  "1.3.3": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|pyproject_hooks/_impl.py|4949c4c0dff363f1"
+   ],
+   "archives": {
+    "pyproject_hooks-1.3.3-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pyproject_hooks-1.3.3.dist-info/METADATA": "844e375bb28dcbe42a0502fbd9428d9ba4669db25028ee7a7afaa8dd7ada2e00",
+      "pyproject_hooks-1.3.3.dist-info/RECORD": "81bdf524375573792403e76b73d0a8af12f6561bccb0e7e17c1aaab07fca221f",
+      "pyproject_hooks-1.3.3.dist-info/WHEEL": "ff23073da055face9f40cc14a28f3735275308cddcf315d6157461a9a7cdfbb6",
+      "pyproject_hooks-1.3.3.dist-info/licenses/LICENSE": "1b22b049b5267d6dfc23a67bf4a84d8ec04b9fdfb1a51d360e42b4342c8b4154",
+      "pyproject_hooks/__init__.py": "c89797a5c140ea7fc00c2d5e75e2d8e1127af43f5e04c56f610e6f506fede84f",
+      "pyproject_hooks/_impl.py": "4949c4c0dff363f15d508f79a45a27d96695e859cc78e5578e8731be42da6c73",
+      "pyproject_hooks/_in_process/__init__.py": "30934fa5f23170ef85821c6905bc641b5ac58907fa1ce51b5785399aad07167b",
+      "pyproject_hooks/_in_process/_in_process.py": "e74d67a39a68a301ddec69516ec217081ccb4d00673c41f3e56ac6ca5d11065f",
+      "pyproject_hooks/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "f8c327837868db10c8cda4f308bde717de28117e577aa06e399f79c366d79f86",
+     "native": {},
+     "pth": {},
+     "sha256": "5fc53fdac9f7bd63fbcdc868fb5f90b4784d78a53a3d3388cd738b807441a20b"
+    }
+   },
+   "name": "pyproject-hooks",
+   "provenance": {
+    "pyproject_hooks-1.3.3-py3-none-any.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "pypa/pyproject-hooks",
+     "workflow": "ci.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Thomas Kluyver <thomas@kluyver.me.uk>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Changelog": "https://pyproject-hooks.readthedocs.io/en/latest/changelog.html",
+     "Documentation": "https://pyproject-hooks.readthedocs.io/",
+     "Source": "https://github.com/pypa/pyproject-hooks"
+    },
+    "summary": "Wrappers to call pyproject.toml-based build backend hooks."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; attestation verifies (pypa/pyproject-hooks)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|pyproject_hooks/_impl.py|4949c4c0dff363f1"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn pyproject_hooks/_impl.py"
+    ]
+   },
+   "version": "1.3.3"
+  }
+ }
+}

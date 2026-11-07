@@ -182,13 +182,20 @@ class StartupWatchdog:
         self._done = threading.Event()
         self._started_at: float | None = None
         self._fired = False
+        # Set once the report is out (stacks, message, parent, log).
+        self._reported = threading.Event()
         self._shown = False
         self._backstop = False
         self._thread: threading.Thread | None = None
 
     @property
     def fired(self) -> bool:
-        return self._fired
+        """True once the watchdog has reported the missing window - all of
+        it: the stacks are in crash.log, the message on stderr and in the
+        log, the parent has heard. It was True from the moment the report
+        began, so whoever waited for it could read a report not written
+        yet (and close crash.log under it)."""
+        return self._reported.is_set()
 
     def start(self) -> None:
         with self._lock:
@@ -228,7 +235,10 @@ class StartupWatchdog:
             if self._shown or self._fired:
                 return
             self._fired = True
-        self._fire()
+        try:
+            self._fire()
+        finally:
+            self._reported.set()
 
     def _fire(self) -> None:
         pid = os.getpid()
@@ -357,7 +367,7 @@ def await_detached_child(
         for line in lines:
             try:
                 event = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if not isinstance(event, dict):
                 continue

@@ -1,0 +1,142 @@
+{
+ "name": "humanize",
+ "versions": {
+  "4.16.0": {
+   "accepted_findings": [
+    "yara|threat_runtime_obfuscation_unicode|humanize/number.py|dfbd68811a62fa8d"
+   ],
+   "archives": {
+    "humanize-4.16.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "humanize-4.16.0.dist-info/METADATA": "2b76d8fcee2af353edfada9ee319e4b76a4d280d99bfb04f0f9b6bf6ba64aa90",
+      "humanize-4.16.0.dist-info/RECORD": "0d2a86891ba76055c7a839e2e029cdc6d67c27f1cde07a8b0e7d7aab1e22cd70",
+      "humanize-4.16.0.dist-info/WHEEL": "99f7cfcbcc019d9427d959c9514e6313df4ab316927e2c8c1d5f58b7468b571b",
+      "humanize-4.16.0.dist-info/licenses/LICENCE": "8ba6c18112a431400ad3c743f70670079b302545d98884fc2f28a91c383a0380",
+      "humanize/__init__.py": "69586bc9cba2dbe0daa63d9f82eed16f8511a9da1ccf2e1045cd5175a9028e40",
+      "humanize/_version.py": "b609d6e572335aeb3a734f59a1ae30fb1753f76fb4723ed9b96aeec6b3974a8e",
+      "humanize/filesize.py": "b35adbf0bf7893f88beb2eb3c689237b84469444de1326a42545790b01913ec7",
+      "humanize/i18n.py": "59437bd22945d6f921dbbd54afb37baff1d54d72d9f9763ceb63f80a325ed911",
+      "humanize/lists.py": "def0609522ce9aec413e0a46608a7eaf8d8b08aad682469dea4aff5dd4601754",
+      "humanize/locale/ar/LC_MESSAGES/humanize.mo": "f9a1c4065a569609e1388bd776ca85dffd19d951a91cb37e26e38c2a32488968",
+      "humanize/locale/ar/LC_MESSAGES/humanize.po": "3dd06fc1f7ed4afcc67a86d071add3dae7bb375b17811cac3909e69a9efac33e",
+      "humanize/locale/bn_BD/LC_MESSAGES/humanize.mo": "2d4ac3178655664630d477a1e98d50bc35d54b49bc2b23baccc3e5c2ca851a1b",
+      "humanize/locale/bn_BD/LC_MESSAGES/humanize.po": "6722a1d226a1154b926c5d71a5fb0eb4baa080afcd7c0754e11ea93f289c0251",
+      "humanize/locale/ca_ES/LC_MESSAGES/humanize.mo": "bdea89c061c4cf2993fa8b6df273e8a409b6499e30b68df2251cd4f09197206f",
+      "humanize/locale/ca_ES/LC_MESSAGES/humanize.po": "0388550e9504a0899751b98430c8f293c5be3fac6ec3264d02bf996f4b15c1ac",
+      "humanize/locale/da_DK/LC_MESSAGES/humanize.mo": "312d387e73f437050f7b9e6fdb23370c440059eec0e51f00f0fe6488b452b436",
+      "humanize/locale/da_DK/LC_MESSAGES/humanize.po": "c52d206570c9c4fdcd237dbd5e96e9047798fc78b0581da811e56edf006a0b0d",
+      "humanize/locale/de_DE/LC_MESSAGES/humanize.mo": "be34bba033c60c6acd35dafb67935cce7a599dba4b63a28aadc8e21480357a96",
+      "humanize/locale/de_DE/LC_MESSAGES/humanize.po": "1c8523caccacef3ccd25341d9f29fd6a0d205d89fd89cc62f72b51746ec01033",
+      "humanize/locale/el_GR/LC_MESSAGES/humanize.mo": "e53108c348e10f7f424e950873ee09060ebf53f34605cb03f5efc9d2f47627cb",
+      "humanize/locale/el_GR/LC_MESSAGES/humanize.po": "823f9393311a4976b6e4db1221aa175f8701466099fa3d893a720466784b3c07",
+      "humanize/locale/eo/LC_MESSAGES/humanize.mo": "422b9d094f1b4dd7b0a635d9731d6755f38cb6049f9455bf548d873237f96e5f",
+      "humanize/locale/eo/LC_MESSAGES/humanize.po": "5299e73d91c66d4400fb11ed0dabac84edd69dd06d42d2c5d89ff5c920582639",
+      "humanize/locale/es_ES/LC_MESSAGES/humanize.mo": "e6b4a95348267d39843ec36036938966c5adac2f5ae6371878e0f4886d10ec65",
+      "humanize/locale/es_ES/LC_MESSAGES/humanize.po": "dbace794e0e7006ac7ce3449a04538447cab3313002fdd45df05934079f138d3",
+      "humanize/locale/eu/LC_MESSAGES/humanize.mo": "41b13ffb6a67713dba9bf4039f51cfda62832aadce4b3e8d42af8d19a6133e16",
+      "humanize/locale/eu/LC_MESSAGES/humanize.po": "f5507cfa54dfce3e35ab81154726b5911e65866624079d375aa0616b2b658539",
+      "humanize/locale/fa_IR/LC_MESSAGES/humanize.mo": "e36075c83a581ddae73157afd35684aff05a2e5abe80cbe1d7b09f8d33351c12",
+      "humanize/locale/fa_IR/LC_MESSAGES/humanize.po": "70ae9dc1146271a18d1461513fa2d6bb467a4b1e887235b9e23b64681520a093",
+      "humanize/locale/fi_FI/LC_MESSAGES/humanize.mo": "e6595e305847b8fd9d920d3505ec31acb70f58113e5bc09d08d59299ed44d642",
+      "humanize/locale/fi_FI/LC_MESSAGES/humanize.po": "44745fbc10e1064b884264143d473e6d56850fd6f70e80f1da2c62a744ca483d",
+      "humanize/locale/fr_FR/LC_MESSAGES/humanize.mo": "6784869a0e49e5c08bc5f10ea3bb3e107db048e04f6ed1efdc154ee81dd4738c",
+      "humanize/locale/fr_FR/LC_MESSAGES/humanize.po": "374540f23da57a0899dbe3051d83ccfc3237b9ced433239900be9984e453655d",
+      "humanize/locale/he_IL/LC_MESSAGES/humanize.mo": "b96ca36d347a69e7bf0721dfb1db214023a2ea8585f31dcf52da0bea97a63f85",
+      "humanize/locale/he_IL/LC_MESSAGES/humanize.po": "24967029d76784c4066f4b7caf0e81e45e9c5068f9e4ca9b8fd1ecabbfe1d1b0",
+      "humanize/locale/hu_HU/LC_MESSAGES/humanize.mo": "3720cdcaffe88867f0f92d703638b50887093ab537a34ae9921c93072e1a5594",
+      "humanize/locale/hu_HU/LC_MESSAGES/humanize.po": "75e5f589c0ac3424531efee7dfa78a98533630aa77273ce27f75f4eb2a518b58",
+      "humanize/locale/id_ID/LC_MESSAGES/humanize.mo": "ea497a5a1e113893831539086e157a510d89293d629d09fd943c547847a9513c",
+      "humanize/locale/id_ID/LC_MESSAGES/humanize.po": "92638e32490300b40d1c073da945b5bff2bf5e83ec597a5bcafcd7db727008f6",
+      "humanize/locale/it_IT/LC_MESSAGES/humanize.mo": "db611fe99f8571b72b37923c6d554dc478a2c7afabbd762253e88d6d8c1fc42c",
+      "humanize/locale/it_IT/LC_MESSAGES/humanize.po": "2dda92a44e4931a3621220d284d066796f57d46a9a113469f8b1bdac7db05f94",
+      "humanize/locale/ja_JP/LC_MESSAGES/humanize.mo": "41a582cbac5eb9d8c71212599ab4ad160860f8b6b1f4a0b9e496e1886f00144f",
+      "humanize/locale/ja_JP/LC_MESSAGES/humanize.po": "9c8c3152cc06dab6f0fe008e6f11e861bd91955f833e17af7610ca1826e42a85",
+      "humanize/locale/ko_KR/LC_MESSAGES/humanize.mo": "c836890a9018efd0e89e73c941cc7413c9ea8ee1c9be696fe76dd9830fa98e98",
+      "humanize/locale/ko_KR/LC_MESSAGES/humanize.po": "c595da958c3d166e859f7f31d6b6441d41507a6f0744c5f8e97b3371edc26992",
+      "humanize/locale/lv/LC_MESSAGES/humanize.mo": "4bbe1d571d8f8cf25276262ba531d7d32f21079bc9300624147bddbd2e360d1e",
+      "humanize/locale/lv/LC_MESSAGES/humanize.po": "fbfae9d1ed36c6a75ac753c6b09ed519096b5aaa67890dae2ba639f4a1875b42",
+      "humanize/locale/nb/LC_MESSAGES/humanize.mo": "3c3f5d9542ecafa5fc1b0dc20880827cc93e5b66163721e17c2164f1d8893f89",
+      "humanize/locale/nb/LC_MESSAGES/humanize.po": "1d983dec4fb9dd8af52a3d13dc27525e0975c441e6fb53bf361c28dc3b2f79c2",
+      "humanize/locale/nl_NL/LC_MESSAGES/humanize.mo": "a54cf09868977201207a936a4b82ab44b6c99c21b6b8d75975fcc2bbf1c5489c",
+      "humanize/locale/nl_NL/LC_MESSAGES/humanize.po": "67965943f773e8680ce571318dabb5d98ccbcd68f783479018c04beb4bc61b6d",
+      "humanize/locale/pl_PL/LC_MESSAGES/humanize.mo": "4da35bb87175d02e098cb1534bda88149a9d2c0b7583f8cb3f37cf4c95e84ca2",
+      "humanize/locale/pl_PL/LC_MESSAGES/humanize.po": "14748cdafc72afbfa29fe3b8050d17809d0f77383ad445c6badcb245cd4ff502",
+      "humanize/locale/pt_BR/LC_MESSAGES/humanize.mo": "4cea39f94489b876bb7da345f3679472b29b172ef9882d6df4a36735859e7b71",
+      "humanize/locale/pt_BR/LC_MESSAGES/humanize.po": "a9cba97b328a1d45a94842a6450e61ba66c989fe8f2f424e9e343279108e4951",
+      "humanize/locale/pt_PT/LC_MESSAGES/humanize.mo": "005a13cac55cf3da3610ca292278243bbbddbd8990139066733696375b23408d",
+      "humanize/locale/pt_PT/LC_MESSAGES/humanize.po": "8b6a793138ea715e4b33cf11f9a91f37de06edc3c3a4d0fabbbdcd1e4a57f124",
+      "humanize/locale/ru_RU/LC_MESSAGES/humanize.mo": "8be828d5ad578d247e3e9587065a4eb2dec386863e5e52d30cffa968527af326",
+      "humanize/locale/ru_RU/LC_MESSAGES/humanize.po": "4a7be433edc8c92e9c7e3ddb83e3b2e364ab4c0dfa5f11bc76386e86ed33c311",
+      "humanize/locale/sk_SK/LC_MESSAGES/humanize.mo": "d3f99d5983d9845b0fa71e61584530795e7f302b88817248844d20048eeac356",
+      "humanize/locale/sk_SK/LC_MESSAGES/humanize.po": "15cb42acef7088a9991bc516a2add5192ac07fd7cf78bac055d8b1be8c5e8ddb",
+      "humanize/locale/sl_SI/LC_MESSAGES/humanize.mo": "b1c7fc2506f63821d1b992c38da697e12b5ad44d69edf7f85c6a971391ae24ff",
+      "humanize/locale/sl_SI/LC_MESSAGES/humanize.po": "892b0c0d025eea5059beca13d47fe29fa68d82b7649e04551c91d4bcbfafdb3d",
+      "humanize/locale/sv_SE/LC_MESSAGES/humanize.mo": "29cf4aa338d671af43dcf117e40a3ab4dbe8b5ee6268719b8ea5809b8fe1407b",
+      "humanize/locale/sv_SE/LC_MESSAGES/humanize.po": "7a5515ea970df5ec47117578c9a286519d4d5e9540318f3111008bae2d5f94f8",
+      "humanize/locale/tlh/LC_MESSAGES/humanize.mo": "c19e6e78f4f545be712833d4d0c3705926cbbba3ea0b16cbc051f973be327bf1",
+      "humanize/locale/tlh/LC_MESSAGES/humanize.po": "30d28f68c6a19199e2b3155aa42152e2548be0119b3d10f4103a459b8b4ee945",
+      "humanize/locale/tr_TR/LC_MESSAGES/humanize.mo": "995ca7e652644ba19566024bedc8254839277dadc033c860ed48eed292004596",
+      "humanize/locale/tr_TR/LC_MESSAGES/humanize.po": "8ed57baa3bdeb5e46fa719924ff14c0ae55f6cc83fb84af98a5264783d33cc20",
+      "humanize/locale/uk_UA/LC_MESSAGES/humanize.mo": "d4382adf946422517f7d416f57d91ac971196680fb71e46c5620b0794b2b6523",
+      "humanize/locale/uk_UA/LC_MESSAGES/humanize.po": "590fbd5b78a9c920e8206b58821207246e048e89df58c92506d7ea322227ba88",
+      "humanize/locale/uz/LC_MESSAGES/humanize.mo": "3168dbf3f1213c3b0950f2c69766af902da27cfd75f52989d87e6218fee2a5a4",
+      "humanize/locale/uz/LC_MESSAGES/humanize.po": "4429856a07686c2380357ef6272ba9f140e036eeb35db619397d9cc315f7653d",
+      "humanize/locale/vi_VN/LC_MESSAGES/humanize.mo": "a8dde145ae6474fc38f47c01e16f1aa276a2b940eb8f28fe09b2ecc1c1146c54",
+      "humanize/locale/vi_VN/LC_MESSAGES/humanize.po": "8b528b141646fe98bff29e97ff8bd1ce4e4b1b4c0f181ffdd442ebdd8de591fc",
+      "humanize/locale/zh_CN/LC_MESSAGES/humanize.mo": "fe6d40b9c50d4211af9511166c870620b2c6acee44ea26fbe86bf241a5304dd4",
+      "humanize/locale/zh_CN/LC_MESSAGES/humanize.po": "e0c73f209fa5d5ff1c9592d2401cab6df55062bb3c886693ebfdc64881a8e076",
+      "humanize/locale/zh_HK/LC_MESSAGES/humanize.mo": "79b3878adf041fa9f481de87ef432340d85efe88f3f52d73d0f80dd99548d1f3",
+      "humanize/locale/zh_HK/LC_MESSAGES/humanize.po": "8bda54edf35afa89ac429ad4a0ef4bcfcd6922d33a033725e668e7fa751dc89f",
+      "humanize/number.py": "dfbd68811a62fa8d824da8aaffc288409ae01351852ec2d301899ea1a6270307",
+      "humanize/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "humanize/time.py": "93c836497d8e3267618a5bffc488f91b88e19f0efc8f2758b5d748b74a7bb173"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "9ad9d5563c8bfe122c25edc98d8c3447ad068f481f4b710c9f54e733fa870259",
+     "native": {},
+     "pth": {},
+     "sha256": "353eb2f34c09d098b2880eee8bef21832eae6d174f48c5762fff7e5fcb74d01d"
+    }
+   },
+   "name": "humanize",
+   "provenance": {
+    "humanize-4.16.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "python-humanize/humanize",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Jason Moiron <jmoiron@jmoiron.net>",
+    "license_expression": "MIT",
+    "maintainer": "Hugo van Kemenade",
+    "project_urls": {
+     "Documentation": "https://humanize.readthedocs.io/",
+     "Funding": "https://tidelift.com/subscription/pkg/pypi-humanize?utm_source=pypi-humanize&utm_medium=pypi",
+     "Homepage": "https://github.com/python-humanize/humanize",
+     "Issue tracker": "https://github.com/python-humanize/humanize/issues",
+     "Release notes": "https://github.com/python-humanize/humanize/releases",
+     "Source": "https://github.com/python-humanize/humanize"
+    },
+    "summary": "Python humanize utilities"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One hit: the micro sign in unit prefixes (number.py). Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|threat_runtime_obfuscation_unicode|humanize/number.py|dfbd68811a62fa8d"
+    ],
+    "yara": [
+     "threat_runtime_obfuscation_unicode:threat_runtime_obfuscation_unicode humanize/number.py"
+    ]
+   },
+   "version": "4.16.0"
+  }
+ }
+}

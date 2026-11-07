@@ -1,0 +1,218 @@
+{
+ "name": "cryptography",
+ "versions": {
+  "50.0.2": {
+   "accepted_findings": [],
+   "archives": {
+    "cryptography-50.0.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "cryptography-50.0.2.dist-info/METADATA": "047cfc71226409de4318b360aef15c63a2adf609731e3dcf7fe932f14ea042ee",
+      "cryptography-50.0.2.dist-info/RECORD": "2e4fff34c0fd52df2f04e3a376f4856adf8f7ac17e0fa4ee841ae7987e2a5271",
+      "cryptography-50.0.2.dist-info/WHEEL": "14825787721dcf4a49e3f7267318f4760230906d711582d44ca35a98282069b2",
+      "cryptography-50.0.2.dist-info/licenses/LICENSE": "3e0c7c091a948b82533ba98fd7cbb40432d6f1a9acbf85f5922d2f99a93ae6bb",
+      "cryptography-50.0.2.dist-info/licenses/LICENSE.APACHE": "aac73b3148f6d1d7111dbca32099f68d26c644c6813ae1e4f05f6579aa2663fe",
+      "cryptography-50.0.2.dist-info/licenses/LICENSE.BSD": "602c4c7482de6479dd2e9793cda275e5e63d773dacd1eca689232ab7008fb4fb",
+      "cryptography-50.0.2.dist-info/sboms/cryptography-rust.cyclonedx.json": "0f6d5a1a35917f545a6647066b3d72e6d654b74ac4f2c3f6495d38f036adf20b",
+      "cryptography-50.0.2.dist-info/sboms/sbom.json": "6191c1fb750c0fd2264e4c5db2aa3bafd32bc33d603f2ee25cbfbe51d66b6d2f",
+      "cryptography/__about__.py": "95184137751279e4ccc0ababa44ed8bc380fbcdd5ba584f0407c5d14e31c109d",
+      "cryptography/__init__.py": "9ad86e52b4dde0544e0a9518ad322a863cfab3a4fd763019ad5ee7675a0c9b6a",
+      "cryptography/cobblestone.py": "4fff85d3cf8051fde58daca965e92535357585639b1f9ee8a38e66552ce4f707",
+      "cryptography/exceptions.py": "f37e445882dcd9fc31c3e83214cae27220b64aa8558844c1d742c14b2b670c87",
+      "cryptography/fernet.py": "dac2c23ce99e8e13956ee75c4b742c3353c8b876f109e45c46d5a49dc437982a",
+      "cryptography/hazmat/__init__.py": "e48c2b2d6ad5a7402312bff815d586fd5d39ecd489198fd6e1e80d36cb9cb748",
+      "cryptography/hazmat/_oid.py": "3a17b69d413a5e32b1d5417a4c0b06532daff06509f958bd0d2e32c52ba4b795",
+      "cryptography/hazmat/asn1/__init__.py": "62a613a071858cb38a8a0442d341c68fa86b8c4c1bbb548fa408aeebebbe7daa",
+      "cryptography/hazmat/asn1/asn1.py": "f6671fae676f2bb2ad8e1458a1f3330235b4bbb9efa9b7ecbcf7db84d40ad414",
+      "cryptography/hazmat/backends/__init__.py": "3b98ef28541d6675e129ea89f87b6e95a10bf4d8bb9abd660f3658e641e56212",
+      "cryptography/hazmat/backends/openssl/__init__.py": "a778e625f9c26a0f62139b1d32b37a56f544bb9e6ee3ac5a4bf223a08d12ae60",
+      "cryptography/hazmat/backends/openssl/backend.py": "d0d73315b8b01b17eaf6a8b6f281d8af4f2bfebed5420e005c78dbd2814fc2a0",
+      "cryptography/hazmat/bindings/__init__.py": "c0709b59f69e7daf9f93a4c74b0f6d87d7c952c4ad268ef6e39c1f141aa676e0",
+      "cryptography/hazmat/bindings/_rust.abi3.so": "a9d379995757480a31a7eebbfb2228af93becdedd205e3af0f60ba9648650404",
+      "cryptography/hazmat/bindings/_rust/__init__.pyi": "b949e7bceabfb9a99e62704da66b2fdd244054ed16406a63239f1a47594be0ac",
+      "cryptography/hazmat/bindings/_rust/_openssl.pyi": "4ffe53a583bc6e08483e3010dc1b40001ab0f82718b241e9f76c26e4f358e9d7",
+      "cryptography/hazmat/bindings/_rust/asn1.pyi": "06b1a30bc27a9f0b92fabdc455c757241f27768b5f63d99b41839fa5b3c6d070",
+      "cryptography/hazmat/bindings/_rust/cobblestone.pyi": "f6551fd56d614ebb33109e18a527093483d20fd04e33ba3e0bcdbe9ad4831bda",
+      "cryptography/hazmat/bindings/_rust/declarative_asn1.pyi": "30198e6732d37663c9ebed4ae80ab73d3b872753068117c8bb484881a83ba1c1",
+      "cryptography/hazmat/bindings/_rust/exceptions.pyi": "7b15ebdb1c3fd29075924f777186ccdcca216f3a149233a6b3564c522d2e4191",
+      "cryptography/hazmat/bindings/_rust/ocsp.pyi": "54f556b8a1c8f4432cd3d64b458006bd1d08cf49823261335c0920247a2fa683",
+      "cryptography/hazmat/bindings/_rust/openssl/__init__.pyi": "3ba18ecaf0f1b7aca589c0766851aebb945c199cbd5232a762a191f2bab3bddc",
+      "cryptography/hazmat/bindings/_rust/openssl/aead.pyi": "eddfbec5d734beecd17b84b6bae41a1a6fbd1862afe0d7122d070bc9671a0fab",
+      "cryptography/hazmat/bindings/_rust/openssl/ciphers.pyi": "2e13f31d649726ae20ac02579facd2bd249d57e698208b1c1c3c083e524618fb",
+      "cryptography/hazmat/bindings/_rust/openssl/cmac.pyi": "9cf1f45f9ed1629b00911a305698d0887139eba4e1513c7b617aec69d9ab9879",
+      "cryptography/hazmat/bindings/_rust/openssl/dh.pyi": "6774c2f86d38f931ed49d00e3cb3358761bb9a5e5b75ad4495951c9f9c29ba19",
+      "cryptography/hazmat/bindings/_rust/openssl/dsa.pyi": "a81b64823d9a95bb76a8572767d503ae1ce83610953bb1d36f2e5549fd445cc2",
+      "cryptography/hazmat/bindings/_rust/openssl/ec.pyi": "cc9cb4a516b99fefe9d9d9b8e4fc44081ffe07a49567234a7e3c450e93ea4f7f",
+      "cryptography/hazmat/bindings/_rust/openssl/ed25519.pyi": "5577d77791ba8548af837f7d4750d87665b77936f411e6f30d3aa3442da0691c",
+      "cryptography/hazmat/bindings/_rust/openssl/ed448.pyi": "631e3d96a7678ec0fb6f188357591c68cac392dba0e5ebe2e5aeb37ab322cb6b",
+      "cryptography/hazmat/bindings/_rust/openssl/hashes.pyi": "6c57b74f5dd47b24489d424c0fe47902b19318ba960e25a8d8bbf6286cd46dfe",
+      "cryptography/hazmat/bindings/_rust/openssl/hmac.pyi": "057667ecd0e32f72406d85b4490f298358b20b90db4175615008b0b22f03151f",
+      "cryptography/hazmat/bindings/_rust/openssl/hpke.pyi": "a7f8462e7e981fe11aac91755796d4b14b638a9be2100a5c4793b4b141c92ed7",
+      "cryptography/hazmat/bindings/_rust/openssl/kdf.pyi": "1e288b74407d9ea32c4ef330885a694297cfcfa7c7533f7f8298c407f5c03970",
+      "cryptography/hazmat/bindings/_rust/openssl/keys.pyi": "b5e22df0ce9910c26b9f8b375b45275b40d9fb7d0977af169d2b0a286d76e25d",
+      "cryptography/hazmat/bindings/_rust/openssl/keywrap.pyi": "9860891284389718b8091393044b94cdbf54e24cbc9f9d8bde20ef08e5cd0512",
+      "cryptography/hazmat/bindings/_rust/openssl/mldsa.pyi": "1fce170d6d134372c785d1890f9b8f6834f98a31222ba319cad5d873cac135fe",
+      "cryptography/hazmat/bindings/_rust/openssl/mlkem.pyi": "6f2a1ebace3e9483a55a5122450742734d2a0a45e9381e6978163aca8f6293cb",
+      "cryptography/hazmat/bindings/_rust/openssl/poly1305.pyi": "fd25bd36d4391439406dd72516d5a94f89469b1288287a4dfb88fc27607361f4",
+      "cryptography/hazmat/bindings/_rust/openssl/rsa.pyi": "d8e4023525e4c6073edeec35c620829682104d5ea9f7f90aefd62ed2b85980f7",
+      "cryptography/hazmat/bindings/_rust/openssl/x25519.pyi": "7b09f81a94326fbccfc04fa78bb1adc9080c0b403598bbaa62c4b2aafea723fb",
+      "cryptography/hazmat/bindings/_rust/openssl/x448.pyi": "8ee4d94e6962f233bfe5572e7e0faf1efc7fb42c9ece648b221ffd3d4dd37332",
+      "cryptography/hazmat/bindings/_rust/pkcs12.pyi": "bc411de700e266f6fc64615ace22c26962f3030a06fedbcf5312d0c39fee3a5f",
+      "cryptography/hazmat/bindings/_rust/pkcs7.pyi": "b711812628ea66c84472aadae9bc8f35b9e2b08765c733922073f6865f5aacfb",
+      "cryptography/hazmat/bindings/_rust/test_support.pyi": "3cf86577e5a43bbe3789714f79b786d0bb602b4693cc6763708b1acb51a6e461",
+      "cryptography/hazmat/bindings/_rust/x509.pyi": "2d54f886d04db1ee608a3421e0685535811b00ed04d40360136f2d5aac378382",
+      "cryptography/hazmat/bindings/openssl/__init__.py": "c0709b59f69e7daf9f93a4c74b0f6d87d7c952c4ad268ef6e39c1f141aa676e0",
+      "cryptography/hazmat/bindings/openssl/_conditional.py": "bdfce2fb11dd4ad01c2508cbaaa3a54a8b3de0bf03feda85b417bb3afc3e2ad6",
+      "cryptography/hazmat/bindings/openssl/binding.py": "16cb8bc5b4e7aea5bad3e7405ad6a482e7deabb4e7a9a41a8b53dcec3a30ae3a",
+      "cryptography/hazmat/decrepit/__init__.py": "c0709b59f69e7daf9f93a4c74b0f6d87d7c952c4ad268ef6e39c1f141aa676e0",
+      "cryptography/hazmat/decrepit/ciphers/__init__.py": "c0709b59f69e7daf9f93a4c74b0f6d87d7c952c4ad268ef6e39c1f141aa676e0",
+      "cryptography/hazmat/decrepit/ciphers/algorithms.py": "5923e3336b177eb2c35ebb4de51ecdeab0355c5edbf772357bf96f0f8cb1da80",
+      "cryptography/hazmat/decrepit/ciphers/modes.py": "3aafcf1300a47b938b73339faffbf300e27ac0fc7eae5b2f1c05cf06e8796fda",
+      "cryptography/hazmat/primitives/__init__.py": "c0709b59f69e7daf9f93a4c74b0f6d87d7c952c4ad268ef6e39c1f141aa676e0",
+      "cryptography/hazmat/primitives/_asymmetric.py": "46181ca2e501e874e214306b4752f1aa4323a54c4888dbd0d6bff3263446eaa4",
+      "cryptography/hazmat/primitives/_cipheralgorithm.py": "121de2ee5c1e7477e2d1e2d2b07f773d9c502b363d23a9642baeef2f8579b4e7",
+      "cryptography/hazmat/primitives/_modes.py": "fc4880383f096fa5a915796ec247144f7102cff4c7f318c6bdb4251a4366e7d4",
+      "cryptography/hazmat/primitives/_serialization.py": "862d3125b941019f29999c769566be96bba9871befbc6de0f4334ad06f0e75fb",
+      "cryptography/hazmat/primitives/asymmetric/__init__.py": "c0709b59f69e7daf9f93a4c74b0f6d87d7c952c4ad268ef6e39c1f141aa676e0",
+      "cryptography/hazmat/primitives/asymmetric/dh.py": "467b767cb683a501234125fc7cdb659935ce2478e5b7f0ca419d5595f85d8dae",
+      "cryptography/hazmat/primitives/asymmetric/dsa.py": "910cd3562a8023d3e210b34e05ca3f9fa31f3f737d7a120f91276e3a9ba9b743",
+      "cryptography/hazmat/primitives/asymmetric/ec.py": "2e495508b2f16db433aa213a1d16984d16ae2cca61614c37b44e9cf28048c584",
+      "cryptography/hazmat/primitives/asymmetric/ed25519.py": "99b7df2efb3edcf8020de835ad05d55e1ec62e7b6554be004e390811ce29b793",
+      "cryptography/hazmat/primitives/asymmetric/ed448.py": "9f474aeb2f952f1bb0fb3beb0f1b8f4f8e7df21ca6817fb5472fe3abd6944211",
+      "cryptography/hazmat/primitives/asymmetric/mldsa.py": "2c731a694d26eba12c4ab4a87567f87b691d99d0d14c41910b5cbe7c22b118ad",
+      "cryptography/hazmat/primitives/asymmetric/mlkem.py": "c2f5647854fee287fe55c500111dbecc8ff98574faaf04c93cc090f2017d1930",
+      "cryptography/hazmat/primitives/asymmetric/padding.py": "8db81a8ef18763090f8cc0e58c7bb99713019437e60b15947b6005d92e8a135d",
+      "cryptography/hazmat/primitives/asymmetric/rsa.py": "94813b9467b8e3d5b95112d3282a6f1467ab213a2e2a8655f46c2e4f349cb12a",
+      "cryptography/hazmat/primitives/asymmetric/types.py": "4a32614eb9c544b9533dd62b043d69a0c8ba723606f9f8747d221a427dd0522c",
+      "cryptography/hazmat/primitives/asymmetric/utils.py": "42cf117bd1853e35bfb4da7fef721e2448cf09fd2c94e22c58ec68eaaca64fa9",
+      "cryptography/hazmat/primitives/asymmetric/x25519.py": "950720524f8f8ae6e3f329c535641e6267b7b5864c80742a9112a42033872f3a",
+      "cryptography/hazmat/primitives/asymmetric/x448.py": "6f7ee283b93ba681ba4890ebcb8da3f849428f9ab8790d17e421663744a7f33f",
+      "cryptography/hazmat/primitives/ciphers/__init__.py": "7b21179a393afc265768e3d80ebeef018197af6f50bf38162f6fb8092a252c5b",
+      "cryptography/hazmat/primitives/ciphers/aead.py": "173972c7bc3c29841a9330e9d735a026722beb6ce066b815875bb68787b1079e",
+      "cryptography/hazmat/primitives/ciphers/algorithms.py": "2067c2c9c6093a1d53be8237e2b7f0f0a7c9ff19add69fc3a4186dd8582171ea",
+      "cryptography/hazmat/primitives/ciphers/base.py": "6810bb1c7041a22c5e6e6a5aad5af4525383b37543d00ec1ea8cff01a4630eff",
+      "cryptography/hazmat/primitives/ciphers/modes.py": "1fb0194a02624930428b482b2fdecdc5a912f79d09c852982ecadaf2d8c73f14",
+      "cryptography/hazmat/primitives/cmac.py": "b33fece87fdc6273afc7e54d59d20a85185edd89a9f33f09d03dc206a397de08",
+      "cryptography/hazmat/primitives/constant_time.py": "c5dba7593d277fc3af29d72a52186514a6b21a9e3f3e0549454d96d702d2aff0",
+      "cryptography/hazmat/primitives/hashes.py": "4abb7081cdffa45bd97c88518fd7b5a7859d8be17f3e995e18796a240460b4e8",
+      "cryptography/hazmat/primitives/hmac.py": "469077cfdcf9b248ab090ae6ef341bb67a7da4b327023ae54d4bcaa85e5a0c37",
+      "cryptography/hazmat/primitives/hpke.py": "46c1e2b2c0b997e7533e7d69d896dcac8ac09c306b2ea339ba0045486a662aee",
+      "cryptography/hazmat/primitives/kdf/__init__.py": "bf7ca2601194dbbd84a233576f07d865d6db7c8f5c54e0821b79d78530dd6b79",
+      "cryptography/hazmat/primitives/kdf/argon2.py": "649c7e7a7525000e28edbe3a0b5c25cc6fd7010416d3022416050a92b33fc00f",
+      "cryptography/hazmat/primitives/kdf/concatkdf.py": "0459ce292ef6b71285d3242f012af435aeee873bcb1e95027242b988d002fda4",
+      "cryptography/hazmat/primitives/kdf/hkdf.py": "33494011f468738929a78fa7c038fdc81faf359ba420e60442b5255ac04d9fda",
+      "cryptography/hazmat/primitives/kdf/kbkdf.py": "0b7c3df6f8c5aa1ab3031cc5387e33cef5681e46f9002e8bcfa00440657b77f8",
+      "cryptography/hazmat/primitives/kdf/pbkdf2.py": "5dc86493df6cf8c93a6fa2920a8baa764f0557288d54e48521e9e69d6ded2e04",
+      "cryptography/hazmat/primitives/kdf/scrypt.py": "5f259475452686e23d57a4ea00f3afba3092306bf55d0760d1adb52160a63be5",
+      "cryptography/hazmat/primitives/kdf/x963kdf.py": "40a8e145e86e4ec02cb4bdfce1b29fbe3bafd727dd6a6007561b014567a7d95c",
+      "cryptography/hazmat/primitives/keywrap.py": "b7db7c299bb367852cdf4012521236ecc64f3cf2b2e041114439002be94ced34",
+      "cryptography/hazmat/primitives/padding.py": "413f94f8dbd5d9e4063b5c153db0e234635273d91e4434be8a0e5c40eacbcf41",
+      "cryptography/hazmat/primitives/poly1305.py": "3f910f415f9107f1493da869834d6ed13b384bf3e7026b2ba312065db19e451a",
+      "cryptography/hazmat/primitives/serialization/__init__.py": "7d772ee3dba02fdaf1869465ff06639cca84f430a484231cb11c5f8ffa93bde8",
+      "cryptography/hazmat/primitives/serialization/base.py": "48006bbe8d12f3a41ca01963ec3a6378b5b2da5cd032bca28a827a0eb1184150",
+      "cryptography/hazmat/primitives/serialization/pkcs12.py": "992f5c14d1b869fcefb1ea1ce5ed4c5a863656c91f2fc37c63f3858e5ebb96e6",
+      "cryptography/hazmat/primitives/serialization/pkcs7.py": "98533b385b99f1c0b1506528a380a87fa06708773f21bc750108e37f19cf971a",
+      "cryptography/hazmat/primitives/serialization/ssh.py": "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c",
+      "cryptography/hazmat/primitives/twofactor/__init__.py": "b66319181fa0e08535afb94816a012534d7dcebd2e3e9ff010161cc1d0c22820",
+      "cryptography/hazmat/primitives/twofactor/hotp.py": "8af668e41adc08658bb2aaa5e27655d175c28f218f8bf8877c3165b4694e2709",
+      "cryptography/hazmat/primitives/twofactor/totp.py": "9b92cfa512f4d24a78cd8f204e3af9e477f3f5a3253d2e7790799591240299d6",
+      "cryptography/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "cryptography/utils.py": "21aed2d106734b47b3c2920741f63c1b57bea381a3ac78a31175e3c00af58ae2",
+      "cryptography/x509/__init__.py": "d0a54d4e646d758357fe2fdec2c4cdcdb4e6d9ed6ac9fa0e85ce1e9a883984be",
+      "cryptography/x509/base.py": "50830a9309acc75d01477fe09c14410814f0429d7e3bcc247d59bb6b31fefe61",
+      "cryptography/x509/certificate_transparency.py": "26aa0e203865c089eb60c156e88167efb589d2f885f8f07fae5655defb3d3187",
+      "cryptography/x509/extensions.py": "fa25dcc169c82f5ce5e4c977055245904a3fef59dc5def387a1beacd6d6c2b83",
+      "cryptography/x509/general_name.py": "b0ffeb575d50969b24e31dd75c6258fccbf443fb3d76d8de2dc907b23a4b4284",
+      "cryptography/x509/name.py": "a08db0e95758f33830eeaa4d865c44c79d765b40215835d0ac361fe44b0cd8f6",
+      "cryptography/x509/ocsp.py": "61ecba35d155d4c3e3a29db8323fd57a78c4a60de451a328a5258e2b401b781b",
+      "cryptography/x509/oid.py": "054ce05d71955a296406474a3d39bd478a84944f600061e07583cc640a7b3c9a",
+      "cryptography/x509/verification.py": "811d82d9cf97650b5b959853e53e6f8d228eb426fbe1e7f66a53d59847301653"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "20529d8f6f490277e7b881b0df1ca4749bdf4d8d5321c03254f8400ba0b33590",
+     "native": {
+      "cryptography/hazmat/bindings/_rust.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "630ebfea3bf689d075f82316324ff7433dc447fe6bc1bfc76524b74b4a9567d2"
+    }
+   },
+   "name": "cryptography",
+   "provenance": {
+    "cryptography-50.0.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "kind": "GitHub",
+     "repository": "pyca/cryptography",
+     "workflow": "pypi-publish.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "The Python Cryptographic Authority and individual contributors <cryptography-dev@python.org>",
+    "license_expression": "Apache-2.0 OR BSD-3-Clause",
+    "project_urls": {
+     "changelog": "https://cryptography.io/en/latest/changelog/",
+     "documentation": "https://cryptography.io/",
+     "homepage": "https://github.com/pyca/cryptography",
+     "issues": "https://github.com/pyca/cryptography/issues",
+     "source": "https://github.com/pyca/cryptography/"
+    },
+    "summary": "cryptography is a package which provides cryptographic recipes and primitives to Python developers."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "The Rust extension's network imports come from the Rust standard library linked in; no URL or address in it beyond those of the format specs. Full capa analysis: the night scan. Attestation verifies."
+   },
+   "scans": {
+    "capa": {
+     "a9d379995757480a31a7eebbfb2228af93becdedd205e3af0f60ba9648650404": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "cryptography/hazmat/bindings/_rust.abi3.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "accept",
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "gethostbyname",
+         "listen",
+         "recvfrom",
+         "send",
+         "sendto",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libpthread.so.0",
+        "librt.so.1"
+       ],
+       "rpath": [],
+       "urls": [
+        "https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file",
+        "https://github.com/PyO3/pyo3/issues/576typesSimpleNamespacebase",
+        "https://github.com/dot-asm>",
+        "https://github.com/pyca/cryptography/issues"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "50.0.2"
+  }
+ }
+}

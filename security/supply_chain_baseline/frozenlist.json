@@ -1,0 +1,94 @@
+{
+ "name": "frozenlist",
+ "versions": {
+  "1.8.0": {
+   "accepted_findings": [],
+   "archives": {
+    "frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "frozenlist-1.8.0.dist-info/METADATA": "946c22dc9f7e2c76f2d698f00a4306dbe49a820e2b3f1a0e22fe5286cbec35f1",
+      "frozenlist-1.8.0.dist-info/RECORD": "e7999043a430527c729f04d61b9d98205bace4069c5f4bace63754419d173300",
+      "frozenlist-1.8.0.dist-info/WHEEL": "997e14e2875feb0e3b6958f065499361dd4c17d05bae154b2a56964af6701c49",
+      "frozenlist-1.8.0.dist-info/licenses/LICENSE": "6fd5243e92dd7f98ec69c7ac377728e74905709ff527a5bf98d6d0263c04f5b6",
+      "frozenlist-1.8.0.dist-info/top_level.txt": "8e2bedc6c3d70379cadd60565b62d6e4cb6efc61edf14640d7735e0acd9c2ae0",
+      "frozenlist/__init__.py": "c40204daef677006e30131883df9e8fce25f7bc010fb587bcffb9cef7758b040",
+      "frozenlist/__init__.pyi": "bcc128112d7119e80fb555e80a2f57c9d11e1eccae22af8a75e5f03f93ddb1a0",
+      "frozenlist/_frozenlist.cpython-312-x86_64-linux-gnu.so": "533163376b8ddb84f3f3a49d12ba74eda261e0b3a9f00d30f448719033f88b71",
+      "frozenlist/_frozenlist.pyx": "b7e6868ee12256dfcc64f049d119eb69abd598f04ae9aaf3de2e3c66f5ee62c5",
+      "frozenlist/py.typed": "b28c3db284f03fd4ff80401049587b19bf3ce79874e0dc2686cd967be2518193"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "d36b8c6427a9193d876acf14e1a82d85424d14de06548bccf474857c3bdedf40",
+     "native": {
+      "frozenlist/_frozenlist.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "494a5952b1c597ba44e0e78113a7266e656b9794eec897b19ead706bd7074383"
+    }
+   },
+   "name": "frozenlist",
+   "provenance": {
+    "frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "aio-libs/frozenlist",
+     "workflow": "ci-cd.yml"
+    }
+   },
+   "pypi": {
+    "home_page": "https://github.com/aio-libs/frozenlist",
+    "license": "Apache-2.0",
+    "maintainer": "aiohttp team <team@aiohttp.org>",
+    "maintainer_email": "team@aiohttp.org",
+    "project_urls": {
+     "CI: Github Actions": "https://github.com/aio-libs/frozenlist/actions",
+     "Chat: Matrix": "https://matrix.to/#/#aio-libs:matrix.org",
+     "Chat: Matrix Space": "https://matrix.to/#/#aio-libs-space:matrix.org",
+     "Code of Conduct": "https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+     "Coverage: codecov": "https://codecov.io/github/aio-libs/frozenlist",
+     "Docs: Changelog": "https://github.com/aio-libs/frozenlist/blob/master/CHANGES.rst#changelog",
+     "Docs: RTD": "https://frozenlist.aio-libs.org",
+     "GitHub: issues": "https://github.com/aio-libs/frozenlist/issues",
+     "GitHub: repo": "https://github.com/aio-libs/frozenlist",
+     "Homepage": "https://github.com/aio-libs/frozenlist"
+    },
+    "summary": "A list-like structure which implements collections.abc.MutableSequence"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (aio-libs/frozenlist)."
+   },
+   "scans": {
+    "capa": {
+     "533163376b8ddb84f3f3a49d12ba74eda261e0b3a9f00d30f448719033f88b71": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "frozenlist/_frozenlist.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libstdc++.so.6"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.8.0"
+  }
+ }
+}

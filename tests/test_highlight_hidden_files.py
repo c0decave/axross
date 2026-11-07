@@ -594,6 +594,14 @@ class RenderedTilesTest(_WindowCase):
                 return found
         self.fail(f"{name} is not listed")
 
+    #: Levels a drawn glyph's core may be off the colour it was drawn in:
+    #: the offscreen raster paints #ff00ff text as (254, 0, 254).
+    TOLERANCE = 3
+
+    def assertColourNear(self, got, want) -> None:  # noqa: N802 - unittest style
+        self.assertTrue(all(abs(a - b) <= self.TOLERANCE for a, b in zip(got, want)),
+                        f"{got} is not within {self.TOLERANCE} levels of {want}")
+
     def test_e2e_hidden_names_stand_out_in_thumbnail_view(self) -> None:
         win = self.make_window()
         pane = win._new_file_pane(win._panes[0].backend)
@@ -609,10 +617,10 @@ class RenderedTilesTest(_WindowCase):
         self.app.processEvents()
         win.set_hidden_color("#ff00ff", store=False)
         self.app.processEvents()
-        self.assertEqual(self.tile_text_colour(pane, ".dotfile"), (255, 0, 255))
+        self.assertColourNear(self.tile_text_colour(pane, ".dotfile"), (255, 0, 255))
         plain = self.tile_text_colour(pane, "plain.txt")
-        self.assertNotEqual(plain, (255, 0, 255))
+        self.assertGreater(max(abs(a - b) for a, b in zip(plain, (255, 0, 255))), 50)
         win.set_highlight_hidden(False, store=False)
         self.app.processEvents()
-        self.assertEqual(self.tile_text_colour(pane, ".dotfile"), plain)
+        self.assertColourNear(self.tile_text_colour(pane, ".dotfile"), plain)
         pane.close()

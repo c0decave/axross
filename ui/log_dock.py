@@ -9,6 +9,7 @@ The handler has the collapse of repeated records (core.log_config)."""
 from __future__ import annotations
 
 import logging
+import threading
 import weakref
 from collections import deque
 
@@ -29,16 +30,59 @@ from PyQt6.QtWidgets import (
 
 from core import log_areas as LA
 from core.i18n import tr
+from core.thread_relay import GuiCall
+from ui.dock_frame import framed
+from ui.icon_provider import set_window_icon
 
 #: The area filter's entry for every area, and for loggers outside every area.
 ALL_AREAS = "all"
 OTHER_AREA = "other"
 
 
-class _LogSignalBridge(QObject):
-    """Bridge to safely emit log records from any thread to the GUI thread."""
+#: Records waiting for the GUI thread at most. The handler used to queue one
+#: Qt signal per record: with the GUI thread busy (a long listing, a modal
+#: question) a DEBUG flood from worker threads grew Qt's event queue without
+#: a bound. The oldest records beyond this are dropped and counted.
+INBOX_MAX = 20_000
 
-    log_record = pyqtSignal(str, int, str)  # formatted message, level number, area id
+
+class _LogSignalBridge(QObject):
+    """Hands records from any thread to the GUI thread through a bounded
+    inbox: :meth:`push` stores, and wakes the GUI thread (one queued signal)
+    only when the inbox was empty."""
+
+    wake = pyqtSignal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._lock = threading.Lock()
+        self._inbox: deque[tuple[str, int, str]] = deque(maxlen=INBOX_MAX)
+        self._dropped = 0
+        # Any thread that logs wakes the GUI thread through this, and
+        # ``wake`` is emitted there: never an emit on the bridge from a
+        # worker, which may log while the window - and this bridge - is
+        # being deleted at quit (core/thread_relay.py).
+        self._post_wake = GuiCall(self._emit_wake)
+
+    def _emit_wake(self) -> None:
+        self.wake.emit()
+
+    def push(self, message: str, level: int, area: str) -> None:
+        with self._lock:
+            first = not self._inbox
+            if len(self._inbox) == INBOX_MAX:
+                self._dropped += 1
+            self._inbox.append((message, level, area))
+        if first:
+            self._post_wake()
+
+    def take(self) -> tuple[list[tuple[str, int, str]], int]:
+        """Everything waiting, and how many records were dropped meanwhile."""
+        with self._lock:
+            records = list(self._inbox)
+            self._inbox.clear()
+            dropped, self._dropped = self._dropped, 0
+        return records, dropped
 
 
 class _QtLogHandler(logging.Handler):
@@ -58,7 +102,7 @@ class _QtLogHandler(logging.Handler):
             return
         try:
             msg = self.format(record)
-            bridge.log_record.emit(msg, record.levelno, LA.area_of(record.name) or "")
+            bridge.push(msg, record.levelno, LA.area_of(record.name) or "")
         except RuntimeError as exc:
             if "has been deleted" in str(exc):
                 self._closed = True
@@ -103,7 +147,8 @@ class LogDock(QDockWidget):
     activity = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Log", parent)
+        super().__init__(tr("Log"), parent)
+        set_window_icon(self, "log")
         self.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )
@@ -191,7 +236,11 @@ class LogDock(QDockWidget):
         # drops the oldest lines. Auto-Scroll follows every one of them.
         self._log_view.verticalScrollBar().rangeChanged.connect(self._follow_newest)
 
-        self.setWidget(container)
+        # In a scroll area (ui.dock_frame), as the Terminal: the bottom area
+        # sits beside the right dock column, and the row of controls above
+        # - wider with a larger font - made every window with a right dock
+        # at least that row wide plus the column.
+        self.setWidget(framed(container, self))
         self._msg_count = 0
         # Records wait here for the next turn of the event loop and are
         # written together (_write_pending): a burst is one edit per run of
@@ -205,7 +254,7 @@ class LogDock(QDockWidget):
 
     def _install_handler(self) -> None:
         self._bridge = _LogSignalBridge(self)
-        self._bridge.log_record.connect(self._on_log_record)
+        self._bridge.wake.connect(self._drain_inbox)
 
         self._handler = _QtLogHandler(self._bridge)
         self._handler.setFormatter(
@@ -228,6 +277,15 @@ class LogDock(QDockWidget):
                 root.removeHandler(handler)
         root.addHandler(self._handler)
 
+    def _drain_inbox(self) -> None:
+        records, dropped = self._bridge.take()
+        if dropped:
+            self._on_log_record(
+                f"[log] {dropped} message(s) dropped - they came faster than the window "
+                "could show them (the log file has them)", logging.WARNING, "")
+        for message, level, area in records:
+            self._on_log_record(message, level, area)
+
     def _on_log_record(self, message: str, level: int, area: str = "") -> None:
         self._records.append((message, level, area))
         cap = self._log_view.maximumBlockCount()
@@ -237,6 +295,12 @@ class LogDock(QDockWidget):
         if not self._passes(level, area):
             return
         self._pending.append((message, level))
+        if cap > 0 and len(self._pending) > 2 * cap:
+            # Only the newest lines are shown; the GUI thread fell behind.
+            # Counted all the same, as the cap's own drops are.
+            cut = len(self._pending) - cap
+            del self._pending[:cut]
+            self._msg_count += cut
         if not self._write_timer.isActive():
             self._write_timer.start()
             self.activity.emit()  # once per burst, as its first record arrives
@@ -262,7 +326,23 @@ class LogDock(QDockWidget):
             pending = pending[-cap:]
         # A cursor of its own: the view's cursor is where the user clicked
         # or marked text, and must stay there.
-        cursor = QTextCursor(self._log_view.document())
+        document = self._log_view.document()
+        # Past the line cap the document drops its first lines for the new
+        # ones. The scroll bar counts (wrapped) lines from the top, so with
+        # Auto-Scroll off the text slid up under a reader by as many lines
+        # as were dropped (reported: the log could not be scrolled with
+        # Auto-Scroll off). Measured here, while those lines still exist.
+        dropped_lines = 0
+        if cap > 0 and not self._btn_scroll.isChecked():
+            dropping = document.blockCount() + sum(len(p[0].split("\n")) for p in pending) - cap
+            block = document.firstBlock()
+            while dropping > 0 and block.isValid():
+                dropped_lines += max(1, block.lineCount())
+                block = block.next()
+                dropping -= 1
+        bar = self._log_view.verticalScrollBar()
+        value_before = bar.value()
+        cursor = QTextCursor(document)
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.beginEditBlock()
         try:
@@ -276,6 +356,8 @@ class LogDock(QDockWidget):
             cursor.insertText("".join(run), self._format(run_level))
         finally:
             cursor.endEditBlock()
+        if dropped_lines:
+            bar.setValue(max(0, value_before - dropped_lines))
 
         self._count_label.setText(f"{self._msg_count} messages")
 

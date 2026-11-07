@@ -275,7 +275,7 @@ def test_edge_stop_ends_speech_and_drops_late_audio(env):
     assert env.ctl.state == "idle" and not env.ctl.speaking()
     env.tts.hold.set()
     APP.processEvents()
-    env.ctl._bridge.audio.emit(0, b"\1\0", 22050)  # a chunk of the stopped speech
+    env.ctl._audio_call(0, b"\1\0", 22050)  # a chunk of the stopped speech
     pump(lambda: False, 0.1)
     assert len(env.player.chunks) == 1
 

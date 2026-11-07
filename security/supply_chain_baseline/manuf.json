@@ -1,0 +1,73 @@
+{
+ "name": "manuf",
+ "versions": {
+  "1.1.5": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|manuf-1.1.5/manuf/manuf.py|5cd30941ce69f1f0",
+    "yara|capability_filesystem_read|manuf-1.1.5/setup.py|c93d7d5dc4f84406",
+    "yara|threat_process_hooks|manuf-1.1.5/setup.py|c93d7d5dc4f84406"
+   ],
+   "archives": {
+    "manuf-1.1.5.tar.gz": {
+     "entry_points": [],
+     "files": {
+      "manuf-1.1.5/PKG-INFO": "fdaeebbeb3d002af33242c1ad02516500172dbfef9b0693bd68701c64f314291",
+      "manuf-1.1.5/README.md": "f49baab76d43383cac8d01ec3a63778b0874f0791f110cec8322e1a36fdd9585",
+      "manuf-1.1.5/manuf.egg-info/PKG-INFO": "fdaeebbeb3d002af33242c1ad02516500172dbfef9b0693bd68701c64f314291",
+      "manuf-1.1.5/manuf.egg-info/SOURCES.txt": "339e23ffc7f0742cdcb71edadff0cd21b8904a58b9ffef15e71785c186c0805f",
+      "manuf-1.1.5/manuf.egg-info/dependency_links.txt": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "manuf-1.1.5/manuf.egg-info/entry_points.txt": "f893fd0fe6fcc81039c6cc831909968391dfae25c24b366c97618359b1965a63",
+      "manuf-1.1.5/manuf.egg-info/top_level.txt": "68d4296db1f0d66ff0a530e45610b6f874d1b6368f0254d5fc8684b44027e3cb",
+      "manuf-1.1.5/manuf/__init__.py": "b22856e2650cc3c0929afe4c4e94bde15ca98c4db82761825c450e700366c57a",
+      "manuf-1.1.5/manuf/__main__.py": "fe53f19a1dfe10058c8007429403c93a3b44c6749df5b10a1ee48c01aae50ae9",
+      "manuf-1.1.5/manuf/manuf": "64e6e65b7538eb58e5dd63d5036680d20b802308be666a3052f55c517465e39e",
+      "manuf-1.1.5/manuf/manuf.py": "5cd30941ce69f1f0e2d3f932a82c2f978c926d5c12d83a03734be9ed157e310c",
+      "manuf-1.1.5/setup.cfg": "1c473cbaee8da5fc46e7f0158794af5cea4414c34a3cf3f180c2001f5e38bd3e",
+      "manuf-1.1.5/setup.py": "c93d7d5dc4f84406457d525d854e3ba27098424a2737d2c71dbe8ae5429dbf8a"
+     },
+     "hooks": [
+      "manuf-1.1.5/setup.cfg",
+      "manuf-1.1.5/setup.py"
+     ],
+     "kind": "sdist",
+     "manifest": "b3217e7da718e4bc3ab1c1b84cb86f48d7c46886689ee3c604d575d17d07747a",
+     "native": {},
+     "pth": {},
+     "sha256": "741989728c8ffd0d5c5782376c00270fcd48cf7544f58bf9492a0ef674d433cd"
+    }
+   },
+   "name": "manuf",
+   "provenance": {
+    "manuf-1.1.5.tar.gz": null
+   },
+   "pypi": {
+    "author": "Michael Huang",
+    "home_page": "https://github.com/coolbho3k/manuf/",
+    "license": "Apache License 2.0 or GPLv3",
+    "project_urls": {
+     "Homepage": "https://github.com/coolbho3k/manuf/"
+    },
+    "summary": "Parser library for Wireshark's OUI database"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "sdist; setup.py is a plain setup() call (the 'python setup.py' match is its docstring). The YARA process-hook hit is that setup.py itself. No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|manuf-1.1.5/manuf/manuf.py|5cd30941ce69f1f0",
+     "yara|capability_filesystem_read|manuf-1.1.5/setup.py|c93d7d5dc4f84406",
+     "yara|threat_process_hooks|manuf-1.1.5/setup.py|c93d7d5dc4f84406"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read manuf-1.1.5/manuf/manuf.py",
+     "capability_filesystem_read:capability_filesystem_read manuf-1.1.5/setup.py",
+     "threat_process_hooks:threat_process_hooks manuf-1.1.5/setup.py"
+    ]
+   },
+   "version": "1.1.5"
+  }
+ }
+}

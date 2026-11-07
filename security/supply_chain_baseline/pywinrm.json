@@ -1,0 +1,99 @@
+{
+ "name": "pywinrm",
+ "versions": {
+  "0.5.0": {
+   "accepted_findings": [
+    "encoded-blob|winrm/tests/conftest.py|c62867c0c104c87f",
+    "yara|axross_windows_lolbins|winrm/__init__.py|58739427b5bfe239",
+    "yara|axross_windows_lolbins|winrm/tests/conftest.py|9dc6edd0337e238c",
+    "yara|capability_network_download|winrm/vendor/requests_kerberos/__init__.py|5ee09750561b09de",
+    "yara|capability_network_outbound|winrm/vendor/requests_kerberos/__init__.py|5ee09750561b09de",
+    "yara|suspicious_network_tools|winrm/__init__.py|58739427b5bfe239",
+    "yara|suspicious_network_tools|winrm/tests/conftest.py|9dc6edd0337e238c",
+    "yara|threat_process_powershell_encoded|winrm/tests/conftest.py|9dc6edd0337e238c"
+   ],
+   "archives": {
+    "pywinrm-0.5.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pywinrm-0.5.0.dist-info/LICENSE": "4e0029d588e95d73480cbdebfd6b5082a7c92191b6db8a068a1494cd54d3655f",
+      "pywinrm-0.5.0.dist-info/METADATA": "86bd9f36a92925f1515a16545f6a293490f8226027592ddd571b10fa2afbd8af",
+      "pywinrm-0.5.0.dist-info/RECORD": "4f62afb2024d196ec7d21d01ae0d5a1e1d7b0385f1a4156494fb4084511c0c8c",
+      "pywinrm-0.5.0.dist-info/WHEEL": "678a585ea47fad307b3963436053a6d6a464d115fa1853f6a3c2e0bcfe39dc79",
+      "pywinrm-0.5.0.dist-info/top_level.txt": "03e03f04fdc861830b4fe55d75cd36f23bd21204a56260b9efab65e830f8b1a1",
+      "winrm/__init__.py": "58739427b5bfe2392f57f631beaa0312ef9cc964786675a8b7341689a03287f5",
+      "winrm/encryption.py": "0824f29ad740d94a416fa0ad5ef6a99e4140fff432704cb224d089e7e8dcaf14",
+      "winrm/exceptions.py": "7993c2ddcac223b6dd06f842a072fd96232aa41aba20dd41a6b3ef1884bdab5b",
+      "winrm/protocol.py": "c5b22d526f73f5040ce334e03e7f83866f5797ed617c3037a0f0ff6e4063b025",
+      "winrm/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/tests/conftest.py": "9dc6edd0337e238ccf4298ac0001f9877f970349617529c6d9b33e28758e4aa2",
+      "winrm/tests/sample_script.ps1": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/tests/test_cmd.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/tests/test_encryption.py": "be15ef48e7c71b7e1e3c94d08884a56a2fca8a79de93482199f18a3ecd797622",
+      "winrm/tests/test_exceptions.py": "cdb3d622579de896e5cc3cd9345b34ea30762921296687f90d130a98bdfa7a73",
+      "winrm/tests/test_integration_protocol.py": "db58b2fb521dbef3007069cb3f4c32ade074d4841787ae6595f438bab7064ec3",
+      "winrm/tests/test_integration_session.py": "0f4f010712d5012b03f9d1457033445969c64d5b66d07fec9e828b5e23c6a654",
+      "winrm/tests/test_nori_type_casting.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/tests/test_powershell.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/tests/test_protocol.py": "3c5916dd4e7e46c4fe7d25c8d6014db5b284797a2e5c5a1f2807cb1557347ff1",
+      "winrm/tests/test_session.py": "9cf49c0fe6defc53922925879be696041beaedf05a3bf2cf6e3031920c9eb130",
+      "winrm/tests/test_transport.py": "ef2b83b5b050d955ad2e0ef93815962891243ca9be807a5ceeb392f49e60eac3",
+      "winrm/tests/test_wql.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/transport.py": "95a68694b52344259d69191439c7410e2d5d1c7064b71bb60ca46d044d52cca8",
+      "winrm/vendor/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "winrm/vendor/requests_kerberos/__init__.py": "5ee09750561b09deb602a4f377849afeecda5b39e1b903c2f72cacf134429bb3",
+      "winrm/vendor/requests_kerberos/compat.py": "14ff4d343f750772102b88b224725b57dacc61aa5d755cff9f00dba301524a46",
+      "winrm/vendor/requests_kerberos/exceptions.py": "e68defe145bc30446f9aa62e87c6201152abe1f98166886e206998bf7ccbbc9b",
+      "winrm/vendor/requests_kerberos/kerberos_.py": "81bf908563f25a4699ad2534b1ec2c0989b2506df3849cc1680f10c63e7e91df"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "80cb1e7a2bb4167965e55167b6c8d7b094a04967bd84b78c34a7bfabae0816f6",
+     "native": {},
+     "pth": {},
+     "sha256": "c267046d281de613fc7c8a528cdd261564d9b99bdb7c2926221eff3263b700c8"
+    }
+   },
+   "name": "pywinrm",
+   "provenance": {
+    "pywinrm-0.5.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Alexey Diyan <alexey.diyan@gmail.com>",
+    "license": "Copyright (c) 2013 Alexey Diyan  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.  THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+    "project_urls": {
+     "homepage": "http://github.com/diyan/pywinrm/"
+    },
+    "summary": "Python library for Windows Remote Management"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Hits read: 'powershell -EncodedCommand' is how winrm.Session.run_ps sends a script (axross's WinRM backend uses it on purpose); the test conftest's encoded command decodes to Write-Error \"Error\". No attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|axross_windows_lolbins|winrm/__init__.py|58739427b5bfe239",
+     "yara|axross_windows_lolbins|winrm/tests/conftest.py|9dc6edd0337e238c",
+     "yara|capability_network_download|winrm/vendor/requests_kerberos/__init__.py|5ee09750561b09de",
+     "yara|capability_network_outbound|winrm/vendor/requests_kerberos/__init__.py|5ee09750561b09de",
+     "yara|suspicious_network_tools|winrm/__init__.py|58739427b5bfe239",
+     "yara|suspicious_network_tools|winrm/tests/conftest.py|9dc6edd0337e238c",
+     "yara|threat_process_powershell_encoded|winrm/tests/conftest.py|9dc6edd0337e238c"
+    ],
+    "yara": [
+     "axross_backdoor_rules:suspicious_network_tools winrm/__init__.py",
+     "axross_backdoor_rules:suspicious_network_tools winrm/tests/conftest.py",
+     "axross_supply_chain:axross_windows_lolbins winrm/__init__.py",
+     "axross_supply_chain:axross_windows_lolbins winrm/tests/conftest.py",
+     "capability_network_download:capability_network_download winrm/vendor/requests_kerberos/__init__.py",
+     "capability_network_outbound:capability_network_outbound winrm/vendor/requests_kerberos/__init__.py",
+     "threat_process_powershell_encoded:threat_process_powershell_encoded winrm/tests/conftest.py"
+    ]
+   },
+   "version": "0.5.0"
+  }
+ }
+}

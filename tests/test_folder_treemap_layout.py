@@ -102,7 +102,7 @@ class FakeApi:
         self.docks = []
         self.handlers = {}
 
-    def add_dock(self, title, widget):
+    def add_dock(self, title, widget, **_kw):
         self.docks.append(widget)
 
     def run_in_background(self, work, on_done=None, on_error=None):

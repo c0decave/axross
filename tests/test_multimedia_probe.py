@@ -283,6 +283,32 @@ def test_edge_the_callback_of_a_deleted_receiver_is_dropped(monkeypatch):
     assert got == []
 
 
+def test_edge_a_relay_deleted_before_the_probe_ends_drops_the_answer(monkeypatch):
+    """The exit clean-up (core/qt_exit.py) deletes the waiting relays while
+    their workers still run. The worker used to emit a signal of the relay -
+    a use-after-free if the two met; it now reaches it through a GuiCall
+    (core/thread_relay.py), dropped once the relay is gone."""
+    from PyQt6 import sip
+
+    gate, ended = threading.Event(), threading.Event()
+
+    def fake(timeout=None, **_kw):
+        gate.wait(5)
+        ended.set()
+        return MP.ProbeResult(ok=True)
+
+    monkeypatch.setattr(MP, "run_probe", fake)
+    got = []
+    MP.probe_async(got.append)
+    (relay,) = list(MP._RELAYS)
+    sip.delete(relay)
+    gate.set()
+    assert ended.wait(5)
+    _pump(lambda: False, 0.3)
+    assert got == []
+    MP._RELAYS.discard(relay)
+
+
 def test_edge_a_probe_running_across_a_reset_is_not_kept(monkeypatch):
     gate = threading.Event()
 

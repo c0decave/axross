@@ -297,7 +297,15 @@ def test_edge_auth_and_timeout_go_with_every_thread_s_requests():
             pass
 
     client._new_session = _Fake
-    _in_threads(3, lambda t: client._request("GET", "/x"))
+    # All three alive at once: a thread that ended before the next started
+    # handed its ident on, and three threads counted as two.
+    together = threading.Barrier(3)
+
+    def request(_t):
+        together.wait(10)
+        client._request("GET", "/x")
+
+    _in_threads(3, request)
     assert len({c[0] for c in calls}) == 3
     assert all(c[1:] == (("user", "pw"), 7.5) for c in calls)
     client.close()

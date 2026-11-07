@@ -1,0 +1,93 @@
+{
+ "name": "python-dateutil",
+ "versions": {
+  "2.9.0.post0": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|dateutil/zoneinfo/rebuild.py|322a98cc2207bcd6",
+    "yara|capability_filesystem_read|dateutil/parser/_parser.py|ee494377289c92c4",
+    "yara|capability_filesystem_read|dateutil/tz/tz.py|1149c474c7de4e15",
+    "yara|capability_filesystem_read|dateutil/zoneinfo/__init__.py|298834a6d8423237",
+    "yara|capability_process_spawn|dateutil/zoneinfo/rebuild.py|322a98cc2207bcd6"
+   ],
+   "archives": {
+    "python_dateutil-2.9.0.post0-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "dateutil/__init__.py": "32a6a6ebb58ef4891399417223aeaf4ba2284974e9f46dfcf0369d1f62c230b6",
+      "dateutil/_common.py": "efbc34cb2b64af19586d29fefa50d53d431a6d45d147d237941bffbd0454a946",
+      "dateutil/_version.py": "055d37d4ec430c09b2e7c9de520e72caa2e42daa88c3b89b2bd02cde388c89bd",
+      "dateutil/easter.py": "772062fa52af8a61f5bbf93aa7b6742492bbd9086a56d541b2a072be910f2af7",
+      "dateutil/parser/__init__.py": "c1693a185bb14e98e8820086b6091c789a2d8b8a558e5e3f7c7417a4d39a4988",
+      "dateutil/parser/_parser.py": "ee494377289c92c401fd7825fb7500981c33098a2bd40219aa4948713e9d1fff",
+      "dateutil/parser/isoparser.py": "f05cbdf7d6e709dd5fad274e62e3ab6967c94ed7795bba90e7537036e1ff8573",
+      "dateutil/relativedelta.py": "218fe6825323a196d87ebbe5a1363671ed366a25633c892265faa03536517ee0",
+      "dateutil/rrule.py": "289cca95a09dd6311bbb8037f1996db256a801487d9d26dd6ce15d8e9ef429ec",
+      "dateutil/tz/__init__.py": "17e333d77bfa8d8b1e92541ff537bd27a9f370b0e6ab8ee03916bad4adf9fc50",
+      "dateutil/tz/_common.py": "720cc34c036c397bc473ce9c605efb12c962b9269bf0fbb0a6c979f9b5f7fd2e",
+      "dateutil/tz/_factories.py": "ba76fa5d0357acf32f7a4b13094f8083c8e6559b384a88e83d47001e95a7aef5",
+      "dateutil/tz/tz.py": "1149c474c7de4e15e263a978b21f7205a6d9eb7fcf3b3cb4d734ac87db619f5a",
+      "dateutil/tz/win.py": "c49b335a04b0135c4fc7f1c98f86647a9cae902fe1372d35e9631c5e16d1681f",
+      "dateutil/tzwin.py": "ec0af8bdd4029e733498a4773148db20ab19ac155f1e0770b0965cfe619845ec",
+      "dateutil/utils.py": "74a09c844c3c78e6e2d25a064f1f75ba70719bfed41a5537bff16314c76ac183",
+      "dateutil/zoneinfo/__init__.py": "298834a6d842323729e4c5d21220499f79cc8d978d65abfbae5270e7eb73d52e",
+      "dateutil/zoneinfo/dateutil-zoneinfo.tar.gz": "d3ea52e7b6e968de0d884df1288193596fa95b803db4f92a18279a7398004475",
+      "dateutil/zoneinfo/rebuild.py": "322a98cc2207bcd6cc1fe2dd4582effb84f410803b8432ade462d1d084532dd2",
+      "python_dateutil-2.9.0.post0.dist-info/LICENSE": "ba00f51a0d92823b5a1cde27d8b5b9d2321e67ed8da9bc163eff96d5e17e577e",
+      "python_dateutil-2.9.0.post0.dist-info/METADATA": "a9d436da322be808332f98d88325998e87cb693a678a9969feb4cfad729a6e93",
+      "python_dateutil-2.9.0.post0.dist-info/RECORD": "fc7aa54068c354d522c07153aad6d77b2d8625ec21e45442dc6056682ef3c74a",
+      "python_dateutil-2.9.0.post0.dist-info/WHEEL": "f86fedd281ae13b503d03ad2a55667ab584730157d0c3d97912e6fed7a664e79",
+      "python_dateutil-2.9.0.post0.dist-info/top_level.txt": "e2d8dd5a485166f17b2c0fc161efcbf60076c3fa766becf9cba02b8da464a2df",
+      "python_dateutil-2.9.0.post0.dist-info/zip-safe": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "89d702d5344e0fa5c6561e0e20a06473dfd0a2900adc9c09240ffea32f5ba042",
+     "native": {},
+     "pth": {},
+     "sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427"
+    }
+   },
+   "name": "python-dateutil",
+   "provenance": {
+    "python_dateutil-2.9.0.post0-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Gustavo Niemeyer",
+    "author_email": "gustavo@niemeyer.net",
+    "home_page": "https://github.com/dateutil/dateutil",
+    "license": "Dual License",
+    "maintainer": "Paul Ganssle",
+    "maintainer_email": "dateutil@python.org",
+    "project_urls": {
+     "Documentation": "https://dateutil.readthedocs.io/en/stable/",
+     "Homepage": "https://github.com/dateutil/dateutil",
+     "Source": "https://github.com/dateutil/dateutil"
+    },
+    "summary": "Extensions to the standard Python datetime module"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|dateutil/zoneinfo/rebuild.py|322a98cc2207bcd6",
+     "yara|capability_filesystem_read|dateutil/parser/_parser.py|ee494377289c92c4",
+     "yara|capability_filesystem_read|dateutil/tz/tz.py|1149c474c7de4e15",
+     "yara|capability_filesystem_read|dateutil/zoneinfo/__init__.py|298834a6d8423237",
+     "yara|capability_process_spawn|dateutil/zoneinfo/rebuild.py|322a98cc2207bcd6"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete dateutil/zoneinfo/rebuild.py",
+     "capability_filesystem_read:capability_filesystem_read dateutil/parser/_parser.py",
+     "capability_filesystem_read:capability_filesystem_read dateutil/tz/tz.py",
+     "capability_filesystem_read:capability_filesystem_read dateutil/zoneinfo/__init__.py",
+     "capability_process_spawn:capability_process_spawn dateutil/zoneinfo/rebuild.py"
+    ]
+   },
+   "version": "2.9.0.post0"
+  }
+ }
+}

@@ -45,6 +45,7 @@ from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
 from ui.settings_dialog import _FormPage, _note
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -295,11 +296,72 @@ class UpdateController(QObject):
         self._download_job.abandon()
 
 
+def _markdown_features(*features: QTextDocument.MarkdownFeature) -> QTextDocument.MarkdownFeature:
+    """The union of Qt Markdown *features*. Every member of MarkdownFeature
+    has several bits, and Python 3.11's enum (3.11.2, Debian 12's, at least)
+    derives a Flag's mask from its one-bit members only: ``|`` and the
+    constructor dropped every bit - GitHub | NoHTML was CommonMark *with*
+    raw HTML. Then the union is made by hand, which Qt reads by its value."""
+    value = 0
+    for feature in features:
+        value |= feature.value
+    union = QTextDocument.MarkdownFeature(value)
+    if union.value != value:
+        union = object.__new__(QTextDocument.MarkdownFeature)
+        union._value_ = value
+        union._name_ = None
+    return union
+
+
 #: Qt's GitHub Markdown, without raw HTML: an HTML span or block in the
 #: notes is shown as the text it is (with HTML, Qt interprets it: a
-#: <script> block swallowed the rest of the notes in a test).
-NOTES_MARKDOWN = (QTextDocument.MarkdownFeature.MarkdownDialectGitHub
-                  | QTextDocument.MarkdownFeature.MarkdownNoHTML)
+#: <script> block swallowed the rest of the notes in a test). Safety does
+#: not rest on these flags: :func:`_escape_html` takes every ``<`` out of
+#: the notes first, so ``NOTES_MARKDOWN | X`` losing its bits on some
+#: Python (see above) costs tables and strike-through, never raw HTML.
+NOTES_MARKDOWN = _markdown_features(QTextDocument.MarkdownFeature.MarkdownDialectGitHub,
+                                    QTextDocument.MarkdownFeature.MarkdownNoHTML)
+
+#: Marks each backslash :func:`_escape_html` adds (WORD JOINER: invisible,
+#: no Markdown syntax), so :func:`_unmark` finds exactly those again.
+_MARK = "\u2060"
+
+
+def _escape_html(text: str) -> str:
+    """*text* with every ``<`` as a Markdown backslash escape.
+
+    Raw HTML (inline or block) and autolinks all begin with ``<``; ``\\<``
+    is a literal ``<`` in every dialect, with HTML enabled or not. A
+    ``<`` already escaped (after an odd run of backslashes) stays as is;
+    after an even run the added backslash escapes the ``<``, not one of
+    them. In a code span or block a backslash is literal - there the
+    added one is taken out again after rendering (:func:`_unmark`)."""
+    out: list[str] = []
+    backslashes = 0
+    for ch in text:
+        if ch == "<" and backslashes % 2 == 0:
+            out.append(_MARK + "\\")
+        out.append(ch)
+        backslashes = backslashes + 1 if ch == "\\" else 0
+    return "".join(out)
+
+
+def _unmark(document: QTextDocument) -> None:
+    """Remove what :func:`_escape_html` added from the rendered document:
+    the mark, and the backslash after it where it stayed (code). Only
+    characters go; the HTML question was settled by the parser."""
+    cursor = QTextCursor(document)
+    cursor.beginEditBlock()
+    found = document.find(_MARK)
+    while not found.isNull():
+        start = found.selectionStart()
+        added = (document.characterAt(start + 1) == "\\"
+                 and document.characterAt(start + 2) == "<")
+        cursor.setPosition(start)
+        cursor.setPosition(start + (2 if added else 1), QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        found = document.find(_MARK, start)
+    cursor.endEditBlock()
 #: The only link schemes the notes open.
 WEB_SCHEMES = ("http", "https")
 
@@ -323,7 +385,8 @@ class ReleaseNotesView(QTextBrowser):
         if text == self._source:
             return
         self._source = text
-        self.document().setMarkdown(text, NOTES_MARKDOWN)
+        self.document().setMarkdown(_escape_html(text), NOTES_MARKDOWN)
+        _unmark(self.document())
         # setMarkdown leaves the cursor at the end, and showing the view
         # scrolls to it: the notes opened at their last line.
         self.moveCursor(QTextCursor.MoveOperation.Start)
@@ -351,6 +414,7 @@ class UpdateDialog(QDialog):
 
     def __init__(self, controller: UpdateController, window, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "download")
         self.setWindowTitle(tr("Software Update"))
         self.resize(620, 460)
         self._controller = controller

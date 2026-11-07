@@ -1,0 +1,126 @@
+{
+ "name": "httpcore2",
+ "versions": {
+  "2.16.0": {
+   "accepted_findings": [
+    "raw-ip-url|httpcore2/_async/http_proxy.py|e837f1077ac060ec",
+    "raw-ip-url|httpcore2/_async/socks_proxy.py|e837f1077ac060ec",
+    "raw-ip-url|httpcore2/_sync/http_proxy.py|e837f1077ac060ec",
+    "raw-ip-url|httpcore2/_sync/socks_proxy.py|e837f1077ac060ec",
+    "yara|capability_filesystem_read|httpcore2/_api.py|df1106799e94daba",
+    "yara|capability_filesystem_read|httpcore2/_async/http11.py|9bc3a2b085778b17",
+    "yara|capability_filesystem_read|httpcore2/_async/http2.py|bbe4aeac1d1833dd",
+    "yara|capability_filesystem_read|httpcore2/_async/socks_proxy.py|e0926f594b0274e9",
+    "yara|capability_filesystem_read|httpcore2/_backends/sync.py|b05a7e52c627c7b8",
+    "yara|capability_filesystem_read|httpcore2/_models.py|8042ddf23bd393e9",
+    "yara|capability_filesystem_read|httpcore2/_sync/http11.py|d9999b38e8d4f3d1",
+    "yara|capability_filesystem_read|httpcore2/_sync/http2.py|c6ad0d5608d1b06f",
+    "yara|capability_filesystem_read|httpcore2/_sync/interfaces.py|6ba9fdeb83955a24",
+    "yara|capability_filesystem_read|httpcore2/_sync/socks_proxy.py|deb2bd064863ee73",
+    "yara|capability_network_outbound|httpcore2/_backends/sync.py|b05a7e52c627c7b8",
+    "yara|capability_process_spawn|httpcore2/_ssl.py|18eca5cf26071034"
+   ],
+   "archives": {
+    "httpcore2-2.16.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "httpcore2-2.16.0.dist-info/METADATA": "c073bd68b2bd543fbc2bab3763b42ed1e70666536d32c1bf39ef2764fd50b0a4",
+      "httpcore2-2.16.0.dist-info/RECORD": "405cfbace0155832e08a10bccc38bfde0b2f011c751d352d5d4240acd19134b1",
+      "httpcore2-2.16.0.dist-info/WHEEL": "5b77e4a649bbfb07fdbc123967eeecd1e5a478cfaca6eefc23c35e6fdf037848",
+      "httpcore2-2.16.0.dist-info/licenses/LICENSE.md": "c4df125c807b0613501e943a5c92496dd11d2c16604ce396097a8dde396304d9",
+      "httpcore2/__init__.py": "8c086f84405bc2a2ed1c2dcf2b34d0dcc6458f09f1cd24c2113b81f420b9c1d8",
+      "httpcore2/_api.py": "df1106799e94dabad0b05bbef5a1e104d3ef76b314ec52dbddcc9ada8be2850b",
+      "httpcore2/_async/__init__.py": "dc59ac4b56f64cafa70258292a65462c4162814613b685750a0c89abe0a5e717",
+      "httpcore2/_async/connection.py": "9c3271ee7524a7d1d780e143a87514c48fed3f297d06d62e7c542a1bbe3eb980",
+      "httpcore2/_async/connection_pool.py": "2a2627625244f683a7f93bad4db2fd4f4e90d18c17eb520c1c1cd597d6168512",
+      "httpcore2/_async/http11.py": "9bc3a2b085778b170fbd22b6d0d61f884448a9d8301e448d1146f724ebb42b00",
+      "httpcore2/_async/http2.py": "bbe4aeac1d1833dd6d7107f0f2f01bedd430f2e79d6997112a354d5d2054c31b",
+      "httpcore2/_async/http_proxy.py": "b2b037a1218c9e64216e336aafabf9d56a324fb5305eda9685219a54f42207e4",
+      "httpcore2/_async/interfaces.py": "109de8e32eb543cd9c9a6ec7d888a71f1243ab03b5f012b21000396f70cbbb2b",
+      "httpcore2/_async/socks_proxy.py": "e0926f594b0274e9b0efe2dacb43be228549cdaf60e09d7abefb63624184efed",
+      "httpcore2/_backends/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "httpcore2/_backends/anyio.py": "3dcb0184a713688b4c3308ea7f3c2195bbbe4eca4420e2f9a35b4d5eaec0ef53",
+      "httpcore2/_backends/auto.py": "348fd45fcb028116eec6b6cafbab69695eeb8050603957e8e9dea2b532aa037a",
+      "httpcore2/_backends/base.py": "6c681fb899473a33d98100251a90b85264c2698b6b6e55a8ddf2f5d8724a1935",
+      "httpcore2/_backends/mock.py": "6a16f0625da612ee4ad3be634ed1ba8f02c254761d56a576992d06e3e28d4081",
+      "httpcore2/_backends/sync.py": "b05a7e52c627c7b8b8a8b4159cfa7520fbe39f765e34ee8ee6d009f4eb7658d3",
+      "httpcore2/_backends/trio.py": "84d3aa4517516c05a6b1eccef0f1880baab0be05f8060d92499ef33a1b75e04e",
+      "httpcore2/_exceptions.py": "7df28f6f17ea37fa9ece64367f507fceb60ec3aee4123d4af8f08d8825531220",
+      "httpcore2/_models.py": "8042ddf23bd393e9e45f32ef5880287651bb129e9c13421b2e3d83f0170c1067",
+      "httpcore2/_ssl.py": "18eca5cf26071034d638d4a77eee9e2eb82c39ffc767ff868ff0930e72a66e79",
+      "httpcore2/_sync/__init__.py": "010fad5f2d20568956fe43587c1c7347ceafec2dc60525dfd539c60ad0ba1a10",
+      "httpcore2/_sync/connection.py": "797d384df0efaa048e8c20796104eec9d3be6edbcc04fac0c6b52371b98fc841",
+      "httpcore2/_sync/connection_pool.py": "ea679999be5d5cedce63b8d5253b28b396ed9a606e3a9642e546e7a78df353f0",
+      "httpcore2/_sync/http11.py": "d9999b38e8d4f3d1cb34db5929523ef50f7c0a15efb5eaaa4fcebfe5f90b23c7",
+      "httpcore2/_sync/http2.py": "c6ad0d5608d1b06feebd19501eeebad7c737d47a2f3836a818c2472401825cd5",
+      "httpcore2/_sync/http_proxy.py": "d5c9d58a2d1d727e2bd6bf938bc4f271a44aad73914cde3824d805905740d11e",
+      "httpcore2/_sync/interfaces.py": "6ba9fdeb83955a241e4a4d359df4ba869eb712019789bc443e1224f819b678a7",
+      "httpcore2/_sync/socks_proxy.py": "deb2bd064863ee731cabf2c5ce9af9e29c3d1a3f5a5a35ee1e974e11ee9e7809",
+      "httpcore2/_synchronization.py": "f2c30b571dd5a0d9db3a07f57a489fd097326ba67998140994b15dcb49252394",
+      "httpcore2/_trace.py": "15462c8d4707d462b579e591a97682b92632e9e03619cc1052984b6c94502fda",
+      "httpcore2/_utils.py": "12a248b05b81034957a2081ed4912191db2467b62951ea12e124ab16d9900f43",
+      "httpcore2/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "af3dd647a4f65f601b3dbbca5aac930b10ca1755ca14c16b0fbc4a694761902a",
+     "native": {},
+     "pth": {},
+     "sha256": "5c4358319f2602d984ad93182c9fee5160f22e9da7babdda870a5e7c4e2dc34f"
+    }
+   },
+   "name": "httpcore2",
+   "provenance": {
+    "httpcore2-2.16.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Tom Christie <tom@tomchristie.com>",
+    "license_expression": "BSD-3-Clause",
+    "maintainer_email": "\"Pydantic Services Inc.\" <engineering@pydantic.dev>",
+    "project_urls": {
+     "Changelog": "https://github.com/pydantic/httpx2/blob/main/src/httpcore2/CHANGELOG.md",
+     "Homepage": "https://github.com/pydantic/httpx2",
+     "Source": "https://github.com/pydantic/httpx2/blob/main/src/httpcore2"
+    },
+    "summary": "A minimal low-level HTTP client."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 4 medium findings (capability patterns) seen; capabilities: filesystem_read, network_outbound, process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|httpcore2/_api.py|df1106799e94daba",
+     "yara|capability_filesystem_read|httpcore2/_async/http11.py|9bc3a2b085778b17",
+     "yara|capability_filesystem_read|httpcore2/_async/http2.py|bbe4aeac1d1833dd",
+     "yara|capability_filesystem_read|httpcore2/_async/socks_proxy.py|e0926f594b0274e9",
+     "yara|capability_filesystem_read|httpcore2/_backends/sync.py|b05a7e52c627c7b8",
+     "yara|capability_filesystem_read|httpcore2/_models.py|8042ddf23bd393e9",
+     "yara|capability_filesystem_read|httpcore2/_sync/http11.py|d9999b38e8d4f3d1",
+     "yara|capability_filesystem_read|httpcore2/_sync/http2.py|c6ad0d5608d1b06f",
+     "yara|capability_filesystem_read|httpcore2/_sync/interfaces.py|6ba9fdeb83955a24",
+     "yara|capability_filesystem_read|httpcore2/_sync/socks_proxy.py|deb2bd064863ee73",
+     "yara|capability_network_outbound|httpcore2/_backends/sync.py|b05a7e52c627c7b8",
+     "yara|capability_process_spawn|httpcore2/_ssl.py|18eca5cf26071034"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_api.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_async/http11.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_async/http2.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_async/socks_proxy.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_backends/sync.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_models.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_sync/http11.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_sync/http2.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_sync/interfaces.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore2/_sync/socks_proxy.py",
+     "capability_network_outbound:capability_network_outbound httpcore2/_backends/sync.py",
+     "capability_process_spawn:capability_process_spawn httpcore2/_ssl.py"
+    ]
+   },
+   "version": "2.16.0"
+  }
+ }
+}

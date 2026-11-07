@@ -1,0 +1,60 @@
+{
+ "name": "jaraco-functools",
+ "versions": {
+  "4.6.0": {
+   "accepted_findings": [
+    "yara|capability_process_spawn|jaraco/functools/__init__.py|4885def75d339ba8"
+   ],
+   "archives": {
+    "jaraco_functools-4.6.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "jaraco/functools/__init__.py": "4885def75d339ba8c0dfbf74bfeb3e0fa8c04b3bbe2ffcc7ddb54946fb94bda8",
+      "jaraco/functools/__init__.pyi": "e39672f83f02473c507183449da2c165820db3ca90180cbe46b35e08cbba693d",
+      "jaraco/functools/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "jaraco_functools-4.6.0.dist-info/METADATA": "6ed3cae5b8eef084c3c7b2385a0a8ac4c8155ab7c729212bea099bee69d5bd6c",
+      "jaraco_functools-4.6.0.dist-info/RECORD": "61979796a2732fffd72f6ed2c3d9700bf958d6e324a46e039740d0d47bffbada",
+      "jaraco_functools-4.6.0.dist-info/WHEEL": "2b6eb4118ce7cd7b09601406aa623c553c4476265836f0d9c16f5c061f7efcc0",
+      "jaraco_functools-4.6.0.dist-info/licenses/LICENSE": "9755a18519666e5f0f4cae3daad3d7012bcae48a600b31237d75e9fe134e6683",
+      "jaraco_functools-4.6.0.dist-info/scm_file_list.json": "5160f58cd78734c836ddbc90c3bdc5bd4b858f2faf2c2ff2a7c3b544e5b98dff",
+      "jaraco_functools-4.6.0.dist-info/scm_version.json": "615da69c49c73d114f0be7a6047fd101bf94a06e3abcaaddcb2358f6be75b878",
+      "jaraco_functools-4.6.0.dist-info/top_level.txt": "d099cddcb7d71f82c845f5cbf9014e18227341664edc42f1e11d5dfe5a2ea103"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "ad424045347bbf7159e62f47a04e41cda4d3695f1221c6d9fa8bef6fcd188a40",
+     "native": {},
+     "pth": {},
+     "sha256": "99e3dc0060c5cbe8fcd1cdb36258e2a65ca40f1566b2033b12abb1bb44dd3c30"
+    }
+   },
+   "name": "jaraco-functools",
+   "provenance": {
+    "jaraco_functools-4.6.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "\"Jason R. Coombs\" <jaraco@jaraco.com>",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Source": "https://github.com/jaraco/jaraco.functools"
+    },
+    "summary": "Functools like those found in stdlib"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: process_spawn; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_process_spawn|jaraco/functools/__init__.py|4885def75d339ba8"
+    ],
+    "yara": [
+     "capability_process_spawn:capability_process_spawn jaraco/functools/__init__.py"
+    ]
+   },
+   "version": "4.6.0"
+  }
+ }
+}

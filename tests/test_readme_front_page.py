@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import struct
 from pathlib import Path
@@ -54,6 +55,26 @@ def benefit_block(text: str) -> list[str]:
             break
         block.append(line)
     return block
+
+
+_HIGHLIGHTS = re.compile(r"^## (\d+) (?:highlights|Highlights|puntos fuertes)$", re.M)
+#: "122 public scripting names" and the German / Spanish forms, in the
+#: READMEs and the scripting section of docs/USAGE*.md.
+_PUBLIC_NAMES = re.compile(r"\b(\d+) (?:public (?:scripting )?names|öffentlichen (?:Scripting-)?"
+                           r"Namen|nombres públicos(?: de scripting)?)")
+NAME_COUNT_DOCS = (*LANGUAGE_READMES, "docs/USAGE.md", "docs/USAGE_de.md", "docs/USAGE_es.md")
+
+
+def highlight_count(text: str) -> tuple[int, int]:
+    """(the number the highlights heading claims, the numbered items under it)."""
+    match = _HIGHLIGHTS.search(text)
+    assert match, "no '## N highlights' heading"
+    section = text[match.end():].split("\n## ", 1)[0]
+    return int(match.group(1)), len(re.findall(r"^\d+\. ", section, re.M))
+
+
+def public_name_counts(text: str) -> list[int]:
+    return [int(n) for n in _PUBLIC_NAMES.findall(" ".join(text.split()))]
 
 
 def png_chunks(data: bytes) -> list[bytes]:
@@ -175,6 +196,30 @@ def test_sad_pyproject_claims_no_os_without_a_ci_job():
         if c.startswith("Operating System ::")
     }
     assert claimed <= ci_operating_systems(), claimed
+
+
+@pytest.mark.parametrize("name", LANGUAGE_READMES)
+def test_happy_the_highlights_heading_counts_its_items(name):
+    """It said 44 over 48 items in all three languages."""
+    claimed, items = highlight_count((ROOT / name).read_text(encoding="utf-8"))
+    assert claimed == items
+
+
+@pytest.mark.parametrize("name", NAME_COUNT_DOCS)
+def test_happy_the_public_scripting_names_are_counted_as_the_api_schema_counts(name):
+    """docs/scripting-api.json (axross.api_schema()) lists every public
+    name: its functions and classes - axross.__all__ without __version__.
+    The READMEs said 90 and USAGE 89 while there were 122."""
+    schema = json.loads((ROOT / "docs" / "scripting-api.json").read_text(encoding="utf-8"))
+    expected = len(schema["functions"]) + len(schema["classes"])
+    counts = public_name_counts((ROOT / name).read_text(encoding="utf-8"))
+    assert counts and set(counts) == {expected}, counts
+
+
+def test_sad_the_count_parsers_see_a_wrong_number():
+    assert highlight_count("## 3 highlights\n\n1. a\n2. b\n\n## Next\n3. c\n") == (3, 2)
+    assert public_name_counts("REPL with 90\npublic scripting names; 89 öffentlichen Namen") == [
+        90, 89]
 
 
 def test_sad_the_benefit_parser_rejects_wrapped_and_short_lists():

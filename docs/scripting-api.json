@@ -441,9 +441,10 @@
       ],
       "returns": "FileBackend",
       "summary": "Open a backend from a URL like ``sftp://user@host/``, ``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.",
-      "doc": "Open a backend from a URL like ``sftp://user@host/``,\n``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.\n\nSensitive credentials in the URL are honoured but a saved profile\nis preferred for anything you'll re-use — :func:`open` looks up\nkeys / passphrases via ``keyring`` so they don't end up in\nprocess history.\n\n**Proxy support** (SOCKS4 / SOCKS5 / HTTP CONNECT). Pass any of\n``proxy_type``, ``proxy_host``, ``proxy_port``, ``proxy_username``,\n``proxy_password`` as kwargs; for proxy-capable protocols\n(sftp, scp, ftp/s, smb/dfsn, webdav, rsync, telnet,\ncisco-telnet, imap, pop3, nntp, gopher, pjl, adb-tcp,\nazure_blob/files, onedrive, sharepoint, gdrive, dropbox, winrm,\nand S3 over HTTP CONNECT), the proxy is wired into the backend's\ntransport. Backends without clean SOCKS/HTTP support log a warning\ninstead of silently ignoring the proxy fields. Per-protocol caveats\nstill apply: S3 is HTTP-CONNECT only, and rsync's OpenBSD-nc path\ncannot carry ``proxy_password``. Requests-based SDK sessions\ncontrolled by Axross ignore process-level ``HTTP_PROXY`` /\n``HTTPS_PROXY`` so the profile/script proxy is the route source of\ntruth. OAuth browser consent pages are external and may follow\nbrowser/system proxy settings. When ``proxy_type`` is not ``\"none\"``,\n``proxy_host`` and a non-zero ``proxy_port`` are required;\nhalf-configured proxies fail closed instead of falling back to\ndirect traffic.\n\nExample::\n\n    b = axross.open_url(\n        \"sftp://alice@gateway.example.com/\",\n        password=\"hunter2\",\n        proxy_type=\"socks5\",\n        proxy_host=\"127.0.0.1\",\n        proxy_port=1080,\n    )\n\nRecognised schemes match registered backend protocol IDs, with\na few ergonomic aliases: ``http://`` / ``https://`` open WebDAV,\n``gophers://`` opens TLS Gopher, ``nntps://`` opens TLS NNTP,\n``git+local://`` opens a local Git repository path, and\n``sftp+key://`` / ``sftp+agent://`` select SSH auth mode.",
+      "doc": "Open a backend from a URL like ``sftp://user@host/``,\n``s3://bucket``, ``smb://server/share``, ``gopher://host:70``.\n\nSensitive credentials in the URL are honoured but a saved profile\nis preferred for anything you'll re-use — :func:`open` looks up\nkeys / passphrases via ``keyring`` so they don't end up in\nprocess history.\n\n**Proxy support** (SOCKS4 / SOCKS5 / HTTP CONNECT). Pass any of\n``proxy_type``, ``proxy_host``, ``proxy_port``, ``proxy_username``,\n``proxy_password`` as kwargs; for proxy-capable protocols\n(sftp, scp, ftp/s, smb/dfsn, webdav, rsync, telnet,\ncisco-telnet, imap, pop3, nntp, gopher, pjl, adb-tcp,\nazure_blob/files, onedrive, sharepoint, gdrive, dropbox, winrm,\nand S3 over HTTP CONNECT), the proxy is wired into the backend's\ntransport. Backends without clean SOCKS/HTTP support log a warning\ninstead of silently ignoring the proxy fields. Per-protocol caveats\nstill apply: S3 is HTTP-CONNECT only, and rsync's OpenBSD-nc path\ncannot carry ``proxy_password``. Requests-based SDK sessions\ncontrolled by Axross ignore process-level ``HTTP_PROXY`` /\n``HTTPS_PROXY`` so the profile/script proxy is the route source of\ntruth. OAuth browser consent pages are external and may follow\nbrowser/system proxy settings. When ``proxy_type`` is not ``\"none\"``,\n``proxy_host`` and a non-zero ``proxy_port`` are required;\nhalf-configured proxies fail closed instead of falling back to\ndirect traffic.\n\nExample::\n\n    b = axross.open_url(\n        \"sftp://alice@gateway.example.com/\",\n        password=\"hunter2\",\n        proxy_type=\"socks5\",\n        proxy_host=\"127.0.0.1\",\n        proxy_port=1080,\n    )\n\nAny other keyword that names a :class:`ConnectionProfile` field sets\nit, as in a saved profile. iSCSI, for instance - the target and what\nthe initiator sends about itself (empty: the system's\n``/etc/iscsi/initiatorname.iscsi`` and any interface)::\n\n    b = axross.open_url(\n        \"iscsi://192.0.2.10/\",\n        iscsi_target_iqn=\"iqn.2026-10.example:disk1\",\n        iscsi_initiator_name=\"iqn.2026-11.org.example:client1\",\n        iscsi_initiator_interface=\"eth1\",\n    )\n\nNFS the same way: ``nfs_machine_name``, ``nfs_uid``, ``nfs_gid`` and\n``nfs_gids`` (\"27, 100\") are what the client sends (AUTH_SYS); any of\nthem set makes axross speak NFS itself (v3, or v4 with ``nfs_version=4``\nor ``\"4.1\"`` and ``nfs_client_id``, the NFSv4 client id) instead of mounting.\n\nRecognised schemes match registered backend protocol IDs, with\na few ergonomic aliases: ``http://`` / ``https://`` open WebDAV,\n``gophers://`` opens TLS Gopher, ``nntps://`` opens TLS NNTP,\n``git+local://`` opens a local Git repository path, and\n``sftp+key://`` / ``sftp+agent://`` select SSH auth mode.",
       "examples": [
-        "b = axross.open_url(\n    \"sftp://alice@gateway.example.com/\",\n    password=\"hunter2\",\n    proxy_type=\"socks5\",\n    proxy_host=\"127.0.0.1\",\n    proxy_port=1080,\n)"
+        "b = axross.open_url(\n    \"sftp://alice@gateway.example.com/\",\n    password=\"hunter2\",\n    proxy_type=\"socks5\",\n    proxy_host=\"127.0.0.1\",\n    proxy_port=1080,\n)",
+        "b = axross.open_url(\n    \"iscsi://192.0.2.10/\",\n    iscsi_target_iqn=\"iqn.2026-10.example:disk1\",\n    iscsi_initiator_name=\"iqn.2026-11.org.example:client1\",\n    iscsi_initiator_interface=\"eth1\",\n)"
       ],
       "raises": [
         "TypeError",
@@ -5835,6 +5836,10 @@
         {
           "name": "scan_id",
           "annotation": "int | None"
+        },
+        {
+          "name": "file_id",
+          "annotation": "str | None"
         }
       ]
     },
@@ -5995,6 +6000,34 @@
           "annotation": "int"
         },
         {
+          "name": "nfs_minor",
+          "annotation": "int"
+        },
+        {
+          "name": "nfs_machine_name",
+          "annotation": "str"
+        },
+        {
+          "name": "nfs_uid",
+          "annotation": "int"
+        },
+        {
+          "name": "nfs_gid",
+          "annotation": "int"
+        },
+        {
+          "name": "nfs_gids",
+          "annotation": "str"
+        },
+        {
+          "name": "nfs_privileged_port",
+          "annotation": "bool"
+        },
+        {
+          "name": "nfs_client_id",
+          "annotation": "str"
+        },
+        {
           "name": "azure_container",
           "annotation": "str"
         },
@@ -6048,6 +6081,14 @@
         },
         {
           "name": "iscsi_mount_point",
+          "annotation": "str"
+        },
+        {
+          "name": "iscsi_initiator_name",
+          "annotation": "str"
+        },
+        {
+          "name": "iscsi_initiator_interface",
           "annotation": "str"
         },
         {
@@ -6135,6 +6176,12 @@
           "signature": "get_proxy_password() -> str | None",
           "returns": "str | None",
           "summary": "Retrieve proxy password from keyring."
+        },
+        {
+          "name": "nfs_sender_chosen",
+          "signature": "nfs_sender_chosen() -> bool",
+          "returns": "bool",
+          "summary": "True when the profile says what the NFS client sends about itself - then axross's own NFSv3 client is used."
         },
         {
           "name": "set_password",
@@ -6450,6 +6497,10 @@
         {
           "name": "attr_hidden",
           "annotation": "bool"
+        },
+        {
+          "name": "stat_error",
+          "annotation": "str"
         }
       ],
       "properties": [
@@ -6457,6 +6508,11 @@
           "name": "is_hidden",
           "returns": "bool",
           "summary": "Hidden from a listing unless the user asks for hidden files: a dot name (the Unix convention, on every backend) or the backend's hidden flag (:attr:`attr_hidden`)."
+        },
+        {
+          "name": "is_nav",
+          "returns": "bool",
+          "summary": "The pane's own rows \".\" (this folder) and \"..\" (the parent): navigation and drop targets, never an entry to select, copy, rename or delete."
         },
         {
           "name": "mode_str",

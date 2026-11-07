@@ -1,0 +1,62 @@
+{
+ "name": "aiohttp-socks",
+ "versions": {
+  "0.12.0": {
+   "accepted_findings": [
+    "yara|capability_network_outbound|aiohttp_socks/connector.py|b4391e45f76b672c"
+   ],
+   "archives": {
+    "aiohttp_socks-0.12.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "aiohttp_socks-0.12.0.dist-info/METADATA": "2f78ac5586bd2cde4a9924f4f45cebd5b894b0547fe6697d8d0dc3568d7ffda6",
+      "aiohttp_socks-0.12.0.dist-info/RECORD": "063c04632efd22efe743e7b9b6d9946efc231a5c754d8708f163fac9c9bad7b5",
+      "aiohttp_socks-0.12.0.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "aiohttp_socks-0.12.0.dist-info/licenses/LICENSE.txt": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "aiohttp_socks-0.12.0.dist-info/top_level.txt": "015da59c5eca771a1465d3bb60d0ae55d3de69ac73073fe916a1be20a59f4701",
+      "aiohttp_socks/__init__.py": "9097102aeda70dc34714aa4c0b5deb2931ec4d9ce955add06adf047e52868cc3",
+      "aiohttp_socks/_deprecated.py": "02a83ae1e565c67976c0d522d8d3678e9d55c45372a237dac7e9423535cf7b14",
+      "aiohttp_socks/_errors.py": "00255abc20851de675b5e57db21a19e7931f59c493cbc51fc8ff114fb40f7a56",
+      "aiohttp_socks/connector.py": "b4391e45f76b672c34caf97a8329a000a688e4705a7aa4fbd6109f7636ae4d44",
+      "aiohttp_socks/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "aiohttp_socks/utils.py": "3ae71809887a6ce95eb57a9d53550602ebac975fcb3d77921d899a5d563b0b1f"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "0cf4a161a299b0394d131c61fe356ac9e11e98a8114d75f2141646af0fa7b0b8",
+     "native": {},
+     "pth": {},
+     "sha256": "ba6f95ec775c761d87f8578ab48f137d0457c676da104984202bf75e747d5ee6"
+    }
+   },
+   "name": "aiohttp-socks",
+   "provenance": {
+    "aiohttp_socks-0.12.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Roman Snegirev <snegiryev@gmail.com>",
+    "license_expression": "Apache-2.0",
+    "project_urls": {
+     "homepage": "https://github.com/romis2012/aiohttp-socks",
+     "repository": "https://github.com/romis2012/aiohttp-socks"
+    },
+    "summary": "Proxy connector for aiohttp"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_outbound|aiohttp_socks/connector.py|b4391e45f76b672c"
+    ],
+    "yara": [
+     "capability_network_outbound:capability_network_outbound aiohttp_socks/connector.py"
+    ]
+   },
+   "version": "0.12.0"
+  }
+ }
+}

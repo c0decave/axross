@@ -199,7 +199,14 @@ class SftpServer:
                 t.add_server_key(key)
             root, stats = self.root, self.stats
             t.set_subsystem_handler("sftp", SFTPServer, _Sftp, root=root, stats=stats)
-            t.start_server(server=_Auth())
+            try:
+                t.start_server(server=_Auth())
+            except (paramiko.SSHException, OSError, EOFError):
+                # The client hung up in the handshake (it refused the host
+                # key, say). That ends this connection, not the server: the
+                # loop must keep accepting the next one.
+                t.close()
+                continue
             self._transports.append(t)
 
 

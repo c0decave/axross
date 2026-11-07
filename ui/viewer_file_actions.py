@@ -94,8 +94,10 @@ def delete_file(parent: QWidget, backend, path: str, pane) -> bool:
     )
     if reply != QMessageBox.StandardButton.Yes:
         return False
+    from ui.off_gui import run_off_gui
+
     try:
-        backend.remove(path)
+        run_off_gui(lambda: backend.remove(path))  # a server round trip: off the GUI thread
     except OSError as exc:
         log.error("Delete failed for %s: %s", path, exc)
         QMessageBox.warning(
@@ -124,6 +126,8 @@ class MoveWatch(QObject):
         self._backend = backend
         self._gone = gone
         self._pending: list[str] = []
+        self._job = None
+        self._again = False
         pane = live_pane(pane)
         if pane is not None:
             pane.path_changed.connect(self._check)
@@ -132,16 +136,45 @@ class MoveWatch(QObject):
         if path not in self._pending:
             self._pending.append(path)
 
-    def _check(self, *_args) -> None:
-        for path in list(self._pending):
-            try:
-                still_there = self._backend.exists(path)
-            except Exception as exc:  # noqa: BLE001 - unknown: keep showing it
-                log.debug("Viewer: cannot check the moved %s: %s", path, exc)
-                continue
-            if still_there is False:
-                self._pending.remove(path)
-                self._gone(path)
+    def _check(self, *_args, again: bool = False) -> None:
+        """Ask the backend about the watched files - on a worker: an
+        exists() per file at every listing of the source pane held the
+        window for the round trips (ScanJob); gone() follows here."""
+        if not self._pending:
+            return
+        from ui.scan_job import ScanJob
+
+        if self._job is None:
+            self._job = ScanJob(self)
+            self._job.finished.connect(self._checked)
+        elif self._job.running and not again:
+            self._again = True  # once this check is done
+            return
+        backend, paths = self._backend, list(self._pending)
+
+        def look(_cancelled, _report) -> list[str]:
+            gone = []
+            for path in paths:
+                try:
+                    if backend.exists(path) is False:
+                        gone.append(path)
+                except Exception as exc:  # noqa: BLE001 - unknown: keep showing it
+                    log.debug("Viewer: cannot check the moved %s: %s", path, exc)
+            return gone
+
+        self._job.start(look, replace=True)
+
+    def _checked(self, kind: str, gone, cancelled: bool) -> None:
+        if kind == "done" and not cancelled:
+            for path in gone:
+                if path in self._pending:
+                    self._pending.remove(path)
+                    self._gone(path)
+        if self._again:
+            # Its result is in: replacing the job (its thread may not have
+            # ended yet, so running is still True) loses nothing.
+            self._again = False
+            self._check(again=True)
 
 
 class DragOut(QObject):

@@ -17,18 +17,20 @@ monochrome switching as every other icon in the app.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QPoint, QSize, Qt
 from PyQt6.QtWidgets import (
     QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QToolButton,
     QWidget,
 )
 
+from core.i18n import tr
 from ui import window_move
-from ui.icon_provider import icon
+from ui.icon_provider import icon, set_window_icon
 
 
 class DockTitleBar(QWidget):
@@ -81,20 +83,38 @@ class DockTitleBar(QWidget):
         layout.setContentsMargins(8, 3, 4, 3)
         layout.setSpacing(6)
 
-        icon_label = QLabel(self)
+        self._icon_name = icon_name
+        self._icon_label = icon_label = QLabel(self)
         icon_label.setPixmap(icon(icon_name, 18).pixmap(18, 18))
         icon_label.setFixedSize(QSize(18, 18))
         layout.addWidget(icon_label)
+        # The panel shows the same icon when it floats or is tabbed.
+        set_window_icon(dock, icon_name)
 
         self._title_label = QLabel(title, self)
         self._title_label.setTextFormat(Qt.TextFormat.PlainText)
+        # The title may be cut rather than widen the panel: the buttons
+        # are what must stay reachable, and a long title (a conversation's)
+        # must not raise the window's minimum width.
+        self._title_label.setMinimumWidth(40)
         layout.addWidget(self._title_label, stretch=1)
+
+        # Show only on one workspace (ui.dock_bindings): a pin, lit while bound.
+        self._pin_btn = QToolButton(self)
+        self._pin_btn.setIconSize(QSize(16, 16))
+        self._pin_btn.setAutoRaise(True)
+        self._pin_btn.setCheckable(True)
+        self._pin_btn.setFixedSize(QSize(22, 22))
+        self._pin_btn.setAccessibleName(tr("Show Only on Workspace"))
+        self._pin_btn.clicked.connect(self._pop_binding_menu)
+        layout.addWidget(self._pin_btn)
+        self.update_pin()
 
         # Float toggle. ``extract-pane`` reads well as "pop out".
         self._float_btn = QToolButton(self)
         self._float_btn.setIcon(icon("extract-pane", 16))
         self._float_btn.setIconSize(QSize(16, 16))
-        self._float_btn.setToolTip("Float / dock this panel")
+        self._float_btn.setToolTip(tr("Float / dock this panel"))
         self._float_btn.setAutoRaise(True)
         self._float_btn.setFixedSize(QSize(22, 22))
         self._float_btn.clicked.connect(self._toggle_float)
@@ -105,23 +125,87 @@ class DockTitleBar(QWidget):
         self._close_btn = QToolButton(self)
         self._close_btn.setIcon(icon("close-pane", 16))
         self._close_btn.setIconSize(QSize(16, 16))
-        self._close_btn.setToolTip(f"Close this panel (reopen via {reopen_hint})")
+        self._close_btn.setToolTip(
+            tr("Close this panel (reopen via {menu})").format(menu=reopen_hint))
         self._close_btn.setAutoRaise(True)
         self._close_btn.setFixedSize(QSize(22, 22))
         self._close_btn.clicked.connect(dock.close)
         layout.addWidget(self._close_btn)
 
-        # Close every panel in this dock area.
+        # Close every panel in this dock area - set apart from the single
+        # close, with its own glyph and colour: right next to it, the two
+        # looked like one red X twice.
+        layout.addSpacing(8)
         self._close_all_btn = QToolButton(self)
         self._close_all_btn.setIcon(icon("close-all-panes", 16))
         self._close_all_btn.setIconSize(QSize(16, 16))
         self._close_all_btn.setToolTip(
-            "Close all panels in this area (reopen via View → Panels)"
+            tr("Close ALL panels in this area, not only this one (reopen via View → Panels)")
         )
+        self._close_all_btn.setAccessibleName(tr("Close All Panels in This Area"))
         self._close_all_btn.setAutoRaise(True)
         self._close_all_btn.setFixedSize(QSize(22, 22))
         self._close_all_btn.clicked.connect(self._close_all)
         layout.addWidget(self._close_all_btn)
+
+    # -- show only on a workspace (ui.dock_bindings) ---------------------------------------
+
+    def _owner(self):
+        from ui.dock_bindings import dock_owner
+
+        return dock_owner(self._dock)
+
+    def update_pin(self) -> None:
+        """The pin lit (checked, coloured) while the dock is bound to a
+        workspace; its tooltip names which."""
+        owner = self._owner()
+        ws = owner.dock_workspace(self._dock) if owner is not None else None
+        self._pin_btn.setChecked(ws is not None)
+        self._pin_btn.setIcon(icon("pin", 16) if ws is not None else
+                              icon("pin", 16, "#8a8a8a"))
+        self._pin_btn.setToolTip(
+            tr("Shown only on {workspace} - click to change").format(workspace=ws.name)
+            if ws is not None else
+            tr("Show Only on Workspace - keep this panel to one workspace"))
+        self._pin_btn.setVisible(owner is not None)
+
+    def add_binding_menu(self, menu: QMenu) -> QMenu | None:
+        """Show Only on Workspace ▸ in *menu*; None without a window that binds."""
+        owner = self._owner()
+        if owner is None:
+            return None
+        sub = menu.addMenu(tr("Show Only on Workspace"))
+        sub.aboutToShow.connect(lambda: owner.fill_dock_workspace_menu(sub, self._dock))
+        owner.fill_dock_workspace_menu(sub, self._dock)
+        return sub
+
+    def binding_menu(self) -> QMenu | None:
+        owner = self._owner()
+        if owner is None:
+            return None
+        menu = QMenu(tr("Show Only on Workspace"), self)
+        owner.fill_dock_workspace_menu(menu, self._dock)
+        return menu
+
+    def _pop_binding_menu(self, _checked: bool = False) -> None:
+        menu = self.binding_menu()
+        self.update_pin()  # a click toggles the check; the binding decides
+        if menu is None:
+            return
+        menu.exec(self._pin_btn.mapToGlobal(QPoint(0, self._pin_btn.height())))
+        menu.deleteLater()
+        self.update_pin()
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt override
+        menu = QMenu(self)
+        if self.add_binding_menu(menu) is None:
+            menu.deleteLater()
+            event.ignore()
+            return
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+        self.update_pin()
+        event.accept()
 
     def add_indicator(self, widget: QWidget) -> None:
         """Show *widget* (a status lamp) left of the buttons, after the
@@ -258,5 +342,15 @@ class DockTitleBar(QWidget):
         else:
             self._title_label.setText(title)
 
+    @property
+    def icon_name(self) -> str:
+        return self._icon_name
+
+    def refresh_icon(self) -> None:
+        """Draw the icon again (after a theme, tint or monochrome switch)."""
+        self._icon_label.setPixmap(icon(self._icon_name, 18).pixmap(18, 18))
+        set_window_icon(self._dock, self._icon_name)
+
 
 __all__ = ["DockTitleBar"]
+

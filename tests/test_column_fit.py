@@ -22,6 +22,21 @@ from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QHeaderView, QTableView, QTableWidget, QTreeView  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def _plain_style():
+    """The widths below are measured without a theme. A MainWindow built by
+    an earlier test in this process leaves its theme stylesheet on the
+    application (wider header and cell padding, a scroll bar), and 560 px
+    then really is too narrow for the Extensions columns. Run without it and
+    put it back afterwards."""
+    sheet = APP.styleSheet()
+    if sheet:
+        APP.setStyleSheet("")
+    yield
+    if sheet:
+        APP.setStyleSheet(sheet)
 LONG = "/some/rather/long/folder/name/that/needs/space/in/the/first/column"
 
 

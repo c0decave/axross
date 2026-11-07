@@ -34,6 +34,9 @@ from core.subprocess_env import clean_child_env
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
+#: Seconds a data transfer may move nothing before rsync gives up (--timeout).
+STALL_TIMEOUT = 300
+
 # Env vars we actually want to forward to rsync / ssh. Everything
 # else (AWS_*, *_TOKEN, *_KEY, GITHUB_*, editor/shell personalisation)
 # stays in the parent process. See docs/OPSEC.md finding #9.
@@ -676,9 +679,10 @@ class RsyncSession(SessionLifecycle):
         extra_args: list[str],
         *,
         capture: bool = True,
-        timeout: int = 60,
+        timeout: int | None = 60,
     ) -> str:
-        """Execute rsync with the given extra arguments.
+        """Execute rsync with the given extra arguments (*timeout* None: no
+        limit on the whole run - pass rsync's --timeout then).
 
         Returns captured stdout on success. Raises :class:`OSError` on
         non-zero exit or timeout.
@@ -1025,7 +1029,10 @@ class RsyncSession(SessionLifecycle):
         url = self._build_url(path)
         tmpdir = tempfile.mkdtemp(prefix="axross-rsync-")
         try:
-            self._run_rsync(["-L", url, tmpdir + os.sep], timeout=300)
+            # A stall limit, not a wall clock: rsync's own --timeout ends a
+            # transfer that moved nothing for that long; a cap on the whole
+            # run failed every file that takes longer than 5 minutes.
+            self._run_rsync([f"--timeout={STALL_TIMEOUT}", "-L", url, tmpdir + os.sep], timeout=None)
             arrived = [os.path.join(tmpdir, n) for n in os.listdir(tmpdir)]
             if len(arrived) != 1 or not os.path.isfile(arrived[0]):
                 raise OSError(f"rsync read {path}: not a regular file")
@@ -1062,7 +1069,7 @@ class RsyncSession(SessionLifecycle):
     def _upload(self, local_path: str, remote_path: str) -> None:
         """Upload a local file to a remote path."""
         url = self._build_url(remote_path)
-        self._run_rsync([local_path, url], timeout=300)
+        self._run_rsync([f"--timeout={STALL_TIMEOUT}", local_path, url], timeout=None)
         log.debug("uploaded %s -> %s", local_path, remote_path)
 
     # --------------------------------------------------------------------- #
@@ -1364,6 +1371,15 @@ def _parse_rsync_itemized(out: str) -> dict:
             stderr=subprocess.PIPE,
             text=True,
         )
+        # stderr drained alongside: read only after the exit, a pipe full
+        # of "permission denied" lines (64 KiB) blocked rsync - and this
+        # loop with it - for good.
+        import threading
+
+        errors: list[str] = []
+        drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() if proc.stderr else ""),
+                                 name="axross-rsync-stderr", daemon=True)
+        drain.start()
 
         try:
             assert proc.stdout is not None
@@ -1389,8 +1405,9 @@ def _parse_rsync_itemized(out: str) -> dict:
             proc.wait()
             raise OSError(f"rsync transfer timed out after {timeout}s")
 
+        drain.join(5)
         if proc.returncode != 0:
-            stderr = (proc.stderr.read() if proc.stderr else "").strip()
+            stderr = "".join(errors).strip()[-4000:]
             raise OSError(f"rsync transfer failed (exit {proc.returncode}): {stderr}")
 
 

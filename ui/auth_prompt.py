@@ -25,7 +25,9 @@ from PyQt6.QtWidgets import (
 from core import auth_prompt as AP
 from core.desktop_open import open_in_browser
 from core.i18n import tr
+from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 #: How long a worker waits for an answer before it gives up (seconds): a
 #: sign-in in the browser takes a while, a forgotten dialog must not hold
@@ -37,6 +39,7 @@ def code_dialog(service: str, url: str, parent=None) -> str | None:
     """Show the sign-in dialog for *service*; the code typed, or None."""
     dialog = QDialog(parent)
     dialog.setObjectName("axSignInCode")
+    set_window_icon(dialog, "lock")
     dialog.setWindowTitle(tr("Sign in to {service}").format(service=service))
     layout = QVBoxLayout(dialog)
     intro = QLabel(tr("Sign in to {service} in the browser and allow axross access. "
@@ -84,6 +87,13 @@ class AuthCodePrompt(QObject):
         self._timeout = reply_timeout
         self._abandoned = False
         self.request.connect(self._show, Qt.ConnectionType.QueuedConnection)
+        # The worker reaches the GUI thread through this and ``request`` is
+        # emitted there: never an emit on this object from the worker, which
+        # may be deleted meanwhile (core/thread_relay.py).
+        self._post_request = GuiCall(self._emit_request)
+
+    def _emit_request(self, service: str, url: str) -> None:
+        self.request.emit(service, url)
 
     def ask(self, service: str, url: str) -> str | None:
         if self._abandoned:
@@ -93,7 +103,7 @@ class AuthCodePrompt(QObject):
         with self._lock:  # one question at a time
             self._event.clear()
             self._answer = None
-            self.request.emit(service, url)
+            self._post_request(service, url)
             if not self._event.wait(self._timeout):
                 return None
             return self._answer

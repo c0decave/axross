@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from core import packer as PK
 from core.i18n import tr
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 
 class PackDialog(QDialog):
@@ -27,6 +28,7 @@ class PackDialog(QDialog):
         self, names: list[str], default_name: str, *, single_file: bool, parent=None
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "pack")
         self.setWindowTitle(tr("Pack"))
         self.setMinimumWidth(460)
         self._single_file = single_file

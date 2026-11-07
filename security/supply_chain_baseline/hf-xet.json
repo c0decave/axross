@@ -1,0 +1,104 @@
+{
+ "name": "hf-xet",
+ "versions": {
+  "1.7.0": {
+   "accepted_findings": [],
+   "archives": {
+    "hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "hf_xet-1.7.0.dist-info/METADATA": "05975b1239f188bb418539f178ef68a693ea6824f20c30583a02eea94faf650a",
+      "hf_xet-1.7.0.dist-info/RECORD": "64411630463118810fa4f4cbf648c491051ecd995d9b529a725d7d054d49aadd",
+      "hf_xet-1.7.0.dist-info/WHEEL": "3b91e51afb00e5b710092708799363799659ba72160d63d5b4d5a88dd6bc7524",
+      "hf_xet-1.7.0.dist-info/licenses/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "hf_xet-1.7.0.dist-info/sboms/hf_xet.cyclonedx.json": "cb60fc609397473419653fb56eb8c3fff0d722a3775f3ac2079e40ec550ab2e4",
+      "hf_xet/__init__.py": "13c50377243c82567f9ef7bd84711fdb66cf6a783cf912b1e15b80a5761e414a",
+      "hf_xet/hf_xet.abi3.so": "a4e40058860f3ad4ca9b0193d47b47e0e7bf8ca7e5ae0735696274c6c4c1706b"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e2f019561ef75805a6b05e38d28ac011d5ca3100b330e92dd059f2abd60f14e5",
+     "native": {
+      "hf_xet/hf_xet.abi3.so": "elf"
+     },
+     "pth": {},
+     "sha256": "2814a6e999d13464c4d679b788cc5d784eb5a4edfc638a31f10e9a11ab531ef8"
+    }
+   },
+   "name": "hf-xet",
+   "provenance": {
+    "hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "environment": "release",
+     "kind": "GitHub",
+     "repository": "huggingface/xet-core",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "license_expression": "Apache-2.0",
+    "maintainer_email": "Rajat Arya <rajat@rajatarya.com>, Jared Sulzdorf <j.sulzdorf@gmail.com>, Di Xiao <di@huggingface.co>, Assaf Vayner <assaf@huggingface.co>, Hoyt Koepke <hoytak@gmail.com>",
+    "project_urls": {
+     "Documentation": "https://huggingface.co/docs/hub/xet/index",
+     "Homepage": "https://github.com/huggingface/xet-core",
+     "Issues": "https://github.com/huggingface/xet-core/issues",
+     "Repository": "https://github.com/huggingface/xet-core.git"
+    },
+    "summary": "Fast transfer of large files with the Hugging Face Hub."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "hf_xet's network imports are its job (Hugging Face's chunked downloads, used by huggingface-hub). Attestation verifies."
+   },
+   "scans": {
+    "capa": {
+     "a4e40058860f3ad4ca9b0193d47b47e0e7bf8ca7e5ae0735696274c6c4c1706b": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "hf_xet/hf_xet.abi3.so",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlsym"
+        ],
+        "network": [
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "listen",
+         "recv",
+         "send",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [
+        "127.0.0.1"
+       ],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libpthread.so.0",
+        "librt.so.1"
+       ],
+       "rpath": [],
+       "urls": [
+        "http://invalid",
+        "http://localhost:8080",
+        "https://BugineseduployanKatakana",
+        "https://cas.xethub.hf.co",
+        "https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eofbad"
+       ]
+      }
+     }
+    },
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.7.0"
+  }
+ }
+}

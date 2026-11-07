@@ -1,0 +1,680 @@
+{
+ "name": "psycopg-binary",
+ "versions": {
+  "3.3.6": {
+   "accepted_findings": [
+    "yara|capability_network_download|psycopg_binary/_psycopg.pyi|e2908e24e7321a7b",
+    "yara|capability_network_outbound|psycopg_binary/_psycopg.pyi|e2908e24e7321a7b"
+   ],
+   "archives": {
+    "psycopg_binary-3.3.6-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "psycopg_binary-3.3.6.dist-info/METADATA": "0a1fb529c1e27ca41655413e669c964bd0d7069e8cc2ab32b192fc98baf37fd5",
+      "psycopg_binary-3.3.6.dist-info/RECORD": "55c6aeb628857a75e140c066d79b19a821dbfbeddca86a379a0c7bce67de4760",
+      "psycopg_binary-3.3.6.dist-info/WHEEL": "504ac80cc95190c99aea177550563d7939b8fca6b1431c01c0d435e74afbbd0e",
+      "psycopg_binary-3.3.6.dist-info/licenses/LICENSE.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
+      "psycopg_binary-3.3.6.dist-info/sboms/auditwheel.cdx.json": "6592137beb9c14c9d7d5f8ae60a45939228e56a75fcc27ae4032694ad4f98a27",
+      "psycopg_binary-3.3.6.dist-info/top_level.txt": "f0e33f3ec01ae682a4cd5bd1bbc9031128a1050a3f2d7ab01bf9eb95e72e6c89",
+      "psycopg_binary.libs/libcom_err-2abe824b.so.2.1": "5426dcb54dd01c9eedda05e2179f0e47114e8b48a534ffe9e94916e79471b257",
+      "psycopg_binary.libs/libcrypt-bc2db45e.so.1": "e2a6f6ff300e287a60dfc0c6fdb76ee01e333068df7c60b4e87453d942ccda65",
+      "psycopg_binary.libs/libcrypto-2d1629ee.so.3": "ac767da23afff24a34a1a86e6464f65ff45c8e3374850c117c1cffbfcd879da0",
+      "psycopg_binary.libs/libgssapi_krb5-497db0c6.so.2.2": "ef73998b86c24e54667a843be6d589442dd082e1b9fc605aa15bcc2293858806",
+      "psycopg_binary.libs/libk5crypto-b1f99d5c.so.3.1": "bf04d7ebe3937aba3855c15acbd991482286a484aeea38bb9ced85e772ea2fb0",
+      "psycopg_binary.libs/libkeyutils-dfe70bd6.so.1.5": "c29e41b03cf4b2dffbfb4960946e2b42f82c0ca5d53d231d3f0fc597ba274488",
+      "psycopg_binary.libs/libkrb5-fcafa220.so.3.3": "94dc6413050486a6c8de4b6f3bfdd288390892b72bc68580c6c53929721fa07b",
+      "psycopg_binary.libs/libkrb5support-d0bcff84.so.0.1": "0eb5322b05ac46e4db7ddb779ee0269006dd01801aaa67b84f8e7f753bfdddf2",
+      "psycopg_binary.libs/liblber-a44a5afb.so.2.0.200": "862a4715f500831283bebf04347491b17a3adb93e56a335d00a6e1b278258929",
+      "psycopg_binary.libs/libldap-7c3a4b12.so.2.0.200": "1408b751ee5e666470af890e13a508b38a57870b6a261697e27f9c6493b645fc",
+      "psycopg_binary.libs/libpcre-9513aab5.so.1.2.0": "02eda850e04931656d8af81f5171bff74d8bec1553d3d85c3d32d7fc5efe8864",
+      "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18": "adee4abe45a36e8f147b15e08aceca893c255dfd4133a047884807931ca8046d",
+      "psycopg_binary.libs/libsasl2-84219a89.so.3.0.0": "e84be55110f16f7ca930af373e9f41fa7f4ec60733c013d933d1443ae5056a98",
+      "psycopg_binary.libs/libselinux-0922c95c.so.1": "99e60178aed625f6d2e2af58bccf605b13619b1544058e9f985a2772affb4a88",
+      "psycopg_binary.libs/libssl-8bd944e8.so.3": "ef566b112dc7532a689c07de999c16efda3b4872df0c9d011bdcf00b94dd8a2e",
+      "psycopg_binary/__init__.py": "e64c70f50767f2e6c88b88a4f769b164eb23af950ed2fc2ae53e52d018425868",
+      "psycopg_binary/_psycopg.c": "7723ad012d1af79845979d439f5552495534d9330e594d3295ed8bf7882631ff",
+      "psycopg_binary/_psycopg.cpython-312-x86_64-linux-gnu.so": "48befccf7bca17871cc4569abaee4e1efdab9bdf76ddab3a7083b2c9ad0aacc0",
+      "psycopg_binary/_psycopg.pyi": "e2908e24e7321a7b57c615669a81d3f4bf266c1a336d5260d2be6f2a1b528574",
+      "psycopg_binary/_uuid.py": "617c42f49d21719156bc163962925fffb5a9b2d326950db574a320c065bdd5b5",
+      "psycopg_binary/pq.c": "5224d9e8f85ce098a6218d887a231a4fa6b5ade7e747ec7730dfc7fa667087ee",
+      "psycopg_binary/pq.cpython-312-x86_64-linux-gnu.so": "b7015ef9e5fdb129a39295ac2f4f910955334f5076be52e5cdd88d3aed9c3666",
+      "psycopg_binary/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "psycopg_binary/types/numutils.c": "29649e3489fd46dd585e1d1bd36b394211385f34e000c1b1f991b1f4012d43e2",
+      "psycopg_binary/version.py": "01c85c2d67e86b2f74da6acfde3d50cb79d0d85e503b3348bfc632d0d77016b7"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "0d198945e861c386ce3c0970633c8638aaff6e0b6f03112e0a40e10dd73ffa47",
+     "native": {
+      "psycopg_binary.libs/libcom_err-2abe824b.so.2.1": "elf",
+      "psycopg_binary.libs/libcrypt-bc2db45e.so.1": "elf",
+      "psycopg_binary.libs/libcrypto-2d1629ee.so.3": "elf",
+      "psycopg_binary.libs/libgssapi_krb5-497db0c6.so.2.2": "elf",
+      "psycopg_binary.libs/libk5crypto-b1f99d5c.so.3.1": "elf",
+      "psycopg_binary.libs/libkeyutils-dfe70bd6.so.1.5": "elf",
+      "psycopg_binary.libs/libkrb5-fcafa220.so.3.3": "elf",
+      "psycopg_binary.libs/libkrb5support-d0bcff84.so.0.1": "elf",
+      "psycopg_binary.libs/liblber-a44a5afb.so.2.0.200": "elf",
+      "psycopg_binary.libs/libldap-7c3a4b12.so.2.0.200": "elf",
+      "psycopg_binary.libs/libpcre-9513aab5.so.1.2.0": "elf",
+      "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18": "elf",
+      "psycopg_binary.libs/libsasl2-84219a89.so.3.0.0": "elf",
+      "psycopg_binary.libs/libselinux-0922c95c.so.1": "elf",
+      "psycopg_binary.libs/libssl-8bd944e8.so.3": "elf",
+      "psycopg_binary/_psycopg.cpython-312-x86_64-linux-gnu.so": "elf",
+      "psycopg_binary/pq.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "1679a1cb93fbe5a6d1fd58d82cbddcc6fcb8c61446ba7cae6eb2a7b19bc585de"
+    }
+   },
+   "name": "psycopg-binary",
+   "provenance": {
+    "psycopg_binary-3.3.6-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": null
+   },
+   "pypi": {
+    "author_email": "Daniele Varrazzo <daniele.varrazzo@gmail.com>",
+    "license_expression": "LGPL-3.0-only",
+    "project_urls": {
+     "Changes": "https://psycopg.org/psycopg3/docs/news.html",
+     "Code": "https://github.com/psycopg/psycopg",
+     "Documentation": "https://psycopg.org/psycopg3/docs/",
+     "Funding": "https://github.com/sponsors/dvarrazzo",
+     "Homepage": "https://psycopg.org/",
+     "Issue Tracker": "https://github.com/psycopg/psycopg/issues"
+    },
+    "summary": "PostgreSQL database adapter for Python -- C optimisation distribution"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "The bundled PostgreSQL client libraries: libpq, libkrb5, libldap and libcrypto import the network calls a database client needs (TLS, Kerberos, LDAP lookup of the service); libpq's popen is linked, never named in a URL or address; prctl names threads. No URLs or addresses. Content review only."
+   },
+   "scans": {
+    "capa": {
+     "02eda850e04931656d8af81f5171bff74d8bec1553d3d85c3d32d7fc5efe8864": {
+      "capabilities": [
+       "contain loop",
+       "encrypt data using RC4 PRGA",
+       "get system information on Linux",
+       "map or unmap memory on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libpcre-9513aab5.so.1.2.0",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "0eb5322b05ac46e4db7ddb779ee0269006dd01801aaa67b84f8e7f753bfdddf2": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "encode data using Base64",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "enumerate files on Linux",
+       "link function at runtime on Linux",
+       "reference Base64 string",
+       "resolve DNS"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libkrb5support-d0bcff84.so.0.1",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ],
+        "network": [
+         "getaddrinfo"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libdl.so.2",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libresolv.so.2",
+        "libselinux-0922c95c.so.1"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "1408b751ee5e666470af890e13a508b38a57870b6a261697e27f9c6493b645fc": {
+      "capabilities": [
+       "connect socket",
+       "contain loop",
+       "convert IP address from string",
+       "create or open file",
+       "create thread",
+       "decode data using Base64 via dword translation table",
+       "delay execution",
+       "encode data using Base64",
+       "encode data using XOR",
+       "get current user on Linux",
+       "get hostname",
+       "get local IPv4 addresses",
+       "get socket information",
+       "parse credit card information",
+       "query environment variable",
+       "read file on Linux",
+       "reference Base64 string",
+       "resolve DNS",
+       "set socket configuration",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libldap-7c3a4b12.so.2.0.200",
+      "profile": {
+       "categories": {
+        "network": [
+         "SSL_connect",
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcrypto-2d1629ee.so.3",
+        "liblber-a44a5afb.so.2.0.200",
+        "libpthread.so.0",
+        "libresolv.so.2",
+        "libsasl2-84219a89.so.3.0.0",
+        "libssl-8bd944e8.so.3"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "48befccf7bca17871cc4569abaee4e1efdab9bdf76ddab3a7083b2c9ad0aacc0": {
+      "capabilities": [],
+      "note": "capa took longer than 900 s",
+      "path": "psycopg_binary/_psycopg.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpq-e9b5c9ac.so.5.18",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/../psycopg_binary.libs"
+       ],
+       "urls": []
+      }
+     },
+     "5426dcb54dd01c9eedda05e2179f0e47114e8b48a534ffe9e94916e79471b257": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "create semaphore on Linux",
+       "get current user on Linux",
+       "lock semaphore on Linux",
+       "query environment variable",
+       "unlock semaphore on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libcom_err-2abe824b.so.2.1",
+      "profile": {
+       "categories": {
+        "anti-analysis": [
+         "prctl"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "862a4715f500831283bebf04347491b17a3adb93e56a335d00a6e1b278258929": {
+      "capabilities": [
+       "contain loop",
+       "encode data using XOR",
+       "read file on Linux",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/liblber-a44a5afb.so.2.0.200",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libresolv.so.2"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "94dc6413050486a6c8de4b6f3bfdd288390892b72bc68580c6c53929721fa07b": {
+      "capabilities": [],
+      "note": "capa took longer than 900 s",
+      "path": "psycopg_binary.libs/libkrb5-fcafa220.so.3.3",
+      "profile": {
+       "categories": {
+        "network": [
+         "connect",
+         "recv",
+         "send",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcom_err-2abe824b.so.2.1",
+        "libk5crypto-b1f99d5c.so.3.1",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libkrb5support-d0bcff84.so.0.1",
+        "libresolv.so.2"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "99e60178aed625f6d2e2af58bccf605b13619b1544058e9f985a2772affb4a88": {
+      "capabilities": [
+       "change file permission on Linux",
+       "check file permission on Linux",
+       "communicate with kernel module via Netlink socket on Linux",
+       "connect socket",
+       "contain loop",
+       "create or open file",
+       "create process on Linux",
+       "delete file on Linux",
+       "encode data using XOR",
+       "enumerate files on Linux",
+       "execute syscall",
+       "get file system information on Linux",
+       "get kernel version",
+       "get password database entry on Linux",
+       "get system information on Linux",
+       "hash data using SHA1",
+       "link function at runtime on Linux",
+       "map or unmap memory on Linux",
+       "move file",
+       "read file on Linux",
+       "receive data",
+       "receive data on socket",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libselinux-0922c95c.so.1",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ],
+        "network": [
+         "bind",
+         "connect",
+         "recvfrom",
+         "sendmsg",
+         "socket"
+        ],
+        "process": [
+         "execve"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libdl.so.2",
+        "libpcre-9513aab5.so.1.2.0"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "ac767da23afff24a34a1a86e6464f65ff45c8e3374850c117c1cffbfcd879da0": {
+      "capabilities": [],
+      "note": "larger than 2 MiB",
+      "path": "psycopg_binary.libs/libcrypto-2d1629ee.so.3",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym",
+         "mprotect"
+        ],
+        "network": [
+         "accept",
+         "bind",
+         "connect",
+         "getaddrinfo",
+         "gethostbyname",
+         "listen",
+         "recvfrom",
+         "sendto",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libdl.so.2",
+        "libpthread.so.0",
+        "libz.so.1"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "adee4abe45a36e8f147b15e08aceca893c255dfd4133a047884807931ca8046d": {
+      "capabilities": [
+       "connect socket",
+       "contain loop",
+       "create or open file",
+       "create process on Linux",
+       "decode data using Base64 via dword translation table",
+       "encode data using Base64",
+       "encode data using XOR",
+       "get current PID on Linux",
+       "get current user on Linux",
+       "get password database entry on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "receive data",
+       "receive data on socket",
+       "reference Base64 string",
+       "send data on socket",
+       "set socket configuration",
+       "write and execute a file",
+       "write file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libpq-e9b5c9ac.so.5.18",
+      "profile": {
+       "categories": {
+        "network": [
+         "SSL_connect",
+         "connect",
+         "getaddrinfo",
+         "recv",
+         "send",
+         "socket"
+        ],
+        "process": [
+         "popen"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcrypto-2d1629ee.so.3",
+        "libgssapi_krb5-497db0c6.so.2.2",
+        "libldap-7c3a4b12.so.2.0.200",
+        "libm.so.6",
+        "libpthread.so.0",
+        "libssl-8bd944e8.so.3"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "b7015ef9e5fdb129a39295ac2f4f910955334f5076be52e5cdd88d3aed9c3666": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "encode data using XOR",
+       "get current PID on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary/pq.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpq-e9b5c9ac.so.5.18",
+        "libpthread.so.0"
+       ],
+       "rpath": [
+        "$ORIGIN/../psycopg_binary.libs"
+       ],
+       "urls": []
+      }
+     },
+     "bf04d7ebe3937aba3855c15acbd991482286a484aeea38bb9ced85e772ea2fb0": {
+      "capabilities": [
+       "authenticate HMAC",
+       "contain loop",
+       "create or open file",
+       "encode data using XOR",
+       "encrypt data using Camellia",
+       "encrypt data using DES",
+       "encrypt data using RC4 PRGA",
+       "execute syscall",
+       "hash data using SHA1",
+       "hash data using SHA256",
+       "hash data using SHA384",
+       "hash data with MD5",
+       "read file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libk5crypto-b1f99d5c.so.3.1",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libkrb5support-d0bcff84.so.0.1",
+        "libresolv.so.2"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "c29e41b03cf4b2dffbfb4960946e2b42f82c0ca5d53d231d3f0fc597ba274488": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "execute syscall",
+       "read file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libkeyutils-dfe70bd6.so.1.5",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libdl.so.2"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e2a6f6ff300e287a60dfc0c6fdb76ee01e333068df7c60b4e87453d942ccda65": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "encode data using XOR",
+       "encrypt data using blowfish",
+       "execute syscall",
+       "hash data using SHA1",
+       "hash data using SHA256",
+       "hash data using SHA512",
+       "hash data using murmur3",
+       "map or unmap memory on Linux",
+       "read file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libcrypt-bc2db45e.so.1",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "e84be55110f16f7ca930af373e9f41fa7f4ec60733c013d933d1443ae5056a98": {
+      "capabilities": [
+       "authenticate HMAC",
+       "connect socket",
+       "contain loop",
+       "create or open file",
+       "decode data using Base64 via dword translation table",
+       "encode data using Base64",
+       "encode data using XOR",
+       "enumerate files on Linux",
+       "get current user on Linux",
+       "get hostname",
+       "get kernel version",
+       "get socket status",
+       "hash data with MD5",
+       "link function at runtime on Linux",
+       "query environment variable",
+       "read file on Linux",
+       "reference Base64 string",
+       "resolve DNS"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libsasl2-84219a89.so.3.0.0",
+      "profile": {
+       "categories": {
+        "dynamic-code": [
+         "dlopen",
+         "dlsym"
+        ],
+        "network": [
+         "connect",
+         "getaddrinfo",
+         "socket"
+        ]
+       },
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcom_err-2abe824b.so.2.1",
+        "libcrypt-bc2db45e.so.1",
+        "libdl.so.2",
+        "libgssapi_krb5-497db0c6.so.2.2",
+        "libk5crypto-b1f99d5c.so.3.1",
+        "libkrb5-fcafa220.so.3.3",
+        "libkrb5support-d0bcff84.so.0.1",
+        "libresolv.so.2"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "ef566b112dc7532a689c07de999c16efda3b4872df0c9d011bdcf00b94dd8a2e": {
+      "capabilities": [],
+      "note": "capa took longer than 900 s",
+      "path": "psycopg_binary.libs/libssl-8bd944e8.so.3",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcrypto-2d1629ee.so.3",
+        "libdl.so.2",
+        "libpthread.so.0",
+        "libz.so.1"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     },
+     "ef73998b86c24e54667a843be6d589442dd082e1b9fc605aa15bcc2293858806": {
+      "capabilities": [
+       "contain loop",
+       "create or open file",
+       "encode data using XOR",
+       "encrypt data using RC4 PRGA",
+       "get password database entry on Linux",
+       "read file on Linux"
+      ],
+      "note": "",
+      "path": "psycopg_binary.libs/libgssapi_krb5-497db0c6.so.2.2",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libcom_err-2abe824b.so.2.1",
+        "libdl.so.2",
+        "libk5crypto-b1f99d5c.so.3.1",
+        "libkeyutils-dfe70bd6.so.1.5",
+        "libkrb5-fcafa220.so.3.3",
+        "libkrb5support-d0bcff84.so.0.1",
+        "libresolv.so.2"
+       ],
+       "rpath": [
+        "$ORIGIN"
+       ],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_network_download|psycopg_binary/_psycopg.pyi|e2908e24e7321a7b",
+     "yara|capability_network_outbound|psycopg_binary/_psycopg.pyi|e2908e24e7321a7b"
+    ],
+    "yara": [
+     "capability_network_download:capability_network_download psycopg_binary/_psycopg.pyi",
+     "capability_network_outbound:capability_network_outbound psycopg_binary/_psycopg.pyi"
+    ]
+   },
+   "version": "3.3.6"
+  }
+ }
+}

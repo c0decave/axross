@@ -1,0 +1,53 @@
+{
+ "name": "texttable",
+ "versions": {
+  "1.7.2": {
+   "accepted_findings": [],
+   "archives": {
+    "texttable-1.7.2-py2.py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "texttable-1.7.2.dist-info/METADATA": "dbc4b5e97daba7c4db45f67e9655564c2f9f37c54e4b73c583ee6dd44a1f8b31",
+      "texttable-1.7.2.dist-info/RECORD": "ad290707e95cd07f77801eada1279d6e763174af112e660d9f8c629a4c0fe075",
+      "texttable-1.7.2.dist-info/WHEEL": "e1805f098347e3094ba6fde9cead616c4b8895703858969b28b16ead9ede4cbd",
+      "texttable-1.7.2.dist-info/licenses/LICENSE": "4ba7bdab54504a3bc44eb33ecca873a26a63ab902822101a87bb46235da63594",
+      "texttable-1.7.2.dist-info/top_level.txt": "dbb032aaf498f32c23b2b78cda94733d7d32f96cde953835a96527a074ec1a20",
+      "texttable.py": "12bed941dddb6935bdcf2373e7111e5393fd6a3696d178a121e71df2240122c1"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "3e5ddee27ebc3be22dd518738411045ca3468aebde56dec4fd54065cd994d9ef",
+     "native": {},
+     "pth": {},
+     "sha256": "a381e1ed30e4d4bd24cdacabe26463b7a570c0e964fc0b35d8d9276b2fcbe252"
+    }
+   },
+   "name": "texttable",
+   "provenance": {
+    "texttable-1.7.2-py2.py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Gerome Fournier",
+    "author_email": "jef@foutaise.org",
+    "home_page": "https://github.com/foutaise/texttable/",
+    "license": "MIT",
+    "project_urls": {
+     "Download": "https://github.com/foutaise/texttable/archive/v1.7.2.tar.gz",
+     "Homepage": "https://github.com/foutaise/texttable/"
+    },
+    "summary": "module to create simple ASCII tables"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.7.2"
+  }
+ }
+}

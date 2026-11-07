@@ -102,6 +102,11 @@ def window(monkeypatch):
 
 def _pane(win) -> ArchivePaneWidget:
     pane = win._archive_dock.widget()
+    # The window lists an archive on a worker (0.14.166): wait for it.
+    deadline = time.time() + 20
+    while pane.loading and time.time() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.01)
     assert isinstance(pane, ArchivePaneWidget)
     return pane
 

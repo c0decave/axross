@@ -88,6 +88,9 @@ class StatsWindow(QWidget):
         # at its own size (sway tiled the old parentless Tool window across
         # half the screen).
         super().__init__(parent, Qt.WindowType.Window)
+        from ui.icon_provider import set_window_icon
+
+        set_window_icon(self, "stats")
         self.setWindowTitle("Agent Stats")
         self.setObjectName("axAgentStats")
         self.counts = AgentStats()
@@ -112,6 +115,9 @@ class StatsWindow(QWidget):
         reset = QPushButton("Reset")
         reset.clicked.connect(self.reset)
         layout.addWidget(reset)
+        from ui.close_corner import add_close_corner
+
+        add_close_corner(self)
         self.resize(self.sizeHint())
 
     def add(self, session: str, event: dict) -> None:
@@ -151,7 +157,7 @@ def activate(api):
             WINDOW.show()
             WINDOW.raise_()
 
-    api.add_menu_action("Agent Stats", toggle)
+    api.add_menu_action("Agent Stats", toggle, icon="stats")
     api.on_agent_event(WINDOW.add)
 
 

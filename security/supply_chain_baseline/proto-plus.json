@@ -1,0 +1,79 @@
+{
+ "name": "proto-plus",
+ "versions": {
+  "1.29.0": {
+   "accepted_findings": [],
+   "archives": {
+    "proto_plus-1.29.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "proto/__init__.py": "c51740e49ea722b8699485900ff9b2be872158dab4c7964d9f4131290e3cb770",
+      "proto/_file_info.py": "fc1234789e5071f56d3d64c8b87b65b048744f93228459c4940b44a4171607ac",
+      "proto/_package_info.py": "51d17e579135f7792f3adfc8a94a9eca527377163507f45161cefe68230c97ce",
+      "proto/datetime_helpers.py": "61aae90a5797328764cf460a6772cdf25100d5f3132ff94a0607bf8191223327",
+      "proto/enums.py": "d0649cbfefc2a4dd413e32cd9b3dfd69b0f55e5663c13ce7f853ac6bc517c697",
+      "proto/fields.py": "3fdbf3036049cc8733aeb33266fdc5c4593d3fc5a75c018012d00374133c70ad",
+      "proto/marshal/__init__.py": "309893a1097bf44597f9e0a7e0b24c55148eb3c27de65b2b8edf59fc48172d45",
+      "proto/marshal/collections/__init__.py": "a58475e61c1c9265665d99294ea13b608130b1fe5d5587b12e7f2eb5eb610013",
+      "proto/marshal/collections/maps.py": "f9736e49cf540836ce3f7bba786ac9632e8fc3df9d81a760d7f56abc918768ee",
+      "proto/marshal/collections/repeated.py": "8f4160bbffe021736403fa6b74a38f124c752f6b71cb9850f8695da2291b843d",
+      "proto/marshal/compat.py": "30b03f0b7cd73bc414240dd578c5c18324a66aaae81aa8cdf136b9db44a4665c",
+      "proto/marshal/marshal.py": "cf92977d4b01537c3081fbd0c5ac6552111b70e78afea8698ecc8c3a17e26b6b",
+      "proto/marshal/rules/__init__.py": "addb6d8ff8b47b8229459617f686524ece409e3016e1997ffc1a0d1df5141e95",
+      "proto/marshal/rules/bytes.py": "01fdba986e5ed47aa7d2dcb93710b186ad26ec2c5a7985936ad390f214cdd233",
+      "proto/marshal/rules/dates.py": "92f76919cd3d78013a8f2f9118a2048e9786f900bac9efbcb10d0a2c891d719b",
+      "proto/marshal/rules/enums.py": "4cdf5a6449355b79c9476726031cf111fd023eb85851c2e2fa4525ddfa9b1c0f",
+      "proto/marshal/rules/field_mask.py": "fc21bd92f95ae3edf6a6a1d5633a172433df0bdcb2489cc424200a6500bed88a",
+      "proto/marshal/rules/message.py": "6ef001127ac17bff866a3ed3be2aa911fca02e80bac519ef05cbf8c85330f245",
+      "proto/marshal/rules/stringy_numbers.py": "b0eb02a25f9d07b7a96d50a3fc066ed59118a39b9a966839ce6e219345f59255",
+      "proto/marshal/rules/struct.py": "0bdba5fbd085d9d5bc33bffa55eceabe3704ce71ea86cab9fb13be0cd28b16eb",
+      "proto/marshal/rules/wrappers.py": "14356ec0bc570a7866efb8f4919f85d615466383e596681085afd31fdbe31377",
+      "proto/message.py": "5a7fa3d671641599da5d0142566f39d7a35abe1306aa36046d5a645521e71a41",
+      "proto/modules.py": "6cb9f1bffaf4fcb2776283d2ecec668a69a1249e470f1802d004926936abb94a",
+      "proto/primitives.py": "170bba290767d62eaf54f3c3dccc505c72af6f3ef3e41e364253b049391c89d2",
+      "proto/utils.py": "5f8d0d16dfb17b8fcbdba0aa2ac6813f88583d4abddb0eb636262aaeb9d39ae8",
+      "proto/version.py": "2b01ab969fe36bb8e46ef79b9e9c0acc9731bb298c21facdffecfad8e62f8ce6",
+      "proto_plus-1.29.0.dist-info/METADATA": "53ba48a72466ce01421899f516577705a58083f7e90139d967ce42ed15b611d2",
+      "proto_plus-1.29.0.dist-info/RECORD": "384c292a05916163704eedc2f321b62096080e14195d240378525f4375c3e3e2",
+      "proto_plus-1.29.0.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "proto_plus-1.29.0.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "proto_plus-1.29.0.dist-info/top_level.txt": "1c583f356f55c610f24b3a860e6531a9487ac3c4199552e1e190c8c5892c4c23"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "bca584bb364f27aeb19a5eae6f49fcb1fdf54be2398fb792014848a87b59cd93",
+     "native": {},
+     "pth": {},
+     "sha256": "8acd070469a7aaf43f440b022ef9757c8cac1a9f866e933f59ae98669ddc6c8b"
+    }
+   },
+   "name": "proto-plus",
+   "provenance": {
+    "proto_plus-1.29.0-py3-none-any.whl": {
+     "kind": "Google"
+    }
+   },
+   "pypi": {
+    "author_email": "Google LLC <googleapis-packages@google.com>",
+    "license": "Apache 2.0",
+    "project_urls": {
+     "Documentation": "https://googleapis.dev/python/proto-plus/latest/",
+     "Homepage": "https://github.com/googleapis/google-cloud-python/tree/main/packages/proto-plus",
+     "Repository": "https://github.com/googleapis/google-cloud-python"
+    },
+    "summary": "Beautiful, Pythonic protocol buffers"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.29.0"
+  }
+ }
+}

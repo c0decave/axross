@@ -290,6 +290,7 @@ def _patched_gethostname(name: str):
 
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _FILE_ATTRIBUTE_READONLY = 0x01  # smbprotocol FileAttributes, MS-FSCC 2.6
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 _FILE_ATTRIBUTE_HIDDEN = 0x02
 _FILE_ATTRIBUTE_DIRECTORY = 0x10
 
@@ -309,7 +310,16 @@ class SmbSession(SessionLifecycle):
         """Connection arguments for every smbclient call. smbclient keys its
         pool by "host:port" and defaults every call to port 445, so a call
         without them dials 445 - not the port this session registered."""
-        return {"port": self._port}
+        kw = {"port": self._port}
+        connections = getattr(self, "_connections", None)
+        if connections is not None:
+            # This session's own pool: smbclient's default one is keyed
+            # by host:port for the whole process, so a second pane on
+            # another share of the same server shared - and on connect
+            # or close tore down - this pane's connection, and a call
+            # without credentials ran as whoever logged in last.
+            kw["connection_cache"] = connections
+        return kw
 
     def __init__(
         self,
@@ -357,11 +367,8 @@ class SmbSession(SessionLifecycle):
         effective_client_name = client_name or SMB_CLIENT_NAME
         from core.proxy import patched_create_connection
 
+        self._connections: dict = {}
         with _session_lock(host):
-            try:
-                smbclient.delete_session(host, port=port)
-            except Exception:
-                pass
 
             # Two scoped patches that nest cleanly:
             # 1) socket.gethostname returns our chosen WORKSTATION name
@@ -378,11 +385,13 @@ class SmbSession(SessionLifecycle):
                 _patched_gethostname(effective_client_name),
                 patched_create_connection(self._proxy),
             ):
-                smbclient.register_session(
+                # kept for security_info(): dialect, signing, encryption
+                self._smb_session = smbclient.register_session(
                     host,
                     username=username,
                     password=password,
                     port=port,
+                    connection_cache=self._connections,
                 )
                 # Verify credentials eagerly by doing a cheap listdir
                 # on the share root so a wrong-password / wrong-share
@@ -392,7 +401,7 @@ class SmbSession(SessionLifecycle):
                     smbclient.listdir(self._prefix, **self._kw)
                 except Exception as exc:
                     try:
-                        smbclient.delete_session(host, port=port)
+                        smbclient.delete_session(host, port=port, connection_cache=self._connections)
                     except Exception:
                         pass
                     raise OSError(f"SMB connect failed for {self._prefix}: {exc}") from exc
@@ -402,6 +411,13 @@ class SmbSession(SessionLifecycle):
     @property
     def name(self) -> str:
         return f"\\\\{self._host}\\{self._share} (SMB)"
+
+    def security_info(self):
+        """The negotiated SMB protection (dialect; encrypted, signed or
+        neither) for the security badge; None before a session exists."""
+        from core.conn_security import smb_session
+
+        return smb_session(getattr(self, "_smb_session", None), self._share)
 
     @property
     def connected(self) -> bool:
@@ -519,7 +535,7 @@ class SmbSession(SessionLifecycle):
         unc = self._unc(path)
         try:
             if self.is_dir(path):
-                if recursive and not smbclient.path.islink(unc, **self._kw):
+                if recursive and not self._is_reparse_point(unc):
                     self._rmdir_recursive(path)
                 else:
                     # A link to a directory goes as the link: smbclient
@@ -529,6 +545,14 @@ class SmbSession(SessionLifecycle):
                 smbclient.remove(unc, **self._kw)
         except _SMB_FAILURES as e:
             raise OSError(f"Cannot remove {path}: {e}") from e
+
+    def _is_reparse_point(self, unc: str) -> bool:
+        """A symlink, junction or mount point (the entry itself, not its
+        target): a recursive delete must not descend into it."""
+        if smbclient.path.islink(unc, **self._kw):
+            return True
+        attrs = getattr(smbclient.lstat(unc, **self._kw), "st_file_attributes", 0)
+        return isinstance(attrs, int) and bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
 
     _MAX_TREE_DEPTH = MAX_RECURSIVE_DELETE_DEPTH
 
@@ -801,6 +825,10 @@ class SmbSession(SessionLifecycle):
             permissions=mode & 0o777,
             is_dir=is_dir,
             attr_hidden=bool(attrs & _FILE_ATTRIBUTE_HIDDEN),
+            # A folder that is a reparse point - an NTFS junction or mount
+            # point, not only a symlink - counts as a link: a recursive
+            # delete removes it and never empties its target.
+            is_link=is_dir and bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT),
         )
 
     @classmethod

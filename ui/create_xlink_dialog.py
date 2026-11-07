@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 
 from core import xlink as XL
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 
 class CreateXlinkDialog(QDialog):
@@ -28,6 +29,7 @@ class CreateXlinkDialog(QDialog):
 
     def __init__(self, default_name: str = "", parent=None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "globe")
         self.setWindowTitle("Create XLink")
         self.resize(560, 220)
         self._build_ui(default_name)

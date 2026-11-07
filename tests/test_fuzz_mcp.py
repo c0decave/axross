@@ -468,6 +468,24 @@ def test_sad_http_survives_mutated_requests(http_server, root):
     assert _health_ok(port)
 
 
+@pytest.mark.parametrize("line, status", [
+    (b"POST /messages HTTP/1.", b"400"),
+    (b"POST0/messages HTTP/1.1", b"400"),
+    (b"POST /messages HTTP/2.0", b"505"),
+    (b"POST /messages", b"400"),
+])
+def test_sad_a_request_line_the_stdlib_cannot_parse_gets_a_status_line(
+        http_server, line, status):
+    """Python 3.11 left request_version at HTTP/0.9 for a request line it
+    could not parse and sent the error as a bare HTML body: a client that
+    spoke HTTP/1.x read no status line. Only "GET <path>" is HTTP/0.9."""
+    port, crashes = http_server
+    answer = _exchange(port, line + b"\r\nHost: 127.0.0.1\r\n\r\n")
+    assert answer.startswith(b"HTTP/1.0 " + status + b" "), answer[:80]
+    assert not _exchange(port, b"GET /health\r\n").startswith(b"HTTP/")
+    assert not crashes
+
+
 def test_sad_http_mutated_bodies_in_a_live_session(http_server, root):
     port, crashes = http_server
     init = b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'

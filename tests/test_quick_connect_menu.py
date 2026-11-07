@@ -49,6 +49,10 @@ def window(tmp_path):
     win.show()
     pump()
     yield win
+    # The profiles went to this worker's real profile store: a later test's
+    # window would list them (test_terminal_bookmarks.py saw "beta").
+    for name in ("alpha", "beta"):
+        win._profile_manager.remove(name)
     win.close()
     win.deleteLater()
     pump()

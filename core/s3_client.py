@@ -226,7 +226,7 @@ class S3Session(SessionLifecycle):
         # Validate bucket name before connecting
         import re
 
-        if not re.match(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", bucket):
+        if not re.fullmatch(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", bucket):
             raise OSError(
                 f"Invalid S3 bucket name '{bucket}'. "
                 "Bucket names must be 3-63 characters, lowercase letters, digits, "

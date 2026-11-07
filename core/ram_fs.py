@@ -46,6 +46,7 @@ import io
 import logging
 import posixpath
 import threading
+import time
 from datetime import datetime
 from typing import IO, Any
 
@@ -137,6 +138,40 @@ def _available_memory_bytes() -> int:
         )
         _pressure_guard_warned = True
     return -1
+
+
+#: One reading of the free memory stands for the checks after it - for at
+#: most PROBE_SECONDS, and only while it leaves PROBE_MARGIN_BYTES above the
+#: reserve after every byte granted since. A copy of 19 000 small files into
+#: RamFS read /proc/meminfo once per file (most of the copy's time); near
+#: the reserve every check reads afresh, as before.
+PROBE_SECONDS = 0.5
+PROBE_MARGIN_BYTES = 64 * 1024 * 1024
+_probe_lock = threading.Lock()
+_probe: dict = {"source": None, "at": 0.0, "available": -1, "granted": 0}
+
+
+def _memory_available_for(additional_bytes: int, reserve: int) -> int:
+    """The free memory to check *additional_bytes* against: a recent
+    reading less what was granted since, or a fresh one (-1: no probe)."""
+    now = time.monotonic()
+    with _probe_lock:
+        probe = _probe
+        if (
+            probe["source"] is _available_memory_bytes  # not patched since
+            and now - probe["at"] < PROBE_SECONDS
+            and probe["available"] >= 0
+            and probe["available"] - probe["granted"] - additional_bytes
+            >= reserve + PROBE_MARGIN_BYTES
+        ):
+            available = probe["available"] - probe["granted"]
+            probe["granted"] += additional_bytes
+            return available
+    available = _available_memory_bytes()
+    with _probe_lock:
+        _probe.update(source=_available_memory_bytes, at=time.monotonic(),
+                      available=available, granted=additional_bytes)
+    return available
 
 
 class RamFsCapacityError(OSError):
@@ -305,7 +340,7 @@ class RamFsSession(SessionLifecycle):
             )
         if not memory:
             return
-        avail = _available_memory_bytes()
+        avail = _memory_available_for(int(additional_bytes), self._system_reserve)
         if avail >= 0 and avail - additional_bytes < self._system_reserve:
             raise RamFsCapacityError(
                 f"RamFS({self._label}) refuses {additional_bytes}-byte "

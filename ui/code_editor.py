@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import re
 
-from PyQt6.QtCore import QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QRect, QSize, Qt, QTimer
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -18,6 +18,8 @@ from PyQt6.QtGui import (
     QTextFormat,
 )
 from PyQt6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
+
+from core.thread_relay import GuiCall
 
 log = logging.getLogger(__name__)
 
@@ -176,8 +178,6 @@ class PygmentsHighlighter(QSyntaxHighlighter):
     compared with the ranges it was painted with, not with its new
     neighbour's."""
 
-    _lexed = pyqtSignal(int, object)
-
     def __init__(self, document, dark: bool) -> None:
         super().__init__(document)
         self._lexer = None
@@ -194,7 +194,10 @@ class PygmentsHighlighter(QSyntaxHighlighter):
         self._timer.setSingleShot(True)
         self._timer.setInterval(200)
         self._timer.timeout.connect(self.relex)
-        self._lexed.connect(self._apply)
+        # The lexer thread hands its result over through this, not through a
+        # signal of the highlighter: closing the editor tab deletes the
+        # highlighter, maybe while the thread reports (core/thread_relay.py).
+        self._lexed = GuiCall(self._apply)
         document.contentsChange.connect(self._changed)
 
     @property
@@ -293,6 +296,8 @@ class PygmentsHighlighter(QSyntaxHighlighter):
             # lexer, and the stale ones held the interpreter from the GUI.
             return self.generation != generation
 
+        lexed = self._lexed
+
         def work() -> None:
             try:
                 ranges = _token_ranges(lexer, text, starts, stale, paints)
@@ -300,10 +305,7 @@ class PygmentsHighlighter(QSyntaxHighlighter):
                 return
             except Exception:  # noqa: BLE001 - a lexer bug leaves the text plain
                 ranges = {}
-            try:
-                self._lexed.emit(generation, result(ranges))
-            except RuntimeError:  # the editor is gone
-                pass
+            lexed(generation, result(ranges))
 
         threading.Thread(target=work, name="axross-lex", daemon=True).start()
 

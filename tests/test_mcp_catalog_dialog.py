@@ -60,6 +60,27 @@ def keyring_store(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_catalog_left_open():
+    """Most tests here leave their catalog (window-modal) and its settings
+    dialog open; a later test in the same process then found the catalog as
+    QApplication.activeModalWidget() (tests/test_viewer_windows_independent.py
+    failed its modal watchdog). Close and delete them after each test."""
+    yield
+    from ui.agent_settings_dialog import AgentSettingsDialog
+    from ui.mcp_catalog_dialog import McpCatalogDialog
+
+    left = [w for w in QApplication.allWidgets()
+            if isinstance(w, (McpCatalogDialog, AgentSettingsDialog))]
+    for widget in left:
+        if isinstance(widget, McpCatalogDialog):
+            widget.done(0)
+    for widget in left:
+        widget.close()
+        widget.deleteLater()
+    APP.processEvents()
+
+
+@pytest.fixture(autouse=True)
 def _quiet(monkeypatch):
     messages = []
     for name in ("information", "warning", "critical"):
@@ -105,9 +126,9 @@ def test_happy_add_from_catalog_through_to_the_settings_file(tmp_path, monkeypat
     groups = {cat.tree.topLevelItem(i).text(0) for i in range(cat.tree.topLevelItemCount())}
     assert {"Files & Dev", "Web & Data", "Knowledge & Reasoning", "Testing",
             "Security"} <= groups
-    _click_entry(cat, "time")
-    assert "Time (Reference)" in cat.details.toPlainText()
-    assert cat.network_combo.currentData() == "none" and cat.name_edit.text() == "time"
+    _click_entry(cat, "vuln-nist")
+    assert "Vuln NIST (NVD / CVE lookups)" in cat.details.toPlainText()
+    assert cat.network_combo.currentData() == "none" and cat.name_edit.text() == "vuln-nist"
     QTest.mouseClick(cat.install_button, Qt.MouseButton.LeftButton)
     _wait(lambda: cat.installs)
     log = cat.log.toPlainText()
@@ -117,7 +138,7 @@ def test_happy_add_from_catalog_through_to_the_settings_file(tmp_path, monkeypat
     save = dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save)
     QTest.mouseClick(save, Qt.MouseButton.LeftButton)
     (server,) = S.AgentSettings.load(path).mcp_servers
-    entry = next(e for e in M.load_builtin()[0] if e.name == "time")
+    entry = next(e for e in M.load_builtin()[0] if e.name == "vuln-nist")
     assert server.container and server.enabled and server.command[-1] == entry.image_ref
     assert server.package["kind"] == "oci" and server.package["digest"] == entry.digest
     raw = json.loads(path.read_text())["mcp_servers"][0]
@@ -160,14 +181,14 @@ def test_happy_the_settings_dialog_and_the_tools_menu_reach_it(tmp_path, monkeyp
         page = dialog.page("agent")
         cat = page.add_from_catalog()
         _wait(lambda: cat.tree.topLevelItemCount() > 0)
-        _click_entry(cat, "sequentialthinking")
+        _click_entry(cat, "vuln-nist")
         QTest.mouseClick(cat.install_button, Qt.MouseButton.LeftButton)
         _wait(lambda: cat.installs)
         cat.close()
         assert dialog.apply()
         data = json.loads(stores.agent.read_text())
         (server,) = data["mcp_servers"]
-        assert server["name"] == "sequentialthinking" and server["container"] is True
+        assert server["name"] == "vuln-nist" and server["container"] is True
         assert server["enabled"] is True
     finally:
         stores.restore()
@@ -260,7 +281,7 @@ def test_sad_a_failed_install_adds_nothing(tmp_path, monkeypatch):
     _settings(path)
     dlg = _dialog(path)
     cat = _open_catalog(dlg)
-    _click_entry(cat, "time")
+    _click_entry(cat, "vuln-nist")
     QTest.mouseClick(cat.install_button, Qt.MouseButton.LeftButton)
     _wait(lambda: "Install failed" in cat.log.toPlainText())
     assert "manifest unknown" in cat.log.toPlainText()
@@ -273,7 +294,7 @@ def test_sad_an_install_can_be_cancelled(tmp_path, monkeypatch):
     _settings(path)
     dlg = _dialog(path)
     cat = _open_catalog(dlg)
-    _click_entry(cat, "time")
+    _click_entry(cat, "vuln-nist")
     QTest.mouseClick(cat.install_button, Qt.MouseButton.LeftButton)
     _wait(lambda: cat.cancel_button.isEnabled())
     assert not cat.install_button.isEnabled()
@@ -324,7 +345,7 @@ def test_edge_uninstall_removes_the_image_on_save(tmp_path, monkeypatch, keyring
     _settings(path)
     dlg = _dialog(path)
     cat = _open_catalog(dlg)
-    _click_entry(cat, "time")
+    _click_entry(cat, "vuln-nist")
     QTest.mouseClick(cat.install_button, Qt.MouseButton.LeftButton)
     _wait(lambda: cat.installs)
     cat.close()
@@ -362,21 +383,21 @@ def test_edge_an_update_is_shown_never_applied(tmp_path):
 
 def test_edge_pulled_images_are_marked_and_names_kept_free(tmp_path, monkeypatch):
     podman = fake_podman(tmp_path, monkeypatch)
-    entry = next(e for e in M.load_builtin()[0] if e.name == "time")
+    entry = next(e for e in M.load_builtin()[0] if e.name == "vuln-nist")
     podman.add_image("f" * 64, [entry.image_ref], [entry.image_ref])
     path = tmp_path / "agent.json"
     s = S.AgentSettings()
     s.mcp_sources = M.CatalogSources(dockerhub=False, mcpregistry=False, c0decave=False,
                                      discover=False)
-    s.mcp_servers.append(C.McpServerConfig(name="time", command=("x",)))
+    s.mcp_servers.append(C.McpServerConfig(name="vuln-nist", command=("x",)))
     s.save(path)
     dlg = _dialog(path)
     cat = _open_catalog(dlg)
     _wait(lambda: any(cat.tree.topLevelItem(i).child(j).text(5) == "pulled"
                       for i in range(cat.tree.topLevelItemCount())
                       for j in range(cat.tree.topLevelItem(i).childCount())))
-    _click_entry(cat, "time")
-    assert cat.name_edit.text() == "time2"
+    _click_entry(cat, "vuln-nist")
+    assert cat.name_edit.text() == "vuln-nist2"
     assert "Image: pulled" in cat.details.toPlainText()
 
 
@@ -402,7 +423,7 @@ def test_edge_an_allowlist_server_keeps_its_hosts_editable(tmp_path):
 def test_edge_a_registry_entry_is_shown_as_untrusted_text(tmp_path, monkeypatch):
     fake_podman(tmp_path, monkeypatch)
     hostile = {"servers": [{"server": {
-        "name": "io.evil/x", "description": "<b>bold</b>‮<script>alert(1)</script>",
+        "name": "io.evil/x", "description": "<b>bold</b>\u202e<script>alert(1)</script>",
         "version": "1", "repository": {"url": "javascript:alert(1)"},
         "packages": [{"registryType": "npm", "identifier": "x-mcp", "version": "1.0.0",
                       "transport": {"type": "stdio"}}]}, "_meta": {}}],
@@ -415,7 +436,7 @@ def test_edge_a_registry_entry_is_shown_as_untrusted_text(tmp_path, monkeypatch)
     _wait(lambda: cat.tree.topLevelItemCount() > 0)
     _click_entry(cat, "mcpregistry:io.evil/x")
     text = cat.details.toPlainText()
-    assert "<b>bold</b>" in text and "‮" not in text  # as text, not as markup
+    assert "<b>bold</b>" in text and "\u202e" not in text  # as text, not as markup
     assert "javascript" not in text and not cat.open_page_button.isEnabled()
     cat.close()
 

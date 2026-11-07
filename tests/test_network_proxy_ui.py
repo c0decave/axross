@@ -280,6 +280,16 @@ class ConnectionDialogProxyModeTest(_QtCase):
     def _select(self, dialog, proto: str) -> None:
         dialog._protocol_combo.setCurrentIndex(dialog._protocol_ids.index(proto))
 
+    def test_no_combo_box_shows_a_doubled_ampersand(self) -> None:
+        # "Network && Proxy" showed both ampersands: a combo box is no menu.
+        from PyQt6.QtWidgets import QComboBox
+
+        dialog = self._dialog()
+        texts = [box.itemText(i) for box in dialog.findChildren(QComboBox)
+                 for i in range(box.count())]
+        self.assertIn("Default proxy (Tools > Network & Proxy)", texts)
+        self.assertEqual([t for t in texts if "&&" in t], [])
+
     def test_new_profile_is_direct_without_a_default_proxy(self) -> None:
         dialog = self._dialog()
         self._select(dialog, "sftp")
@@ -430,6 +440,20 @@ class MainWindowIndicatorTest(_QtCase):
         cls._patch.stop()
         shutil.rmtree(cls._home, ignore_errors=True)
 
+    def _drain_proxy(self) -> None:
+        """The route is resolved on a worker (0.14.176): wait for it."""
+        import time
+
+        from PyQt6.QtWidgets import QApplication
+
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            if not any(j.running for j in getattr(self.win, "_proxy_jobs", [])):
+                QApplication.processEvents()
+                return
+            time.sleep(0.01)
+
     def _pane_with(self, profile):
         pane = mock.MagicMock()
         self.win._pane_profiles[pane] = profile
@@ -448,6 +472,7 @@ class MainWindowIndicatorTest(_QtCase):
             ConnectionProfile(name="x", protocol="sftp", host="h", proxy_mode="default")
         )
         self.win._refresh_proxy_indicator(pane)
+        self._drain_proxy()
         text, tip = pane.set_proxy_info.call_args[0]
         self.assertEqual(text, "via HTTP gw:3128")
         self.assertIn("default proxy", tip)
@@ -455,11 +480,13 @@ class MainWindowIndicatorTest(_QtCase):
     def test_direct_profile_clears_the_label(self) -> None:
         pane = self._pane_with(ConnectionProfile(name="x", protocol="sftp", host="h"))
         self.win._refresh_proxy_indicator(pane)
+        self._drain_proxy()
         self.assertEqual(pane.set_proxy_info.call_args[0][0], "")
 
     def test_pane_without_profile_is_cleared(self) -> None:
         pane = mock.MagicMock()
         self.win._refresh_proxy_indicator(pane)
+        self._drain_proxy()
         pane.set_proxy_info.assert_called_once_with("", "")
 
     def test_unresolvable_pac_is_flagged_not_raised(self) -> None:
@@ -471,6 +498,7 @@ class MainWindowIndicatorTest(_QtCase):
             PS, "pac_script", side_effect=PS.ProxyResolutionError("PAC unreachable")
         ):
             self.win._refresh_proxy_indicator(pane)
+            self._drain_proxy()
         text, tip = pane.set_proxy_info.call_args[0]
         self.assertEqual(text, "Proxy: ?")
         self.assertIn("PAC unreachable", tip)
@@ -489,6 +517,7 @@ class MainWindowIndicatorTest(_QtCase):
             ConnectionProfile(name="x", protocol="sftp", host="h", proxy_mode="default")
         )
         self.win._refresh_proxy_indicator(pane)
+        self._drain_proxy()
         for part in pane.set_proxy_info.call_args[0]:
             self.assertNotIn("TOPSECRET", part)
 

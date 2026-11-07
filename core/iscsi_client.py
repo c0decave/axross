@@ -14,6 +14,7 @@ import glob
 import logging
 import os
 import re
+import secrets
 import shutil
 import stat as stat_module
 import subprocess
@@ -24,7 +25,7 @@ from typing import IO
 
 from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
-from core.local_fs import copy_file_onto, entry_stat, group_name, owner_name
+from core.local_fs import copy_file_onto, entry_stat, group_name, owner_name, unstattable_item
 from core.path_policy import confined_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
@@ -45,6 +46,39 @@ _PRIVILEGED_CMD_TIMEOUT = 30.0  # seconds
 # argv-based CHAP flow so we never feed shell metacharacters to sudo.
 _IQN_SAFE = re.compile(r"^[a-zA-Z0-9.:_\-]+$")
 _IP_SAFE = re.compile(r"^[0-9a-fA-F.:]+$")
+
+#: RFC 3720: an iSCSI name is at most 223 bytes.
+_INITIATOR_NAME_MAX = 223
+
+
+def validate_initiator_name(name: str) -> str:
+    """The initiator name (IQN) a profile sends instead of the system's
+    ``/etc/iscsi/initiatorname.iscsi``. Freely chosen - ``iqn.``, ``eui.``,
+    ``naa.`` or anything else the target accepts - but one token of
+    printable ASCII: open-iscsi keeps it in a ``key = value`` record, where
+    a space, ``#`` or line break would end or comment out the value."""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    if len(name.encode()) > _INITIATOR_NAME_MAX:
+        raise ValueError(f"iSCSI initiator name is longer than {_INITIATOR_NAME_MAX} bytes")
+    bad = sorted({c for c in name if not ("!" <= c <= "~") or c == "#"})
+    if bad:
+        raise ValueError(f"iSCSI initiator name {name!r} contains {''.join(bad)!r}: "
+                         "printable ASCII without spaces or '#' only")
+    return name
+
+
+def validate_interface(name: str) -> str:
+    """A network interface the iSCSI connection is bound to (Linux names:
+    1-15 bytes, no '/', no whitespace, not '.' or '..')."""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    if (len(name.encode()) > 15 or name in (".", "..") or "/" in name or "#" in name
+            or any(not ("!" <= c <= "~") for c in name)):
+        raise ValueError(f"{name!r} is no network interface name")
+    return name
 
 
 class IscsiSession(SessionLifecycle):
@@ -71,9 +105,23 @@ class IscsiSession(SessionLifecycle):
         proxy_port: int = 0,
         proxy_username: str = "",
         proxy_password: str = "",
+        initiator_name: str = "",
+        initiator_interface: str = "",
     ):
         from core.proxy import LocalTunnel, proxy_config_from_kwargs
 
+        # What this initiator tells the target about itself: its name
+        # (the IQN of the login and of SendTargets discovery) and the
+        # network interface it sends from. Either one gets the session an
+        # open-iscsi interface record of its own (_create_iface).
+        self._initiator_name = validate_initiator_name(initiator_name)
+        self._initiator_interface = validate_interface(initiator_interface)
+        self._iface = (
+            f"axross-{secrets.token_hex(4)}"
+            if self._initiator_name or self._initiator_interface
+            else ""
+        )
+        self._iface_created = False
         cfg = proxy_config_from_kwargs(
             {
                 "proxy_type": proxy_type,
@@ -135,6 +183,7 @@ class IscsiSession(SessionLifecycle):
         """Discover the target, log in, wait for the device, and mount."""
         if self.connected:
             return
+        self._create_iface()
         self._discover()
         self._set_chap_if_needed()
         self._login()
@@ -153,6 +202,7 @@ class IscsiSession(SessionLifecycle):
             self._unmount()
         if self._logged_in:
             self._logout()
+        self._delete_iface()
         if self._tmp_dir_created and os.path.isdir(self._mount_point) and not self._mounted:
             remove_private_mount_point(self._mount_point)
             log.info("Removed temp mount dir: %s", self._mount_point)
@@ -179,6 +229,7 @@ class IscsiSession(SessionLifecycle):
                         items.append(self._entry_to_item(entry))
                     except OSError as exc:
                         log.warning("Cannot stat %s: %s", entry.path, exc)
+                        items.append(unstattable_item(entry, exc))  # as LocalFS
         except OSError as exc:
             raise OSError(f"Cannot list {path}: {exc}") from exc
         return items
@@ -269,7 +320,12 @@ class IscsiSession(SessionLifecycle):
 
     @staticmethod
     def targets_discover(
-        portal_ip: str, *, portal_port: int = 3260, timeout: float = 10.0
+        portal_ip: str,
+        *,
+        portal_port: int = 3260,
+        timeout: float = 10.0,
+        initiator_name: str = "",
+        initiator_interface: str = "",
     ) -> list[dict]:
         """Discover iSCSI targets advertised at ``portal_ip:portal_port``
         via ``iscsiadm -m discovery -t sendtargets``. Static method so
@@ -279,10 +335,17 @@ class IscsiSession(SessionLifecycle):
         target endpoint (a single IQN can advertise multiple
         portals).
 
+        ``initiator_name`` / ``initiator_interface``: what the discovery
+        login sends as the initiator's name and the network interface it
+        leaves through (a temporary open-iscsi interface record, removed
+        afterwards); empty = the system's.
+
         Requires ``iscsiadm`` (open-iscsi) on PATH and root/sudo
         privileges (the SCSI mid-layer + initiator config require
         them on Linux). Raises ``OSError`` when missing.
         """
+        initiator_name = validate_initiator_name(initiator_name)
+        initiator_interface = validate_interface(initiator_interface)
         if "\r" in portal_ip or "\n" in portal_ip or " " in portal_ip:
             raise ValueError("targets_discover portal_ip must not contain CR/LF/space")
         binary = shutil.which("iscsiadm")
@@ -299,7 +362,27 @@ class IscsiSession(SessionLifecycle):
             "-p",
             f"{portal_ip}:{int(portal_port)}",
         ]
+        iface = ""
+        if initiator_name or initiator_interface:
+            iface = f"axross-{secrets.token_hex(4)}"
+            settings = [("iface.transport_name", "tcp")]
+            if initiator_name:
+                settings.append(("iface.initiatorname", initiator_name))
+            if initiator_interface:
+                settings.append(("iface.net_ifacename", initiator_interface))
+            steps = [[binary, "-m", "iface", "-I", iface, "-o", "new"]] + [
+                [binary, "-m", "iface", "-I", iface, "-o", "update", "-n", k, "-v", v]
+                for k, v in settings
+            ]
+            cmd += ["-I", iface]
         try:
+            if iface:
+                for step in steps:
+                    made = subprocess.run(step, capture_output=True, text=True,
+                                          timeout=float(timeout), env=clean_child_env())
+                    if made.returncode != 0:
+                        raise OSError(f"iscsiadm iface rc={made.returncode}: "
+                                      f"{(made.stderr or made.stdout).strip()[:300]}")
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -309,6 +392,16 @@ class IscsiSession(SessionLifecycle):
             )
         except subprocess.TimeoutExpired as exc:
             raise OSError(f"iscsiadm discovery timed out: {exc}") from exc
+        finally:
+            if iface:
+                # the node records discovery bound to it, then the record
+                for cleanup in ([binary, "-m", "node", "-I", iface, "-o", "delete"],
+                                [binary, "-m", "iface", "-I", iface, "-o", "delete"]):
+                    try:
+                        subprocess.run(cleanup, capture_output=True, text=True,
+                                       timeout=float(timeout), env=clean_child_env())
+                    except (OSError, subprocess.TimeoutExpired) as exc:
+                        log.warning("iSCSI cleanup of %s: %s", iface, exc)
         if proc.returncode != 0:
             raise OSError(
                 f"iscsiadm discovery rc={proc.returncode}: "
@@ -345,6 +438,7 @@ class IscsiSession(SessionLifecycle):
             self._target_iqn,
             "-p",
             f"{self._portal_ip}:{self._portal_port}",
+            *self._iface_args(),
             "--login",
         ]
         proc = subprocess.run(
@@ -492,6 +586,64 @@ class IscsiSession(SessionLifecycle):
     # Internal helpers -- iSCSI lifecycle
     # ------------------------------------------------------------------
 
+    def _iface_args(self) -> list[str]:
+        iface = getattr(self, "_iface", "")
+        return ["-I", iface] if iface else []
+
+    def _iface_settings(self) -> list[tuple[str, str]]:
+        settings = [("iface.transport_name", "tcp")]
+        if self._initiator_name:
+            settings.append(("iface.initiatorname", self._initiator_name))
+        if self._initiator_interface:
+            settings.append(("iface.net_ifacename", self._initiator_interface))
+        return settings
+
+    def _create_iface(self) -> None:
+        """The session's own open-iscsi interface record, so the login and
+        the discovery send this profile's initiator name and leave through
+        its interface - the system's initiatorname.iscsi and every other
+        session stay as they are. Removed again by _delete_iface."""
+        if not getattr(self, "_iface", "") or self._iface_created:
+            return
+        self._run_privileged(["iscsiadm", "-m", "iface", "-I", self._iface, "-o", "new"])
+        self._iface_created = True
+        try:
+            for key, value in self._iface_settings():
+                self._run_privileged(
+                    ["iscsiadm", "-m", "iface", "-I", self._iface, "-o", "update",
+                     "-n", key, "-v", value]
+                )
+        except BaseException:
+            self._delete_iface()
+            raise
+        log.info(
+            "iSCSI interface record %s: initiator %s, network interface %s",
+            self._iface,
+            self._initiator_name or "(system default)",
+            self._initiator_interface or "(any)",
+        )
+
+    def _delete_iface(self) -> None:
+        """The node records bound to the session's interface record, then
+        the record itself. Best effort: a failure is logged, never raised
+        (disconnect must go on)."""
+        if not getattr(self, "_iface_created", False):
+            return
+        portal = f"{self._portal_ip}:{self._portal_port}"
+        for cmd in (
+            ["iscsiadm", "-m", "node", "-T", self._target_iqn, "-p", portal,
+             "-I", self._iface, "-o", "delete"],
+            ["iscsiadm", "-m", "iface", "-I", self._iface, "-o", "delete"],
+        ):
+            try:
+                result = self._run_privileged(cmd, check=False)
+                if result.returncode != 0:
+                    log.warning("iSCSI cleanup %s: rc=%s %s", " ".join(cmd[1:4]),
+                                result.returncode, (result.stderr or "").strip()[:200])
+            except OSError as exc:
+                log.warning("iSCSI cleanup %s: %s", " ".join(cmd[1:4]), exc)
+        self._iface_created = False
+
     def _discover(self) -> None:
         """Discover iSCSI targets on the portal."""
         portal = f"{self._portal_ip}:{self._portal_port}"
@@ -509,6 +661,7 @@ class IscsiSession(SessionLifecycle):
                     self._target_iqn,
                     "-p",
                     portal,
+                    *self._iface_args(),
                     "-o",
                     "new",
                 ],
@@ -516,7 +669,7 @@ class IscsiSession(SessionLifecycle):
             return
         log.info("Discovering iSCSI targets on %s", portal)
         result = self._run_privileged(
-            ["iscsiadm", "-m", "discovery", "-t", "sendtargets", "-p", portal],
+            ["iscsiadm", "-m", "discovery", "-t", "sendtargets", "-p", portal, *self._iface_args()],
         )
         log.debug("Discovery output:\n%s", result.stdout)
 
@@ -561,6 +714,7 @@ class IscsiSession(SessionLifecycle):
             self._target_iqn,
             "-p",
             portal,
+            *self._iface_args(),
             "--op=update",
         ]
         # Step 1: non-secret authmethod update via iscsiadm.
@@ -601,13 +755,13 @@ class IscsiSession(SessionLifecycle):
         this target. Returns an empty list when sudo isn't available
         or the iqn/ip values would otherwise need escaping before
         going into a shell glob."""
-        if not _IQN_SAFE.match(self._target_iqn or ""):
+        if not _IQN_SAFE.fullmatch(self._target_iqn or ""):
             log.debug(
                 "IQN %r contains characters we refuse to glob",
                 self._target_iqn,
             )
             return []
-        if not _IP_SAFE.match(self._portal_ip or ""):
+        if not _IP_SAFE.fullmatch(self._portal_ip or ""):
             log.debug(
                 "IP %r contains characters we refuse to glob",
                 self._portal_ip,
@@ -616,7 +770,8 @@ class IscsiSession(SessionLifecycle):
         if not isinstance(self._portal_port, int):
             return []
         pattern = (
-            f"/etc/iscsi/nodes/{self._target_iqn}/{self._portal_ip},{self._portal_port},*/default"
+            f"/etc/iscsi/nodes/{self._target_iqn}/{self._portal_ip},{self._portal_port},*/"
+            f"{getattr(self, '_iface', '') or 'default'}"
         )
         # Try non-privileged glob first. If the on-disk perms let us
         # read the node directory we get the paths without sudo.
@@ -767,7 +922,8 @@ class IscsiSession(SessionLifecycle):
         log.info("Logging in to %s via %s", self._target_iqn, portal)
         try:
             self._run_privileged(
-                ["iscsiadm", "-m", "node", "-T", self._target_iqn, "-p", portal, "--login"],
+                ["iscsiadm", "-m", "node", "-T", self._target_iqn, "-p", portal,
+                 *self._iface_args(), "--login"],
             )
         except subprocess.CalledProcessError as exc:
             if exc.returncode == 15:
@@ -814,7 +970,8 @@ class IscsiSession(SessionLifecycle):
         log.info("Logging out from %s", self._target_iqn)
         try:
             self._run_privileged(
-                ["iscsiadm", "-m", "node", "-T", self._target_iqn, "-p", portal, "--logout"],
+                ["iscsiadm", "-m", "node", "-T", self._target_iqn, "-p", portal,
+                 *self._iface_args(), "--logout"],
             )
         except subprocess.CalledProcessError as exc:
             log.warning("iSCSI logout failed: %s", exc)

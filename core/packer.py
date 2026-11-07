@@ -343,11 +343,27 @@ def _copy(src: _Exact, dst) -> int:
 # ---------------------------------------------------------------------------
 
 
+#: The local date and time a ZIP entry can hold (its DOS date field).
+_ZIP_EARLIEST = (1980, 1, 1, 0, 0, 0)
+_ZIP_LATEST = (2107, 12, 31, 23, 59, 58)
+
+
+def _zip_date_time(mtime: float) -> tuple:
+    """*mtime* as a ZIP entry's local date and time, held to what a ZIP can
+    store: the clamp is on the local time - 1980-01-01 00:00 UTC is a
+    1979 date west of UTC."""
+    try:
+        stamp = tuple(time.localtime(mtime)[:6])
+    except (OverflowError, OSError, ValueError):
+        return _ZIP_LATEST if mtime > 0 else _ZIP_EARLIEST
+    return max(_ZIP_EARLIEST, min(_ZIP_LATEST, stamp))
+
+
 def _write_zip(backend, entries, out_path, opts, step, cancel) -> None:
     level = opts.level_for("deflate")
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=level) as zf:
         for e in entries:
-            stamp = time.localtime(e.mtime)[:6]
+            stamp = _zip_date_time(e.mtime)
             if e.is_dir:
                 info = zipfile.ZipInfo(e.arcname + "/", date_time=stamp)
                 info.external_attr = (stat_mod.S_IFDIR | 0o755) << 16 | 0x10
@@ -492,9 +508,19 @@ def _place_local(tmp: str, backend, folder: str, stem: str, suffix: str) -> str:
 
 
 def _place_remote(tmp: str, backend, folder: str, stem: str, suffix: str, cancel) -> str:
+    """Upload the archive under a hidden temporary name next to its place,
+    then rename it there: a dropped connection leaves no truncated
+    ``bundle.zip`` under the final name - at most the hidden part."""
+    import secrets
+
+    from core.path_policy import hidden_sibling_name
+    from core.server_ops import server_side_move
+
     target = _unique(backend, folder, stem, suffix)
+    name = target.rsplit(backend.separator(), 1)[-1]
+    part = backend.join(folder, hidden_sibling_name(name, f".{secrets.token_hex(6)}.part"))
     try:
-        with open(tmp, "rb") as src, backend.open_write(target) as dst:
+        with open(tmp, "rb") as src, backend.open_write(part) as dst:
             while True:
                 if cancel is not None and cancel.is_set():
                     raise PackCancelled("cancelled")
@@ -502,10 +528,11 @@ def _place_remote(tmp: str, backend, folder: str, stem: str, suffix: str, cancel
                 if not chunk:
                     break
                 dst.write(chunk)
+        server_side_move(backend, part, target, overwrite=False)
     except BaseException:
         try:
-            if backend.exists(target):
-                backend.remove(target)
+            if backend.exists(part):
+                backend.remove(part)
         except OSError:
             pass
         raise
@@ -553,13 +580,19 @@ def pack(
             raise PackCancelled("cancelled")
 
     local = _is_local(backend)
-    staging = tempfile.mkdtemp(prefix="axross-pack-")
-    if local:
-        fd, tmp = tempfile.mkstemp(prefix=_TEMP_PREFIX, suffix=".tmp", dir=folder)
-        os.close(fd)
-    else:
-        tmp = os.path.join(staging, "archive")
     try:
+        staging = tempfile.mkdtemp(prefix="axross-pack-")
+    except OSError as exc:
+        raise PackError(f"packing failed: no temporary folder: {exc}") from exc
+    tmp = ""
+    try:
+        # Inside the try: a folder that cannot be written is a PackError,
+        # and the staging folder goes with the rest.
+        if local:
+            fd, tmp = tempfile.mkstemp(prefix=_TEMP_PREFIX, suffix=".tmp", dir=folder)
+            os.close(fd)
+        else:
+            tmp = os.path.join(staging, "archive")
         if fmt.fmt_id == "zip":
             _write_zip(backend, entries, tmp, options, step, cancel)
         elif fmt.fmt_id == "7z":
@@ -585,7 +618,7 @@ def pack(
     except Exception as exc:  # noqa: BLE001 - py7zr raises its own types
         raise PackError(f"packing failed: {type(exc).__name__}: {exc}") from exc
     finally:
-        if os.path.exists(tmp):
+        if tmp and os.path.exists(tmp):
             try:
                 os.unlink(tmp)
             except OSError:

@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core.local_fs import LocalFS  # noqa: E402
+from tests.off_gui_wait import _drain_scan_job  # noqa: E402
 
 MIB = 1024 * 1024
 CHUNKS = 40  # 40 MiB, read one MiB at a time
@@ -84,6 +85,7 @@ class SnapshotJobTest(unittest.TestCase):
         from ui.snapshot_browser_dialog import SnapshotBrowserDialog
 
         self.dlg = SnapshotBrowserDialog(LocalFS(), str(self.target_file))
+        _drain_scan_job(self.dlg._list_job)  # listed off the GUI thread
         self.addCleanup(self.dlg.deleteLater)
         self.dlg.show()
         self.entry = SimpleNamespace(

@@ -59,9 +59,9 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -73,6 +73,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -90,7 +91,9 @@ from core import mcp_client as MC
 from core.agent_net import parse_host
 from core.agent_sandbox import ENGINES, LEVELS, RULES, SandboxProfile, available
 from core.i18n import tr
+from core.thread_relay import GuiCall
 from ui.close_corner import add_close_corner
+from ui.icon_provider import set_window_icon
 
 #: Why the function boxes of the Access page cannot be ticked.
 SWITCH_ON_FIRST = 'Switch on "Let agents use axross functions" first to choose these.'
@@ -143,6 +146,24 @@ def default_detector(**kwargs):
     return detect(podman=Podman(), **kwargs)
 
 
+def shrinkable(combo: QComboBox, chars: int = 18) -> QComboBox:
+    """*combo* no longer as wide as its longest entry at least: it fills its
+    place and gives way down to *chars* characters (the open list still
+    shows each entry whole). Long entries ("Lax - the host's network,
+    folders as configured") made Settings > Agent scroll sideways."""
+    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(chars)
+    combo.setSizePolicy(QSizePolicy.Policy.Expanding, combo.sizePolicy().verticalPolicy())
+    return combo
+
+
+def _wrapped_note(text: str) -> QLabel:
+    note = QLabel(text)
+    note.setWordWrap(True)
+    note.setProperty("role", "muted")
+    return note
+
+
 def free_name(name: str, taken) -> str:
     """*name*, or with a number when *taken* has it (at most 32 characters)."""
     candidate, n = name, 1
@@ -169,6 +190,31 @@ def confirm_detected_install(parent, detected) -> bool:
     return answer == QMessageBox.StandardButton.Yes
 
 
+def confirm_detected_program(parent, detected) -> bool:
+    """Ask before a detected server that runs a program on this machine is
+    switched on, naming the whole command and the file it came from -
+    default No. A project folder's .mcp.json (a cloned repository) names
+    the server and its command; one tick ran it."""
+    if detected.transport != "stdio" or detected.image_id or detected.needs_install:
+        return True
+    import html
+
+    from core.mcp_detect import masked as _masked
+
+    # Escaped: the command and the file are a repository's text, and the
+    # box guesses the format - no markup may hide or restyle a word.
+    text = tr("Switching {name} on runs this program on this computer whenever the agent "
+              "uses it:\n\n{command}\n\nFound in:\n{origins}\n\nOnly switch it on when you "
+              "trust that file and the program.").format(
+        name=detected.name, command=" ".join(_masked(detected.command)),
+        origins="\n".join(detected.origins[:5]) or "?")
+    answer = QMessageBox.question(
+        parent, tr("Run this program?"), html.escape(text, quote=False),
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No)
+    return answer == QMessageBox.StandardButton.Yes
+
+
 def confirm_detected_secrets(parent, detected) -> bool:
     """Ask before a detected server with secret values is switched on - they
     go to the keyring (the question names them, never their values)."""
@@ -186,8 +232,7 @@ def confirm_detected_secrets(parent, detected) -> bool:
 class _AgentSettingsForm:
     """The tabs of the agent's settings (AGENT_TABS); :class:`AgentSettingsPage`
     (Edit > Settings… > Agent) and :class:`AgentSettingsDialog` share it.
-    The class it is mixed into is the widget and has the signals ``saved``
-    and ``_tested``."""
+    The class it is mixed into is the widget and has the signal ``saved``."""
 
     def _build_form(
         self,
@@ -221,7 +266,6 @@ class _AgentSettingsForm:
         #: Container servers uninstalled here: their images go on save.
         self._uninstalls: list[MC.McpServerConfig] = []
         self._catalog_dialog = None
-        self._tested.connect(self._show_test)
         # Update and source checks report through a queue that a timer of
         # the page empties: a worker never touches a widget that may be gone.
         self._inbox: queue.SimpleQueue = queue.SimpleQueue()
@@ -309,11 +353,13 @@ class _AgentSettingsForm:
         for p in self._llm.profiles:
             self.profile_combo.addItem(p.name, p.name)
         form.addRow(tr("LLM profile of new tabs"), self.profile_combo)
-        self.mode_combo = QComboBox()
+        self.mode_combo = shrinkable(QComboBox())
         form.addRow(tr("Protection mode of new tabs"), self.mode_combo)
-        self.bypass_check = QCheckBox(
-            tr("Bypass may be chosen (the agent changes and runs commands without asking)")
-        )
+        # Shorter than before: a check box cannot wrap, and the one long line
+        # made the page scroll sideways.
+        self.bypass_check = QCheckBox(tr("Bypass may be chosen (changes and commands unasked)"))
+        self.bypass_check.setToolTip(
+            tr("In Bypass the agent changes and runs commands without asking."))
         self.bypass_check.toggled.connect(self._fill_modes)
         form.addRow("", self.bypass_check)
         self.steps_spin = QSpinBox()
@@ -1113,7 +1159,7 @@ class _AgentSettingsForm:
                 ENGINE_LABELS[engine] + ("" if ok else tr(" (not installed)")), engine
             )
         form.addRow(tr("Engine"), self.engine_combo)
-        self.level_combo = QComboBox()
+        self.level_combo = shrinkable(QComboBox())
         for level in LEVELS:
             self.level_combo.addItem(tr(LEVEL_LABELS[level]), level)
         form.addRow(tr("Level"), self.level_combo)
@@ -1439,7 +1485,7 @@ class _AgentSettingsForm:
         self.server_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.server_token_edit.setPlaceholderText(tr("unchanged - stored in the keyring"))
         form.addRow(tr("Token"), self.server_token_edit)
-        self.server_confirm_combo = QComboBox()
+        self.server_confirm_combo = shrinkable(QComboBox())
         for key, label in CONFIRM_LABELS.items():
             self.server_confirm_combo.addItem(tr(label), key)
         form.addRow(tr("Asks"), self.server_confirm_combo)
@@ -1952,6 +1998,9 @@ class _AgentSettingsForm:
         self.server_test_label.setText(tr("Connecting…"))
 
         settings = self.settings
+        # Not a signal of this page: Settings is deleted as soon as it closes,
+        # and a test can take seconds (core/thread_relay.py).
+        tested = GuiCall(self._show_test)
 
         def run() -> None:
             try:
@@ -1963,13 +2012,11 @@ class _AgentSettingsForm:
                     names = [t.remote_name for t in client.tools()]
                 finally:
                     client.close()
-                self._tested.emit(
-                    server.name, tr("{n} tools").format(n=len(names)), ", ".join(names)
-                )
+                tested(server.name, tr("{n} tools").format(n=len(names)), ", ".join(names))
             except MC.McpClientError as exc:
-                self._tested.emit(server.name, tr("Test failed: {why}").format(why=exc), "")
+                tested(server.name, tr("Test failed: {why}").format(why=exc), "")
             except Exception as exc:  # noqa: BLE001 - said, never a test stuck on "Connecting…"
-                self._tested.emit(server.name, tr("Test failed: {why}").format(why=exc), "")
+                tested(server.name, tr("Test failed: {why}").format(why=exc), "")
 
         threading.Thread(target=run, name="mcp-server-test", daemon=True).start()
 
@@ -2121,14 +2168,17 @@ class _AgentSettingsForm:
         self.source_dockerhub_check = QCheckBox(tr("Docker Hub - Docker's mcp namespace"))
         self.source_registry_check = QCheckBox(
             tr("MCP Registry (registry.modelcontextprotocol.io)"))
-        self.source_discover_check = QCheckBox(tr(
-            "Discover - curated awesome-lists to browse (install only where the MCP Registry "
-            "or Docker Hub names the repository)"))
+        self.source_discover_check = QCheckBox(tr("Discover - curated awesome-lists to browse"))
         for box in (self.source_builtin_check, self.source_hub_check,
                     self.source_dockerhub_check, self.source_registry_check,
                     self.source_discover_check):
             box.toggled.connect(self._store_sources)
             layout.addWidget(box)
+        # Wrapped under its check box, which cannot wrap.
+        discover_note = _wrapped_note(tr(
+            "Discover installs only where the MCP Registry or Docker Hub names the repository."))
+        discover_note.setContentsMargins(24, 0, 0, 0)
+        layout.addWidget(discover_note)
         layout.addWidget(QLabel(tr("Your catalogs (a JSON file or an https:// URL):")))
         self.source_list = QListWidget()
         self.source_list.currentRowChanged.connect(lambda _r: self.source_check_label.clear())
@@ -2326,10 +2376,16 @@ class _AgentSettingsForm:
     def _remove_uninstalled_images(self) -> None:
         """The images of the servers uninstalled here (now saved), by ID."""
         from core.mcp_install import uninstall
+        from ui.off_gui import run_off_gui
+
+        servers, others = list(self._uninstalls), self.settings.mcp_servers
+
+        def remove_all() -> list:
+            # podman image rm per server (up to 120 s each): off the GUI thread.
+            return [(server, *uninstall(server, others=others)) for server in servers]
 
         done, kept = [], []
-        for server in self._uninstalls:
-            ok, message = uninstall(server, others=self.settings.mcp_servers)
+        for server, ok, message in run_off_gui(remove_all, text=tr("Removing images…")):
             (done if ok else kept).append(f"{server.name}: {message}" if message else server.name)
         self._uninstalls = []
         self.uninstall_messages = done + kept
@@ -2405,8 +2461,6 @@ class AgentSettingsPage(_AgentSettingsForm, QWidget):
 
     #: Emitted after a successful save.
     saved = pyqtSignal()
-    #: (server name, result line, tool names): a Test finished.
-    _tested = pyqtSignal(str, str, str)
 
     def __init__(
         self,
@@ -2457,8 +2511,6 @@ class AgentSettingsDialog(_AgentSettingsForm, QDialog):
 
     #: Emitted after a successful save.
     saved = pyqtSignal()
-    #: (server name, result line, tool names): a Test finished.
-    _tested = pyqtSignal(str, str, str)
 
     def __init__(
         self,
@@ -2472,6 +2524,7 @@ class AgentSettingsDialog(_AgentSettingsForm, QDialog):
         mcp_opener=None,
     ) -> None:
         QDialog.__init__(self, parent)
+        set_window_icon(self, "agent")
         self.setWindowTitle(tr("Agent Settings"))
         self.resize(820, 560)
         tabs = self._build_form(settings_path, llm_settings, sessions, store_session,

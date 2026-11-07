@@ -34,7 +34,7 @@ style.
 from __future__ import annotations
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QObject, QTimer
+from PyQt6.QtCore import QEvent, QItemSelectionModel, QObject, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QApplication, QHeaderView, QTableView
 
 #: Model signals after which the content widths may have changed.
@@ -68,6 +68,25 @@ def _address(obj) -> int:
 
 def _header(view: QAbstractItemView) -> QHeaderView:
     return view.horizontalHeader() if hasattr(view, "horizontalHeader") else view.header()
+
+
+def detach_header_selection(view: QAbstractItemView) -> None:
+    """Give *view*'s column header a selection model of its own (empty).
+
+    A header paints each section with the "previous / next section
+    selected" state, and QItemSelectionModel.isColumnSelected answers that
+    by asking the model for the flags of every row of the column. In a
+    list of 30 000 files, Select All (or any repaint of the header while
+    they are selected) asked 150 000 times - over a second of a frozen
+    window, again on every repaint while the selection stood. A list that
+    selects whole rows never shows a column as selected, so the header
+    loses nothing by not seeing the selection. Call after setModel(),
+    which hands the header the view's selection model again."""
+    header = _header(view)
+    model = view.model()
+    if header is None or model is None:
+        return
+    header.setSelectionModel(QItemSelectionModel(model, header))
 
 
 class ColumnFitter(QObject):
@@ -122,8 +141,15 @@ class ColumnFitter(QObject):
 
     # -- triggers ---------------------------------------------------------
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+        # A filter keeps getting events while Python tears it down (the
+        # collector clears an object in a cycle before its view is
+        # destroyed): an exception here would end the process (PyQt6
+        # aborts on one).
+        view = self.__dict__.get("_view")
+        if view is None:
+            return False
         kind = event.type()
-        if obj is self._view:  # installed for the cell cache only
+        if obj is view:  # installed for the cell cache only
             if kind in _RESTYLE_EVENTS:
                 self._forget_cells()
                 self.schedule()
@@ -435,4 +461,4 @@ class ColumnFitter(QObject):
             self._fitting = False
 
 
-__all__ = ["ColumnFitter"]
+__all__ = ["ColumnFitter", "detach_header_selection"]

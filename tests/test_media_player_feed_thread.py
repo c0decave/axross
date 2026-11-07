@@ -43,9 +43,11 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 np = pytest.importorskip("numpy")
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
+
+from tests.media_testkit import multimedia_backend_here  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -287,6 +289,10 @@ def test_edge_the_position_does_not_wait_for_a_slow_step(tmp_path, monkeypatch):
         engine.close()
 
 
+@pytest.mark.skipif(not multimedia_backend_here(), reason=(
+    "Qt Multimedia without a backend: a started QAudioDecoder deleted in its thread crashes "
+    "the process when the thread ends (a Qt fault); the panel builds no engine there "
+    "(tests/test_media_player_no_decoder.py)"))
 def test_edge_the_exit_handler_closes_engines_and_ends_the_threads(tmp_path):
     engine = MP.EqEngine(sink_factory=lambda fmt: PacedSink())
     engine.load(str(tone_wav(tmp_path / "t.wav", 4.0)))

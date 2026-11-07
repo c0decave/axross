@@ -1,0 +1,65 @@
+{
+ "name": "tarsafe",
+ "versions": {
+  "0.0.5": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|test/test_tarsafe.py|52024fafe998f07d",
+    "yara|capability_filesystem_read|test/test_tarsafe.py|52024fafe998f07d"
+   ],
+   "archives": {
+    "tarsafe-0.0.5-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "src/__init__.py": "b7ee78d13f942f4495e3066dacc4179d9526bfacffc3129a4ca31eb35c6a7d44",
+      "src/tarsafe.py": "be435db29a723e99bdbabc33ee0169b9c51ae9025e127754f8f96ca0847bfdaa",
+      "tarsafe-0.0.5.dist-info/LICENSE": "11f27f861b48a50c9cac4a36f235b9f8fb27d13ab36a9c5f7dc47cd01a5f76cf",
+      "tarsafe-0.0.5.dist-info/METADATA": "613f2ad31e06cf6c7fe50506a5d34d3d6b379251c4ba649b699e947d88701073",
+      "tarsafe-0.0.5.dist-info/RECORD": "f1c4cede9f6e174b875e87a0d723d73adffe9de213c6cdf79f0a050ac3f4b99f",
+      "tarsafe-0.0.5.dist-info/WHEEL": "11546323af45e6a5639bf620a9c4d73e74c0bf705f494af4595007b923f75e8a",
+      "tarsafe-0.0.5.dist-info/top_level.txt": "c1ae6672afa9d58aaff17dd8eb20e08da98a298f1d92f1702350a8ae4fcec8c1",
+      "tarsafe/__init__.py": "3ef2cf57169891fd970858598feaef78b54e46b0aed0619260948b44e283f7cc",
+      "tarsafe/tarsafe.py": "a90e10fc76439636491ba01518f8dc014d6b7f29c3c32edf622e58b65630694b",
+      "test/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test/test_tarsafe.py": "52024fafe998f07db2e2b9c8325f20926b8c667526fa2c00869026a3662a2db0"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "650a961d1833a45d99f48fea77030ee834916355aab7a5d3ab52efbde5b51336",
+     "native": {},
+     "pth": {},
+     "sha256": "1a6aa8255c181d6070db3b083f6d969602c6306ba3dc7c836a288cc26a5c5bff"
+    }
+   },
+   "name": "tarsafe",
+   "provenance": {
+    "tarsafe-0.0.5-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Andrew Scott",
+    "home_page": "https://github.com/beatsbears/tarsafe",
+    "license": "MIT License",
+    "project_urls": {
+     "Homepage": "https://github.com/beatsbears/tarsafe"
+    },
+    "summary": "A safe subclass of the TarFile class for interacting with tar files. Can be used as a direct drop-in replacement for safe usage of extractall()"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|test/test_tarsafe.py|52024fafe998f07d",
+     "yara|capability_filesystem_read|test/test_tarsafe.py|52024fafe998f07d"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete test/test_tarsafe.py",
+     "capability_filesystem_read:capability_filesystem_read test/test_tarsafe.py"
+    ]
+   },
+   "version": "0.0.5"
+  }
+ }
+}

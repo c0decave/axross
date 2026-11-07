@@ -102,9 +102,11 @@ class ProxyFilterTest(_QtCase):
         items = [FileItem(name="plain.txt"), FileItem(name=".dot")]
         self.assertEqual(self.shown(items, False), {"plain.txt"})
 
-    def test_edge_dot_dot_stays_and_a_lone_dot_follows_the_dot_rule(self) -> None:
+    def test_edge_dot_and_dot_dot_stay_with_hidden_entries_off(self) -> None:
+        """"." is the row for this folder (a drop on it lands here), as ".."
+        is the one for the parent: both are navigation, not dot files."""
         items = [FileItem(name="..", is_dir=True), FileItem(name=".", is_dir=True)]
-        self.assertEqual(self.shown(items, False), {".."})
+        self.assertEqual(self.shown(items, False), {"..", "."})
         self.assertEqual(self.shown(items, True), {"..", "."})
 
     def test_edge_the_text_filter_still_applies_to_hidden_entries(self) -> None:
@@ -332,7 +334,7 @@ class NewPanesFollowTest(_WindowCase):
         pane = win._add_pane_to_splitter(win._root_splitter, ram)
         self.settle(pane)
         pane.navigate("/srv")
-        self.assertEqual(_visible_names(pane) - {".."}, {".env", "app.py"})
+        self.assertEqual(_visible_names(pane) - {".", ".."}, {".env", "app.py"})
 
     def test_happy_layout_preset_and_restored_panes_follow_the_switch(self) -> None:
         """The operator's start: the switch is on, the layout comes back

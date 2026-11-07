@@ -146,11 +146,33 @@ class InvertSelectionTest(_Pane):
         start = QItemSelection()
         for r in range(1, 20001, 2):
             start.select(p._proxy.index(r, 0), p._proxy.index(r, p._proxy.columnCount() - 1))
-        p._table.selectionModel().select(start, QItemSelectionModel.SelectionFlag.Select)
+        sel = p._table.selectionModel()
+        sel.select(start, QItemSelectionModel.SelectionFlag.Select)
+        calls = []
+        real_select = sel.select
+        sel.select = lambda *args: (calls.append(args), real_select(*args))[1]
+        # Against what any inversion must do, read every row once, timed on
+        # this host at the same time: a fixed 2 s failed on a busy host (2-7
+        # s), where that reading alone took as long as the inversion.
+        before = self._read_every_row(p)
         t = time.perf_counter()
-        p._invert_selection()
-        self.assertLess(time.perf_counter() - t, 2.0)
+        try:
+            p._invert_selection()
+        finally:
+            took = time.perf_counter() - t
+            del sel.select
+        reference = (before + self._read_every_row(p)) / 2
+        self.assertEqual(len(calls), 1)  # one selection, not one select() per row
+        self.assertLess(took, max(2.0, 10 * reference), reference)
         self.assertEqual(len(p._table.selectionModel().selectedRows()), 10000)
+
+    @staticmethod
+    def _read_every_row(pane) -> float:
+        proxy, model = pane._proxy, pane._model
+        start = time.perf_counter()
+        for row in range(proxy.rowCount()):
+            model.get_item(proxy.mapToSource(proxy.index(row, 0)).row())
+        return time.perf_counter() - start
 
 
 class FilterTest(_Pane):

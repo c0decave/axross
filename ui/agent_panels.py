@@ -38,12 +38,15 @@ from PyQt6.QtWidgets import QMenu, QSplitter, QTabBar, QToolButton, QWidget
 
 from core.i18n import tr
 from ui.extension_panels import ExtensionDock, ExtensionPanelTitleBar
+from ui.icon_provider import set_window_icon
 
 #: The object name of a detached conversation: this, then its session id.
 AGENT_PANEL_PREFIX = "agent-conversation-"
 #: What a session layout entry of a detached conversation names as its
 #: "extension" (no extension has it: theirs carry a "user:"/"bundled:" id).
 AGENT_PANEL_EXT_ID = "axross:agent"
+#: The Agent dock itself, laid out on a workspace like an extension panel.
+AGENT_DOCK_EXT_ID = "axross:agent-dock"
 #: How far (pixels) beyond the tab bar a dragged tab must go to detach.
 DETACH_DISTANCE = 30
 
@@ -114,6 +117,7 @@ class AgentPanel(ExtensionDock):
     def __init__(self, tab: QWidget, owner: QWidget) -> None:
         title = tab.session.title
         super().__init__(panel_title(title), owner, AGENT_PANEL_EXT_ID)
+        set_window_icon(self, "bot")
         self.setObjectName(f"{AGENT_PANEL_PREFIX}{tab.session.id}")
         self.tab = tab
         #: Set by the Agent dock once the conversation is to go: the

@@ -8,7 +8,15 @@
       "output_device": "",        # a device id; "" is the system's default
       "input_device": "",
       "output_volume": 100,       # percent, 0-100
-      "input_volume": 100
+      "input_volume": 100,
+      "output_muted": false,      # the master mute (the Audio Mixer)
+      "media_volume": 100,        # per source: Media Player, Agent voice,
+      "media_muted": false,       # media preview - its share of the output
+      "media_output": "",         # volume, muted, its own device ("" - the
+      "voice_volume": 100, ...    # output's); voice_* and preview_* alike
+      "eq_enabled": true,         # one equalizer for all of axross
+      "eq_preset": "Flat",        # (core.audio_eq): a preset or "Custom"
+      "eq_gains": [0.0, ...]      # ten bands, dB, +-12
     }
 
 The backend reaches Qt as ``QT_AUDIO_BACKEND`` (core.multimedia_env) before
@@ -23,7 +31,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 BACKENDS = ("auto", "pulseaudio", "pipewire")
@@ -35,13 +43,37 @@ def _volume_ok(value) -> bool:
             and VOLUME_RANGE[0] <= value <= VOLUME_RANGE[1])
 
 
-#: name -> validator. The order is the settings page's.
+def _bool_ok(value) -> bool:
+    return isinstance(value, bool)
+
+
+def _text_ok(value) -> bool:
+    return isinstance(value, str) and len(value) <= 512
+
+
+def _gains_ok(value) -> bool:
+    from core.audio_eq import gains_ok
+
+    return gains_ok(value)
+
+
+#: What the Audio Mixer gives its own volume, mute and output: axross's
+#: sound sources (core.audio_route.SOURCES).
+SOURCES = ("media", "voice", "preview", "games")
+
+#: name -> validator. The first five are the settings page's (its order).
 FIELDS = {
     "backend": lambda v: v in BACKENDS,
     "output_device": lambda v: isinstance(v, str),
     "output_volume": _volume_ok,
     "input_device": lambda v: isinstance(v, str),
     "input_volume": _volume_ok,
+    "output_muted": _bool_ok,
+    **{f"{source}_{part}": check for source in SOURCES
+       for part, check in (("volume", _volume_ok), ("muted", _bool_ok), ("output", _text_ok))},
+    "eq_enabled": _bool_ok,
+    "eq_preset": _text_ok,
+    "eq_gains": _gains_ok,
 }
 
 
@@ -56,6 +88,22 @@ class AudioSettings:
     output_volume: int = 100
     input_device: str = ""
     input_volume: int = 100
+    output_muted: bool = False
+    media_volume: int = 100
+    media_muted: bool = False
+    media_output: str = ""
+    voice_volume: int = 100
+    voice_muted: bool = False
+    voice_output: str = ""
+    preview_volume: int = 100
+    preview_muted: bool = False
+    preview_output: str = ""
+    games_volume: int = 80
+    games_muted: bool = False
+    games_output: str = ""
+    eq_enabled: bool = True
+    eq_preset: str = "Flat"
+    eq_gains: list = field(default_factory=lambda: [0.0] * 10)
 
     def get(self, name: str):
         if name not in FIELDS:
@@ -67,6 +115,8 @@ class AudioSettings:
             raise KeyError(name)
         if not FIELDS[name](value):
             raise ValueError(f"invalid value for the audio setting {name}: {value!r}")
+        if name == "eq_gains":
+            value = [float(g) for g in value]  # a copy of its own
         setattr(self, name, value)
 
     @classmethod
@@ -88,7 +138,7 @@ class AudioSettings:
     def load(cls, path: Path | None = None) -> AudioSettings:
         try:
             raw = json.loads(Path(path or settings_file()).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return cls()
         return cls.from_dict(raw)
 

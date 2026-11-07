@@ -216,3 +216,28 @@ def test_e2e_the_main_windows_log_dock_takes_a_burst_in_few_edits(tmp_path, monk
         win.close()
         win.deleteLater()
         APP.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_sad_a_flood_while_the_gui_thread_is_busy_stays_bounded() -> None:
+    """Feedback (log limit against OOM): one queued Qt signal per record let
+    a flood from worker threads grow without a bound while the GUI thread
+    was busy. The inbox keeps INBOX_MAX, counts the rest and says so."""
+    from ui import log_dock as LD
+
+    bridge = LD._LogSignalBridge()
+    wakes = []
+    bridge.wake.connect(lambda: wakes.append(1))
+
+    def flood():
+        for i in range(LD.INBOX_MAX + 500):
+            bridge.push(f"line {i}", logging.DEBUG, "")
+
+    t = threading.Thread(target=flood)
+    t.start()
+    t.join()
+    records, dropped = bridge.take()
+    assert len(records) == LD.INBOX_MAX and dropped == 500
+    assert records[-1][0] == f"line {LD.INBOX_MAX + 499}"  # the newest kept
+    assert bridge.take() == ([], 0)
+    QApplication.instance().processEvents()
+    assert len(wakes) == 1  # one wake for the whole burst, not one per record

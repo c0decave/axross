@@ -80,7 +80,9 @@ class FullBundleShipsSiftTest(unittest.TestCase):
 
     def test_edge_slim_excludes_sift_and_full_collects_it(self) -> None:
         text = (ROOT / "build" / "axross.spec").read_text()
-        slim = re.search(r'if FLAVOR == "slim":\n    excludes \+= \[(.*?)\n    \]', text, re.S)
+        # the slim block (shared with base, which excludes more on top)
+        slim = re.search(r'if FLAVOR (?:== "slim"|in \("slim", "base"\)):\n    excludes \+= \[(.*?)\n    \]',
+                         text, re.S)
         self.assertIsNotNone(slim)
         self.assertIn('"sift"', slim.group(1))
         self.assertRegex(text, r'collect_submodules\("sift"\)')

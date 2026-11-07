@@ -263,3 +263,17 @@ def test_e2e_settings_dialog_area_level_reaches_logging_the_log_dock_and_the_nex
     LC.configure(log_file)
     assert smb.isEnabledFor(logging.DEBUG)
     assert not logging.getLogger("core.ftp_client").isEnabledFor(logging.DEBUG)
+
+
+def test_happy_logging_off_is_saved_and_applied_at_once(page, store):
+    assert page.enabled_check.isChecked()
+    page.enabled_check.setChecked(False)
+    assert page.is_dirty()
+    assert page.save()
+    from core import log_config as LC
+
+    assert LC.LogSettings.load(store).enabled is False
+    assert not logging.getLogger("core.anything").isEnabledFor(logging.CRITICAL)
+    page.enabled_check.setChecked(True)
+    assert page.save()
+    assert logging.getLogger("core.anything").isEnabledFor(logging.ERROR)

@@ -242,3 +242,44 @@ def test_happy_two_aware_timestamps_still_compare_normally():
     entries = [_entry("c.txt", Status.DIFFERS, left=older, right=newer)]
     action = _action_for(plan_sync(entries, policy=ConflictPolicy.NEWER_WINS), "c.txt")
     assert action.direction == "to_left"
+
+
+@pytest.mark.parametrize("policy", list(ConflictPolicy))
+def test_sad_a_folder_on_one_side_and_a_file_on_the_other_is_never_synced(policy):
+    """A folder ``a`` on the left, a file ``a`` on the right: the comparison
+    calls it DIFFERS, and "left/right/newer wins" planned a "copy" of the
+    folder over the file (or of the file over the folder) - while the
+    folder's contents were still planned as copies into what is a file on
+    the other side. The transfer conflict window refuses folder-vs-file
+    replacements outright; the sync now leaves the path, and everything
+    below it, to the user."""
+    folder = FileItem(name="a", is_dir=True, modified=LATER)
+    file = FileItem(name="a", size=4, modified=BASE)
+    entries = [
+        _entry("a", Status.DIFFERS, left=folder, right=file,
+               reason="type differs (directory vs file)"),
+        _entry("a/x.txt", Status.LEFT_ONLY, left=_item()),
+        _entry("a/sub", Status.LEFT_ONLY, left=FileItem(name="sub", is_dir=True)),
+        _entry("ab.txt", Status.LEFT_ONLY, left=_item()),
+    ]
+    plan = plan_sync(entries, policy=policy)
+    assert [a.rel_path for a in plan.actions] == ["ab.txt"]
+    assert [c.rel_path for c in plan.conflicts] == ["a", "a/sub", "a/x.txt"]
+
+
+def test_edge_newer_wins_takes_a_gap_within_the_mtime_tolerance_as_a_tie():
+    """The comparison counts mtimes up to MTIME_TOLERANCE_S apart as the
+    same moment (FAT keeps 2 s, S3 and WebDAV round). "Newer wins"
+    compared the raw times, so a 1 s gap - rounding, not age - chose a
+    side and overwrote the other copy."""
+    from core.tree_compare import MTIME_TOLERANCE_S
+
+    near = BASE + timedelta(seconds=MTIME_TOLERANCE_S / 2)
+    entries = [_entry("c.txt", Status.DIFFERS, left=_item(10), right=_item(11, near))]
+    plan = plan_sync(entries, policy=ConflictPolicy.NEWER_WINS)
+    assert _action_for(plan, "c.txt") is None
+    assert [c.rel_path for c in plan.conflicts] == ["c.txt"]
+    beyond = BASE + timedelta(seconds=MTIME_TOLERANCE_S + 1)
+    entries = [_entry("c.txt", Status.DIFFERS, left=_item(10), right=_item(11, beyond))]
+    action = _action_for(plan_sync(entries, policy=ConflictPolicy.NEWER_WINS), "c.txt")
+    assert action is not None and action.direction == "to_left"

@@ -405,7 +405,9 @@ def detach_from_terminal() -> bool:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Axross File Manager")
+    # prog: argparse names the script it was started as - "__main__.py" for
+    # `python -m axross`, "main.py" from a checkout; the command is axross.
+    parser = argparse.ArgumentParser(prog="axross", description="Axross File Manager")
     from axross._version import __version__
 
     parser.add_argument(
@@ -447,10 +449,25 @@ def main() -> int:
     from core.frozen_archive import lock_bundle_dir, pin_frozen_archive
 
     pin_frozen_archive()
+    # onnxruntime's telemetry (on by default; Piper voices, faster-whisper's
+    # VAD, any extension or script): off for this process and its children.
+    os.environ["ORT_DISABLE_TELEMETRY"] = "1"
     # And its unpacked folder (/tmp/_MEI*) is locked against the daily temp
     # cleaner, which deleted the files a long-running process had not
     # touched since its start (core.frozen_archive.lock_bundle_dir).
     lock_bundle_dir()
+    # A binary's installed packs (core.packs: units added from its release,
+    # each checked against the signed release when it was installed) go on
+    # the import path before anything imports them. pip installs use extras.
+    if getattr(sys, "frozen", False):
+        try:
+            from axross._version import __version__ as _version
+            from core import packs as _packs
+
+            _packs.activate(_version)
+            _packs.prune(_version)          # an update started once: older versions' packs go
+        except Exception:  # a broken pack folder must not stop the start
+            logging.getLogger(__name__).warning("packs could not be activated", exc_info=True)
     # Before anything can start a child: give the process the environment
     # it started with (a frozen bundle points LD_LIBRARY_PATH, QT_PLUGIN_PATH
     # and more into its unpacked folder, and host programs then load our
@@ -856,6 +873,10 @@ def _run(args) -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Axross")
     app.setOrganizationName("axross")
+    # Qt's own button texts (OK, Cancel, Apply...) in the interface language.
+    from ui.qt_translations import install_qt_translator
+
+    install_qt_translator(app)
     no_screen = _no_screen_message(app)
     if no_screen:
         # Also in the log: a start detached from the terminal has no stderr.
@@ -877,7 +898,8 @@ def _run(args) -> int:
     # The last session's layout, before the first paint (File > Restore
     # Layout on Start switches it off). It never connects: remote panes
     # come back as placeholders with a Reconnect button.
-    window.restore_layout_on_start()
+    if not window.restore_layout_on_start():
+        window.apply_first_start_layout()  # nothing saved yet: two panes
     window.show()
     # Disarmed on the first event-loop pass: the window is up then.
     from PyQt6.QtCore import QTimer

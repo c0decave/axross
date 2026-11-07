@@ -1,0 +1,149 @@
+{
+ "name": "pypdf",
+ "versions": {
+  "6.21.4": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|pypdf/_reader.py|55bbb1b10a5721a7",
+    "yara|capability_filesystem_read|pypdf/_utils.py|cfaea0f7eadfda43",
+    "yara|capability_filesystem_read|pypdf/_writer.py|1e95f388a3d6d716",
+    "yara|capability_filesystem_read|pypdf/generic/_base.py|8397982fa37b56d5",
+    "yara|capability_filesystem_read|pypdf/generic/_data_structures.py|a2c0ee0c3bac0d58",
+    "yara|capability_filesystem_read|pypdf/generic/_image_inline.py|a708cc06e98c88b0",
+    "yara|capability_filesystem_read|pypdf/generic/_utils.py|33c8bde72a42e65d",
+    "yara|capability_filesystem_write_executable|pypdf/_codecs/adobe_glyphs.py|69ac4e46ea50409e",
+    "yara|capability_process_spawn|pypdf/filters.py|c870b8235de4b0b9"
+   ],
+   "archives": {
+    "pypdf-6.21.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "pypdf-6.21.4.dist-info/METADATA": "383b3d4cd588005f67afc74b113cbe19ea008691cdf18db3795601116a3d8139",
+      "pypdf-6.21.4.dist-info/RECORD": "bf717e54c91b374e5c8cae0a06b83ee7f76db346894cc9c2cc69a0dfedab892c",
+      "pypdf-6.21.4.dist-info/WHEEL": "acb244f0e2cf0596f3eedab1b35c83fb003e0036b511ce4fb9853e63f3cd5832",
+      "pypdf-6.21.4.dist-info/licenses/LICENSE": "a97ac230e5f33ef10a5367a850eb01f91f1a0b064e34742c7794d2294557f524",
+      "pypdf/__init__.py": "d7786f1b3cb2e52e28b1085f0ea150fa7f029baad252b29af7415c790871f7df",
+      "pypdf/_cmap.py": "8b3edbb61399302e966cbaadd6a863708c2b4de85bdb69813851ee9eea6de926",
+      "pypdf/_codecs/__init__.py": "574b0332eb98897f512be3fafb06e7724b81618c1f03014ca49823e13683dffe",
+      "pypdf/_codecs/_codecs.py": "ead39a397326cd52a6e0a433e33bbf6cd0cae6e24fb6ab06b93e069c4a764c43",
+      "pypdf/_codecs/adobe_glyphs.py": "69ac4e46ea50409ee46cb0c76e35a280b67aa60f06f7fe5ea832a2349c72923e",
+      "pypdf/_codecs/core_font_metrics.py": "dbb26cac9a39511246215ed90ce09427259f066e8b0567aaeefdce5b3a05f21f",
+      "pypdf/_codecs/pdfdoc.py": "c5f4af30562cbf1b9a490d14bbdbd90ca681d16bbce61d6e0a20758bdac07145",
+      "pypdf/_codecs/std.py": "0f240cb84a40184a52f6ecb58d67f87278fe92a4a13ce0228f9b08ed0d580fc1",
+      "pypdf/_codecs/symbol.py": "08fe958d172c72b9bcca6007f74c6977155a7a5c22e8c49bd536f5c0d0e1d359",
+      "pypdf/_codecs/zapfding.py": "e39a9c635d716c1c2da21ebfb7467fef33631bbfaa238d752d14155d828faf65",
+      "pypdf/_configuration.py": "9d8c16d16023b0612f61ca03109159d8cb6345d91cd35b8d7fce52bebc9efc7f",
+      "pypdf/_crypt_providers/__init__.py": "c5441b160310bca31a38e4f7454756ddb4bc7d94a147c3c13b3eab7ac7f05855",
+      "pypdf/_crypt_providers/_base.py": "34505711d85bae0f64d353d57cd37f93b94401897606481720e8b9a1f53ff91f",
+      "pypdf/_crypt_providers/_cryptography.py": "33183bb4201aa15e950085a97ee874e2af254be0aaeb9ab0de643d7e93100526",
+      "pypdf/_crypt_providers/_fallback.py": "81772ba3f2bbab82180cbe57195471a059978d75cc6ba4e57830f0c56c828f81",
+      "pypdf/_crypt_providers/_pycryptodome.py": "bd9102129a13f4ebe9a46ebb74aec456de51e5aa491bd5fce588a3479ed2a6f6",
+      "pypdf/_doc_common.py": "fdb120c74ef3bd723b0783a9dbe23ba08331532d149ce01ca5aa50b4d571b115",
+      "pypdf/_encryption.py": "342c3ee9fd8cca74bf4be3fe3cb60cc9651aac6025b38f34820321bef85c29fa",
+      "pypdf/_page.py": "d048e72108dc64e16d12d647eee729362abe3630b897d32f0e40b3985d5a763a",
+      "pypdf/_page_labels.py": "874759c0ee0376c6924b629f553528f21024ac9c14a71987012546907d89115d",
+      "pypdf/_protocols.py": "4e4ea32b83d1f71cc4ec44e7a9a7f6ef5494299913b3a2254672d118f9588ff7",
+      "pypdf/_reader.py": "55bbb1b10a5721a7bad12954a598f6f8beaaacd138d2f771cd97e8b99a1d0514",
+      "pypdf/_text_extraction/__init__.py": "6adc0f09de4efbdd37d61b1681e5263f1d9132cf57e8812254a97fe278e0a8d7",
+      "pypdf/_text_extraction/_layout_mode/__init__.py": "56adb80f37575f9af91995d319579011c9212ed332099acdf207db4a506efecc",
+      "pypdf/_text_extraction/_layout_mode/_fixed_width_page.py": "99734328472c3bdd10cafb4a0caf2fb92b2f61953ba2f63287bfcb5e68994605",
+      "pypdf/_text_extraction/_layout_mode/_text_state_manager.py": "994da1a3d4de7eda11690d80c3744b8e6d396ed6bc05b629527bf760001bd848",
+      "pypdf/_text_extraction/_layout_mode/_text_state_params.py": "5634f0811c865ba97a4d0cc3b12ec8205cb3953fa95d41472768ed930c9d5d8d",
+      "pypdf/_text_extraction/_text_extractor.py": "baca865ba63ef8bee5e737499fb606901092d5110141ed1a673a146f95fe706a",
+      "pypdf/_utils.py": "cfaea0f7eadfda43798adaba2bcdf91e804ee11c12c772e11e6591f39be78e50",
+      "pypdf/_version.py": "0d7708d5feb00100c4ccc8d09469a7131dc4d01da831deb95da7e2b29c0fc0ba",
+      "pypdf/_writer.py": "1e95f388a3d6d716fc31045c31a5c9a6f17538325823c4ca4a17431d39163f03",
+      "pypdf/actions/__init__.py": "d8bdd81ef60846bab097640490991e4b63bd6b521eb0356ed696e24854299518",
+      "pypdf/actions/_actions.py": "9ad300bde70c006ba9484e0d78296103c0dcdafa75038248f3bde6a988cd6c4b",
+      "pypdf/annotations/__init__.py": "7f693ffa3027dfd082076ecac50fdef771a29e7ce40076d49e749e1899758f21",
+      "pypdf/annotations/_base.py": "608453cd3764aa3f035164939b2d1fae47d3af88e87b91d41b344e5287f8a08a",
+      "pypdf/annotations/_markup_annotations.py": "c210635217f7c5195cae67829cd82a1679ad2767fb07c2289f82b8e88f74a079",
+      "pypdf/annotations/_non_markup_annotations.py": "fd2cd3ce864ce01dff1bf57a33ff266c9e7b630d2d024f601db347ea5211ab70",
+      "pypdf/constants.py": "579bd3b09defab4b63ac63f7effb4713ade10722c8c7799b8566aa80917c3624",
+      "pypdf/errors.py": "070d56f61c4eb03830ab053a628436974f89894c93aba979423542afe5b81850",
+      "pypdf/filters.py": "c870b8235de4b0b93b3e01d0ef2c2b490db3dbedaafc0ec47736dd3d40ac5f93",
+      "pypdf/generic/__init__.py": "3bbfbe5ca9a0e6fd1f3f7718960def531794e3c35ceec6b204cb03119eb546b5",
+      "pypdf/generic/_appearance_stream.py": "4f572ec49a2c290b0389ed7b30758ac21855f1c3b8efc71eeb013e29ebfe22b4",
+      "pypdf/generic/_base.py": "8397982fa37b56d52bfdc1c6fc708cb86b8327f64716f0296ff532fb995d8080",
+      "pypdf/generic/_color.py": "2b10852d96453098d4b9b2f437ad85042a552b37038403c1f6719ba29e3c795c",
+      "pypdf/generic/_data_structures.py": "a2c0ee0c3bac0d584659177263e2e26e4222e5315d7e72838e9f0eb001d7c79f",
+      "pypdf/generic/_files.py": "5a582054cca80cd045b128fdc90ab293ff15d63b75895265302a86f03d277966",
+      "pypdf/generic/_fit.py": "607a2571a31e1c67d84fdb0d1a3dbfd04b52a09619d9a261b4aa9525c03887f9",
+      "pypdf/generic/_font.py": "03628263532c0da3dc56d97166cb1a3d89671ebee88af34692c9758d14dbb462",
+      "pypdf/generic/_image_inline.py": "a708cc06e98c88b0972a6367e6513282b0fd35599c8429c26ff0573a0058f7cc",
+      "pypdf/generic/_image_xobject.py": "90a667695d1002a18545e554352728a4a125754799e273e7c92fb48969e9bf1c",
+      "pypdf/generic/_link.py": "9fe346b50e3f01fb7dfe6d6fd272af4f2b355526ba5b9e0fc5aede36d3e03ca4",
+      "pypdf/generic/_outline.py": "3c4b924f86fe2a6010203009d05872c4dec036626376c59a4ddc4aa3b862ab78",
+      "pypdf/generic/_rectangle.py": "ec7ac97ce31ab906ad0368245a17074a4cc1ec5e245a671afba90d03a1d5a3a3",
+      "pypdf/generic/_utils.py": "33c8bde72a42e65d9eef5d74f157aaf74bdb6d4b65427beefbe256fc0b32c793",
+      "pypdf/generic/_viewerpref.py": "24c98e21100d57dc69d797483627cbeec256290ba532015f523038c68d45308d",
+      "pypdf/pagerange.py": "0209c3144e2959cf34d1800cfec3dc1afcb6f747f70f93588abaf6e478753b46",
+      "pypdf/papersizes.py": "e93cf9b1f34dff724e51aa58f3753e95a928867a57600d2148440d98e54b14bf",
+      "pypdf/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pypdf/types.py": "b09ef01f393b111fc227b90ffacf2ef5ac459e40979c5a6bf27cdc8f50314dab",
+      "pypdf/xmp.py": "0fb1996e355223d8ad669d289f16eb7e0ad9cd3314e8005cdb4c03defd876fea"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "fd00418376521b0f0c89e35281a19242af57be24fe0cde4c28bb3e8e6ae2a26a",
+     "native": {},
+     "pth": {},
+     "sha256": "33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c"
+    }
+   },
+   "name": "pypdf",
+   "provenance": {
+    "pypdf-6.21.4-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "py-pdf/pypdf",
+     "workflow": "publish-to-pypi.yaml"
+    }
+   },
+   "pypi": {
+    "author_email": "Mathieu Fenniak <biziqe@mathieu.fenniak.net>",
+    "license_expression": "BSD-3-Clause",
+    "maintainer": "stefan6419846",
+    "maintainer_email": "Martin Thoma <info@martin-thoma.de>",
+    "project_urls": {
+     "Bug Reports": "https://github.com/py-pdf/pypdf/issues",
+     "Changelog": "https://pypdf.readthedocs.io/en/latest/meta/CHANGELOG.html",
+     "Documentation": "https://pypdf.readthedocs.io/en/latest/",
+     "Source": "https://github.com/py-pdf/pypdf"
+    },
+    "summary": "A pure-python PDF library capable of splitting, merging, cropping, and transforming PDF files"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "A reviewed young release: 6.21.4 fixes GHSA-5849-834g-hvw5 and two more parser advisories (build/young-release-exceptions.txt; axross opens untrusted PDFs with it). Nothing flagged in the code. Attestation verifies."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|pypdf/_reader.py|55bbb1b10a5721a7",
+     "yara|capability_filesystem_read|pypdf/_utils.py|cfaea0f7eadfda43",
+     "yara|capability_filesystem_read|pypdf/_writer.py|1e95f388a3d6d716",
+     "yara|capability_filesystem_read|pypdf/generic/_base.py|8397982fa37b56d5",
+     "yara|capability_filesystem_read|pypdf/generic/_data_structures.py|a2c0ee0c3bac0d58",
+     "yara|capability_filesystem_read|pypdf/generic/_image_inline.py|a708cc06e98c88b0",
+     "yara|capability_filesystem_read|pypdf/generic/_utils.py|33c8bde72a42e65d",
+     "yara|capability_filesystem_write_executable|pypdf/_codecs/adobe_glyphs.py|69ac4e46ea50409e",
+     "yara|capability_process_spawn|pypdf/filters.py|c870b8235de4b0b9"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read pypdf/_reader.py",
+     "capability_filesystem_read:capability_filesystem_read pypdf/_utils.py",
+     "capability_filesystem_read:capability_filesystem_read pypdf/_writer.py",
+     "capability_filesystem_read:capability_filesystem_read pypdf/generic/_base.py",
+     "capability_filesystem_read:capability_filesystem_read pypdf/generic/_data_structures.py",
+     "capability_filesystem_read:capability_filesystem_read pypdf/generic/_image_inline.py",
+     "capability_filesystem_read:capability_filesystem_read pypdf/generic/_utils.py",
+     "capability_filesystem_write_executable:capability_filesystem_write_executable pypdf/_codecs/adobe_glyphs.py",
+     "capability_process_spawn:capability_process_spawn pypdf/filters.py"
+    ]
+   },
+   "version": "6.21.4",
+   "young_release": "6.21.4 fixes GHSA-5849-834g-hvw5 GHSA-mfr5-77xh-9j7h GHSA-cggf-277g-3q54 (parser advisories; axross opens untrusted PDFs with it)"
+  }
+ }
+}

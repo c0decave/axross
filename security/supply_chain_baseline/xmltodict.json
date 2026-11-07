@@ -1,0 +1,55 @@
+{
+ "name": "xmltodict",
+ "versions": {
+  "1.0.4": {
+   "accepted_findings": [],
+   "archives": {
+    "xmltodict-1.0.4-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "xmltodict-1.0.4.dist-info/METADATA": "08b2908e0ceb1edc16c270e005d52d3484ecab089aa1bb3dbe5a896507f7f1e3",
+      "xmltodict-1.0.4.dist-info/RECORD": "9e6e575de17ac46a80f73117fcdbfa15d8e540c6273a40c65ed830a489b82b85",
+      "xmltodict-1.0.4.dist-info/WHEEL": "6027f0606398322e49870d9f538c8d83012bc9b6f6217e4f13004a57865b741a",
+      "xmltodict-1.0.4.dist-info/licenses/LICENSE": "d66d5eb8f83a0ba21d3dd04318b8817588e8764daabea852d1035e3f07ffda55",
+      "xmltodict-1.0.4.dist-info/top_level.txt": "532f8331f61e927063218c0ea566686c41f4569679f41467ebe70bec25a69e30",
+      "xmltodict.py": "701d42ae7298bbdf154163aed261e4f0fd3cc6c803748ec52f312a5bc402c46e"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "4d40c7006e89166a3f78d9167033a98f7180a14d403ae6f6221fcca852244c15",
+     "native": {},
+     "pth": {},
+     "sha256": "a4a00d300b0e1c59fc2bfccb53d7b2e88c32f200df138a0dd2229f842497026a"
+    }
+   },
+   "name": "xmltodict",
+   "provenance": {
+    "xmltodict-1.0.4-py3-none-any.whl": {
+     "environment": "pypi-publish",
+     "kind": "GitHub",
+     "repository": "martinblech/xmltodict",
+     "workflow": "publish.yml"
+    }
+   },
+   "pypi": {
+    "author": "Martin Blech",
+    "license_expression": "MIT",
+    "project_urls": {
+     "Homepage": "https://github.com/martinblech/xmltodict"
+    },
+    "summary": "Makes working with XML feel like you are working with JSON"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; attestation verifies (martinblech/xmltodict)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "1.0.4"
+  }
+ }
+}

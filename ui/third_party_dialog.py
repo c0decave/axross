@@ -31,6 +31,7 @@ from core import third_party
 from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.column_fit import ColumnFitter
+from ui.icon_provider import set_window_icon
 
 COL_NAME, COL_PURPOSE, COL_LICENSE, COL_SHIPS, COL_LINK = range(5)
 #: Item role holding what the filter looks at (core.third_party.search_text).
@@ -71,6 +72,7 @@ def _tooltip(entry: third_party.Entry) -> str:
 class ThirdPartyDialog(QDialog):
     def __init__(self, parent=None, data_file: Path | str | None = None) -> None:
         super().__init__(parent)
+        set_window_icon(self, "book")
         self.setWindowTitle(tr("Third-Party Software"))
         self.resize(1000, 640)
         self._last_open = ("", 0.0)

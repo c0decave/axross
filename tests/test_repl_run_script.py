@@ -122,6 +122,28 @@ def test_edge_a_syntax_error_in_a_script_is_shown_not_raised(repl, saved) -> Non
     assert "x" not in repl._globals  # nothing of a broken script runs
 
 
+def test_sad_errors_show_in_the_console_under_the_apps_own_excepthook(
+    repl, saved, monkeypatch
+) -> None:
+    """axross installs its own sys.excepthook (main._install_excepthook), and
+    code.InteractiveInterpreter hands an error to a non-default hook instead
+    of writing it. In the app a REPL error never reached the console (the
+    hook only logged it) and an error in a ``.run`` script popped the modal
+    "Unexpected Error" dialog. The console now shows every error itself."""
+    hooked: list[BaseException] = []
+    monkeypatch.setattr(sys, "excepthook", lambda typ, value, tb: hooked.append(value))
+    repl._replace_input("1 / 0")
+    repl._submit_current()
+    repl.run_saved_script(saved("raise ValueError('bad value')\n"))
+    repl.run_saved_script(saved("def broken(:\n"))
+    text = repl.toPlainText()
+    assert "ZeroDivisionError" in text
+    assert "ValueError: bad value" in text
+    assert "SyntaxError" in text
+    assert hooked == []
+    assert sys.excepthook is not sys.__excepthook__  # the app's hook is back
+
+
 def test_edge_a_startup_script_of_several_statements_runs_whole(monkeypatch, tmp_path) -> None:
     from ui import repl_widget
 

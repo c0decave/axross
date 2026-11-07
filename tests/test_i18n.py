@@ -157,6 +157,7 @@ def test_happy_an_explicit_setting_beats_everything():
         configured="pl",
         env={"LC_ALL": "de_DE.UTF-8"},
         timezone="Europe/Stockholm",
+        available=SUPPORTED,
     )
     assert lang == "pl"
 
@@ -173,7 +174,8 @@ def test_happy_the_locale_beats_the_timezone():
 
 def test_happy_the_timezone_is_used_when_the_locale_says_nothing():
     lang = detect_language(
-        configured=None, env={"LANG": "C.UTF-8"}, timezone="Europe/Warsaw"
+        configured=None, env={"LANG": "C.UTF-8"}, timezone="Europe/Warsaw",
+        available=SUPPORTED,
     )
     assert lang == "pl"
 
@@ -186,7 +188,8 @@ def test_sad_an_invalid_configured_value_does_not_win():
     """A stale or hand-edited setting must not pin the UI to a
     catalogue that does not exist."""
     lang = detect_language(
-        configured="klingon", env={"LANG": "fr_FR.UTF-8"}, timezone=None
+        configured="klingon", env={"LANG": "fr_FR.UTF-8"}, timezone=None,
+        available=SUPPORTED,
     )
     assert lang == "fr"
 
@@ -485,3 +488,26 @@ def test_sad_no_shipped_catalogue_translates_an_it_term():
             if missing:
                 lost[f"{path.stem}: {source!r} -> {translation!r}"] = missing
     assert lost == {}, "\n".join(f"{k} lost {v}" for k, v in lost.items())
+
+
+# --------------------------------------------------------------------------
+# Singular and plural (tr_n)
+# --------------------------------------------------------------------------
+
+
+def test_happy_tr_n_picks_singular_or_plural(tmp_path):
+    """Product review: "0 duplicate group(s) covering 0 file(s)"."""
+    from core import i18n
+
+    assert i18n.tr_n(1, "{n} file", "{n} files") == "1 file"
+    assert i18n.tr_n(0, "{n} file", "{n} files") == "0 files"
+    assert i18n.tr_n(2, "{n} file in {where}", "{n} files in {where}", where="x") == "2 files in x"
+
+
+def test_happy_tr_n_translates_each_form(tmp_path, monkeypatch):
+    from core import i18n
+
+    path = _catalogue(tmp_path, "de", {"{n} file": "{n} Datei", "{n} files": "{n} Dateien"})
+    monkeypatch.setattr(i18n, "_ACTIVE", i18n.Translator("de", path))
+    assert i18n.tr_n(1, "{n} file", "{n} files") == "1 Datei"
+    assert i18n.tr_n(5, "{n} file", "{n} files") == "5 Dateien"

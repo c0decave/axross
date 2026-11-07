@@ -30,7 +30,7 @@ def activate(api):
     view.setOpenExternalLinks(False)  # a click never leaves axross unasked
     view.setOpenLinks(False)
     view.setPlaceholderText("Select a Markdown file (.md) to preview it here.")
-    api.add_dock("Markdown Preview", view)
+    api.add_dock("Markdown Preview", view, icon="markdown")
     state = {"wanted": None}
 
     def show(ctx):

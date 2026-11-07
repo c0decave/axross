@@ -1,0 +1,104 @@
+{
+ "name": "s3transfer",
+ "versions": {
+  "0.19.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|s3transfer/__init__.py|86cf544d1ccf2538",
+    "yara|capability_filesystem_delete|s3transfer/compat.py|4de89faa2e5dee4b",
+    "yara|capability_filesystem_delete|s3transfer/utils.py|16844d8b6d4d4e78",
+    "yara|capability_filesystem_read|s3transfer/__init__.py|86cf544d1ccf2538",
+    "yara|capability_filesystem_read|s3transfer/bandwidth.py|4340f2d18368c480",
+    "yara|capability_filesystem_read|s3transfer/copies.py|5385df579bbb1594",
+    "yara|capability_filesystem_read|s3transfer/crt.py|c7263d8a14bf88e6",
+    "yara|capability_filesystem_read|s3transfer/download.py|d07dcc915b1d248c",
+    "yara|capability_filesystem_read|s3transfer/processpool.py|aaab80647a26b99e",
+    "yara|capability_filesystem_read|s3transfer/upload.py|8e1df5789f3498ef",
+    "yara|capability_filesystem_read|s3transfer/utils.py|16844d8b6d4d4e78"
+   ],
+   "archives": {
+    "s3transfer-0.19.3-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "s3transfer-0.19.3.dist-info/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "s3transfer-0.19.3.dist-info/METADATA": "7b7029ecab804a4f394906ed493b93402beb32538be18caa7b462873e2ed7d81",
+      "s3transfer-0.19.3.dist-info/NOTICE.txt": "d8354e0fa7fb762da7bc054a8a6774a0b310dfbbc78006393ee573a0e57612b5",
+      "s3transfer-0.19.3.dist-info/RECORD": "563d4ea4ddc1891fcdb57fb9a8c8891a5065525401fdc1cdac7cbf125c0a60c7",
+      "s3transfer-0.19.3.dist-info/WHEEL": "195f5a3138703ffe28342b6f102d9e737a9462eb6059e033925ae8ff49b85894",
+      "s3transfer-0.19.3.dist-info/top_level.txt": "713ec90eca35556cd01895c05c89a7c88e8950afc5c3bce3345b22822c08b0d9",
+      "s3transfer/__init__.py": "86cf544d1ccf253861aa8e278bbf3deaa484c1b57eaf40ec8d94a5a48ea11b85",
+      "s3transfer/bandwidth.py": "4340f2d18368c480dc99bb3d746ea65d405464ba5f9eb046c27c99379fc8acf4",
+      "s3transfer/compat.py": "4de89faa2e5dee4b80daa11b398bc793b279996eaaae0d0e279d9cb4a6729b4f",
+      "s3transfer/constants.py": "56d4212aa82482884699e6e64ef76bf654afaa6aaba0e1d890dd542b1fca4ed2",
+      "s3transfer/copies.py": "5385df579bbb15941acb06e5bf4b962f98ea5dbfbc5f4b0324e4d9db808c1c57",
+      "s3transfer/crt.py": "c7263d8a14bf88e62da0c6e1b1203da300964578ca9179cf38831376a0b62187",
+      "s3transfer/delete.py": "083fdaac7e2aea4a57e378908df656afd63b3048f798f7d70a9169ff0de9245e",
+      "s3transfer/download.py": "d07dcc915b1d248cfb7a20625f6c8e70bf5c8432733e81bbb636c580438505bf",
+      "s3transfer/exceptions.py": "cf8958700316eebe0cb688eba72a0249c78cc62a96effa56468bee8b40929b05",
+      "s3transfer/futures.py": "229b31455a3701bf92d00a3352c8865e65b5eab333c40e5dfd0f451c6162c5a2",
+      "s3transfer/manager.py": "0ec6d633f7cac0490d1f1e9ec063055d1b4544ca92ebb473369c07509f532449",
+      "s3transfer/processpool.py": "aaab80647a26b99e03d1013e4c94a304f1a63113ad2e25c2e57206096aa43bcd",
+      "s3transfer/subscribers.py": "364c0e5e44d3a5ef62be4c769d68d9be1b71f22057688e5b54fe25f5b04f302d",
+      "s3transfer/tasks.py": "941bc9ed044ce87d6ce7c3e0219d022328414af07ee8567bc329cc59e7014266",
+      "s3transfer/upload.py": "8e1df5789f3498ef365ea28787bde20b0ff3018f01460e2dd2f65a03ce82cf8b",
+      "s3transfer/utils.py": "16844d8b6d4d4e78cda6473cb18e38e6beceff2b66c527c99e468abe5251c5ca"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "0c58bed034b2d74e2f176bb2e9b09ba84a605f321d2ab45e63eeb3f518091df2",
+     "native": {},
+     "pth": {},
+     "sha256": "24eb7535804306355e31c952a90022bf5b2f9d760f9a11062c7493a217c08553"
+    }
+   },
+   "name": "s3transfer",
+   "provenance": {
+    "s3transfer-0.19.3-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author": "Amazon Web Services",
+    "author_email": "kyknapp1@gmail.com",
+    "home_page": "https://github.com/boto/s3transfer",
+    "license": "Apache License 2.0",
+    "project_urls": {
+     "Homepage": "https://github.com/boto/s3transfer"
+    },
+    "summary": "An Amazon S3 Transfer Manager"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|s3transfer/__init__.py|86cf544d1ccf2538",
+     "yara|capability_filesystem_delete|s3transfer/compat.py|4de89faa2e5dee4b",
+     "yara|capability_filesystem_delete|s3transfer/utils.py|16844d8b6d4d4e78",
+     "yara|capability_filesystem_read|s3transfer/__init__.py|86cf544d1ccf2538",
+     "yara|capability_filesystem_read|s3transfer/bandwidth.py|4340f2d18368c480",
+     "yara|capability_filesystem_read|s3transfer/copies.py|5385df579bbb1594",
+     "yara|capability_filesystem_read|s3transfer/crt.py|c7263d8a14bf88e6",
+     "yara|capability_filesystem_read|s3transfer/download.py|d07dcc915b1d248c",
+     "yara|capability_filesystem_read|s3transfer/processpool.py|aaab80647a26b99e",
+     "yara|capability_filesystem_read|s3transfer/upload.py|8e1df5789f3498ef",
+     "yara|capability_filesystem_read|s3transfer/utils.py|16844d8b6d4d4e78"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete s3transfer/__init__.py",
+     "capability_filesystem_delete:capability_filesystem_delete s3transfer/compat.py",
+     "capability_filesystem_delete:capability_filesystem_delete s3transfer/utils.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/__init__.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/bandwidth.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/copies.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/crt.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/download.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/processpool.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/upload.py",
+     "capability_filesystem_read:capability_filesystem_read s3transfer/utils.py"
+    ]
+   },
+   "version": "0.19.3"
+  }
+ }
+}

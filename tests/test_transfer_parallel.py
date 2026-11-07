@@ -884,7 +884,7 @@ def test_e2e_the_dock_shows_several_running_jobs_with_their_progress_and_speed(t
         assert 2 <= len(rows) <= 3
         speeds = [text(r, COL_SPEED) for r in rows if text(r, COL_SPEED)]
         assert all(s.endswith("/s") for s in speeds)
-        assert dock._overall_progress.format() == "%p%"
+        assert dock._overall_progress.format().startswith("%p%")  # with the time left
         wait_all(mgr, jobs, 60)
         APP.processEvents()
         assert [text(r, COL_STATUS) for r in range(model.rowCount())] == ["done"] * 4

@@ -13,6 +13,12 @@ binary contains a library or package without an entry.
 None of these packages is vendored into the axross source tree; a source or
 `pip` install imports them as installed by the user.
 
+One data table is taken into the source tree: `core/bluetooth_companies.py`
+holds the Bluetooth SIG company identifiers (the key of BLE manufacturer
+data) as listed by [Bumble](https://github.com/google/bumble)'s
+`bumble/company_ids.py`, Copyright 2021-2022 Google LLC, Apache-2.0
+(regenerated with `scripts/gen_bt_companies.py`).
+
 When a binary bundle is produced (PyInstaller), the bundle statically
 includes many of the components listed here. Redistribution of such bundles
 is governed by the strongest copyleft license among the included
@@ -48,6 +54,12 @@ Installed by `pip install axross`.
 | `[archive]` | rarfile | ISC | https://github.com/markokr/rarfile |
 | `[azure]` | azure-storage-blob | MIT | https://github.com/Azure/azure-sdk-for-python |
 | `[azure]` | azure-storage-file-share | MIT | https://github.com/Azure/azure-sdk-for-python |
+| `[bluetooth-raw]` | Bumble | Apache-2.0 | https://github.com/google/bumble |
+| `[chat]` | matrix-nio | ISC | https://github.com/matrix-nio/matrix-nio |
+| `[chat]` | python-omemo | MIT | https://github.com/Syndace/python-omemo |
+| `[chat]` | python-twomemo | MIT | https://github.com/Syndace/python-twomemo |
+| `[chat]` | Slixmpp | MIT | https://codeberg.org/poezio/slixmpp |
+| `[chat]` | vodozemac | MIT AND Apache-2.0 | https://github.com/matrix-nio/vodozemac-python |
 | `[dns]` | dnspython | ISC | https://github.com/rthalley/dnspython |
 | `[dropbox]` | dropbox | MIT | https://github.com/dropbox/dropbox-sdk-python |
 | `[encoding]` | chardet | 0BSD | https://github.com/chardet/chardet |
@@ -107,7 +119,7 @@ are not bundled - Help > Features… downloads them (pinned SHA-256,
 <!-- third-party:voice -->
 | Component | SPDX license | Note |
 |---|---|---|
-| ctranslate2 4.8.4 | MIT | Runs the Whisper speech recognition models |
+| ctranslate2 4.8.3 | MIT | Runs the Whisper speech recognition models |
 | espeak-ng 1.52.0.1 (commit 724808c5a83f9ef95fdd0db886ba7ba537ff224a) | GPL-3.0-or-later | Phonemes for the Piper voices (statically linked into piper's espeakbridge, with its data) |
 | faster-whisper 1.2.1 | MIT | Local speech recognition of the Agent dock |
 | onnxruntime 1.31.0 | MIT | Runs the Piper voice models |
@@ -152,6 +164,7 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [boto3](https://github.com/boto/boto3) | Apache-2.0 | Amazon S3 and S3-compatible storage | full, slim |
 | [botocore](https://github.com/boto/botocore) | Apache-2.0 | Used by boto3: Low-level, data-driven core of boto 3 | full, slim |
 | [brotli](https://github.com/google/brotli) | MIT | Used by py7zr: Python bindings for the Brotli compression library | full, slim |
+| [Bumble](https://github.com/google/bumble) | Apache-2.0 | Drives a USB Bluetooth stick directly, without BlueZ (Bluetooth panel) | full |
 | [cached-property](https://github.com/pydanny/cached-property) | BSD-3-Clause | Used by exchangelib: A decorator for caching properties in classes | full |
 | [certifi](https://github.com/certifi/python-certifi) | MPL-2.0 | Mozilla's CA certificate bundle for TLS verification | full, slim |
 | [cffi](https://github.com/python-cffi/cffi) | MIT-0 | Used by cryptography: Foreign Function Interface for Python calling C code | full, slim |
@@ -184,6 +197,7 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [huggingface_hub](https://github.com/huggingface/huggingface_hub) | Apache-2.0 | Used by faster-whisper: Client library to download and publish models, datasets and other repos on the huggingface | full |
 | [idna](https://github.com/kjd/idna) | BSD-3-Clause | Used by requests: Internationalized Domain Names in Applications (IDNA) | full, slim |
 | [impacket](https://github.com/fortra/impacket) | LicenseRef-Impacket-Apache-1.1-modified | WMI / DCOM and SMB tooling for Windows hosts | full |
+| [importlib_resources](https://github.com/python/importlib_resources) | Apache-2.0 | Used by libusb-package: Read resources from Python packages | full |
 | [inflate64](https://github.com/miurahr/inflate64) | LGPL-2.1-or-later | Used by py7zr: deflate64 compression/decompression library | full, slim |
 | [invoke](https://github.com/pyinvoke/invoke) | BSD-2-Clause | Used by paramiko: Pythonic task execution | full, slim |
 | [ipwhois](https://github.com/secynic/ipwhois) | BSD-2-Clause | WHOIS / RDAP lookups | full, slim |
@@ -199,9 +213,11 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [jsonschema-specifications](https://github.com/python-jsonschema/jsonschema-specifications) | MIT | Used by jsonschema: The JSON Schema meta-schemas and vocabularies, exposed as a Registry | full, slim |
 | [keyring](https://github.com/jaraco/keyring) | MIT | Stores profile passwords in the operating system's keyring | full, slim |
 | [ldap3](https://github.com/cannatag/ldap3) | LGPL-3.0-or-later | LDAP backend and helpers | full, slim |
+| [libusb-package](https://github.com/pyocd/libusb-package) | Apache-2.0 | Used by Bumble: libusb as a Python package | full |
 | [lxml](https://github.com/lxml/lxml) | BSD-3-Clause | Used by exchangelib: Powerful and Pythonic XML processing library combining libxml2/libxslt with the ElementTre | full |
 | [manuf](https://github.com/coolbho3k/manuf) | Apache-2.0 OR GPL-3.0-or-later | MAC address vendor lookup (Wireshark OUI database) | full, slim |
 | [MarkupSafe](https://github.com/pallets/markupsafe) | BSD-3-Clause | Used by Flask: Safely add untrusted strings to HTML/XML markup | full |
+| [matrix-nio](https://github.com/matrix-nio/matrix-nio) | ISC | Matrix client with end-to-end encryption (Matrix panel) | full |
 | [more-itertools](https://github.com/more-itertools/more-itertools) | MIT | Used by jaraco.classes: More routines for operating on iterables, beyond itertools | full, slim |
 | [msal](https://github.com/AzureAD/microsoft-authentication-library-for-python) | MIT | Microsoft sign-in for OneDrive and SharePoint | full |
 | [multivolumefile](https://github.com/miurahr/multivolume) | LGPL-2.1-or-later | Used by py7zr: multi volume file wrapper library | full, slim |
@@ -215,6 +231,8 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [pathvalidate](https://github.com/thombashi/pathvalidate) | MIT | Used by piper-tts: pathvalidate is a Python library to sanitize/validate a string such as filenames/file-path | full |
 | [Pillow](https://github.com/python-pillow/Pillow) | MIT-CMU | Image thumbnails, image metadata and the image viewer | full, slim |
 | [piper-tts](https://github.com/OHF-voice/piper1-gpl) | GPL-3.0-or-later | Speech output of the Agent dock (Piper) | full |
+| [platformdirs](https://github.com/tox-dev/platformdirs) | MIT | Used by Bumble: platform-specific data folders | full |
+| [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) | BSD-3-Clause | Used by Bumble: interactive command lines | full |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | BSD-3-Clause | Used by onnxruntime | full |
 | [psutil](https://github.com/giampaolo/psutil) | BSD-3-Clause | Drive overview extension; process information | full, slim |
 | [psycopg](https://github.com/psycopg/psycopg) | LGPL-3.0-only | PostgreSQL backend | full, slim |
@@ -227,6 +245,7 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [pybcj](https://github.com/miurahr/pybcj) | LGPL-2.1-or-later | Used by py7zr: bcj filter library | full, slim |
 | [pycparser](https://github.com/eliben/pycparser) | BSD-3-Clause | Used by cffi: C parser in Python | full, slim |
 | [pycryptodomex](https://github.com/Legrandin/pycryptodome) | BSD-2-Clause AND LicenseRef-PublicDomain | Used by impacket: Cryptographic library for Python | full, slim |
+| [pyee](https://github.com/jfhbrook/pyee) | MIT | Used by Bumble: event emitters | full |
 | [Pygments](https://github.com/pygments/pygments) | BSD-2-Clause | Syntax highlighting in the text editor | full, slim |
 | [PyJWT](https://github.com/jpadilla/pyjwt) | MIT | Used by msal: JSON Web Token implementation in Python | full, slim |
 | [pymongo](https://github.com/mongodb/mongo-python-driver) | Apache-2.0 | MongoDB / GridFS backend | full, slim |
@@ -237,10 +256,16 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [pyppmd](https://github.com/miurahr/pyppmd) | LGPL-2.1-or-later | Used by py7zr: PPMd compression/decompression library | full, slim |
 | [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | GPL-3.0-only OR LicenseRef-Riverbank-Commercial | Python bindings for Qt: the whole user interface | full, slim |
 | [PyQt6_sip](https://github.com/Python-SIP/sip) | BSD-2-Clause | Runtime support module of the PyQt6 bindings | full, slim |
+| [pySerial](https://github.com/pyserial/pyserial) | BSD-3-Clause | Used by Bumble: serial-port transports | full |
+| [pyserial-asyncio](https://github.com/pyserial/pyserial-asyncio) | BSD-3-Clause | Used by Bumble: serial ports with asyncio | full |
 | [pysnmp](https://github.com/lextudio/pysnmp) | BSD-2-Clause | SNMP helpers | full, slim |
 | [PySocks](https://github.com/Anorov/PySocks) | BSD-3-Clause | SOCKS4/5 proxies for every connection | full, slim |
 | [pyspnego](https://github.com/jborean93/pyspnego) | MIT | NTLM / Kerberos (Negotiate) authentication for proxies and SMB | full, slim |
 | [python-dateutil](https://github.com/dateutil/dateutil) | Apache-2.0 AND BSD-3-Clause | Used by botocore: Extensions to the standard Python datetime module | full, slim |
+| [python-libusb1](https://github.com/vpelletier/python-libusb1) | LGPL-2.1-or-later | Used by Bumble: libusb from Python | full |
+| [python-omemo](https://github.com/Syndace/python-omemo) | MIT | OMEMO end-to-end encryption session manager (XMPP panel) | full |
+| [python-twomemo](https://github.com/Syndace/python-twomemo) | MIT | OMEMO 2 (urn:xmpp:omemo:2) backend | full |
+| [PyUSB](https://github.com/pyusb/pyusb) | BSD-3-Clause | Used by Bumble: USB access | full |
 | [pywinrm](https://github.com/diyan/pywinrm) | MIT | WinRM backend (Windows Remote Management) | full |
 | [PyYAML](https://github.com/yaml/pyyaml) | MIT | Used by ctranslate2: YAML parser and emitter for Python | full, slim |
 | [rarfile](https://github.com/markokr/rarfile) | ISC | RAR archives (browse, extract) | full, slim |
@@ -255,6 +280,7 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [SecretStorage](https://github.com/mitya57/secretstorage) | BSD-3-Clause | Used by keyring: Python bindings to FreeDesktop.org Secret Service API | full, slim |
 | [sift-summarizer](https://github.com/c0decave/sift) | MIT | sift: the Analysis dock's explanation of the selected file | full |
 | [six](https://github.com/benjaminp/six) | MIT | Used by impacket: Python 2 and 3 compatibility utilities | full, slim |
+| [Slixmpp](https://codeberg.org/poezio/slixmpp) | MIT | XMPP client library (XMPP panel) | full |
 | [smbprotocol](https://github.com/jborean93/smbprotocol) | MIT | SMB / CIFS file shares | full, slim |
 | [stone](https://github.com/dropbox/stone) | MIT | Used by dropbox: Stone is an interface description language (IDL) for APIs | full |
 | [tftpy](https://github.com/msoulier/tftpy) | MIT | TFTP backend | full, slim |
@@ -266,7 +292,10 @@ them) into the bundle under `licenses/python/<name>-<version>/`
 | [tzlocal](https://github.com/regebro/tzlocal) | MIT | Used by exchangelib: tzinfo object for the local timezone | full |
 | [uritemplate](https://github.com/python-hyper/uritemplate) | BSD-3-Clause OR Apache-2.0 | Used by google-api-python-client: Implementation of RFC 6570 URI Templates | full |
 | [urllib3](https://github.com/urllib3/urllib3) | MIT | HTTP connection pool (proxies, S3, WebDAV) | full, slim |
+| [vodozemac](https://github.com/matrix-nio/vodozemac-python) | MIT AND Apache-2.0 | Olm and Megolm end-to-end encryption of Matrix (used by matrix-nio) | full |
 | [watchdog](https://github.com/gorakhargosh/watchdog) | Apache-2.0 | Instant refresh of local folders (inotify, FSEvents, ReadDirectoryChangesW) | full, slim |
+| [wcwidth](https://github.com/jquast/wcwidth) | MIT | Used by prompt_toolkit: terminal width of characters | full |
+| [websockets](https://github.com/python-websockets/websockets) | BSD-3-Clause | Used by Bumble: WebSocket transports | full |
 | [Werkzeug](https://github.com/pallets/werkzeug) | BSD-3-Clause | Used by Flask: The comprehensive WSGI web application library | full |
 | [xmltodict](https://github.com/martinblech/xmltodict) | MIT | Used by pywinrm: Makes working with XML feel like you are working with JSON | full |
 <!-- /third-party:python-binaries -->
@@ -323,6 +352,7 @@ licence text at all (libxcb, lz4-libs, sqlite-libs, xcb-util-keysyms).
 | [libsystemd](https://systemd.io) | LGPL-2.1-or-later AND MIT | Journal and D-Bus helpers used by system libraries | full, slim |
 | [LibTIFF](https://libtiff.gitlab.io/libtiff/) | libtiff | TIFF images (Pillow) | full, slim |
 | [libunistring](https://www.gnu.org/software/libunistring/) | LGPL-3.0-or-later OR GPL-2.0-or-later | Unicode string functions used by GnuTLS | full |
+| [libusb](https://github.com/libusb/libusb) | LGPL-2.1-or-later | USB access of the Bluetooth stick used directly (in libusb-package) | full |
 | [libvpx](https://chromium.googlesource.com/webm/libvpx) | BSD-3-Clause | VP8/VP9 codec library of PyAV's FFmpeg | full |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | BSD-3-Clause | WebP images (Pillow, Qt image plugin) | full, slim |
 | [libxcb and xcb-util](https://xcb.freedesktop.org) | MIT | X protocol bindings of Qt's xcb platform plugin | full, slim |

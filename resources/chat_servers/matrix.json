@@ -1,0 +1,515 @@
+{
+ "format": 1,
+ "protocol": "matrix",
+ "snapshot_date": "2025-01-27",
+ "sources": [
+  "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+  "https://matrix.org"
+ ],
+ "servers": [
+  {
+   "name": "matrix.org",
+   "host": "matrix-client.matrix.org",
+   "port": 443,
+   "tls": true,
+   "note": "the Matrix.org Foundation's homeserver",
+   "source": "https://matrix.org",
+   "domain": "matrix.org"
+  },
+  {
+   "name": "4d2.org",
+   "host": "matrix.4d2.org",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "4d2.org"
+  },
+  {
+   "name": "archaeo.social",
+   "host": "matrix.archaeo.social",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Denmark",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "archaeo.social"
+  },
+  {
+   "name": "arcticfoxes.net",
+   "host": "matrix.arcticfoxes.net",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "arcticfoxes.net"
+  },
+  {
+   "name": "aria-net.org",
+   "host": "aria.im",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Italy",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "aria-net.org"
+  },
+  {
+   "name": "bark.lgbt",
+   "host": "synapse.bark.lgbt",
+   "port": 443,
+   "tls": true,
+   "note": "Netherlands",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "bark.lgbt"
+  },
+  {
+   "name": "bitcoinist.org",
+   "host": "bitcoinist.org",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Netherlands",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "bitcoinist.org"
+  },
+  {
+   "name": "calitabby.net",
+   "host": "matrix.calitabby.net",
+   "port": 443,
+   "tls": true,
+   "note": "United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "calitabby.net"
+  },
+  {
+   "name": "catgirl.cloud",
+   "host": "matrix.catgirl.cloud",
+   "port": 443,
+   "tls": true,
+   "note": "Form; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "catgirl.cloud"
+  },
+  {
+   "name": "chagai.website",
+   "host": "mx.chagai.website",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Switzerland",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "chagai.website"
+  },
+  {
+   "name": "chatwave.org",
+   "host": "matrix.chatwave.org",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "chatwave.org"
+  },
+  {
+   "name": "club1.fr",
+   "host": "club1.fr",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; France",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "club1.fr"
+  },
+  {
+   "name": "comm.cx",
+   "host": "matrix-client.comm.cx",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Japan",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "comm.cx"
+  },
+  {
+   "name": "constellatory.net",
+   "host": "matrix.constellatory.net",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; US",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "constellatory.net"
+  },
+  {
+   "name": "converser.eu",
+   "host": "converser.eu",
+   "port": 443,
+   "tls": true,
+   "note": "France",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "converser.eu"
+  },
+  {
+   "name": "digitalprivacy.diy",
+   "host": "matrix.digitalprivacy.diy",
+   "port": 443,
+   "tls": true,
+   "note": "New Zealand / Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "digitalprivacy.diy"
+  },
+  {
+   "name": "duesen.chat",
+   "host": "matrix.duesen.chat",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "duesen.chat"
+  },
+  {
+   "name": "env.esq",
+   "host": "env.esq",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Cinny; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "env.esq"
+  },
+  {
+   "name": "envs.net",
+   "host": "matrix.envs.net",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "envs.net"
+  },
+  {
+   "name": "exarius.org",
+   "host": "exarius.org",
+   "port": 443,
+   "tls": true,
+   "note": "France",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "exarius.org"
+  },
+  {
+   "name": "flieger.chat",
+   "host": "matrix.flieger.chat",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "flieger.chat"
+  },
+  {
+   "name": "fox.yt",
+   "host": "matrix.fox.yt",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Australia",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "fox.yt"
+  },
+  {
+   "name": "freiburg.social",
+   "host": "matrix.freiburg.social",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "freiburg.social"
+  },
+  {
+   "name": "furryrefuge.com",
+   "host": "matrix.furryrefuge.com",
+   "port": 443,
+   "tls": true,
+   "note": "SSO; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "furryrefuge.com"
+  },
+  {
+   "name": "g24.at",
+   "host": "matrix.g24.at",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Austria",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "g24.at"
+  },
+  {
+   "name": "gemeinsam.jetzt",
+   "host": "matrix.gemeinsam.jetzt",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Austria",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "gemeinsam.jetzt"
+  },
+  {
+   "name": "glasgow.social",
+   "host": "matrix.glasgow.social",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; UK",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "glasgow.social"
+  },
+  {
+   "name": "gnulinux.club",
+   "host": "matrix.gnulinux.club",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "gnulinux.club"
+  },
+  {
+   "name": "grin.hu",
+   "host": "matrix.grin.hu",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Hungary",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "grin.hu"
+  },
+  {
+   "name": "hashi.sbs",
+   "host": "chatserver.hashi.sbs",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; UK/China?",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "hashi.sbs"
+  },
+  {
+   "name": "hot-chilli.im",
+   "host": "hot-chilli.im",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "hot-chilli.im"
+  },
+  {
+   "name": "imagisphe.re",
+   "host": "imagisphe.re",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; France",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "imagisphe.re"
+  },
+  {
+   "name": "jonasled.de",
+   "host": "matrix.jonasled.de",
+   "port": 443,
+   "tls": true,
+   "note": "Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "jonasled.de"
+  },
+  {
+   "name": "magdeburg.jetzt",
+   "host": "chat.magdeburg.jetzt",
+   "port": 443,
+   "tls": true,
+   "note": "SSO; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "magdeburg.jetzt"
+  },
+  {
+   "name": "monero.social",
+   "host": "matrix.monero.social",
+   "port": 443,
+   "tls": true,
+   "note": "United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "monero.social"
+  },
+  {
+   "name": "mtrx.nz",
+   "host": "mtrx.nz",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; New Zealand",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "mtrx.nz"
+  },
+  {
+   "name": "ncs.lol",
+   "host": "ncs.lol",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Ukraine",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "ncs.lol"
+  },
+  {
+   "name": "nitro.chat",
+   "host": "nitro.chat",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "nitro.chat"
+  },
+  {
+   "name": "nope.chat",
+   "host": "nope.chat",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "nope.chat"
+  },
+  {
+   "name": "oblak.be",
+   "host": "matrix.oblak.be",
+   "port": 443,
+   "tls": true,
+   "note": "SSO; Germany?",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "oblak.be"
+  },
+  {
+   "name": "pcriot.org",
+   "host": "pcriot.org",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "pcriot.org"
+  },
+  {
+   "name": "pub.solar",
+   "host": "matrix.pub.solar",
+   "port": 443,
+   "tls": true,
+   "note": "SSO; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "pub.solar"
+  },
+  {
+   "name": "rollenspiel.chat",
+   "host": "rollenspiel.chat",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "rollenspiel.chat"
+  },
+  {
+   "name": "socialnetwork24.com",
+   "host": "socialnetwork24.com",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "socialnetwork24.com"
+  },
+  {
+   "name": "soziale.cloud",
+   "host": "chat.soziale.cloud",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "soziale.cloud"
+  },
+  {
+   "name": "studichat.de",
+   "host": "matrix.studichat.de",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "studichat.de"
+  },
+  {
+   "name": "synod.im",
+   "host": "synod.im",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "synod.im"
+  },
+  {
+   "name": "tarnkappe.info",
+   "host": "matrix.tarnkappe.info",
+   "port": 443,
+   "tls": true,
+   "note": "SSO; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "tarnkappe.info"
+  },
+  {
+   "name": "tchncs.de",
+   "host": "matrix.tchncs.de",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "tchncs.de"
+  },
+  {
+   "name": "tedomum.net",
+   "host": "matrix.tedomum.net",
+   "port": 443,
+   "tls": true,
+   "note": "SSO; France",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "tedomum.net"
+  },
+  {
+   "name": "transfem.dev",
+   "host": "matrix.transfem.dev",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "transfem.dev"
+  },
+  {
+   "name": "unredacted.org",
+   "host": "matrix.unredacted.org",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "unredacted.org"
+  },
+  {
+   "name": "utwente.io",
+   "host": "matrix.snt.utwente.nl",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Netherlands",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "utwente.io"
+  },
+  {
+   "name": "waffle.tech",
+   "host": "waffle.tech",
+   "port": 443,
+   "tls": true,
+   "note": "United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "waffle.tech"
+  },
+  {
+   "name": "we2.ee",
+   "host": "we2.ee",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; United States",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "we2.ee"
+  },
+  {
+   "name": "yatrix.org",
+   "host": "matrix.yatrix.org",
+   "port": 443,
+   "tls": true,
+   "note": "In-house Element; Germany",
+   "source": "https://raw.githubusercontent.com/austinhuang0131/matrix-servers-temporary/main/servers.json",
+   "domain": "yatrix.org"
+  }
+ ]
+}

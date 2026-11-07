@@ -1,0 +1,75 @@
+{
+ "name": "pypi-attestations",
+ "versions": {
+  "0.0.30": {
+   "accepted_findings": [
+    "yara|capability_network_download|pypi_attestations/_cli.py|5668edc80b2359bf",
+    "yara|capability_network_outbound|pypi_attestations/_cli.py|5668edc80b2359bf"
+   ],
+   "archives": {
+    "pypi_attestations-0.0.30-py3-none-any.whl": {
+     "entry_points": [
+      "pypi-attestations = pypi_attestations._cli:main"
+     ],
+     "files": {
+      "pypi_attestations-0.0.30.dist-info/METADATA": "c8005f7482bc7922892bb482d944288de2fc43a43b044c9e30f72d090c4af841",
+      "pypi_attestations-0.0.30.dist-info/RECORD": "070dd162658a5fd65c19a1ff7f2e58ed5e52578f96943912d4716dcbaacec273",
+      "pypi_attestations-0.0.30.dist-info/WHEEL": "2b6eb4118ce7cd7b09601406aa623c553c4476265836f0d9c16f5c061f7efcc0",
+      "pypi_attestations-0.0.30.dist-info/entry_points.txt": "086152c7b120a5e096bd415bdbe72c2239815cf3af2106803f8fa6e262e47293",
+      "pypi_attestations-0.0.30.dist-info/licenses/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "pypi_attestations-0.0.30.dist-info/top_level.txt": "0dca75b99ab1d0e13490ea46404673d9a0f608bc2b8c6dfcef1395de89e961b9",
+      "pypi_attestations/__init__.py": "e24abb1375665116577c11557d7046fbae6ea54d7e15f90a012e96eab0f8cd58",
+      "pypi_attestations/__main__.py": "7f695c07ebd4c6921b586b40521808cfaa40b9b54fcef15e5021ec158233b922",
+      "pypi_attestations/_cli.py": "5668edc80b2359bf995305fbdea41a8ef31363f2a312e3621a473d9c88cdac25",
+      "pypi_attestations/_impl.py": "79a856a7e35767ff8cf098dfc0978bca8730c3642286cae0db2266661435c536",
+      "pypi_attestations/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "9bcd324a0fff6f76f5934c72c7b6466b676f986ae723680e5d2b1ef6ef23e7e9",
+     "native": {},
+     "pth": {},
+     "sha256": "b3a9c53f6cb89e5e7b5b70e6cfca97cfc66008c1ed54087355e06e40071cef21"
+    }
+   },
+   "name": "pypi-attestations",
+   "provenance": {
+    "pypi_attestations-0.0.30-py3-none-any.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "pypi/pypi-attestations",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Trail of Bits <opensource@trailofbits.com>",
+    "license_expression": "Apache-2.0",
+    "maintainer_email": "PyPI Admins <admin@pypi.org>",
+    "project_urls": {
+     "Documentation": "https://pypi.github.io/pypi-attestations/",
+     "Homepage": "https://pypi.org/project/pypi-attestations",
+     "Issues": "https://github.com/pypi/pypi-attestations/issues",
+     "Source": "https://github.com/pypi/pypi-attestations"
+    },
+    "summary": "A library to convert between Sigstore Bundles and PEP-740 Attestation objects"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_download, network_outbound; attestation verifies (pypi/pypi-attestations)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_download|pypi_attestations/_cli.py|5668edc80b2359bf",
+     "yara|capability_network_outbound|pypi_attestations/_cli.py|5668edc80b2359bf"
+    ],
+    "yara": [
+     "capability_network_download:capability_network_download pypi_attestations/_cli.py",
+     "capability_network_outbound:capability_network_outbound pypi_attestations/_cli.py"
+    ]
+   },
+   "version": "0.0.30"
+  }
+ }
+}

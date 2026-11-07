@@ -1,0 +1,93 @@
+{
+ "name": "msgpack",
+ "versions": {
+  "1.2.3": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|msgpack/__init__.py|422314cf8f068c7e",
+    "yara|capability_filesystem_read|msgpack/fallback.py|47dd6573f352e62c"
+   ],
+   "archives": {
+    "msgpack-1.2.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [],
+     "files": {
+      "msgpack-1.2.3.dist-info/METADATA": "f47c09192e9f4f81b8b4a63979473a13f7a63c67dcdc41be2e0f97353a9dc5b4",
+      "msgpack-1.2.3.dist-info/RECORD": "bd24ad9d6020b97eef19b6841bb9d0a57e41867ba6b2694cc5e9977e3c622407",
+      "msgpack-1.2.3.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "msgpack-1.2.3.dist-info/licenses/COPYING": "492dedba85da5872f78e6091bcd1fea474d660d35acb4dee964b8aab3f007427",
+      "msgpack-1.2.3.dist-info/top_level.txt": "dadca4498d695dd880db16130d1ea33f0d2a239646c518a1ca17f84b9859c979",
+      "msgpack/__init__.py": "422314cf8f068c7e3be9a5c3a2f8039cf133f5a2764216c09749224420ee5733",
+      "msgpack/_cmsgpack.cpython-312-x86_64-linux-gnu.so": "2078768feb8be5a980371d0f6ef3c08d66879a0b3670f64289c8811fc795e273",
+      "msgpack/exceptions.py": "7424d67a2f1da64accb100dc8d093be004e5f47b08047d326edf3338f36a3187",
+      "msgpack/ext.py": "eade5f893bb1d3e65335b4c9bd580fca77bf498600aaeefd17087eb2bc201e9e",
+      "msgpack/fallback.py": "47dd6573f352e62c3f45b7e915beda8e80eb00893af6cb6f281a4d492447f8a0"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "9f76754a3d18bc093b8db3a78a34ece61f355aad9c504d6fdddcfcf65f605fbd",
+     "native": {
+      "msgpack/_cmsgpack.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "ede33b2892ceb976283e009ad12fa1834cfdf1f9c43ee9c97849fc588d00a618"
+    }
+   },
+   "name": "msgpack",
+   "provenance": {
+    "msgpack-1.2.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "msgpack/msgpack-python",
+     "workflow": "wheel.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "Inada Naoki <songofacandy@gmail.com>",
+    "license_expression": "Apache-2.0",
+    "project_urls": {
+     "Changelog": "https://github.com/msgpack/msgpack-python/blob/main/CHANGELOG.md",
+     "Documentation": "https://msgpack-python.readthedocs.io/",
+     "Homepage": "https://msgpack.org/",
+     "Repository": "https://github.com/msgpack/msgpack-python/",
+     "Tracker": "https://github.com/msgpack/msgpack-python/issues"
+    },
+    "summary": "MessagePack serializer"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_read; 1 native binaries profiled, none with network/process imports or addresses; attestation verifies (msgpack/msgpack-python)."
+   },
+   "scans": {
+    "capa": {
+     "2078768feb8be5a980371d0f6ef3c08d66879a0b3670f64289c8811fc795e273": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "msgpack/_cmsgpack.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|msgpack/__init__.py|422314cf8f068c7e",
+     "yara|capability_filesystem_read|msgpack/fallback.py|47dd6573f352e62c"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read msgpack/__init__.py",
+     "capability_filesystem_read:capability_filesystem_read msgpack/fallback.py"
+    ]
+   },
+   "version": "1.2.3"
+  }
+ }
+}

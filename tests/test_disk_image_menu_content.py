@@ -179,15 +179,21 @@ def ram_pane():
     APP.processEvents()
 
 
+def _disk_image_dialogs() -> list:
+    return [w for w in APP.topLevelWidgets() if type(w).__name__ == "DiskImageDialog"]
+
+
 def test_e2e_a_local_image_without_a_telling_name_gets_disk_image(local_pane):
     _select(local_pane, "blob")
     menu = local_pane._build_context_menu()
     action = next(a for a in menu.actions() if a.text().replace("&", "") == "Disk Image…")
     assert action.property("axCommand") == "disk-image"
+    before = set(_disk_image_dialogs())
     action.trigger()
-    dialogs = [w for w in APP.topLevelWidgets() if type(w).__name__ == "DiskImageDialog"]
-    assert dialogs
-    dlg = dialogs[-1]
+    # The window this click opened. An earlier test's dialog that was closed
+    # but not deleted yet is a top-level widget too, and may never have
+    # read an image (tests/test_disk_image_followups.py never starts one).
+    (dlg,) = [w for w in _disk_image_dialogs() if w not in before and w.isVisible()]
     assert wait(lambda: dlg.info is not None)
     assert dlg.info.scheme == "gpt"
     dlg.close()

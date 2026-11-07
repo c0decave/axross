@@ -1,0 +1,140 @@
+{
+ "name": "stone",
+ "versions": {
+  "3.5.5": {
+   "accepted_findings": [
+    "yara|capability_filesystem_delete|stone/compiler.py|dc615c1733715cc5",
+    "yara|capability_filesystem_read|stone/_vendor/ply/lex.py|6da6d12129c801fc",
+    "yara|capability_filesystem_read|stone/backends/tsd_client.py|73e29fa57f78e59b",
+    "yara|capability_filesystem_read|stone/backends/tsd_types.py|697cd18a9c5f86f0",
+    "yara|capability_filesystem_read|stone/cli.py|20389ea5e5215e74",
+    "yara|capability_process_spawn|stone/_vendor/ply/lex.py|6da6d12129c801fc",
+    "yara|capability_process_spawn|stone/_vendor/ply/yacc.py|8316e2431dcf9fb2",
+    "yara|capability_process_spawn|stone/cli.py|20389ea5e5215e74",
+    "yara|capability_process_spawn|stone/cli_helpers.py|5d15af12e9a8ec14"
+   ],
+   "archives": {
+    "stone-3.5.5-py3-none-any.whl": {
+     "entry_points": [
+      "stone = stone.cli:main"
+     ],
+     "files": {
+      "stone-3.5.5.dist-info/METADATA": "221d440e5aa3474f3c92b5c301b740de86c27e664d2d52f595032523ee0c0b47",
+      "stone-3.5.5.dist-info/RECORD": "45def2dd58201efee28530cbf5e780413ccef99d9c15d6854a160d40e70725ed",
+      "stone-3.5.5.dist-info/WHEEL": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1",
+      "stone-3.5.5.dist-info/entry_points.txt": "217e55f3200315fb7b65b3ecd33d92126068f5d4d31142e19ef2ac50c46b734c",
+      "stone-3.5.5.dist-info/licenses/LICENSE": "4bf7cf281a1216fa71fbc3a70c209b5433a78e1b736bc27706f624e79d24f4ca",
+      "stone-3.5.5.dist-info/top_level.txt": "54a4d40356da08e2b1871a78c6965016343d8603565931943fefbf929735347f",
+      "stone/__init__.py": "006c37e750d5cdf570fe5b8ab32338a1e9888ac2d6ca4f9bdfb9a5aa6df48d7c",
+      "stone/__main__.py": "5b36965c84eb2f828dd9159f038d95ac60dd65661c237b6f6f9667f70420b1fc",
+      "stone/_vendor/__init__.py": "44934f469b4a33611f5533148c1a7a565ce468f22d48258eefea4eedd3d39424",
+      "stone/_vendor/ply/LICENSE": "1b8416b5928da43708ff4a5b9d7414994c3b86d3e058492966ccaaf2131074c0",
+      "stone/_vendor/ply/README.md": "1ae36c830eb48674ce51808022bedde69194bbb8cbaca7aa4f43feceb61befa4",
+      "stone/_vendor/ply/__init__.py": "b31ea204817ffd6288794d22c36592a12a8185c947179121053734c038a04d5f",
+      "stone/_vendor/ply/lex.py": "6da6d12129c801fcc7a3b5aa2d8176a86092687d1bb4cf1ddf3b601da2b7480d",
+      "stone/_vendor/ply/yacc.py": "8316e2431dcf9fb25b280cbd09d46d3f920f3c9304f065a56d0f6ef50e85c78e",
+      "stone/_version.py": "03ccff70e2bf2447afd1923f89cffd72537abf130ebbf6681d2cb93d7fae849c",
+      "stone/backend.py": "50330b112e767dbf7bf0c77507209b0ef212bd9ba75cfbc41956cd4b41c11a20",
+      "stone/backends/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stone/backends/helpers.py": "e6f970bf9b62eb717a907e459c955ea23639d7d0c824d736309beff25b968258",
+      "stone/backends/js_client.py": "8de9db1da0861f7772f9f41602b46c1deeddf06249c50302e2744c1227e04d3d",
+      "stone/backends/js_helpers.py": "8d1ffb9bb3f3a7ed5e97fe021d3b109eb8fc4b022913924a6a2b77479a28bf40",
+      "stone/backends/js_types.py": "0131e4170209e16365bbee0bfde1cbf0c9e9270829874b4444ba58f35f41e7f0",
+      "stone/backends/obj_c.py": "82027f2abeb1de938169b2d3fb04a6266bc572e0a4053868cf7331cae33fc1f0",
+      "stone/backends/obj_c_client.py": "9b2f80078f102ee5309b4a1939a70738bd3fe081fde5e238a582cde9a9aa702a",
+      "stone/backends/obj_c_helpers.py": "3aff2a88fcf264df4c3923816cbd695885ed0fe51f8e8e5a68d88ae9ec6bc445",
+      "stone/backends/obj_c_types.py": "6b490e735d0f9682ee0d31ed8d61c578c04dd066523f8df27db2c67716eeba0c",
+      "stone/backends/python_client.py": "2b71707fee9cb5696fcbb245f59e5be48d015acb51e150b2f4f569c633904f09",
+      "stone/backends/python_helpers.py": "a7f408c947e60e568b3e34893d6e62fddb0b4fd7b9cb44c89ca0af79d314a81e",
+      "stone/backends/python_rsrc/__init__.py": "f07c6a43397b28ecfa97bf3fd598488cb9f20d23531a98f329e50bc9a2d5f86b",
+      "stone/backends/python_rsrc/stone_base.py": "2271756ffb291bdaabd1687dad66087c4cf77a083e8169ee4696722e3dd7c935",
+      "stone/backends/python_rsrc/stone_serializers.py": "46fca437f06de844a01c1293380fb1849f38ab1738cf8325ac25810fc1919b7b",
+      "stone/backends/python_rsrc/stone_validators.py": "749a80971e651def00d4cff063e5fdfa01246de32196bfe3f000e0f87f827e8b",
+      "stone/backends/python_type_mapping.py": "fa67ac8370de32866891fab37ed33cf07ed03d3687b7897d67016746e1423f52",
+      "stone/backends/python_type_stubs.py": "50eff951e90a54d5e619c8165f1ea6f04b2d0268e7970dd909540b702ab4e9f1",
+      "stone/backends/python_types.py": "f8de33dd752fdf59030904b1b5c5a7bbf4f2f9dba0a891f4e460d2033912f595",
+      "stone/backends/swift.py": "00d36edf232b2443835b090f8db87a7de98408697fc08aa5ca74028656fbba6e",
+      "stone/backends/swift_client.py": "df61ada181ac67a2bf48a782187ecc3543549cef6495169c9ff938ffa80607d2",
+      "stone/backends/swift_helpers.py": "577e4e7cb183f1dab8c0ed1bec26692fc3b14d0e5ccb213ffa3e3fab1a438595",
+      "stone/backends/swift_types.py": "24823dd48b45e2b60375d3b2ea5f3a31cc05ee91c9ab948d0127f597c2ae4a87",
+      "stone/backends/tsd_client.py": "73e29fa57f78e59b4eb474a3c56549e3275afbb66e3b76ccabe4e45a7b0458b7",
+      "stone/backends/tsd_helpers.py": "1ed49fdb26d7985372aef52bc3e4bd22df21420d8badfcea03ba742713dad5a9",
+      "stone/backends/tsd_types.py": "697cd18a9c5f86f0cdce992384290444822112477b8c6010e7d54eb88f2ffddd",
+      "stone/cli.py": "20389ea5e5215e74b8333fd06c70ccee689655f346aed14a33c86bc3cdd323fc",
+      "stone/cli_helpers.py": "5d15af12e9a8ec14a4986bab3fc699daed058ef81c3dfcd197fa42b3a91741a9",
+      "stone/compiler.py": "dc615c1733715cc5aa04302698d1e56ba05efb27516b32e8c70da323d94d7c07",
+      "stone/frontend/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stone/frontend/ast.py": "88aa746cf22dcdc030dd814738e58ed16264623881656dc98e39a17cbdd04fa6",
+      "stone/frontend/exception.py": "4f318fb59a2af5e59448c297e32f0fdeeae6c9583df084d82bb93e27ad07dc86",
+      "stone/frontend/frontend.py": "a6db189920a3553142c988417c735decd151336dfcf07022e46559aaea569eb7",
+      "stone/frontend/ir_generator.py": "5f95b4deebc11137f260b121560e1e5b7e02a148297224e2c332e3cad3825387",
+      "stone/frontend/lexer.py": "ef9f8dd3abd3898976df54dc0c2d05dee141ce92740d2c75168a5180c3568293",
+      "stone/frontend/parser.py": "ed4edc0207104fd04336e7fdf910b91b16cce7a7b350aad2c956b2c5ad212776",
+      "stone/ir/__init__.py": "481b036e26ed7f3a77f32037fe42127f64c69de98e6ae44b8754663930ca8bcb",
+      "stone/ir/api.py": "cbb962b860e70f33392d995779cee1a09d229c41ae0277eef3ae9683b695f158",
+      "stone/ir/data_types.py": "2463367d34a45fdcd57d93302b5d4e5198d8b57423a080c18df5b34680470cb3",
+      "stone/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stone/typing_hacks.py": "411788fddc2fa8332aca96a9757a289536f79554553e8af8737faf5f04fbfe0d"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "b5cc6094adfaae929dda77acc5a498c0d8b5bfe0ac2e19a809d847c194f95a39",
+     "native": {},
+     "pth": {},
+     "sha256": "ff04dcfe37efef6bfe744f59f4df1dd1a43716f47e28d7cf1165eb984a0b2c33"
+    }
+   },
+   "name": "stone",
+   "provenance": {
+    "stone-3.5.5-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "dropbox/stone",
+     "workflow": "pypiupload.yaml"
+    }
+   },
+   "pypi": {
+    "author": "Ken Elkabany",
+    "author_email": "kelkabany@dropbox.com",
+    "home_page": "https://github.com/dropbox/stone",
+    "license_expression": "MIT",
+    "maintainer": "Dropbox",
+    "maintainer_email": "api-platform@dropbox.com",
+    "project_urls": {
+     "Homepage": "https://github.com/dropbox/stone"
+    },
+    "summary": "Stone is an interface description language (IDL) for APIs."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: filesystem_delete, filesystem_read, process_spawn; attestation verifies (dropbox/stone)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_delete|stone/compiler.py|dc615c1733715cc5",
+     "yara|capability_filesystem_read|stone/_vendor/ply/lex.py|6da6d12129c801fc",
+     "yara|capability_filesystem_read|stone/backends/tsd_client.py|73e29fa57f78e59b",
+     "yara|capability_filesystem_read|stone/backends/tsd_types.py|697cd18a9c5f86f0",
+     "yara|capability_filesystem_read|stone/cli.py|20389ea5e5215e74",
+     "yara|capability_process_spawn|stone/_vendor/ply/lex.py|6da6d12129c801fc",
+     "yara|capability_process_spawn|stone/_vendor/ply/yacc.py|8316e2431dcf9fb2",
+     "yara|capability_process_spawn|stone/cli.py|20389ea5e5215e74",
+     "yara|capability_process_spawn|stone/cli_helpers.py|5d15af12e9a8ec14"
+    ],
+    "yara": [
+     "capability_filesystem_delete:capability_filesystem_delete stone/compiler.py",
+     "capability_filesystem_read:capability_filesystem_read stone/_vendor/ply/lex.py",
+     "capability_filesystem_read:capability_filesystem_read stone/backends/tsd_client.py",
+     "capability_filesystem_read:capability_filesystem_read stone/backends/tsd_types.py",
+     "capability_filesystem_read:capability_filesystem_read stone/cli.py",
+     "capability_process_spawn:capability_process_spawn stone/_vendor/ply/lex.py",
+     "capability_process_spawn:capability_process_spawn stone/_vendor/ply/yacc.py",
+     "capability_process_spawn:capability_process_spawn stone/cli.py",
+     "capability_process_spawn:capability_process_spawn stone/cli_helpers.py"
+    ]
+   },
+   "version": "3.5.5"
+  }
+ }
+}

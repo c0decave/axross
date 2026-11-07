@@ -1,0 +1,62 @@
+{
+ "name": "hpack",
+ "versions": {
+  "4.2.0": {
+   "accepted_findings": [],
+   "archives": {
+    "hpack-4.2.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "hpack-4.2.0.dist-info/METADATA": "d2408cbb7b7d2f4bd041a96a850300da45e1bf79b1a380148a5fc29dcd55255f",
+      "hpack-4.2.0.dist-info/RECORD": "15ed3c3218b193fb48783057fa6fb37acf340b0f8927b18bbf0964f284a2a823",
+      "hpack-4.2.0.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "hpack-4.2.0.dist-info/licenses/LICENSE": "763a9342a04df62046c9dc748a5287934eb0a5331c6863b3ca0aee20e18cb4ed",
+      "hpack-4.2.0.dist-info/top_level.txt": "9f2ad92db428fb49c2ea8b7760eff5d3da645224ed2b5334c1425f2c7b9071e1",
+      "hpack/__init__.py": "8d7e285593c15d356e93f6b7c6856a51bb93e2cd6f95e7d74a091e5587b71471",
+      "hpack/exceptions.py": "5eacbcbe2aaf28a1c1c90ec8a3c169f873e50cfdd3ed133d6a994f4b176bf632",
+      "hpack/hpack.py": "4ab14aab1a856cee45aea3169854167b16dac9ef9ec4cef1ed1d5da82439769d",
+      "hpack/huffman.py": "cc3b91b4ec8511d29bf7f199acdb40a274c452ca882eb2b6b2d4a1e702e919ee",
+      "hpack/huffman_constants.py": "e0f84e31e97998dd1ab24151ae7e2756927f09339484ed6a6c544eeaefc87f63",
+      "hpack/huffman_table.py": "12452e981b596483c227a950ecb1bf6f07c38f58991225cce0035c5e34f5cd4b",
+      "hpack/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "hpack/struct.py": "06a10e4b74f996ae341257efec6ec24385f6a7209a93ce6657367f5c8cb1a083",
+      "hpack/table.py": "500937f5f52433fafc76704a3832ffa86afdff044e9ca4150761033f60032642"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "6144f52775fc6c93938404115b8466ad887a8aed77345c1ba5755f3b3ee816aa",
+     "native": {},
+     "pth": {},
+     "sha256": "858ac0b02280fa582b5080d68db0899c62a80375e0e5413a74970c5e518b6986"
+    }
+   },
+   "name": "hpack",
+   "provenance": {
+    "hpack-4.2.0-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Cory Benfield <cory@lukasa.co.uk>",
+    "license_expression": "MIT",
+    "maintainer_email": "Thomas Kriechbaumer <thomas@kriechbaumer.name>",
+    "project_urls": {
+     "Bug Reports": "https://github.com/python-hyper/hpack/issues",
+     "Documentation": "https://python-hyper.org/",
+     "Homepage": "https://github.com/python-hyper/hpack/",
+     "Source": "https://github.com/python-hyper/hpack/"
+    },
+    "summary": "Pure-Python HPACK header encoding"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [],
+    "yara": []
+   },
+   "version": "4.2.0"
+  }
+ }
+}

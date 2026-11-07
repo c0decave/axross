@@ -51,7 +51,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.i18n import tr
 from ui.dock_frame import BOTTOM_DOCK_HINT_PX, framed
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +121,37 @@ def _build_globals() -> dict:
         "__doc__": "Axross embedded REPL — see axross.help()",
         "axross": _scripting,
     }
+
+
+class _InlineConsole(code.InteractiveConsole):
+    """An InteractiveConsole that always writes its tracebacks to the console.
+
+    code.InteractiveInterpreter hands an error to ``sys.excepthook`` instead
+    of writing it whenever that hook is not the default one - and axross
+    installs its own (main._install_excepthook). The REPL's errors never
+    reached the console: the app's hook only logged them, and an error in a
+    ``.run`` script (a frame of its own file, not "<repl>") popped the
+    "Unexpected Error" dialog. The default hook is put back while the error
+    is shown, so the stdlib formats it as in a terminal, into stderr - which
+    ReplWidget._run_source redirects into the console."""
+
+    def showtraceback(self) -> None:
+        with _default_excepthook():
+            super().showtraceback()
+
+    def showsyntaxerror(self, filename=None, **kwargs) -> None:
+        with _default_excepthook():
+            super().showsyntaxerror(filename, **kwargs)
+
+
+@contextlib.contextmanager
+def _default_excepthook():
+    hook = sys.excepthook
+    sys.excepthook = sys.__excepthook__
+    try:
+        yield
+    finally:
+        sys.excepthook = hook
 
 
 class _RlCompleter:
@@ -229,7 +262,7 @@ class ReplWidget(QPlainTextEdit):
         )
 
         self._globals = _build_globals()
-        self._console = code.InteractiveConsole(locals=self._globals)
+        self._console = _InlineConsole(locals=self._globals)
         self._completer = _RlCompleter(self._globals)
         self._buffer: list[str] = []  # multi-line accumulator
         self._history: list[str] = []
@@ -990,7 +1023,8 @@ class ConsoleDock(QDockWidget):
     activity = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Console", parent)
+        super().__init__(tr("Console"), parent)
+        set_window_icon(self, "console")
         self.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )

@@ -25,7 +25,9 @@ from core import third_party as T  # noqa: E402
 
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 DOCKERFILE = (ROOT / "Dockerfile.build").read_text(encoding="utf-8")
-BUNDLE_LOCK = (ROOT / "build" / "requirements-bundle.txt").read_text(encoding="utf-8")
+from tests.bundle_sources import REASON as NO_BUILD, have_bundle_sources, read  # noqa: E402
+
+BUNDLE_LOCK = read("requirements-bundle.txt")
 
 
 def _raw() -> dict:
@@ -99,6 +101,7 @@ def test_happy_the_readme_section_is_the_last_thing_in_each_readme():
         assert text.rstrip().endswith(T.block_end("readme")), name
 
 
+@pytest.mark.skipif(not have_bundle_sources(), reason=NO_BUILD)
 def test_happy_pinned_versions_are_the_ones_the_builder_installs():
     by_id = {e.id: e for e in T.load()}
     for key, entry_id in (("RG", "ripgrep"), ("FD", "fd")):
@@ -283,6 +286,7 @@ def test_edge_write_is_idempotent(tmp_path):
     assert before == {n: (tmp_path / n).read_bytes() for n in before}
 
 
+@pytest.mark.skipif(not have_bundle_sources(), reason=NO_BUILD)
 def test_edge_the_data_file_is_packaged_for_pip_and_the_bundle():
     tool = PYPROJECT["tool"]["setuptools"]
     assert "resources.credits" in tool["packages"]

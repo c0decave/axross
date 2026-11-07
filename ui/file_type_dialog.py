@@ -42,6 +42,7 @@ from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.format_utils import format_size
 from ui.scan_job import BusyStrip, ScanJob
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ class FileTypeDialog(QDialog):
         use_file_command: bool = True,
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "file")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._backend = backend
         self._paths = list(paths)
@@ -413,6 +415,7 @@ class FolderFileTypeDialog(QDialog):
         use_sift: bool | None = None,
     ) -> None:
         super().__init__(parent)
+        set_window_icon(self, "folder")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         from core import file_categories as FC
 

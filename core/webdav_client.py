@@ -26,6 +26,7 @@ import tempfile
 import threading
 import weakref
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import IO, Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -58,6 +59,8 @@ _NSMAP = {"d": _DAV_NS, "oc": _OC_NS}
 # Refusing past this prevents a runaway / hostile server from OOMing
 # the UI before the parser can complete.
 MAX_PROPFIND_BYTES = 64 * 1024 * 1024
+#: The quota answer is one small multistatus (Depth: 0).
+MAX_QUOTA_BYTES = 1024 * 1024
 
 
 class WebDavRequestError(OSError):
@@ -112,11 +115,16 @@ def _parse_http_date(text: str) -> datetime:
     epoch on parse failure so list_dir keeps working."""
     if not text:
         return datetime.fromtimestamp(0)
-    # RFC 1123 dates are GMT by definition (RFC 9110 5.6.7); strptime
-    # returns them naive, which FileItem would read as LOCAL time.
+    # RFC 1123 dates are GMT by definition (RFC 9110 5.6.7). Not strptime's
+    # %a / %b: those follow LC_TIME, which Qt sets from the user's locale -
+    # under de_DE every date would fail and read as 1970.
+    try:
+        parsed = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        parsed = None
+    if parsed is not None:
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
     for fmt, utc in (
-        ("%a, %d %b %Y %H:%M:%S %Z", True),
-        ("%a, %d %b %Y %H:%M:%S GMT", True),
         ("%Y-%m-%dT%H:%M:%S%z", False),
         ("%Y-%m-%dT%H:%M:%S", False),
     ):
@@ -393,7 +401,6 @@ class _WebDavClient:
             def _txt(tag: str) -> str:
                 return (prop.findtext(tag, default="", namespaces=_NSMAP) or "").strip()
 
-            displayname = _txt("d:displayname")
             size_text = _txt("d:getcontentlength")
             try:
                 size = int(size_text)
@@ -423,7 +430,11 @@ class _WebDavClient:
                     if c.text:
                         oc_checksums.append(c.text.strip())
 
-            name = displayname or posixpath.basename(href_path.rstrip("/")) or ""
+            # The name is the href's last segment - the resource's address.
+            # DAV:displayname is presentation text: it may differ from the
+            # segment (Nextcloud), repeat a sibling's name or hold "/" and
+            # "..", and every later call addresses the entry by its name.
+            name = posixpath.basename(href_path.rstrip("/")) or ""
             results.append(
                 {
                     "path": href_path,
@@ -476,11 +487,19 @@ class _WebDavClient:
             return False
 
     def check(self, path: str) -> bool:
+        """False only when the server says the resource is not there (404,
+        410). Any other failure (403, 429, 5xx, a broken answer) is an
+        OSError: "absent" is the go-ahead of if_exists="fail" / "newer" and
+        of an overwrite, and would replace the file the user chose to keep."""
         try:
             self.info(path)
             return True
-        except (FileNotFoundError, WebDavRequestError):
+        except FileNotFoundError:
             return False
+        except WebDavRequestError as exc:
+            if exc.status in (404, 410):
+                return False
+            raise
 
     def download_to(self, fileobj: IO[bytes], path: str) -> None:
         with self._request("GET", path, stream=True) as resp:
@@ -549,7 +568,9 @@ class _WebDavClient:
             )
             return (0, 0, 0)
         try:
-            resp = self._request(
+            # Streamed and capped: the pane asks on every navigation, and a
+            # hostile server could otherwise send an endless body.
+            with self._request(
                 "PROPFIND",
                 path,
                 data=self.QUOTA_BODY,
@@ -557,14 +578,23 @@ class _WebDavClient:
                     "Content-Type": "application/xml; charset=utf-8",
                     "Depth": "0",
                 },
-            )
+                stream=True,
+            ) as resp:
+                if resp.status_code not in (207, 200):
+                    return (0, 0, 0)
+                chunks: list[bytes] = []
+                received = 0
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    received += len(chunk)
+                    if received > MAX_QUOTA_BYTES:
+                        log.debug("WebDAV quota answer exceeds %d bytes", MAX_QUOTA_BYTES)
+                        return (0, 0, 0)
+                    chunks.append(chunk)
         except Exception as exc:  # noqa: BLE001
             log.debug("WebDAV quota PROPFIND failed: %s", exc)
             return (0, 0, 0)
-        if resp.status_code not in (207, 200):
-            return (0, 0, 0)
         try:
-            tree = _parse_xml(_local_fromstring, resp.content)
+            tree = _parse_xml(_local_fromstring, b"".join(chunks))
         except WebDavRequestError as exc:
             log.debug("WebDAV quota answer unusable: %s", exc)
             return (0, 0, 0)
@@ -756,7 +786,7 @@ class WebDavSession(SessionLifecycle):
         items: list[FileItem] = []
         for entry in entries:
             name = entry["name"]
-            if not name:
+            if not name or name in (".", ".."):
                 continue
             items.append(
                 FileItem(

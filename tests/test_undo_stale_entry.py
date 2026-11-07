@@ -136,6 +136,10 @@ def test_happy_ctrl_z_in_the_window_passes_over_a_restored_entry(setup, monkeypa
         _undo_last_operation = mw.MainWindow._undo_last_operation
         _undo_refusal = staticmethod(mw.MainWindow._undo_refusal)
         _undo_source_backend = mw.MainWindow._undo_source_backend
+        _undo_step = mw.MainWindow._undo_step
+        _undo_status = mw.MainWindow._undo_status
+        _undo_picked = mw.MainWindow._undo_picked
+        _undo_apply = mw.MainWindow._undo_apply
         _panes: list = []
 
         def _backends_by_label(self):
@@ -144,7 +148,16 @@ def test_happy_ctrl_z_in_the_window_passes_over_a_restored_entry(setup, monkeypa
         def _finish_undo(self, plan, pane, jobs=()):
             asked.append(f"done {plan.source}")
 
-    _Window()._undo_last_operation()
+    window = _Window()
+    window._undo_last_operation()
+    # The backend calls run on a worker (0.14.161): wait for both steps.
+    import time
+
+    deadline = time.monotonic() + 10
+    while (getattr(window, "_undo_busy", False) or not asked
+           or not asked[-1].startswith("done")) and time.monotonic() < deadline:
+        _APP.processEvents()
+        time.sleep(0.01)
     assert older.read_text() == "A"
     assert asked[-1] == f"done {older}"
     assert not newer.exists()

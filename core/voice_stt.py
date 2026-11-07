@@ -74,7 +74,7 @@ def transcribe_server(
         raise TranscriptionError("the transcription server's answer is too large")
     try:
         data = json.loads(raw)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise TranscriptionError("the transcription server's answer is no JSON") from exc
     if not isinstance(data, dict) or not isinstance(data.get("text"), str):
         raise TranscriptionError("the transcription server's answer has no text")

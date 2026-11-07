@@ -60,7 +60,9 @@ def test_sad_backend_calls_report_oserror(monkeypatch, payload):
     for op in (lambda: s.list_dir("/"), lambda: s.stat("/f"), lambda: s.checksum("/f")):
         with pytest.raises(OSError):
             op()
-    assert s.exists("/f") is False
+    # A broken answer is not "absent" (that is the go-ahead of an overwrite).
+    with pytest.raises(OSError):
+        s.exists("/f")
 
 
 def test_edge_quota_with_unusable_xml_is_zero(monkeypatch):

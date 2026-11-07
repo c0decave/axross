@@ -55,7 +55,7 @@ def shown(pane) -> list[str]:
     proxy = pane._table.model()
     return sorted(
         proxy.index(r, 0).data() for r in range(proxy.rowCount())
-        if proxy.index(r, 0).data() != ".."
+        if proxy.index(r, 0).data() not in (".", "..")
     )
 
 

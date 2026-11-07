@@ -1,0 +1,126 @@
+{
+ "name": "charset-normalizer",
+ "versions": {
+  "3.5.2": {
+   "accepted_findings": [
+    "yara|capability_filesystem_read|charset_normalizer/api.py|55455aa5898f169c",
+    "yara|threat_runtime_obfuscation_unicode|charset_normalizer/__init__.py|997c6fda6b13aee4"
+   ],
+   "archives": {
+    "charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "entry_points": [
+      "normalizer = charset_normalizer.cli:cli_detect"
+     ],
+     "files": {
+      "charset_normalizer-3.5.2.dist-info/METADATA": "89ce6362bb7be88558f4be99a98f5d1b4da93d19cd0323e5ee0bac05cf883dfb",
+      "charset_normalizer-3.5.2.dist-info/RECORD": "1e056aadf07196553ba65b770c09353c02c1102a14e991ca4d2b06200373bb8c",
+      "charset_normalizer-3.5.2.dist-info/WHEEL": "797631520e4ac7d96fb6e40cd3e5f2d32e39caeb9cf024f466babe3777b7c296",
+      "charset_normalizer-3.5.2.dist-info/entry_points.txt": "0034932ab91767786174e5458ba0dc5041d0452d317f10c813fa44cf8c0b2170",
+      "charset_normalizer-3.5.2.dist-info/licenses/LICENSE": "6d0d41bfe170ac6c7dc248c9a63e254d0fb45a60d50a8257d0af92c6e249b887",
+      "charset_normalizer-3.5.2.dist-info/top_level.txt": "ec04b2cde3ebf3fc6e65626c9ea263201b7257cbe1128d30042bf530f4518b74",
+      "charset_normalizer/__init__.py": "997c6fda6b13aee46c685bb1f96e6ee0d37c06702ac4cc38bfb30acce0f1f5b6",
+      "charset_normalizer/__main__.py": "cb3631311f8884a44763071295abc4bfca06770c6c47cf66af65f4f6a5c6769b",
+      "charset_normalizer/api.py": "55455aa5898f169c803379b698a9fdf808d94002312b238968abb870fc427f81",
+      "charset_normalizer/cd.cpython-312-x86_64-linux-gnu.so": "c2f3063d035647a23fd2ac5243dbf6925056c3aba636696a980293516d240eca",
+      "charset_normalizer/cd.py": "e9d24e66f774aeb1045af931e78900132f6a00ffee22e8963008b9c17f0e66c6",
+      "charset_normalizer/cli/__init__.py": "0fc23cea5164dbea72e3926fab19e24e2ad28ffb05c84eac8da63fd3e1b5b217",
+      "charset_normalizer/cli/__main__.py": "34f2b7c980245d713b52fb3a22a8a39206734ba1ba7e0b9116e297ce0a5ff147",
+      "charset_normalizer/constant.py": "b49d4ea5dbc4598665bc66f651caf81564cc1cca4f21a0e45d9491bd5833771b",
+      "charset_normalizer/legacy.py": "6e091d12fb9b4c238f94c28ecee10d5c73226ab877e956866d1bd64a522bd4a0",
+      "charset_normalizer/md.cpython-312-x86_64-linux-gnu.so": "f20c7da02510ade7b0968eda061d2cb1d6eb29ccaa77af92ddea82b326bc8c3b",
+      "charset_normalizer/md.py": "cf596c0498a61f91f8d6fef54e296cba3204b178001deda9371f8a8084c378e3",
+      "charset_normalizer/models.py": "f8350cead0964f25fc4d477ee0355a6005ce07f7311c686b45a4b66bf38e406b",
+      "charset_normalizer/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "charset_normalizer/utils.py": "119ec0e7fb286ef4c8c58585b1f5ee56c9f6261c31c33addd3cb20105d05ae71",
+      "charset_normalizer/version.py": "793b9181127b1e37a817ec597c6e6d970bd1130cac7654af99ba2cbda4a9cf57"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "5fc16c10d15bf3ecb0643a5ffb8726e7e0c1f4656837d3c6f7933c342212b917",
+     "native": {
+      "charset_normalizer/cd.cpython-312-x86_64-linux-gnu.so": "elf",
+      "charset_normalizer/md.cpython-312-x86_64-linux-gnu.so": "elf"
+     },
+     "pth": {},
+     "sha256": "3d31298449090ab8d47b7b1b2a555ff73cac7ed438a08b7ac160980c7ebed649"
+    }
+   },
+   "name": "charset-normalizer",
+   "provenance": {
+    "charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl": {
+     "environment": "pypi",
+     "kind": "GitHub",
+     "repository": "jawah/charset_normalizer",
+     "workflow": "cd.yml"
+    }
+   },
+   "pypi": {
+    "author_email": "\"Ahmed R. TAHRI\" <tahri.ahmed@proton.me>",
+    "license": "MIT",
+    "maintainer_email": "\"Ahmed R. TAHRI\" <tahri.ahmed@proton.me>",
+    "project_urls": {
+     "Changelog": "https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
+     "Code": "https://github.com/jawah/charset_normalizer",
+     "Documentation": "https://charset-normalizer.readthedocs.io/",
+     "Issue tracker": "https://github.com/jawah/charset_normalizer/issues"
+    },
+    "summary": "The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "One hit: Cyrillic letters in __init__.py's docstring usage example. Attestation verifies."
+   },
+   "scans": {
+    "capa": {
+     "c2f3063d035647a23fd2ac5243dbf6925056c3aba636696a980293516d240eca": {
+      "capabilities": [
+       "contain loop"
+      ],
+      "note": "",
+      "path": "charset_normalizer/cd.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     },
+     "f20c7da02510ade7b0968eda061d2cb1d6eb29ccaa77af92ddea82b326bc8c3b": {
+      "capabilities": [
+       "contain loop",
+       "encode data using Base64"
+      ],
+      "note": "",
+      "path": "charset_normalizer/md.cpython-312-x86_64-linux-gnu.so",
+      "profile": {
+       "categories": {},
+       "error": "",
+       "ipv4": [],
+       "needed": [
+        "libc.so.6",
+        "libpthread.so.0"
+       ],
+       "rpath": [],
+       "urls": []
+      }
+     }
+    },
+    "keys": [
+     "yara|capability_filesystem_read|charset_normalizer/api.py|55455aa5898f169c",
+     "yara|threat_runtime_obfuscation_unicode|charset_normalizer/__init__.py|997c6fda6b13aee4"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read charset_normalizer/api.py",
+     "threat_runtime_obfuscation_unicode:threat_runtime_obfuscation_unicode charset_normalizer/__init__.py"
+    ]
+   },
+   "version": "3.5.2"
+  }
+ }
+}

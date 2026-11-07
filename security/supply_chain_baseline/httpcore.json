@@ -1,0 +1,122 @@
+{
+ "name": "httpcore",
+ "versions": {
+  "1.0.9": {
+   "accepted_findings": [
+    "raw-ip-url|httpcore/_async/http_proxy.py|e837f1077ac060ec",
+    "raw-ip-url|httpcore/_async/socks_proxy.py|e837f1077ac060ec",
+    "raw-ip-url|httpcore/_sync/http_proxy.py|e837f1077ac060ec",
+    "raw-ip-url|httpcore/_sync/socks_proxy.py|e837f1077ac060ec",
+    "yara|capability_filesystem_read|httpcore/_api.py|ba7666783b1c8415",
+    "yara|capability_filesystem_read|httpcore/_async/http11.py|faa33d6d5ecf8d24",
+    "yara|capability_filesystem_read|httpcore/_async/http2.py|6b35f57dc9ad5da2",
+    "yara|capability_filesystem_read|httpcore/_async/socks_proxy.py|94b2a02e58203df8",
+    "yara|capability_filesystem_read|httpcore/_backends/sync.py|6e113877d88af549",
+    "yara|capability_filesystem_read|httpcore/_models.py|20ed8271771da68b",
+    "yara|capability_filesystem_read|httpcore/_sync/http11.py|205a1b0f531de491",
+    "yara|capability_filesystem_read|httpcore/_sync/http2.py|031538ca172aebc0",
+    "yara|capability_filesystem_read|httpcore/_sync/interfaces.py|b275ce378daf5031",
+    "yara|capability_filesystem_read|httpcore/_sync/socks_proxy.py|cde8195bd4a7aa3d",
+    "yara|capability_network_outbound|httpcore/_backends/sync.py|6e113877d88af549"
+   ],
+   "archives": {
+    "httpcore-1.0.9-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "httpcore-1.0.9.dist-info/METADATA": "fe2d4fda6199128978779e0cf27f3c045c531863fcdd987eacc74f3a18d41c21",
+      "httpcore-1.0.9.dist-info/RECORD": "56c7eb698ca4b47f9eb3ccbae04bdd802a651114200a9fadbff5665029d441db",
+      "httpcore-1.0.9.dist-info/WHEEL": "aad0b0a12256807936d52d4a6f88a1773236ae527564a688bab4e3fe780e8724",
+      "httpcore-1.0.9.dist-info/licenses/LICENSE.md": "fdcb59154c74cbaba16a11242f7740bea9f23d6feb5547917d8c5f94a80392a5",
+      "httpcore/__init__.py": "f644ff92a0a10822544c7c30db866647f7b371d6e94585a4b03fa060dce464ff",
+      "httpcore/_api.py": "ba7666783b1c8415821823c2c244b75a8b7d7ae2ba6e0fe42b12ed193c70db5e",
+      "httpcore/_async/__init__.py": "116765dafe2d867007cc9a6a8d4e21d9af03522180bcd896ae48a2f697e14dfd",
+      "httpcore/_async/connection.py": "e8e70f5ea3047dcd01537f3ffa21d4343775bca4937365154f4f57a8d6ff04e9",
+      "httpcore/_async/connection_pool.py": "0ce210dacd9909ff6a7f0c61ccca6b4cf2ea08bf0ec465e2285eaa447c6f5726",
+      "httpcore/_async/http11.py": "faa33d6d5ecf8d2405e6fc6cdfbf9e5173881706c88cf7196cd962b97f53b41c",
+      "httpcore/_async/http2.py": "6b35f57dc9ad5da2308e9bad165678bddf7627cc708c639af5ac7d408bf8dfde",
+      "httpcore/_async/http_proxy.py": "db3564ae5bfe0ecfab5866aa69796b84426201014fa36dc14f71aafec5a80575",
+      "httpcore/_async/interfaces.py": "8d389a58bf37a60a460bdce2bfdd197f068a34c987c2639a97368a8ae4f1013a",
+      "httpcore/_async/socks_proxy.py": "94b2a02e58203df84596a8b438378190e5afb7d0a0841054caab27b14d6dc7a4",
+      "httpcore/_backends/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "httpcore/_backends/anyio.py": "c7c3e01215d10bc6d5aac77393f609c7c63a77d4ee6f4e82b944b09db9adaa86",
+      "httpcore/_backends/auto.py": "cced77e8f2999ac6930caf87464f38780f8c520f3fdb025fe0dbe62b8df6022a",
+      "httpcore/_backends/base.py": "69286045d6673264611561deb63ba694cef77fc2b3d58380c8250fff8907b250",
+      "httpcore/_backends/mock.py": "7abf53e37eae49eecd2eb7e22dae31e8dbaa8398af43af770b1598096b206c7e",
+      "httpcore/_backends/sync.py": "6e113877d88af549b176c76c826d847ca9d76819acd9682019853eee3994ba35",
+      "httpcore/_backends/trio.py": "2c7bb8fccaf932cc109a64f7c84e282e07fd6ff2497de552e018c3c5e25ced1a",
+      "httpcore/_exceptions.py": "968a022a06b7fd8558bb7b3e7772fd44c3d127286c63b7e2bae1b1be4383d1cd",
+      "httpcore/_models.py": "20ed8271771da68bd170b4dd185181e91c8165d126da1fd33a6a02738ac42a1a",
+      "httpcore/_ssl.py": "b2baa648d53888e52f585f92ac9bdbf06fd811b1c510b39740ec1d0c80534bd7",
+      "httpcore/_sync/__init__.py": "2410c8817b7995ad4b089d6c2d078a863285a4b9e936bf12beceb3da78b77e08",
+      "httpcore/_sync/connection.py": "f5ec4639bdcf07e329d93d7eb1c91278bdadfad27ff7e357a2657c8a19960a05",
+      "httpcore/_sync/connection_pool.py": "6be4fc2d3b14c5ceebd16c356ad7c7483a163e34347c0f1497b4b7f85d0c8fbd",
+      "httpcore/_sync/http11.py": "205a1b0f531de491652462969e1d7f4377a98a452bc88f2aa34f6ff0c8892040",
+      "httpcore/_sync/http2.py": "031538ca172aebc067e6fa9d258b625ca6148fb9ef8586f1cf7bf8ad3e319ef0",
+      "httpcore/_sync/http_proxy.py": "fda97fe9cacab8466edb0cafbb8f7745922625d0499e3e6818a3632ce24bd99a",
+      "httpcore/_sync/interfaces.py": "b275ce378daf5031cee49049be8f03e155a4d966ade38cf63975c70eb8db97de",
+      "httpcore/_sync/socks_proxy.py": "cde8195bd4a7aa3dbff7dd831496bcfc2a6939506454be0083076e4644ad6a44",
+      "httpcore/_synchronization.py": "cd28b5de6002a250679278d90649d40ba84a343413e02ea28e77b367eaf44f6b",
+      "httpcore/_trace.py": "724e99a08cd84e474d0087eae4c19e2aa0570edaa3397faa7d8c266456eb19ca",
+      "httpcore/_utils.py": "fd12e05d8380602df9d229002d5e7d199ebc209adda1c459c4fb3d3e39b37456",
+      "httpcore/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "e2137d82852990d7060bc77173b23aac9c755be145c5c60f57a27880fd994fb3",
+     "native": {},
+     "pth": {},
+     "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
+    }
+   },
+   "name": "httpcore",
+   "provenance": {
+    "httpcore-1.0.9-py3-none-any.whl": null
+   },
+   "pypi": {
+    "author_email": "Tom Christie <tom@tomchristie.com>",
+    "license_expression": "BSD-3-Clause",
+    "project_urls": {
+     "Documentation": "https://www.encode.io/httpcore",
+     "Homepage": "https://www.encode.io/httpcore/",
+     "Source": "https://github.com/encode/httpcore"
+    },
+    "summary": "A minimal low-level HTTP client."
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; 4 medium findings (capability patterns) seen; capabilities: filesystem_read, network_outbound; no attestation: content review only."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_filesystem_read|httpcore/_api.py|ba7666783b1c8415",
+     "yara|capability_filesystem_read|httpcore/_async/http11.py|faa33d6d5ecf8d24",
+     "yara|capability_filesystem_read|httpcore/_async/http2.py|6b35f57dc9ad5da2",
+     "yara|capability_filesystem_read|httpcore/_async/socks_proxy.py|94b2a02e58203df8",
+     "yara|capability_filesystem_read|httpcore/_backends/sync.py|6e113877d88af549",
+     "yara|capability_filesystem_read|httpcore/_models.py|20ed8271771da68b",
+     "yara|capability_filesystem_read|httpcore/_sync/http11.py|205a1b0f531de491",
+     "yara|capability_filesystem_read|httpcore/_sync/http2.py|031538ca172aebc0",
+     "yara|capability_filesystem_read|httpcore/_sync/interfaces.py|b275ce378daf5031",
+     "yara|capability_filesystem_read|httpcore/_sync/socks_proxy.py|cde8195bd4a7aa3d",
+     "yara|capability_network_outbound|httpcore/_backends/sync.py|6e113877d88af549"
+    ],
+    "yara": [
+     "capability_filesystem_read:capability_filesystem_read httpcore/_api.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_async/http11.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_async/http2.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_async/socks_proxy.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_backends/sync.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_models.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_sync/http11.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_sync/http2.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_sync/interfaces.py",
+     "capability_filesystem_read:capability_filesystem_read httpcore/_sync/socks_proxy.py",
+     "capability_network_outbound:capability_network_outbound httpcore/_backends/sync.py"
+    ]
+   },
+   "version": "1.0.9"
+  }
+ }
+}

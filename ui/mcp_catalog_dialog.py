@@ -60,6 +60,7 @@ from core import mcp_install as I
 from core.i18n import tr
 from ui.close_corner import add_close_corner
 from ui.column_fit import ColumnFitter
+from ui.icon_provider import set_window_icon
 
 log = logging.getLogger(__name__)
 _ENTRY_ROLE = Qt.ItemDataRole.UserRole
@@ -82,6 +83,7 @@ class McpCatalogDialog(QDialog):
         """*category* filters the list from the start (kept even when no
         source names it, so an empty list says so); *query* is searched."""
         super().__init__(parent)
+        set_window_icon(self, "extensions")
         #: The category asked for (an agent profile's missing one).
         self._wanted_category = category
         self.setWindowTitle(tr("Add MCP Server from Catalog"))

@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 np = pytest.importorskip("numpy")
-pytest.importorskip("PyQt6.QtMultimedia", reason="QtMultimedia not installed")
+pytest.importorskip("PyQt6.QtMultimedia", exc_type=ImportError)  # or no libpulse.so.0
 
 from PyQt6.QtCore import (  # noqa: E402
     QEventLoop,
@@ -44,6 +44,7 @@ from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core import extensions as EX  # noqa: E402
+from tests.media_testkit import need_multimedia_backend  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 RATE = 44100
@@ -219,6 +220,7 @@ def test_edge_eq_engine_seek_back_while_the_decoder_holds_a_buffer(tmp_path):
     """With the queue full the decoder keeps its next buffer unread; after
     stop() that buffer is still available and was read as the first one
     of the new run: the track went on 4096 frames before the target."""
+    need_multimedia_backend()
     seconds = 6.0
     path = ramp_wav(tmp_path / "ramp.wav", seconds)
     engine, sink = eq_engine(ThrottledSink(frames=441))
@@ -391,6 +393,7 @@ def _simple():
 
 
 def test_happy_simple_engine_seeks_and_knows_the_length(tmp_path):
+    need_multimedia_backend()
     path = ramp_wav(tmp_path / "ramp.wav", 8.0)
     engine = _simple()
     try:
@@ -408,6 +411,7 @@ def test_happy_simple_engine_seeks_and_knows_the_length(tmp_path):
 
 
 def test_edge_simple_engine_seek_before_play_and_past_the_end(tmp_path):
+    need_multimedia_backend()
     path = ramp_wav(tmp_path / "ramp.wav", 6.0)
     engine = _simple()
     ended = []
@@ -426,6 +430,7 @@ def test_edge_simple_engine_seek_before_play_and_past_the_end(tmp_path):
 
 
 def test_sad_simple_engine_reports_a_broken_file(tmp_path):
+    need_multimedia_backend()
     broken = tmp_path / "broken.mp3"
     broken.write_bytes(b"not audio at all" * 100)
     engine = _simple()
@@ -1283,7 +1288,10 @@ def test_sad_hostile_playlists_are_refused_or_skipped(tmp_path):
     with pytest.raises(MP.PlaylistError):
         MP.read_playlist(str(tmp_path / "fifo.m3u"))  # never blocks on a pipe
     os.symlink("/dev/zero", tmp_path / "zero.mp3")
-    lines = ["http://example.com/stream.mp3", "missing.mp3", "notes.txt", "zero.mp3",
+    # http(s) streams are tracks now (tests/test_media_player_streams.py);
+    # other schemes are not.
+    lines = ["ftp://example.com/stream.mp3", "file:///dev/zero", "missing.mp3", "notes.txt",
+             "zero.mp3",
              "x" * 5000 + ".mp3", "bad\x07bell.mp3", "/etc/passwd"]
     touch(tmp_path / "notes.txt", b"t")
     entries, skipped = MP.parse_m3u("\n".join(lines).encode(), str(tmp_path))
@@ -1554,6 +1562,7 @@ def test_edge_a_remote_drop_without_tracks_makes_no_temp_folder(tmp_path):
 
 
 def test_e2e_panel_with_the_qmediaplayer_engine_seeks_skips_and_moves_on(tmp_path):
+    need_multimedia_backend()
     broken = touch(tmp_path / "broken.mp3", b"not audio at all" * 100)
     first = ramp_wav(tmp_path / "first.wav", 3.0)
     second = ramp_wav(tmp_path / "second.wav", 3.0)

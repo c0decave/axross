@@ -30,8 +30,9 @@ from PyQt6.QtWidgets import (
 )
 
 from core.open_limits import DEFAULT_MAX_OPEN_MB, describe_limit, max_open_bytes
-from ui.close_corner import make_close_corner, make_maximize_corner
+from ui.close_corner import add_close_corner
 from ui.scan_job import ScanJob
+from ui.icon_provider import set_window_icon
 
 if TYPE_CHECKING:
     from core.backend import FileBackend
@@ -526,6 +527,7 @@ class HexEditorDialog(QDialog):
         background: bool = False,
     ):
         super().__init__(parent)
+        set_window_icon(self, "hex")
         self._backend = backend
         self._file_path = file_path
         self._original_data = b""
@@ -565,8 +567,6 @@ class HexEditorDialog(QDialog):
         self._size_label.setProperty("role", "muted")
         info.addStretch()
         info.addWidget(self._size_label)
-        info.addWidget(make_maximize_corner(self))
-        info.addWidget(make_close_corner(self, self._on_close))
         layout.addLayout(info)
 
         # Hex view + scrollbar
@@ -653,6 +653,8 @@ class HexEditorDialog(QDialog):
 
         # Update status on cursor move
         self._hex_widget.installEventFilter(self)
+        # The title row: icon, name, _ [] x (the [x] asks about unsaved edits).
+        add_close_corner(self, self._on_close)
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self._hex_widget:
@@ -757,9 +759,19 @@ class HexEditorDialog(QDialog):
             return
         try:
             # Conflict check
+            from ui.off_gui import run_off_gui
+
+            backend, path = self._backend, self._file_path
+
+            def read_current() -> bytes:
+                with backend.open_read(path) as f:
+                    return _read_capped(f)
+
+            def status(text: str) -> None:
+                self._status_label.setText(text)
+
             try:
-                with self._backend.open_read(self._file_path) as f:
-                    current = _read_capped(f)
+                current = run_off_gui(read_current, status=status, text="Checking…")
                 if current != self._original_data:
                     reply = QMessageBox.question(
                         self,
@@ -783,7 +795,10 @@ class HexEditorDialog(QDialog):
 
             from core.atomic_io import atomic_write
 
-            atomic_write(self._backend, self._file_path, content)
+            # Off the GUI thread: the window keeps painting while a server
+            # takes the write (ui.off_gui); clicks wait until it is done.
+            run_off_gui(lambda: atomic_write(backend, path, content), status=status,
+                        text="Saving…")
 
             self._original_data = content
             self._hex_widget._modified_offsets.clear()
@@ -792,8 +807,9 @@ class HexEditorDialog(QDialog):
             log.info("Hex saved: %s (%d bytes)", self._file_path, len(content))
             self.saved.emit()
 
-        except OSError as e:
-            log.error("Cannot save file %s: %s", self._file_path, e)
+        except Exception as e:  # noqa: BLE001 - any failure is "not saved", never "saved"
+            log.error("Cannot save file %s: %s", self._file_path, e,
+                      exc_info=not isinstance(e, OSError))
             QMessageBox.critical(self, "Save Error", f"Cannot save:\n{e}")
 
     def _on_search(self) -> None:

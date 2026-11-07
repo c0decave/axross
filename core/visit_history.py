@@ -196,7 +196,7 @@ def _read() -> tuple[dict[str, HostVisit], bool]:
         return {}, True
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         # ValueError covers JSONDecodeError and UnicodeDecodeError.
         log.warning("visit_history: cannot read %s: %s", path, exc)
         return {}, False

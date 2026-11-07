@@ -113,7 +113,7 @@ class TagStore:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             aside = self._path.with_name(f"{self._path.name}.corrupt-{int(time.time())}")
             log.warning("Tags: %s is unreadable (%s); kept as %s, starting from the defaults",
                         self._path, exc, aside.name)

@@ -1,0 +1,71 @@
+{
+ "name": "uritemplate",
+ "versions": {
+  "4.2.0": {
+   "accepted_findings": [
+    "yara|capability_network_download|uritemplate/template.py|eeea5f00b436c815",
+    "yara|capability_network_outbound|uritemplate/template.py|eeea5f00b436c815"
+   ],
+   "archives": {
+    "uritemplate-4.2.0-py3-none-any.whl": {
+     "entry_points": [],
+     "files": {
+      "uritemplate-4.2.0.dist-info/METADATA": "352afd43b6f1ab8f94ca31af2a1ad4f0d1a94dbd712c1b6d9e44e35d4bb3a962",
+      "uritemplate-4.2.0.dist-info/RECORD": "26b5cfaa1097ee3a8c10401d650a3c058eeeec942bef8ebf7d8b62f0d5a46cca",
+      "uritemplate-4.2.0.dist-info/WHEEL": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+      "uritemplate-4.2.0.dist-info/licenses/LICENSE": "3cfc9f01cdeec92900f228cf5677ffa57e7ed304c4263532bcad9cbd9969e46c",
+      "uritemplate-4.2.0.dist-info/top_level.txt": "589ce414420d59b830bb3b9410ff240fc4a4d9f147610cc182b8cedef8b2b9b1",
+      "uritemplate/__init__.py": "e153ca368bef62ab5fdbe35631fa16fcbe4b764819a61d050097495cb92dbf95",
+      "uritemplate/api.py": "23fb453afaef50f7e62c67ef6f8083c9e65bd8386a190f2811e4c04fe8c43b9b",
+      "uritemplate/orderedset.py": "e19f2ef2ec37dfd0ff456bdb52c96fe5de849c0db0c500baeb7d7ba132f3a74a",
+      "uritemplate/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "uritemplate/template.py": "eeea5f00b436c815f113c8a92aac778343fb4e031141122d5d1a1a1b97682e79",
+      "uritemplate/variable.py": "670993165a9046fa7d4ddf4549b3f80a8f67d6551e7d9635eff2bf8efd654c16"
+     },
+     "hooks": [],
+     "kind": "wheel",
+     "manifest": "aad7c0e38dc6ccc85a86bca52d67c55addb9b44c78ff37c658baecb1557173ad",
+     "native": {},
+     "pth": {},
+     "sha256": "962201ba1c4edcab02e60f9a0d3821e82dfc5d2d6662a21abd533879bdb8a686"
+    }
+   },
+   "name": "uritemplate",
+   "provenance": {
+    "uritemplate-4.2.0-py3-none-any.whl": {
+     "kind": "GitHub",
+     "repository": "python-hyper/uritemplate",
+     "workflow": "release.yml"
+    }
+   },
+   "pypi": {
+    "author": "Ian Stapleton Cordasco",
+    "author_email": "graffatcolmingov@gmail.com",
+    "home_page": "https://uritemplate.readthedocs.org",
+    "license": "BSD 3-Clause OR Apache-2.0",
+    "project_urls": {
+     "Homepage": "https://uritemplate.readthedocs.org",
+     "Source": "https://github.com/python-hyper/uritemplate"
+    },
+    "summary": "Implementation of RFC 6570 URI Templates"
+   },
+   "reviewed": {
+    "by": "claude",
+    "date": "2026-11-05",
+    "note": "Nothing flagged: no YARA threat hit, no high finding, no .pth start-up code, no build hook; capabilities: network_download, network_outbound; attestation verifies (python-hyper/uritemplate)."
+   },
+   "scans": {
+    "capa": {},
+    "keys": [
+     "yara|capability_network_download|uritemplate/template.py|eeea5f00b436c815",
+     "yara|capability_network_outbound|uritemplate/template.py|eeea5f00b436c815"
+    ],
+    "yara": [
+     "capability_network_download:capability_network_download uritemplate/template.py",
+     "capability_network_outbound:capability_network_outbound uritemplate/template.py"
+    ]
+   },
+   "version": "4.2.0"
+  }
+ }
+}

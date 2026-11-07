@@ -39,8 +39,10 @@ import time
 import weakref
 from pathlib import Path
 
-import numpy as np
 import pytest
+
+# the sinks' engine (EqEngine) runs on numpy; without it the player uses Qt's
+np = pytest.importorskip("numpy", reason="numpy is not installed")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -393,3 +395,48 @@ def test_e2e_track_changes_and_seeks_on_a_real_sink_lose_no_stream(
     speed = float(line.split("speed=")[1].split()[0])
     assert 0.8 < speed < 1.2, line
     assert "error=''" in line, line
+
+
+# --- found by the review of 2026-11-06 ---------------------------------------
+
+
+def test_happy_the_last_track_played_out_closes_its_stream(tmp_path, monkeypatch):
+    """The end of the list left the sound card's stream (PulseAudio,
+    PipeWire, a Bluetooth link) open until the next action."""
+    monkeypatch.setattr(MP, "PARK_MS", 100)
+    factory = Recorder()
+    engine = MP.EqEngine(sink_factory=factory)
+    try:
+        engine.load(str(_tone(tmp_path / "t.wav", seconds=0.5)))
+        engine.play()
+        end = time.monotonic() + 10
+        while not engine.finished and time.monotonic() < end:
+            _spin(0.05)
+        assert engine.finished and engine.state == "stopped"
+        _spin(0.4)
+        assert "stop 0" in factory.events, factory.events
+    finally:
+        engine.close()
+
+
+def test_sad_a_play_after_a_failure_forgets_the_old_error(tmp_path):
+    """play() kept the error of a failed start: "Cannot play" stayed, every
+    seek was ignored and the next decoder error was swallowed."""
+    track = _tone(tmp_path / "t.wav")
+    away = tmp_path / "away.wav"
+    engine = MP.EqEngine(sink_factory=lambda fmt: MP.MemorySink())
+    try:
+        engine.load(str(track))
+        track.rename(away)          # the mount is not up yet
+        engine.play()
+        _spin(0.1)
+        assert engine.error and engine.state == "stopped"
+        away.rename(track)          # now it is
+        engine.play()
+        _spin(0.3)
+        assert engine.error == "" and engine.state == "playing"
+        engine.seek(3000)
+        _spin(0.3)
+        assert engine.position_ms() >= 2500
+    finally:
+        engine.close()

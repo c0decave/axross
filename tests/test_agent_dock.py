@@ -171,6 +171,32 @@ class SadTest(_Base):
 
 
 class EdgeTest(_Base):
+    def test_edge_a_tab_deleted_while_its_agent_waits_for_a_confirmation_ends_the_wait(
+        self,
+    ) -> None:
+        """The agent's thread asks the GUI thread through a GuiCall
+        (core/thread_relay.py), never by emitting on the tab. A tab deleted
+        without stop() (the exit clean-up) drops the question, and the
+        thread's wait ends instead of running on for good."""
+        import threading
+
+        from PyQt6 import sip
+
+        self.make()
+        tab = self.dock.current_tab()
+        answers = []
+        worker = threading.Thread(target=lambda: answers.append(
+            tab._wait_for_answer("write_file", {"path": "x"})))
+        worker.start()
+        time.sleep(0.05)  # the question is posted; the GUI thread does not take it yet
+        self.dock.tabs.removeTab(self.dock.tabs.indexOf(tab))
+        sip.delete(tab)
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(answers, [False])
+        self.app.processEvents()  # the posted question finds no tab: dropped
+        self.assertEqual(self.asked, [])
+
     def test_edge_the_secret_arguments_are_masked_in_the_question(self) -> None:
         self.make(
             {

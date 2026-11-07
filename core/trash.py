@@ -218,6 +218,23 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
 
         server_side_move(backend, path, dst)
     except OSError as exc:
+        if _stat_safely(backend, dst) is not None:
+            # A move across devices copied everything, then could not remove
+            # all of the source: the trash holds the only complete copy. It
+            # gets its sidecar, or the Trash window would not list it and
+            # Empty Trash would delete it unseen.
+            try:
+                _write_meta(backend, meta, {
+                    "trash_id": trash_id,
+                    "original_path": path,
+                    "trashed_at": datetime.now().isoformat(timespec="seconds"),
+                    "size": int(getattr(info, "size", 0) or 0),
+                    "is_dir": bool(getattr(info, "is_dir", False)),
+                    "label": getattr(info, "name", "") or "",
+                    "incomplete": str(exc),
+                })
+            except OSError as meta_exc:
+                log.error("trash: %s is at %s with no metadata: %s", path, dst, meta_exc)
         _finish_journal(
             op_id, "trash", backend=label, status="error", source=path, dest=dst, error=str(exc)
         )
@@ -259,7 +276,10 @@ def trash(backend, path: str, root: str | None = None, *, journal: bool = True) 
         status="done",
         source=path,
         dest=dst,
-        details={"trash_id": trash_id},
+        # A trash of its own (the agent's dedupe, a script's root=): undo
+        # has to look there, not in the backend's default trash.
+        details={"trash_id": trash_id,
+                 **({"trash_root": trash_root} if root is not None else {})},
     )
     return trash_id
 
@@ -697,8 +717,20 @@ def empty_trash(backend, root: str | None = None) -> int:
         log.warning("empty_trash: cannot list %s: %s", trash_root, exc)
         return 0
     removed = 0
+    # Only what the Trash window lists goes: a data object without its
+    # sidecar (list_trash does not show it - say a move that stopped half
+    # way) may be the only copy of the user's files, so it stays.
+    sidecar_ids = {
+        (getattr(it, "name", "") or "")[: -len(META_SUFFIX)]
+        for it in items
+        if (getattr(it, "name", "") or "").endswith(META_SUFFIX)
+    }
     for it in items:
         name = getattr(it, "name", "") or ""
+        if not name.endswith(META_SUFFIX) and name not in sidecar_ids:
+            log.warning("empty_trash: keeping %r in %s - it has no sidecar, the Trash "
+                        "window does not show it", name, trash_root)
+            continue
         try:
             full = (
                 _data_path(backend, trash_root, name)

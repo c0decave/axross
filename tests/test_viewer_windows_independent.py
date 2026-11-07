@@ -315,6 +315,9 @@ def test_happy_checksum_and_elevated_viewers_are_non_modal(window, folder):
     pane.navigate(str(folder))
     with mock.patch.object(pane._backend, "checksum", return_value="sha256:" + "a" * 64):
         pane._show_checksum(FileItem(name="notes.txt", size=6))
+        from tests.off_gui_wait import _drain_checksum
+
+        assert _drain_checksum(pane)  # it runs off the GUI thread (0.14.158)
     with mock.patch.object(E, "elevated_read", return_value=b"root:x:0:0\n"):
         pane._open_as_root(str(folder / "notes.txt"))
     kinds = {type(w) for w in _all_independent() if w.isVisible()}
@@ -323,14 +326,21 @@ def test_happy_checksum_and_elevated_viewers_are_non_modal(window, folder):
 
 
 def test_happy_archive_member_viewers_are_non_modal(window, folder):
-    from ui.file_pane import open_local_file_in_viewer
+    """Text goes to the window's editor (a tab with highlighting, as from a
+    pane), a binary without a desktop application to the hex window."""
+    from ui import file_pane as FP
     from ui.hex_editor import HexEditorDialog
-    from ui.text_editor import TextEditorDialog
 
-    open_local_file_in_viewer(window, str(folder / "notes.txt"))
-    open_local_file_in_viewer(window, str(folder / "blob.bin"))
-    kinds = {type(w) for w in _all_independent() if w.isVisible()}
-    assert {TextEditorDialog, HexEditorDialog} <= kinds
+    with mock.patch.object(FP, "_open_with_system_app", return_value=False):
+        assert FP.open_local_file_in_viewer(window, str(folder / "notes.txt")) == "text"
+        assert FP.open_local_file_in_viewer(window, str(folder / "blob.bin")) == "hex"
+    assert any(isinstance(w, HexEditorDialog) and w.isVisible() for w in _all_independent())
+    editor = window._editor()
+    end = time.time() + 5
+    while time.time() < end and not editor.isVisible():
+        APP.processEvents()
+        time.sleep(0.01)
+    assert editor.isVisible()  # the text member, read in the background
     assert QApplication.activeModalWidget() is None
 
 

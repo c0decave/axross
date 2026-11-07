@@ -351,3 +351,48 @@ def test_edge_copy_with_an_unresolvable_target_creates_nothing():
     with pytest.raises(OSError):
         s.copy("/a.txt", "/b.txt")
     assert drive.created == []
+
+
+# -- renamed on the web (review 2026-11-06) -----------------------------------
+
+
+def test_sad_a_name_renamed_on_the_web_is_not_deleted_through_the_cache():
+    """a.txt renamed to b.txt in the browser: remove("/a.txt") resolved the
+    cached id - b.txt - and deleted it for good. Destructive calls ask the
+    server now, so the old name is simply not found."""
+    drive = _Drive([_file("ID1", "a.txt", mime="text/plain")])
+    s = _session(drive)
+    s.list_dir("/")
+    assert s._path_cache["/a.txt"] == "ID1"
+    drive.store[0]["name"] = "b.txt"  # renamed elsewhere
+    with pytest.raises(FileNotFoundError):
+        s.remove("/a.txt")
+    assert drive.deleted == []
+    with pytest.raises(OSError):
+        s.rename("/a.txt", "/c.txt")
+    assert drive.updated == []
+    assert "/a.txt" not in s._path_cache
+
+
+def test_edge_a_new_listing_drops_names_that_are_gone():
+    drive = _Drive([_file("ID1", "a.txt", mime="text/plain"), _file("D", "sub", mime=_FOLDER),
+                    _file("ID2", "x.txt", parent="D", mime="text/plain")])
+    s = _session(drive)
+    s.list_dir("/")
+    s.list_dir("/sub")
+    assert {"/a.txt", "/sub", "/sub/x.txt"} <= set(s._path_cache)
+    drive.store[:] = [f for f in drive.store if f["id"] != "D"]   # the folder went
+    drive.store[0]["name"] = "renamed.txt"
+    s.list_dir("/")
+    assert "/a.txt" not in s._path_cache and "/sub" not in s._path_cache
+    assert "/sub/x.txt" not in s._path_cache and s._path_cache["/renamed.txt"] == "ID1"
+
+
+def test_happy_writing_over_a_renamed_name_creates_a_new_file():
+    drive = _Drive([_file("ID1", "a.txt", mime="text/plain")])
+    s = _session(drive)
+    s.list_dir("/")
+    drive.store[0]["name"] = "b.txt"
+    writer = s.open_write("/a.txt")
+    assert writer._existing_id is None   # not the cached id, which is b.txt now
+    writer.discard()
