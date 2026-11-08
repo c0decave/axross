@@ -5,6 +5,7 @@ backend, never overwriting, never leaving a half-written archive."""
 from __future__ import annotations
 
 import bz2
+import dataclasses
 import gzip
 import io
 import lzma
@@ -239,3 +240,47 @@ def test_edge_a_bad_archive_name_is_refused(tree) -> None:
     for bad in ("../escape", "sub/name", "", ".", ".."):
         with pytest.raises(PK.PackError):
             PK.pack(FS, str(tree), ["docs"], bad, PK.PackOptions(fmt="zip"))
+
+
+@pytest.mark.parametrize("fmt", ["zip", "tar.gz", "tar.bz2", "tar.xz", "tar.zst"])
+def test_happy_the_source_mode_is_kept(tree, fmt) -> None:
+    """Every file was stored as 0644 and every folder as 0755: a script lost
+    its exec bit and a private file (0600) came back readable by everyone.
+    The source mode, masked to 0o777, is stored now."""
+    if fmt == "tar.zst" and not _zstd_ok():
+        pytest.skip("no zstd")
+    (tree / "docs" / "run.sh").write_text("#!/bin/sh\n")
+    os.chmod(tree / "docs" / "run.sh", 0o4755)          # setuid is not stored
+    os.chmod(tree / "docs" / "a.txt", 0o600)
+    os.chmod(tree / "docs" / "deep", 0o700)
+    result = _pack(tree, fmt, names=("docs",))
+    if fmt == "zip":
+        with zipfile.ZipFile(result.path) as zf:
+            modes = {i.filename.rstrip("/"): (i.external_attr >> 16) & 0o7777 for i in zf.infolist()}
+    else:
+        if fmt == "tar.zst":
+            tf = tarfile.open(fileobj=io.BytesIO(PK.zstd_decompress(Path(result.path).read_bytes())))
+        else:
+            tf = tarfile.open(result.path)
+        with tf:
+            modes = {m.name: m.mode for m in tf.getmembers()}
+    assert modes["docs/run.sh"] == 0o755
+    assert modes["docs/a.txt"] == 0o600
+    assert modes["docs/deep"] == 0o700
+    assert modes["docs/deep/b.bin"] == (os.stat(tree / "docs" / "deep" / "b.bin").st_mode & 0o777)
+
+
+def test_edge_a_remote_source_stores_its_permissions_or_the_old_default(tree, monkeypatch) -> None:
+    """A remote backend's listing carries ``permissions``: it was ignored
+    (always 0644). It is stored now; 0 (not known) keeps 0644 / 0755."""
+    class Remote(LocalFS):
+        def list_dir(self, path):
+            return [dataclasses.replace(i, permissions=0o640 if i.name == "a.txt" else 0)
+                    for i in super().list_dir(path)]
+
+    monkeypatch.setattr(PK, "_is_local", lambda backend: not isinstance(backend, Remote))
+    result = PK.pack(Remote(), str(tree), ["docs"], "up", PK.PackOptions(fmt="tar.gz"))
+    with tarfile.open(result.path) as tf:
+        modes = {m.name: m.mode for m in tf.getmembers()}
+    assert modes["docs/a.txt"] == 0o640
+    assert modes["docs/deep/b.bin"] == 0o644 and modes["docs/deep"] == 0o755

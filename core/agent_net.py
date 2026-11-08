@@ -31,6 +31,13 @@ log = logging.getLogger(__name__)
 CHUNK = 64 * 1024
 #: Seconds to open a TCP connection on the host.
 CONNECT_TIMEOUT = 15.0
+#: Streams one sandbox may have open at once (core.mcp_egress allows as
+#: many connections): each holds a socket and a thread on the host.
+MAX_STREAMS = 64
+#: Seconds a write to a stream may wait for the far end to take the
+#: bytes; then the stream is closed (a peer that stops reading would hold
+#: the worker channel's reader).
+SEND_TIMEOUT = 30.0
 #: Bytes kept for a stream whose answer has not arrived yet.
 EARLY_LIMIT = 4 * 1024 * 1024
 
@@ -101,6 +108,8 @@ class HostRelay:
         self._resolver = resolver
         self._lock = threading.Lock()
         self._streams: dict[int, socket.socket] = {}
+        #: Streams being connected (counted against MAX_STREAMS).
+        self._opening = 0
         self._next = 0
 
     def _connect(self, host: str, port: int) -> socket.socket:
@@ -143,8 +152,17 @@ class HostRelay:
         host = str(host).lower()
         if not self._allowed(host, int(port)):
             raise PermissionError(f"{host}:{port} is not an allowed host of this sandbox")
-        sock = self._connect(host, int(port))
-        sock.settimeout(None)
+        with self._lock:
+            if len(self._streams) + self._opening >= MAX_STREAMS:
+                raise PermissionError(f"the sandbox has {MAX_STREAMS} connections open already")
+            self._opening += 1
+        try:
+            sock = self._connect(host, int(port))
+        finally:
+            with self._lock:
+                self._opening -= 1
+        # Reads wait in a loop (_pump); a write waits at most SEND_TIMEOUT.
+        sock.settimeout(SEND_TIMEOUT)
         with self._lock:
             self._next += 1
             stream = self._next
@@ -157,7 +175,10 @@ class HostRelay:
     def _pump(self, stream: int, sock: socket.socket) -> None:
         try:
             while True:
-                data = sock.recv(CHUNK)
+                try:
+                    data = sock.recv(CHUNK)
+                except socket.timeout:
+                    continue  # an idle stream (the timeout is for writes)
                 if not data:
                     break
                 self._send({"type": "tcp_data", "stream": stream, "data": _b64(data)})
@@ -172,6 +193,8 @@ class HostRelay:
         if sock is None:
             return
         try:
+            # The socket's timeout (SEND_TIMEOUT): a far end that stops
+            # reading ends its stream, it does not hold the caller.
             sock.sendall(base64.b64decode(data, validate=True))
         except (OSError, ValueError, TypeError):
             self.close(stream)

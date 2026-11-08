@@ -67,6 +67,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import io
 import ipaddress
 import logging
 import ntpath
@@ -98,6 +99,13 @@ MAX_BODY_BYTES = 8 * 1024 * 1024 * 1024  # 8 GiB hard cap per request
 PUT_CHUNK = 1 * 1024 * 1024
 HEAD_BANNER = "axross-reverse/1"
 REQUEST_TIMEOUT_S = 30.0
+#: Seconds the request line and every header together may take (a client
+#: sending a byte now and then never trips the per-read timeout above).
+HEADER_DEADLINE_S = 30.0
+#: Connections served at once; one more is answered 503 and closed (each
+#: holds a thread, also before it sent its token).
+MAX_CONNECTIONS = 64
+_DIGITS = re.compile(r"[0-9]+")
 MIN_WALK_DIR_VISITS = 128
 MAX_WALK_DIR_VISITS = 50_000
 MAX_WALK_PATH_CHARS = 8_192
@@ -149,6 +157,8 @@ def _normalize_key(raw: str) -> str:
     """
     parts = _split_segments(raw)
     for seg in parts:
+        if "\x00" in seg:
+            raise ValueError(f"NUL in path segment: {raw!r}")
         if "\\" in seg:
             raise PermissionError(f"backslash in path segment: {raw!r}")
         if _DRIVE_SEGMENT.match(seg):
@@ -210,10 +220,25 @@ def _path_flavour(backend):
     return ntpath if sep == "\\" else posixpath
 
 
-def _rooted_join(backend, root: str, *parts: str) -> str:
+def _confine_locally(backend) -> bool:
+    """True for a backend on this machine's own file system (LocalFS):
+    its symlinks are resolved by this machine's kernel."""
+    from core.local_fs import LocalFS
+
+    return isinstance(backend, LocalFS)
+
+
+def _rooted_join(backend, root: str, *parts: str, follow: bool = True) -> str:
     """Join client-derived *parts* below *root*, refusing a result that
     leaves it in the backend's own path flavour (second layer behind the
-    segment checks of :func:`_normalize_key`)."""
+    segment checks of :func:`_normalize_key`).
+
+    On a local backend the path is also resolved
+    (core.path_policy.confined_path): a symlink in the served tree that
+    points out of it (``b/link -> /etc``) is a PermissionError - every
+    folder on the way, and with *follow* the last part too (without it the
+    entry itself is meant: DELETE and MOVE remove or rename a link, never
+    what it points to). The lexical path is returned."""
     full = _backend_join(backend, root, *parts)
     flavour = _path_flavour(backend)
     base = flavour.normcase(flavour.normpath(root or flavour.sep))
@@ -224,6 +249,11 @@ def _rooted_join(backend, root: str, *parts: str) -> str:
         inside_root = target == base or target.startswith(base.rstrip("/") + "/")
     if not inside_root:
         raise PermissionError(f"path leaves the served root: {full!r}")
+    if _confine_locally(backend):
+        from core.path_policy import confined_path
+
+        rel = "/".join(p.strip("/") for p in parts if p and p.strip("/"))
+        confined_path(root or flavour.sep, rel, follow=follow)
     return full
 
 
@@ -360,6 +390,25 @@ class _BodyError(ValueError):
         self.status = status
 
 
+class _DeadlineIO(socket.SocketIO):
+    """The connection's input with an overall deadline while ``deadline``
+    is set (the request line and headers): each read waits at most what is
+    left of it, then TimeoutError (which BaseHTTPRequestHandler answers by
+    closing the connection)."""
+
+    deadline: float | None = None
+
+    def readinto(self, b):
+        if self.deadline is not None:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("the request headers took too long")
+            self._sock.settimeout(min(REQUEST_TIMEOUT_S, left))
+        else:
+            self._sock.settimeout(REQUEST_TIMEOUT_S)
+        return super().readinto(b)
+
+
 class _BaseHandler(BaseHTTPRequestHandler):
     """Common handler — auth, error-shape, logging."""
 
@@ -379,6 +428,17 @@ class _BaseHandler(BaseHTTPRequestHandler):
             self.connection.settimeout(REQUEST_TIMEOUT_S)
         except OSError as exc:
             log.debug("reverse-server: cannot set socket timeout: %s", exc)
+        # The input through _DeadlineIO: the headers have one deadline.
+        self.rfile.close()
+        self._input = _DeadlineIO(self.connection, "rb")
+        self.rfile = io.BufferedReader(self._input)
+
+    def handle_one_request(self) -> None:
+        self._input.deadline = time.monotonic() + HEADER_DEADLINE_S
+        try:
+            super().handle_one_request()
+        finally:
+            self._input.deadline = None
 
     def parse_request(self) -> bool:
         """Refuse DNS rebinding on loopback binds before any verb runs.
@@ -390,7 +450,9 @@ class _BaseHandler(BaseHTTPRequestHandler):
         Non-loopback binds require the bearer token instead and are served
         under whatever name clients use.
         """
-        if not super().parse_request():
+        ok = super().parse_request()
+        self._input.deadline = None  # the headers are read: the body has the per-read timeout
+        if not ok:
             return False
         if not _is_local_bind(self.config.bind):
             return True
@@ -504,15 +566,20 @@ class _BaseHandler(BaseHTTPRequestHandler):
             raise _BodyError(400, str(exc)) from exc
 
     def _content_length(self, *, default: int | None = None) -> int:
-        raw = self.headers.get("Content-Length")
+        """The body length: digits only (int() took ``+5``, `` 5`` and
+        ``1_0``), and several Content-Length headers only when they agree
+        (two framings of one body: request smuggling)."""
+        values = [v.strip(" \t") for v in self.headers.get_all("Content-Length") or []]
+        raw = values[0] if values else None
         if raw in (None, ""):
             if default is None:
                 raise ValueError("missing Content-Length")
             return default
-        try:
-            length = int(raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid Content-Length {raw!r}") from exc
+        if len(set(values)) > 1:
+            raise ValueError("Content-Length headers that differ")
+        if not _DIGITS.fullmatch(raw):
+            raise ValueError(f"invalid Content-Length {raw[:40]!r}")
+        length = int(raw)
         if length < 0:
             raise ValueError("negative Content-Length")
         if length > MAX_BODY_BYTES:
@@ -893,15 +960,18 @@ class _S3Handler(_BaseHandler):
             bucket, key = path, ""
         else:
             bucket, _, key = path.partition("/")
-        # Second layer: the joined path must stay below the root.
-        _rooted_join(self.config.backend, self.config.root_path, bucket, key)
+        # Second layer: the joined path must stay below the root (on a
+        # local backend also through symlinks; DELETE means a link itself).
+        _rooted_join(self.config.backend, self.config.root_path, bucket, key,
+                     follow=self.command != "DELETE")
         return (bucket, key)
 
     def _backend_path_for(self, bucket: str, key: str) -> str:
         """Rooted backend path. The reverse-server treats the *first
         URL segment* as the bucket name; we map it to a top-level
         directory under ``config.root_path``."""
-        return _rooted_join(self.config.backend, self.config.root_path, bucket, key)
+        return _rooted_join(self.config.backend, self.config.root_path, bucket, key,
+                            follow=self.command != "DELETE")
 
     def _s3_failure(self, what: str, exc: OSError) -> None:
         """A stat or listing that failed: AccessDenied for a refusal,
@@ -1323,6 +1393,8 @@ def _walk_keys(
                 continue
             rel = full[len(root) :].lstrip("/")
             if getattr(item, "is_dir", False):
+                if getattr(item, "is_link", False) is True:
+                    continue  # a symlinked folder may lead out of the served tree (or loop)
                 folder = rel + "/"
                 # Only folders that can hold a key with the prefix.
                 if not prefix or folder.startswith(prefix) or prefix.startswith(folder):
@@ -1540,7 +1612,7 @@ class _DAVHandler(_BaseHandler):
         if self.config.read_only:
             self._send_simple(403, b"read-only reverse-server")
             return
-        path = self._backend_path()
+        path = self._backend_path(follow=False)  # a link is removed, never its target
         if path is None:
             return
         if self._is_served_root(path):
@@ -1617,13 +1689,15 @@ class _DAVHandler(_BaseHandler):
         dst_path = urlparse(dst_url).path or ""
         try:
             dst_norm = _normalize_key(dst_path)
+            # MOVE renames (a link at the destination is replaced, not
+            # followed); COPY writes through it.
             dst_full = _rooted_join(
-                self.config.backend, self.config.root_path, dst_norm.lstrip("/")
+                self.config.backend, self.config.root_path, dst_norm.lstrip("/"), follow=not move
             )
         except (ValueError, PermissionError) as exc:
             self._send_simple(400, str(exc).encode("utf-8"))
             return
-        src_full = self._backend_path()
+        src_full = self._backend_path(follow=not move)
         if src_full is None:
             return
         if (move and self._is_served_root(src_full)) or self._is_served_root(dst_full):
@@ -1723,10 +1797,13 @@ class _DAVHandler(_BaseHandler):
         root = self.config.root_path or flavour.sep
         return flavour.normcase(flavour.normpath(full)) == flavour.normcase(flavour.normpath(root))
 
-    def _backend_path(self) -> str | None:
+    def _backend_path(self, *, follow: bool = True) -> str | None:
+        """The request's path below the root; None after a 400 answer.
+        *follow*: False for what acts on a symlink itself (DELETE, MOVE)."""
         try:
             key = _normalize_key(urlparse(self.path).path or "/")
-            return _rooted_join(self.config.backend, self.config.root_path, key.lstrip("/"))
+            return _rooted_join(self.config.backend, self.config.root_path, key.lstrip("/"),
+                                follow=follow)
         except (ValueError, PermissionError) as exc:
             self._send_simple(400, str(exc).encode("utf-8"))
             return None
@@ -1819,8 +1896,42 @@ class ReverseServer:
 
 
 class _ReverseHTTPServer(ThreadingHTTPServer):
-    """One thread per request; a client that fails the TLS handshake or
-    drops the connection is a debug line, not a traceback on stderr."""
+    """One thread per connection, at most MAX_CONNECTIONS at once (one
+    more is answered 503 and closed, before any of it is read); a client
+    that fails the TLS handshake or drops the connection is a debug line,
+    not a traceback on stderr."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            log.warning("reverse-server: %d connections already, refusing %s",
+                        MAX_CONNECTIONS, client_address[0] if client_address else "?")
+            self._refuse_busy(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+    def _refuse_busy(self, request) -> None:
+        if not isinstance(request, ssl.SSLSocket):  # TLS: no handshake for a refusal
+            try:
+                request.setblocking(False)
+                request.send(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                             b"Retry-After: 5\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+        self.shutdown_request(request)
 
     def handle_error(self, request, client_address) -> None:
         exc = sys.exc_info()[1]

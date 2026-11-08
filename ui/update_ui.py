@@ -215,13 +215,13 @@ class UpdateController(QObject):
         if not self.has_build(inst):
             self._set(AVAILABLE, self._no_build_message(inst))
             return False
-        release, factory = self.release, self.opener_factory
+        release, factory, current = self.release, self.opener_factory, self.current_version
         asset = release.asset(inst.asset)
         self.progress = (0, asset.size if asset else 0)
 
         def work(cancel, report):
             flag = types.SimpleNamespace(is_set=cancel)
-            return SU.update(release, inst, opener=factory(), cancel=flag,
+            return SU.update(release, inst, opener=factory(), cancel=flag, current=current,
                              progress=lambda done, total: report(done, total, ""))
 
         self._dismissed = False
@@ -392,10 +392,28 @@ def _unmark(document: QTextDocument) -> None:
 WEB_SCHEMES = ("http", "https")
 
 
+def ask_open_link(parent, href: str, text: str) -> bool:
+    """Ask before a link of the release notes opens in the browser: the
+    notes come from the release page, and a link's text can name another
+    address than it opens - the real one is shown, and the text too when
+    it differs."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    body = tr("Open this address in your web browser?") + "\n\n" + href
+    if text and text.strip() and text.strip() != href:
+        body += "\n\n" + tr("The link in the notes reads: {text}").format(text=text.strip()[:300])
+    box = QMessageBox(QMessageBox.Icon.Question, tr("Open Link"), body,
+                      QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel, parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    return box.exec() == QMessageBox.StandardButton.Open
+
+
 class ReleaseNotesView(QTextBrowser):
     """Release notes from the network, as Markdown: no resource is loaded
     (:meth:`loadResource` answers nothing, for any URL), raw HTML is text,
-    and a link opens only when it is http(s) with a host."""
+    and a link opens only when it is http(s) with a host - and only after
+    :func:`ask_open_link` showed its real address and the user agreed."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -424,11 +442,32 @@ class ReleaseNotesView(QTextBrowser):
             self.refused_resources.add(name.toString())
         return None
 
-    @staticmethod
-    def _open_link(url: QUrl) -> None:
+    def _link_text(self, href: str) -> str:
+        """The text of the notes' first link to *href* ("" when none)."""
+        parts: list[str] = []
+        block = self.document().begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                fragment = it.fragment()
+                if fragment.isValid() and fragment.charFormat().anchorHref() == href:
+                    parts.append(fragment.text())
+                elif parts:
+                    return "".join(parts)
+                it += 1
+            if parts:
+                return "".join(parts)
+            block = block.next()
+        return "".join(parts)
+
+    def _open_link(self, url: QUrl) -> None:
         if url.scheme().lower() not in WEB_SCHEMES or not url.host():
             log.info("release notes: link not opened (only http and https): %s",
                      url.toString()[:200])
+            return
+        href = url.toString()
+        if not ask_open_link(self, href, self._link_text(href)):
+            log.info("release notes: link not opened (declined): %s", href[:200])
             return
         from core import desktop_open
 

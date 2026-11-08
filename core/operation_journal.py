@@ -91,6 +91,43 @@ def new_operation_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+#: The batch the events written on this thread belong to (journal_batch).
+_BATCH = threading.local()
+
+
+def new_batch_id() -> str:
+    """An id for the entries of one user operation (one F5 / F6 / drop /
+    Paste, one Move to Trash of a selection): undo reverses them together."""
+    return "b" + uuid.uuid4().hex[:11]
+
+
+class journal_batch:  # noqa: N801 - used like a function: ``with journal_batch(id):``
+    """Every event this thread writes inside the block carries
+    ``details["batch"] = batch_id`` (unless it names a batch itself).
+
+    For callers that journal through code of their own (core.trash.trash
+    per selected entry); the transfer engine names the batch on each job,
+    whose events are written on worker threads.
+    """
+
+    def __init__(self, batch_id: str) -> None:
+        self.batch_id = batch_id
+        self._outer = ""
+
+    def __enter__(self) -> str:
+        self._outer = getattr(_BATCH, "id", "")
+        _BATCH.id = self.batch_id
+        return self.batch_id
+
+    def __exit__(self, *_exc) -> None:
+        _BATCH.id = self._outer
+
+
+def current_batch() -> str:
+    """The batch of :class:`journal_batch` on this thread, or ""."""
+    return getattr(_BATCH, "id", "") or ""
+
+
 def append_event(event: JournalEvent, *, journal_path: Path | None = None) -> None:
     """Append one redacted JSONL event to the operation journal. Paths
     keep their real names (see ``_PATH_FIELDS``); the log line about the
@@ -98,6 +135,10 @@ def append_event(event: JournalEvent, *, journal_path: Path | None = None) -> No
     if not _journal_enabled(journal_path):
         return
     path = _target_path(journal_path)
+    batch = current_batch()
+    if batch and not (event.details or {}).get("batch"):
+        event = JournalEvent(**{**asdict(event), "details": {**(event.details or {}),
+                                                            "batch": batch}})
     payload = _redact_event(asdict(event))
     line = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     data = (line + "\n").encode("utf-8")
@@ -254,7 +295,10 @@ __all__ = [
     "JOURNAL_PATH",
     "JournalEvent",
     "append_event",
+    "current_batch",
     "finish_operation",
+    "journal_batch",
+    "new_batch_id",
     "new_operation_id",
     "read_recent",
     "record_phase",

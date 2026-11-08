@@ -596,6 +596,22 @@ class SmbSession(SessionLifecycle):
                 ) from e
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
 
+    def rename_no_replace(self, src: str, dst: str) -> None:
+        """``rename`` already refuses an existing *dst* (smbclient.rename
+        does not replace; ``replace`` would): named, so a move within the
+        share knows it (core.transfer_worker)."""
+        self.rename(src, dst)
+
+    def set_modified(self, path: str, mtime: float) -> None:
+        """Set *path*'s modification time (epoch seconds; SMB keeps 100 ns),
+        so a copy keeps its source's time. The access time stays."""
+        unc = self._unc(path)
+        try:
+            atime = smbclient.stat(unc, **self._kw).st_atime
+            smbclient.utime(unc, times=(atime, mtime), **self._kw)
+        except _SMB_FAILURES as e:
+            raise OSError(f"Cannot set the modification time of {path}: {e}") from e
+
     def _exists_quietly(self, path: str) -> bool:
         try:
             return bool(smbclient.path.exists(self._unc(path), **self._kw))

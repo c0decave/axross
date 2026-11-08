@@ -88,6 +88,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+#: Journal events Ctrl+Z reads (core.operation_journal caps the read at
+#: 4 MiB as well): enough for the batch of a move of a few thousand files.
+UNDO_JOURNAL_EVENTS = 20000
+
 
 def _under_any(path: str, roots: set[str]) -> bool:
     """*path* is in *roots* or lies below one of them, with ``/`` or ``\\``
@@ -95,6 +99,22 @@ def _under_any(path: str, roots: set[str]) -> bool:
     if path in roots:
         return True
     return any(path[:i] in roots for i, ch in enumerate(path) if ch in "/\\")
+
+
+class _UndoTagTargets:
+    """The conflict-plan answers ``_track_tag_moves`` asks about, for an
+    undo: each entry goes back to the path it was moved from, whatever its
+    name is now (a "Rename" answer gave it another one)."""
+
+    def __init__(self, back: dict[str, str]) -> None:
+        self._back = back
+
+    def resolve(self, _dest: str, source: str):
+        target = self._back.get(source)
+        return None if target is None else (target, "fail")
+
+    def keeps_inside(self, _folder: str) -> bool:
+        return False
 
 
 def _is_ssh_session(backend) -> bool:
@@ -450,6 +470,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._transfer_manager.job_error.connect(self._tags_on_move_error)
         self._transfer_manager.job_finished.connect(self._on_undo_job_finished)
         self._transfer_manager.job_error.connect(self._on_undo_job_error)
+        #: Copies and moves whose status-bar summary waits for their jobs.
+        self._transfer_summaries: list[dict] = []
+        self._transfer_manager.job_finished.connect(self._on_summary_job_ended)
+        self._transfer_manager.job_error.connect(self._on_summary_job_ended)
         # Connections of closed panes kept open for their transfers:
         # (profile, backend), released once no job uses the backend.
         self._deferred_releases: list[tuple] = []
@@ -3096,7 +3120,10 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._active_pane = pane
         self._note_active_workspace(pane)
         if self._target_pane is pane:
-            self._target_pane = next((p for p in self._panes if p is not pane), None)
+            self._target_pane = self._fallback_target(pane)
+        # Each workspace keeps its own pair: a pane clicked in another
+        # workspace's window does not make a hidden pane its target.
+        self._keep_target_in_workspace()
         self._refresh_pane_styles()
         self._sync_view_mode_action()
         if changed:
@@ -4226,7 +4253,9 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             self._undo_status("An undo is still running.")
             return
         try:
-            events = read_recent(limit=200)
+            # Every entry of a batch (a folder move journals three events
+            # per file): 200 events held the newest 66 files of a move.
+            events = read_recent(limit=UNDO_JOURNAL_EVENTS)
         except Exception as exc:  # noqa: BLE001 — a broken journal must not block the app
             log.warning("undo: could not read the journal: %s", exc)
             QMessageBox.warning(self, "Undo", f"Could not read the operation journal:\n{exc}")
@@ -4332,12 +4361,18 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if not confirm_production(self, target, f"undo: {plan.reason}"):
                 self._undo_status("Undo cancelled")
                 return
+        if plan.action == "batch":
+            self._undo_batch(plan, backend, pane, source, by_label)
+            return
         if plan.action == "transfer_back":
             # Here: it only queues transfers (the transfer engine is the
             # GUI thread's), which do their work off it themselves.
             partial: list = []
+            source_pane = by_label.get(plan.source_backend, (None, None))[1]
 
             def queued(jobs) -> None:
+                # The tags go back with the file, as they came with it.
+                self._track_undo_tags(pane, source_pane, {plan.dest: plan.source}, jobs)
                 self._undo_jobs_queued(plan, pane, partial, jobs)
 
             def transfer(**kwargs):
@@ -4369,18 +4404,165 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         self._undo_step(lambda: apply_undo(plan, backend, source_backend=None,
                                            transfer=None), carried_out)
 
-    def _finish_undo(self, plan, pane, jobs=()) -> None:
+    def _finish_undo(self, plan, pane, jobs=(), *, message: str | None = None) -> None:
         try:
             from core.undo import record_undone
 
             # The next Ctrl+Z reaches the operation before this one - not
             # the move back the jobs of this undo journaled.
-            record_undone(plan, by=[getattr(j, "operation_id", "") for j in jobs])
+            record_undone(plan, by=[getattr(j, "operation_id", "") for j in jobs],
+                          by_batches=[getattr(j, "batch_id", "") for j in jobs])
         except Exception as exc:  # noqa: BLE001 - the undo itself succeeded
             log.warning("undo: could not record the undo in the journal: %s", exc)
         if pane is not None and pane in self._panes:
             pane.refresh_after_change()
-        self.statusBar().showMessage(f"Undone: {plan.reason}", 5000)
+        self.statusBar().showMessage(message or f"Undone: {plan.reason}", 5000)
+
+    def _refresh_undo_panes(self, *panes) -> None:
+        for pane in panes:
+            if pane is not None and pane in self._panes:
+                pane.refresh_after_change()
+
+    # -- undo of a batch (one F6 / drop / Paste, one Move to Trash) -------------
+
+    def _undo_batch(self, plan, backend, pane, source_backend, by_label: dict) -> None:
+        """Undo every entry of one user operation, after the one question.
+
+        The files go back first - through the transfer engine for a move
+        (each to its own recorded path, refusing a name that is there
+        again), by rename or trash restore otherwise - then the folders the
+        move created are removed where they are empty and its source
+        folders made again (core.undo.apply_batch_folders). Entries that
+        could not be undone stay in the history for another Ctrl+Z."""
+        from core.undo import apply_batch_files, apply_batch_folders, batch_transfer_pairs
+
+        source_backend = source_backend or backend
+        source_pane = by_label.get(plan.source_backend, (None, None))[1] or pane
+        pairs = batch_transfer_pairs(plan)
+        if not pairs:
+            def work():
+                done, failures = apply_batch_files(plan, backend)
+                if not failures:
+                    failures = apply_batch_folders(plan, source_backend=source_backend,
+                                                   backend=backend)
+                return done, failures
+
+            self._undo_status(f"Undoing: {plan.reason}")
+            self._undo_step(work, lambda kind, value: self._undo_batch_ended(
+                plan, (pane, source_pane), kind, value))
+            return
+        from core.transfer_worker import TransferStatus
+
+        partial: list = []
+
+        def queued(jobs) -> None:
+            if partial and not jobs:
+                QMessageBox.warning(self, "Undo failed", f"{plan.reason} failed:\n{partial[0]}")
+                return
+            back = {current: original for current, original in pairs}
+            back.update({p.dest: p.source for p in plan.parts if p.action == "folder_back"})
+            self._track_undo_tags(pane, source_pane, back, jobs)
+            parts = {(p.dest, p.source): p for p in plan.parts if p.action == "transfer_back"}
+            self._undo_waits.append({
+                "plan": plan, "batch": True, "jobs": list(jobs), "failed": [],
+                "pending": {j.job_id for j in jobs},
+                "parts": {j.job_id: parts.get((j.source_path, j.dest_path)) for j in jobs},
+                "panes": (pane, source_pane), "backends": (backend, source_backend),
+                "record": not partial, "partial": partial,
+            })
+            refused = [j for j in jobs if j.status is TransferStatus.ERROR]
+            for job in refused:  # rows that never run: no signal comes for them
+                self._on_undo_job_error(job.job_id, job.error_message)
+            self.statusBar().showMessage(f"Undoing: {plan.reason}", 5000)
+
+        self._transfer_manager.transfer_pairs_in_background(
+            backend, source_backend, pairs, self._transfer_direction(backend, source_backend),
+            True, on_done=queued, on_error=partial.append)
+        for each in (pane, source_pane):
+            if each is not None:
+                self._transfer_target_panes.add(each)
+        self._undo_status(f"Undoing: {plan.reason}")
+
+    def _undo_batch_jobs_ended(self, wait: dict) -> None:
+        """Every job of a batch undo ended: the folders follow when all of
+        its files are back; else the files that are back are recorded and
+        the rest stays in the history."""
+        from core.transfer_worker import TransferStatus
+        from core.undo import apply_batch_folders
+
+        plan, jobs = wait["plan"], wait["jobs"]
+        done = [wait["parts"][j.job_id] for j in jobs
+                if j.status is TransferStatus.DONE and not j.skipped
+                and wait["parts"].get(j.job_id) is not None]
+        failures = list(wait["failed"])
+        failures += [f"{plan.source or plan.dest}: {exc}" for exc in wait.get("partial", ())]
+        if failures:
+            self._undo_batch_ended(plan, wait["panes"], "done", (done, failures), jobs,
+                                   folders_ran=False)
+            return
+        backend, source_backend = wait["backends"]
+        self._undo_step(
+            lambda: (done, apply_batch_folders(plan, backend, source_backend)),
+            lambda kind, value: self._undo_batch_ended(plan, wait["panes"], kind, value, jobs,
+                                                       folders_ran=True))
+
+    def _undo_batch_ended(self, plan, panes, kind: str, value, jobs=(), *,
+                          folders_ran: bool = True) -> None:
+        from dataclasses import replace
+
+        if kind == "error":
+            if not isinstance(value, (OSError, ValueError)):
+                raise value  # a bug: the error dialog
+            QMessageBox.warning(self, "Undo failed", str(value))
+            self._refresh_undo_panes(*panes)
+            return
+        done, failures = value
+        if not failures:
+            self._finish_undo(plan, panes[0], jobs)
+            self._refresh_undo_panes(panes[1])
+            return
+        files = [p for p in plan.parts if p.action != "folder_back"]
+        files_done = [p for p in done if p.action != "folder_back"]
+        if files_done and len(files_done) == len(files) and folders_ran:
+            # Every file is back; only a folder could not be removed or made.
+            self._finish_undo(plan, panes[0], jobs)
+            self._refresh_undo_panes(panes[1])
+        elif files_done:
+            # What came back is not offered again; the rest is.
+            self._finish_undo(replace(plan, operation_id="", parts=tuple(files_done)),
+                              panes[0], jobs, message=f"Partly undone: {plan.reason}")
+            self._refresh_undo_panes(panes[1])
+        else:
+            self._refresh_undo_panes(*panes)
+        shown = "\n".join(failures[:10])
+        if len(failures) > 10:
+            shown += "\n" + tr_n(len(failures) - 10, "… and {n} more", "… and {n} more")
+        QMessageBox.warning(
+            self, "Undo",
+            tr("{count} of {total} entries could not be undone:\n{errors}\n\n"
+               "They stay in the undo history.").format(
+                count=len(failures), total=len(plan.parts), errors=shown))
+
+    def _track_undo_tags(self, current_pane, original_pane, back: dict, jobs) -> None:
+        """The tags of what an undo moves back follow it there, through the
+        hook a move uses (_track_tag_moves) with the pairs reversed:
+        *back* maps each current path to the path it goes back to."""
+        if current_pane is None or original_pane is None or not jobs:
+            return
+        moved = set(back)
+        # The entries not inside another one that goes back: a folder whose
+        # files are below it, a file on its own (one set lookup per parent).
+        top = [path for path in back
+               if not any(path[:i] in moved for i, ch in enumerate(path) if ch in "/\\")]
+        by_dir: dict[str, list[str]] = {}
+        for path in top:
+            by_dir.setdefault(original_pane.backend.parent(back[path]), []).append(path)
+        try:
+            for dest_dir, paths in by_dir.items():
+                self._track_tag_moves(current_pane, original_pane, paths, dest_dir, jobs,
+                                      _UndoTagTargets(back))
+        except Exception as exc:  # noqa: BLE001 - the undo itself goes ahead
+            log.warning("undo: the tags cannot follow: %s", exc)
 
     def _undo_jobs_queued(self, plan, pane, partial: list, jobs) -> None:
         """The jobs of a transfer-back undo are queued; *partial* holds the
@@ -4418,6 +4600,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if job_id not in wait["pending"]:
                 continue
             wait["pending"].discard(job_id)
+            if wait.get("batch"):
+                if not wait["pending"]:
+                    self._undo_waits.remove(wait)
+                    self._undo_batch_jobs_ended(wait)
+                continue
             if not wait["pending"]:
                 self._undo_waits.remove(wait)
                 if wait.get("record", True):
@@ -4432,6 +4619,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
     def _on_undo_job_error(self, job_id: str, error: str) -> None:
         for wait in list(self._undo_waits):
             if job_id not in wait["pending"]:
+                continue
+            if wait.get("batch"):
+                wait["pending"].discard(job_id)
+                job = self._transfer_manager.get_job(job_id)
+                wait["failed"].append(f"{job.source_path if job else job_id}: {error}")
+                if not wait["pending"]:
+                    self._undo_waits.remove(wait)
+                    self._undo_batch_jobs_ended(wait)
                 continue
             self._undo_waits.remove(wait)
             plan = wait["plan"]
@@ -4461,7 +4656,7 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 )
         elif plan.backend not in by_label:
             return f"The connection {plan.backend} is no longer open."
-        if plan.action == "transfer_back":
+        if MainWindow._undo_moves_data(plan):
             if not plan.source_backend:
                 return (
                     "This move was recorded before the journal named the connection "
@@ -4481,10 +4676,19 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         apply_undo refuse instead of pushing data to whichever host
         happened to be at hand.
         """
-        if plan.action != "transfer_back" or not plan.source_backend:
+        if not MainWindow._undo_moves_data(plan) or not plan.source_backend:
             return None
         entry = by_label.get(plan.source_backend)
         return entry[0] if entry else None
+
+    @staticmethod
+    def _undo_moves_data(plan) -> bool:
+        """Whether *plan* sends data back to the connection it came from (a
+        transfer-engine move, or a batch of such moves and their folders)."""
+        if plan.action == "transfer_back":
+            return True
+        return plan.action == "batch" and any(
+            p.action in ("transfer_back", "folder_back") for p in plan.parts)
 
     def _undo_transfer(
         self, *, src_backend, src_path, dst_backend, dst_path, queued: list | None = None,
@@ -4672,9 +4876,19 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         works. Copies go through the normal transfer engine in two
         batches, one per direction, so the transfer dock shows them as
         ordinary transfers.
+
+        A side the plan overwrites is asked first, like F5's overwrite:
+        a production connection waits for its countdown, and a Cancel
+        there changes neither side.
         """
         if not items or not self._compared_panes_open(left, right):
             return
+        for direction, side in (("to_right", right), ("to_left", left)):
+            overwrites = sum(1 for i in items if i.get("direction") == direction
+                             and i.get("kind") == "copy" and i.get("overwrites"))
+            if not MainWindow._production_gate_ok(side, overwrites=overwrites):
+                self.statusBar().showMessage(tr("Sync cancelled: nothing was changed"), 8000)
+                return
         folders = []
         for item in items:
             if item.get("kind") != "mkdir":
@@ -6071,8 +6285,11 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
 
         if target_pane and target_pane in self._panes and target_pane is not self._active_pane:
             self._target_pane = target_pane
-        elif len(self._panes) > 1:
-            self._target_pane = next(p for p in self._panes if p is not self._active_pane)
+        else:
+            # From the active pane's workspace only: the first other pane
+            # anywhere was one of a hidden tab, and F5 copied into it.
+            self._target_pane = self._fallback_target(self._active_pane)
+        self._keep_target_in_workspace()
 
         # Force all panes visible (Qt may hide widgets during reparenting)
         for pane in self._panes:
@@ -7087,7 +7304,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             if not self._target_production_ok(target, value, plan, len(paths), move_now):
                 return
             self._start_transfer_between(
-                source, target, paths, move=move_now, dest_dir=dest_dir, conflict_plan=plan
+                source, target, paths, move=move_now, dest_dir=dest_dir, conflict_plan=plan,
+                kept=self._plan_skips(value, plan, dest_backend),
             )
             if on_queued is not None:
                 on_queued()
@@ -7095,6 +7313,22 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         check.finished.connect(finished)
         self.statusBar().showMessage(tr("Checking the destination for existing names…"))
         check.start(work)
+
+    @staticmethod
+    def _plan_skips(scan, plan, backend) -> int:
+        """How many names the answered *plan* leaves alone at the
+        destination (Skip, a folder/file mismatch, "Overwrite if Newer" on
+        a destination that is not older) - not counting those inside a
+        skipped folder, which the transfer never reaches."""
+        skipped = sorted(c.dest_path for c in scan.conflicts
+                         if plan.resolve(c.dest_path, c.source_path) is None)
+        sep = backend.separator() or "/"
+        count, last = 0, None
+        for path in skipped:
+            if last is not None and path.startswith(last.rstrip(sep) + sep):
+                continue
+            count, last = count + 1, path
+        return count
 
     @staticmethod
     def _plan_overwrites(scan, plan) -> int:
@@ -7117,13 +7351,24 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         move asked; an overwrite on a production server went straight
         through, though the profile promises the countdown for it."""
         overwrites = self._plan_overwrites(scan, plan) if plan is not None else 0
+        return self._production_gate_ok(target, overwrites=overwrites,
+                                        moved_here=count if move else 0)
+
+    @staticmethod
+    def _production_gate_ok(target, *, overwrites: int = 0, moved_here: int = 0) -> bool:
+        """The one production gate of a write into *target*'s pane: its
+        countdown when the operation replaces *overwrites* names there or
+        moves *moved_here* entries into it (F5 / F6 / drag & drop / Paste
+        through _target_production_ok, Compare -> Sync through _apply_sync).
+        A plain copy of new names does not ask."""
         if overwrites:
             what = tr("overwrite {count} item(s)").format(count=overwrites)
-        elif move:
-            what = tr("move {count} item(s) here").format(count=count)
+        elif moved_here:
+            what = tr("move {count} item(s) here").format(count=moved_here)
         else:
             return True
-        return target._production_ok(what)
+        gate = getattr(target, "_production_ok", None)
+        return gate(what) if callable(gate) else True
 
     def _ask_undeletable_move(self, undeletable: list) -> str:
         """Some sources of a move could not be removed after the copy: move
@@ -7262,11 +7507,14 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
         *,
         dest_dir: str | None = None,
         conflict_plan=None,
+        kept: int | None = None,
     ) -> None:
         """Queue the transfer now. Without *conflict_plan* existing files
         are replaced: callers that decided that themselves (the compare
         window, through ``_transfer_compared``) use this directly; the
-        user commands go through ``_request_transfer``."""
+        user commands go through ``_request_transfer``. With *kept* (the
+        names the conflict answers skipped) the status bar sums the
+        operation up once its jobs have ended (_watch_transfer_summary)."""
         direction = self._transfer_direction(source.backend, target.backend)
 
         # Track target pane (and source for move) for auto-refresh on completion
@@ -7302,6 +7550,8 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
                 len(jobs),
                 sum(j.total_bytes for j in jobs),
             )
+            if kept is not None:
+                self._watch_transfer_summary(jobs, move, kept)
 
         self._transfer_manager.transfer_files_in_background(
             source_backend=source.backend,
@@ -7325,6 +7575,53 @@ class MainWindow(DockBindingMixin, ExtensionPanelsMixin, WorkspaceMixin, QMainWi
             target.backend.name,
             relay,
         )
+
+    # -- the summary of a copy or move ------------------------------------------
+
+    def _watch_transfer_summary(self, jobs, move: bool, kept: int) -> None:
+        """Say in the status bar what a copy or move did once all its jobs
+        ended: "2 copied, 1 skipped (destination kept)". A Skip answer, or
+        "Overwrite if Newer" on a destination that was not older, was only
+        logged before - the user saw nothing happen and no reason."""
+        from core.transfer_worker import TransferStatus
+
+        running = (TransferStatus.PENDING, TransferStatus.ACTIVE)
+        wait = {"jobs": list(jobs), "move": move, "kept": kept,
+                "pending": {j.job_id for j in jobs if j.status in running}}
+        if wait["pending"]:
+            self._transfer_summaries.append(wait)
+        else:
+            self._show_transfer_summary(wait)
+
+    def _on_summary_job_ended(self, job_id: str, _error: str = "") -> None:
+        for wait in list(self._transfer_summaries):
+            if job_id in wait["pending"]:
+                wait["pending"].discard(job_id)
+                if not wait["pending"]:
+                    self._transfer_summaries.remove(wait)
+                    self._show_transfer_summary(wait)
+
+    def _show_transfer_summary(self, wait: dict) -> None:
+        from core.transfer_worker import TransferStatus
+
+        jobs = wait["jobs"]
+        done = sum(1 for j in jobs if j.status is TransferStatus.DONE and not j.skipped)
+        not_older = sum(1 for j in jobs if j.status is TransferStatus.DONE and j.skipped)
+        failed = sum(1 for j in jobs if j.status is TransferStatus.ERROR)
+        cancelled = sum(1 for j in jobs if j.status is TransferStatus.CANCELLED)
+        parts = [tr_n(done, "{n} moved", "{n} moved") if wait["move"]
+                 else tr_n(done, "{n} copied", "{n} copied")]
+        if wait["kept"]:
+            parts.append(tr_n(wait["kept"], "{n} skipped (destination kept)",
+                              "{n} skipped (destinations kept)"))
+        if not_older:
+            parts.append(tr_n(not_older, "{n} skipped (destination not older)",
+                              "{n} skipped (destinations not older)"))
+        if failed:
+            parts.append(tr_n(failed, "{n} failed", "{n} failed"))
+        if cancelled:
+            parts.append(tr_n(cancelled, "{n} cancelled", "{n} cancelled"))
+        self.statusBar().showMessage(", ".join(parts), 15000)
 
     # -- tags follow moves -------------------------------------------------------
 

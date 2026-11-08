@@ -179,8 +179,12 @@ class FindBar(QWidget):
         source = needle if self.regex.isChecked() else re.escape(needle)
         if self.whole_word.isChecked():
             source = rf"\b(?:{source})\b"
+        # MULTILINE: ^ and $ are each line's start and end, as in every
+        # editor - without it "^#include" was not found past line 1, and
+        # Replace All of "\s+$" removed only the final newline.
+        flags = re.MULTILINE | (0 if self.case.isChecked() else re.IGNORECASE)
         try:
-            return re.compile(source, 0 if self.case.isChecked() else re.IGNORECASE)
+            return re.compile(source, flags)
         except re.error as exc:
             self.message.setText(tr("Bad regex: {error}").format(error=exc))
             return None

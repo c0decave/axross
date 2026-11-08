@@ -277,12 +277,10 @@ class XmppClient(C.ChatClient):
         password = C.account_secret(self.account, "password")
         if not password:
             raise C.ChatError("The account has no password stored.")
-        import slixmpp
-
         install_log_redaction()
         self._want_online = True
         pinned = normalise_fingerprint(str(self.account.settings.get("fingerprint", "")))
-        xmpp = slixmpp.ClientXMPP(f"{self.jid}/{self.resource}", password)
+        xmpp = _client_class()(f"{self.jid}/{self.resource}", password)
         xmpp.ssl_context = self._ssl_context(pinned)
         xmpp.enable_plaintext = False
         # enable_plaintext only picks the ports: a stream whose STARTTLS an
@@ -293,8 +291,9 @@ class XmppClient(C.ChatClient):
         # a stream without TLS ends in "no login method", never the password.
         xmpp.plugin["feature_mechanisms"].use_mechs = set(SAFE_SASL_MECHANISMS)
         xmpp.enable_direct_tls = not self.account.settings.get("starttls_only", False)
+        self._proxy = None
         if self.account.settings.get("proxy") != "none":
-            self._apply_proxy(xmpp)
+            self._proxy = self._apply_proxy(xmpp)
         for plugin in ("xep_0030", "xep_0004", "xep_0060", "xep_0163", "xep_0199", "xep_0203", "xep_0280",
                        "xep_0045", "xep_0334", "xep_0380"):
             xmpp.register_plugin(plugin)
@@ -317,8 +316,9 @@ class XmppClient(C.ChatClient):
         xmpp.add_event_handler("roster_update", self._on_roster)
         xmpp.add_event_handler("presence_subscribe", self._on_subscribe)
         xmpp.add_event_handler("pubsub_publish", self._on_pep)
+        xmpp.add_event_handler(PROXY_FAILED_EVENT, self._on_proxy_failed)
         self._set_state(C.STATE_CONNECTING, self.host or self.jid.split("@", 1)[1])
-        xmpp.connect(host=self.host or None, port=self.port or None)
+        xmpp.connect(*self._connect_address())
         try:
             await asyncio.wait_for(self._session_ready.wait(), 60)
         except asyncio.TimeoutError:
@@ -389,18 +389,34 @@ class XmppClient(C.ChatClient):
                     return str(jid)
         return ""
 
-    def _apply_proxy(self, xmpp) -> None:
+    def _apply_proxy(self, xmpp):
+        """The default proxy for this account (None: it connects directly).
+        slixmpp has no proxy support of its own (``use_proxy`` /
+        ``proxy_config`` are gone since 1.8): the client class of
+        :func:`_client_class` makes every TCP connection through it."""
         from core import proxy_settings
 
         domain = self.host or self.jid.split("@", 1)[1]
         config = proxy_settings.resolve("default", None, domain, self.port or 5222, "xmpp").config
-        if config is None:
-            return
-        if config.transport not in ("socks5", "socks4", "http"):
-            raise C.ChatError(f"XMPP cannot go through a {config.transport} proxy; choose Direct.")
-        xmpp.use_proxy = True
-        xmpp.proxy_config = {"host": config.host, "port": config.port, "username": config.username or None,
-                             "password": config.password or None}
+        xmpp.axross_proxy = config
+        return config
+
+    def _connect_address(self) -> tuple[str | None, int | None]:
+        """The (host, port) for slixmpp's connect(). Behind a proxy always an
+        explicit address (the server field or the JID's domain, port 5222):
+        slixmpp then makes no SRV or address lookup of its own here - the
+        proxy resolves the name."""
+        if getattr(self, "_proxy", None) is not None:
+            return self.host or self.jid.split("@", 1)[1], self.port or 5222
+        return self.host or None, self.port or None
+
+    def _on_proxy_failed(self, exc) -> None:
+        """The proxy did not give a connection: the login fails - never a
+        direct connection instead."""
+        self._want_online = False
+        self._set_state(C.STATE_ERROR, "the proxy refused the connection")
+        self._note(self.server_key, f"The connection through the proxy failed: {exc}", C.KIND_ERROR)
+        self._session_ready.set()
 
     def _on_cert(self, pem: str) -> None:
         der = ssl.PEM_cert_to_DER_cert(pem)
@@ -425,7 +441,9 @@ class XmppClient(C.ChatClient):
 
     async def _offer_certificate(self, reason: str) -> None:
         der = await probe_certificate(self.host or self.jid.split("@", 1)[1], self.port or 5222,
-                                      self.jid.split("@", 1)[1])
+                                      self.jid.split("@", 1)[1],
+                                      proxy_mode="none" if self.account.settings.get("proxy") == "none"
+                                      else "default")
         if der:
             self.request.emit(CertificateRequest(self.host or self.jid.split("@", 1)[1], self.port or 5222,
                                                  fingerprint_of(der), reason))
@@ -471,7 +489,7 @@ class XmppClient(C.ChatClient):
         self._reconnect_handle = None
         if self._want_online and self.xmpp is not None:
             self._note(self.server_key, "Reconnecting…")
-            self.xmpp.connect(host=self.host or None, port=self.port or None)
+            self.xmpp.connect(*self._connect_address())
 
     async def _on_session_start(self, _event) -> None:
         xmpp = self.xmpp
@@ -767,7 +785,8 @@ class XmppClient(C.ChatClient):
             members.pop(nick, None)
         else:
             role = presence["muc"]["role"] or ""
-            members[nick] = C.Member(name=nick, role={"moderator": "@", "participant": ""}.get(role, ""),
+            members[nick] = C.Member(name=nick, display=C.clean_name(nick),
+                                     role={"moderator": "@", "participant": ""}.get(role, ""),
                                      away=presence["type"] in ("away", "xa", "dnd"))
         self._set_members(room, members)
 
@@ -1120,16 +1139,82 @@ def make_session_manager(client: XmppClient):
     return SessionManager
 
 
+# --- the connection (through the proxy) ----------------------------------------------------------------
+
+#: the slixmpp event :func:`_client_class`'s client fires when the proxy gives no connection
+PROXY_FAILED_EVENT = "axross_proxy_failed"
+_CLIENT_CLASS = None
+
+
+def _client_class():
+    """slixmpp's ClientXMPP whose TCP connections axross makes: through
+    ``axross_proxy`` (a core.proxy.ProxyConfig) when it is set. slixmpp 1.17
+    has no proxy support: its own connection step would connect directly
+    and resolve SRV and address records locally. A proxy that fails ends
+    the connection attempt (no retry, no direct connection) and fires
+    :data:`PROXY_FAILED_EVENT`."""
+    global _CLIENT_CLASS
+    if _CLIENT_CLASS is not None:
+        return _CLIENT_CLASS
+    import slixmpp
+
+    class ProxiedClientXMPP(slixmpp.ClientXMPP):
+        axross_proxy = None
+
+        async def get_dns_records(self, domain, port=None):
+            if self.axross_proxy is not None:
+                return []   # no local SRV / address lookup behind a proxy
+            return await super().get_dns_records(domain, port)
+
+        async def _attempt_connection(self, host, port, tls, server_hostname):
+            proxy = self.axross_proxy
+            if proxy is None:
+                return await super()._attempt_connection(host, port, tls, server_hostname)
+            from core.proxy import create_proxy_socket
+
+            self.event_when_connected = "connected"
+            self._connect_loop_wait += 1
+            if self._current_connection_attempt is None:
+                return False
+            ssl_context = self.get_ssl_context() if tls else None
+            try:
+                sock = await asyncio.to_thread(create_proxy_socket, proxy, host, int(port), 20.0)
+            except Exception as exc:  # noqa: BLE001 - any proxy failure ends the attempt
+                # slixmpp checks this attribute: no further attempt, no rescheduling.
+                self._current_connection_attempt = None
+                self.event("connection_failed", exc)
+                self.event(PROXY_FAILED_EVENT, exc)
+                return False
+            try:
+                sock.setblocking(False)
+                await self.loop.create_connection(lambda: self, sock=sock, ssl=ssl_context,
+                                                  server_hostname=(server_hostname or self.default_domain)
+                                                  if ssl_context is not None else None)
+            except OSError as exc:
+                sock.close()
+                self.event("connection_failed", exc)
+                return False
+            self._connect_loop_wait = 0
+            return True
+
+    _CLIENT_CLASS = ProxiedClientXMPP
+    return _CLIENT_CLASS
+
+
 # --- probing an untrusted certificate ----------------------------------------------------------------
 
-async def probe_certificate(host: str, port: int, domain: str, timeout: float = 15.0) -> bytes:
+async def probe_certificate(host: str, port: int, domain: str, timeout: float = 15.0,
+                            proxy_mode: str = "default") -> bytes:
     """The DER certificate a server shows after STARTTLS (or direct TLS), not
-    verified - to show its fingerprint to the user. b"" if none."""
+    verified - to show its fingerprint to the user. b"" if none. Through the
+    default proxy when one applies (*proxy_mode* "default"); a proxy that
+    fails gives b"", never a direct connection."""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+        reader, writer = await C.open_stream(host, port, proxy_mode=proxy_mode, protocol="xmpp",
+                                             timeout=timeout)
         writer.write(f"<?xml version='1.0'?><stream:stream to='{domain}' version='1.0' "
                      "xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>".encode())
         writer.write(b"<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
@@ -1144,7 +1229,7 @@ async def probe_certificate(host: str, port: int, domain: str, timeout: float = 
         der = writer.get_extra_info("ssl_object").getpeercert(binary_form=True) or b""
         writer.close()
         return der
-    except (OSError, asyncio.TimeoutError, ssl.SSLError):
+    except (OSError, asyncio.TimeoutError, ssl.SSLError, ValueError, C.ChatError):
         return b""
 
 

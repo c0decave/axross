@@ -34,6 +34,8 @@ class _RecordingImap:
 
     def uid(self, cmd, *args):
         self.uid_calls.append((cmd, *args))
+        if cmd == "FETCH":  # remove() checks that UID 5 is there first
+            return ("OK", [b"5 (UID 5 RFC822.SIZE 1)"])
         return ("OK", [b""])
 
     def expunge(self):
@@ -57,7 +59,8 @@ class ImapAttachmentPathTest(unittest.TestCase):
     def test_happy_message_remove_still_deletes_that_message(self) -> None:
         s, imap = _session()
         s.remove("/INBOX/5_hello.eml")
-        self.assertEqual(imap.uid_calls[0], ("STORE", "5", "+FLAGS", "(\\Deleted)"))
+        stores = [c for c in imap.uid_calls if c[0] == "STORE"]
+        self.assertEqual(stores, [("STORE", "5", "+FLAGS", "(\\Deleted)")])
 
     def test_sad_attachment_remove_is_refused_and_touches_nothing(self) -> None:
         s, imap = _session()

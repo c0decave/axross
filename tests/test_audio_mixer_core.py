@@ -264,6 +264,26 @@ def test_happy_the_voice_is_equalized_a_test_tone_is_not(own_settings):
     assert rms(bytes(written["voice"])[3000:-3000]) > 2.5 * rms(pcm[3000:-3000])
 
 
+def _saved(path, key, wanted, timeout: float = 10.0) -> bool:
+    """Wait until the settings file holds *wanted* at *key* (a callable:
+    a test on the value). A fixed qWait(400) raced the panel's save timer
+    on a busy machine and failed now and then."""
+    import time
+
+    from PyQt6.QtTest import QTest
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if wanted(json.loads(path.read_text()).get(key)):
+                return True
+        except (OSError, ValueError):
+            pass  # not written yet
+        if time.monotonic() >= deadline:
+            return False
+        QTest.qWait(20)
+
+
 def _player_panel():
     import importlib.util
 
@@ -278,8 +298,6 @@ def _player_panel():
 
 @pytest.mark.skipif(not AEQ.available(), reason="numpy is missing")
 def test_happy_the_media_player_shows_and_changes_the_shared_equalizer(own_settings):
-    from PyQt6.QtTest import QTest
-
     AR.update(own_settings, eq_gains=AEQ.PRESETS["Rock"], eq_preset="Rock")
     mp, panel = _player_panel()
     try:
@@ -288,14 +306,12 @@ def test_happy_the_media_player_shows_and_changes_the_shared_equalizer(own_setti
         assert panel.engine.gains_db == AEQ.PRESETS["Rock"]
         # the panel's change is saved for all of axross
         panel.preset.setCurrentText("Vocal")
-        QTest.qWait(400)
-        assert json.loads(own_settings.read_text())["eq_preset"] == "Vocal"
+        assert _saved(own_settings, "eq_preset", lambda v: v == "Vocal")
         assert AR.eq_gains() == AEQ.PRESETS["Vocal"]
         # a slider makes it Custom
         panel.sliders[0].setValue(11)
-        QTest.qWait(400)
+        assert _saved(own_settings, "eq_gains", lambda v: bool(v) and v[0] == 11.0)
         assert panel.preset.currentText() == "Custom"
-        assert json.loads(own_settings.read_text())["eq_gains"][0] == 11.0
         # and the mixer's change shows in the panel
         AR.update(own_settings, eq_enabled=False, eq_gains=AEQ.PRESETS["Loudness"],
                   eq_preset="Loudness")

@@ -24,12 +24,15 @@ lists. Tools that are missing are named with the package that has them.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 
 from core.subprocess_env import clean_child_env
@@ -62,6 +65,14 @@ _FLS = re.compile(r"^(?P<type>\S)/(?P<meta>\S)\s+(?P<deleted>\*\s+)?(?P<inode>[0
 
 class ToolError(RuntimeError):
     pass
+
+
+class Cancelled(ToolError):
+    """The user pressed Cancel."""
+
+
+#: qemu-img convert -p prints "    (12.34/100%)\r" to stdout.
+_QEMU_PROGRESS = re.compile(rb"\((\d+(?:\.\d+)?)/100%\)")
 
 
 def suffixes() -> tuple[str, ...]:
@@ -172,7 +183,86 @@ def raw_target(path: str) -> str:
     return target
 
 
-def convert_to_raw(path: str, target: str | None = None) -> str:
+def _run_long(argv: list[str], progress=None, cancel=lambda: False) -> None:
+    """Run *argv* with no time limit - converting a 500 GB image takes
+    hours, and the fixed 10-minute timeout killed every such conversion -
+    feeding the percentages it prints (``qemu-img -p``) to *progress*, and
+    ending it when *cancel()* turns true (:class:`Cancelled`)."""
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=clean_child_env())
+    except OSError as exc:
+        raise ToolError(str(exc)) from exc
+    errors = bytearray()
+
+    def read_progress():
+        rest = b""
+        for chunk in iter(lambda: proc.stdout.read1(4096), b""):
+            *lines, rest = re.split(rb"[\r\n]", rest + chunk)
+            rest = rest[-256:]
+            for line in lines:
+                found = _QEMU_PROGRESS.search(line)
+                if found and progress is not None:
+                    progress(min(float(found.group(1)), 100.0))
+        found = _QEMU_PROGRESS.search(rest)
+        if found and progress is not None:
+            progress(min(float(found.group(1)), 100.0))
+
+    def read_errors():
+        for chunk in iter(lambda: proc.stderr.read1(4096), b""):
+            errors.extend(chunk)
+            del errors[:-65536]
+
+    readers = [threading.Thread(target=fn, daemon=True) for fn in (read_progress, read_errors)]
+    for reader in readers:
+        reader.start()
+    cancelled = False
+    while proc.poll() is None:
+        if cancel():
+            cancelled = True
+            proc.terminate()
+            try:
+                proc.wait(5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            break
+        time.sleep(0.1)
+    for reader in readers:
+        reader.join(5)
+    if cancelled:
+        raise Cancelled("cancelled")
+    if proc.returncode != 0:
+        lines = [ln for ln in errors.decode("utf-8", "replace").splitlines() if ln.strip()]
+        raise ToolError(lines[-1] if lines else f"{os.path.basename(argv[0])} failed "
+                                                 f"(exit {proc.returncode})")
+
+
+#: The progress and Cancel of the job dialog whose work runs on this thread
+#: (see :func:`job_hooks`).
+_JOB = threading.local()
+
+
+@contextlib.contextmanager
+def job_hooks(progress, cancel):
+    """``with job_hooks(progress, cancel): convert_to_raw(path, target)``:
+    the conversion on this thread reports to *progress* and stops at
+    *cancel* without the call naming them."""
+    _JOB.hooks = (progress, cancel)
+    try:
+        yield
+    finally:
+        _JOB.hooks = None
+
+
+def convert_to_raw(path: str, target: str | None = None, *, progress=None,
+                   cancel=None) -> str:
+    """``qemu-img convert`` *path* to a raw image *target*; *progress(percent)*
+    is called as it goes, *cancel()* stops it (the half-written target
+    is removed). Not given, they come from :class:`job_hooks`."""
+    hooks = getattr(_JOB, "hooks", None) or (None, None)
+    progress = progress or hooks[0]
+    cancel = cancel or hooks[1] or (lambda: False)
     target = target or raw_target(path)
     if os.path.exists(target):
         raise ToolError(f"{target} exists - not overwritten")
@@ -186,7 +276,8 @@ def convert_to_raw(path: str, target: str | None = None) -> str:
         raise ToolError(f"qemu-img info names no usable format for {path}")
     try:
         # -f: the format checked above; without it convert probes again.
-        _run([need("qemu-img"), "convert", "-f", fmt, "-O", "raw", path, target])
+        _run_long([need("qemu-img"), "convert", "-f", fmt, "-O", "raw", "-p", path, target],
+                  progress, cancel)
     except ToolError:
         if os.path.exists(target):
             os.unlink(target)  # a half-written image is no evidence
@@ -289,6 +380,39 @@ def extract(image: str, entries: list[Entry], folder: str, sector_offset: int = 
     return written
 
 
+class _WatchedReads:
+    """*backend* for one long read: each ``read`` reports the bytes so far
+    to *progress* and raises :class:`Cancelled` once *cancel()* is true."""
+
+    def __init__(self, backend, cancel, progress) -> None:
+        self._backend, self._cancel, self._progress = backend, cancel, progress
+        self.done = 0
+
+    def open_read(self, path):
+        watched = self
+
+        class _File:
+            def __init__(self, fh):
+                self._fh = fh
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._fh.close()
+                return False
+
+            def read(self, size=-1):
+                if watched._cancel():
+                    raise Cancelled("cancelled")
+                chunk = self._fh.read(size)
+                watched.done += len(chunk)
+                watched._progress(watched.done)
+                return chunk
+
+        return _File(self._backend.open_read(path))
+
+
 def _remove(path: str) -> None:
     try:
         os.unlink(path)
@@ -317,8 +441,103 @@ def activate(api):
     )
 
     from core import disk_image as DI
+    from core.i18n import tr
     from resources.extensions._pane import refresh_pane
     from ui.plain_text import plain_message
+
+    class JobDialog(QDialog):
+        """A long job's progress, with Cancel. Not modal: axross stays
+        usable meanwhile. The worker only stores numbers; a timer shows
+        them, so no Qt call leaves the GUI thread."""
+
+        def __init__(self, title, text, *, percent):
+            from PyQt6.QtCore import QTimer
+            from PyQt6.QtWidgets import QProgressBar
+
+            super().__init__(api.window)
+            from ui.icon_provider import set_window_icon
+
+            set_window_icon(self, "forensics")
+            self.setWindowTitle(title)
+            self.cancel_event = threading.Event()
+            self.value = None
+            layout = QVBoxLayout(self)
+            label = QLabel(text)
+            label.setTextFormat(Qt.TextFormat.PlainText)  # the path is not ours
+            layout.addWidget(label)
+            self.bar = QProgressBar()
+            self.bar.setRange(0, 100 if percent else 0)
+            layout.addWidget(self.bar)
+            self.detail = QLabel("")
+            self.detail.setTextFormat(Qt.TextFormat.PlainText)
+            layout.addWidget(self.detail)
+            row = QHBoxLayout()
+            row.addStretch(1)
+            self.cancel_button = QPushButton(tr("Cancel"))
+            self.cancel_button.clicked.connect(self.cancel)
+            row.addWidget(self.cancel_button)
+            layout.addLayout(row)
+            self.percent = percent
+            self.timer = QTimer(self)
+            self.timer.timeout.connect(self._show_value)
+            self.timer.start(200)
+            from ui.close_corner import add_close_corner
+
+            add_close_corner(self)  # closing it means Cancel (closeEvent)
+            self.resize(460, self.sizeHint().height())
+
+        def report(self, value):  # any thread
+            self.value = value
+
+        def _show_value(self):
+            value = self.value
+            if value is None:
+                return
+            if self.percent:
+                self.bar.setValue(int(value))
+            else:
+                self.detail.setText(tr("{size} read").format(size=DI.human_size(value)))
+
+        def cancel(self):
+            self.cancel_event.set()
+            self.cancel_button.setEnabled(False)
+            self.detail.setText(tr("Cancelling…"))
+
+        def reject(self):  # Esc, the window's [x]
+            self.cancel()
+
+        def closeEvent(self, event):  # noqa: N802 - Qt
+            if self.timer.isActive():  # still running: closing means Cancel
+                self.cancel()
+                event.ignore()
+                return
+            super().closeEvent(event)
+
+        def finish(self):
+            """The job ended: the dialog goes; True when it was cancelled."""
+            self.timer.stop()
+            self.hide()
+            self.deleteLater()
+            return self.cancel_event.is_set()
+
+    def job(title, text, work, done, *, percent):
+        """Run *work(dialog)* in the background with a JobDialog."""
+        dialog = JobDialog(title, text, percent=percent)
+        dialog.show()
+
+        def finished(result):
+            if not dialog.finish():
+                done(result)
+            else:
+                api.notify(tr("{title}: cancelled").format(title=title))
+
+        def failed(exc):
+            if dialog.finish() or isinstance(exc, Cancelled):
+                api.notify(tr("{title}: cancelled").format(title=title))
+                return
+            warn(title)(exc)
+
+        api.run_in_background(lambda: work(dialog), on_done=finished, on_error=failed)
 
     def local(ctx):
         if not ctx.is_local:
@@ -349,8 +568,11 @@ def activate(api):
             if box.clickedButton() is copy:
                 QApplication.clipboard().setText(f"{path}\n{text}\n")
 
-        api.run_in_background(lambda: hash_image(ctx.backend, path), on_done=done,
-                              on_error=warn("Hash Image"))
+        def work(dialog):
+            reads = _WatchedReads(ctx.backend, dialog.cancel_event.is_set, dialog.report)
+            return hash_image(reads, path)
+
+        job("Hash Image", tr("Hashing\n{path}").format(path=path), work, done, percent=False)
 
     def do_info(ctx):
         path = local(ctx)
@@ -382,8 +604,13 @@ def activate(api):
             api.notify(f"wrote {written}")
             refresh_pane(ctx.pane)  # not blocking; skipped for a pane closed meanwhile
 
-        api.run_in_background(lambda: convert_to_raw(path, target), on_done=done,
-                              on_error=warn("Convert to Raw Image"))
+        def work(dialog):
+            with job_hooks(dialog.report, dialog.cancel_event.is_set):
+                return convert_to_raw(path, target)
+
+        job("Convert to Raw Image",
+            tr("Converting\n{path}\nto\n{target}").format(path=path, target=target),
+            work, done, percent=True)
 
     class EntryModel(QAbstractTableModel):
         """The fls entries as a table model: 200 000 of them as table items

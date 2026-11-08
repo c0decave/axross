@@ -272,3 +272,59 @@ seeking over a member; checksums via
 separators on Windows; cross-protocol relay paths where the
 source backend lies about file size and the destination
 buffer overflows the cap.
+
+## Reverse-serve (S3 / WebDAV over a backend)
+
+**Entry point / route.** `core/reverse_serve.py` `_S3Handler` /
+`_DAVHandler` on `serve_s3` / `serve_webdav` (loopback by default; a
+non-loopback bind needs a token and TLS or `allow_insecure_http`).
+
+**Untrusted input.** Request line, headers (`Content-Length`,
+`Transfer-Encoding`, `Destination`, `Authorization`, `Host`, `Origin`),
+URL path and query, body; every connection before its token is checked.
+
+**Trust boundary.** Network ↔ the served backend folder.
+
+**Defenses in place.** Path segments refuse `..`, backslashes, drives
+and NUL (400); `_rooted_join` keeps the joined path below the root and,
+on LocalFS, resolves it with `core.path_policy.confined_path` - a
+symlink that leads out of the served tree is refused (the final link
+itself is meant for DELETE and MOVE); S3 listings do not walk into
+symlinked folders. At most `MAX_CONNECTIONS` (64) connections at once
+(one more is answered 503 and closed before it is read); the request
+line and headers together have `HEADER_DEADLINE_S`, every read
+`REQUEST_TIMEOUT_S`. `Content-Length` is digits only and several must
+agree; chunked framing with `Content-Length` is refused.
+
+**Known gaps to attack.** The symlink check runs before the use (a
+link swapped in between is not covered); PROPFIND / ListObjects still
+name a symlinked file and show what `stat` reports for it; non-local
+backends get the lexical check only.
+
+## MCP client: container servers and the agent sandbox relay
+
+**Entry point.** `core/mcp_client.McpServerConfig.containment_problems`
+(every server of the agent settings, a hand-edited file too),
+`core/mcp_runner.downloading_runner` / `container_flag_problems`,
+`core/agent_net.HostRelay` (a sandboxed worker's `tcp_open` /
+`tcp_data`).
+
+**Untrusted input.** A server's command line (settings file, Agent
+settings dialog, catalog entries); the worker's relay requests.
+
+**Trust boundary.** Downloaded code ↔ the host; sandbox ↔ host network.
+
+**Defenses in place.** A command that downloads or runs code from its
+line (npx/uvx and the like, curl/wget, package and tool managers,
+`node -pe`, `node --import=data:`, `perl -le`, a runner named inside a
+word such as `EXEC:npx`) never runs on the host. `container: true`
+counts only for the exact podman line `core.mcp_install.run_command`
+writes (an allow-list: no option before `run`, each option one
+`--opt=value` word, volumes of absolute normalized folders other than
+`/`); the dialog shows that line read-only. The relay holds at most
+`MAX_STREAMS` (64) streams and a write waits at most `SEND_TIMEOUT`.
+
+**Known gaps to attack.** The volume folders are checked by shape,
+not against the install record (a hand-edited settings file may name
+another folder than `/`); the word scan is heuristic and fails closed
+on what it cannot read.

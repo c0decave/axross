@@ -115,8 +115,12 @@ def test_edge_blob_a_folder_listing_that_fails_after_a_404_is_an_oserror():
 
 
 def test_edge_blob_a_prefix_path_needs_no_probe():
-    s = _blob({}, head_fail={"x/": azure_exceptions.HttpResponseError("503")})
+    """No HEAD of the key "x/" - but the prefix must be there (review
+    round 3: "x/" was a folder for any x, in an empty container too)."""
+    s = _blob({"x/a": {}}, head_fail={"x/": azure_exceptions.HttpResponseError("503")})
     assert s.stat("/x/").is_dir
+    with pytest.raises(FileNotFoundError):
+        _blob({}, head_fail={"y/": azure_exceptions.HttpResponseError("503")}).stat("/y/")
 
 
 # -- Azure Files -------------------------------------------------------------

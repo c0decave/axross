@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr
+from core.i18n import tr, tr_n
 from core.transfer_manager import TransferManager
 from core.transfer_worker import TransferJob, TransferStatus
 from models.transfer_model import COL_PROGRESS, ProgressBarDelegate, TransferModel
@@ -76,6 +76,9 @@ class TransferDock(QDockWidget):
         #: Bytes of this batch's done jobs the manager has dropped from its
         #: list (core.transfer_manager.MAX_DONE_KEPT): still part of the bar.
         self._batch_dropped = 0
+        #: (failed, cancelled) of the last batch once it ended: the bar
+        #: keeps saying so until the next batch or Clear Finished.
+        self._ended_badly = (0, 0)
         self._setup_ui()
 
         # Connect manager signals
@@ -211,19 +214,45 @@ class TransferDock(QDockWidget):
         if not jobs:
             self._batch.clear()
             self._batch_dropped = 0
+            self._ended_badly = (0, 0)
+            self._show_ended_badly(False)
             self._overall_progress.setValue(0)
             self._overall_progress.setFormat("%p%")
             self._overall_progress.setToolTip("")
             return
         running = (TransferStatus.ACTIVE, TransferStatus.PENDING)
         if not any(j.status in running for j in jobs):
-            # All jobs finished — show "Done" and reset to 0
+            # All jobs finished: "Done" - or, when some of the batch failed
+            # or were cancelled, how many (it said "Done" when all failed).
+            if self._batch:
+                ended = [j for j in jobs if j.job_id in self._batch and not j.retried]
+                self._ended_badly = (
+                    sum(1 for j in ended if j.status == TransferStatus.ERROR),
+                    sum(1 for j in ended if j.status == TransferStatus.CANCELLED),
+                )
             self._batch.clear()
             self._batch_dropped = 0
             self._overall_progress.setValue(0)
-            self._overall_progress.setFormat("Done")
-            self._overall_progress.setToolTip("")
+            failed, cancelled = self._ended_badly
+            if failed or cancelled:
+                parts = []
+                if failed:
+                    parts.append(tr_n(failed, "{n} failed", "{n} failed"))
+                if cancelled:
+                    parts.append(tr_n(cancelled, "{n} cancelled", "{n} cancelled"))
+                text = ", ".join(parts)
+                self._overall_progress.setFormat(text)
+                self._overall_progress.setToolTip(
+                    tr("{what} in the last batch; Retry Failed tries them again").format(
+                        what=text))
+                self._show_ended_badly(True)
+            else:
+                self._overall_progress.setFormat(tr("Done"))
+                self._overall_progress.setToolTip("")
+                self._show_ended_badly(False)
             return
+        self._ended_badly = (0, 0)
+        self._show_ended_badly(False)
         total = done = self._batch_dropped
         speed = 0.0
         for job in jobs:
@@ -250,6 +279,21 @@ class TransferDock(QDockWidget):
         else:
             self._overall_progress.setFormat("%p%")
             self._overall_progress.setToolTip("")
+
+    def _show_ended_badly(self, bad: bool) -> None:
+        """The overall bar's text in the theme's error colour (``danger``)
+        while it reports failed or cancelled jobs."""
+        bar = self._overall_progress
+        if bool(bar.property("endedBadly")) == bad:
+            return
+        bar.setProperty("endedBadly", bad)
+        if not bad:
+            bar.setStyleSheet("")
+            return
+        from PyQt6.QtGui import QPalette
+
+        dark = bar.palette().color(QPalette.ColorRole.Window).lightness() < 128
+        bar.setStyleSheet(f"QProgressBar {{ color: {'#ff6b6b' if dark else '#c92a2a'}; }}")
 
     def show_current(self) -> bool:
         """Scroll to and select the running transfer (the first one when
@@ -377,6 +421,7 @@ class TransferDock(QDockWidget):
                 self._batch.discard(job.job_id)
                 self._batch_dropped += job.total_bytes if job.status == TransferStatus.DONE \
                     else min(job.transferred_bytes, job.total_bytes)
+        self._ended_badly = (0, 0)
         self._manager.clear_finished()
         self._model.clear_finished()
         self._update_overall()

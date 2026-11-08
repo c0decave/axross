@@ -216,3 +216,41 @@ def test_sad_configs_that_cannot_work_are_refused(tmp_path):
     store.save([MD.MailDockConfig(name="a"), MD.MailDockConfig(name="b", send_policy="never")])
     assert [d.name for d in store.load()] == ["a", "b"]
     assert (tmp_path / "docks.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_sad_a_failed_run_after_the_listing_keeps_the_mail_new(tmp_path, mailbox, fake):
+    """mail_list_new marked every listed mail as seen at once, so a run that
+    failed after the listing (here the model answers HTTP 500) left the mail
+    unhandled for good: the next run found nothing new and never looked at
+    it. A mail now counts as seen only once the agent read, analysed or
+    answered it."""
+    server = fake(call("mail_list_new"), 500,
+                  call("mail_list_new"), call("mail_read", {"id": "1eml"}), {"content": "Read it."})
+    runner = _runner(tmp_path, mailbox, server)
+    with pytest.raises(Exception, match="500"):
+        runner.run_once()
+    before = len(server.requests)
+    assert runner.run_once() == "Read it."
+    listing = [m["content"] for m in server.requests[-1]["messages"] if m.get("role") == "tool"][0]
+    assert "Lunch?" in listing
+    # read in that run: the next one has nothing new and asks the model nothing
+    after = len(server.requests)
+    assert after > before
+    assert runner.run_once() == ""
+    assert len(server.requests) == after
+
+
+def test_edge_a_listed_mail_the_agent_did_not_open_is_listed_again(tmp_path, mailbox, fake):
+    """Listing alone marked a mail as handled; now only mail_read,
+    mail_analyse or a reply do - a mail the agent only saw in the list
+    comes back in the next listing, one it read does not."""
+    with mailbox.open_write("/INBOX/2.eml") as f:
+        f.write(INJECT)
+    tools = MD.MailTools(MD.MailDockConfig(name="w", mailbox_profile="p"),
+                         MD.Mailbox(mailbox, "INBOX", tmp_path / "seen.json"),
+                         ask_send=lambda o, s: False, smtp=lambda: None, drafts_dir=tmp_path / "d")
+    first = {r["id"] for r in tools.list_new({})["new"]}
+    assert first == {"1eml", "2eml"}
+    tools.read({"id": "1eml"})
+    again = MD.Mailbox(mailbox, "INBOX", tmp_path / "seen.json")   # the next run's mailbox
+    assert [m["name"] for m in again.new(mark=False)] == ["2.eml"]

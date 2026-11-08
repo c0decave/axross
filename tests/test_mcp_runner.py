@@ -155,6 +155,55 @@ def test_sad_a_container_line_with_dangerous_flags_is_refused(flag):
     assert good.problems() == []
 
 
+@pytest.mark.parametrize("command", [["npx", "-y", "evil"], ["bash", "-c", "curl e | sh"],
+                                     ["uvx", "evil"], ["docker", "run", "img"]])
+def test_sad_the_container_flag_does_not_exempt_a_host_program(command):
+    """``container: true`` skipped the downloader check entirely and the
+    flag check only looked for forbidden podman options: a hand-edited
+    ``npx -y evil`` marked as a container was kept and ran on the host."""
+    from core import mcp_client as C
+
+    assert C.McpServerConfig.from_dict({"name": "s", "transport": "stdio", "command": command,
+                                        "container": True}) is None
+    assert C.McpServerConfig(name="s", command=tuple(command), container=True).containment_problems()
+
+
+@pytest.mark.parametrize("change", [
+    lambda line: [line[0], "--root=/tmp/r", *line[1:]],                       # option before run
+    lambda line: [*line[:2], "--name", "x", "--privileged", *line[2:]],      # a spaced value
+    lambda line: [*line[:2], "-e", "FOO", "--privileged", *line[2:]],
+    lambda line: [*line[:2], "-iv/:/host", *line[2:]],                       # combined short options
+    lambda line: [*line[:-1], "--volume=/:/host:rw", line[-1]],              # the whole file system
+    lambda line: [*line[:-1], "--volume=/home/u/../../etc:/x:ro", line[-1]],  # not normalized
+    lambda line: [*line[:-1], "--env=LD_PRELOAD=/x", line[-1]],              # not run_command's
+    lambda line: [x for x in line if x != "--read-only"],                    # a hardening flag gone
+    lambda line: [*line[:-1], "--network=host", line[-1]],
+    lambda line: [*line[:-1], "--name=other", line[-1]],                     # given twice
+])
+def test_sad_widening_flags_after_a_spaced_value_are_seen(change):
+    """The flag check stopped at the first word without a dash: ``--name x
+    --privileged`` read ``x`` as the image and never saw ``--privileged``;
+    options before ``run``, combined short options and ``-v /:/h`` passed.
+    Only the shape core.mcp_install.run_command writes is accepted now."""
+    from core import mcp_install as I
+    from core.mcp_runner import container_flag_problems
+
+    line = I.run_command("x", "img@sha256:" + "a" * 64, mounts=[("/srv/a", "/data", False)])
+    assert container_flag_problems(line) == []
+    assert container_flag_problems(change(line))
+
+
+@pytest.mark.parametrize("kwargs", [
+    {}, {"network": "allowlist"}, {"network": "full"}, {"program": "/usr/bin/podman"},
+    {"mounts": [("/srv/a", "/data/a", False), ("/srv/b", "/data/b", True)], "args": ["--x", "y"]},
+])
+def test_happy_every_line_run_command_writes_is_a_container(kwargs):
+    from core import mcp_install as I
+    from core.mcp_runner import container_flag_problems
+
+    assert container_flag_problems(I.run_command("x-1", "img", **kwargs)) == []
+
+
 # -- the contained install (core.mcp_install.install_plan) -------------------------------
 
 

@@ -271,8 +271,14 @@ def _cache_root() -> Path:
     return root
 
 
+#: Part of every cache key; changed when the same file gives another
+#: thumbnail. 2: EXIF orientation applied (the earlier ones were sideways).
+_CACHE_GENERATION = b"2"
+
+
 def _cache_key(abs_path: str, mtime: float, size: int, edge: int) -> str:
     h = hashlib.sha256()
+    h.update(_CACHE_GENERATION + b"\x00")
     h.update(abs_path.encode("utf-8", errors="replace"))
     h.update(b"\x00")
     # Full mtime precision: rapid write/read/write within one second
@@ -377,6 +383,16 @@ def _decode_with_pillow(abs_path: str, edge: int | None, *, encode: bool = True)
         ) from exc
     except Exception as exc:
         raise PreviewDecodeFailed(f"{abs_path}: Pillow decode failed: {exc}") from exc
+
+    # Upright as the camera meant it (EXIF / TIFF orientation), as on the
+    # Qt path.
+    try:
+        from PIL import ImageOps
+
+        ImageOps.exif_transpose(img, in_place=True)
+    except Exception as exc:  # noqa: BLE001 - a broken tag leaves it as stored
+        log.debug("%s: EXIF orientation not applied: %s", abs_path, exc)
+    w, h = img.size
 
     # Convert to a PNG-friendly mode. CMYK / I;16 / YCbCr etc. can't be
     # PNG-encoded directly; RGBA is the safe superset (handles palette
@@ -502,6 +518,10 @@ def _read_raster(abs_path: str, edge: int):
 
     reader = QImageReader(abs_path)
     reader.setDecideFormatFromContent(True)
+    # Upright as the camera meant it (EXIF orientation): a phone photo
+    # stored sideways was shown, and thumbnailed, sideways. The scaled
+    # size below is in stored orientation, which is what Qt applies it to.
+    reader.setAutoTransform(True)
 
     # Sniff declared dimensions BEFORE decoding.
     raw_size = reader.size()

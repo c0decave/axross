@@ -53,7 +53,7 @@ def _expunges(srv) -> list[str]:
 
 def test_happy_the_only_flagged_message_is_expunged():
     with _server(_PLAIN, b"5") as srv:
-        IC.ImapSession(srv.host, srv.port, "u", "p", use_ssl=False).remove("/INBOX/5_x.eml")
+        IC.ImapSession(srv.host, srv.port, "u", "p", use_ssl=False).remove("/INBOX/5.eml")
         assert _expunges(srv) == ["EXPUNGE"]
 
 
@@ -61,7 +61,7 @@ def test_sad_other_flagged_messages_leave_it_in_place_and_remove_fails():
     with _server(_PLAIN, b"3 5") as srv:
         s = IC.ImapSession(srv.host, srv.port, "u", "p", use_ssl=False)
         with pytest.raises(OSError, match="not expunged"):
-            s.remove("/INBOX/5_x.eml")
+            s.remove("/INBOX/5.eml")
         assert _expunges(srv) == []  # message 3 is not wiped with it
         assert any("UID STORE 5 +FLAGS (\\Deleted)" in c for c in srv.commands)
 
@@ -73,10 +73,10 @@ def test_sad_an_expunge_the_server_refuses_fails_the_remove():
     with _server(_UIDPLUS, b"5", expunge=refuse) as srv:
         s = IC.ImapSession(srv.host, srv.port, "u", "p", use_ssl=False)
         with pytest.raises(OSError, match="expunge refused"):
-            s.remove("/INBOX/5_x.eml")
+            s.remove("/INBOX/5.eml")
 
 
 def test_edge_uidplus_expunges_only_this_message_among_flagged_ones():
     with _server(_UIDPLUS, b"3 5") as srv:
-        IC.ImapSession(srv.host, srv.port, "u", "p", use_ssl=False).remove("/INBOX/5_x.eml")
+        IC.ImapSession(srv.host, srv.port, "u", "p", use_ssl=False).remove("/INBOX/5.eml")
         assert _expunges(srv) == ["UID EXPUNGE 5"]

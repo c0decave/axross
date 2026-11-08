@@ -36,7 +36,7 @@ from __future__ import annotations
 import errno
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import IO
 
 from core.answer_fields import as_size, as_str
@@ -65,12 +65,23 @@ except ImportError:  # pragma: no cover — optional dep
     IMPACKET_AVAILABLE = False
 
 
-# DMTF datetime format: YYYYMMDDhhmmss.uuuuuu±UUU (e.g. 20260419103000.000000+000)
-_DMTF_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.\d+[+-]\d+$")
+# DMTF datetime format: YYYYMMDDhhmmss.uuuuuu±UUU (e.g. 20260419103000.000000+000);
+# UUU is the offset from UTC in minutes.
+_DMTF_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d+)([+-])(\d+)$")
+
+
+class WmiValueError(OSError, ValueError):
+    """A path or WQL value WMI cannot take. An OSError - what every
+    caller of a backend handles (a ValueError escaped the pane) - and
+    still a ValueError for callers that caught that."""
 
 
 def _parse_dmtf(value: str) -> datetime:
-    """Decode a WMI DMTF datetime into a naive datetime (UTC-ish).
+    """Decode a WMI DMTF datetime into an aware datetime.
+
+    The value is the wall clock of the zone its ``±UUU`` suffix names
+    (minutes from UTC); dropping the offset handed out that wall clock
+    as a naive time, which FileItem reads as the CLIENT's local time.
 
     Returns ``datetime.fromtimestamp(0)`` when the value is missing
     or malformed — matches the rest of axross's "missing mtime"
@@ -81,10 +92,12 @@ def _parse_dmtf(value: str) -> datetime:
     m = _DMTF_RE.match(value.strip())
     if not m:
         return datetime.fromtimestamp(0)
-    y, mo, d, h, mi, s = (int(g) for g in m.groups())
+    y, mo, d, h, mi, s = (int(g) for g in m.groups()[:6])
+    micro = int((m.group(7) + "000000")[:6])
+    offset = int(m.group(9)) * (-1 if m.group(8) == "-" else 1)
     try:
-        return datetime(y, mo, d, h, mi, s)
-    except ValueError:
+        return datetime(y, mo, d, h, mi, s, micro, tzinfo=timezone(timedelta(minutes=offset)))
+    except (ValueError, OverflowError):
         return datetime.fromtimestamp(0)
 
 
@@ -115,10 +128,10 @@ def _split_wmi(path: str) -> tuple[str, str, str, str]:
     """
     norm = _normalise(path)
     if not norm:
-        raise ValueError("empty path")
+        raise WmiValueError("empty path")
     # Drive prefix.
     if len(norm) < 2 or norm[1] != ":":
-        raise ValueError(f"WMI path must begin with a drive letter: {path!r}")
+        raise WmiValueError(f"WMI path must begin with a drive letter: {path!r}")
     drive = norm[:2].upper()
     rest = norm[2:]  # everything after "C:"
     if not rest or rest == "\\":
@@ -150,10 +163,10 @@ def _wql_escape(value: str) -> str:
     filename can't pivot the WHERE clause.
     """
     if "\x00" in value:
-        raise ValueError("WQL value contains NUL byte")
+        raise WmiValueError("WQL value contains NUL byte")
     for ch in value:
         if ord(ch) < 0x20 and ch not in ("\t", "\r", "\n"):
-            raise ValueError(f"WQL value contains forbidden control char {ch!r}")
+            raise WmiValueError(f"WQL value contains forbidden control char {ch!r}")
     return value.replace("'", "''")
 
 
@@ -464,9 +477,9 @@ class WMISession(SessionLifecycle):
         thousands of rows back over DCOM.
         """
         if "\r" in wql or "\n" in wql:
-            raise ValueError("WMI cim_query: WQL must not contain CR/LF")
+            raise WmiValueError("WMI cim_query: WQL must not contain CR/LF")
         if namespace is not None and ("\r" in namespace or "\n" in namespace):
-            raise ValueError("WMI cim_query: invalid namespace")
+            raise WmiValueError("WMI cim_query: invalid namespace")
         # Connect using the requested namespace (or fall back to the
         # session's default ``//./root/cimv2``).
         if namespace is None:

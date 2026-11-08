@@ -956,6 +956,15 @@ class IrcClient(C.ChatClient):
 
     _on_432 = _on_433
 
+    def _set_members(self, key: str, members: dict) -> None:
+        """Every member shown by its nick made safe to show (as Matrix shows
+        display names): a server's NAMES / JOIN / NICK can carry bidi and
+        control characters (``\u202enimda``). The nick itself is kept: it is
+        what commands address."""
+        for member in members.values():
+            member.display = C.clean_name(member.name)
+        super()._set_members(key, members)
+
     async def _on_nick(self, line: Line) -> None:
         old, new = line.nick, line.param(0)
         if self.fold(old) == self.fold(self.nick):

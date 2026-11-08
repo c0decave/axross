@@ -53,12 +53,16 @@ INTERVAL_CHOICES = {
 
 
 def format_interval(seconds: int) -> str:
-    """Human phrasing for an interval, largest whole unit first."""
-    for unit_s, unit in ((86400, "day"), (3600, "h"), (60, "min")):
-        if seconds >= unit_s:
-            value = seconds // unit_s
-            return f"every {value} {unit}" + ("s" if unit == "day" and value != 1 else "")
-    return f"every {seconds} s"
+    """Human phrasing for an interval, largest unit first, with every unit
+    it has: 5400 s is "every 1 h 30 min" (it was rounded down to "every
+    1 h", so two jobs that ran at different rates looked alike)."""
+    seconds = max(0, int(seconds))
+    parts = []
+    for unit_s, unit in ((86400, "day"), (3600, "h"), (60, "min"), (1, "s")):
+        value, seconds = divmod(seconds, unit_s)
+        if value:
+            parts.append(f"{value} {unit}" + ("s" if unit == "day" and value != 1 else ""))
+    return "every " + (" ".join(parts) or "0 s")
 
 
 def job_row(job: Job, *, now: datetime | None = None) -> dict[str, str]:

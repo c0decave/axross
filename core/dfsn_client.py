@@ -10,9 +10,9 @@ every link entry needs the server to walk the referral table.
 How this backend bridges that
 -----------------------------
 :class:`DFSNamespaceSession` is a thin specialisation of
-:class:`core.smb_client.SmbSession` that flips smbclient's global
-``client_dfs_enabled`` switch on at construction time. With that
-switch on, smbprotocol auto-resolves DFS referrals on the wire so
+:class:`core.smb_client.SmbSession` that turns smbclient's global
+DFS resolution on (``ClientConfig(skip_dfs=False)``) at construction
+time. With it on, smbprotocol auto-resolves DFS referrals on the wire so
 every existing FileBackend operation (list_dir / stat / open_read /
 open_write / rename / remove) "just works" against a DFS path —
 the user sees one unified namespace.
@@ -119,29 +119,23 @@ class DFSNamespaceSession(smb_client.SmbSession):
     # ------------------------------------------------------------------
     @staticmethod
     def _enable_dfs_locked() -> None:
-        """Flip smbclient's global ``client_dfs_enabled`` switch on.
+        """Turn smbclient's global DFS resolution on: ``skip_dfs=False``.
         MUST be called while holding ``_DFS_OPTION_LOCK`` — the lock
         is acquired by ``__init__`` and held across the parent's
         connection probe so a parallel SmbSession ctor can't toggle
         DFS off in between.
 
-        Older smbprotocol versions treated DFS as always-on; newer
-        ones gate it behind an explicit option. We swallow any
-        AttributeError / TypeError so the worst case is "behaves
-        like SMB", not a crash.
+        The switch used to be ``client_dfs_enabled=True``, an option
+        smbclient does not have: ClientConfig.set() ignored it, so the
+        "switch" did nothing and a ``skip_dfs=True`` set elsewhere stayed.
+        A config that still skips DFS afterwards is an OSError - this
+        backend is useless without referrals.
         """
         if smb_client.smbclient is None:
             return
-        try:
-            smb_client.smbclient.ClientConfig(
-                client_dfs_enabled=True,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.debug(
-                "smbclient.ClientConfig(dfs=True) not accepted (%s); "
-                "smbprotocol may already enable DFS by default",
-                exc,
-            )
+        config = smb_client.smbclient.ClientConfig(skip_dfs=False)
+        if getattr(config, "skip_dfs", False):
+            raise OSError("DFS-N: smbclient refused to turn DFS resolution on (skip_dfs)")
 
     # ------------------------------------------------------------------
     # DFS-specific introspection (not part of FileBackend, but useful
@@ -151,35 +145,40 @@ class DFSNamespaceSession(smb_client.SmbSession):
         """Return the resolved referral for *path*, or ``None`` when
         smbprotocol's internal referral cache doesn't have an entry.
 
-        Best-effort: this prods the library's referral cache after a
-        list_dir/stat round-trip has already populated it. We don't
-        send a fresh GetReferrals RPC ourselves — the client library
-        already does that during normal operations.
+        Best-effort: this reads the library's referral cache
+        (``ClientConfig.lookup_referral``) after a list_dir/stat
+        round-trip has populated it. We don't send a fresh GetReferrals
+        RPC ourselves — the client library already does that during
+        normal operations. (It asked ``smbclient._pool.lookup_tree``,
+        which does not exist: the answer was always None.)
         """
-        tree = self._lookup_tree(self._unc(path))
-        if tree is None:
+        entry = self._lookup_referral(self._unc(path))
+        if entry is None:
             return None
-        target = getattr(tree, "share_name", None)
+        try:
+            target = entry.target_hint.target_path
+        except Exception as exc:  # noqa: BLE001 — a cache entry without targets
+            log.debug("DFS referral for %s has no target: %s", path, exc)
+            return None
         if not target:
             return None
-        return DfsReferral(
-            namespace_path=path,
-            target_path=str(target),
-            ttl_seconds=int(getattr(tree, "tree_connect_andx_response", 0) or 0),
-        )
-
-    def _lookup_tree(self, unc: str):
-        """Return the smbprotocol Tree object for *unc* or ``None``
-        when the library doesn't expose its referral cache. Wrapped
-        as a method so tests can patch a single seam without touching
-        smbclient's module-private internals."""
         try:
-            return smb_client.smbclient._pool.lookup_tree(  # type: ignore[attr-defined]
-                unc,
-                None,
-            )
+            # The TTL of the hinted referral (no public accessor).
+            ttl = int(entry._referrals[entry._target_hint_idx]["time_to_live"].get_value())
+        except Exception:  # noqa: BLE001
+            ttl = 0
+        return DfsReferral(namespace_path=path, target_path=str(target), ttl_seconds=ttl)
+
+    def _lookup_referral(self, unc: str):
+        """The smbclient referral-cache entry for *unc*, or None.
+        Wrapped as a method so tests can patch a single seam."""
+        if smb_client.smbclient is None:
+            return None
+        try:
+            config = smb_client.smbclient.ClientConfig()
+            return config.lookup_referral([p for p in unc.split("\\") if p])
         except Exception as exc:  # noqa: BLE001 — best-effort introspection
-            log.debug("DFS _lookup_tree(%s) failed: %s", unc, exc)
+            log.debug("DFS lookup_referral(%s) failed: %s", unc, exc)
             return None
 
     def list_targets(self) -> list[str]:

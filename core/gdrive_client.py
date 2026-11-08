@@ -694,12 +694,22 @@ class GDriveSession(SessionLifecycle):
 
     def exists(self, path: str) -> bool:
         """False only for "not found"; any other failure is an OSError -
-        server_side_copy(overwrite=False) takes False as its go-ahead."""
+        server_side_copy(overwrite=False) takes False as its go-ahead.
+        Asked of the server, not the cache: a cached parent folder renamed
+        on the web since named another folder, and the no-clobber check
+        said False for a file open_write() (which resolves fresh) then
+        overwrote."""
+        seen = self._path_cache.get(self.normalize(path))
         try:
-            self._resolve_path(path)
-            return True
+            self._resolve_path(path, fresh=True)
         except FileNotFoundError:
             return False
+        if seen is not None:
+            # The id the pane listed stays what the session "saw": a write
+            # that follows checks it against the server (_resolve_for_change)
+            # and refuses when the name is another file's now.
+            self._path_cache[self.normalize(path)] = seen
+        return True
 
     def mkdir(self, path: str) -> None:
         path = self.normalize(path)
@@ -951,7 +961,9 @@ class GDriveSession(SessionLifecycle):
         Drive would add a second item of it, and server_side_copy streams
         over the existing file instead when asked to overwrite."""
         src_id = self._resolve_path(src)
-        dst_parent = self._resolve_path(self.parent(dst))
+        # Fresh, as open_write: a cached parent id renamed on the web since
+        # put the copy into the folder that now has another name.
+        dst_parent = self._resolve_path(self.parent(dst), fresh=True)
         dst_name = posixpath.basename(dst.rstrip("/"))
         if self._existing_child(dst_parent, dst_name, dst) is not None:
             raise FileExistsError(

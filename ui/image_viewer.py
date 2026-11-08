@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import previews as P
+from core.i18n import tr
 from ui import viewer_file_actions as VFA
 from ui import viewer_window as VW
 from ui.close_corner import add_close_corner
@@ -76,6 +77,8 @@ class ImageViewerDialog(QDialog):
         self._zoom = 1.0
         self._rotation = 0
         self._original: QImage | None = None
+        #: A picture was shown: a later one that fails is said in place.
+        self._shown_any = False
         # A decode is being waited for (_load_current); a load asked for
         # meanwhile follows it.
         self._loading = False
@@ -263,38 +266,40 @@ class ImageViewerDialog(QDialog):
             if failure is not None:
                 raise failure
         except P.PreviewTooLarge as exc:
-            QMessageBox.warning(
-                self,
-                "Image Too Large",
-                f"Refusing to decode (Defense Layer 2):\n{exc}",
-            )
-            self.reject()
+            self._failed("Image Too Large", f"Refusing to decode (Defense Layer 2):\n{exc}")
             return
         except P.PreviewNotAvailable as exc:
-            QMessageBox.warning(
-                self,
-                "Cannot Preview",
-                f"{path}\n\n{exc}",
-            )
-            self.reject()
+            self._failed("Cannot Preview", f"{path}\n\n{exc}")
             return
         except P.PreviewDecodeFailed as exc:
-            QMessageBox.warning(
-                self,
-                "Decode Failed",
-                f"{path}\n\n{exc}",
-            )
-            self.reject()
+            self._failed("Decode Failed", f"{path}\n\n{exc}")
             return
         if img is None or img.isNull():
-            QMessageBox.warning(self, "Decode Failed",
-                                f"{path}\n\nThe picture could not be decoded.")
-            self.reject()
+            self._failed("Decode Failed", f"{path}\n\nThe picture could not be decoded.")
             return
+        self._shown_any = True
         self._original = img
         self._rotation = 0
         self._zoom = 1.0
         self._render()
+
+    def _failed(self, title: str, text: str) -> None:
+        """The current picture cannot be shown. The first one: said in a
+        box, and the viewer does not open. A later one (Prev / Next): said
+        in its place, and the viewer stays - one corrupt picture closed
+        it, so Prev / Next could not step past it."""
+        if not self._shown_any:
+            QMessageBox.warning(self, title, text)
+            self.reject()
+            return
+        self._original = None
+        self._label.setPixmap(QPixmap())
+        self._label.setTextFormat(Qt.TextFormat.PlainText)  # the path is not ours
+        self._label.setText(f"{title}\n\n{text}")
+        self._label.adjustSize()
+        name = self._siblings[self._idx].rsplit("/", 1)[-1]
+        self._info.setText(tr("{name} — cannot be shown [{n}/{count}]").format(
+            name=name, n=self._idx + 1, count=len(self._siblings)))
 
     def _render(self) -> None:
         if self._original is None:

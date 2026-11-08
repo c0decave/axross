@@ -376,3 +376,54 @@ def test_edge_folder_properties_count_members_stored_with_backslashes(window, tm
     pane = _pane(window)
     rows = dict(pane.properties_rows("dir/"))
     assert rows["Contents"].startswith("2 file(s), 1 folder(s)"), rows
+
+
+def _wait_for(win, cond, timeout: float = 20.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        pump(0.02)
+        pane = win._archive_dock.widget() if win._archive_dock is not None else None
+        if isinstance(pane, ArchivePaneWidget) and not pane.loading and cond(pane):
+            return pane
+    raise AssertionError("the archive view did not get there")
+
+
+def test_sad_a_find_files_hit_in_a_nested_archive_opens_down_to_the_member(window, outer):
+    """Opening the Find Files hit ``outer.tar!/docs/inner.zip!/deep.tar.gz!/leaf.txt``
+    showed only outer.tar. Each nested archive is opened now, and the
+    member is selected in the innermost one."""
+    from core.file_search import SearchScope
+    from core.local_fs import LocalFS
+    from core.search_federation import SearchHit
+    from ui.find_files_dialog import FindFilesDialog
+
+    dlg = FindFilesDialog([])
+    dlg.open_archive_requested.connect(window._open_found_archive)
+    hit = SearchHit(backend_label="local", path=f"{outer}!/docs/inner.zip!/deep.tar.gz!/leaf.txt",
+                    archive_path=str(outer), member="docs/inner.zip!/deep.tar.gz!/leaf.txt")
+    try:
+        dlg._activate(SearchScope(LocalFS(), str(outer.parent)), hit)
+        pane = _wait_for(window, lambda p: p.chain == ("outer.tar", "inner.zip"))
+        assert os.path.basename(pane._archive_path) == "deep.tar.gz"
+        assert pane.selected_members() == ["leaf.txt"]
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+def test_edge_a_plain_member_hit_is_selected_and_a_stale_request_is_dropped(window, outer):
+    """A hit directly in the archive selects its row; a request whose view
+    never opened does not fire on a later, unrelated open."""
+    from core.local_fs import LocalFS
+    from ui import archive_pane as AP
+
+    AP.request_reveal(str(outer), "readme.txt")
+    window._open_found_archive(LocalFS(), str(outer), "readme.txt")
+    pane = _wait_for(window, lambda p: bool(p._entries))
+    assert pane.selected_members() == ["readme.txt"]
+    AP.request_reveal(str(outer.parent / "gone.tar"), "x.txt")
+    window.open_archive_pane(str(outer))
+    pane = _wait_for(window, lambda p: bool(p._entries))
+    assert pane.selected_members() == []
+    assert AP._PENDING_REVEAL       # still waiting for its own archive
+    AP._PENDING_REVEAL.clear()

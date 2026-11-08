@@ -215,3 +215,38 @@ def test_sad_a_right_to_left_override_in_an_attachment_name_is_named():
 
     m = MailMessage(attachments=[Attachment("invoice\u202efdp.exe", "application/pdf", 2, "0" * 64, b"MZ")])
     assert any("right-to-left override" in f.text for f in analyse(m).findings)
+
+
+def _msg_with(recipients, root_props: bytes = b"", html: bytes = b""):
+    tree = {"__substg1.0_0037001F": cfb_writer.unicode("s"),
+            "__substg1.0_1000001F": cfb_writer.unicode("x"),
+            "__properties_version1.0": b"\0" * 32 + root_props}
+    if html:
+        tree["__substg1.0_10130102"] = html
+    for i, (name, addr, rtype) in enumerate(recipients):
+        tree[f"__recip_version1.0_#{i:08X}"] = {
+            "__substg1.0_3001001F": cfb_writer.unicode(name), "__substg1.0_39FE001F": cfb_writer.unicode(addr),
+            "__properties_version1.0": b"\0" * 8 + struct.pack("<IIQ", (0x0C15 << 16) | 0x0003, 0, rtype)}
+    return cfb_writer.build(tree)
+
+
+def test_sad_msg_bcc_recipients_are_not_shown_as_to():
+    """Every recipient that was not Cc (PR_RECIPIENT_TYPE 2) was listed as
+    To - a Bcc (3) recipient of a sent .msg showed as an open To. Bcc is
+    its own list now; the flag bits above the type do not change it."""
+    m = parse_msg(_msg_with([("Bob", "bob@corp.example", 1), ("Dan", "dan@corp.example", 2),
+                             ("Eve", "eve@corp.example", 3), ("Ann", "ann@corp.example", 0x10000001)]))
+    assert m.to == ["Bob <bob@corp.example>", "Ann <ann@corp.example>"]
+    assert m.cc == ["Dan <dan@corp.example>"] and m.bcc == ["Eve <eve@corp.example>"]
+    assert m.summary()["bcc"] == ["Eve <eve@corp.example>"]
+    assert parse_eml(b"Bcc: Eve <eve@corp.example>\r\nTo: bob@corp.example\r\n\r\nx").bcc == [
+        "Eve <eve@corp.example>"]
+
+
+def test_sad_msg_html_body_is_read_in_its_codepage():
+    """A .msg's HTML body (bytes) was read as UTF-8 whatever its code page:
+    a cp1252 body lost every umlaut. PR_INTERNET_CPID names it now."""
+    cpid = struct.pack("<IIQ", (0x3FDE << 16) | 0x0003, 0, 1252)
+    m = parse_msg(_msg_with([], cpid, "<p>Grüße, café</p>".encode("cp1252")))
+    assert m.html == "<p>Grüße, café</p>"
+    assert parse_msg(_msg_with([], b"", "<p>Grüße</p>".encode())).html == "<p>Grüße</p>"

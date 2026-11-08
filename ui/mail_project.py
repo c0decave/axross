@@ -47,6 +47,8 @@ ANALYST_PROMPT = (
 )
 
 COLUMNS = ("score", "high", "warn", "date", "sender", "subject", "source")
+#: The most messages the table lists (the highest scores first).
+ROW_LIMIT = 1000
 
 
 def _safe_browser_class():
@@ -182,6 +184,7 @@ class MailProjectDialog(QDialog):
         split.setSizes([620, 480])
         layout.addWidget(split, 1)
         self.status = QLabel()
+        self._count_text = ""   # the count refresh() last put on the status line
         layout.addWidget(self.status)
         add_close_corner(self)
         if folder:
@@ -323,7 +326,9 @@ class MailProjectDialog(QDialog):
     def refresh(self) -> None:
         if self.project is None:
             return
-        rows = self.project.messages(search=self.search.text().strip())
+        search = self.search.text().strip()
+        rows = self.project.messages(search=search, limit=ROW_LIMIT)
+        total = self.project.count(search=search) if len(rows) >= ROW_LIMIT else len(rows)
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             for c, key in enumerate(COLUMNS):
@@ -331,7 +336,27 @@ class MailProjectDialog(QDialog):
                 if c == 0:
                     item.setData(Qt.ItemDataRole.UserRole, row["sha256"])
                 self.table.setItem(r, c, item)
-        self.status.setText(tr("{n} messages").format(n=len(rows)) if not self.status.text() else self.status.text())
+        self._show_count(len(rows), total)
+
+    def _show_count(self, shown: int, total: int) -> None:
+        """The status line's count: "showing 1000 of N" when the table holds
+        only the first ones (it stopped at 1000 without a word). An import's
+        result line stays; a cut table's count is added below it."""
+        if shown < total:
+            text = tr("Showing {shown} of {total} messages - search to narrow them down.").format(
+                shown=shown, total=total)
+        else:
+            text = tr("{n} messages").format(n=shown)
+        current, last = self.status.text(), self._count_text
+        if not current or current == last:
+            self.status.setText(text)
+        elif last and current.endswith("\n" + last):
+            self.status.setText(current[: -len(last)] + text)
+        elif shown < total:
+            self.status.setText(current + "\n" + text)
+        else:
+            text = ""
+        self._count_text = text
 
     def _show_selected(self) -> None:
         items = self.table.selectedItems()

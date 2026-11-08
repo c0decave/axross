@@ -16,6 +16,7 @@ import html
 import logging
 import re
 import time
+import unicodedata
 import zlib
 
 from PyQt6 import sip
@@ -52,6 +53,7 @@ from PyQt6.QtWidgets import (
 
 from core import chat as C
 from core.i18n import tr
+from core.remote_name import sanitize_for_display
 from core.thread_relay import GuiCall
 from ui.chat_rooms import RoomListPanel
 from ui.close_corner import add_close_corner
@@ -98,6 +100,58 @@ def linkify(text: str) -> str:
         pos = m.start() + len(url)
     out.append(html.escape(text[pos:]))
     return "".join(out)
+
+
+def _label_scripts(label: str) -> set[str]:
+    """The scripts (LATIN, CYRILLIC, GREEK ...) of the letters in *label*."""
+    scripts = set()
+    for char in label:
+        if char.isalpha():
+            name = unicodedata.name(char, "")
+            scripts.add(name.split(" ", 1)[0] if name else "?")
+    return scripts
+
+
+def host_warnings(ace_host: str) -> list[str]:
+    """Warnings for a link's host in its ASCII (punycode) form: an
+    internationalised name (``xn--``), which can imitate another one, and
+    one whose labels mix letters of several scripts (a Cyrillic "а" in
+    "аpple.com"). Like the mail view's link notes."""
+    labels = [label for label in ace_host.lower().split(".") if label]
+    shown = []
+    for label in labels:
+        if label.startswith("xn--"):
+            try:
+                label = label[4:].encode("ascii").decode("punycode")
+            except (UnicodeError, ValueError):
+                label = "\ufffd"
+        shown.append(label)
+    warnings = []
+    if any(label.startswith("xn--") for label in labels) or not ace_host.isascii():
+        warnings.append(tr("Warning: the name uses non-ASCII letters ({name}) and can "
+                           "imitate another address.").format(
+                               name=sanitize_for_display(".".join(shown))))
+    mixed = sorted(set().union(*(s for s in map(_label_scripts, shown) if len(s) > 1)))
+    if mixed:
+        warnings.append(tr("Warning: the name mixes letters of several scripts ({scripts}) - "
+                           "a typical look-alike.").format(scripts=", ".join(mixed)))
+    return warnings
+
+
+def link_question(url: QUrl) -> str:
+    """The Open Link question for *url*: the address percent-encoded, the
+    host in its ASCII form on a line of its own, then any warning.
+    ``url.toString()`` decoded the host, so ``xn--pple-43d.com`` showed as
+    "аpple.com" with a Cyrillic "а" - the mail view's way, shared."""
+    encoded = QUrl.ComponentFormattingOption.FullyEncoded
+    text = sanitize_for_display(url.toString(encoded))
+    ace = sanitize_for_display(url.host(encoded))
+    lines = [tr("Open this address in the browser?"), "", text, "",
+             tr("Host: {host}").format(host=ace or tr("(no host)"))]
+    warnings = host_warnings(ace)
+    if warnings:
+        lines += ["", *warnings]
+    return "\n".join(lines)
 
 
 def message_html(message: C.ChatMessage, conversation_encryption: str = "") -> str:
@@ -280,7 +334,9 @@ class ConversationView(QWidget):
         self.title.setText(conv.title)
         topic = conv.topic.replace("\n", " ")
         self.topic.setText(topic[:300])
-        self.topic.setToolTip(topic)
+        # Plain text as rich text (escaped): a topic is the server's text,
+        # never markup Qt renders (as ui/chat_rooms.py shows room names).
+        self.topic.setToolTip(Qt.convertFromPlainText(topic) if topic else "")
         self.security.setText(tr(ENC_SHORT.get(conv.encryption, conv.encryption)))
         from ui.security_badge import security_icon, tooltip_html
 
@@ -328,12 +384,10 @@ class ConversationView(QWidget):
             bar.setValue(bar.maximum())
 
     def _link(self, url: QUrl) -> None:
-        text = url.toString()
         if url.scheme().lower() not in ("http", "https"):
             return
         answer = QMessageBox.question(
-            self, tr("Open Link"),
-            tr("Open this address in the browser?") + "\n\n" + text,
+            self, tr("Open Link"), link_question(url),
             QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel)
         if answer == QMessageBox.StandardButton.Open:
             from core.desktop_open import open_url

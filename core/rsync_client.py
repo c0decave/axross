@@ -468,6 +468,21 @@ def _escape_rsync_pattern(name: str) -> str:
     return "".join("\\" + c if c in "\\*?[" else c for c in name)
 
 
+def _literal_source(path: str) -> str:
+    """*path* as an rsync SOURCE argument that names exactly that path.
+
+    rsync expands wildcards in a source (the daemon, and the remote rsync
+    under protect-args): ``/a[1].txt`` matched ``a1.txt``, and rename()
+    copied THAT file and then deleted the original. A component with
+    ``*``, ``?`` or ``[`` is backslash-escaped (its backslashes too);
+    a component without one is taken literally by rsync and stays as is.
+    """
+    return "/".join(
+        _escape_rsync_pattern(part) if any(c in part for c in "*?[") else part
+        for part in path.split("/")
+    )
+
+
 class RsyncSession(SessionLifecycle):
     """Rsync backend implementing the FileBackend protocol.
 
@@ -722,7 +737,7 @@ class RsyncSession(SessionLifecycle):
 
     def list_dir(self, path: str) -> list[FileItem]:
         """List directory contents via ``rsync --list-only``."""
-        url = self._build_url(path)
+        url = self._build_url(_literal_source(path))
         # Ensure trailing slash so rsync lists contents, not the dir itself
         if not url.endswith("/"):
             url += "/"
@@ -985,7 +1000,7 @@ class RsyncSession(SessionLifecycle):
         tmpdir = tempfile.mkdtemp()
         try:
             local_path = os.path.join(tmpdir, "payload")
-            src_url = self._build_url(src)
+            src_url = self._build_url(_literal_source(src))
             dst_url = self._build_url(dst)
 
             flags = self._archive_flags()
@@ -1026,7 +1041,7 @@ class RsyncSession(SessionLifecycle):
         "skipping non-regular file" or "skipping directory", so the
         download goes into an empty temp directory and only a regular
         file that actually arrived there counts as read."""
-        url = self._build_url(path)
+        url = self._build_url(_literal_source(path))
         tmpdir = tempfile.mkdtemp(prefix="axross-rsync-")
         try:
             # A stall limit, not a wall clock: rsync's own --timeout ends a
@@ -1166,7 +1181,7 @@ class RsyncSession(SessionLifecycle):
         if bandwidth_limit_kbps:
             args.append(f"--bwlimit={int(bandwidth_limit_kbps)}")
         # Source: rsync URL into the session; destination: local path.
-        args.append(self._build_url(src_path))
+        args.append(self._build_url(_literal_source(src_path)))
         args.append(dst_local_path)
         try:
             proc = _sp.run(args, capture_output=True, text=True, timeout=float(timeout),

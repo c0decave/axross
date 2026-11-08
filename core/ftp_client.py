@@ -1501,6 +1501,23 @@ class FtpSession(SessionLifecycle):
             raise OSError(f"Cannot rename {src} -> {dst}: {e}") from e
 
     @_ftp_errors_as_oserror
+    @serialized
+    def set_modified(self, path: str, mtime: float) -> None:
+        """Set *path*'s modification time with ``MFMT`` (whole seconds,
+        UTC), so a copy keeps its source's time. Only a server that names
+        MFMT in its FEAT reply is asked: NotImplementedError otherwise (the
+        copy then keeps the upload time, which "Overwrite if Newer" and
+        Compare read as the newer one)."""
+        ftp = self._ensure_connected()
+        if "MFMT" not in _features(ftp):
+            raise NotImplementedError("the FTP server does not offer MFMT")
+        stamp = datetime.fromtimestamp(int(mtime), tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+        try:
+            ftp.sendcmd(f"MFMT {stamp} {path}")
+        except error_perm as e:
+            raise OSError(f"Cannot set the modification time of {path}: {e}") from e
+
+    @_ftp_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
         got = self._transfer_connection()
         if got is None:

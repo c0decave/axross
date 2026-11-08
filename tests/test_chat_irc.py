@@ -421,3 +421,73 @@ def test_sad_a_client_reporting_after_its_panel_is_gone_does_not_raise(tmp_path)
     client.conversation_changed.emit(client.server_key)
     client.state_changed.emit("offline", "")
     QApplication.processEvents()
+
+
+# --- the default proxy ----------------------------------------------------------------------
+
+def _default_socks5(tmp_path, monkeypatch, routes):
+    from proxy_testkit import FakeSocks5Server
+
+    from core import proxy_settings as PS
+
+    proxy = FakeSocks5Server(routes)
+    path = tmp_path / "proxy.json"
+    PS.save(PS.ProxyDefaults(proxy_type="socks5", host="127.0.0.1", port=proxy.port, bypass=[]), path)
+    monkeypatch.setattr(PS, "SETTINGS_PATH", path)
+    return proxy
+
+
+def test_happy_the_default_proxy_carries_the_connection(ircd, clients, tmp_path, monkeypatch):
+    """Round 3 checked every chat protocol for the XMPP bug (the default
+    proxy ignored, a direct connection): IRC's connection and its
+    certificate probe go through core.chat.open_stream - a recording SOCKS5
+    listener sees them, and a refused tunnel is an error, not a direct
+    connection."""
+    from proxy_testkit import allow_loopback_proxy
+
+    server = ircd()
+    proxy = _default_socks5(tmp_path, monkeypatch, {("127.0.0.1", server.port): ("127.0.0.1", server.port)})
+    try:
+        with allow_loopback_proxy():
+            client = clients(server, proxy="default")
+            client.connect_account()
+            assert online(client)
+            assert proxy.connects == [("127.0.0.1", server.port)]
+            client.disconnect_account()
+            proxy.routes.clear()
+            refused = clients(server, proxy="default", nick="bob")
+            refused.connect_account()
+            assert wait_until(lambda: refused.state == C.STATE_ERROR, 10)
+            assert proxy.connects[-1] == ("127.0.0.1", server.port) and len(proxy.connects) >= 2
+            assert not any("bob" in line for line in server.lines_of("bob"))
+    finally:
+        proxy.close()
+
+
+def test_sad_member_nicks_from_the_server_are_shown_cleaned():
+    """NAMES (353), JOIN and NICK put the server's nicks into the member
+    list as they came: bidi and zero-width characters (``\\u202enimda``)
+    reached the panel. Each member is shown by its nick made safe (as
+    Matrix shows display names); the nick itself stays what commands
+    address."""
+    import asyncio
+
+    account = C.Account(protocol="irc", name="t", settings={
+        "server": "127.0.0.1", "port": 1, "tls": I.TLS_OFF, "nick": "alice", "proxy": "none"})
+    client = I.IrcClient(account)
+    try:
+        client._add_conversation("#c", C.CONV_CHANNEL, "#c")
+
+        async def feed():
+            await client._on_353(I.parse_line(":srv 353 alice = #c :bob \u202enimda\u200b mallory\r\n"))
+            await client._on_366(I.parse_line(":srv 366 alice #c :End\r\n"))
+            await client._on_join(I.parse_line(":ev\u2066il!u@h JOIN #c\r\n"))
+            await client._on_nick(I.parse_line(":bob!u@h NICK :\u202ebob2\r\n"))
+
+        asyncio.run(feed())
+        members = client.conversation("#c").members
+        shown = sorted(m.display for m in members.values())
+        assert shown == ["bob2", "evil", "mallory", "nimda"]
+        assert "\u202enimda\u200b" in {m.name for m in members.values()}
+    finally:
+        client.shutdown()

@@ -291,7 +291,7 @@ def test_happy_update_checks(monkeypatch):
 def test_happy_settings_keep_container_servers_and_sources(tmp_path):
     path = tmp_path / "settings.json"
     s = S.AgentSettings()
-    config = C.McpServerConfig(name="time", command=("podman", "run", "img"), container=True,
+    config = C.McpServerConfig(name="time", command=tuple(I.run_command("time", "img")), container=True,
                                secret_env=("TOKEN",), egress=("example.com:443",),
                                package={"kind": "oci", "identifier": "docker.io/mcp/time",
                                         "digest": DIGEST, "image": "a" * 64})
@@ -413,7 +413,7 @@ def test_sad_mounts_need_rootless_podman(tmp_path, monkeypatch):
 
 
 def test_sad_broken_container_configs_are_cleaned_or_refused():
-    data = {"name": "c", "command": ["podman", "run", "img"], "container": True,
+    data = {"name": "c", "command": I.run_command("c", "img"), "container": True,
             "sandbox": "High", "secret_env": ["OK", "BAD NAME", 5],
             "egress": ["example.com:443", "nohost"], "package": {"kind": "oci", "x": "y" * 900,
                                                                 "image": 7}}
@@ -429,12 +429,12 @@ def test_sad_broken_container_configs_are_cleaned_or_refused():
 
 def test_sad_the_client_refuses_what_it_cannot_deliver(tmp_path, monkeypatch):
     fake_podman(tmp_path, monkeypatch)
-    config = C.McpServerConfig(name="c", command=("podman", "run", "img"), container=True,
+    config = C.McpServerConfig(name="c", command=tuple(I.run_command("c", "img")), container=True,
                                env={"A": "two\nlines"})
     with pytest.raises(C.McpClientError, match="line"):
         C.McpClient(config)
     no_hosts = C.McpServerConfig(name="c", container=True,
-                                 command=("podman", "run", f"-T,{C.TOKEN_EGRESS}", "img"))
+                                 command=tuple(I.run_command("c", "img", network="allowlist")))
     with pytest.raises(C.McpClientError, match="allowed host"):
         C.McpClient(no_hosts)
 

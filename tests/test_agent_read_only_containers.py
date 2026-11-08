@@ -147,11 +147,14 @@ def test_edge_a_hand_edited_container_line_does_not_qualify(command):
     assert not config.files_safe() and config.files_risk()
 
 
-def test_edge_bash_passes_today_s_validation_and_still_does_not_qualify():
-    config = C.McpServerConfig.from_dict({"name": "x", "command": ["bash", "-c", "id"],
-                                          "container": True})
-    assert config is not None and config.container  # what validation guarantees: no more
-    assert "podman line" in config.files_risk()
+def test_sad_a_container_flag_on_a_host_program_is_refused():
+    """container=true exempted the line from the downloader check and
+    container_flag_problems only listed forbidden options: ``bash -c id``
+    (or ``npx -y x``) was kept as a "container" and ran on the host. Only
+    run_command's podman line is a container now."""
+    for command in (["bash", "-c", "id"], ["npx", "-y", "x"], ["/tmp/podman-not", "run", "img"]):
+        config = C.McpServerConfig.from_dict({"name": "x", "command": command, "container": True})
+        assert config is None
 
 
 def test_edge_research_keeps_files_writable_off_instead_of_read_only():

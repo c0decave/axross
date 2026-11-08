@@ -500,9 +500,10 @@ class DropboxSession(SessionLifecycle):
         """Convert a UI path to a Dropbox API path.
 
         The Dropbox API uses "" (empty string) for the root, and all
-        other paths must start with "/".
+        other paths must start with "/". Blanks are part of a name: a
+        strip() of the whole path addressed "foo " as its namesake "foo",
+        so a delete of the one removed the other.
         """
-        path = path.strip()
         if not path or path == "/":
             return ""
         if not path.startswith("/"):

@@ -346,6 +346,18 @@ _LIVE_GROUPS: set[int] = set()
 _LIVE_LOCK = threading.Lock()
 
 
+def track_group(pid: int) -> None:
+    """Kill the process group *pid* leads when axross exits (see
+    :func:`_kill_live_groups`) - until :func:`forget_group`."""
+    with _LIVE_LOCK:
+        _LIVE_GROUPS.add(pid)
+
+
+def forget_group(pid: int) -> None:
+    with _LIVE_LOCK:
+        _LIVE_GROUPS.discard(pid)
+
+
 def _kill_live_groups() -> None:
     """atexit: kill the process group of every bounded run still in flight -
     the thread that would stop it at its limit ends with this process."""
@@ -569,14 +581,21 @@ def _has_exited(proc: subprocess.Popen) -> bool:
     return proc.poll() is not None
 
 
+def signal_group(pgid: int, *, hard: bool) -> bool:
+    """Terminate (or kill) the process group *pgid* (POSIX), so processes
+    the script started go down with it; False when it is gone already."""
+    try:
+        os.killpg(pgid, signal.SIGKILL if hard else signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
 def _signal_group(proc: subprocess.Popen, *, hard: bool) -> None:
     """Terminate (or kill) the child's whole process group, so processes
     the script started go down with it."""
     if os.name == "posix":
-        try:
-            os.killpg(proc.pid, signal.SIGKILL if hard else signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
+        signal_group(proc.pid, hard=hard)
         return
     try:  # no process groups to signal: the child itself
         proc.kill() if hard else proc.terminate()
@@ -675,8 +694,7 @@ def run_bounded(
     if posix:
         # Until it is stopped below: a normal exit of axross kills the group
         # (the thread that enforces the limit dies with the process).
-        with _LIVE_LOCK:
-            _LIVE_GROUPS.add(proc.pid)
+        track_group(proc.pid)
     try:
         wake = threading.Event()
         out = _StreamReader(proc.stdout, max_output_chars, wake, text=True)
@@ -724,8 +742,7 @@ def run_bounded(
         except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL is not ignorable
             pass
     finally:
-        with _LIVE_LOCK:
-            _LIVE_GROUPS.discard(proc.pid)
+        forget_group(proc.pid)
     duration_ms = int((time.monotonic() - started) * 1000)
     drain_end = time.monotonic() + OUTPUT_DRAIN_SECONDS
     for reader in readers:

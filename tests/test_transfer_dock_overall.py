@@ -97,7 +97,8 @@ class OverallProgressTest(unittest.TestCase):
         (job,) = self.add(1)
         job.status = self.Status.ERROR
         self.mgr.job_error.emit(job.job_id, "boom")
-        self.assertTrue(_wait(self.app, lambda: self.bar().format() == "Done"))
+        # Not "Done" (review round 3): the batch failed, and the bar says so.
+        self.assertTrue(_wait(self.app, lambda: self.bar().format() == "1 failed"))
 
     def test_edge_a_burst_of_signals_recomputes_once(self) -> None:
         # _update_overall walks all_jobs(); count those walks.

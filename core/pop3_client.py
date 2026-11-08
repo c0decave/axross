@@ -463,6 +463,27 @@ class Pop3Session(SessionLifecycle):
             )
         return msgno
 
+    def _check_identity(self, path: str, msgno: int) -> None:
+        """FileNotFoundError unless message *msgno* is the one *path*
+        names: ``<n>_<subject>.eml`` with the subject the listing gives it
+        (TOP n 0). DELE by the number alone deleted another message when
+        the path came from elsewhere - a fresh session's "1_salary-letter.eml"
+        was message 1 "hello". Nothing is deleted on a mismatch."""
+        expected = path.rsplit("/", 1)[-1].split("_", 1)[1][: -len(".eml")]
+        listed = getattr(self, "_listed", {}).get(msgno)
+        if listed and getattr(self, "_listing_generation", -1) == getattr(self, "_generation", 0):
+            now = listed[1]  # the listing of this very connection named it
+        else:
+            subject = self._fetch_subject(msgno)  # named as list_dir() names it
+            now = _sanitize_filename(subject) if subject else "untitled"
+        if now != expected:
+            raise FileNotFoundError(
+                errno.ENOENT,
+                f"POP3: message {msgno} is {now!r}, not the {expected!r} the path names; "
+                "nothing deleted (list the mailbox again)",
+                path,
+            )
+
     def _fetch_subject(self, msgno: int) -> str:
         """Best-effort: TOP <msgno> 0 returns headers only; parse
         Subject. Failure → empty string (never raises)."""
@@ -665,6 +686,7 @@ class Pop3Session(SessionLifecycle):
         """
         path = self.normalize(path)
         msgno = self._resolve(path)
+        self._check_identity(path, msgno)
         pop = self._ensure_connected()
         try:
             pop.dele(msgno)

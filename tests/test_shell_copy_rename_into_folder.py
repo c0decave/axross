@@ -116,12 +116,13 @@ def test_edge_every_shell_backend_sends_the_guarded_copy(monkeypatch):
     for module, cls in ((scp_client, "SCPSession"), (T, "TelnetSession")):
         session = getattr(module, cls).__new__(getattr(module, cls))
         monkeypatch.setattr(session, "normalize", lambda p: p, raising=False)
-        monkeypatch.setattr(
-            session,
-            "_exec_raw",
-            lambda cmd, *a, **k: sent.append((cls, cmd)) or ("", 0),
-            raising=False,
-        )
+        for seam in ("_exec_raw", "_exec_tree_op"):  # Telnet's cp: _exec_tree_op
+            monkeypatch.setattr(
+                session,
+                seam,
+                lambda cmd, *a, **k: sent.append((cls, cmd)) or ("", 0),
+                raising=False,
+            )
         session.copy("/a", "/b")
     guarded = T.copy_command("/a", "/b", preserve=True)
     assert ("rsh", guarded) in sent and ("rsh", T.rename_command("/a", "/b")) in sent

@@ -209,3 +209,49 @@ def test_edge_bytes_that_arrive_before_the_answer_are_kept():
     bridge.closed(7)
     assert bridge._early == {}
     bridge.close()
+
+
+def test_sad_relay_streams_are_bounded(echo_server, monkeypatch):
+    """A sandboxed worker could open any number of relay streams: each a
+    socket and a thread on the host (300 opened, no limit). Now
+    MAX_STREAMS, counted under the lock with the ones being connected; a
+    closed stream frees its slot."""
+    monkeypatch.setattr(N, "MAX_STREAMS", 5)
+    relay = N.HostRelay(lambda m: None, lambda h, p: True, allow_loopback=True)
+    try:
+        streams = [relay.open("127.0.0.1", echo_server) for _ in range(5)]
+        with pytest.raises(PermissionError, match="5 connections"):
+            relay.open("127.0.0.1", echo_server)
+        relay.close(streams[0])
+        relay.open("127.0.0.1", echo_server)
+    finally:
+        relay.close_all()
+
+
+def test_sad_a_write_to_a_peer_that_does_not_read_ends_the_stream(monkeypatch):
+    """HostRelay.write's sendall had no timeout: a far end that stops
+    reading held the caller (the worker channel's reader) for ever. Now
+    the write waits SEND_TIMEOUT and closes the stream; an idle stream is
+    no timeout for its reader."""
+    monkeypatch.setattr(N, "SEND_TIMEOUT", 0.5)
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    sent = []
+    relay = N.HostRelay(sent.append, lambda h, p: True, allow_loopback=True)
+    try:
+        stream = relay.open("127.0.0.1", server.getsockname()[1])
+        peer, _ = server.accept()   # accepts and never reads
+        threading.Event().wait(1.0)  # idle beyond the timeout: still open
+        assert stream in relay._streams
+        import base64
+        import time
+
+        start = time.monotonic()
+        blob = base64.b64encode(b"x" * (8 << 20)).decode()
+        relay.write(stream, blob)
+        assert time.monotonic() - start < 10 and stream not in relay._streams
+        peer.close()
+    finally:
+        relay.close_all()
+        server.close()

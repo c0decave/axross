@@ -336,3 +336,34 @@ def test_double_click_folder_does_not_emit(tmp_path):
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_sad_a_dot_slash_prefix_is_no_folder_named_dot(tmp_path) -> None:
+    """An archive made with ``tar -C dir .`` names its members ``./run.sh``,
+    ``./sub/...``: the view showed one folder named "." holding all of
+    them. ``./`` is dropped from the tree; the rows keep the verbatim
+    member names, so extracting a selection still finds them."""
+    import tarfile
+
+    entries = [
+        ArchiveEntry(name="./", size=0, compressed=0, mtime=None, is_dir=True),
+        ArchiveEntry(name="./run.sh", size=3, compressed=3, mtime=None, is_dir=False),
+        ArchiveEntry(name="./sub/", size=0, compressed=0, mtime=None, is_dir=True),
+        ArchiveEntry(name="./sub/a.txt", size=1, compressed=1, mtime=None, is_dir=False),
+        ArchiveEntry(name="././x/./y.txt", size=1, compressed=1, mtime=None, is_dir=False),
+    ]
+    model = build_archive_tree(entries)
+    top = sorted(model.item(r, COL_NAME).text() for r in range(model.rowCount()))
+    assert top == ["run.sh", "sub", "x"]
+    run = next(model.item(r, COL_NAME) for r in range(model.rowCount())
+               if model.item(r, COL_NAME).text() == "run.sh")
+    assert run.data(Qt.ItemDataRole.UserRole) == "./run.sh"
+    src = tmp_path / "dot.tgz"
+    with tarfile.open(src, "w:gz") as tf:
+        info = tarfile.TarInfo("./run.sh")
+        info.size = 3
+        import io
+
+        tf.addfile(info, io.BytesIO(b"abc"))
+    assert archive_mod.extract_members(str(src), str(tmp_path / "out"), ["./run.sh"]) == 1
+    assert (tmp_path / "out" / "run.sh").read_bytes() == b"abc"

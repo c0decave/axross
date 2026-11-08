@@ -58,6 +58,13 @@ LOCAL_FS = frozenset({
     "fuseblk", "vfat", "exfat", "msdos", "apfs", "hfs", "hfsplus", "iso9660", "udf", "bcachefs",
 })
 _REMOVABLE_ROOTS = ("/media/", "/run/media/", "/Volumes/")
+#: File systems whose source is no device path but a name: a ZFS dataset
+#: is "pool/dataset" (every one but "/" was "system" and hidden).
+NAMED_SOURCE_FS = frozenset({"zfs"})
+#: Container engines' layer storage: one dataset per image layer, not a
+#: drive of the user's.
+_CONTAINER_ROOTS = ("/var/lib/docker/", "/var/lib/containers/", "/var/lib/lxd/",
+                    "/var/snap/lxd/", "/var/lib/incus/")
 #: The kinds the panel shows unless "Show system and memory mounts" is on.
 SHOWN_KINDS = ("local", "network", "removable")
 #: Never measured: statvfs on an automount point mounts what is behind it
@@ -99,7 +106,8 @@ def _kind(device: str, mount: str, fstype: str) -> str:
         # Not the kernel's initial rootfs, which older kernels list before
         # the real root on "/": the root showed twice.
         return "local"
-    if fstype in LOCAL_FS and (device.startswith("/dev/") or fstype in ("apfs", "hfs")):
+    named = fstype in NAMED_SOURCE_FS and not mount.startswith(_CONTAINER_ROOTS)
+    if fstype in LOCAL_FS and (device.startswith("/dev/") or fstype in ("apfs", "hfs") or named):
         if mount.startswith(_REMOVABLE_ROOTS):
             return "removable"
         return "local"

@@ -41,6 +41,7 @@ class _Folder:
     def __init__(self, messages) -> None:
         self.messages = messages
         self.name = "Inbox"
+        self.children: list = []  # subfolders (list_dir lists them too)
         self.filtered: list[str] = []
 
     def all(self):

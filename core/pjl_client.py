@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import IO
 
 from core.backend import SessionLifecycle
+from core.path_policy import MAX_RECURSIVE_DELETE_DEPTH, check_tree_depth
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -591,10 +592,30 @@ class PjlSession(SessionLifecycle):
         return _PjlWriter(self, path)
 
     def remove(self, path: str, recursive: bool = False) -> None:
+        """Delete *path*, then check that it is gone.
+
+        PJL is fire-and-forget: FSDELETE of a missing file or of a
+        folder with entries (which no PJL stack deletes) answered with a
+        status the call never read, so remove() returned as if it had
+        worked. Now, as LocalFS: FileNotFoundError for a missing path,
+        ENOTEMPTY for a folder with entries unless *recursive* (then its
+        entries go first, deepest first), and OSError when the entry is
+        still listed after the delete.
+        """
         self._ensure_safe()
         if self.normalize(path) in ("/", ""):
             # '/' maps to the volume root ('0:/'): never send that.
             raise OSError("refusing to delete the printer filesystem root")
+        self._remove_entry(self.normalize(path), self.stat(path).is_dir, recursive, 0)
+
+    def _remove_entry(self, path: str, is_dir: bool, recursive: bool, depth: int) -> None:
+        if is_dir:
+            children = self.list_dir(path)
+            if children and not recursive:
+                raise OSError(errno.ENOTEMPTY, f"PJL remove({path}): directory not empty", path)
+            check_tree_depth(path, depth, MAX_RECURSIVE_DELETE_DEPTH)
+            for child in children:
+                self._remove_entry(self.join(path, child.name), child.is_dir, True, depth + 1)
         target = self._to_pjl_path(path)
         sock = _open_socket(self._host, self._port, self._proxy, self._timeout)
         try:
@@ -604,14 +625,19 @@ class PjlSession(SessionLifecycle):
         finally:
             sock.close()
         self._per_op_revalidate(blob)
+        if self.exists(path):
+            raise OSError(
+                f"PJL FSDELETE({path}) on {self._host}: the entry is still there; "
+                "the device did not delete it"
+            )
 
     def mkdir(self, path: str) -> None:
         # FSMKDIR is supported by some PJL stacks (HP's mainline,
         # Lexmark's MarkVision) but absent from many others. PJL is
-        # fire-and-forget, so we send the command then probe via a
-        # follow-up ``stat()`` to confirm; if the directory still
-        # doesn't exist afterwards we log a warning so the operator
-        # knows the firmware silently dropped the request.
+        # fire-and-forget, so the command is sent and a follow-up
+        # listing confirms it; a folder that is not there afterwards is
+        # an OSError - returning normally reported a folder that the
+        # firmware had silently not created.
         self._ensure_safe()
         target = self._to_pjl_path(path)
         sock = _open_socket(self._host, self._port, self._proxy, self._timeout)
@@ -622,20 +648,11 @@ class PjlSession(SessionLifecycle):
         finally:
             sock.close()
         self._per_op_revalidate(blob)
-        # Post-op verification: most printers don't surface an error
-        # code for unsupported FSMKDIR, they just no-op. A follow-up
-        # stat catches that without breaking the caller.
-        try:
-            if not self.is_dir(path):
-                log.warning(
-                    "PJL FSMKDIR(%s) on %s appears to have been ignored "
-                    "(no directory entry visible after the op). The "
-                    "firmware on this device may not implement FSMKDIR.",
-                    path,
-                    self._host,
-                )
-        except Exception:  # noqa: BLE001 — verification is best-effort
-            pass
+        if not self.is_dir(path):
+            raise OSError(
+                f"PJL FSMKDIR({path}) on {self._host}: no folder there afterwards; the "
+                "firmware on this device may not implement FSMKDIR"
+            )
 
     def rename(self, src: str, dst: str) -> None:
         # PJL has no native rename — emulate via upload + delete only

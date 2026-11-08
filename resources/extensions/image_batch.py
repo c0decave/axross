@@ -23,13 +23,23 @@ MAX_INPUT_BYTES = 64 * 1024 * 1024
 
 def convert(data: bytes, max_edge: int, fmt: str, quality: int = 88) -> bytes:
     """*data* decoded, scaled so its longer edge is at most *max_edge*
-    (never up), and encoded as *fmt* (``PNG`` / ``JPEG`` / ``WebP``)."""
+    (never up), and encoded as *fmt* (``PNG`` / ``JPEG`` / ``WebP``).
+
+    The picture is turned upright first (EXIF orientation) and written
+    without that tag - the copy of a phone photo stored sideways was
+    sideways for good. A JPEG gets transparent parts on white, not black."""
     from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, Qt
-    from PyQt6.QtGui import QImage
+    from PyQt6.QtGui import QColor, QImage, QImageReader, QPainter
 
     if fmt not in FORMATS:
         raise ValueError(f"unknown format {fmt!r}")
-    image = QImage.fromData(data)
+    source = QBuffer()
+    source.setData(QByteArray(data))
+    source.open(QIODevice.OpenModeFlag.ReadOnly)
+    reader = QImageReader(source)
+    reader.setAutoTransform(True)
+    image = reader.read()
+    source.close()
     if image.isNull():
         raise ValueError("not an image Qt can read")
     if max_edge > 0 and max(image.width(), image.height()) > max_edge:
@@ -39,6 +49,13 @@ def convert(data: bytes, max_edge: int, fmt: str, quality: int = 88) -> bytes:
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+    if fmt == "JPEG" and image.hasAlphaChannel():
+        flat = QImage(image.size(), QImage.Format.Format_RGB32)
+        flat.fill(QColor(255, 255, 255))
+        painter = QPainter(flat)
+        painter.drawImage(0, 0, image)
+        painter.end()
+        image = flat
     out = QByteArray()
     buf = QBuffer(out)
     buf.open(QIODevice.OpenModeFlag.WriteOnly)

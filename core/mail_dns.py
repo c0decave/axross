@@ -284,12 +284,12 @@ def dkim_verify(raw: bytes, signature: str, lookup=_lookup_default) -> tuple[str
 
 # --- DMARC -----------------------------------------------------------------------------
 
-def dmarc_policy(domain: str, lookup=_lookup_default) -> dict | None:
+def dmarc_policy(domain: str, lookup=_lookup_default) -> dict:
+    """The DMARC record of *domain* (else its organisational domain) as a
+    dict, ``{}`` when neither publishes one. A failed lookup raises (it was
+    None, and :func:`dns_check` then reported nothing about DMARC)."""
     for name in (domain, _org(domain)):
-        try:
-            recs = [r for r in _txt(lookup, f"_dmarc.{name}") if r.lower().startswith("v=dmarc1")]
-        except OSError:
-            return None
+        recs = [r for r in _txt(lookup, f"_dmarc.{name}") if r.lower().startswith("v=dmarc1")]
         if recs:
             tags = _tags(recs[0])
             return {"domain": name, "p": tags.get("p", "none").lower(), "sp": tags.get("sp", "").lower(),
@@ -314,17 +314,72 @@ def _applied(policy: dict, from_dom: str) -> tuple[str, str]:
 
 # --- all of it -----------------------------------------------------------------------------
 
+_FROM = re.compile(r"\bfrom\s+(\S+)(?:\s*\(([^)]*)\))?", re.I)
+_BY = re.compile(r"\bby\s+([A-Za-z0-9][A-Za-z0-9.-]*)", re.I)
+#: The client address a receiver recorded in Authentication-Results or
+#: Received-SPF: "sender IP is 1.2.3.4" (Microsoft), "client-ip=1.2.3.4",
+#: "smtp.remote-ip=1.2.3.4", "designates 1.2.3.4 as permitted sender" (Gmail).
+_RECORDED_IP = re.compile(r"(?:sender IP is|client-ip=|smtp\.remote-ip=|designates?)\s*\[?(?:IPv6:)?"
+                          r"([0-9A-Fa-f][0-9A-Fa-f.:]*[0-9A-Fa-f])", re.I)
+
+
+def _public(addr) -> bool:
+    return not (addr.is_private or addr.is_loopback or addr.is_link_local)
+
+
 def sending_ip(msg: MailMessage) -> str:
-    """The address the receiving side saw: the newest Received hop whose
-    'from' address is public ("[IPv6:2001:db8::1]" is 2001:db8::1)."""
-    for value in msg.header_all("Received"):
-        m = re.search(r"\bfrom\s+\S+\s+\(([^)]*)\)", " ".join(value.split()), re.I)
+    """The address of the server that handed the message to the receiving
+    organisation: the first Received hop from outside it ("[IPv6:2001:db8::1]"
+    is 2001:db8::1).
+
+    The Received lines are read from the newest on. The receiving side is
+    the organisation (registrable domain) of each hop's 'by' host; a hop
+    whose 'from' host (its reverse name when the line records one, else its
+    HELO name) belongs to it is the receiver's own relaying - Microsoft 365
+    passes a mail through several outlook.com / office365.com servers with
+    public addresses - and is passed over, as is a hop with only private
+    addresses. The first hop from another organisation is where the mail
+    came in. When the receiver recorded the client address in an
+    Authentication-Results or Received-SPF header above that hop (written
+    after it, so not by the sender), that address is taken. With no hop
+    from outside, the newest public address."""
+    headers = [(i, k.lower(), " ".join(v.split())) for i, (k, v) in enumerate(msg.headers)]
+    inside: set[str] = set()
+    newest_public, entry_pos, entry_ip = "", None, ""
+    for pos, name, value in headers:
+        if name != "received":
+            continue
+        m = _FROM.search(value)
+        by = _BY.search(value, m.end() if m else 0)
+        if by:
+            inside.add(_org(by.group(1).rstrip(".")))
         if not m:
             continue
-        for addr in ip_literals(m.group(1)):
-            if not (addr.is_private or addr.is_loopback or addr.is_link_local):
+        comment = m.group(2) or ""
+        ips = [a for a in ip_literals(comment) if _public(a)]
+        if not ips:
+            continue
+        newest_public = newest_public or str(ips[0])
+        rdns = comment.split()[0] if comment.split() else ""
+        host = rdns if re.search(r"[A-Za-z]", rdns) and "." in rdns and ":" not in rdns else m.group(1)
+        if _org(host.strip("[]").rstrip(".")) not in inside:
+            entry_pos, entry_ip = pos, str(ips[0])
+            break
+    if entry_pos is None:
+        return newest_public
+    for pos, name, value in headers:
+        if pos >= entry_pos:
+            break
+        if name not in ("authentication-results", "received-spf"):
+            continue
+        for found in _RECORDED_IP.finditer(value):
+            try:
+                addr = ipaddress.ip_address(found.group(1))
+            except ValueError:
+                continue
+            if _public(addr):
                 return str(addr)
-    return ""
+    return entry_ip
 
 
 def unverifiable_dkim(msg: MailMessage) -> str:
@@ -372,7 +427,7 @@ def dns_check(msg: MailMessage, lookup=_lookup_default) -> tuple[list[Finding], 
         policy = dmarc_policy(from_dom, lookup) if from_dom else None
     except Exception as exc:  # noqa: BLE001
         policy = None
-        findings.append(Finding("info", "dns", f"DMARC could not be checked: {type(exc).__name__}: {exc}"[:300]))
+        findings.append(Finding("info", "dns", f"DMARC: lookup failed ({type(exc).__name__}: {exc})"[:300]))
     if policy:
         aligned_spf = bool(spf == "pass" and env_dom and _aligned(env_dom, from_dom, policy["aspf"]))
         aligned_dkim = any(d["result"] == "pass" and _aligned(d["domain"], from_dom, policy["adkim"]) for d in dkim)

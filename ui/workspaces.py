@@ -312,6 +312,29 @@ class WorkspaceMixin:
             widget = widget.parentWidget()
         return None
 
+    def _fallback_target(self, active):
+        """A target pane for *active* when it has none: another file pane of
+        *active*'s workspace - the one that workspace remembers first - or
+        None (F5 then says to pick a target). Never a pane of another
+        workspace: after a restart F5 copied into a pane of a hidden tab."""
+        if active is None:
+            return None
+        ws = self.workspace_of(active)
+        others = [p for p in self._panes if p is not active and self.workspace_of(p) is ws]
+        if ws is not None and getattr(ws, "last_target", None) in others:
+            return ws.last_target
+        return others[0] if others else None
+
+    def _keep_target_in_workspace(self) -> None:
+        """The target pane belongs to the active pane's workspace (each
+        workspace keeps its own pair); one elsewhere is replaced by the
+        fallback, or unset."""
+        active, target = self._active_pane, self._target_pane
+        if target is None or active is None:
+            return
+        if self.workspace_of(target) is not self.workspace_of(active):
+            self._target_pane = self._fallback_target(active)
+
     def _widgets_of(self, ws: Workspace) -> tuple[list, list, list]:
         """The file panes, terminal panes and placeholders in *ws*."""
         return (
@@ -476,6 +499,10 @@ class WorkspaceMixin:
         if hasattr(self, "apply_dock_bindings"):
             self.apply_dock_bindings()  # docks shown only on some workspace (ui.dock_bindings)
         if old is ws and self.workspace_of(self._active_pane) is ws:
+            before = self._target_pane
+            self._keep_target_in_workspace()
+            if self._target_pane is not before:
+                self._refresh_pane_styles()
             return
         files = self._widgets_of(ws)[0]
         if not files:
@@ -483,9 +510,9 @@ class WorkspaceMixin:
         active = ws.last_active if ws.last_active in files else files[0]
         self._set_active_pane(active)
         target = ws.last_target if ws.last_target in files else None
-        if target is None and len(files) > 1:
-            target = next(p for p in files if p is not active)
-        if target is not None and target is not active:
+        if target is None or target is active:
+            target = self._fallback_target(active)
+        if target is not self._target_pane:
             self._target_pane = target
             self._refresh_pane_styles()
 

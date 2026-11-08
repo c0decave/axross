@@ -74,6 +74,16 @@ for item in fs.list_dir(fs.home())[:10]:
 '''
 
 
+def _new_session(proc: QProcess) -> bool:
+    """Have *proc*'s child start a session (and process group) of its own;
+    False where Qt cannot (Windows, Qt before 6.7)."""
+    flag = getattr(getattr(QProcess, "UnixProcessFlag", None), "CreateNewSession", None)
+    if os.name != "posix" or flag is None or not hasattr(proc, "setUnixProcessParameters"):
+        return False
+    proc.setUnixProcessParameters(flag)
+    return True
+
+
 class ScriptRun(QObject):
     """One child process: streams its output, reports how it ended."""
 
@@ -93,6 +103,12 @@ class ScriptRun(QObject):
         for key, value in env.items():
             penv.insert(key, value)
         self._proc.setProcessEnvironment(penv)
+        #: The run's process group (POSIX): the child leads a session of
+        #: its own, so Stop and closing the window reach what it started.
+        #: Before, only the child was signalled and a ``subprocess.run``
+        #: of the script went on running.
+        self._group: int | None = None
+        self._new_session = _new_session(self._proc)
         self._limiters = {
             False: SR.OutputLimiter(max_lines=SR.MAX_OUTPUT_LINES),
             True: SR.OutputLimiter(max_lines=SR.MAX_OUTPUT_LINES),
@@ -105,12 +121,17 @@ class ScriptRun(QObject):
         self._kill_timer.setSingleShot(True)
         self._kill_timer.timeout.connect(self._kill)
         self._started_at = 0.0
+        self._stop_at = 0.0
         self._stopping = False
         self._done = False
 
     def start(self) -> None:
         self._started_at = time.monotonic()
         self._proc.start()
+        pid = int(self._proc.processId())
+        if self._new_session and pid > 0:
+            self._group = pid
+            SR.track_group(pid)  # killed when axross exits, like a bounded run
         if self._command.stdin_text:
             self._proc.write(self._command.stdin_text.encode("utf-8"))
         # End of input: input() gets EOF, and axross.confirm() raises
@@ -126,27 +147,44 @@ class ScriptRun(QObject):
         return int(self._proc.processId()) or None
 
     def stop(self) -> None:
-        """Terminate now, kill after the grace period. Returns at once."""
+        """Terminate the run's process group now, kill it after the grace
+        period. Returns at once."""
         if self._proc.state() == QProcess.ProcessState.NotRunning:
             return
         self._stopping = True
-        self._proc.terminate()
+        self._stop_at = time.monotonic()
+        self._terminate()
         self._kill_timer.start(int(SR.STOP_GRACE_SECONDS * 1000))
 
     def shutdown(self) -> None:
-        """Stop and wait for the end (window close): terminate, then kill."""
+        """Stop and wait for the end (window close): terminate, then kill
+        - the whole process group."""
         if self._proc.state() == QProcess.ProcessState.NotRunning:
             return
         self._stopping = True
-        self._proc.terminate()
+        self._kill_timer.stop()
+        self._terminate()
         if not self._proc.waitForFinished(int(SR.STOP_GRACE_SECONDS * 1000)):
             self._proc.kill()
             self._proc.waitForFinished(5000)
+        self._kill_group()
+
+    def _terminate(self) -> None:
+        if self._group is None or not SR.signal_group(self._group, hard=False):
+            self._proc.terminate()
+
+    def _kill_group(self) -> None:
+        """What is left of the group after a Stop: killed, then forgotten."""
+        group, self._group = self._group, None
+        if group is not None:
+            SR.signal_group(group, hard=True)
+            SR.forget_group(group)
 
     def _kill(self) -> None:
         if self._proc.state() != QProcess.ProcessState.NotRunning:
             log.info("script run did not end after terminate; killing pid %s", self.pid())
             self._proc.kill()
+        self._kill_group()
 
     def _read(self, from_stderr: bool) -> None:
         data = bytes(
@@ -161,6 +199,19 @@ class ScriptRun(QObject):
         if self._done:
             return
         self._kill_timer.stop()
+        if self._stopping and self._group is not None:
+            # The script ended on Stop; what it started gets the rest of
+            # the grace period, then is killed - even once this run is gone.
+            group, self._group = self._group, None
+            elapsed_ms = int((time.monotonic() - self._stop_at) * 1000)
+            wait_ms = max(0, int(SR.STOP_GRACE_SECONDS * 1000) - elapsed_ms)
+            QTimer.singleShot(wait_ms, lambda: (SR.signal_group(group, hard=True),
+                                                SR.forget_group(group)))
+        elif self._group is not None:
+            # Ended by itself: what it started on purpose (a browser it
+            # opened) is the user's now.
+            SR.forget_group(self._group)
+            self._group = None
         self._read(False)
         self._read(True)
         for from_stderr, limiter in self._limiters.items():

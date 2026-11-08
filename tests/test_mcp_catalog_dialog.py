@@ -367,7 +367,7 @@ def test_edge_an_update_is_shown_never_applied(tmp_path):
     path = tmp_path / "agent.json"
     s = S.AgentSettings()
     s.mcp_servers.append(C.McpServerConfig(
-        name="tz", command=("podman", "run", "x"), container=True,
+        name="tz", command=tuple(I.run_command("tz", "x")), container=True,
         package={"kind": "npm", "identifier": "tz-mcp", "version": "0.1.0", "image": "a" * 64}))
     s.save(path)
     dlg = _dialog(path)
@@ -619,3 +619,22 @@ def test_happy_e2e_a_third_party_server_says_axross_does_not_maintain_it(tmp_pat
     _click_entry(cat, "time")
     assert "Maintained by" not in cat.details.toPlainText()  # axross's own choice: no line
     cat.close()
+
+
+def test_sad_a_container_s_podman_line_is_read_only_in_the_dialog(tmp_path):
+    """The Program field of a container server could be edited into any
+    line (``npx -y evil``) and was saved as a "container". The installer
+    alone writes that line: the field is read-only and Save keeps it."""
+    path = tmp_path / "agent.json"
+    s = S.AgentSettings()
+    line = tuple(I.run_command("tz", "x"))
+    s.mcp_servers.append(C.McpServerConfig(name="tz", command=line, container=True,
+                                           package={"kind": "oci", "image": "a" * 64}))
+    s.save(path)
+    dlg = _dialog(path)
+    dlg.server_list.setCurrentRow(0)
+    assert dlg.server_command_edit.isReadOnly()
+    dlg.server_command_edit.setText("npx -y evil")
+    assert dlg.save()
+    (server,) = S.AgentSettings.load(path).mcp_servers
+    assert server.container and server.command == line

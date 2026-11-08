@@ -9,6 +9,7 @@ from __future__ import annotations
 import atexit
 import collections
 import functools
+import json
 import logging
 import math
 import os
@@ -359,9 +360,17 @@ MAX_STATE_BYTES = 4 * 1024 * 1024
 STATE_VERSION = 1
 
 #: Temporary folders holding copies of remote tracks (up to
-#: MAX_REMOTE_BYTES each): the playlist plays from them until the
-#: extension unloads, then they go.
+#: MAX_REMOTE_BYTES each): the playlist plays from them; a copy goes when
+#: its row does (after it stops playing), the rest when the extension
+#: unloads.
 _TEMP_FOLDERS: list[str] = []
+_TEMP_PREFIX = "axross-media-"
+#: In each temporary folder: the process that made it, so a later start
+#: removes the folders of one that ended without cleaning up (a crash).
+_OWNER_FILE = "owner.json"
+#: A folder without an owner file (made before there was one) is stale
+#: once it has not changed for this long.
+STALE_UNMARKED_SECONDS = 24 * 3600
 
 
 class PlaylistError(ValueError):
@@ -537,9 +546,132 @@ def remote_temp_folder(temp_root: str | None = None) -> str:
     GUI thread, where the unload runs (PlayerPanel.add_remote)."""
     import tempfile
 
-    folder = os.path.abspath(tempfile.mkdtemp(prefix="axross-media-", dir=temp_root))
+    folder = os.path.abspath(tempfile.mkdtemp(prefix=_TEMP_PREFIX, dir=temp_root))
     _TEMP_FOLDERS.append(folder)
+    try:
+        with open(os.path.join(folder, _OWNER_FILE), "w", encoding="utf-8") as fh:
+            json.dump({"pid": os.getpid(), "proc_start": _process_start(os.getpid())}, fh)
+    except OSError:
+        _forget_temp(folder)
+        raise
     return folder
+
+
+def _process_start(pid: int) -> int | None:
+    """The kernel's start time of *pid* (Linux): tells it from a later
+    process that got the same pid. (As core.extensions has it - the
+    player is also exported on its own, without that module.)"""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as fh:
+            return int(fh.read().rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _process_alive(pid: int, proc_start) -> bool:
+    """Whether the process that made a temporary folder still runs."""
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) \
+                and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except OSError:  # gone, or another user's process has the pid now
+        return False
+    now = _process_start(pid)
+    return not (isinstance(proc_start, int) and now is not None and now != proc_start)
+
+
+def _temp_folder_of(path: str) -> str | None:
+    path = os.path.abspath(path)
+    return next((f for f in _TEMP_FOLDERS if path.startswith(f + os.sep)), None)
+
+
+def _has_copies(folder: str) -> bool:
+    """Whether *folder* still holds a track's copy (a subfolder of one)."""
+    try:
+        return any(name != _OWNER_FILE for name in os.listdir(folder))
+    except OSError:
+        return False
+
+
+def delete_temp_copy(path: str, *, keep_folder: bool = False) -> None:
+    """Remove the temporary copy *path* of a remote track - its file and
+    the subfolder it was copied into - and, unless *keep_folder*, its
+    temporary folder once that holds no copy any more. Before, the copies
+    stayed until the extension unloaded: each Clear and re-add of a remote
+    folder kept up to MAX_REMOTE_TOTAL_BYTES more on the disk."""
+    folder = _temp_folder_of(path)
+    if folder is None:
+        return  # not a copy of ours
+    sub = os.path.dirname(os.path.abspath(path))
+    if os.path.dirname(sub) == folder:
+        shutil.rmtree(sub, ignore_errors=True)
+    else:  # pragma: no cover - copy_remote always makes the subfolder
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    if not keep_folder and not _has_copies(folder):
+        _forget_temp(folder)
+
+
+def _owner_alive(folder: str) -> bool | None:
+    """Whether the process that made *folder* still runs; None when the
+    folder names none."""
+    try:
+        with open(os.path.join(folder, _OWNER_FILE), encoding="utf-8") as fh:
+            owner = json.loads(fh.read(4096))
+        pid = owner["pid"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    return _process_alive(pid, owner.get("proc_start"))
+
+
+def sweep_stale_temp_folders(temp_root: str | None = None) -> list[str]:
+    """Remove the temporary folders (``axross-media-*``) whose process has
+    ended - an axross that crashed or was killed left its copies behind
+    for good. Only this user's folders, never a link; the removed ones."""
+    import tempfile
+
+    root = temp_root or tempfile.gettempdir()
+    removed = []
+    try:
+        entries = list(os.scandir(root))
+    except OSError:
+        return removed
+    now = time.time()
+    for entry in entries:
+        if not entry.name.startswith(_TEMP_PREFIX):
+            continue
+        try:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            st = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():
+            continue  # another user's
+        folder = os.path.abspath(entry.path)
+        if folder in _TEMP_FOLDERS:
+            continue
+        alive = _owner_alive(folder)
+        if alive or (alive is None and now - st.st_mtime < STALE_UNMARKED_SECONDS):
+            continue
+        shutil.rmtree(folder, ignore_errors=True)
+        removed.append(folder)
+    return removed
 
 
 def copy_remote(backend, path: str, name: str, folder: str, index: int,
@@ -4726,6 +4858,12 @@ class PlayerPanel(QWidget):
         #: from there.
         self._resume_row: int | None = None
         self._history: list[QListWidgetItem] = []
+        #: Removed rows' temporary copies that were still playing: deleted
+        #: once the engine moves on (another track, stop, end).
+        self._doomed: set[str] = set()
+        #: Temporary folders an add_remote is still copying into: kept
+        #: when their last copy goes meanwhile.
+        self._filling: set[str] = set()
         self._round: set[int] = set()
         self._rng = random.Random()
         self._fail_streak = 0
@@ -4740,6 +4878,8 @@ class PlayerPanel(QWidget):
         self._state_path = state_path
         self._state_unreadable = False
         self._restoring = False
+        #: What the file held while a restore checks its tracks (_state).
+        self._restore_pending: dict | None = None
         self._last_save = time.monotonic()
         root = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -5023,6 +5163,7 @@ class PlayerPanel(QWidget):
     def _connect_engine(self, engine) -> None:
         engine.finished_playing.connect(self._next_after_end)
         engine.changed.connect(self._refresh)
+        engine.changed.connect(self._release_doomed)
         failed = getattr(engine, "failed", None)
         if failed is not None:
             failed.connect(self._track_failed)
@@ -5221,6 +5362,7 @@ class PlayerPanel(QWidget):
             except OSError as exc:
                 say_failed(exc)
                 return
+            self._filling.add(folder)
             copy_next({"remote": remote, "skipped": skipped, "truncated": truncated,
                        "folder": folder, "index": 0, "total": 0})
 
@@ -5247,14 +5389,51 @@ class PlayerPanel(QWidget):
                     done=job["index"], count=count))
                 copy_next(job)
             else:
+                self._filled(job["folder"])
                 self._say_added(count, job["skipped"], job["truncated"])
 
         def copy_failed(job, exc) -> None:
             if job["index"] == 0:
                 _forget_temp(job["folder"])  # nothing of it is in the playlist
+            self._filled(job["folder"])
             say_failed(exc)
 
         self._background(lambda: list_remote(backend, paths), listed, say_failed)
+
+    def _filled(self, folder: str) -> None:
+        """An add_remote is done with *folder*: it goes if the rows of all
+        its copies were removed meanwhile."""
+        self._filling.discard(folder)
+        if folder in _TEMP_FOLDERS and not _has_copies(folder):
+            _forget_temp(folder)
+
+    def _playing_copy(self, path: str) -> bool:
+        engine = self.engine
+        return bool(getattr(engine, "loaded", False)) and getattr(engine, "path", "") == path \
+            and getattr(engine, "state", "stopped") != "stopped"
+
+    def _drop_copies(self, paths) -> None:
+        """Delete the temporary copies among *paths* (rows just removed)
+        that no other row plays; the one playing goes once it stops."""
+        temp = {p for p in paths if isinstance(p, str) and _is_temp_copy(p)}
+        if not temp:
+            return
+        kept = {self.playlist.item(i).data(_PATH_ROLE) for i in range(self.playlist.count())}
+        for path in temp - kept:
+            if self._playing_copy(path):
+                self._doomed.add(path)
+            else:
+                self._delete_copy(path)
+
+    def _release_doomed(self) -> None:
+        """The engine changed: delete the removed copies it no longer plays."""
+        for path in list(self._doomed):
+            if not self._playing_copy(path):
+                self._doomed.discard(path)
+                self._delete_copy(path)
+
+    def _delete_copy(self, path: str) -> None:
+        delete_temp_copy(path, keep_folder=_temp_folder_of(path) in self._filling)
 
     def _background(self, work, done, failed) -> None:
         if self.run_in_background is not None:
@@ -5411,11 +5590,14 @@ class PlayerPanel(QWidget):
             # It plays on; next continues with what followed it.
             self._resume_row = playing - sum(1 for r in rows if r < playing)
             self._current = None
+        removed = []
         for row in reversed(rows):
             item = self.playlist.takeItem(row)
+            removed.append(item.data(_PATH_ROLE))
             if item in self._history:
                 self._history = [h for h in self._history if h is not item]
             self._round.discard(id(item))
+        self._drop_copies(removed)
 
     def clear_playlist(self) -> None:
         self._remove_all_rows()
@@ -5425,8 +5607,10 @@ class PlayerPanel(QWidget):
         self._resume_row = None
         self._history.clear()
         self._round.clear()
+        removed = []
         while self.playlist.count():
-            self.playlist.takeItem(self.playlist.count() - 1)
+            removed.append(self.playlist.takeItem(self.playlist.count() - 1).data(_PATH_ROLE))
+        self._drop_copies(removed)
 
     def play_selected(self) -> None:
         item = self.playlist.currentItem()
@@ -5447,6 +5631,7 @@ class PlayerPanel(QWidget):
             self._round.add(id(item))
         self.note.setText("")
         self.engine.load(path)
+        self._release_doomed()  # the copy of a removed row that played until now
         self._track_ms = 0
         self._read_tags(path)
         self.engine.play()
@@ -6328,11 +6513,15 @@ class PlayerPanel(QWidget):
     # -- the saved state ------------------------------------------------------------------
 
     def _schedule_save(self, *_args) -> None:
-        if self._state_path and not self._restoring:
+        if self._state_path:
             self._save_timer.start()
 
     def _state(self) -> dict:
-        tracks: list[dict] = []
+        # While the restore still checks its tracks (one on a hung mount
+        # never answers), they are saved as the file had them, ahead of
+        # what was added since: before, nothing was saved for the session.
+        pending = self._restore_pending if self._restoring else None
+        tracks: list[dict] = list(pending["tracks"]) if pending else []
         current = -1
         for item in self._items():
             path = item.data(_PATH_ROLE)
@@ -6347,6 +6536,8 @@ class PlayerPanel(QWidget):
         if current >= 0 and self.engine.loaded \
                 and self.engine.path == self._current.data(_PATH_ROLE):
             position = int(self.engine.position_ms())
+        elif current < 0 and pending and pending["current"] >= 0:
+            current, position = pending["current"], pending["position_ms"]
         return {"version": STATE_VERSION, "volume": self.volume.value(), "muted": self.muted,
                 "shuffle": self.shuffle, "repeat": self.repeat, "tracks": tracks,
                 "current": current, "position_ms": position,
@@ -6363,8 +6554,8 @@ class PlayerPanel(QWidget):
         whether the equalizer and the playlist are open to the private
         state file."""
         self._save_timer.stop()
-        if not self._state_path or self._restoring:
-            return  # restoring: the file still holds more than the list
+        if not self._state_path:
+            return
         self._last_save = time.monotonic()
         try:
             write_state(self._state_path, self._state(), keep_old=self._state_unreadable)
@@ -6400,6 +6591,7 @@ class PlayerPanel(QWidget):
         self.set_playlist_open(state.get("playlist_open") is not False)
         tracks = state.get("tracks")
         wanted = []
+        kept = []  # as the file has them: saved so while the check runs
         for index, track in enumerate(tracks[:MAX_PLAYLIST_ENTRIES]
                                       if isinstance(tracks, list) else []):
             path = track.get("path") if isinstance(track, dict) else None
@@ -6409,8 +6601,15 @@ class PlayerPanel(QWidget):
             duration = track.get("duration")
             wanted.append((index, path, _clean_text(title) if isinstance(title, str) else "",
                            duration if isinstance(duration, int) and duration > 0 else 0))
+            kept.append({key: track[key] for key in ("path", "title", "duration")
+                         if key in track})
         current = state.get("current")
         position = state.get("position_ms")
+        self._restore_pending = {
+            "tracks": kept,
+            "current": next((n for n, entry in enumerate(wanted) if entry[0] == current), -1),
+            "position_ms": position if isinstance(position, int) and position > 0 else 0,
+        }
 
         def work():
             return [entry for entry in wanted if is_stream(entry[1]) or _is_track(entry[1])]
@@ -6466,6 +6665,7 @@ class PlayerPanel(QWidget):
             self._state_path = None  # nothing after this writes
             self._clock.stop()
             self.engine.stop()
+            self._release_doomed()
             close = getattr(self.engine, "close", None)
             if callable(close):
                 close()  # the equalizer engine frees its decoder and sound card
@@ -6551,6 +6751,11 @@ def _mixer_opener(window):
 
 
 def activate(api):
+    # Copies of remote tracks an earlier axross left when it ended without
+    # unloading the extension (a crash, a kill): off the GUI thread, the
+    # temporary folder may be large.
+    api.run_in_background(sweep_stale_temp_folders, on_done=lambda _removed: None,
+                          on_error=lambda exc: log.debug("temporary folder sweep: %s", exc))
     window = getattr(api, "window", None)
     open_settings = getattr(window, "open_settings", None)
     panel = PlayerPanel(state_path=str(state_file()),

@@ -63,6 +63,9 @@ class FakeTelnetShell:
         self.close()
 
     def _lookup(self, cmd: str):
+        # Listings run under TZ=UTC0 (their dates are UTC); the canned
+        # answers are keyed by the command itself.
+        cmd = cmd.removeprefix("TZ=UTC0 ")
         best = None
         for prefix, out in self.outputs.items():
             if cmd.startswith(prefix) and (best is None or len(prefix) > len(best[0])):

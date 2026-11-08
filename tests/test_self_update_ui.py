@@ -707,10 +707,26 @@ def test_sad_a_non_web_link_is_not_opened(href):
 
 def test_happy_a_web_link_opens_through_desktop_open():
     view = notes_view("[release](https://github.com/c0decave/axross/releases)")
-    with mock.patch("core.desktop_open.open_url") as open_url:
+    with mock.patch("core.desktop_open.open_url") as open_url, \
+            mock.patch("ui.update_ui.ask_open_link", return_value=True):
         click_anchor(view, "https://github.com/c0decave/axross/releases")
     (call,) = open_url.call_args_list
     assert call.args[0].toString() == "https://github.com/c0decave/axross/releases"
+
+
+def test_sad_a_web_link_is_asked_for_and_shows_its_real_address():
+    """A link of the release notes opened in the browser at a click, and
+    its text could name another address than it opens
+    (``[https://github.com/…](https://evil.example/)``). It is asked for
+    now, with the real address - and the link's text when it differs."""
+    view = notes_view("[https://github.com/c0decave/axross](https://evil.example/x)")
+    asked = []
+    with mock.patch("core.desktop_open.open_url") as open_url, \
+            mock.patch("ui.update_ui.ask_open_link",
+                       side_effect=lambda parent, href, text: asked.append((href, text)) or False):
+        click_anchor(view, "https://evil.example/x")
+    assert asked == [("https://evil.example/x", "https://github.com/c0decave/axross")]
+    open_url.assert_not_called()
 
 
 def test_edge_empty_notes_hide_the_view(stores, fake):
@@ -751,7 +767,8 @@ def test_happy_e2e_the_dialog_renders_the_notes_and_guards_the_links(stores, fak
     assert counter.hits == []
     clicked: list[str] = []
     notes.anchorClicked.connect(lambda url: clicked.append(url.toString()))
-    with mock.patch("core.desktop_open.open_url") as open_url:
+    with mock.patch("core.desktop_open.open_url") as open_url, \
+            mock.patch("ui.update_ui.ask_open_link", return_value=True):
         click_anchor(notes, "javascript:alert(1)")
         click_anchor(notes, "file:///etc/passwd")
         open_url.assert_not_called()

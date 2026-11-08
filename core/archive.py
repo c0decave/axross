@@ -21,11 +21,11 @@ Every extraction enforces:
    written (the target dir is removed before raising so there's no
    partial state).
 2. **No absolute-path entries** — refused upfront.
-3. **No symlink / hardlink entries** in tarballs — tarfile
-   represents these with distinct type flags; we reject every
-   non-``REGTYPE`` / non-``DIRTYPE`` entry. ZIPs don't have a
-   symlink concept in the standard (some toolchains abuse mode
-   bits for it — we don't honour those either).
+3. **No symlink / hardlink entries** — a tar symlink or hardlink
+   member, and a ZIP member whose Unix mode says symlink (Info-ZIP
+   ``zip -y``), is left out: nothing is written for it, and its name
+   is in :attr:`ExtractResult.skipped_links`. Any other non-file,
+   non-directory tar member (device, FIFO) refuses the archive.
 4. **Size / count / ratio caps** — an archive that claims to
    expand to more than ``MAX_EXTRACT_TOTAL_BYTES`` OR contains
    more than ``MAX_EXTRACT_FILES`` entries OR shows a per-entry
@@ -383,6 +383,38 @@ def auto_suffix_dir(parent: str, base: str) -> str:
 # --------------------------------------------------------------------------
 
 
+class ExtractResult(int):
+    """What :func:`extract` and :func:`extract_members` did: the number of
+    regular files written (an ``int``, as these returned before) and the
+    link members left out (:attr:`skipped_links`, archive names).
+
+    A symlink member used to refuse a whole tarball, and a ZIP symlink was
+    written as a regular 0755 file holding the link's target path; links
+    are skipped now, never followed or created."""
+
+    skipped_links: list[str]
+
+    def __new__(cls, written: int = 0, skipped_links=()):
+        obj = super().__new__(cls, written)
+        obj.skipped_links = list(skipped_links)
+        return obj
+
+    def __repr__(self) -> str:
+        return f"ExtractResult({int(self)}, skipped_links={self.skipped_links!r})"
+
+
+def _zip_is_link(info: zipfile.ZipInfo) -> bool:
+    """A ZIP member whose Unix mode is a symlink (Info-ZIP ``zip -y``): its
+    data is the link's target path, not file content."""
+    return info.create_system == 3 and stat.S_ISLNK(info.external_attr >> 16)
+
+
+def _as_result(written, skipped: list[str]) -> ExtractResult:
+    if skipped:
+        log.info("archive: %d link member(s) left out: %s", len(skipped), ", ".join(skipped[:20]))
+    return ExtractResult(int(written), skipped)
+
+
 def _write_member_file(dest: str, src, mode: int | None, mtime: float | None) -> None:
     """Write one member's bytes to *dest* with its stored mode and time.
 
@@ -679,11 +711,15 @@ def _extract_zip(
                 f"archive declares {total_uncompressed} uncompressed "
                 f"bytes; cap is {MAX_EXTRACT_TOTAL_BYTES}",
             )
-        files_total = sum(1 for i in infos if not i.is_dir())
+        files_total = sum(1 for i in infos if not i.is_dir() and not _zip_is_link(i))
         files_done = 0
+        skipped: list[str] = []
         seen_paths: set[str] = set()
         for info in infos:
             name = info.filename
+            if _zip_is_link(info):
+                skipped.append(name)
+                continue
             # zipfile flags directories by trailing slash OR
             # explicit attrs; use is_dir() to cover both.
             if info.is_dir():
@@ -705,7 +741,7 @@ def _extract_zip(
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
-        return files_done
+        return _as_result(files_done, skipped)
 
 
 #: Leading bytes of the stream formats :func:`_open_tar` opens itself.
@@ -870,16 +906,17 @@ def _extract_tar(
             )
         files_total = sum(1 for m in members if m.isfile())
         files_done = 0
+        skipped: list[str] = []
         seen_paths: set[str] = set()
         for m in members:
             # Tar members can be symlinks, hardlinks, device nodes,
             # FIFOs — all of which can escape the target dir or
             # trigger host-side side-effects we never want to
-            # execute automatically. Only REG + DIR pass.
+            # execute automatically. Only REG + DIR are written; a
+            # link is left out (and reported), anything else refuses.
             if m.issym() or m.islnk():
-                raise UnsafeArchive(
-                    f"tar entry is a link (sym or hard): {m.name!r}",
-                )
+                skipped.append(m.name)
+                continue
             if not (m.isfile() or m.isdir()):
                 raise UnsafeArchive(
                     f"tar entry has unsupported type {getattr(m, 'type', b'?')!r}: {m.name!r}",
@@ -910,7 +947,7 @@ def _extract_tar(
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, m.name)
-        return files_done
+        return _as_result(files_done, skipped)
 
 
 def _extract_7z(
@@ -1143,6 +1180,8 @@ def _extract_members_zip(
             )
         requested = _resolve_selection([i.filename for i in infos], members)
         selected = [i for i in infos if _is_selected(i.filename, requested)]
+        skipped = [i.filename for i in selected if _zip_is_link(i)]
+        selected = [i for i in selected if not _zip_is_link(i)]
         sel_files = [i for i in selected if not i.is_dir()]
         if len(sel_files) > MAX_EXTRACT_FILES:
             raise UnsafeArchive(
@@ -1173,7 +1212,7 @@ def _extract_members_zip(
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, name)
-        return files_done
+        return _as_result(files_done, skipped)
 
 
 def _extract_members_tar(
@@ -1207,14 +1246,14 @@ def _extract_members_tar(
             )
         files_total = len(sel_files)
         files_done = 0
+        skipped: list[str] = []
         seen_paths: set[str] = set()
         for m in selected:
-            # SAME type guards as _extract_tar: reject links + anything
-            # that isn't a plain file or dir BEFORE writing.
+            # SAME type guards as _extract_tar: leave links out, refuse
+            # anything else that isn't a plain file or dir BEFORE writing.
             if m.issym() or m.islnk():
-                raise UnsafeArchive(
-                    f"tar entry is a link (sym or hard): {m.name!r}",
-                )
+                skipped.append(m.name)
+                continue
             if not (m.isfile() or m.isdir()):
                 raise UnsafeArchive(
                     f"tar entry has unsupported type {getattr(m, 'type', b'?')!r}: {m.name!r}",
@@ -1239,7 +1278,7 @@ def _extract_members_tar(
             files_done += 1
             if progress is not None:
                 progress(files_done, files_total, m.name)
-        return files_done
+        return _as_result(files_done, skipped)
 
 
 def extract_members(
@@ -1247,14 +1286,15 @@ def extract_members(
     target: str,
     members: list[str],
     progress: Callable[[int, int, str], None] | None = None,
-) -> int:
+) -> ExtractResult:
     """Extract ONLY the named *members* from *archive_path* into *target*.
 
     *members* is a list of member names as reported by
     :func:`list_archive`. A name that refers to a DIRECTORY pulls in
     every descendant (path-segment prefix match on the archive's
     normalised names — ``d`` selects ``d/a.txt`` but never a sibling
-    ``d2.txt``). Returns the count of regular files written.
+    ``d2.txt``). Returns the count of regular files written, as an
+    :class:`ExtractResult` that also names the link members left out.
 
     Behaviour:
 
@@ -1265,7 +1305,7 @@ def extract_members(
       pre-exist; it is created (0o755) and removed on any failure, so
       the caller never sees partial / attacker-controlled content.
     * **Safety guards** — the SAME guards as the full extractors apply
-      per selected member: symlink / non-file-non-dir refusal,
+      per selected member: links left out, non-file-non-dir refusal,
       :func:`_safe_member_path` zip-slip check, :func:`_check_duplicate_member`,
       :func:`_check_bomb_ratio`, and the MAX_EXTRACT_FILES /
       MAX_EXTRACT_TOTAL_BYTES caps — enforced across the SELECTED set.
@@ -1351,7 +1391,7 @@ def extract_members(
                 f"{MAX_EXTRACT_TOTAL_BYTES} — likely bomb with "
                 "declared-size metadata smaller than reality",
             )
-        return written
+        return written if isinstance(written, ExtractResult) else ExtractResult(written)
     except BaseException:
         # Clean on ANY failure (UnsafeArchive, KeyError, ExtractCancelled,
         # OSError, KeyboardInterrupt) — never leave partial content.
@@ -1620,7 +1660,7 @@ def extract(
     target: str,
     *,
     progress: Callable[[int, int, str], None] | None = None,
-) -> int:
+) -> ExtractResult:
     """Extract *archive_path* into *target*.
 
     *target* must NOT exist yet; the function creates it (0o755) and
@@ -1631,7 +1671,9 @@ def extract(
     failure as "tried to extract, ignore" would then be fooled into
     trusting partial content. Clean-on-fail removes the temptation.
 
-    Returns the number of regular files written.
+    Returns the number of regular files written, as an
+    :class:`ExtractResult` whose ``skipped_links`` names the symlink and
+    hardlink members left out (tar, and ZIP symlinks).
     """
     if not os.path.isfile(archive_path):
         raise FileNotFoundError(
@@ -1715,7 +1757,7 @@ def extract(
                 f"{MAX_EXTRACT_TOTAL_BYTES} — likely bomb with "
                 "declared-size metadata smaller than reality",
             )
-        return written
+        return written if isinstance(written, ExtractResult) else ExtractResult(written)
     except BaseException:
         # Cleanup on ANY failure — UnsafeArchive, ExtractCancelled,
         # OSError, KeyboardInterrupt. Leaving partial content behind

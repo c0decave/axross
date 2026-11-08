@@ -234,6 +234,15 @@ _SPECIAL_NAMES = {
 _SPECIAL_TYPES = frozenset(_SPECIAL_NAMES)
 
 
+def _checked(path: str) -> str:
+    """*path*, or OSError when it holds a control character: no
+    quoting is safe for those on every line a command passes through
+    (see :func:`core.path_policy.refuse_control_chars`)."""
+    from core.path_policy import refuse_control_chars
+
+    return refuse_control_chars(path, "ADB")
+
+
 def _compile_ls_res():
     global _LS_LINE_RES
     if _LS_LINE_RES is None:
@@ -241,7 +250,8 @@ def _compile_ls_res():
 
         mode = r"^(?P<mode>[bcdlps-][rwxstST-]{9})[.+@]?\s+"
         owner = r"(?P<user>\S+)\s+(?P<group>\S+)\s+"
-        tail = r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(?P<name>.+?)$"
+        # The name is exactly what follows the ONE space after the date.
+        tail = r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}) (?P<name>.+)"
         device = r"(?P<major>\d+),\s*(?P<minor>\d+)\s+"
         _LS_LINE_RES = (
             # toybox: link count, and a size (or major, minor) always
@@ -255,15 +265,30 @@ def _compile_ls_res():
     return _LS_LINE_RES
 
 
-def _parse_ls_entry(line: str) -> tuple[FileItem, str] | None:
+def _is_ls_entry(line: str) -> bool:
+    return any(regex.fullmatch(line) for regex in _compile_ls_res())
+
+
+def _ls_entries(out: str) -> list[tuple[str, str]]:
+    """``ls -la`` output as ``(line, rest)`` records: a name with a line
+    break keeps its other lines (see core.telnet_client.ls_records)."""
+    from core.telnet_client import ls_records
+
+    return ls_records(out, _is_ls_entry)
+
+
+def _parse_ls_entry(line: str, rest: str = "") -> tuple[FileItem, str] | None:
     """One ``ls -la`` output line (toybox or toolbox) as ``(FileItem,
     file-type character)``; None for ``total N`` or an unparseable line.
 
     A device node, FIFO or socket is an entry like any other, with size
     0 ("major, minor" is no size); its type character (``c``, ``b``,
     ``p``, ``s``) tells the caller it holds no file content.
+
+    The line is not stripped: blanks around a name belong to it ("report "
+    cut to "report" named another file, which a delete then removed).
+    *rest*: the further lines of a name with a line break.
     """
-    line = line.rstrip()
     if not line or line.startswith("total "):
         return None
     m = None
@@ -277,7 +302,7 @@ def _parse_ls_entry(line: str) -> tuple[FileItem, str] | None:
     mode = m.group("mode")
     is_dir = mode.startswith("d")
     is_link = mode.startswith("l")
-    name = m.group("name")
+    name = m.group("name") + rest
     link_target = ""
     if is_link and " -> " in name:
         name, _, link_target = name.partition(" -> ")
@@ -558,7 +583,7 @@ class AdbSession(SessionLifecycle):
         """
         from core.exec_util import shell_path
 
-        return shell_path(path)
+        return shell_path(_checked(path))
 
     # ------------------------------------------------------------------
     # Listing / stat
@@ -573,8 +598,8 @@ class AdbSession(SessionLifecycle):
         errors: list[str] = []
         unparsed: list[str] = []
         special: dict[str, str] = {}
-        for line in split_lf_only_stream(out):
-            entry = _parse_ls_entry(line)
+        for line, rest in _ls_entries(out):
+            entry = _parse_ls_entry(line, rest)
             if entry is None:
                 if line.startswith("ls:"):
                     errors.append(line.strip())
@@ -628,8 +653,8 @@ class AdbSession(SessionLifecycle):
         # expanding their contents.
         out = self._shell(f"ls -la -d {self._shell_q(path)}")
         errors: list[str] = []
-        for line in split_lf_only_stream(out):
-            entry = _parse_ls_entry(line)
+        for line, rest in _ls_entries(out):
+            entry = _parse_ls_entry(line, rest)
             if entry is None:
                 if line.startswith("ls:"):
                     errors.append(line.strip())
@@ -685,6 +710,7 @@ class AdbSession(SessionLifecycle):
         """
         import tempfile as _tf
 
+        _checked(path)
         kind = self.__dict__.get("_special_paths", {}).get(posixpath.normpath(path))
         if kind is not None:
             # A device node, FIFO or socket the listing named: no file
@@ -721,7 +747,7 @@ class AdbSession(SessionLifecycle):
                 "Android shell has no wire-level append primitive; "
                 "writes are full-file replacements",
             )
-        return _AdbPushOnClose(self, path)
+        return _AdbPushOnClose(self, _checked(path))
 
     def _push_file(self, local_path: str, remote_path: str) -> None:
         """Push *local_path* to *remote_path* on the device. Used by
@@ -743,8 +769,11 @@ class AdbSession(SessionLifecycle):
         out = self._shell(remove_command(path, recursive=recursive, quote=self._shell_q))
         if out.strip():
             # rm on Android's toybox is quiet on success; any output
-            # indicates a refusal.
-            raise OSError(f"ADB rm({path}): {out.strip()}")
+            # indicates a refusal - ls's "No such file or directory" for a
+            # path that is not there (rm -f alone said nothing for it).
+            from core.exec_util import ls_error
+
+            raise ls_error(f"ADB rm({path})", out.strip()[:500])
 
     def mkdir(self, path: str) -> None:
         out = self._shell(f"mkdir {self._shell_q(path)}")
@@ -756,7 +785,7 @@ class AdbSession(SessionLifecycle):
         # (review B6, 2026-10-17); the guard's message is the error.
         from core.telnet_client import rename_command
 
-        out = self._shell(rename_command(src, dst))
+        out = self._shell(rename_command(_checked(src), _checked(dst)))
         if out.strip():
             raise OSError(f"ADB mv({src}→{dst}): {out.strip()}")
 
@@ -778,7 +807,7 @@ class AdbSession(SessionLifecycle):
     def copy(self, src: str, dst: str) -> None:
         from core.telnet_client import copy_command
 
-        out = self._shell(copy_command(src, dst))
+        out = self._shell(copy_command(_checked(src), _checked(dst)))
         if out.strip():
             raise OSError(f"ADB cp({src}→{dst}): {out.strip()}")
 

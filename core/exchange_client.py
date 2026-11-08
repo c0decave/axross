@@ -560,7 +560,9 @@ class ExchangeSession(SessionLifecycle):
             *folder_parts, msg_seg = parts
             folder = self._resolve_folder(folder_parts)
             return self._list_attachments(folder, msg_seg)
-        return self._list_messages(folder)
+        # The folder's own subfolders first: they were left out, so a
+        # recursive copy or delete of a folder never saw them.
+        return self._folder_items(folder, f"Exchange list {path}") + self._list_messages(folder)
 
     def stat(self, path: str) -> FileItem:
         parts = _split_path(path)
@@ -1018,12 +1020,17 @@ class ExchangeSession(SessionLifecycle):
     # exchangelib helpers — kept narrow so tests can patch them
     # ------------------------------------------------------------------
     def _list_root_folders(self) -> list[FileItem]:
+        return self._folder_items(self._account.root, "Exchange list root folders")
+
+    @staticmethod
+    def _folder_items(parent, where: str) -> list[FileItem]:
+        """A folder item for each child folder of *parent*."""
         try:
-            roots = list(self._account.root.children)
+            children = list(parent.children)
         except Exception as exc:  # noqa: BLE001
-            raise OSError(f"Exchange list root folders: {exc}") from exc
+            raise OSError(f"{where}: {exc}") from exc
         out: list[FileItem] = []
-        for folder in roots:
+        for folder in children:
             name = _sanitize(getattr(folder, "name", "") or "")
             if not name:
                 continue

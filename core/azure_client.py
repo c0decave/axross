@@ -468,8 +468,13 @@ class AzureBlobSession(SessionLifecycle):
         key = self._to_key(path)
         name = posixpath.basename(path.rstrip("/")) or path
 
-        if not key or key.endswith("/"):
+        if not key:
             return FileItem(name=name, is_dir=True)
+        if key.endswith("/"):
+            # A folder only when it is there: "x/" was a folder for any x.
+            if self.is_dir(path):
+                return FileItem(name=name, is_dir=True)
+            raise FileNotFoundError(errno.ENOENT, "Not found", path)
 
         # Try as blob. Only "not found" moves on to the folder check: a
         # throttled or dropped probe of a file "x" beside blobs under "x/"
@@ -675,6 +680,14 @@ class AzureBlobSession(SessionLifecycle):
         dst_key = self._to_key(dst)
 
         src_is_dir = self.is_dir(src)
+        if not src_is_dir:
+            self._file_key(dst, "rename to")
+        if posixpath.normpath("/" + src_key) == posixpath.normpath("/" + dst_key):
+            # Copy onto itself, then delete the source: that deleted the
+            # only copy. rename(2) leaves the entry as it is.
+            if not src_is_dir and not self.exists(src):
+                raise FileNotFoundError(errno.ENOENT, f"Cannot rename {src}: not found", src)
+            return
         # Copy + delete onto an existing folder merged into it (namesakes
         # replaced, the source deleted) or put a file beside it that hid it.
         if self.is_dir(dst):
@@ -767,7 +780,7 @@ class AzureBlobSession(SessionLifecycle):
     _MAX_APPEND_EXISTING_SIZE = 256 * 1024 * 1024  # see s3_client.py
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        key = self._to_key(path)
+        key = self._file_key(path, "write")
         blob_client = self._container.get_blob_client(key)
         if append:
             cap = self._MAX_APPEND_EXISTING_SIZE
@@ -1059,9 +1072,10 @@ class AzureBlobSession(SessionLifecycle):
 
     def copy(self, src: str, dst: str) -> None:
         """Azure Blob Copy Blob — server-side."""
+        dst_key = self._file_key(dst, "copy to")
         try:
             src_blob = self._container.get_blob_client(self._to_key(src))
-            dst_blob = self._container.get_blob_client(self._to_key(dst))
+            dst_blob = self._container.get_blob_client(dst_key)
             # start_copy_from_url only starts the copy: a pending one ends
             # later, possibly failed - copy() returns when it is done.
             dst_blob.start_copy_from_url(src_blob.url)
@@ -1090,6 +1104,20 @@ class AzureBlobSession(SessionLifecycle):
     def _to_key(self, path: str) -> str:
         """Convert a UI path to a blob key (no leading slash)."""
         return path.lstrip("/")
+
+    def _file_key(self, path: str, action: str) -> str:
+        """The blob key a FILE at *path* is written to. A key ending in
+        "/" is a folder marker: data put there vanished from the listing
+        (shown as a folder) and the next mkdir() replaced it with an empty
+        marker. Such a destination - and the root - is refused."""
+        key = self._to_key(path)
+        if not key or key.endswith("/"):
+            raise IsADirectoryError(
+                errno.EISDIR,
+                f"Cannot {action} {path}: a path ending in '/' names a folder, not a file",
+                path,
+            )
+        return key
 
     def _to_prefix(self, path: str) -> str:
         """Convert a UI path to a blob prefix for listing."""

@@ -253,11 +253,14 @@ class MtpSession(LocalFS):
 
     MTP isn't a proper POSIX filesystem — permissions / ownership
     aren't meaningful on the mount and many backends report empty
-    chmod / readlink. The class inherits LocalFS's symlinks /
-    hardlinks flags as True, but real MTP mounts will typically
-    raise OSError on those mutation calls. Consumers filter via
-    the flag only as a rough optimisation.
+    chmod / readlink. symlink() / hardlink() always raise (MTP has
+    no links), so the flags LocalFS sets True are False here, as the
+    registry's ``can_symlink`` says: the pane offered "New symlink" /
+    "New hardlink" for a call that could only fail.
     """
+
+    supports_symlinks = False
+    supports_hardlinks = False
 
     def __init__(
         self,

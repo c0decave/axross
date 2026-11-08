@@ -24,6 +24,7 @@ Hard refusals:
 
 from __future__ import annotations
 
+import errno
 import io
 import logging
 import posixpath
@@ -280,13 +281,17 @@ class SlpSession(SessionLifecycle):
 
     def _lookup_type(self, safe_name: str) -> str:
         """Translate a sanitised filename back to the original SLP
-        service-type string."""
+        service-type string. FileNotFoundError when the agent has none."""
         for t in self._fetch_types():
             if _safe_name(t) == safe_name:
                 return t
-        raise OSError(f"SLP: unknown service type {safe_name!r}")
+        raise FileNotFoundError(errno.ENOENT, f"SLP: unknown service type {safe_name!r}", safe_name)
 
     def stat(self, path: str) -> FileItem:
+        """The entry, as the directory agent lists it. It used to be made
+        up from the path alone - every name "existed", even with the
+        network down. FileNotFoundError for a type or URL the agent does
+        not list; a failed query is another OSError."""
         path = self.normalize(path)
         if path == "/":
             return FileItem(
@@ -298,6 +303,9 @@ class SlpSession(SessionLifecycle):
                 permissions=0o555,
             )
         parts = path.strip("/").split("/")
+        if len(parts) > 2:
+            raise FileNotFoundError(errno.ENOENT, f"SLP stat({path}): no such entry", path)
+        svc_type = self._lookup_type(parts[0])
         if len(parts) == 1:
             return FileItem(
                 name=parts[0],
@@ -307,8 +315,11 @@ class SlpSession(SessionLifecycle):
                 modified=datetime.fromtimestamp(0),
                 permissions=0o555,
             )
+        listed = {_safe_name(url) + ".attrs" for url, _lifetime in self._fetch_urls(svc_type)}
+        if parts[1] not in listed:
+            raise FileNotFoundError(errno.ENOENT, f"SLP stat({path}): no such service URL", path)
         return FileItem(
-            name=posixpath.basename(path),
+            name=parts[1],
             is_dir=False,
             is_link=False,
             size=0,
@@ -317,14 +328,20 @@ class SlpSession(SessionLifecycle):
         )
 
     def is_dir(self, path: str) -> bool:
-        path = self.normalize(path)
-        return path == "/" or "/" not in path.strip("/")
+        """False only for an entry the agent does not list."""
+        try:
+            return self.stat(path).is_dir
+        except FileNotFoundError:
+            return False
 
     def exists(self, path: str) -> bool:
+        """False only when the agent does not list the entry; a failed
+        query is an OSError (the transfer worker takes False as the
+        go-ahead to write)."""
         try:
             self.stat(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return False
 
     def open_read(self, path: str) -> IO[bytes]:

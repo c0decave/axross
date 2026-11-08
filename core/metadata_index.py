@@ -33,6 +33,7 @@ import posixpath
 import sqlite3
 import stat
 import threading
+import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -110,6 +111,7 @@ def _connect(db_path: Path | None):
     with _lock:
         conn = sqlite3.connect(str(path))
         try:
+            conn.create_function("ax_casefold", 1, _casefold, deterministic=True)
             conn.executescript(SCHEMA_SQL)
             yield conn
             conn.commit()
@@ -518,6 +520,25 @@ _ORDER = " ORDER BY modified DESC, indexed_at DESC"
 _LIKE_ESCAPE = "!"
 
 
+def _casefold(value):
+    """The SQL function ``ax_casefold``: *value* NFC-normalised and
+    casefolded. SQLite's LOWER and LIKE fold ASCII only - "ärger" did not
+    find "Ärger.txt", nor "straße" "STRASSE.pdf" - and a decomposed name
+    (macOS writes "A" + combining diaeresis) did not match a composed
+    needle."""
+    if not isinstance(value, str):
+        return value
+    return unicodedata.normalize("NFC", value).casefold()
+
+
+def _name_clause() -> str:
+    return f"ax_casefold(name) LIKE ? ESCAPE '{_LIKE_ESCAPE}'"
+
+
+def _name_pattern(needle: str) -> str:
+    return f"%{_like_escape(_casefold(needle or ''))}%"
+
+
 def _like_escape(s: str) -> str:
     return (
         s.replace(_LIKE_ESCAPE, _LIKE_ESCAPE + _LIKE_ESCAPE)
@@ -526,35 +547,37 @@ def _like_escape(s: str) -> str:
     )
 
 
-def _query(db_path, where_sql: str, params: tuple) -> list[MetaEntry]:
+def _query(db_path, where_sql: str, params: tuple, *, limit: int | None = None,
+           cancel=None) -> list[MetaEntry]:
     # SAFETY: ``where_sql`` is never user-supplied — every call site in
     # this module hand-writes the clause with ``?`` placeholders and
     # supplies the user-controlled values via *params*. Static scanners
     # flag the string concatenation; the concat is of trusted literals.
     # Do NOT add a public wrapper that forwards untrusted strings into
     # *where_sql* or this guarantee breaks.
+    sql = ("SELECT backend_id, path, name, size, is_dir, extension, "
+           "modified, indexed_at FROM metadata WHERE " + where_sql + _ORDER)
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (*params, max(0, int(limit)))
     with _connect(db_path) as conn:
-        cur = conn.execute(
-            "SELECT backend_id, path, name, size, is_dir, extension, "
-            "modified, indexed_at FROM metadata WHERE " + where_sql + _ORDER,
-            params,
-        )
+        if cancel is not None:
+            # A stop request interrupts the query (sqlite3.OperationalError
+            # "interrupted"); the caller has dropped the answer by then.
+            conn.set_progress_handler(lambda: 1 if cancel() else 0, 20_000)
+        cur = conn.execute(sql, params)
         return [_row_to_entry(r) for r in cur.fetchall()]
 
 
 def search(needle: str, *, db_path=None) -> list[MetaEntry]:
-    """Case-insensitive substring match on ``name``.
+    """Case-insensitive substring match on ``name`` (Unicode casefolding:
+    "ärger" finds "Ärger.txt", "strasse" finds "Straße.pdf").
 
     ``%`` and ``_`` in the needle are escaped so a user literally
     searching for ``"100%"`` matches the literal 3-char string,
     not "1" followed by 2 anything chars.
     """
-    pat = f"%{_like_escape((needle or '').lower())}%"
-    return _query(
-        db_path,
-        f"LOWER(name) LIKE ? ESCAPE '{_LIKE_ESCAPE}'",
-        (pat,),
-    )
+    return _query(db_path, _name_clause(), (_name_pattern(needle),))
 
 
 def search_by_ext(ext: str, *, db_path=None) -> list[MetaEntry]:
@@ -602,13 +625,19 @@ def search_all(
     until: datetime | None = None,
     backend_id: str | None = None,
     db_path=None,
+    limit: int | None = None,
+    cancel=None,
 ) -> list[MetaEntry]:
-    """Combine any subset of the filters. Empty clauses are skipped."""
+    """Combine any subset of the filters. Empty clauses are skipped.
+
+    *limit*: at most that many entries (ask for one more than you show to
+    learn whether there are more). *cancel* (zero-argument callable):
+    true stops the query with ``sqlite3.OperationalError``."""
     clauses: list[str] = []
     params: list = []
     if needle:
-        clauses.append(f"LOWER(name) LIKE ? ESCAPE '{_LIKE_ESCAPE}'")
-        params.append(f"%{_like_escape(needle.lower())}%")
+        clauses.append(_name_clause())
+        params.append(_name_pattern(needle))
     if ext:
         clauses.append("extension = ?")
         params.append(ext.strip().lower().lstrip("."))
@@ -628,7 +657,7 @@ def search_all(
         clauses.append("backend_id = ?")
         params.append(backend_id)
     where = " AND ".join(clauses) if clauses else "1=1"
-    return _query(db_path, where, tuple(params))
+    return _query(db_path, where, tuple(params), limit=limit, cancel=cancel)
 
 
 def default_db_path() -> Path:

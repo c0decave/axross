@@ -443,8 +443,26 @@ class _Heap:
 
 # --- as .eml ------------------------------------------------------------------------------
 
-def to_eml(msg: PstMessage) -> bytes:
-    """An RFC 5322 message rebuilt from a PST message's properties."""
+def _set_boundaries(out, seed: str) -> None:
+    """Give every multipart of *out* a boundary derived from *seed* (the PST
+    path, folder and node id): the email package draws random ones, so the
+    same message rebuilt twice gave other bytes and another SHA-256 - a
+    mail project's duplicate check never matched on a second import."""
+    import hashlib
+
+    digest = hashlib.sha256(seed.encode("utf-8", "surrogateescape")).hexdigest()[:32]
+    leaves = [part.as_string() for part in out.walk() if not part.is_multipart()]
+    for n, part in enumerate(p for p in out.walk() if p.is_multipart()):
+        boundary = f"=_axross_{digest}_{n}"
+        while any(boundary in leaf for leaf in leaves):     # never a line of the content
+            boundary += "x"
+        part.set_boundary(boundary)
+
+
+def to_eml(msg: PstMessage, source: str = "") -> bytes:
+    """An RFC 5322 message rebuilt from a PST message's properties - the
+    same bytes each time for the same *source* (the PST's path) and
+    message."""
     from email import message_from_string, policy
     from email.message import EmailMessage
     from email.utils import format_datetime
@@ -485,7 +503,12 @@ def to_eml(msg: PstMessage) -> bytes:
     out["X-Axross-Source"] = f"pst folder {msg.folder!r}, node {msg.nid:#x}"
     text = p.get(0x1000) if isinstance(p.get(0x1000), str) else ""
     html = p.get(0x1013)
-    html = html.decode("utf-8", "replace") if isinstance(html, bytes) else (html if isinstance(html, str) else "")
+    if isinstance(html, bytes):
+        from core.mail_message import decode_html_body
+
+        html = decode_html_body(html, p.get(0x3FDE), p.get(0x3FFD))   # PR_INTERNET_CPID, PR_MESSAGE_CODEPAGE
+    elif not isinstance(html, str):
+        html = ""
     out.set_content(text or ("" if html else "(no text)"))
     if html:
         out.add_alternative(html, subtype="html")
@@ -498,4 +521,5 @@ def to_eml(msg: PstMessage) -> bytes:
         maintype, _, subtype = str(mime).partition("/")
         out.add_attachment(data, maintype=maintype or "application", subtype=subtype or "octet-stream",
                            filename=str(name))
+    _set_boundaries(out, f"{source}\0{msg.folder}\0{msg.nid}")
     return out.as_bytes()

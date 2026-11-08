@@ -773,14 +773,26 @@ def _expected_sha256(release: Release, asset: Asset, opener) -> str:
     return expected
 
 
+def _require_newer(release: Release, current: str | None) -> None:
+    """UpdateError unless *release* is newer than *current* (the running
+    version): a signed older release is a downgrade to its known bugs."""
+    if current is None:
+        from axross._version import __version__ as current
+    if not is_newer(release.version, current):
+        raise UpdateError(f"release {release.version} is not newer than this axross "
+                          f"({current}) - refused")
+
+
 def download(release: Release, inst: Install, *, dest_dir, opener=None,
              progress: Callable[[int, int], None] | None = None,
-             cancel: threading.Event | None = None) -> Downloaded:
+             cancel: threading.Event | None = None, current: str | None = None) -> Downloaded:
     """Fetch this build's asset of *release* into a hidden file in
     *dest_dir* and check it against the release's signed SHA256SUMS. The
-    file is removed on any failure."""
+    file is removed on any failure. Only a release newer than *current*
+    (the running version) is fetched."""
     if not inst.can_download:
         raise UpdateError(inst.why_not())
+    _require_newer(release, current)
     asset = release.asset(inst.asset)
     if asset is None:
         raise UpdateError(f"release {release.version} has no {inst.asset}")
@@ -885,24 +897,28 @@ def install(downloaded: Downloaded, inst: Install) -> Installed:
 
 def update(release: Release, inst: Install, *, opener=None,
            progress: Callable[[int, int], None] | None = None,
-           cancel: threading.Event | None = None) -> Installed:
+           cancel: threading.Event | None = None, current: str | None = None) -> Installed:
     """Download, verify and install *release* for *inst*. A folder that is
     not writable gets nothing: the verified file goes to :func:`cache_dir`
-    and the result says so (the window offers Save to…)."""
+    and the result says so (the window offers Save to…). A release that is
+    not newer than *current* (the running version) is refused."""
     if not inst.can_download:
         raise UpdateError(inst.why_not())
+    _require_newer(release, current)
     carried = _carry_packs(release, opener, progress, cancel)
-    result = _update_binary(release, inst, opener=opener, progress=progress, cancel=cancel)
+    result = _update_binary(release, inst, opener=opener, progress=progress, cancel=cancel,
+                            current=current)
     if carried.dropped:
         result = replace(result, dropped_units=tuple(carried.dropped))
     return result
 
 
-def _update_binary(release: Release, inst: Install, *, opener, progress, cancel) -> Installed:
+def _update_binary(release: Release, inst: Install, *, opener, progress, cancel,
+                   current: str | None = None) -> Installed:
     folder = inst.executable.parent
     if _writable(folder):
         downloaded = download(release, inst, dest_dir=folder, opener=opener, progress=progress,
-                              cancel=cancel)
+                              cancel=cancel, current=current)
         return install(downloaded, inst)
     cache = cache_dir()
     cache.mkdir(parents=True, exist_ok=True)
@@ -911,7 +927,7 @@ def _update_binary(release: Release, inst: Install, *, opener, progress, cancel)
     except OSError:
         pass
     downloaded = download(release, inst, dest_dir=cache, opener=opener, progress=progress,
-                          cancel=cancel)
+                          cancel=cancel, current=current)
     final = cache / versioned_name(inst.asset, release.version)
     try:
         os.chmod(downloaded.path, _plain_mode(inst.executable))

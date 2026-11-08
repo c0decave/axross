@@ -98,3 +98,24 @@ def test_edge_a_read_only_root_adds_no_mounts(home):
     (home / ".bashrc").write_text("# shell\n")
     mounts = dict(AS._agent_mounts(AS.SandboxProfile(name="t"), str(home), False))
     assert list(mounts) == [str(home)]
+
+
+def test_sad_windows_trailing_dots_spaces_and_streams_name_the_same_file(home, monkeypatch):
+    """Windows drops trailing dots and spaces when it opens a name, and
+    ``name:stream`` writes the file's alternate stream: ``.claude.json.``,
+    ``.claude \\settings.json`` and ``.bashrc:x`` got past the guard
+    (review 3 of 0.15.176)."""
+    monkeypatch.setattr(P, "_case_insensitive", lambda: True)
+    monkeypatch.setattr(P, "_windows_names", lambda: True)
+    for rel in (".claude.json.", ".claude.json ", ".claude /settings.json", ".bashrc:evil",
+                ".SSH./authorized_keys"):
+        assert P.refusal(str(home / rel)), rel
+    assert P.refusal(str(home / "notes.txt.")) is None
+
+
+def test_edge_posix_keeps_trailing_dots_as_part_of_the_name(home, monkeypatch):
+    """On Linux ``.bashrc.`` is another file than ``.bashrc``."""
+    monkeypatch.setattr(P, "_case_insensitive", lambda: False)
+    monkeypatch.setattr(P, "_windows_names", lambda: False)
+    assert P.refusal(str(home / ".bashrc.")) is None
+    assert P.refusal(str(home / ".bashrc"))

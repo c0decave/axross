@@ -48,6 +48,7 @@ class MailMessage:
     from_: str = ""
     to: list[str] = field(default_factory=list)
     cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
     reply_to: list[str] = field(default_factory=list)
     message_id: str = ""
     date: datetime | None = None
@@ -73,7 +74,7 @@ class MailMessage:
 
     def summary(self) -> dict:
         return {"source": self.source, "kind": self.kind, "subject": self.subject, "from": self.from_,
-                "to": self.to, "cc": self.cc, "date": self.date.isoformat() if self.date else "",
+                "to": self.to, "cc": self.cc, "bcc": self.bcc, "date": self.date.isoformat() if self.date else "",
                 "message_id": self.message_id, "size": self.size, "sha256": self.sha256,
                 "attachments": [{"name": a.name, "type": a.content_type, "size": a.size, "sha256": a.sha256}
                                 for a in self.attachments],
@@ -133,6 +134,7 @@ def parse_eml(data: bytes, source: str = "") -> MailMessage:
     msg.from_ = ", ".join(_addresses(msg.header_all("From")))
     msg.to = _addresses(msg.header_all("To"))
     msg.cc = _addresses(msg.header_all("Cc"))
+    msg.bcc = _addresses(msg.header_all("Bcc"))
     msg.reply_to = _addresses(msg.header_all("Reply-To"))
     msg.message_id = msg.header("Message-ID").strip()
     msg.date = _date(msg.header("Date"))
@@ -206,6 +208,36 @@ def _text(cf, storage, prop_id) -> str:
     return _clean(v) if isinstance(v, str) else ""
 
 
+_CODEPAGES = {65001: "utf-8", 65000: "utf-7", 1200: "utf-16-le", 1201: "utf-16-be", 20127: "ascii",
+              20866: "koi8-r", 21866: "koi8-u", 50220: "iso2022-jp", 50221: "iso2022-jp",
+              50222: "iso2022-jp", 51932: "euc-jp", 51949: "euc-kr", 52936: "hz", 54936: "gb18030",
+              936: "gbk", 10000: "mac-roman"}
+
+
+def codepage_codec(codepage) -> str:
+    """Python's codec for a Windows code page number (PR_INTERNET_CPID,
+    PR_MESSAGE_CODEPAGE): 1252 is cp1252, 28592 iso-8859-2, 65001 utf-8;
+    '' when it names none Python has."""
+    import codecs
+
+    if not isinstance(codepage, int) or codepage <= 0:
+        return ""
+    name = _CODEPAGES.get(codepage) or (
+        f"iso-8859-{codepage - 28590}" if 28591 <= codepage <= 28606 else f"cp{codepage}")
+    try:
+        return codecs.lookup(name).name
+    except LookupError:
+        return ""
+
+
+def decode_html_body(raw: bytes, *codepages) -> str:
+    """An Outlook HTML body (PR_HTML, bytes) in the first of *codepages* that
+    names a codec (PR_INTERNET_CPID, then PR_MESSAGE_CODEPAGE), else UTF-8:
+    a cp1252 body read as UTF-8 showed every umlaut as a replacement mark."""
+    codec = next((c for c in map(codepage_codec, codepages) if c), "") or "utf-8"
+    return raw.decode(codec, "replace")
+
+
 def _filetime(raw: bytes | None) -> datetime | None:
     if not raw:
         return None
@@ -243,7 +275,9 @@ def parse_msg(data: bytes, source: str = "") -> MailMessage:
     msg.text = body[:MAX_BODY_CHARS] if isinstance(body, str) else ""
     html = _prop(cf, root, 0x1013)
     if isinstance(html, bytes):
-        msg.html = html.decode("utf-8", "replace")[:MAX_BODY_CHARS]
+        codepages = [struct.unpack("<I", raw[:4])[0] for raw in
+                     (props.get((tag << 16) | _PT_LONG) for tag in (0x3FDE, 0x3FFD)) if raw]
+        msg.html = decode_html_body(html, *codepages)[:MAX_BODY_CHARS]
     elif isinstance(html, str):
         msg.html = html[:MAX_BODY_CHARS]
     for name, entry in sorted(root.children.items()):
@@ -252,9 +286,10 @@ def parse_msg(data: bytes, source: str = "") -> MailMessage:
             disp = _text(cf, entry, 0x3001)
             rprops = _props_stream(cf, entry, 8)
             rtype_raw = rprops.get((0x0C15 << 16) | _PT_LONG)
-            rtype = struct.unpack("<I", rtype_raw[:4])[0] if rtype_raw else 1
+            # PR_RECIPIENT_TYPE: 1 To, 2 Cc, 3 Bcc (high bits are flags)
+            rtype = (struct.unpack("<I", rtype_raw[:4])[0] if rtype_raw else 1) & 0x0FFFFFFF
             text = f"{disp} <{addr}>" if disp and addr and disp != addr else addr or disp
-            (msg.cc if rtype == 2 else msg.to).append(text)
+            {2: msg.cc, 3: msg.bcc}.get(rtype, msg.to).append(text)
         elif name.startswith("__attach_version1.0_#") and entry.kind == cfb.STORAGE:
             if len(msg.attachments) >= MAX_PARTS:
                 msg.truncated.append(f"more than {MAX_PARTS} attachments")
@@ -269,6 +304,8 @@ def parse_msg(data: bytes, source: str = "") -> MailMessage:
         msg.to = _addresses(msg.header_all("To"))
     if not msg.cc:
         msg.cc = _addresses(msg.header_all("Cc"))
+    if not msg.bcc:
+        msg.bcc = _addresses(msg.header_all("Bcc"))
     msg.reply_to = _addresses(msg.header_all("Reply-To"))
     return msg
 

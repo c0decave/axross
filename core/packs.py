@@ -20,7 +20,10 @@ A release's manifest can be re-issued (same version, a pack fixed): the
 signed ``SHA256SUMS`` then names the new manifest. :func:`stale_units`
 compares the installed blobs against such a manifest and :func:`update`
 brings them to it - through :func:`signed_manifest` and the same blob
-checks as :func:`install`, there is no other path.
+checks as :func:`install`, there is no other path. Each issue is numbered
+in the signed ``SHA256SUMS`` (:data:`PACKS_ISSUE_PREFIX`); an issue older
+than the one installed is refused, so an earlier signed issue uploaded
+again cannot roll a fixed pack back.
 
 The running session has its blob folders on sys.path: nothing it may
 import from is deleted or replaced while it runs. A blob re-issued under
@@ -36,6 +39,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -44,6 +48,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MANIFEST_FORMAT = 1
+#: The line of SHA256SUMS that numbers a release's pack manifest: written
+#: by ``scripts/sign_release.py --packs-issue N`` after the release line,
+#: covered by the signature, raised by one for each re-issue. A release
+#: without it is issue 0. ``installed.json`` keeps the highest issue
+#: installed; a lower one is refused (an earlier signed issue re-uploaded
+#: under the same version: a rollback to the pack the re-issue fixed), and
+#: so is another manifest under the installed issue's number.
+#: Binaries before it ignore the line (core.self_update.parse_sums reads
+#: checksum lines only; release_of_sums the ``# axross-release`` line).
+PACKS_ISSUE_PREFIX = "# axross-packs-issue "
+_ISSUE = re.compile(r"[0-9]{1,9}")
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_BLOB = 512 * 1024 * 1024
 PYPI_HOSTS = frozenset({"files.pythonhosted.org"})
@@ -184,19 +199,57 @@ class Fetcher:
                         cancel=self.cancel)
 
 
-def signed_manifest(release, fetch: Fetcher, *, verify=None, sums: bytes | None = None) -> tuple[dict, dict]:
+def packs_issue_of_sums(text: str) -> int:
+    """The issue the ``# axross-packs-issue N`` line of SHA256SUMS names;
+    0 without one. PackError for a line that names no number."""
+    for line in text.splitlines():
+        if line.startswith(PACKS_ISSUE_PREFIX):
+            value = line[len(PACKS_ISSUE_PREFIX):].strip()
+            if not _ISSUE.fullmatch(value):
+                raise PackError(f"the packs issue line {line[:60]!r} names no number")
+            return int(value)
+    return 0
+
+
+def _installed_issue(state: dict) -> int:
+    issue = state.get("issue")
+    return issue if isinstance(issue, int) and not isinstance(issue, bool) and issue >= 0 else 0
+
+
+def _refuse_rollback(state: dict, issue: int, version: str, manifest: dict) -> None:
+    """PackError for a manifest of an issue older than the one installed
+    (an earlier signed issue, re-uploaded), and for another manifest under
+    the installed issue's number (a re-issue raises it: else the earlier
+    one could not be told from the fix)."""
+    have = _installed_issue(state)
+    if issue < have:
+        raise PackError(f"the pack manifest of {version} is issue {issue}, older than the issue "
+                        f"{have} installed - refused (an earlier signed issue, re-uploaded)")
+    if issue == have and isinstance(state.get("manifest"), dict) and state["manifest"] != manifest:
+        raise PackError(f"the pack manifest of {version} differs from the one installed under the "
+                        f"same issue {issue} - refused (a re-issue carries a higher number)")
+
+
+def signed_manifest(release, fetch: Fetcher, *, verify=None) -> tuple[dict, dict]:
     """(manifest, SHA256SUMS entries) of *release* (core.self_update.Release),
     the manifest checked against the signed SHA256SUMS."""
+    manifest, entries, _issue = _signed(release, fetch, verify=verify)
+    return manifest, entries
+
+
+def _signed(release, fetch: Fetcher, *, verify=None) -> tuple[dict, dict, int]:
+    """:func:`signed_manifest` and the manifest's issue (:data:`PACKS_ISSUE_PREFIX`)."""
     from core import self_update as SU
 
-    if sums is None:
-        sums_asset, sig_asset = release.asset(SU.SUMS_NAME), release.asset(SU.SIG_NAME)
-        if sums_asset is None or sig_asset is None:
-            raise PackError(f"release {release.version} has no signed {SU.SUMS_NAME}")
-        sums = fetch(sums_asset.url, SU.MAX_SUMS_BYTES)
-        signature = fetch(sig_asset.url, SU.SIG_BYTES)
-        (verify or SU.verify_signature)(sums, signature)
-    entries = SU.parse_sums(sums.decode("utf-8", "replace"))
+    sums_asset, sig_asset = release.asset(SU.SUMS_NAME), release.asset(SU.SIG_NAME)
+    if sums_asset is None or sig_asset is None:
+        raise PackError(f"release {release.version} has no signed {SU.SUMS_NAME}")
+    sums = fetch(sums_asset.url, SU.MAX_SUMS_BYTES)
+    signature = fetch(sig_asset.url, SU.SIG_BYTES)
+    (verify or SU.verify_signature)(sums, signature)
+    text = sums.decode("utf-8", "replace")
+    issue = packs_issue_of_sums(text)
+    entries = SU.parse_sums(text)
     name = manifest_name(release.version)
     asset = release.asset(name)
     if asset is None or name not in entries:
@@ -207,15 +260,16 @@ def signed_manifest(release, fetch: Fetcher, *, verify=None, sums: bytes | None 
     manifest = parse_manifest(data)
     if manifest.get("version") != release.version:
         raise PackError(f"{name} is for version {manifest.get('version')}, not {release.version}")
-    return manifest, entries
+    return manifest, entries, issue
 
 
 def install(release, units: list[str], *, fetch: Fetcher | None = None, root: Path | None = None,
             verify=None, progress=None) -> list[str]:
     """Install *units* (and what they need) of *release*; the blobs installed."""
     fetch = fetch or Fetcher()
-    manifest, entries = signed_manifest(release, fetch, verify=verify)
-    return _install_checked(release, manifest, entries, units, fetch, root or packs_root(), progress)
+    manifest, entries, issue = _signed(release, fetch, verify=verify)
+    return _install_checked(release, manifest, entries, units, fetch, root or packs_root(), progress,
+                            issue)
 
 
 def split_available(manifest: dict, units: list[str]) -> tuple[list[str], list[str]]:
@@ -239,9 +293,10 @@ def install_available(release, units: list[str], *, fetch: Fetcher | None = None
     along by a self-update: (the blobs installed, the units *release* no
     longer has - left out instead of refusing the whole update)."""
     fetch = fetch or Fetcher()
-    manifest, entries = signed_manifest(release, fetch, verify=verify)
+    manifest, entries, issue = _signed(release, fetch, verify=verify)
     kept, dropped = split_available(manifest, units)
-    done = _install_checked(release, manifest, entries, kept, fetch, root or packs_root(), progress)
+    done = _install_checked(release, manifest, entries, kept, fetch, root or packs_root(), progress,
+                            issue)
     return done, dropped
 
 
@@ -268,10 +323,12 @@ def _write_state(folder: Path, state: dict) -> None:
 
 
 def _install_checked(release, manifest: dict, entries: dict, units: list[str], fetch: Fetcher,
-                     root: Path, progress) -> list[str]:
+                     root: Path, progress, issue: int = 0) -> list[str]:
     """The blobs of *units*, each checked against *manifest* and *entries* -
-    which only :func:`signed_manifest` hands out (install, update)."""
+    which only :func:`signed_manifest` hands out (install, update). A
+    manifest of an *issue* older than the one installed is refused."""
     folder = root / release.version
+    _refuse_rollback(_state(folder), issue, release.version, manifest)
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
     wanted = set()
@@ -329,6 +386,7 @@ def _install_checked(release, manifest: dict, entries: dict, units: list[str], f
             progress(i + 1, len(wanted))
     state["units"] = sorted(set(state.get("units", [])) | set(units))
     state["manifest"] = manifest
+    state["issue"] = max(_installed_issue(state), issue)
     state["dirs"] = dirs
     state["retired"] = sorted(retired)
     _write_state(folder, state)
@@ -479,7 +537,8 @@ def check_reissued(version: str, *, fetch: Fetcher | None = None, root: Path | N
         return None, []
     fetch = fetch or Fetcher()
     release = release_for(version, fetch=fetch)
-    manifest, _ = signed_manifest(release, fetch, verify=verify)
+    manifest, _, issue = _signed(release, fetch, verify=verify)
+    _refuse_rollback(_state((root or packs_root()) / version), issue, version, manifest)
     return release, stale_units(version, manifest, root)
 
 
@@ -497,9 +556,9 @@ def update(release, *, fetch: Fetcher | None = None, root: Path | None = None, v
     units = installed(release.version, root)
     if not units:
         return []
-    manifest, entries = signed_manifest(release, fetch, verify=verify)
+    manifest, entries, issue = _signed(release, fetch, verify=verify)
     keep, _dropped = split_available(manifest, units)
-    done = _install_checked(release, manifest, entries, keep, fetch, root, progress)
+    done = _install_checked(release, manifest, entries, keep, fetch, root, progress, issue)
     folder = root / release.version
     state = _state(folder)
     state["units"] = sorted(keep)

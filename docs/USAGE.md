@@ -303,6 +303,35 @@ list, and a walk that stops part-way says how much was queued.
   the queue, each failed transfer once.
 - **Cancel All** also stops a copy or move whose folder walk is
   still running: none of its files is queued.
+- **Moves within one server.** A move whose source and destination are
+  on the same connection (a drop onto a folder in the same pane, F6
+  between two panes of one connection, Cut and Paste) renames each file
+  on the server (SFTP RENAME, FTP RNFR/RNTO, WebDAV MOVE, SMB, an S3
+  server-side copy): no byte passes through axross. A name the conflict
+  answers allow to be overwritten, a link, or a rename the server
+  refuses takes the normal copy instead.
+- **Modification times.** A copy keeps its source's modification time
+  on local disks, SFTP (whole seconds), SMB and FTP servers that announce
+  `MFMT`. WebDAV and S3 cannot set it: the copy there carries the upload
+  time, which Compare Panes and *Overwrite if Newer* read as the newer
+  one. *Overwrite if Newer* compares whole seconds.
+- **What happened.** When a copy or move has ended, the status bar sums
+  it up: "2 copied, 1 skipped (destination kept)", "3 skipped
+  (destinations not older)", failures counted. The dock's overall bar
+  ends on *Done* only when every job of the batch ended well, otherwise
+  on "N failed" / "N cancelled" in red.
+- **Undo.** *Edit → Undo Last Operation* (`Ctrl+Z`) reverses the newest
+  move or Move to Trash whose connection is open, as a whole: one F5 /
+  F6 / drop / Paste, or one Move to Trash of a selection, is one
+  operation and one question. A moved folder goes back with its folders
+  (those the move created are removed when empty, the source folders
+  made again) and with its tags; a name that is there again stops the
+  undo before anything moves, and entries that could not be put back
+  stay for the next `Ctrl+Z`. A copy cannot be undone.
+- **Production connections.** Every write that overwrites or deletes on
+  a connection marked *production* waits for its countdown first: F5 /
+  F6 / drag & drop / Paste with an overwrite, a move off or onto it, and
+  Compare Panes → *Sync* for each side the sync overwrites.
 - **Verify.** A per-job `verify_checksum` flag re-hashes the
   destination after the upload and rejects on mismatch.
 - **Parallel transfers.** *Edit → Settings… → Files & Panes →
@@ -339,7 +368,7 @@ native protocol doesn't support them.
 | `core.file_search` | The Find Files engine: name / type / content / size / date over folders of any backend, inside archives, streaming and cancellable; `fd` / `rg` locally when installed. |
 | `core.file_categories` | The type presets of Find Files (Images, Disk & VM images, Crypto wallets, Keys & certificates, …) by name, folder and content markers. |
 | `core.previews` | Local image thumbnailer with strict MIME allow-list, size caps, and a Qt-allocation gate. F3 / double-click. |
-| `core.archive` | Safe extraction of zip / tar / 7z and single compressed files (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Zip-slip / bomb / lying-metadata guards; `.7z` needs the `[archive]` extra, zstd Python 3.14 or that extra. |
+| `core.archive` | Safe extraction of zip / tar / 7z and single compressed files (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .tar.zst .tzst .7z .gz .bz2 .xz .zst`). Zip-slip / bomb / lying-metadata guards; symlink and hardlink members (tar, and ZIP symlinks) are left out - never created or followed - and the result names them; `.7z` needs the `[archive]` extra, zstd Python 3.14 or that extra. |
 | `core.packer` | Right-click → **Pack**: zip, tar.gz / .zst / .xz / .bz2, 7z (optionally AES-256 with encrypted file names), or one file as .gz / .zst / .xz / .bz2 — from any backend, never overwriting (`name (2).zip`), never leaving a half-written archive. |
 | `core.elevated_io` | `pkexec`-gated local read for `/etc/shadow` etc. — Axross never holds the privilege itself. "Open as root…" context-menu entry. |
 | `core.fuse_mount` | FUSE mount any FileBackend. Read-only by default; `writeable=True` enables create / write / unlink / mkdir / rename. Optional `[fuse]` extra. |
@@ -402,7 +431,10 @@ Results stream in while the search runs; *Stop* or closing the window
 cancels it. The columns sort; double-click or `Enter` shows the file
 selected in a pane (an archive member opens the archive view), and the
 right-click menu has *Open*, *Reveal in Pane*, *Copy Path* and *Send to
-Agent*.
+Agent*. When the pane's filter or the hidden-files setting would hide the
+revealed entry, the reveal clears the filter or shows hidden entries in
+that folder (until the pane goes to another one), and the status line
+says so.
 
 On a local folder the search uses [`fd`](https://github.com/sharkdp/fd)
 to list files and [`ripgrep`](https://github.com/BurntSushi/ripgrep)
@@ -444,10 +476,13 @@ index file.
   under a folder whose listing failed stay. The MCP tool `index_build` only
   adds; with `prune` it also asks the backend for every indexed path under
   the folder and drops the rows whose file is gone.
-- **How it is searched.** Name substring (case-insensitive), extension,
-  size range, date range, one connection. Extension, size and date use
-  SQLite indexes; a name substring (`LIKE '%…%'`) cannot use one and reads
-  every row.
+- **How it is searched.** Name substring (case-insensitive for every
+  script: "ärger" finds `Ärger.txt`, "strasse" finds `Straße.pdf` - also in
+  the MCP `search` tool), extension, size range, date range, one
+  connection. Extension, size and date use SQLite indexes; a name
+  substring (`LIKE '%…%'`) cannot use one and reads every row. The search
+  runs in the background and the window lists the first 5000 matches (it
+  says when there are more).
 - **How fast — measured** on the development machine with `/usr` (290 872
   entries, local disk, the machine under other load): first run 125 s
   (about 2 300 entries/s), second run over the same tree 53 s, index file
@@ -1629,7 +1664,9 @@ A dock's agent has only the mail tools - `mail_list_new`, `mail_list`, `mail_rea
 content is marked as untrusted in every tool result; a mail cannot add recipients or
 change the policy. `dock_report` leaves a note for another dock (*Reports to* limits
 which); the other dock reads it at its next run, which a note alone starts. A run with
-no new mail and no notes asks the model nothing. SMTP: STARTTLS or TLS with the
+no new mail and no notes asks the model nothing. A mail counts as handled once the
+agent read, analysed or answered it - one it only saw in `mail_list_new`, or one of a
+run that failed or was stopped, is new again at the next run. SMTP: STARTTLS or TLS with the
 certificate checked, plain only to this machine; the password is kept in the keyring.
 
 **Tools → Mail Project…** imports `.eml` and Outlook `.msg` files, Outlook data files

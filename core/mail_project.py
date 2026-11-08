@@ -213,7 +213,7 @@ class MailProject:
                     result.errors.append(f"{label}: {msg.props['error']}")
                     continue
                 try:
-                    data = to_eml(msg)
+                    data = to_eml(msg, str(path))
                 except Exception as exc:  # noqa: BLE001 - one message the rebuild cannot take
                     result.errors.append(f"{label}: {type(exc).__name__}: {exc}"[:300])
                     continue
@@ -280,14 +280,26 @@ class MailProject:
 
     # --- reading -------------------------------------------------------------------
 
+    @staticmethod
+    def _where(search: str) -> tuple[str, list]:
+        if not search:
+            return "", []
+        return (" WHERE subject LIKE ? OR sender LIKE ? OR recipients LIKE ? OR source LIKE ?",
+                [f"%{search}%"] * 4)
+
+    def count(self, *, search: str = "") -> int:
+        """How many messages :meth:`messages` would list without its limit."""
+        where, args = self._where(search)
+        with self._lock:
+            return int(self._db.execute("SELECT COUNT(*) FROM messages" + where, args).fetchone()[0])
+
     def messages(self, *, order: str = "score", search: str = "", limit: int = 1000) -> list[dict]:
+        """At most *limit* messages (see :meth:`count` for how many there are)."""
         column = {"score": "score DESC, date DESC", "date": "date DESC", "sender": "sender",
                   "subject": "subject"}.get(order, "score DESC")
-        sql = "SELECT sha256, source, kind, subject, sender, recipients, date, size, score, high, warn FROM messages"
-        args: list = []
-        if search:
-            sql += " WHERE subject LIKE ? OR sender LIKE ? OR recipients LIKE ? OR source LIKE ?"
-            args = [f"%{search}%"] * 4
+        where, args = self._where(search)
+        sql = ("SELECT sha256, source, kind, subject, sender, recipients, date, size, score, high, warn "
+               "FROM messages" + where)
         sql += f" ORDER BY {column} LIMIT ?"
         args.append(int(limit))
         keys = ("sha256", "source", "kind", "subject", "sender", "recipients", "date", "size", "score",

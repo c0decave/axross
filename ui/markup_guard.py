@@ -53,17 +53,41 @@ log = logging.getLogger(__name__)
 #: picture in a Markdown file is far smaller; /dev/zero has no end).
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
 
-#: What makes Qt's rich text load a resource: an image, a background
-#: (attribute or CSS property), a CSS url().
-_ASKS_FOR_RESOURCE = re.compile(r"<\s*img\b|\bbackground(?:-image)?\s*[=:]|\burl\s*\(",
-                                re.IGNORECASE)
+#: Tags that make Qt's rich text load a resource: an image, a style sheet
+#: (``<link rel=stylesheet>``, a ``<style>`` block with its ``@import``
+#: and ``url()``).
+_RESOURCE_TAG = re.compile(r"<\s*(?:img|link|style)\b", re.IGNORECASE)
+#: What makes a tag load one: a background (attribute or CSS property), a
+#: CSS url() or @import.
+_RESOURCE_IN_TAG = re.compile(r"@import\b|\bbackground(?:-image)?\s*[=:]|\burl\s*\(",
+                              re.IGNORECASE)
+_STYLE_ATTRIBUTE_NAME = re.compile(r"\bstyle\s*=", re.IGNORECASE)
 
 _installed = False
 
 
+def _tag_asks_for_resource(text: str) -> bool:
+    """A start tag of *text* that asks for a resource - also once its
+    character references are decoded (Qt decodes them in attribute names
+    and values: ``b&#97;ckground=``, ``u&#114;l(``) - or whose style
+    carries a CSS escape (``\\75rl(``). Outside a tag these words are text
+    and load nothing (``url(`` in a chat topic shown with
+    Qt.convertFromPlainText)."""
+    for match in _TAG.finditer(text):
+        raw = match.group(0)
+        for tag in (raw, html.unescape(raw)):
+            if _RESOURCE_IN_TAG.search(tag):
+                return True
+            if "\\" in tag and _STYLE_ATTRIBUTE_NAME.search(tag):
+                return True
+    return False
+
+
 def asks_for_resource(text) -> bool:
     """True when *text* would be rendered as rich text and load something."""
-    if not isinstance(text, str) or not _ASKS_FOR_RESOURCE.search(text):
+    if not isinstance(text, str) or "<" not in text:
+        return False
+    if not _RESOURCE_TAG.search(text) and not _tag_asks_for_resource(text):
         return False
     from PyQt6.QtCore import Qt
 

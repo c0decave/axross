@@ -220,3 +220,68 @@ def test_happy_the_login_and_keys_survive_a_restart(make, tmp_path):
         assert wait_until(lambda: any("imported" in t for t in texts(again, again.server_key)), 30)
     finally:
         again.shutdown()
+
+
+# --- the default proxy ----------------------------------------------------------------------
+
+def test_happy_the_default_proxy_carries_the_connection(tmp_path, monkeypatch):
+    """Round 3 checked every chat protocol for the XMPP bug (the default
+    proxy ignored, a direct connection): nio's HTTP session for the
+    homeserver goes through the default SOCKS5 proxy - a recording
+    listener sees the request - and a refused tunnel never ends in a
+    direct request."""
+    import asyncio
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from proxy_testkit import FakeSocks5Server
+
+    from core import proxy_settings as PS
+
+    if M.nio_missing():
+        pytest.skip("matrix-nio is not installed")
+    hits = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            hits.append(self.path)
+            body = b'{"versions": ["v1.1"]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    port = httpd.server_address[1]
+    proxy = FakeSocks5Server({("127.0.0.1", port): ("127.0.0.1", port)})
+    path = tmp_path / "proxy.json"
+    PS.save(PS.ProxyDefaults(proxy_type="socks5", host="127.0.0.1", port=proxy.port, bypass=[]), path)
+    monkeypatch.setattr(PS, "SETTINGS_PATH", path)
+    account = C.Account(protocol="matrix", name="a", settings={
+        "homeserver": f"http://127.0.0.1:{port}", "user": "alice", "proxy": "default"})
+    client = M.MatrixClient(account)
+
+    async def versions():
+        nio = client._make_nio("")
+        try:
+            return await nio.send("GET", "/_matrix/client/versions")
+        finally:
+            await nio.close()
+
+    try:
+        response = asyncio.run(versions())
+        assert response.status == 200
+        assert proxy.connects == [("127.0.0.1", port)] and hits == ["/_matrix/client/versions"]
+        proxy.routes.clear()
+        with pytest.raises(Exception):  # noqa: B017 - aiohttp_socks' own error type
+            asyncio.run(versions())
+        assert len(proxy.connects) == 2 and len(hits) == 1
+    finally:
+        client.shutdown()
+        proxy.close()
+        httpd.shutdown()

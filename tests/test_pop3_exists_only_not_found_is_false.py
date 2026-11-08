@@ -90,6 +90,11 @@ class _ScriptedPop3:
                 else:
                     rows = "".join(f"{n} {s}\r\n" for n, s in self._present().items())
                     out = f"+OK {len(self._present())} messages\r\n{rows}.\r\n".encode()
+            elif cmd == "TOP" and args and int(args[0]) in self._present():
+                # The subjects the test paths name ("2_two.eml"): remove()
+                # checks them before DELE.
+                subject = {1: "one", 2: "two", 3: "three"}[int(args[0])]
+                out = f"+OK\r\nSubject: {subject}\r\n\r\n.\r\n".encode()
             elif cmd == "DELE" and args and int(args[0]) in self._present():
                 self.deleted.add(int(args[0]))
                 out = b"+OK marked\r\n"

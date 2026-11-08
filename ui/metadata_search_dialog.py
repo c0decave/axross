@@ -24,7 +24,6 @@ from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -48,6 +47,11 @@ from ui.scan_job import BusyStrip, ScanJob
 from ui.icon_provider import set_window_icon
 
 log = logging.getLogger("ui.metadata_search_dialog")
+
+#: The most matches the table shows. The search asks the index for one
+#: more, to say when there are more (a search for "" listed every row of a
+#: large index and filled the table one insertRow at a time).
+RESULT_LIMIT = 5000
 
 
 def _format_size(n: int) -> str:
@@ -90,6 +94,9 @@ class MetadataSearchDialog(QDialog):
         # The walk can take minutes: it runs in a thread (progress, Cancel, Esc).
         self._job = ScanJob(self)
         self._job.finished.connect(self._on_index_finished)
+        # A search runs off the GUI thread too; a new one replaces it.
+        self._search_job = ScanJob(self)
+        self._search_job.finished.connect(self._on_search_finished)
         self._build_ui()
         self._update_status()
 
@@ -204,34 +211,45 @@ class MetadataSearchDialog(QDialog):
         }
         if self._only_active.isChecked() and self._active_pane is not None:
             kwargs["backend_id"] = _backend_id_for(self._active_pane.backend)
-        try:
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                entries = MX.search_all(**kwargs)
-            finally:
-                QApplication.restoreOverrideCursor()
-        except Exception as exc:  # noqa: BLE001 — surface DB errors
-            QMessageBox.warning(
-                self,
-                "Search",
-                f"Search failed:\n{exc}",
-            )
+        kwargs["limit"] = RESULT_LIMIT + 1
+        self._status.setText(tr("Searching…"))
+        self._search_job.start(lambda cancel, _progress: MX.search_all(cancel=cancel, **kwargs),
+                               replace=True)
+
+    def _on_search_finished(self, kind: str, value, cancelled: bool) -> None:
+        if cancelled:
             return
-        self._populate(entries)
+        if kind == "error":
+            QMessageBox.warning(self, "Search", f"Search failed:\n{value}")
+            self._update_status()
+            return
+        self._populate(value)
 
     def _populate(self, entries: list) -> None:
-        self._table.setRowCount(0)
-        for e in entries:
-            row = self._table.rowCount()
-            self._table.insertRow(row)
-            name_item = QTableWidgetItem(e.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, e)
-            self._table.setItem(row, 0, name_item)
-            self._table.setItem(row, 1, QTableWidgetItem(e.path))
-            self._table.setItem(row, 2, QTableWidgetItem(_format_size(e.size)))
-            self._table.setItem(row, 3, QTableWidgetItem(_format_when(e.modified)))
-            self._table.setItem(row, 4, QTableWidgetItem(e.backend_id))
-        self._update_status(found=len(entries))
+        """Fill the table in one pass: the row count set once, painting off
+        while the items go in (insertRow per entry froze the window on a
+        large result)."""
+        more = len(entries) > RESULT_LIMIT
+        entries = entries[:RESULT_LIMIT]
+        table = self._table
+        sorting = table.isSortingEnabled()
+        table.setSortingEnabled(False)
+        table.setUpdatesEnabled(False)
+        try:
+            table.clearContents()
+            table.setRowCount(len(entries))
+            for row, e in enumerate(entries):
+                name_item = QTableWidgetItem(e.name)
+                name_item.setData(Qt.ItemDataRole.UserRole, e)
+                table.setItem(row, 0, name_item)
+                table.setItem(row, 1, QTableWidgetItem(e.path))
+                table.setItem(row, 2, QTableWidgetItem(_format_size(e.size)))
+                table.setItem(row, 3, QTableWidgetItem(_format_when(e.modified)))
+                table.setItem(row, 4, QTableWidgetItem(e.backend_id))
+        finally:
+            table.setUpdatesEnabled(True)
+            table.setSortingEnabled(sorting)
+        self._update_status(found=len(entries), more=more)
 
     def start_index_active(self) -> None:
         """Index the active pane's folder (Edit > Index Active Folder…)."""
@@ -288,13 +306,15 @@ class MetadataSearchDialog(QDialog):
     def reject(self) -> None:
         # Esc, Close and the window's own close must stop a running index.
         self._job.abandon()
+        self._search_job.abandon()
         super().reject()
 
     def closeEvent(self, event) -> None:
         self._job.abandon()
+        self._search_job.abandon()
         super().closeEvent(event)
 
-    def _update_status(self, found: int | None = None) -> None:
+    def _update_status(self, found: int | None = None, more: bool = False) -> None:
         try:
             total = MX.row_count()
         except Exception:
@@ -302,6 +322,10 @@ class MetadataSearchDialog(QDialog):
         in_index = tr_n(total, "{n} entry in index", "{n} entries in index")
         if found is None:
             self._status.setText(in_index)
+        elif more:
+            self._status.setText(
+                tr("Showing the first {n} matches - there are more; narrow the search.").format(
+                    n=format_count(found)) + "  ·  " + in_index)
         else:
             self._status.setText(
                 tr_n(found, "{n} match", "{n} matches") + "  ·  " + in_index)

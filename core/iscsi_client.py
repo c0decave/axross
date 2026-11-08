@@ -25,7 +25,14 @@ from typing import IO
 
 from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
-from core.local_fs import copy_file_onto, entry_stat, group_name, owner_name, unstattable_item
+from core.local_fs import (
+    LocalFS,
+    copy_file_onto,
+    entry_stat,
+    group_name,
+    owner_name,
+    unstattable_item,
+)
 from core.path_policy import confined_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
@@ -301,7 +308,9 @@ class IscsiSession(SessionLifecycle):
         os.rename(self._real(src, follow=False), self._real(dst, follow=False))
 
     def open_read(self, path: str) -> IO[bytes]:
-        return open(self._real(path), "rb")
+        # LocalFS's open: non-blocking, refused unless a regular file. A
+        # plain open() of a FIFO without a writer blocked forever.
+        return LocalFS().open_read(self._real(path))
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         real = self._real(path)
@@ -526,7 +535,7 @@ class IscsiSession(SessionLifecycle):
             h = hashlib.new(algorithm)
         except ValueError as exc:
             raise OSError(f"Unsupported algorithm: {algorithm}") from exc
-        with open(self._real(path), "rb") as f:
+        with self.open_read(path) as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(chunk)
         return f"{algorithm}:{h.hexdigest()}"

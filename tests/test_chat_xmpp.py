@@ -216,3 +216,78 @@ def test_happy_group_chat(server, make):
     assert wait_until(lambda: "hello room" in texts(alice, room), 20)
     assert alice.conversation(room).encryption == C.ENC_TRANSPORT
     assert any("not end-to-end encrypted" in t for t in texts(alice, room))
+
+
+# --- the default proxy ----------------------------------------------------------------------
+
+@pytest.fixture
+def default_socks5(tmp_path, monkeypatch, server):
+    """axross's default proxy is a recording loopback SOCKS5 server that
+    relays to the fake XMPP server (the SSRF guard lets the loopback proxy
+    through for the test)."""
+    from proxy_testkit import FakeSocks5Server, allow_loopback_proxy
+
+    from core import proxy_settings as PS
+
+    proxy = FakeSocks5Server({("127.0.0.1", server.port): ("127.0.0.1", server.port)})
+    path = tmp_path / "proxy.json"
+    PS.save(PS.ProxyDefaults(proxy_type="socks5", host="127.0.0.1", port=proxy.port, bypass=[]), path)
+    monkeypatch.setattr(PS, "SETTINGS_PATH", path)
+    with allow_loopback_proxy():
+        yield proxy
+    proxy.close()
+
+
+def test_happy_the_default_proxy_carries_the_connection(server, make, default_socks5):
+    """slixmpp 1.17 has no proxy support: the ``use_proxy`` / ``proxy_config``
+    attributes axross set were ignored and the client logged in directly
+    while the default SOCKS5 proxy applied."""
+    alice = make("alice", proxy="default")
+    alice.connect_account()
+    assert online(alice)
+    assert ("127.0.0.1", server.port) in default_socks5.connects
+
+
+def test_sad_a_proxy_that_fails_fails_the_login_never_a_direct_one(server, make, default_socks5):
+    """A proxy that refuses the tunnel ends in an error; the server sees no
+    connection (no direct fallback, no retry around the proxy)."""
+    default_socks5.routes.clear()
+    alice = make("alice", proxy="default")
+    alice.connect_account()
+    assert wait_until(lambda: alice.state == C.STATE_ERROR, 20)
+    assert default_socks5.connects and server.sessions == []
+    assert any("through the proxy failed" in t for t in texts(alice, alice.server_key))
+
+
+def test_sad_the_certificate_probe_goes_through_the_proxy_too(server, default_socks5):
+    """probe_certificate opened a plain asyncio connection, around the proxy."""
+    import asyncio
+
+    der = asyncio.run(X.probe_certificate("127.0.0.1", server.port, "localhost"))
+    assert der and I.fingerprint_of(der) == server.fingerprint
+    assert default_socks5.connects == [("127.0.0.1", server.port)]
+    default_socks5.routes.clear()
+    # A refused tunnel gives nothing - a direct connection would get the certificate.
+    assert asyncio.run(X.probe_certificate("127.0.0.1", server.port, "localhost")) == b""
+    assert len(default_socks5.connects) == 2
+
+
+def test_sad_group_chat_nicks_are_shown_cleaned():
+    """A room's occupant nick (the resource of the presence's JID) went
+    into the member list as it came - bidi and zero-width characters
+    reached the panel. It is shown made safe, as Matrix shows names."""
+    account = C.Account(protocol="xmpp", name="a", settings={"jid": "a@localhost", "proxy": "none"})
+    client = X.XmppClient(account)
+
+    class _From(str):
+        resource = "\u202enimda\u200b"
+
+    presence = {"from": _From("room@conference.localhost/x"), "type": "available",
+                "muc": {"role": "participant"}}
+    try:
+        client._add_conversation("room@conference.localhost", C.CONV_CHANNEL, "room")
+        client._on_groupchat_presence(presence)
+        (member,) = client.conversation("room@conference.localhost").members.values()
+        assert member.display == "nimda" and member.name == "\u202enimda\u200b"
+    finally:
+        client.shutdown()

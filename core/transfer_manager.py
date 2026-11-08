@@ -15,7 +15,7 @@ from core import backend_registry
 from core.capability_contracts import contract_for_backend
 from core.path_policy import safe_join, safe_leaf, transfer_leaf
 from core.thread_relay import GuiCall
-from core.transfer_conflicts import IF_EXISTS_OVERWRITE, prefetch_stats
+from core.transfer_conflicts import IF_EXISTS_FAIL, IF_EXISTS_OVERWRITE, prefetch_stats
 from core.transfer_pool import MAX_PARALLEL, JobScheduler, parallel_transfers, valid_parallel
 from core.transfer_worker import (
     TransferDirection,
@@ -363,6 +363,7 @@ class TransferManager(QObject):
         if_exists: str = IF_EXISTS_OVERWRITE,
         source_item=None,
         stat_answer=None,
+        batch_id: str | None = None,
     ) -> TransferJob:
         """Enqueue a single file transfer.
 
@@ -373,7 +374,11 @@ class TransferManager(QObject):
         *dest_listing* shares destination listings across one batch (see
         _DestListings). *if_exists* is what the worker does
         with an existing destination (see ``core.transfer_conflicts``).
+        *batch_id* names the user operation the job is part of (by default
+        the one :meth:`transfer_files` is walking on this thread).
         """
+        if batch_id is None:
+            batch_id = getattr(self._local, "batch_id", "") or ""
         # Get file size for progress
         if size:
             total_bytes = size
@@ -440,6 +445,7 @@ class TransferManager(QObject):
             source_fingerprint=fingerprint,
             source_mode=source_mode,
             source_mtime=source_mtime,
+            batch_id=batch_id,
         )
 
         job.source_backend = source_backend
@@ -457,6 +463,7 @@ class TransferManager(QObject):
                     "direction": direction.name,
                     "temp_file": use_temp,
                     "source_backend": _backend_label(source_backend),
+                    **({"batch": batch_id} if batch_id else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001
@@ -482,6 +489,7 @@ class TransferManager(QObject):
         move: bool = False,
         *,
         conflict_plan: ConflictPlan | None = None,
+        batch_id: str | None = None,
     ) -> list[TransferJob]:
         """Enqueue multiple file transfers to a destination directory.
 
@@ -489,7 +497,33 @@ class TransferManager(QObject):
         (the scripting semantics, and a sync's confirmed overwrites). With one, every name follows
         the user's answer and every job refuses to replace a file the plan
         did not allow it to replace.
+
+        Every job of the call shares one *batch_id* in the operation journal
+        (a new one when none is given), and a move journals each folder it
+        creates there: undo reverses the call as one operation, folders
+        included (core.undo).
         """
+        from core.operation_journal import new_batch_id
+
+        outer_batch = getattr(self._local, "batch_id", "")
+        self._local.batch_id = batch_id or outer_batch or new_batch_id()
+        try:
+            return self._transfer_files(source_backend, dest_backend, source_paths, dest_dir,
+                                        direction, move, conflict_plan=conflict_plan)
+        finally:
+            self._local.batch_id = outer_batch
+
+    def _transfer_files(
+        self,
+        source_backend: FileBackend,
+        dest_backend: FileBackend,
+        source_paths: list[str],
+        dest_dir: str,
+        direction: TransferDirection,
+        move: bool,
+        *,
+        conflict_plan: ConflictPlan | None,
+    ) -> list[TransferJob]:
         jobs = []
         dest_listing = _DestListings(dest_backend)
         # One batch instead of an is_dir and a stat round trip per selected
@@ -591,6 +625,7 @@ class TransferManager(QObject):
         conflict_plan: ConflictPlan | None = None,
         on_done: Callable[[list[TransferJob]], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
+        batch_id: str | None = None,
     ) -> None:
         """:meth:`transfer_files` with the walk on a worker thread.
 
@@ -603,6 +638,78 @@ class TransferManager(QObject):
         meanwhile. After :meth:`shutdown` a walk's result is dropped, and
         after :meth:`cancel_all` too: then the walk stops listing, *on_done*
         gets no jobs and a move removes no source folder."""
+        self._walk_in_background(
+            source_backend, dest_backend, move, on_done, on_error,
+            lambda: self.transfer_files(
+                source_backend,
+                dest_backend,
+                source_paths,
+                dest_dir,
+                direction,
+                move,
+                conflict_plan=conflict_plan,
+                batch_id=batch_id,
+            ),
+            what=source_paths,
+        )
+
+    def transfer_pairs_in_background(
+        self,
+        source_backend: FileBackend,
+        dest_backend: FileBackend,
+        pairs: list[tuple[str, str]],
+        direction: TransferDirection = TransferDirection.DOWNLOAD,
+        move: bool = False,
+        *,
+        on_done: Callable[[list[TransferJob]], None] | None = None,
+        on_error: Callable[[Exception], None] | None = None,
+        batch_id: str | None = None,
+    ) -> None:
+        """One file job per ``(source, dest)`` pair, each refusing an
+        existing destination, built on a worker thread - the undo of a
+        batch puts every file back at its own recorded path (core.undo).
+
+        Before a job is built every destination is checked: one that is
+        there again fails the whole call with FileExistsError and nothing
+        is queued (an undo that overwrote a file would trade one loss for
+        another). The folder each destination belongs in is made first,
+        with any missing above it: the move removed the folders it emptied.
+        """
+        from core.operation_journal import new_batch_id
+        from core.trash import recreate_parent_folders
+
+        def build() -> list[TransferJob]:
+            taken = [dest for _src, dest in pairs if dest_backend.exists(dest)]
+            if taken:
+                more = f" and {len(taken) - 1} more" if len(taken) > 1 else ""
+                raise FileExistsError(
+                    f"{taken[0]}{more} exist(s) again - the undo would overwrite it. "
+                    "Move or rename it first."
+                )
+            outer_batch = getattr(self._local, "batch_id", "")
+            self._local.batch_id = batch_id or new_batch_id()
+            jobs: list[TransferJob] = []
+            try:
+                for src, dest in pairs:
+                    if self._walk_cancelled():
+                        break
+                    recreate_parent_folders(dest_backend, dest)
+                    jobs.append(self.transfer_file(
+                        source_backend, dest_backend, src, dest, direction, move=move,
+                        if_exists=IF_EXISTS_FAIL,
+                    ))
+            finally:
+                self._local.batch_id = outer_batch
+            return jobs
+
+        self._walk_in_background(source_backend, dest_backend, move, on_done, on_error,
+                                 build, what=[src for src, _dest in pairs][:3])
+
+    def _walk_in_background(self, source_backend, dest_backend, move: bool, on_done,
+                            on_error, build: Callable[[], list[TransferJob]], *,
+                            what) -> None:
+        """Run *build* (it queues jobs through transfer_file) on a worker
+        thread; its jobs are registered on the GUI thread (_finish_walk)."""
         walk = [source_backend, dest_backend, threading.Event()]
         self._walks.append(walk)
 
@@ -613,17 +720,9 @@ class TransferManager(QObject):
             jobs: list[TransferJob] = []
             error: Exception | None = None
             try:
-                jobs = self.transfer_files(
-                    source_backend,
-                    dest_backend,
-                    source_paths,
-                    dest_dir,
-                    direction,
-                    move,
-                    conflict_plan=conflict_plan,
-                )
+                jobs = build()
             except Exception as exc:  # noqa: BLE001 - what was built is still queued
-                log.exception("Transfer walk of %s failed", source_paths)
+                log.exception("Transfer walk of %s failed", what)
                 error = exc
             finally:
                 payload = (walk, jobs, self._local.pending, self._local.move_dirs, move, on_done,
@@ -794,6 +893,9 @@ class TransferManager(QObject):
             else:
                 dest_backend.mkdir(dest_dir)
                 dest_listing.created(dest_dir)
+                if move:
+                    self._journal_move_folder(source_backend, dest_backend, source_dir,
+                                              dest_dir, direction)
         except Exception as e:  # noqa: BLE001 - a library error too: a refused row, not a stopped walk
             log.error("Failed to create directory %s: %s", dest_dir, e)
             self._directory_error(dest_dir, f"mkdir failed: {e}")
@@ -898,6 +1000,33 @@ class TransferManager(QObject):
 
         return jobs
 
+    def _journal_move_folder(self, source_backend, dest_backend, source_dir: str,
+                             dest_dir: str, direction: TransferDirection) -> None:
+        """Journal a folder a move created at the destination (and removes
+        at the source once it is empty), in the move's batch: undoing the
+        move removes it again when it is empty and makes the source folder
+        again - the files' entries alone brought back the files, not the
+        folders."""
+        try:
+            from core.operation_journal import finish_operation, new_operation_id
+
+            batch = getattr(self._local, "batch_id", "") or ""
+            finish_operation(
+                new_operation_id(),
+                "move_folder",
+                status="done",
+                source=source_dir,
+                dest=dest_dir,
+                backend=_backend_label(dest_backend),
+                details={
+                    "direction": direction.name,
+                    "source_backend": _backend_label(source_backend),
+                    **({"batch": batch} if batch else {}),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("operation journal of folder %s failed: %s", dest_dir, exc)
+
     def cancel_job(self, job_id: str) -> None:
         job = self._jobs.get(job_id)
         if job:
@@ -974,6 +1103,7 @@ class TransferManager(QObject):
             source_fingerprint=old_job.source_fingerprint,
             source_mode=old_job.source_mode,
             source_mtime=old_job.source_mtime,
+            batch_id=old_job.batch_id,
         )
         new_job.source_backend = old_job.source_backend
         new_job.dest_backend = old_job.dest_backend
@@ -989,7 +1119,9 @@ class TransferManager(QObject):
                 details={
                     "retry_of": job_id,
                     "resume": True,
+                    "direction": new_job.direction.name,
                     "source_backend": _backend_label(new_job.source_backend),
+                    **({"batch": new_job.batch_id} if new_job.batch_id else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001

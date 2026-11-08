@@ -672,6 +672,13 @@ class FindFilesDialog(QDialog):
         if scope.kind == "index":
             self.index_open_requested.emit(scope.label, hit.path, bool(hit.is_dir))
         elif hit.archive_path:
+            # The archive view opens the nested archives down to the member
+            # and selects it (it showed only the outermost archive).
+            from core.local_fs import LocalFS
+            from ui.archive_pane import request_reveal
+
+            if isinstance(scope.backend, LocalFS):
+                request_reveal(hit.archive_path, hit.member)
             self.open_archive_requested.emit(scope.backend, hit.archive_path, hit.member)
         else:
             self.reveal_requested.emit(scope.backend, hit.path)

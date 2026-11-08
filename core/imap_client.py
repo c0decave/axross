@@ -1300,48 +1300,8 @@ class ImapSession(SessionLifecycle):
             normalized = self.normalize(path)
             parts = [p for p in normalized.split("/") if p]
             leaf_name = parts[-1] if parts else path
-            if leaf_name.lower().endswith(".eml"):
-                # It's a message file
-                self._select_existing(mailbox, path)
-                imap = self._ensure_connected()
-                typ, data = imap.uid("FETCH", uid, "(RFC822.SIZE INTERNALDATE ENVELOPE)")
-                if typ != "OK":
-                    raise OSError(f"Cannot stat message UID {uid}: {data}")
-                size = 0
-                modified = datetime.fromtimestamp(0)
-                if not any(part for part in data or ()):
-                    # UID FETCH of a UID that is not there answers OK, no data.
-                    raise FileNotFoundError(errno.ENOENT, "No such message", path)
-                envelope = None
-                for response in _imap_responses(data):
-                    # A reply with a literal arrives split into a (line,
-                    # literal) tuple and the rest of the line; joined here.
-                    attrs = _fetch_attributes(response)
-                    found = _fetch_number(attrs, b"RFC822.SIZE")
-                    if found is not None:
-                        size = found
-                    if b"INTERNALDATE" in attrs:
-                        modified = _fetch_date(attrs)
-                    if b"ENVELOPE" in attrs:
-                        envelope = attrs[b"ENVELOPE"]
-                if not self._names_message(leaf_name, uid, envelope):
-                    # "5_invoice.eml" copied in from another mailbox is not
-                    # this mailbox's message 5: it "existed", and a copy
-                    # there was refused or prompted for nothing.
-                    raise FileNotFoundError(
-                        errno.ENOENT, f"No message {leaf_name!r} (UID {uid} is another one)", path
-                    )
-                return FileItem(name=leaf_name, size=size, modified=modified)
-            else:
-                # It's the attachment directory for this UID - when the
-                # message is there.
-                self._select_existing(mailbox, path)
-                typ, data = self._ensure_connected().uid("FETCH", uid, "(UID)")
-                if typ != "OK":
-                    raise OSError(f"Cannot stat message UID {uid}: {data}")
-                if not any(part for part in data or ()):
-                    raise FileNotFoundError(errno.ENOENT, "No such message", path)
-                return FileItem(name=uid, is_dir=True)
+            self._select_existing(mailbox, path)
+            return self._selected_message_item(uid, leaf_name, path)
 
         if len(parsed) == 3:
             mailbox, uid, att_name = parsed
@@ -1358,6 +1318,49 @@ class ImapSession(SessionLifecycle):
             )
 
         raise OSError(f"Invalid path: {path!r}")
+
+    def _selected_message_item(self, uid: str, leaf_name: str, path: str) -> FileItem:
+        """The item *leaf_name* names in the SELECTED mailbox: the message
+        file ``<uid>[_<subject>].eml`` (checked against the message's
+        subject) or the attachment folder ``<uid>``. FileNotFoundError when
+        the UID is not there or is another message."""
+        imap = self._ensure_connected()
+        if not leaf_name.lower().endswith(".eml"):
+            # The attachment directory for this UID - when the message is there.
+            typ, data = imap.uid("FETCH", uid, "(UID)")
+            if typ != "OK":
+                raise OSError(f"Cannot stat message UID {uid}: {data}")
+            if not any(part for part in data or ()):
+                raise FileNotFoundError(errno.ENOENT, "No such message", path)
+            return FileItem(name=uid, is_dir=True)
+        typ, data = imap.uid("FETCH", uid, "(RFC822.SIZE INTERNALDATE ENVELOPE)")
+        if typ != "OK":
+            raise OSError(f"Cannot stat message UID {uid}: {data}")
+        size = 0
+        modified = datetime.fromtimestamp(0)
+        if not any(part for part in data or ()):
+            # UID FETCH of a UID that is not there answers OK, no data.
+            raise FileNotFoundError(errno.ENOENT, "No such message", path)
+        envelope = None
+        for response in _imap_responses(data):
+            # A reply with a literal arrives split into a (line,
+            # literal) tuple and the rest of the line; joined here.
+            attrs = _fetch_attributes(response)
+            found = _fetch_number(attrs, b"RFC822.SIZE")
+            if found is not None:
+                size = found
+            if b"INTERNALDATE" in attrs:
+                modified = _fetch_date(attrs)
+            if b"ENVELOPE" in attrs:
+                envelope = attrs[b"ENVELOPE"]
+        if not self._names_message(leaf_name, uid, envelope):
+            # "5_invoice.eml" copied in from another mailbox is not
+            # this mailbox's message 5: it "existed", and a copy
+            # there was refused or prompted for nothing.
+            raise FileNotFoundError(
+                errno.ENOENT, f"No message {leaf_name!r} (UID {uid} is another one)", path
+            )
+        return FileItem(name=leaf_name, size=size, modified=modified)
 
     @staticmethod
     def _names_message(leaf: str, uid: str, envelope) -> bool:
@@ -1441,6 +1444,13 @@ class ImapSession(SessionLifecycle):
                 log.debug("Ignoring remove for non-UID path: %s", path)
                 return  # Non-UID path (temp file etc.) — nothing to delete
             self._select_mailbox(mailbox, readonly=False)
+            # stat()'s identity check, in this selection: "5_invoice.eml"
+            # from a stale listing (or another mailbox) is not this
+            # mailbox's UID 5 when its subject differs - deleting by the
+            # number alone removed another message. FileNotFoundError then,
+            # nothing deleted.
+            leaf_name = [p for p in self.normalize(path).split("/") if p][-1]
+            self._selected_message_item(uid, leaf_name, path)
             imap = self._ensure_connected()
             typ, data = imap.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
             if typ != "OK":

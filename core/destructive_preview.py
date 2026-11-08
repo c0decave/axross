@@ -77,15 +77,19 @@ def preview_delete(
     max_entries: int = 10_000,
     cancel: Callable[[], bool] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
+    verb: str = "delete",
 ) -> OperationPreview:
     """Count what deleting *paths* would remove, and the hidden entries in it.
+
+    *verb* names the action in :meth:`OperationPreview.summary` ("move to
+    trash" for Move to Trash: its question summed itself up as "delete: …").
 
     *cancel* is polled before every entry; once it returns true the walk
     stops and the preview is marked ``cancelled``. *progress* receives
     ``(dirs, files, path)`` for every entry visited. Both serve a caller
     that runs the walk on a worker thread.
     """
-    preview = OperationPreview(operation="delete", roots=list(paths))
+    preview = OperationPreview(operation=verb, roots=list(paths))
 
     def stopped() -> bool:
         if cancel is not None and not preview.cancelled and cancel():

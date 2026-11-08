@@ -71,13 +71,30 @@ def _case_insensitive() -> bool:
     return sys.platform in ("win32", "darwin")
 
 
+def _windows_names() -> bool:
+    return sys.platform == "win32"
+
+
 def _key(path: str) -> tuple[str, ...]:
-    """*path* as comparable components (normcase, and casefolded where
-    names are case-insensitive)."""
-    text = os.path.normcase(os.path.abspath(path))
+    """*path* as comparable components: normcase, casefolded where names
+    are case-insensitive, NFC (macOS stores names decomposed), and on
+    Windows without what the OS drops when it opens a name - trailing dots
+    and spaces (``.claude.json.`` is ``.claude.json``) and an alternate
+    data stream (``name:stream``)."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFC", os.path.normcase(os.path.abspath(path)))
     if _case_insensitive():
         text = text.casefold()
-    return tuple(part for part in text.replace("\\", "/").split("/") if part)
+    parts = [part for part in text.replace("\\", "/").split("/") if part]
+    if _windows_names():
+        cleaned = []
+        for i, part in enumerate(parts):
+            if i > 0 and ":" in part:  # the first part is the drive ("c:")
+                part = part.split(":", 1)[0]
+            cleaned.append(part.rstrip(". ") or part)
+        parts = cleaned
+    return tuple(parts)
 
 
 def homes(environ=os.environ) -> list[str]:

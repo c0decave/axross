@@ -370,3 +370,81 @@ def test_e2e_an_llm_answer_with_an_image_survives_the_transcript():
         view.setMarkdown("Here you go: ![x](/dev/zero) and " + {DEV_ZERO!r})
         view.show(); pump()
     """)
+
+
+# -- review round 3: style sheets and character references ----------------------------------
+
+STYLE_SHEET_TEXTS = (
+    '<link rel="stylesheet" type="text/css" href="FILE"><b>topic</b>',
+    '<style>@import "FILE";</style><b>topic</b>',
+    '<p style="background-image:u&#114;l(FILE)">topic</p>',
+    '<table b&#97;ckground="FILE"><tr><td>x</td></tr></table>',
+    '<p style="background:\\75rl(FILE)">topic</p>',
+)
+
+
+@pytest.mark.parametrize("template", STYLE_SHEET_TEXTS)
+def test_sad_style_sheets_and_encoded_attributes_are_shown_as_written(template):
+    """The guard knew <img, background and url( only: ``<link
+    rel=stylesheet>``, ``<style>@import``, and attributes written with
+    character references (``b&#97;ckground=``, ``u&#114;l(``) passed, and
+    Qt read the file they name (/dev/zero: the process died)."""
+    text = template.replace("FILE", "/dev/zero")
+    out = MG.defuse(text)
+    assert out != text and _rendered(out).strip() == text.strip()
+
+
+@pytest.mark.parametrize("template", STYLE_SHEET_TEXTS[:4])
+def test_sad_qt_opens_no_file_a_defused_label_names(template, tmp_path):
+    """End to end: the text in a QLabel (AutoText) - a FIFO stands for the
+    file, and a writer process notes whether Qt opened it."""
+    from PyQt6.QtWidgets import QLabel
+
+    fifo = tmp_path / "f.css"
+    os.mkfifo(fifo)
+    marker = tmp_path / "opened"
+    writer = subprocess.Popen([sys.executable, "-I", "-c",
+                               "import sys;f=open(sys.argv[1],'wb');open(sys.argv[2],'w').close();"
+                               "f.write(b'p{}');f.close()", str(fifo), str(marker)])
+    try:
+        QLabel(template.replace("FILE", str(fifo))).sizeHint()
+        try:
+            writer.wait(0.5)  # the writer ends at once when Qt opened the FIFO
+        except subprocess.TimeoutExpired:
+            pass
+        assert not marker.exists()
+    finally:
+        writer.kill()
+        writer.wait()
+
+
+def test_happy_plain_text_made_rich_is_left_as_it_is():
+    """Qt.convertFromPlainText of a text naming url( or @import loads
+    nothing (the words are text, not a tag): it is not defused."""
+    for text in ('see url(/dev/zero) and @import "x"', 'background: red; <style> is escaped'):
+        rich = Qt.convertFromPlainText(text)
+        assert MG.defuse(rich) == rich
+
+
+def test_e2e_an_irc_topic_with_a_style_sheet_survives_its_tooltip():
+    """An IRC server's 332 topic ``<style>@import "/dev/zero";</style>``
+    became the topic label's tooltip as it came; hovering it made Qt read
+    /dev/zero until the process died. It is shown as plain text now."""
+    out = assert_survives("""
+        import asyncio
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtWidgets import QToolTip
+        import core.chat as C, core.chat_irc as I
+        from ui.chat_panel import ConversationView
+        acc = C.Account(protocol="irc", name="t", settings={"server": "127.0.0.1", "port": 1,
+                        "tls": I.TLS_OFF, "nick": "alice", "proxy": "none"})
+        c = I.IrcClient(acc)
+        c._add_conversation("#c", C.CONV_CHANNEL, "#c")
+        topic = '<style>@import "/dev/zero";</style>Welcome'
+        asyncio.run(c._on_332(I.parse_line(f":srv 332 alice #c :{topic}\\r\\n")))
+        view = ConversationView(c, "#c"); view.show(); pump()
+        print("PLAIN", view.topic.toolTip() == Qt.convertFromPlainText(topic), flush=True)
+        QToolTip.showText(QPoint(5, 5), view.topic.toolTip(), view.topic); pump()
+        c.runner.stop()
+    """)
+    assert "PLAIN True" in out

@@ -188,6 +188,21 @@ def _backend_label(backend) -> str:
     return getattr(backend, "name", type(backend).__name__)
 
 
+def _backend_can_rename(backend) -> bool:
+    """Whether the registry lets *backend*'s class rename (TFTP and other
+    write-once protocols do not); a class it does not know is asked."""
+    try:
+        from core import backend_registry
+
+        class_name = type(backend).__name__
+        for info in backend_registry.all_backends():
+            if info.class_name == class_name:
+                return bool(info.capabilities.can_rename)
+    except Exception as exc:  # noqa: BLE001 - no registry: try the rename
+        log.debug("backend registry lookup failed: %s", exc)
+    return True
+
+
 class TransferDirection(Enum):
     UPLOAD = auto()
     DOWNLOAD = auto()
@@ -331,6 +346,9 @@ class TransferJob:
     # a cheap native fingerprint.
     verify_checksum: bool = False
     operation_id: str = ""
+    # The user operation this job is part of (core.operation_journal
+    # new_batch_id): one F5 / F6 / drop is undone as one.
+    batch_id: str = ""
     # What to do with an existing destination (core.transfer_conflicts):
     # "overwrite" (the default), "fail" or "newer". Checked right before
     # the first write and again right before the temp file is renamed.
@@ -417,13 +435,13 @@ class TransferWorker(QObject):
         rename, and without the labels undo cannot tell which host it is
         on or which host the data came from.
         """
-        return {
-            "backend": _backend_label(job.dest_backend),
-            "details": {
-                "direction": job.direction.name,
-                "source_backend": _backend_label(job.source_backend),
-            },
+        details = {
+            "direction": job.direction.name,
+            "source_backend": _backend_label(job.source_backend),
         }
+        if job.batch_id:
+            details["batch"] = job.batch_id
+        return {"backend": _backend_label(job.dest_backend), "details": details}
 
     @staticmethod
     def _record_journal_phase(job: TransferJob, phase: str) -> None:
@@ -555,6 +573,8 @@ class TransferWorker(QObject):
 
         try:
             renamed = self._move_by_rename(job)
+            if renamed is None:
+                renamed = self._move_on_server(job)
             if renamed is not None:
                 # One rename on the same file system: no byte copied, nothing
                 # to verify (it is the same file), no source left to remove.
@@ -708,6 +728,90 @@ class TransferWorker(QObject):
                 f"cannot move {job.source_path}: removing it from its folder failed: {exc}"
             ) from exc
         return st.st_size
+
+    @staticmethod
+    def _move_on_server(job: TransferJob) -> int | None:
+        """Move a file within ONE remote session by renaming it on the
+        server (SFTP RENAME, FTP RNFR/RNTO, WebDAV MOVE, SMB, S3 copy on the
+        server): no byte passes through this machine. Returns the size
+        moved, or None when this move needs the copy (two sessions, a
+        backend without rename, a folder or link, a destination that is
+        there and may be replaced, a rename the server refused).
+
+        A move inside one SFTP server used to download and upload every
+        byte (40 MiB: 5.7 s against 4 ms for the rename).
+
+        The rules of the copy hold: ``if_exists`` is checked as the copy
+        checks it, and only a destination that is not there is renamed
+        onto - where the backend can, through ``rename_no_replace``, which
+        the server refuses rather than replace a file that appeared
+        meanwhile. A planned overwrite takes the copy, with its temp file
+        and rollback. A refused rename that left both ends as they were
+        falls back to the copy; one that left the file at both ends fails
+        the job as a move whose source could not be removed does.
+        """
+        from core.local_fs import LocalFS
+
+        if not job.move or job.resume:
+            return None
+        src, dst = job.source_backend, job.dest_backend
+        if src is None or src is not dst or isinstance(src, LocalFS):
+            return None
+        rename = getattr(src, "rename_no_replace", None) or getattr(src, "rename", None)
+        if not callable(rename) or not _backend_can_rename(src):
+            return None
+        if job.cancel_event.is_set():
+            raise InterruptedError("Transfer cancelled")
+        try:
+            item = src.stat(job.source_path)
+        except Exception as exc:  # noqa: BLE001 - the copy reports what is wrong
+            log.debug("server-side move: cannot stat %s: %s", job.source_path, exc)
+            return None
+        if getattr(item, "is_dir", False) or getattr(item, "is_link", False):
+            # The copy follows a file link to its content and refuses a
+            # folder here; a rename would move them as they are.
+            return None
+        if TransferWorker._check_existing_destination(job) is not False:
+            if job.if_exists != "overwrite":
+                return None  # there, and the answers allow replacing it: the copy
+            try:
+                if dst.exists(job.dest_path):
+                    return None
+            except Exception as exc:  # noqa: BLE001 - unknown: the copy decides
+                log.debug("server-side move: cannot check %s: %s", job.dest_path, exc)
+                return None
+        try:
+            rename(job.source_path, job.dest_path)
+        except Exception as exc:  # noqa: BLE001 - the state decides what follows
+            source_there = TransferWorker._exists_or_none(src, job.source_path)
+            dest_there = TransferWorker._exists_or_none(dst, job.dest_path)
+            if source_there and dest_there is False:
+                log.info("Server-side rename of %s refused (%s); copying instead",
+                         job.source_path, exc)
+                return None
+            if source_there is False and dest_there:
+                log.info("Server-side rename of %s reported %s but completed",
+                         job.source_path, exc)
+                return int(getattr(item, "size", 0) or 0)
+            raise OSError(f"cannot move {job.source_path} to {job.dest_path} "
+                          f"on the server: {exc}") from exc
+        if TransferWorker._exists_or_none(dst, job.dest_path) is False:
+            # A server that answered OK and renamed nothing: the copy.
+            if TransferWorker._exists_or_none(src, job.source_path):
+                log.warning("Server-side rename of %s changed nothing; copying instead",
+                            job.source_path)
+                return None
+            raise OSError(f"moving {job.source_path} on the server lost track of it: "
+                          f"{job.dest_path} is not there")
+        return int(getattr(item, "size", 0) or 0)
+
+    @staticmethod
+    def _exists_or_none(backend, path: str) -> bool | None:
+        try:
+            return bool(backend.exists(path))
+        except Exception as exc:  # noqa: BLE001 - unknown
+            log.debug("cannot check whether %s exists: %s", path, exc)
+            return None
 
     @staticmethod
     def _move_source_size(job: TransferJob) -> int | None:
@@ -932,7 +1036,12 @@ class TransferWorker(QObject):
         if mode == "newer":
             src_mtime = TransferWorker._mtime_of(job.source_backend, job.source_path)
             dst_mtime = TransferWorker._mtime_of(dest_backend, job.dest_path)
-            if src_mtime is not None and dst_mtime is not None and src_mtime > dst_mtime:
+            # Whole seconds: SFTP and FTP keep no fraction, so a copy that
+            # was given its source's time (10.6 s) reads back as 10 s and
+            # looked older than its unchanged source - every "Overwrite if
+            # Newer" copied it again.
+            if (src_mtime is not None and dst_mtime is not None
+                    and int(src_mtime) > int(dst_mtime)):
                 return True
             raise _DestinationKept(
                 f"{job.dest_path} is not older than {job.source_path}; kept"
@@ -1082,6 +1191,9 @@ class TransferWorker(QObject):
                 destination_snapshot.close()
             if backup is not None:  # the check passed (or never ran: nothing written)
                 self._drop_destination_backup(job, backup)
+        # FTP (MFMT) is written directly: the temp-file route was the only
+        # one that kept the source's time.
+        self._apply_source_mtime(job)
         return transferred
 
     @staticmethod

@@ -1100,6 +1100,22 @@ class SSHSession(SessionLifecycle):
         self.sftp.rename(src, dst)
 
     @_sftp_errors_as_oserror
+    def rename_no_replace(self, src: str, dst: str) -> None:
+        """The plain SSH_FXP_RENAME, which the server refuses when *dst*
+        exists (``rename`` tries posix-rename first, which replaces it):
+        a move within the server that must not overwrite a file that
+        appeared after the check (core.transfer_worker)."""
+        self.sftp.rename(src, dst)
+
+    @_sftp_errors_as_oserror
+    def set_modified(self, path: str, mtime: float) -> None:
+        """Set *path*'s modification time (epoch seconds) by SETSTAT, so a
+        copy keeps its source's time. SFTP v3 keeps whole seconds and sets
+        both times or neither: the access time becomes now (the file was
+        just written)."""
+        self.sftp.utime(path, (time.time(), mtime))
+
+    @_sftp_errors_as_oserror
     def open_read(self, path: str) -> IO[bytes]:
         # Pipelined, bounded read-ahead: see core.sftp_io.
         from core.sftp_io import open_read_ahead

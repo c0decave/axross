@@ -310,10 +310,13 @@ class TftpSession(SessionLifecycle):
 
         return patched_module_udp_socket(contexts, self._proxy)
 
-    def _probe_size(self, name: str) -> int:
+    def _probe_size(self, name: str, *, strict: bool = False) -> int:
         """Best-effort: ask the server for the file's ``tsize`` via
         the OACK option. Many tftpd daemons honour this; some don't.
-        Returns 0 when unavailable.
+        Returns 0 when unavailable. *strict*: a failed request raises as
+        :func:`_rrq_error` types it (FileNotFoundError for error code 1)
+        instead of reading as size 0 - stat() of a missing file returned
+        an item.
 
         tftpy passes every received packet to the packet hook, the OACK
         included, so a server that reports ``tsize`` answers before any
@@ -357,6 +360,14 @@ class TftpSession(SessionLifecycle):
             return known.size
         except Exception as exc:  # noqa: BLE001
             log.debug("TFTP probe(%r) failed: %s", name, exc)
+            if strict:
+                error = _rrq_error(name, exc)
+                if isinstance(error, FileNotFoundError):
+                    raise error from exc
+                # Another refusal may be of the tsize option alone (error 8):
+                # the plain read request decides; a file it opens is there,
+                # its size unknown.
+                self._probe_present(name)
             return 0
 
     def stat(self, path: str) -> FileItem:
@@ -371,7 +382,7 @@ class TftpSession(SessionLifecycle):
                 permissions=0o500,
             )
         name = _validate_filename(path)
-        size = self._probe_size(name)
+        size = self._probe_size(name, strict=True)
         return FileItem(
             name=posixpath.basename(name),
             size=size,
@@ -395,8 +406,11 @@ class TftpSession(SessionLifecycle):
         if path == "/" or self.is_dir(path):
             return True
         name = _validate_filename(path)
-        if self._filelist_enabled:
-            return name in self._filelist
+        if self._filelist_enabled and name in self._filelist:
+            # The list is only a shortcut to True: a file on the server
+            # but not on the list was "absent", and the transfer worker
+            # (if_exists="fail") went ahead and overwrote it.
+            return True
         # TFTP has no metadata operation: a read request is the only
         # existence check. It stops at the server's first data packet, so
         # a file of any size costs one block (a file over the read cap

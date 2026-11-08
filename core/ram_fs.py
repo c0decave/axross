@@ -275,6 +275,14 @@ class RamFsSession(SessionLifecycle):
     def max_bytes(self) -> int:
         return self._max_bytes
 
+    def disk_usage(self, path: str) -> tuple[int, int, int]:
+        """(total, used, free) of the per-instance cap: the registry
+        declares ``has_disk_usage``, and the inherited default answered
+        zeros. Bytes open writers reserved count as used."""
+        with self._lock:
+            used = self._used_bytes + self._reserved_bytes
+        return (self._max_bytes, used, max(0, self._max_bytes - used))
+
     def disconnect(self) -> None:
         with self._lock:
             self._tree.clear()

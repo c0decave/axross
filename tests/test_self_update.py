@@ -765,3 +765,22 @@ def test_edge_the_release_line_is_no_checksum_line():
     assert SU.release_of_sums(text) == "1.2.3"
     assert SU.parse_sums(text) == {"axross-full": "a" * 64}
     assert SU.release_of_sums(f"{'a' * 64}  axross-full\n") is None
+
+
+@pytest.mark.parametrize("version", [older_than(__version__), __version__])
+def test_sad_update_and_download_refuse_a_release_that_is_not_newer(binary, tmp_path, version):
+    """core.self_update.update() and download() installed whatever signed
+    release they were handed: an older one (a downgrade to its fixed bugs)
+    replaced the running binary. Only the check compared versions."""
+    server = FakeGitHub(FakeRelease(version, {"axross-full": NEW_BYTES}))
+    try:
+        found = SU.check(opener=opener_for(server))
+        assert not found.newer
+        with pytest.raises(SU.UpdateError, match="not newer"):
+            SU.update(found.release, frozen_install(binary), opener=opener_for(server))
+        with pytest.raises(SU.UpdateError, match="not newer"):
+            SU.download(found.release, frozen_install(binary), dest_dir=tmp_path,
+                        opener=opener_for(server))
+        assert binary.read_bytes() == OLD_BYTES and leftovers(tmp_path) == []
+    finally:
+        server.close()

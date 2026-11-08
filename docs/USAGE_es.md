@@ -310,6 +310,37 @@ recorrido que se detiene a medias dice cuánto se encoló.
   de error, cada una una sola vez.
 - **Cancel All** detiene también una copia o un move cuyo recorrido
   de carpetas sigue en marcha: ninguno de sus ficheros entra en cola.
+- **Moves dentro de un servidor.** Un move cuyo origen y destino están
+  en la misma conexión (soltar sobre una carpeta del mismo panel, F6
+  entre dos paneles de una conexión, Cut y Paste) renombra cada fichero
+  en el servidor (SFTP RENAME, FTP RNFR/RNTO, WebDAV MOVE, SMB, copia S3
+  en el servidor): ningún byte pasa por axross. Un nombre que las
+  respuestas al conflicto permiten sobrescribir, un enlace o un rename
+  que el servidor rechaza va por la copia normal.
+- **Fechas de modificación.** Una copia conserva la fecha de
+  modificación del origen en discos locales, SFTP (segundos enteros),
+  SMB y servidores FTP que anuncian `MFMT`. WebDAV y S3 no pueden
+  fijarla: la copia allí lleva la hora de subida, que Compare Panes y
+  *Overwrite if Newer* leen como la más nueva. *Overwrite if Newer*
+  compara segundos enteros.
+- **Qué pasó.** Cuando una copia o un move termina, la barra de estado
+  lo resume: "2 copied, 1 skipped (destination kept)", "3 skipped
+  (destinations not older)", con los fallos contados. La barra total
+  del dock termina en *Done* solo cuando todos los jobs de la tanda
+  acabaron bien; si no, en rojo con "N failed" / "N cancelled".
+- **Undo.** *Edit → Undo Last Operation* (`Ctrl+Z`) deshace el move o
+  Move to Trash más reciente cuya conexión está abierta, entero: un F5 /
+  F6 / soltar / Paste, o un Move to Trash de una selección, es una
+  operación y una pregunta. Una carpeta movida vuelve con sus carpetas
+  (las que el move creó se quitan si están vacías, las de origen se
+  crean de nuevo) y con sus etiquetas; un nombre que vuelve a existir
+  detiene el undo antes de que nada se mueva, y lo que no pudo volver
+  queda para el siguiente `Ctrl+Z`. Una copia no se puede deshacer.
+- **Conexiones de producción.** Toda escritura que sobrescribe o borra
+  en una conexión marcada *production* espera primero su cuenta atrás:
+  F5 / F6 / arrastrar y soltar / Paste con sobrescritura, un move desde
+  o hacia ella, y Compare Panes → *Sync* por cada lado que el sync
+  sobrescribe.
 - **Verify.** El flag `verify_checksum` por job re-hashea el
   destino tras el upload y rechaza en caso de mismatch.
 - **Parallel transfers.** *Edit → Settings… → Files & Panes →
@@ -345,7 +376,7 @@ cuyo protocolo nativo no las soporta.
 | `core.snapshot_browser` | Vista de timeline uniforme sobre S3, Dropbox, GDrive, OneDrive, Azure Blob. |
 | `core.metadata_index` | Búsqueda offline SQLite por nombre / ext / tamaño / mtime. Un fichero: `$AXROSS_METADATA_DB`, si no `$XDG_DATA_HOME/axross/metadata.sqlite`, si no `~/.local/share/axross/metadata.sqlite` (un índice que ya está allí sigue en uso). Solo lo llena *Index Active Folder…*, nunca la navegación; guarda por entrada la conexión, el path, nombre, tamaño, extensión y fechas, sin contenido. La búsqueda por extensión, tamaño y fecha usa índices de SQLite; la de un trozo del nombre lee todas las filas. sift no construye ningún índice ni busca: es un analizador de ficheros. |
 | `core.previews` | Thumbnailer local de imágenes con allow-list MIME, caps de tamaño y gate del límite de allocation Qt. F3 / doble-click. |
-| `core.archive` | Extracción segura de zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Guards contra zip-slip / bomba / metadata mentirosa; `.7z` requiere el extra `[archive]`. |
+| `core.archive` | Extracción segura de zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Guards contra zip-slip / bomba / metadata mentirosa; las entradas symlink y hardlink (tar, y symlinks de ZIP) se omiten - nunca se crean ni se siguen - y el resultado las nombra; `.7z` requiere el extra `[archive]`. |
 | `core.elevated_io` | Lectura local con privilegios vía `pkexec` — Axross nunca mantiene el privilegio. Entrada "Open as root…" en el menú contextual. |
 | `core.fuse_mount` | Montaje FUSE de cualquier FileBackend. Solo lectura por defecto; `writeable=True` habilita create / write / unlink / mkdir / rename. Extra opcional `[fuse]`. |
 | `core.mcp_server` | Servidor MCP JSON-RPC con framing stdio que expone el backend configurado como herramientas. `--mcp-write` añade herramientas mutadoras, capadas a un root a prueba de path-traversal. |
@@ -407,7 +438,10 @@ Los resultados llegan mientras la búsqueda corre; *Stop* o cerrar la
 ventana la cancela. Las columnas se ordenan; doble clic o `Enter` muestra el
 fichero seleccionado en un panel (un miembro de archivo abre la vista del
 archivo), y el menú contextual tiene *Open*, *Reveal in Pane*, *Copy Path* y
-*Send to Agent*.
+*Send to Agent*. Si el filtro del panel o el ajuste de ficheros ocultos
+escondería la entrada mostrada, Reveal vacía el filtro o muestra las
+entradas ocultas en esa carpeta (hasta que el panel cambie a otra), y la
+línea de estado lo dice.
 
 En una carpeta local la búsqueda usa [`fd`](https://github.com/sharkdp/fd)
 para listar ficheros y [`ripgrep`](https://github.com/BurntSushi/ripgrep)
@@ -450,10 +484,13 @@ muestra el fichero del índice.
   se quedan. La herramienta MCP `index_build` solo añade; con `prune` además
   pregunta al backend por cada path indexado bajo la carpeta y quita las
   filas cuyo fichero ya no está.
-- **Cómo se busca.** Subcadena del nombre (sin distinguir mayúsculas),
-  extensión, rango de tamaño, rango de fechas, una conexión. Extensión,
-  tamaño y fecha usan índices SQLite; una subcadena del nombre
-  (`LIKE '%…%'`) no puede usar ninguno y lee todas las filas.
+- **Cómo se busca.** Subcadena del nombre (sin distinguir mayúsculas en
+  ningún alfabeto: «ärger» encuentra `Ärger.txt`, «strasse» encuentra
+  `Straße.pdf`, también en la herramienta MCP `search`), extensión, rango de
+  tamaño, rango de fechas, una conexión. Extensión, tamaño y fecha usan
+  índices SQLite; una subcadena del nombre (`LIKE '%…%'`) no puede usar
+  ninguno y lee todas las filas. La búsqueda corre en segundo plano y la
+  ventana muestra las primeras 5000 coincidencias (y avisa si hay más).
 - **Qué tan rápido — medido** en la máquina de desarrollo con `/usr`
   (290 872 entradas, disco local, la máquina con otra carga): primera pasada
   125 s (unas 2 300 entradas/s), segunda pasada sobre el mismo árbol 53 s,
@@ -1614,7 +1651,9 @@ El agente de un dock solo tiene las herramientas de correo (`mail_list_new`, `ma
 `mail_read`, `mail_analyse`, `mail_draft`, `mail_send`, `dock_report`) y no escribe
 ficheros. El contenido de un correo se marca como no fiable en cada resultado; un correo
 no puede añadir destinatarios ni cambiar la política. `dock_report` deja una nota a otro
-dock, que la lee en su siguiente ejecución. SMTP: STARTTLS o TLS con el certificado
+dock, que la lee en su siguiente ejecución. Un correo cuenta como atendido cuando el
+agente lo ha leído, analizado o contestado; uno que solo vio en `mail_list_new`, o uno de
+una ejecución que falló o se detuvo, vuelve a ser nuevo en la siguiente. SMTP: STARTTLS o TLS con el certificado
 comprobado, sin cifrar solo a esta máquina; la contraseña queda en el llavero.
 
 **Tools → Mail Project…** importa ficheros `.eml` y `.msg` de Outlook, ficheros de datos de

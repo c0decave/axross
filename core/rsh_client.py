@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 from core.backend import SessionLifecycle
 from core.subprocess_env import clean_child_env
-from core.telnet_client import copy_command, remove_command, rename_command
+from core.telnet_client import copy_command, ls_records, remove_command, rename_command
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -72,16 +72,9 @@ _LS_RE = re.compile(
     r"\d+\s+"  # link count
     r"\S+\s+\S+\s+"  # user, group
     r"(?P<size>\d+|\d+,\s*\d+)\s+"  # size, or "major, minor" for a device
-    r"(?P<date>\S+\s+\S+\s+\S+)\s+"  # date triplet
-    r"(?P<name>.+?)$"
+    r"(?P<date>\S+\s+\S+\s+\S+) "  # date triplet, then ONE space
+    r"(?P<name>.+)$"  # the name exactly: blanks at either end belong to it
 )
-
-
-# Filename-allow-list. rsh quotes via ``shlex.quote`` already, but
-# refusing newlines / NUL up-front catches programmer errors and
-# stops a hostile profile from smuggling a second command via a
-# crafted path even if the quoting were ever weakened.
-_PATH_RE = re.compile(r"^[^\x00\r\n]*$")
 
 
 class RshError(OSError):
@@ -89,8 +82,13 @@ class RshError(OSError):
 
 
 def _validate_path(path: str) -> str:
-    if not _PATH_RE.fullmatch(path):
-        raise OSError(f"rsh path contains CR / LF / NUL: {path!r}")
+    # rsh quotes via ``shlex.quote``, but rshd hands the command line to a
+    # login shell and a control character (CR / LF / NUL, a terminal's
+    # line-editing keys) is safe on none of those layers: refused up-front,
+    # the one rule Telnet, ADB, SCP and FTP share.
+    from core.path_policy import refuse_control_chars
+
+    refuse_control_chars(path, "rsh")
     # Refuse paths that start with '-' so they cannot be re-interpreted
     # as flags by the remote tool (``head -c -r`` etc.). Callers should
     # also pass the explicit ``--`` separator in the command string.
@@ -323,8 +321,8 @@ class RshSession(SessionLifecycle):
 
         out = self._run_remote(f"ls -la {shlex.quote(ls_dir_operand(path))}")
         items: list[FileItem] = []
-        for raw in split_lf_only_stream(out.decode("utf-8", "replace")):
-            item = _parse_ls_line(raw)
+        for raw, rest in ls_records(out.decode("utf-8", "replace"), _LS_RE.match):
+            item = _parse_ls_line(raw, rest)
             if item is None or item.name in (".", ".."):
                 continue
             items.append(item)
@@ -352,8 +350,8 @@ class RshSession(SessionLifecycle):
         status, out, err = self._run_status(f"LC_ALL=C ls -la -d {shlex.quote(path)}")
         if status != 0:
             raise ls_error(f"rsh stat({path})", err.decode("utf-8", "replace").strip())
-        for raw in split_lf_only_stream(out.decode("utf-8", "replace")):
-            item = _parse_ls_line(raw)
+        for raw, rest in ls_records(out.decode("utf-8", "replace"), _LS_RE.match):
+            item = _parse_ls_line(raw, rest)
             if item is not None and item.name == path:
                 return replace(item, name=posixpath.basename(path))
         raise OSError(f"rsh stat({path}): unreadable answer from ls: {out[:200]!r}")
@@ -410,7 +408,15 @@ class RshSession(SessionLifecycle):
 
     def remove(self, path: str, recursive: bool = False) -> None:
         path = _validate_path(self.normalize(path))
-        self._run_remote(remove_command(path, recursive=recursive))
+        # FileNotFoundError for a missing path: remove_command asks ls
+        # first (rm -f alone reported success for it).
+        from core.exec_util import ls_error
+
+        try:
+            self._run_remote(remove_command(path, recursive=recursive))
+        except OSError as exc:
+            # The message ends in the remote stderr: ls's wording types it.
+            raise ls_error(f"rsh remove({path})", str(exc)) from exc
 
     def mkdir(self, path: str) -> None:
         path = _validate_path(self.normalize(path))
@@ -486,16 +492,20 @@ class RshSession(SessionLifecycle):
         self._run_remote(cmd, stdin=data)
 
 
-def _parse_ls_line(raw: str) -> FileItem | None:
+def _parse_ls_line(raw: str, rest: str = "") -> FileItem | None:
     """One ``ls -la`` line as a FileItem; None for the ``total`` line,
-    an ``ls:`` message and anything else the pattern does not match."""
-    line = raw.strip()
+    an ``ls:`` message and anything else the pattern does not match.
+    *rest*: the further lines of a name with a line break
+    (:func:`core.telnet_client.ls_records`). The line is not stripped:
+    blanks around a name are part of it, and "report " cut to "report"
+    named another file, which a delete then removed."""
+    line = raw
     if not line or line.startswith("total ") or line.startswith("ls:"):
         return None
     m = _LS_RE.match(line)
     if not m:
         return None
-    name = m.group("name")
+    name = m.group("name") + rest
     perms_text = m.group("perms")
     # Strip ``-> target`` for symlinks; we don't model them.
     if perms_text.startswith("l"):

@@ -20,11 +20,12 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING
 
 from core.backend import SessionLifecycle
 from core.exec_util import shell_path
+from core.path_policy import refuse_control_chars
 from models.file_item import FileItem
 from security.protocol_line_split import split_lf_only_stream
 
@@ -81,13 +82,16 @@ _LS_LINE_RE = re.compile(
     r"(\S+)\s+"  # owner
     r"(\S+)\s+"  # group
     r"(\d+|\d+,\s*\d+)\s+"  # size, or "major, minor" for a device
-    r"(.{12})\s+"  # date (fixed width)
-    r"(.+)$"  # name (may contain -> for symlinks)
+    r"(.{12}) "  # date (fixed width), then ONE space
+    r"(.+)$"  # name, exactly as printed: blanks at either end are part of it
 )
 
 CONNECT_TIMEOUT = 15.0
 CMD_TIMEOUT = 30.0
 TRANSFER_TIMEOUT = 300.0
+#: Server-side cp / mv / rm -rf: they take as long as the data takes. Under
+#: CMD_TIMEOUT a long copy was reported failed while it went on running.
+TREE_OP_TIMEOUT = 3600.0
 #: Encoded characters per upload heredoc; larger files take several.
 MAX_HEREDOC_CHARS = 64 * 1024
 _READ_SLICE = 0.1  # select() poll interval
@@ -702,8 +706,10 @@ class _ShellSession:
         else:
             output = text[: m.start()]
 
-        # Clean up: strip leading/trailing whitespace, remove prompt markers
-        output = output.replace(_PROMPT_MARKER, "").strip()
+        # Clean up: remove prompt markers and the line breaks around the
+        # answer. Not blanks: they belong to the answer (the last name of a
+        # listing, "report ", came back as "report").
+        output = output.replace(_PROMPT_MARKER, "").strip("\n")
 
         return output, exit_code
 
@@ -746,6 +752,10 @@ class _Capabilities:
     has_df: bool = False
     has_wc: bool = False
     has_test: bool = True  # Assume shell built-in
+    #: ``ls -b`` (GNU, toybox, BSD): names come escaped. On a terminal ls
+    #: otherwise prints "?" for every control character, and the "?" then
+    #: named another file.
+    has_ls_escape: bool = False
     shell_type: str = "sh"
     os_name: str = "unknown"
     transfer_method: str = "raw"  # "base64", "uuencode", "xxd", "raw"
@@ -797,6 +807,11 @@ def _probe_capabilities(shell: _ShellSession) -> _Capabilities:
             if code == 0:
                 has_stat_bsd = True
 
+    has_ls_escape = False
+    if tools.get("ls"):
+        _, code = shell.execute("ls -lab / >/dev/null 2>&1", timeout=5.0)
+        has_ls_escape = code == 0
+
     # Detect OS
     os_output, _ = shell.execute("uname -s 2>/dev/null", timeout=5.0)
     os_name = os_output.strip() or "unknown"
@@ -828,6 +843,7 @@ def _probe_capabilities(shell: _ShellSession) -> _Capabilities:
         has_readlink=tools.get("readlink", False),
         has_df=tools.get("df", False),
         has_wc=tools.get("wc", False),
+        has_ls_escape=has_ls_escape,
         shell_type=shell_type,
         os_name=os_name,
         transfer_method=transfer_method,
@@ -868,11 +884,21 @@ def remove_command(path: str, *, recursive: bool, quote=shlex.quote) -> str:
     ("Not a directory"), and ``rm -f`` alone refuses an empty folder.
     Recursive: ``rm -rf``, which removes a link itself, never the folder it
     points to. *quote* quotes the path for the remote shell; ``--`` ends
-    the options, so a name that starts with ``-`` is never one."""
+    the options, so a name that starts with ``-`` is never one.
+
+    ``-f`` (no prompt on a terminal for a write-protected file) also says
+    nothing about a path that is not there: the delete of a missing file
+    "worked". ``ls -d`` asks first and, under LC_ALL=C, prints why it
+    cannot (``No such file or directory``, ``Permission denied``), which
+    :func:`core.exec_util.ls_error` types; the command then fails."""
     q = quote(path)
+    there = f"LC_ALL=C ls -d -- {q} >/dev/null"
     if recursive:
-        return f"rm -rf -- {q}"
-    return f"if test -d {q} && ! test -L {q}; then rmdir -- {q}; else rm -f -- {q}; fi"
+        return f"if {there}; then rm -rf -- {q}; else false; fi"
+    return (
+        f"if test -d {q} && ! test -L {q}; then rmdir -- {q}; "
+        f"elif {there}; then rm -f -- {q}; else false; fi"
+    )
 
 
 def copy_command(src: str, dst: str, *, preserve: bool = False) -> str:
@@ -924,15 +950,89 @@ def _uu_decode(text: str) -> bytes:
     raise ValueError("uuencoded data has no begin/end frame")
 
 
-def _parse_ls_la(output: str) -> list[FileItem]:
-    """Parse `ls -la` output into FileItem list."""
+def ls_records(output: str, is_entry) -> list[tuple[str, str]]:
+    """The entries of an ``ls -l`` answer as ``(first line, rest)``.
+
+    ls prints a name (or a link target) with a line break as it is, so a
+    line that is no entry of its own (*is_entry* says) continues the entry
+    before it; *rest* is that continuation, each line after a ``"\\n"``.
+    The entry keeps its whole name: cut to the first line it named
+    ANOTHER file, which a delete then removed. Such a name is listed, not
+    dropped (a recursive copy or delete would miss it without a word), and
+    refused where it is used (:func:`core.path_policy.refuse_control_chars`).
+    A ``total`` line, an ``ls:`` message and lines before the first entry
+    are records of their own, with no entry to continue.
+    """
+    lines = split_lf_only_stream(output)
+    if lines and lines[-1] == "":
+        lines.pop()  # the final line feed ends the last line, it is no name
+    if lines and all(line.endswith("\r") for line in lines):
+        lines = [line[:-1] for line in lines]  # a CRLF answer (Windows SSH servers)
+    records: list[list[str]] = []
+    current: list[str] | None = None
+    for line in lines:
+        if is_entry(line):
+            current = [line, ""]
+            records.append(current)
+        elif current is not None and not line.startswith(("total ", "ls: ")):
+            current[1] += "\n" + line
+        else:
+            current = None
+            records.append([line, ""])
+    for first, rest in records:
+        if rest:
+            log.warning(
+                "ls listed a name with a line break: %r; it cannot be used through "
+                "a remote shell", (first + rest)[-200:],
+            )
+    return [(first, rest) for first, rest in records]
+
+
+_LS_ESCAPES = {"n": 10, "t": 9, "r": 13, "a": 7, "b": 8, "f": 12, "v": 11, "e": 27}
+
+
+def ls_unescape(text: str) -> str:
+    """A name as ``ls -b`` (``--quoting-style=escape``) prints it, back to
+    the name: ``\\ `` is a blank, ``\\n`` a line feed, ``\\NNN`` an octal
+    byte (one of a name's UTF-8 bytes)."""
+    if "\\" not in text:
+        return text
+    out = bytearray()
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch != "\\" or i + 1 >= len(text):
+            out += ch.encode("utf-8")
+            i += 1
+            continue
+        nxt = text[i + 1]
+        octal = re.match(r"[0-7]{1,3}", text[i + 1 : i + 4])
+        if octal:
+            out.append(int(octal.group(0), 8) & 0xFF)
+            i += 1 + len(octal.group(0))
+        elif nxt in _LS_ESCAPES:
+            out.append(_LS_ESCAPES[nxt])
+            i += 2
+        else:  # \\ \  \" \' ...: the character itself
+            out += nxt.encode("utf-8")
+            i += 2
+    return out.decode("utf-8", "replace")
+
+
+def _parse_ls_la(output: str, *, escaped: bool = False, utc: bool = False) -> list[FileItem]:
+    """Parse `ls -la` output into FileItem list.
+
+    The name is exactly what follows the single space after the date:
+    blanks at its start or end belong to it (``"report "`` is not
+    ``"report"``), and a name with a line break keeps its other lines
+    (:func:`ls_records`). *escaped*: the listing came from ``ls -b``
+    (names and link targets escaped, see :func:`ls_unescape`). *utc*: ls
+    ran under ``TZ=UTC0``, so its dates are UTC and come back aware.
+    """
     # Strip ANSI escape sequences that some shells/aliases inject
     output = _ANSI_RE.sub("", output)
     items: list[FileItem] = []
-    for line in split_lf_only_stream(output):
-        line = line.strip()
-        if not line or line.startswith("total "):
-            continue
+    for line, rest in ls_records(output, _LS_LINE_RE.match):
         m = _LS_LINE_RE.match(line)
         if not m:
             continue
@@ -942,7 +1042,7 @@ def _parse_ls_la(output: str) -> list[FileItem]:
         group = m.group(5)
         size = 0 if "," in m.group(6) else int(m.group(6))
         date_str = m.group(7).strip()
-        name_field = m.group(8)
+        name_field = m.group(8) + rest
 
         is_dir = type_char == "d"
         is_link = type_char == "l"
@@ -951,13 +1051,15 @@ def _parse_ls_la(output: str) -> list[FileItem]:
 
         if is_link and " -> " in name_field:
             name, link_target = name_field.split(" -> ", 1)
+        if escaped:
+            name, link_target = ls_unescape(name), ls_unescape(link_target)
 
         # Skip . and ..
         if name in (".", ".."):
             continue
 
         permissions = _parse_permissions(perm_str)
-        modified = _parse_ls_date(date_str)
+        modified = _parse_ls_date(date_str, utc=utc)
 
         items.append(
             FileItem(
@@ -1020,7 +1122,7 @@ _LS_MONTHS = {name: number for number, name in enumerate(
 _LS_DATE = re.compile(r"([A-Za-z]{3})\s+(\d{1,2})\s+(?:(\d{1,2}):(\d{2})|(\d{4}))")
 
 
-def _parse_ls_date(date_str: str) -> datetime:
+def _parse_ls_date(date_str: str, *, utc: bool = False) -> datetime:
     """Parse ls -la date field.
 
     Formats: 'Mar 16 14:30' (recent) or 'Mar 16  2025' (old). The month
@@ -1028,34 +1130,45 @@ def _parse_ls_date(date_str: str) -> datetime:
     with a table, not strptime's %b: that follows the local LC_TIME, which
     Qt sets from the user's locale. Feb 29 without a year is taken in the
     latest leap year that does not lie in the future.
+
+    ls prints the wall clock of the SERVER's time zone. A naive datetime
+    means local time to FileItem, which was wrong for every server in
+    another zone; *utc* (ls ran under ``TZ=UTC0``) returns an aware UTC
+    time instead. Without it the result stays naive (the caller cannot
+    know the server's zone).
     """
+    tz = timezone.utc if utc else None
     match = _LS_DATE.fullmatch(date_str.strip())
     month = _LS_MONTHS.get(match.group(1).lower()) if match else None
     if match is None or month is None:
-        return datetime.fromtimestamp(0)
+        return datetime.fromtimestamp(0, tz)
     day = int(match.group(2))
     try:
         if match.group(5):
-            return datetime(int(match.group(5)), month, day)
+            return datetime(int(match.group(5)), month, day, tzinfo=tz)
         hour, minute = int(match.group(3)), int(match.group(4))
-        now = datetime.now()
+        now = datetime.now(tz)
         # A date without a year lies within the last ~6 months: this
         # year, or last year when it would be in the future.
         for year in range(now.year, now.year - 9, -1):
             try:
-                dt = datetime(year, month, day, hour, minute)
+                dt = datetime(year, month, day, hour, minute, tzinfo=tz)
             except ValueError:   # Feb 29 outside a leap year
                 continue
             if dt <= now or year < now.year:
                 return dt
     except ValueError:
         pass
-    return datetime.fromtimestamp(0)
+    return datetime.fromtimestamp(0, tz)
 
 
 def _parse_stat_gnu(output: str) -> FileItem:
-    """Parse GNU stat output with format '%n|%s|%Y|%f|%U|%G|%F'."""
-    parts = output.strip().split("|")
+    """Parse GNU stat output with format '%n|%s|%Y|%f|%U|%G|%F'.
+
+    Split from the right: the name (``%n``, first) may hold a ``|`` -
+    ``a|b.txt`` came apart into a name ``a`` and a size ``b.txt``, an
+    unparseable answer - the six fields after it cannot."""
+    parts = output.strip("\r\n").rsplit("|", 6)
     if len(parts) < 7:
         raise OSError(f"Cannot parse stat output: {output[:200]!r}")
     name = posixpath.basename(parts[0])
@@ -1276,6 +1389,9 @@ class TelnetSession(SessionLifecycle):
     (ls, stat, cat, base64, etc.) to implement the FileBackend interface.
     """
 
+    #: Until _connect() probes the shell: nothing beyond POSIX assumed.
+    _caps: _Capabilities = _Capabilities()
+
     def __init__(
         self,
         host: str,
@@ -1441,13 +1557,26 @@ class TelnetSession(SessionLifecycle):
             log.debug("Telnet liveness check failed: %s", exc)
             return False
 
+    def _path(self, path: str) -> str:
+        """*path* normalized for a command line; OSError when it holds a
+        control character. The command goes through the server's terminal,
+        whose line editing acts on ^U / ^W / ^V before the shell sees any
+        quoting: the rest of such a name ran as a command of its own."""
+        return refuse_control_chars(self.normalize(path), "Telnet")
+
+    def _ls(self, flags: str) -> str:
+        """The ``ls`` command a listing runs: under ``TZ=UTC0``, so its
+        dates are UTC (the parser returns them aware), and with ``-b``
+        where ls has it."""
+        return f"TZ=UTC0 ls {flags}{'b' if self._caps.has_ls_escape else ''}"
+
     def list_dir(self, path: str) -> list[FileItem]:
-        path = self.normalize(path)
+        path = self._path(path)
         try:
             from core.exec_util import ls_dir_operand
 
-            output = self._exec(f"ls -la {shell_path(ls_dir_operand(path))}")
-            return _parse_ls_la(output)
+            output = self._exec(f"{self._ls('-la')} {shell_path(ls_dir_operand(path))}")
+            return _parse_ls_la(output, escaped=self._caps.has_ls_escape, utc=True)
         except OSError as exc:
             # Stripped IoT / busybox / restricted-shell fallback:
             # if `ls` isn't on PATH (or is refused by a restricted
@@ -1492,14 +1621,14 @@ class TelnetSession(SessionLifecycle):
         return out
 
     def stat(self, path: str) -> FileItem:
-        path = self.normalize(path)
+        path = self._path(path)
         qpath = shell_path(path)
         if self._caps.has_stat_gnu:
             output = self._exec(f"stat --format='%n|%s|%Y|%f|%U|%G|%F' {qpath}")
             return _parse_stat_gnu(output)
         # Fallback: ls -ld
-        output = self._exec(f"ls -ld {qpath}")
-        items = _parse_ls_la(output)
+        output = self._exec(f"{self._ls('-ld')} {qpath}")
+        items = _parse_ls_la(output, escaped=self._caps.has_ls_escape, utc=True)
         if not items:
             raise OSError(f"Cannot stat {path}: no output from ls -ld")
         item = items[0]
@@ -1523,7 +1652,7 @@ class TelnetSession(SessionLifecycle):
         False from exists() as the go-ahead to write."""
         from core.exec_util import path_kind, path_kind_command
 
-        path = self.normalize(path)
+        path = self._path(path)
         out, code = self._exec_raw(path_kind_command(path))
         return path_kind(f"Telnet {path}", out, code)
 
@@ -1534,16 +1663,40 @@ class TelnetSession(SessionLifecycle):
         return self._path_kind(path) is not None
 
     def mkdir(self, path: str) -> None:
-        self._exec(f"mkdir -p {shell_path(self.normalize(path))}")
+        self._exec(f"mkdir -p {shell_path(self._path(path))}")
 
     def remove(self, path: str, recursive: bool = False) -> None:
-        self._exec(remove_command(self.normalize(path), recursive=recursive))
+        """FileNotFoundError for a path that is not there (``rm -f`` said
+        nothing), another OSError for any other refusal."""
+        from core.exec_util import ls_error
+
+        path = self._path(path)
+        output, code = self._exec_tree_op(remove_command(path, recursive=recursive))
+        if code != 0:
+            raise ls_error(f"Telnet remove({path})", output.strip()[:500] or f"exit {code}")
 
     def rename(self, src: str, dst: str) -> None:
-        self._exec(rename_command(self.normalize(src), self.normalize(dst)))
+        cmd = rename_command(self._path(src), self._path(dst))
+        output, code = self._exec_tree_op(cmd)
+        if code != 0:
+            raise CommandFailed(f"Command failed (exit {code}): {cmd[:80]}\n{output[:500]}")
+
+    def _exec_tree_op(self, cmd: str) -> tuple[str, int]:
+        """Run a command that changes the tree (cp, mv, rm): under
+        TREE_OP_TIMEOUT, not CMD_TIMEOUT, and never sent a second time -
+        _exec_raw's reconnect-and-retry after a timeout ran a copy that was
+        still going again. A timeout says the command may still be running."""
+        shell = self._ensure_connected()
+        try:
+            return shell.execute(cmd, timeout=TREE_OP_TIMEOUT)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"Telnet: no answer within {TREE_OP_TIMEOUT:.0f} s; the command may still be "
+                f"running on the server: {cmd[:80]!r}"
+            ) from exc
 
     def open_read(self, path: str) -> IO[bytes]:
-        path = self.normalize(path)
+        path = self._path(path)
         qpath = shell_path(path)
         shell = self._ensure_connected()
 
@@ -1619,7 +1772,7 @@ class TelnetSession(SessionLifecycle):
         return data
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
-        path = self.normalize(path)
+        path = self._path(path)
         if append:
             try:
                 with self.open_read(path) as f:
@@ -1656,12 +1809,12 @@ class TelnetSession(SessionLifecycle):
     def chmod(self, path: str, mode: int) -> None:
         if not self._caps.has_chmod:
             raise OSError("chmod not available on remote system")
-        self._exec(f"chmod {oct(mode)[2:]} {shell_path(self.normalize(path))}")
+        self._exec(f"chmod {oct(mode)[2:]} {shell_path(self._path(path))}")
 
     def readlink(self, path: str) -> str:
         if not self._caps.has_readlink:
             raise OSError("readlink not available on remote system")
-        output = self._exec(f"readlink {shell_path(self.normalize(path))}")
+        output = self._exec(f"readlink {shell_path(self._path(path))}")
         result = output.strip()
         if not result:
             raise OSError(f"Not a symlink: {path}")
@@ -1675,9 +1828,9 @@ class TelnetSession(SessionLifecycle):
 
     def copy(self, src: str, dst: str) -> None:
         """Shell ``cp -p`` on the remote — server-side."""
-        src = self.normalize(src)
-        dst = self.normalize(dst)
-        output, code = self._exec_raw(f"{copy_command(src, dst, preserve=True)} 2>&1")
+        src = self._path(src)
+        dst = self._path(dst)
+        output, code = self._exec_tree_op(f"{copy_command(src, dst, preserve=True)} 2>&1")
         if code != 0:
             raise OSError(f"cp {src} -> {dst} failed: {output.strip()!r}")
 
@@ -1690,7 +1843,7 @@ class TelnetSession(SessionLifecycle):
         }.get(algorithm)
         if not tool:
             return ""
-        path = self.normalize(path)
+        path = self._path(path)
         output, code = self._exec_raw(f"{tool} {shell_path(path)} 2>/dev/null")
         if code != 0 or not output:
             return ""
@@ -1750,7 +1903,7 @@ class TelnetSession(SessionLifecycle):
     def disk_usage(self, path: str) -> tuple[int, int, int]:
         if not self._caps.has_df:
             return (0, 0, 0)
-        path = self.normalize(path)
+        path = self._path(path)
         # Try df -B1 (GNU) first
         output, code = self._exec_raw(f"df -B1 {shell_path(path)} 2>/dev/null")
         if code == 0:

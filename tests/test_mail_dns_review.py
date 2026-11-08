@@ -293,3 +293,91 @@ def test_happy_include_of_a_domain_with_spf_still_matches():
     records = {"example.com": '"v=spf1 include:spf.partner.example -all"',
                "spf.partner.example": '"v=spf1 ip4:192.0.2.0/24 -all"'}
     assert D.spf_check("192.0.2.10", "example.com", dns(records))[0] == "pass"
+
+
+# --- review 3: the hop where the mail entered the receiving organisation -----------------------
+
+O365 = b"""Received: from AM0PR02MB1234.eurprd02.prod.outlook.com (2603:10a6:208:12::34)
+ by DB9PR02MB5678.eurprd02.prod.outlook.com with HTTPS; Mon, 2 Nov 2026 10:00:03 +0000
+Received: from AM6PR0502CA0001.eurprd05.prod.outlook.com (2603:10a6:20b:2e::14)
+ by AM0PR02MB1234.eurprd02.prod.outlook.com (2603:10a6:208:12::34) with Microsoft SMTP Server; Mon, 2 Nov 2026 10:00:02 +0000
+Received: from AM3PEPF0000A78F.eurprd04.prod.outlook.com (2603:10a6:207:1::3) by AM6PR0502CA0001.outlook.office365.com
+ (2603:10a6:20b:2e::14) with Microsoft SMTP Server; Mon, 2 Nov 2026 10:00:02 +0000
+Received: from mail-wm1-f41.google.com (209.85.128.41) by
+ AM3PEPF0000A78F.mail.protection.outlook.com (10.167.16.104) with Microsoft SMTP Server; Mon, 2 Nov 2026 10:00:01 +0000
+Return-Path: alice@gmail.com
+From: Alice <alice@gmail.com>
+To: bob@contoso.com
+Subject: hi
+
+body
+"""
+
+
+def test_sad_microsoft_365_internal_hops_are_not_the_sending_address():
+    """sending_ip took the newest Received hop with any public address - in
+    Microsoft 365 that is one of its own outlook.com servers (public IPv6),
+    so a gmail mail was checked against Microsoft's address and showed
+    "SPF fail" at high severity. The receiver's own hops (from and by in its
+    organisations, outlook.com and office365.com) are passed over now."""
+    msg = parse_eml(O365)
+    assert D.sending_ip(msg) == "209.85.128.41"
+    findings, result = D.dns_check(msg, dns({"gmail.com": '"v=spf1 ip4:209.85.128.0/17 -all"',
+                                             "_dmarc.gmail.com": '"v=DMARC1; p=none"'}))
+    assert result["spf"] == "pass", texts(findings)
+    assert not texts(findings, "high"), texts(findings)
+
+
+def test_happy_the_address_the_receiver_recorded_above_the_entry_hop_wins():
+    """A filter in front of the receiver (another organisation, public
+    address) was taken as the sender. The client address the receiver wrote
+    into Authentication-Results above the entry hop is used; one in a header
+    below it (the sender could have written it) is not."""
+    raw = (b"Authentication-Results: mx.contoso.example; spf=pass smtp.mailfrom=gmail.com "
+           b"smtp.remote-ip=209.85.128.41\r\n"
+           b"Received: from scan.cloudav.example (scan.cloudav.example [93.184.216.34]) by mx.contoso.example; "
+           b"Mon, 2 Nov 2026 10:00:02 +0000\r\n"
+           b"Received: from mail-wm1-f41.google.com (209.85.128.41) by scan.cloudav.example; "
+           b"Mon, 2 Nov 2026 10:00:01 +0000\r\nFrom: a@gmail.com\r\n\r\nx\r\n")
+    assert D.sending_ip(parse_eml(raw)) == "209.85.128.41"
+    forged = (b"Received: from mail.attacker.example (mail.attacker.example [6.6.6.6]) by mx.contoso.example; "
+              b"Mon, 2 Nov 2026 10:00:02 +0000\r\n"
+              b"Authentication-Results: mx.contoso.example; spf=pass smtp.remote-ip=209.85.128.41\r\n"
+              b"Received-SPF: pass client-ip=209.85.128.41\r\nFrom: a@gmail.com\r\n\r\nx\r\n")
+    assert D.sending_ip(parse_eml(forged)) == "6.6.6.6"
+
+
+def test_edge_a_mail_from_inside_the_organisation_keeps_the_newest_public_hop():
+    """Every hop inside the receiver's organisation, none from outside:
+    the newest public address, as before - and the Received-SPF client-ip
+    of a Gmail-style receiver above an outside hop is read too."""
+    inside = (b"Received: from a.contoso.example (a.contoso.example [93.184.216.34]) by b.contoso.example; "
+              b"Mon, 2 Nov 2026 10:00:02 +0000\r\n"
+              b"Received: from c.contoso.example (c.contoso.example [93.184.216.35]) by a.contoso.example; "
+              b"Mon, 2 Nov 2026 10:00:01 +0000\r\n\r\nx\r\n")
+    assert D.sending_ip(parse_eml(inside)) == "93.184.216.34"
+    gmail = (b"Received-SPF: softfail (google.com: domain of transitioning a@b.example does not designate "
+             b"198.51.200.9 as permitted sender) client-ip=198.51.200.9;\r\n"
+             b"Received: by 2002:a05:6000:1::1 with SMTP id x; Mon, 2 Nov 2026 10:00:03 +0000\r\n"
+             b"Received: from relay.mx.google.com (relay.mx.google.com [64.233.160.10]) by mx.google.com; "
+             b"Mon, 2 Nov 2026 10:00:02 +0000\r\n"
+             b"Received: from out.b.example (out.b.example [198.51.200.9]) by relay.mx.google.com; "
+             b"Mon, 2 Nov 2026 10:00:01 +0000\r\n\r\nx\r\n")
+    assert D.sending_ip(parse_eml(gmail)) == "198.51.200.9"
+
+
+def test_sad_a_failed_dmarc_lookup_is_a_finding():
+    """dmarc_policy turned a resolver error (a timeout) into None, and
+    dns_check said nothing about DMARC at all - as if it had not been
+    looked at. It is an info finding "DMARC: lookup failed" now."""
+    raw = (b"Received: from mx.example.net (mx.example.net [93.184.216.34]) by mx.me; "
+           b"Mon, 2 Nov 2026 10:00:01 +0000\r\nFrom: a@example.net\r\n\r\nb\r\n")
+
+    def lookup(name, rtype):
+        if name.startswith("_dmarc."):
+            raise TimeoutError("DNS timed out")
+        return ['"v=spf1 ip4:93.184.216.34 -all"'] if (name, rtype) == ("example.net", "TXT") else []
+    findings, result = D.dns_check(parse_eml(raw), lookup)
+    failed = [f for f in findings if f.text.startswith("DMARC: lookup failed")]
+    assert len(failed) == 1 and failed[0].severity == "info" and "timed out" in failed[0].text
+    assert result["dmarc"] is None and result["spf"] == "pass"

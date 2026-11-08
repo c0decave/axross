@@ -68,7 +68,11 @@ signs `SHA256SUMS` (`scripts/sign_release.py`, raw 64-byte signature in
   *Help > Features…* also offers "Update packs" on its own when the release's manifest
   was re-issued (same version, a pack fixed): `core.packs.check_reissued` and `update`,
   through the same signed `SHA256SUMS` and blob checks as *Add*; the fixed packs are used
-  from the next start. Until then the running session keeps the folders it imports
+  from the next start. Each re-issue is numbered in the signed `SHA256SUMS`
+  (`# axross-packs-issue N` after the release line, `scripts/sign_release.py
+  --packs-issue N`; none is issue 0): `installed.json` keeps the highest issue installed
+  (`issue`), and a lower one - an earlier signed issue uploaded again - or another
+  manifest under the installed number is refused, by *Add* and "Update packs" alike. Until then the running session keeps the folders it imports
   from: a blob re-issued under its old file name is unpacked into a folder of its own
   (`<blob>.<sha256 prefix>`, recorded as `dirs` in `installed.json`), and a folder no
   unit needs any more is only listed as `retired` there.

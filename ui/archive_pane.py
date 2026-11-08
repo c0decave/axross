@@ -121,11 +121,13 @@ def _fmt_mtime(mtime: float | None) -> str:
 
 def _split_segments(name: str) -> list[str]:
     """Split an archive member name into non-empty path segments.
-    Normalises backslashes to ``/`` and drops empty segments (leading,
-    trailing, or doubled separators) so ``d//sub/`` → ``['d', 'sub']``.
-    Pure path math — never touches the filesystem."""
+    Normalises backslashes to ``/`` and drops empty and ``.`` segments
+    (leading, trailing, or doubled separators, and the ``./`` prefix of an
+    archive made with ``tar -C dir .``) so ``d//sub/`` and ``./d/sub/``
+    → ``['d', 'sub']`` - ``./`` showed as a folder named ".". Pure path
+    math — never touches the filesystem."""
     normalised = name.replace("\\", "/")
-    return [seg for seg in normalised.split("/") if seg]
+    return [seg for seg in normalised.split("/") if seg and seg != "."]
 
 
 def _make_row(
@@ -231,6 +233,32 @@ def build_archive_tree(entries: list[ArchiveEntry]) -> QStandardItemModel:
         parent.appendRow(row)
 
     return model
+
+
+#: A member a pane is to show once its listing is in (:func:`request_reveal`):
+#: ``{"key": (chain, name), "parts": [...], "until": monotonic deadline}``.
+_PENDING_REVEAL: dict = {}
+#: How long a reveal waits for its archive view (a nested one is extracted
+#: first, behind a Cancel dialog).
+REVEAL_WAIT_SECONDS = 300.0
+
+
+def request_reveal(archive_path: str, member_chain: str) -> None:
+    """Show *member_chain* of *archive_path* when its archive view lists:
+    ``"n.zip!/y.txt"`` (a Find Files hit inside a nested archive) opens
+    ``n.zip`` as the next view - as a double-click does - and selects
+    ``y.txt`` there; a plain member is selected. Opening the hit showed
+    only the outermost archive. One request at a time: a newer one
+    replaces it."""
+    _PENDING_REVEAL.clear()
+    parts = [p for p in (member_chain or "").split("!/") if p]
+    if parts:
+        _PENDING_REVEAL.update(key=((), os.path.abspath(archive_path)), parts=parts,
+                               until=time.monotonic() + REVEAL_WAIT_SECONDS)
+
+
+def _same_member(a: str, b: str) -> bool:
+    return _split_segments(a) == _split_segments(b)
 
 
 def _is_folder_item(name_item: QStandardItem) -> bool:
@@ -588,6 +616,66 @@ class ArchivePaneWidget(QWidget):
             f"{basename} [{fmt}] — {n_files} entries, {_fmt_size(total)}",
         )
         self._status_label.setText("Ready")
+        self._reveal_pending()
+
+    def _reveal_key(self) -> tuple:
+        """What :func:`request_reveal` names this view by: the outermost
+        archive by its path, a nested one by the archives around it and its
+        own name (its file sits in a temp folder)."""
+        if not self.chain:
+            return ((), os.path.abspath(self._archive_path))
+        return (self.chain, os.path.basename(self._archive_path))
+
+    def _reveal_pending(self) -> None:
+        if not _PENDING_REVEAL or _PENDING_REVEAL["key"] != self._reveal_key():
+            return
+        parts = _PENDING_REVEAL["parts"]
+        expired = time.monotonic() > _PENDING_REVEAL["until"]
+        _PENDING_REVEAL.clear()
+        if expired:
+            return
+        member = next((e.name for e in self._entries if not e.is_dir and _same_member(e.name, parts[0])), None)
+        if member is None:
+            return
+        self.select_member(member)
+        rest = parts[1:]
+        if rest and is_supported_archive(member):
+            _PENDING_REVEAL.update(key=((*self.chain, os.path.basename(self._archive_path)),
+                                        os.path.basename(member.rstrip("/"))),
+                                   parts=rest, until=time.monotonic() + REVEAL_WAIT_SECONDS)
+            # Not from inside this listing's slot: the window extracts the
+            # nested archive behind a dialog of its own.
+            from PyQt6 import sip
+            from PyQt6.QtCore import QTimer
+
+            def go(pane=self, m=member) -> None:
+                if not sip.isdeleted(pane):
+                    pane._open(m)
+            QTimer.singleShot(0, go)
+
+    def select_member(self, member: str) -> bool:
+        """Select (and scroll to) the row of *member*; False when there is none."""
+        model = self._tree.model()
+        if model is None or not hasattr(model, "itemFromIndex"):
+            return False
+        pending = [model.invisibleRootItem()]
+        while pending:
+            parent = pending.pop()
+            for r in range(parent.rowCount()):
+                item = parent.child(r, COL_NAME)
+                if item is None:
+                    continue
+                if item.hasChildren():
+                    pending.append(item)
+                elif item.data(Qt.ItemDataRole.UserRole) == member:
+                    index = item.index()
+                    self._tree.setCurrentIndex(index)
+                    self._tree.selectionModel().select(
+                        index, self._tree.selectionModel().SelectionFlag.ClearAndSelect
+                        | self._tree.selectionModel().SelectionFlag.Rows)
+                    self._tree.scrollTo(index)
+                    return True
+        return False
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt
         if self._list_job is not None:

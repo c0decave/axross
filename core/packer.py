@@ -225,6 +225,22 @@ class _Entry:
     is_dir: bool
     size: int
     mtime: float
+    #: The source's permission bits (masked to 0o777), stored in the archive.
+    mode: int = 0o644
+
+
+def _mode(backend, item, path: str, is_dir: bool) -> int:
+    """The permission bits of *item* to store: ``stat`` for a local file,
+    else the backend's ``permissions`` (0 is "not known": 0644, a folder
+    0755). Only 0o777 - no setuid, setgid or sticky bit in an archive."""
+    default = 0o755 if is_dir else 0o644
+    if _is_local(backend):
+        try:
+            return os.lstat(path).st_mode & 0o777
+        except OSError:
+            return default
+    perms = getattr(item, "permissions", 0)
+    return perms & 0o777 if isinstance(perms, int) and perms > 0 else default
 
 
 def _is_local(backend) -> bool:
@@ -263,7 +279,7 @@ def _collect(
             skipped.append(arcname)
             return
         if item.is_dir:
-            entries.append(_Entry(arcname, path, True, 0, _mtime(item)))
+            entries.append(_Entry(arcname, path, True, 0, _mtime(item), _mode(backend, item, path, True)))
             try:
                 children = backend.list_dir(path)
             except OSError as exc:
@@ -276,7 +292,8 @@ def _collect(
         files += 1
         if files > MAX_PACK_FILES:
             raise PackError(f"more than {MAX_PACK_FILES} files - pack fewer at a time")
-        entries.append(_Entry(arcname, path, False, max(0, int(item.size or 0)), _mtime(item)))
+        entries.append(_Entry(arcname, path, False, max(0, int(item.size or 0)), _mtime(item),
+                              _mode(backend, item, path, False)))
 
     for name in names:
         if name in ("", ".", "..") or "/" in name or "\\" in name:
@@ -372,12 +389,12 @@ def _write_zip(backend, entries, out_path, opts, step, cancel) -> None:
             stamp = _zip_date_time(e.mtime)
             if e.is_dir:
                 info = zipfile.ZipInfo(e.arcname + "/", date_time=stamp)
-                info.external_attr = (stat_mod.S_IFDIR | 0o755) << 16 | 0x10
+                info.external_attr = (stat_mod.S_IFDIR | e.mode) << 16 | 0x10
                 zf.writestr(info, b"")
                 continue
             info = zipfile.ZipInfo(e.arcname, date_time=stamp)
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (stat_mod.S_IFREG | 0o644) << 16
+            info.external_attr = (stat_mod.S_IFREG | e.mode) << 16
             fh, src = _open_source(backend, e, cancel)
             with fh, zf.open(info, "w", force_zip64=e.size > 0x7FFFFFFF) as dst:
                 _copy(src, dst)
@@ -409,11 +426,11 @@ def _write_tar(backend, entries, out_path, opts, step, cancel) -> None:
                     info.mtime = int(e.mtime)
                     if e.is_dir:
                         info.type = tarfile.DIRTYPE
-                        info.mode = 0o755
+                        info.mode = e.mode
                         tf.addfile(info)
                         continue
                     info.size = e.size
-                    info.mode = 0o644
+                    info.mode = e.mode
                     fh, src = _open_source(backend, e, cancel)
                     with fh:
                         try:

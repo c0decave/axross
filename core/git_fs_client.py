@@ -803,6 +803,13 @@ class GitFsSession(SessionLifecycle):
         dst_branch, dst_sub = self._split_branch(dst)
         if src_branch != dst_branch:
             raise OSError("Git: cross-branch rename is not supported (use copy)")
+        # The rename is two commits, "write dst" then "remove src": onto
+        # itself the second removed the file, and onto an existing file
+        # the first replaced it without a word (DbFsBackend refuses both).
+        if dst == src:
+            raise OSError(errno.EINVAL, f"Git rename: source and destination are the same: {src}")
+        if self.exists(dst):
+            raise FileExistsError(errno.EEXIST, f"Git rename: destination already exists: {dst}")
         with self.open_read(src) as fh:
             data = fh.read()
         mode = self._file_mode(src_branch, src_sub)

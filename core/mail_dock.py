@@ -224,6 +224,20 @@ class Mailbox:
             self._save()
         return out
 
+    def mark_seen(self, msg_id: str) -> None:
+        """Remember the message *msg_id* (an id :meth:`new` or
+        :meth:`recent` gave, or a bare ``.eml`` name) as handled: the agent
+        read, analysed or answered it. Listing alone marks nothing - a run
+        that fails, is cancelled or crashes after ``mail_list_new`` leaves
+        the mail new for the next run."""
+        name = self._ids.get(msg_id) or (msg_id if msg_id.endswith(".eml") else "")
+        if _bare_name(name) and name not in self._seen:
+            self._seen.add(name)
+            try:
+                self._save()
+            except OSError as exc:      # the mail is still read; it may be listed again
+                log.warning("mail dock: cannot save %s: %s", self.state_file, exc)
+
     def recent(self, limit: int = 30) -> list[dict]:
         return [{"id": self._short(i.name), "name": i.name, "date": i.modified.isoformat()}
                 for i in self._items()[-limit:]]
@@ -333,7 +347,10 @@ class MailTools:
                 "attachments": [{"name": a.name, "type": a.content_type, "size": a.size} for a in msg.attachments]}
 
     def list_new(self, args: dict) -> dict:
-        new = self.mailbox.new()
+        # Not marked seen here: a mail counts as handled once the agent read,
+        # analysed or answered it (mark_seen), so a run that fails after the
+        # listing does not lose it.
+        new = self.mailbox.new(mark=False)
         rows = []
         for item in new:
             try:
@@ -348,7 +365,9 @@ class MailTools:
         return {"messages": self.mailbox.recent(int(args.get("limit", 20) or 20))}
 
     def read(self, args: dict) -> str:
-        msg = self.mailbox.message(str(args.get("id", "")))
+        msg_id = str(args.get("id", ""))
+        msg = self.mailbox.message(msg_id)
+        self.mailbox.mark_seen(msg_id)
         addr = parseaddr(msg.header("Reply-To") or msg.header("From") or msg.from_)[1]
         self._replied_to[str(args.get("id", ""))] = addr
         text = msg.text or re.sub(r"<[^>]+>", " ", msg.html)
@@ -356,7 +375,9 @@ class MailTools:
                 + text[:MAX_TEXT] + ("\n[... cut]" if len(text) > MAX_TEXT else ""))
 
     def analyse(self, args: dict) -> dict:
-        msg = self.mailbox.message(str(args.get("id", "")))
+        msg_id = str(args.get("id", ""))
+        msg = self.mailbox.message(msg_id)
+        self.mailbox.mark_seen(msg_id)
         report = analyse(msg)
         dns_result = None
         if self.dock.dns_checks:
@@ -381,6 +402,7 @@ class MailTools:
         in_reply_to, references = "", ""
         if reply_id:
             original = self.mailbox.message(reply_id)
+            self.mailbox.mark_seen(reply_id)
             self._replied_to[reply_id] = parseaddr(original.header("Reply-To") or original.header("From"))[1]
             if not to:
                 to = [self._replied_to[reply_id]]
@@ -499,7 +521,8 @@ class MailTools:
                              "without asking; anyone else needs the user's yes."}[self.dock.send_policy]
         return [
             FunctionTool("mail_list_new", "The messages that arrived in this dock's mailbox since it last "
-                         "looked (marks them as seen): id, from, subject, date, attachments, suspicion score.",
+                         "looked: id, from, subject, date, attachments, suspicion score. A message counts as "
+                         "handled once mail_read or mail_analyse opened it; one not opened is listed again.",
                          {"type": "object", "properties": {}}, self.list_new, group="mail"),
             FunctionTool("mail_list", "The newest messages of the mailbox folder (id, date).",
                          {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1,

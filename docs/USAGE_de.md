@@ -309,6 +309,38 @@ Durchlauf, der mittendrin abbricht, sagt, wie viel eingereiht wurde.
   jeden genau einmal.
 - **Cancel All** stoppt auch eine Kopie oder einen Move, dessen
   Ordner-Walk noch läuft: keine seiner Dateien kommt in die Queue.
+- **Moves auf einem Server.** Ein Move, dessen Quelle und Ziel auf
+  derselben Verbindung liegen (Drop auf einen Ordner im selben Pane, F6
+  zwischen zwei Panes einer Verbindung, Cut und Paste), benennt jede
+  Datei auf dem Server um (SFTP RENAME, FTP RNFR/RNTO, WebDAV MOVE, SMB,
+  serverseitige S3-Kopie): kein Byte läuft durch axross. Ein Name, den
+  die Konflikt-Antworten überschreiben lassen, ein Link oder ein Rename,
+  den der Server ablehnt, geht über die normale Kopie.
+- **Änderungszeiten.** Eine Kopie behält die Änderungszeit der Quelle
+  auf lokalen Platten, SFTP (ganze Sekunden), SMB und FTP-Servern, die
+  `MFMT` anbieten. WebDAV und S3 können sie nicht setzen: Die Kopie dort
+  trägt die Upload-Zeit, die Compare Panes und *Overwrite if Newer* als
+  die neuere lesen. *Overwrite if Newer* vergleicht ganze Sekunden.
+- **Was passiert ist.** Ist eine Kopie oder ein Move fertig, fasst die
+  Statusleiste zusammen: „2 kopiert, 1 übersprungen (Ziel behalten)",
+  „3 übersprungen (Ziele nicht älter)", Fehler mitgezählt. Der
+  Gesamtbalken des Docks endet nur dann auf *Fertig*, wenn jeder Job des
+  Durchgangs gut ausging, sonst rot auf „N fehlgeschlagen" /
+  „N abgebrochen".
+- **Undo.** *Edit → Undo Last Operation* (`Ctrl+Z`) macht den neuesten
+  Move oder Move to Trash rückgängig, dessen Verbindung offen ist, und
+  zwar ganz: ein F5 / F6 / Drop / Paste oder ein Move to Trash einer
+  Auswahl ist eine Operation und eine Frage. Ein verschobener Ordner
+  kommt mit seinen Ordnern zurück (die der Move angelegt hat, werden
+  entfernt, wenn sie leer sind, die Quellordner neu angelegt) und mit
+  seinen Tags; ein Name, der wieder da ist, stoppt das Undo, bevor sich
+  etwas bewegt, und was nicht zurückkam, bleibt für das nächste
+  `Ctrl+Z`. Eine Kopie lässt sich nicht rückgängig machen.
+- **Produktions-Verbindungen.** Jeder Schreibvorgang, der auf einer als
+  *production* markierten Verbindung überschreibt oder löscht, wartet
+  zuerst den Countdown ab: F5 / F6 / Drag & Drop / Paste mit
+  Überschreiben, ein Move von ihr weg oder auf sie, und Compare Panes →
+  *Sync* für jede Seite, die der Sync überschreibt.
 - **Verify.** Pro-Job-Flag `verify_checksum` re-hasht das Ziel nach
   dem Upload und lehnt bei Mismatch ab.
 - **Parallel transfers.** *Edit → Settings… → Files & Panes →
@@ -344,7 +376,7 @@ native Protokoll sie nicht kennt.
 | `core.snapshot_browser` | Uniforme Versionshistorie über S3, Dropbox, GDrive, OneDrive, Azure Blob. |
 | `core.metadata_index` | Offline-SQLite-Suche nach Name / Ext / Größe / mtime. Eine Datei: `$AXROSS_METADATA_DB`, sonst `$XDG_DATA_HOME/axross/metadata.sqlite`, sonst `~/.local/share/axross/metadata.sqlite` (ein Index, der schon dort liegt, bleibt in Gebrauch). Gefüllt nur über *Index Active Folder…*, nicht durchs Browsen — Details im Handbuch, Abschnitt *Metadata-Index*. |
 | `core.previews` | Lokaler Bild-Thumbnailer mit MIME-Allowlist, Größenkappen, Qt-Allocator-Gate. F3 / Doppelklick. |
-| `core.archive` | Sichere Entpackung von zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Zip-Slip-/Bomb-/Lying-Metadata-Guards; `.7z` braucht das `[archive]`-Extra. |
+| `core.archive` | Sichere Entpackung von zip / tar / 7z (`.zip .xpi .jar .war .apk .epub .docx .xlsx .odt .tar .tar.gz .tgz .tar.bz2 .tbz2 .tar.xz .txz .7z`). Zip-Slip-/Bomb-/Lying-Metadata-Guards; Symlink- und Hardlink-Einträge (tar, und ZIP-Symlinks) werden ausgelassen - nie angelegt oder verfolgt - und das Ergebnis nennt sie; `.7z` braucht das `[archive]`-Extra. |
 | `core.elevated_io` | `pkexec`-gated lokales Lesen für `/etc/shadow` & Co. — Axross hält selbst keine Privilegien. „Open as root…"-Kontextmenü. |
 | `core.fuse_mount` | FUSE-Mount jedes Backends. Read-only by default; `writeable=True` aktiviert create / write / unlink / mkdir / rename. Optionales `[fuse]`-Extra. |
 | `core.mcp_server` | Stdio-JSON-RPC-MCP-Server, der das konfigurierte Backend als Tools exponiert. `--mcp-write` ergänzt mutierende Tools, gecappt auf einen pfad-traversal-sicheren Root. |
@@ -406,7 +438,10 @@ Treffer erscheinen, während die Suche läuft; *Stop* oder Schließen des
 Fensters bricht sie ab. Die Spalten sortieren; Doppelklick oder `Enter`
 zeigt die Datei markiert in einem Pane (ein Archiv-Member öffnet die
 Archiv-Ansicht), das Kontextmenü hat *Open*, *Reveal in Pane*, *Copy Path*
-und *Send to Agent*.
+und *Send to Agent*. Würden der Filter des Panes oder die Einstellung für
+versteckte Dateien den gezeigten Eintrag verbergen, leert Reveal den
+Filter oder blendet versteckte Einträge in diesem Ordner ein (bis das
+Pane in einen anderen wechselt), und die Statuszeile sagt es.
 
 In einem lokalen Ordner listet die Suche Dateien mit
 [`fd`](https://github.com/sharkdp/fd) und durchsucht ihren Inhalt mit
@@ -451,10 +486,13 @@ Fenster zeigt die Index-Datei.
   `index_build` fügt nur hinzu; mit `prune` fragt es zusätzlich das Backend
   nach jedem indizierten Pfad unter dem Ordner und entfernt die Zeilen,
   deren Datei fehlt.
-- **Wie er durchsucht wird.** Teilstring im Namen (ohne Groß/Klein),
-  Endung, Größen- und Zeitraum, eine Verbindung. Endung, Größe und Datum
-  nutzen SQLite-Indizes; ein Namens-Teilstring (`LIKE '%…%'`) kann keinen
-  nutzen und liest jede Zeile.
+- **Wie er durchsucht wird.** Teilstring im Namen (ohne Groß/Klein in
+  jeder Schrift: „ärger“ findet `Ärger.txt`, „strasse“ findet `Straße.pdf` -
+  auch im MCP-Werkzeug `search`), Endung, Größen- und Zeitraum, eine
+  Verbindung. Endung, Größe und Datum nutzen SQLite-Indizes; ein
+  Namens-Teilstring (`LIKE '%…%'`) kann keinen nutzen und liest jede Zeile.
+  Die Suche läuft im Hintergrund, das Fenster listet die ersten 5000
+  Treffer (und sagt, wenn es mehr gibt).
 - **Wie schnell — gemessen** auf dem Entwicklungsrechner mit `/usr`
   (290 872 Einträge, lokale Platte, Rechner unter anderer Last): erster Lauf
   125 s (etwa 2 300 Einträge/s), zweiter Lauf über denselben Baum 53 s,
@@ -1610,7 +1648,10 @@ Der Agent eines Docks hat nur die Mail-Werkzeuge (`mail_list_new`, `mail_list`,
 Dateien. Mail-Inhalt ist in jedem Ergebnis als nicht vertrauenswürdig markiert; eine
 Mail kann weder Empfänger hinzufügen noch die Regel ändern. `dock_report` hinterlässt
 einem anderen Dock eine Notiz, die es beim nächsten Lauf liest - die Notiz allein
-startet ihn. Ein Lauf ohne neue Mail und ohne Notiz fragt das Modell nichts. SMTP:
+startet ihn. Ein Lauf ohne neue Mail und ohne Notiz fragt das Modell nichts. Eine Mail
+gilt als erledigt, sobald der Agent sie gelesen, analysiert oder beantwortet hat - eine,
+die er nur in `mail_list_new` sah, oder eine aus einem fehlgeschlagenen oder gestoppten
+Lauf ist beim nächsten Lauf wieder neu. SMTP:
 STARTTLS oder TLS mit geprüftem Zertifikat, unverschlüsselt nur zu diesem Rechner; das
 Passwort liegt im Schlüsselbund.
 

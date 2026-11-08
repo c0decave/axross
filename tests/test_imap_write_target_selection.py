@@ -52,7 +52,7 @@ def test_happy_remove_after_a_write_probe_selects_read_write_again():
         s = _session(srv)
         s.set_flags(5, ["\\Seen"], mailbox="INBOX", mode="add")  # SELECT INBOX, read-write
         s.open_write("/Archive").discard()  # EXAMINE Archive: read-only
-        s.remove("/Archive/5_x.eml")
+        s.remove("/Archive/5.eml")
         assert _command_before_store(srv) == 'SELECT "Archive"'
         assert (s._selected_mailbox, s._selected_readonly) != ("Archive", True)
 
@@ -70,7 +70,7 @@ def test_sad_a_failed_probe_forgets_the_selection():
         assert (writer._mailbox, writer._filename) == ("INBOX", "report.txt")
         writer.discard()
         assert s._selected_mailbox is None
-        s.remove("/Archive/5_x.eml")
+        s.remove("/Archive/5.eml")
         assert _command_before_store(srv) == 'SELECT "Archive"'
 
 
@@ -79,7 +79,7 @@ def test_edge_probing_the_mailbox_already_selected_keeps_it_read_write():
         s = _session(srv)
         s.set_flags(5, ["\\Seen"], mailbox="Archive", mode="add")
         s.open_write("/Archive").discard()
-        s.remove("/Archive/5_x.eml")
+        s.remove("/Archive/5.eml")
         assert [c for c in _commands(srv) if c.startswith(("SELECT", "EXAMINE"))] == [
             'SELECT "Archive"'
         ]

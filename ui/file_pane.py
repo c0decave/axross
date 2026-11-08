@@ -490,8 +490,16 @@ def _run_removal(backend, entries, trash: bool, cancelled, report) -> _RemovalRe
     one server request finishes that entry first. An OSError is recorded
     and the next entry goes ahead (as the synchronous loop did); any other
     exception is a backend defect and stops the run, so nothing more is
-    removed after it.
+    removed after it. The trash entries of one run share a journal batch:
+    Ctrl+Z restores them together (core.undo).
     """
+    from core.operation_journal import journal_batch, new_batch_id
+
+    with journal_batch(new_batch_id() if trash else ""):
+        return _run_removal_entries(backend, entries, trash, cancelled, report)
+
+
+def _run_removal_entries(backend, entries, trash: bool, cancelled, report) -> _RemovalResult:
     from core import removal_cancel as RC
     from core import trash as T
 
@@ -1205,6 +1213,10 @@ class FilePaneWidget(QWidget):
         self._model = FileTableModel(self)
         self._proxy = FileSortProxyModel(self)
         self._proxy.setSourceModel(self._model)
+        #: The window's "Show Hidden Files" for this pane, and the folder a
+        #: Reveal showed hidden entries in for its entry (None: none).
+        self._hidden_pref = False
+        self._reveal_hidden_in: str | None = None
         self._proxy.setFilterKeyColumn(0)  # Filter on name column
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._proxy.setSortRole(Qt.ItemDataRole.DisplayRole)
@@ -1433,6 +1445,10 @@ class FilePaneWidget(QWidget):
                 self._history_pos = len(self._history) - 1
         elif isinstance(history, int):
             self._history_pos = history
+        if self._reveal_hidden_in is not None and path != self._reveal_hidden_in:
+            # Hidden entries were shown for one Reveal in that folder only.
+            self._reveal_hidden_in = None
+            self._proxy.show_hidden = self._hidden_pref
         self._current_path = path
         self._apply_cut_marks()
         self._retire_stale_menus()
@@ -2366,11 +2382,14 @@ class FilePaneWidget(QWidget):
             return
 
         def select() -> None:
+            note = self._make_visible(name)
             self._restore_selection({name}, name)
             index = self._table.currentIndex()
             if index.isValid():
                 self._table.scrollTo(index)
             self._table.setFocus()
+            if note:
+                self.status_message(note)
 
         if folder == self._current_path and not self.is_loading:
             select()
@@ -2386,6 +2405,43 @@ class FilePaneWidget(QWidget):
 
         self.navigation_finished.connect(arrived)
         self.navigate_async(folder)
+
+    def _make_visible(self, name: str) -> str:
+        """Let the entry *name* of this folder be seen for a Reveal: the
+        filter typed earlier is cleared, and hidden entries are shown in
+        this folder (until the pane goes to another one) when the entry is
+        hidden and they are not shown. Returns what was changed, for the
+        status line ("" when nothing had to be).
+
+        Before, the reveal selected nothing and said nothing: the entry was
+        there, but filtered out."""
+        proxy = self._proxy
+        for row in range(self._model.rowCount()):
+            item = self._model.get_item(row)
+            if item is None or item.name != name:
+                continue
+            index = self._model.index(row, COL_NAME)
+            if proxy.mapFromSource(index).isValid():
+                return ""
+            cleared = shown = False
+            if self._filter_edit.text():
+                self._filter_edit.clear()
+                cleared = True
+            if not proxy.mapFromSource(index).isValid() and item.is_hidden \
+                    and not proxy.show_hidden:
+                proxy.show_hidden = True
+                self._reveal_hidden_in = self._current_path
+                shown = True
+            if cleared and shown:
+                text = tr("Filter cleared and hidden entries shown in this folder to show {name}")
+            elif cleared:
+                text = tr("Filter cleared to show {name}")
+            elif shown:
+                text = tr("Hidden entries shown in this folder to show {name}")
+            else:
+                return ""
+            return text.format(name=name)
+        return tr("{name} is not in this folder").format(name=name)
 
     def _wait(self, fn, text: str):
         """*fn()* - backend calls an action needs the answer of before it
@@ -2482,6 +2538,8 @@ class FilePaneWidget(QWidget):
         return [item for item in self._selected_source_items() if not item.is_nav]
 
     def set_show_hidden(self, show: bool) -> None:
+        self._hidden_pref = show
+        self._reveal_hidden_in = None
         self._proxy.show_hidden = show
 
     def set_hidden_style(self, highlight: bool, colour: str | None = None) -> None:
@@ -4355,10 +4413,12 @@ class FilePaneWidget(QWidget):
         def work(cancelled, report):
             from core.destructive_preview import preview_delete
 
-            return preview_delete(backend, paths, cancel=cancelled, progress=report)
+            return preview_delete(backend, paths, cancel=cancelled, progress=report,
+                                  verb=tr("move to trash") if trash else tr("delete"))
 
         self._show_removal_busy(
-            tr("Checking {n} item(s) before the delete…").format(n=len(entries))
+            (tr("Checking {n} item(s) before moving them to the trash…") if trash
+             else tr("Checking {n} item(s) before the delete…")).format(n=len(entries))
         )
         self._ensure_removal_job().start(work, replace=True)
 

@@ -1786,6 +1786,11 @@ class _AgentSettingsForm:
         for widget in (self.server_command_edit, self.server_env_edit, self.server_sandbox_combo,
                        self.server_secret_env_edit, self.server_secret_button):
             widget.setEnabled(stdio)
+        # A container's podman line is written by the installer only
+        # (core.mcp_runner.container_flag_problems accepts no other).
+        self.server_command_edit.setReadOnly(container)
+        self.server_command_edit.setToolTip(
+            tr("Written by Install in a Container - not edited here") if container else "")
         # A container is its own sandbox; its network is set at install.
         self.server_sandbox_combo.setEnabled(stdio and not container)
         self.server_sandbox_combo.setToolTip(
@@ -1932,7 +1937,8 @@ class _AgentSettingsForm:
         server.enabled = self.server_enabled_check.isChecked()
         server.category = self.server_category_combo.currentText().strip()
         server.transport = self.server_transport_combo.currentData() or "stdio"
-        server.command = tuple(self._split(self.server_command_edit.text()))
+        if not server.container:  # a container's line is the installer's (read-only)
+            server.command = tuple(self._split(self.server_command_edit.text()))
         server.env = dict(
             e.split("=", 1) for e in self._split(self.server_env_edit.text()) if "=" in e
         )

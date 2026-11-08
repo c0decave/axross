@@ -6,7 +6,7 @@ import importlib
 import logging
 import shutil
 import threading
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass, field, replace
 from enum import Enum, auto
 
 log = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ S3_CAPS = BackendCapabilities(
 )
 RSYNC_CAPS = BackendCapabilities(
     can_chmod=False,
-    can_symlink=True,
+    can_symlink=False,  # no symlink() (links are listed and followed, not made)
     can_rename=False,
     can_seek=False,
     can_stream_write=False,
@@ -154,7 +154,7 @@ RSYNC_CAPS = BackendCapabilities(
 )
 NFS_CAPS = BackendCapabilities(
     can_chmod=True,
-    can_symlink=True,
+    can_symlink=False,  # no symlink() (links are listed and followed, not made)
     has_disk_usage=True,
     has_atime=True,
     has_sparse_files=True,
@@ -195,11 +195,13 @@ CLOUD_CAPS = BackendCapabilities(
     has_disk_usage=True,
     has_version_history=True,  # OneDrive/Dropbox/GDrive all keep history
     can_checksum_without_read=True,
+    # OneDrive (Graph copy), Google Drive (files.copy), Dropbox (copy_v2)
+    can_server_side_copy=True,
     seekable_reads=False,
 )
 ISCSI_CAPS = BackendCapabilities(
     can_chmod=True,
-    can_symlink=True,
+    can_symlink=False,  # no symlink() (links are listed and followed, not made)
     has_disk_usage=True,
     has_atime=True,
     has_sparse_files=True,
@@ -274,6 +276,9 @@ DBFS_CAPS = BackendCapabilities(
     can_server_side_copy=True,
     append_native=True,
 )
+#: Git-as-FS: DBFS_CAPS without disk usage - disk_usage() is all zeros
+#: (a repository has no capacity or free-space figure).
+GIT_CAPS = replace(DBFS_CAPS, has_disk_usage=False)
 TFTP_CAPS = BackendCapabilities(
     # TFTP is read+write but with no rename/chmod/listing/seek.
     can_chmod=False,
@@ -309,7 +314,7 @@ RAMFS_CAPS = BackendCapabilities(
 )
 TELNET_CAPS = BackendCapabilities(
     can_chmod=True,
-    can_symlink=True,
+    can_symlink=False,  # no symlink() (links are listed and followed, not made)
     can_rename=True,
     can_recursive_delete=True,
     can_stream_read=True,
@@ -326,7 +331,7 @@ TELNET_CAPS = BackendCapabilities(
 )
 SCP_CAPS = BackendCapabilities(
     can_chmod=True,
-    can_symlink=True,
+    can_symlink=False,  # no symlink() (links are listed and followed, not made)
     can_rename=True,
     can_recursive_delete=True,
     can_stream_read=True,
@@ -909,7 +914,7 @@ def init_registry() -> None:
             default_port=0,
             required_extra="git",
             available=_check_available("dulwich"),
-            capabilities=DBFS_CAPS,
+            capabilities=GIT_CAPS,
             credential_kind=CredentialKind.NONE,
         )
     )

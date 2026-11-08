@@ -48,6 +48,8 @@ def _exec_pair(session):
 
     session._exec = run
     session._exec_raw = raw
+    # Telnet's cp / mv / rm (long timeout, never sent twice) go here.
+    session._exec_tree_op = raw
     return session
 
 

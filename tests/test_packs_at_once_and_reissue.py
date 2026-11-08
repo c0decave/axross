@@ -60,11 +60,17 @@ def _key():
     return key, pub
 
 
-def publish(state: dict, blobs: dict, *, key=None, sums_from: dict | None = None) -> None:
+def publish(state: dict, blobs: dict, *, key=None, sums_from: dict | None = None,
+            issue: int | None = None) -> None:
     """(Re-)issue the release *VERSION* with *blobs*: a new manifest, new
     SHA256SUMS, signed with *key* (the release key unless given). With
     *sums_from*, SHA256SUMS and its signature stay those of that earlier
-    issue (a manifest swapped without being signed)."""
+    issue (a manifest swapped without being signed). The first issue has
+    no ``# axross-packs-issue`` line (issue 0), each re-issue the next
+    number (or *issue*), as scripts/sign_release.py --packs-issue writes it."""
+    if issue is None:
+        issue = state["issue"] + 1 if "issue" in state else 0
+    state["issue"] = issue
     wheels = {n.split("-")[0]: (n, hashlib.sha256(d).hexdigest(), len(d), f"https://files.pythonhosted.org/x/{n}")
               for n, d in blobs.items()}
     files = dict(blobs)
@@ -72,7 +78,8 @@ def publish(state: dict, blobs: dict, *, key=None, sums_from: dict | None = None
     if sums_from is not None:
         files[SU.SUMS_NAME], files[SU.SIG_NAME] = sums_from[SU.SUMS_NAME], sums_from[SU.SIG_NAME]
     else:
-        sums = "".join(f"{hashlib.sha256(d).hexdigest()}  {n}\n" for n, d in sorted(files.items())).encode()
+        sums = ((f"{P.PACKS_ISSUE_PREFIX}{issue}\n" if issue else "")
+                + "".join(f"{hashlib.sha256(d).hexdigest()}  {n}\n" for n, d in sorted(files.items()))).encode()
         files[SU.SUMS_NAME] = sums
         files[SU.SIG_NAME] = (key or state["key"]).sign(sums)
     state["files"] = files
@@ -463,3 +470,47 @@ def test_sad_the_features_window_offers_nothing_for_a_badly_signed_reissue(app, 
         time.sleep(0.01)
     assert dlg.update_packs_button.isHidden() and dlg._packs_release is None
     assert not (tmp_path / VERSION / ALPHA_FIXED).exists()
+
+
+def test_sad_a_reissue_cannot_be_rolled_back_to_an_earlier_signed_issue(release, tmp_path):
+    """Someone who can edit the release re-uploaded issue 1's files (validly
+    signed back then) after the fix (issue 2): "Update packs" offered them
+    as a re-issue and installed the old, broken pack again. The signed
+    ``# axross-packs-issue`` number is kept in installed.json; a lower one,
+    or another manifest under the installed number, is refused."""
+    _install(release, ["extra:a"], tmp_path)
+    first = (dict(release["files"]), release["release"])
+    _reissue(release)                                   # the fix: issue 1
+    rel, stale = P.check_reissued(VERSION, **_opts(release, tmp_path))
+    P.update(rel, **_opts(release, tmp_path))
+    state = json.loads((tmp_path / VERSION / "installed.json").read_text())
+    assert state["issue"] == 1
+    release["files"], release["release"] = first        # issue 0 uploaded again
+    with pytest.raises(P.PackError, match="older than the issue 1"):
+        P.check_reissued(VERSION, **_opts(release, tmp_path))
+    with pytest.raises(P.PackError, match="older than the issue 1"):
+        P.update(release["release"], **_opts(release, tmp_path))
+    with pytest.raises(P.PackError, match="older than the issue 1"):
+        _install(release, ["extra:n"], tmp_path)
+    path = []
+    P.activate(VERSION, tmp_path, path)
+    assert ALPHA_FIXED in [Path(p).name for p in path]
+
+
+def test_sad_another_manifest_under_the_installed_issue_is_refused(release, tmp_path):
+    _install(release, ["extra:a"], tmp_path)
+    _reissue(release, issue=0)                          # a change without a new number
+    with pytest.raises(P.PackError, match="same issue 0"):
+        P.check_reissued(VERSION, **_opts(release, tmp_path))
+    publish(release, {n: d for n, d in release["files"].items() if n.endswith(".whl")},
+            issue=5)                                    # numbered: taken
+    rel, stale = P.check_reissued(VERSION, **_opts(release, tmp_path))
+    assert stale == ["extra:a"]
+
+
+def test_edge_signed_manifest_has_no_way_around_the_signature():
+    """signed_manifest took ``sums=`` - SHA256SUMS bytes used as they were,
+    the signature not checked. No caller used it; it is gone."""
+    import inspect
+
+    assert "sums" not in inspect.signature(P.signed_manifest).parameters

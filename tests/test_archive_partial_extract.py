@@ -243,13 +243,14 @@ def test_missing_archive_raises(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------
-# SECURITY — symlink member selected is refused
+# SECURITY — a selected symlink member is left out, never created
 # --------------------------------------------------------------------------
 
 
 def test_tar_symlink_member_refused(tmp_path) -> None:
-    """A selected TAR member that is a symlink → UnsafeArchive, and the
-    target dir is left clean (clean-on-fail)."""
+    """A selected TAR member that is a symlink is not created (it was an
+    UnsafeArchive for the whole run; review 3: links are left out and
+    named in the result)."""
     src = tmp_path / "evil.tar"
     with tarfile.open(str(src), "w") as tf:
         good = tarfile.TarInfo(name="good.txt")
@@ -261,10 +262,10 @@ def test_tar_symlink_member_refused(tmp_path) -> None:
         tf.addfile(link)
 
     target = tmp_path / "out"
-    with pytest.raises(A.UnsafeArchive):
-        A.extract_members(str(src), str(target), ["link"])
-    # Nothing written, target removed.
-    assert not target.exists()
+    result = A.extract_members(str(src), str(target), ["link"])
+    assert result == 0 and result.skipped_links == ["link"]
+    # Nothing written: no link, nothing outside.
+    assert os.listdir(target) == []
 
 
 def test_tar_hardlink_member_refused(tmp_path) -> None:
@@ -279,9 +280,9 @@ def test_tar_hardlink_member_refused(tmp_path) -> None:
         tf.addfile(link)
 
     target = tmp_path / "out"
-    with pytest.raises(A.UnsafeArchive):
-        A.extract_members(str(src), str(target), ["hard"])
-    assert not target.exists()
+    result = A.extract_members(str(src), str(target), ["hard"])
+    assert result == 0 and result.skipped_links == ["hard"]
+    assert os.listdir(target) == []
 
 
 # --------------------------------------------------------------------------

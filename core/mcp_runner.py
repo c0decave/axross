@@ -251,8 +251,8 @@ _NODES = frozenset({"node", "nodejs"})
 #: options, the letters of a one-letter option cluster that mean code, and
 #: the letters that take the rest of the cluster as their value.
 _CODE_INTERPRETERS = {
-    "perl": (frozenset({"-e", "-E"}), "eE", "IMmxdDil0C"),
-    "ruby": (frozenset({"-e", "--eval"}), "e", "IrCEFxKT0"),
+    "perl": (frozenset({"-e", "-E"}), "eE", "IMmxDiC"),
+    "ruby": (frozenset({"-e", "--eval"}), "e", "IrCEFxK"),
     "php": (frozenset({"-r", "-B", "-R", "-E", "-F"}), "", ""),
     "lua": (frozenset({"-e"}), "e", "l"),
     "luajit": (frozenset({"-e"}), "e", "lbj"),
@@ -262,13 +262,29 @@ _CODE_INTERPRETERS = {
     "tclsh": (frozenset({"-c"}), "", ""),
     "gawk": (frozenset({"--source", "-e"}), "", ""),
 }
+#: Letters of a one-letter option cluster whose optional value is digits
+#: only (``perl -l``, ``-0777``, ``ruby -T1``; ``perl -d`` takes ``:Module``
+#: or ``t``): after them the cluster goes on (``perl -le CODE``, ``-de 0``).
+_DIGIT_LETTERS = {"perl": "l0d", "ruby": "0Tl"}
+#: Programs that download files: any line with one is a runner.
+_DOWNLOADERS = frozenset({"curl", "wget", "aria2c"})
+#: Package and tool managers that fetch or install what they run.
+_PACKAGE_TOOLS = frozenset({
+    "gem", "pip-run", "jbang", "cs", "coursier", "mise", "asdf", "volta", "hatch", "pdm",
+    "poetry", "conda", "mamba", "micromamba", "pipenv", "rye", "dotnet",
+})
 #: Programs that download (or install) what they run, wherever they stand
 #: in a command line: a word naming one makes the command a runner.
 _RUNNER_NAMES = frozenset({
     "npx", "bunx", "pnpx", "npm", "pnpm", "yarn", "bun", "uvx", "uv", "pipx", "pip", "pip3",
     "docker", "podman", "nerdctl", "docker-compose", "deno", "go", "nix", "nix-shell",
     "nix-env", "nix-build", "nix-store", "pixi", "pkgx", "dnx", "corepack",
+    *_DOWNLOADERS, *_PACKAGE_TOOLS,
 })
+#: Node options whose value is code when it is a data: or a remote URL.
+_NODE_MODULE_OPTIONS = frozenset({"--import", "--loader", "--experimental-loader", "-r",
+                                  "--require"})
+_CODE_URL = re.compile(r"^\s*(?:data|https?):", re.IGNORECASE)
 #: Python modules that are package tools (``python -m pdm run …``).
 _PYTHON_TOOL_MODULES = frozenset({"pdm", "poetry", "hatch", "conda", "mamba", "ensurepip",
                                    "pixi", "virtualenv", "venv"})
@@ -579,8 +595,16 @@ def _node(rest: list[str], depth: int):
         if arg == "--":
             i += 1
             break
-        if arg in ("-e", "--eval", "-p", "--print") or arg.startswith(("--eval=", "--print=")):
+        if arg in ("-e", "--eval", "-p", "--print") or arg.startswith(("--eval=", "--print=")) \
+                or (len(arg) > 2 and arg[0] == "-" and arg[1] != "-" and set(arg[1:]) & set("ep")):
+            # -pe / -ep: one-letter options in one word, one of them code.
             return _unreadable("node -e", "node runs code from its command line")
+        name, eq, value = arg.partition("=")
+        if name in _NODE_MODULE_OPTIONS:
+            value = value if eq else (rest[i + 1] if i + 1 < len(rest) else "")
+            if _CODE_URL.match(value):
+                return _unreadable(f"node {name}", f"node {name} loads code from a "
+                                                   "data: or remote URL")
         if arg in _NODE_VALUED:
             i += 2
             continue
@@ -636,6 +660,7 @@ def _code_interpreter(program: str, rest: list[str]):
     is a runner that cannot be converted (it may start anything); a script
     on disk is not."""
     flags, code_letters, value_letters = _CODE_INTERPRETERS[program]
+    digit_letters = _DIGIT_LETTERS.get(program, "")
     for arg in rest:
         if arg == "--" or not arg.startswith("-") or arg == "-":
             break
@@ -645,10 +670,27 @@ def _code_interpreter(program: str, rest: list[str]):
                                                     "command line")
         if arg.startswith("--") or not code_letters:
             continue
-        for letter in arg[1:]:
+        letters = arg[1:]
+        at = 0
+        while at < len(letters):
+            letter = letters[at]
+            at += 1
             if letter in code_letters:
                 return _unreadable(f"{program} -{letter}", f"{program} -{letter} runs code "
                                                            "from its command line")
+            if letter in digit_letters:
+                if letter == "d" and letters[at:at + 1] == ":":
+                    break  # perl -d:Module
+                if letter == "d" and letters[at:at + 1] == "t":
+                    at += 1
+                    continue
+                if letter == "0" and letters[at:at + 1] in ("x", "X"):
+                    at += 1  # perl -0xHHH: hexadecimal digits
+                    while at < len(letters) and letters[at] in "0123456789abcdefABCDEF":
+                        at += 1
+                while at < len(letters) and letters[at].isdigit():
+                    at += 1
+                continue
             if letter in value_letters:
                 break  # the rest of the cluster is this option's value
     return None
@@ -665,6 +707,10 @@ def _scan(program: str, words: list[str], depth: int):
             commands = _shell_words(word)
             if commands is not None:
                 plan = _shell_line(program, word, depth)
+                if plan is None and any(_embedded_runner(w) for c in commands for w in c):
+                    # socat STDIO "EXEC:npx -y x": a runner inside a word of the line
+                    plan = _unreadable(program, f"an argument of {program} names a runner "
+                                                "inside a word")
             else:
                 # A line only a shell can read: any runner name in it counts.
                 bare = word.replace("'", "").replace('"', "").replace("\\", "")
@@ -680,11 +726,28 @@ def _scan(program: str, words: list[str], depth: int):
             start = [word.rsplit("=", 1)[-1]] if word.startswith("-") else [word]
             # The runner's own parse has scanned the words after it.
             return _with_env(_runner([*start, *words[k + 1:]], depth + 1), {}, program)
+        embedded = _embedded_runner(word)
+        if embedded:
+            # EXEC:npx, --opt=x,uvx: a runner inside a word.
+            return _unreadable(program, f"an argument of {program} names {embedded} inside "
+                                        "a word")
         if (name in _SHELLS or name in _POWERSHELLS or name in _NODES or name == "cmd"
                 or name in _CODE_INTERPRETERS or _PYTHONS.fullmatch(name)) and \
                 k + 1 < len(words) and words[k + 1][:1] in ("-", "/"):
             return _with_env(_runner(words[k:], depth + 1), {}, program)
     return None
+
+
+def _embedded_runner(word: str) -> str:
+    """The runner a word names in one of its ``=`` / ``:`` / ``,`` parts
+    (``EXEC:npx``, ``cmd=uvx``), "" when none does."""
+    if not any(c in word for c in "=:,"):
+        return ""
+    for piece in re.split(r"[=:,]", word):
+        name = _program([piece.strip()]) if piece.strip() else ""
+        if name in _RUNNER_NAMES:
+            return name
+    return ""
 
 
 def downloading_runner(argv) -> RunnerPlan | None:
@@ -780,40 +843,111 @@ def _direct(program: str, argv: list[str], depth: int) -> RunnerPlan | None:
     if program in ("pixi", "pkgx", "dnx"):
         return RunnerPlan(f"{program} {M.clean_text(sub, 20)}".strip(),
                           why_not=f"{program} fetches the packages it runs: not converted")
+    if program in _DOWNLOADERS:
+        return RunnerPlan(program, why_not=f"{program} downloads files: a line with it may run "
+                                           "what it fetched - not converted")
+    if program == "dotnet" and sub.lower().endswith(".dll") and not sub.startswith("-"):
+        return None  # dotnet server.dll: an assembly on disk
+    if program in _PACKAGE_TOOLS:
+        return RunnerPlan(f"{program} {M.clean_text(sub, 20)}".strip(),
+                          why_not=f"{program} fetches or installs what it runs: not converted")
     return None
 
 
-#: Container options a server's podman line may never carry (the line of a
-#: hand-edited settings file is checked too).
-_FORBIDDEN = frozenset({
-    "--privileged", "-v", "--mount", "--cap-add", "--device", "--pid", "--ipc", "--uts",
-    "--userns", "--cgroupns", "--add-host", "--volumes-from", "--gpus", "--sysctl",
-    "--entrypoint", "--group-add", "--runtime",
-})
-_VOLUME = re.compile(r"^/[^:,]*:/[^:,]*:(?:ro|rw)$")
+#: The server name in a container's --name / --label (core.mcp_client's names).
+_CONTAINER_SERVER = r"[A-Za-z0-9_-]{1,32}"
+
+
+def _volume_problem(value: str) -> str:
+    """Why ``--volume=VALUE`` is not one of run_command's folders ("" = it
+    is): ``HOST:TARGET:ro|rw``, both absolute and normalized, the host
+    folder never the whole file system (core.mcp_install.choice_problems
+    takes no other at install)."""
+    import posixpath
+
+    parts = value.split(":")
+    if len(parts) != 3 or parts[2] not in ("ro", "rw"):
+        return "a folder as HOST:TARGET:ro or :rw"
+    host, target, _mode = parts
+    for path in (host, target):
+        if not path.startswith("/") or posixpath.normpath(path) != path or "," in path \
+                or any(ord(c) < 32 or c == "\x7f" for c in path):
+            return "absolute, normalized folders"
+    if host == "/":
+        return "never the whole file system (/)"
+    if target == "/":
+        return "never over the container's root"
+    return ""
 
 
 def container_flag_problems(argv) -> list[str]:
-    """Why the podman line *argv* of a container server is not allowed:
-    options that widen the container (privileged, capabilities, devices,
-    host namespaces, host network, other security options, mounts other
-    than core.mcp_install's ``--volume=HOST:TARGET:ro|rw``)."""
-    from core.mcp_install import ALLOWLIST_NETWORK
+    """Why *argv* is not the podman line of a container server ([] = it is).
+    An allow-list: only the shape core.mcp_install.run_command writes -
+    ``podman run`` (no options before ``run``), every one of RUN_FLAGS, its
+    ``--name`` / ``--label`` / ``--env-file``, ``--network=none`` or the
+    allowlist network (or none: full network, chosen at install),
+    ``--user=0:0`` and ``--volume=HOST:TARGET:ro|rw``; each option one
+    ``--opt=value`` word (a spaced value, combined short options or any
+    other option is refused); then the image and the server's arguments. A
+    settings file edited by hand is checked the same way."""
+    import posixpath
+
+    from core.mcp_client import TOKEN_ENV_FD, TOKEN_RUN
+    from core.mcp_install import ALLOWLIST_NETWORK, RUN_FLAGS
 
     argv = [str(a) for a in (argv or ())]
-    tokens = argv[2:] if len(argv) > 1 and argv[1] == "run" else argv[1:]
+    program = argv[0] if argv else ""
+    if posixpath.basename(program) != "podman" or ("/" in program and not program.startswith("/")):
+        return ["a container server runs only on the podman line axross writes "
+                "(Install in a Container)"]
+    if len(argv) < 2 or argv[1] != "run":
+        return [f"podman options before run are not allowed "
+                f"({M.clean_text(argv[1] if len(argv) > 1 else '', 60)})"]
     out: list[str] = []
-    for arg in tokens:
+    seen: dict[str, int] = {}
+    image = None
+    names = {"--name": "", "--label": ""}
+    for arg in argv[2:]:
         if not arg.startswith("-"):
+            image = arg
             break  # the image: what follows are the server's arguments
-        flag, _, value = arg.partition("=")
-        bad = flag in _FORBIDDEN
-        if flag == "--volume":
-            bad = not _VOLUME.fullmatch(value)
-        elif flag == "--security-opt":
-            bad = value != "no-new-privileges"
-        elif flag in ("--network", "--net"):
-            bad = value != "none" and arg != ALLOWLIST_NETWORK
-        if bad:
-            out.append(f"the container option {M.clean_text(arg, 60)} is not allowed")
+        flag, eq, value = arg.partition("=")
+        key = arg if arg in RUN_FLAGS else flag
+        seen[key] = seen.get(key, 0) + 1
+        problem = ""
+        if arg in RUN_FLAGS:
+            pass
+        elif not eq or not flag.startswith("--"):
+            problem = "not an option axross writes (each is one --option=value word)"
+        elif flag == "--name":
+            m = re.fullmatch(rf"axross-mcp-({_CONTAINER_SERVER})-{re.escape(TOKEN_RUN)}", value)
+            names["--name"] = m.group(1) if m else ""
+            problem = "" if m else "not the name axross gives"
+        elif flag == "--label":
+            m = re.fullmatch(rf"io\.axross\.mcp=({_CONTAINER_SERVER})", value)
+            names["--label"] = m.group(1) if m else ""
+            problem = "" if m else "not the label axross gives"
+        elif flag == "--env-file":
+            problem = "" if value == f"/dev/fd/{TOKEN_ENV_FD}" else "only axross's environment pipe"
+        elif flag == "--network":
+            problem = "" if arg in ("--network=none", ALLOWLIST_NETWORK) else "only none or the allowlist"
+        elif flag == "--user":
+            problem = "" if value == "0:0" else "only 0:0 (the user's own id in rootless podman)"
+        elif flag == "--volume":
+            problem = _volume_problem(value)
+        else:
+            problem = "not an option axross writes"
+        if problem:
+            out.append(f"the container option {M.clean_text(arg, 60)} is not allowed: {problem}")
+    for key, count in seen.items():
+        if count > 1 and key != "--volume":
+            out.append(f"the container option {M.clean_text(key, 60)} is given {count} times")
+    missing = [f for f in RUN_FLAGS if f not in seen]
+    missing += [f for f in ("--name", "--label", "--env-file") if f not in seen]
+    if missing:
+        out.append("the container line lacks " + ", ".join(missing))
+    elif names["--name"] and names["--label"] and names["--name"] != names["--label"]:
+        out.append("the container's name and label differ")
+    if image is None:
+        out.append("the container line names no image")
     return out

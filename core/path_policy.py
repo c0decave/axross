@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import posixpath
@@ -203,6 +204,32 @@ def drop_impossible_names(items, *, keep_dots: bool = False, origin: str = ""):
     return kept
 
 
+def refuse_control_chars(path: str, where: str = "") -> str:
+    """*path* unchanged; :class:`OSError` (EINVAL) when it holds a C0
+    control character (U+0000-U+001F, TAB and line breaks included) or
+    DEL (U+007F).
+
+    For backends that put a path into a remote shell command line
+    (Telnet, RSH, ADB, SCP, FTP). Quoting (``shlex.quote``) protects
+    against the shell, not against what sits in front of it: a terminal's
+    line discipline acts on ``^U`` (erase the line), ``^W``, ``^V``, ``^C``
+    and the line breaks before the shell ever sees the quotes, so the
+    rest of such a "name" ran as a command of its own; an FTP or rsh
+    server splits its command line on CR / LF. No escaping survives every
+    one of those layers, so such a path is refused before any command is
+    built - in every operation, not only the destructive ones.
+    """
+    bad = sorted({c for c in path if ord(c) < 0x20 or c == "\x7f"})
+    if bad:
+        points = ",".join(f"U+{ord(c):04X}" for c in bad)
+        label = f"{where}: " if where else ""
+        raise OSError(
+            errno.EINVAL,
+            f"{label}refusing a path with control characters ({points}): {path!r}",
+        )
+    return path
+
+
 def _inside(root: str, path: str) -> bool:
     return os.path.commonpath([root, path]) == root
 
@@ -244,6 +271,7 @@ __all__ = [
     "confined_path",
     "drop_impossible_names",
     "drop_unsafe_names",
+    "refuse_control_chars",
     "safe_join",
     "safe_leaf",
     "transfer_leaf",

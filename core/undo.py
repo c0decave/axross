@@ -35,6 +35,17 @@ honest about which operations HAVE one:
 ``undo``
     Written by :func:`record_undone` after an undo succeeded, so the same
     entry is not offered again; not itself reversible.
+``move_folder``
+    A folder a move created at its destination (the move removes the
+    source folder once it is empty). Undone with its move: removed again
+    when it is empty, and the source folder made again.
+
+Batches: the entries of one user operation - one F5 / F6 / drop / Paste
+(``core.transfer_manager.transfer_files``), one Move to Trash of a
+selection - carry one ``details["batch"]`` id, and :func:`undoable` offers
+them as ONE plan (action ``"batch"``, the entries in ``parts``): a folder
+move is undone with one question, files and folders together. Entries
+written before the batch id existed are offered one by one, as before.
 
 Quietly skipping the last two would be the worst outcome: the user
 presses undo, nothing objects, and they believe the state was restored.
@@ -52,7 +63,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +98,10 @@ class UndoPlan:
     source_backend: str = ""
     #: ``metadata_remove``: one :class:`MetadataUndoItem` per file.
     items: tuple = ()
+    #: The user operation the entry was part of ("" before batches).
+    batch: str = ""
+    #: ``"batch"``: the plans of its entries, newest first.
+    parts: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -224,6 +239,22 @@ def plan_undo(event: dict) -> UndoPlan:
             items=items,
         )
 
+    if operation == "move_folder":
+        if not source or not dest:
+            return _refuse(event, "the journal entry is missing one of the two paths")
+        return UndoPlan(
+            operation_id=str(event.get("operation_id", "")),
+            operation=operation,
+            reversible=True,
+            action="folder_back",
+            reason=f"remove the folder {dest} the move created and make {source} again",
+            source=source,
+            dest=dest,
+            backend=str(event.get("backend", "")),
+            direction=str(details.get("direction", "")),
+            source_backend=str(details.get("source_backend", "")),
+        )
+
     if operation == "undo":
         return _refuse(event, "an undo is not itself undoable")
 
@@ -313,7 +344,95 @@ def apply_undo(
             from core import trash as trash_module  # type: ignore[no-redef]
         return _restore_metadata(plan, backend, trash_module)
 
+    if plan.action == "folder_back":
+        _folders_back((plan,), backend, source_backend or backend)
+        return plan.source
+
+    if plan.action == "batch":
+        if batch_transfer_pairs(plan):
+            raise ValueError(
+                "a batch that moves data between connections is carried out by "
+                "the transfer engine (batch_transfer_pairs), then apply_batch_folders"
+            )
+        _done, failures = apply_batch_files(plan, backend, trash_module=trash_module)
+        if not failures:  # a folder still holding a file that failed stays
+            failures = apply_batch_folders(plan, backend, source_backend or backend)
+        if failures:
+            shown = "\n".join(failures[:10])
+            more = f"\n… and {len(failures) - 10} more" if len(failures) > 10 else ""
+            raise OSError(f"{plan.reason}: {len(failures)} of {len(plan.parts)} entries were "
+                          "not undone:\n"
+                          f"{shown}{more}")
+        return plan.source
+
     raise ValueError(f"unknown undo action: {plan.action!r}")
+
+
+#: The part actions a batch carries out itself, one after the other.
+_FILE_ACTIONS = ("move_back", "restore_from_trash", "restore_metadata")
+
+
+def batch_transfer_pairs(plan: UndoPlan) -> list[tuple[str, str]]:
+    """``(current path, original path)`` of every part of a batch that goes
+    back through the transfer engine (a move between or within connections),
+    oldest first - the order the move ran in."""
+    return [(p.dest, p.source) for p in reversed(plan.parts) if p.action == "transfer_back"]
+
+
+def apply_batch_files(plan: UndoPlan, backend, *,
+                      trash_module=None) -> tuple[list[UndoPlan], list[str]]:
+    """Carry out the renames and trash restores of a batch on *backend*;
+    every part is tried. Returns the parts carried out and the failures
+    ("path: reason")."""
+    done: list[UndoPlan] = []
+    failures: list[str] = []
+    for part in reversed(plan.parts):
+        if part.action not in _FILE_ACTIONS:
+            continue
+        try:
+            apply_undo(part, backend, trash_module=trash_module)
+            done.append(part)
+        except (OSError, ValueError) as exc:
+            failures.append(f"{part.source or part.dest}: {exc}")
+    return done, failures
+
+
+def apply_batch_folders(plan: UndoPlan, backend, source_backend) -> list[str]:
+    """The folder parts of a batch, after its files are back: each folder
+    the move created is removed when it is empty (deepest first) and the
+    source folder it came from is made again. A folder that holds
+    something now is left; the failures are returned."""
+    folders = [p for p in plan.parts if p.action == "folder_back"]
+    return _folders_back(folders, backend, source_backend, collect=True)
+
+
+def _depth(path: str) -> int:
+    bare = path.rstrip("/\\")
+    return bare.count("/") + bare.count("\\")
+
+
+def _folders_back(folders, backend, source_backend, collect: bool = False) -> list[str]:
+    failures: list[str] = []
+    for part in sorted(folders, key=lambda p: _depth(p.dest), reverse=True):
+        try:
+            if backend.exists(part.dest) and not backend.list_dir(part.dest):
+                backend.remove(part.dest)
+                log.info("undo: removed the folder %s the move created", part.dest)
+        except OSError as exc:
+            if not collect:
+                raise
+            failures.append(f"{part.dest}: {exc}")
+    for part in sorted(folders, key=lambda p: _depth(p.source)):
+        try:
+            if not source_backend.exists(part.source):
+                _recreate_parent(source_backend, part.source)
+                source_backend.mkdir(part.source)
+                log.info("undo: made the folder %s again", part.source)
+        except OSError as exc:
+            if not collect:
+                raise
+            failures.append(f"{part.source}: {exc}")
+    return failures
 
 
 def _recreate_parent(backend, path: str) -> None:
@@ -363,7 +482,7 @@ def _restore_metadata(plan: UndoPlan, backend, trash_module) -> str:
     return plan.source or (plan.items[0].path if plan.items else "")
 
 
-def record_undone(plan: UndoPlan, *, by: Iterable[str] = ()) -> None:
+def record_undone(plan: UndoPlan, *, by: Iterable[str] = (), by_batches: Iterable[str] = ()) -> None:
     """Journal that *plan* was carried out, so :func:`undoable` stops
     offering it - a second Ctrl+Z then reaches the operation before it
     instead of failing on the one already reversed.
@@ -372,6 +491,8 @@ def record_undone(plan: UndoPlan, *, by: Iterable[str] = ()) -> None:
     engine journals a move back as a new "move"). They are dropped from
     the history too: offered as the newest entry, the next Ctrl+Z would
     redo what was just undone, and the one after that undo it again.
+    *by_batches* names their batches (a walk back journals the folders it
+    makes in them too). A batch plan records its parts as well.
     """
     from core.operation_journal import finish_operation, new_operation_id
 
@@ -379,6 +500,11 @@ def record_undone(plan: UndoPlan, *, by: Iterable[str] = ()) -> None:
     reverse = [op for op in by if isinstance(op, str) and op]
     if reverse:
         details["by"] = reverse
+    batches = sorted({b for b in by_batches if isinstance(b, str) and b})
+    if batches:
+        details["by_batches"] = batches
+    if plan.parts:
+        details["parts"] = [p.operation_id for p in plan.parts]
     finish_operation(
         new_operation_id(),
         "undo",
@@ -423,6 +549,7 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
     plans: list[UndoPlan] = []
     starts: dict[str, dict] = {}
     undone: set[str] = set()
+    undone_batches: set[str] = set()
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -437,16 +564,133 @@ def undoable(events: list[dict]) -> list[UndoPlan]:
             target = details.get("undone")
             if isinstance(target, str) and target:
                 undone.add(target)
-            reverse = details.get("by")
-            if isinstance(reverse, list):
-                undone.update(op for op in reverse if isinstance(op, str) and op)
+            for key, into in (("by", undone), ("parts", undone),
+                              ("by_batches", undone_batches)):
+                listed = details.get(key)
+                if isinstance(listed, list):
+                    into.update(op for op in listed if isinstance(op, str) and op)
         try:
-            plans.append(plan_undo(_with_start_fields(event, starts)))
+            merged = _with_start_fields(event, starts)
+            plan = plan_undo(merged)
+            batch = (merged.get("details") or {}).get("batch")
+            if isinstance(batch, str) and batch:
+                plan = replace(plan, batch=batch)
+            plans.append(plan)
         except Exception as exc:  # noqa: BLE001 — a bad row must not kill the list
             log.debug("undo: skipping malformed journal row: %s", exc)
-    plans = [p for p in plans if p.operation_id not in undone]
+    plans = [p for p in plans
+             if p.operation_id not in undone and p.batch not in undone_batches]
+    plans = [p for p in plans if not p.batch or p.batch not in undone]
     plans.reverse()
-    return plans
+    return _group_batches(plans)
+
+
+def _group_batches(plans: list[UndoPlan]) -> list[UndoPlan]:
+    """One plan per batch, at the place of its newest entry (newest first
+    in, newest first out). A batch of one file entry stays that entry."""
+    groups: dict[str, list[UndoPlan]] = {}
+    order: list = []
+    for plan in plans:
+        key = plan.batch or (plan.operation_id if plan.action == "folder_back" else "")
+        if not key:
+            order.append(plan)
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(plan)
+    out: list[UndoPlan] = []
+    for entry in order:
+        if isinstance(entry, UndoPlan):
+            out.append(entry)
+            continue
+        parts = groups[entry]
+        usable = [p for p in parts if p.reversible]
+        if len(usable) == 1 and usable[0].action != "folder_back":
+            # One file of it to put back (the trash's sidecar write, a
+            # skipped name beside it): offered as that entry, as before.
+            out.append(usable[0])
+        elif len(parts) == 1 and parts[0].action != "folder_back":
+            out.append(parts[0])
+        else:
+            out.append(_batch_plan(entry, parts))
+    return out
+
+
+def _batch_plan(batch: str, parts: list[UndoPlan]) -> UndoPlan:
+    """The plan of a batch's entries (*parts*, newest first).
+
+    Entries that did not complete (a file the move failed on, a name the
+    conflict answers skipped) stayed where they were: the batch reverses
+    the rest. A batch of nothing reversible (a copy) is refused with the
+    reason of its newest entry."""
+    from core.i18n import tr, tr_n
+
+    usable = tuple(p for p in parts if p.reversible)
+    files = [p for p in usable if p.action != "folder_back"]
+    folders = [p for p in usable if p.action == "folder_back"]
+    lead = files[0] if files else (folders[0] if folders else parts[0])
+    if not usable:
+        return replace(parts[0], operation_id=batch, batch=batch, parts=tuple(parts))
+    backends = {p.backend for p in usable}
+    if len(backends) > 1:
+        return replace(_refuse({"operation_id": batch, "operation": lead.operation},
+                               "the entries of this operation are on more than one connection"),
+                       batch=batch, parts=usable)
+    sources = {p.source_backend for p in usable if p.action in ("transfer_back", "folder_back")}
+    operation = lead.operation if lead.operation != "move_folder" else "move"
+    roots = _roots(usable)
+    if operation == "trash":
+        reason = tr_n(len(files), "restore {n} item from the trash",
+                      "restore {n} items from the trash")
+    else:
+        what = tr_n(len(files), "{n} file", "{n} files")
+        if folders:
+            what += ", " + tr_n(len(folders), "{n} folder", "{n} folders")
+        if len(roots) == 1:
+            reason = tr("move {dest} back to {source} ({what})").format(
+                dest=roots[0].dest, source=roots[0].source, what=what)
+        else:
+            reason = tr("move {count} entries back ({what})").format(
+                count=len(roots), what=what)
+    shown = "\n".join(f"  {p.source}" for p in roots[:5])
+    if len(roots) > 5:
+        shown += "\n  " + tr_n(len(roots) - 5, "… and {n} more", "… and {n} more")
+    if len(roots) > 1 or operation == "trash":
+        reason += "\n" + shown
+    return UndoPlan(
+        operation_id=batch,
+        operation=operation,
+        reversible=True,
+        action="batch",
+        reason=reason,
+        source=roots[0].source if len(roots) == 1 else "",
+        dest=roots[0].dest if len(roots) == 1 else "",
+        backend=lead.backend,
+        direction=lead.direction,
+        source_backend=next(iter(sources)) if len(sources) == 1 else lead.source_backend,
+        batch=batch,
+        parts=usable,
+    )
+
+
+def _roots(parts) -> list[UndoPlan]:
+    """The entries of a batch the user picked: those not inside a folder
+    the batch moved too (by their original path)."""
+    folders = {p.source.rstrip("/\\") for p in parts if p.action == "folder_back"}
+
+    def inside(path: str) -> bool:
+        bare = path.rstrip("/\\")
+        for sep in ("/", "\\"):
+            head = bare.rsplit(sep, 1)[0] if sep in bare else ""
+            while head:
+                if head in folders:
+                    return True
+                head = head.rsplit(sep, 1)[0] if sep in head else ""
+        return False
+
+    roots = [p for p in reversed(parts) if not inside(p.source)]
+    return roots or list(reversed(parts))
 
 
 def gone_reason(plan: UndoPlan, backend) -> str:
@@ -458,6 +702,12 @@ def gone_reason(plan: UndoPlan, backend) -> str:
     deleted in the Trash window, the trash emptied, another tool - and an
     undo that keeps offering it would hide every older operation.
     """
+    if plan.action == "batch":
+        trashed = [p for p in plan.parts if p.action == "restore_from_trash"]
+        if trashed and len(trashed) == len(plan.parts) and all(
+                gone_reason(p, backend) for p in trashed):
+            return "their trash entries are gone (restored or deleted from the trash since)"
+        return ""
     if plan.action != "restore_from_trash" or not plan.trash_id:
         return ""
     from core import trash as trash_module
@@ -509,7 +759,10 @@ def pick_undoable(
 __all__ = [
     "MetadataUndoItem",
     "UndoPlan",
+    "apply_batch_files",
+    "apply_batch_folders",
     "apply_undo",
+    "batch_transfer_pairs",
     "gone_reason",
     "pick_undoable",
     "plan_undo",

@@ -27,7 +27,7 @@ import logging
 import re
 import socket
 import ssl
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterator
 
 log = logging.getLogger(__name__)
@@ -548,4 +548,9 @@ def parse_overview_date(s: str) -> datetime:
         return datetime.fromtimestamp(0)
     if result is None:
         return datetime.fromtimestamp(0)
+    if result.tzinfo is None:
+        # "-0000" (RFC 5322: UTC, the sender's zone unknown) comes back
+        # naive from parsedate_to_datetime, and a naive time is LOCAL
+        # time to FileItem: the date was off by the client's offset.
+        result = result.replace(tzinfo=timezone.utc)
     return result

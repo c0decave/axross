@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import re
 import shutil
 import stat as stat_module
@@ -19,7 +20,7 @@ from typing import IO
 
 from core import posix_compat, removal_cancel
 from core.backend import SessionLifecycle
-from core.local_fs import copy_file_onto, entry_stat
+from core.local_fs import LocalFS, copy_file_onto, entry_stat
 from core.path_policy import confined_path
 from core.private_mount_dir import make_private_mount_point, remove_private_mount_point
 from core.subprocess_env import clean_child_env
@@ -50,6 +51,32 @@ def _validate_mount_source(host: str, export: str) -> None:
 def _nfs_available() -> bool:
     """Check if mount.nfs is available on the system."""
     return shutil.which("mount.nfs") is not None or shutil.which("mount") is not None
+
+
+def _stat_to_item(name: str, st: os.stat_result, full_path: str) -> FileItem:
+    """An lstat result as a FileItem, the way LocalFS and iSCSI build it:
+    a symlink is ``is_link`` with its ``link_target``. Without them an
+    atomic save took a link for a file and replaced it with a regular
+    file of the link's mode (0777)."""
+    is_link = stat_module.S_ISLNK(st.st_mode)
+    link_target = ""
+    if is_link:
+        try:
+            link_target = os.readlink(full_path)
+        except OSError:
+            pass
+    birth = getattr(st, "st_birthtime", 0)
+    return FileItem(
+        name=name,
+        size=st.st_size,
+        modified=local_time(st.st_mtime),
+        is_dir=stat_module.S_ISDIR(st.st_mode),
+        is_link=is_link,
+        link_target=link_target,
+        permissions=st.st_mode & 0o7777,
+        accessed=local_time(st.st_atime) if getattr(st, "st_atime", 0) else None,
+        created=local_time(birth) if birth else None,
+    )
 
 
 class NfsSession(SessionLifecycle):
@@ -228,22 +255,7 @@ class NfsSession(SessionLifecycle):
                 entry_path = os.path.join(full, entry_name)
                 try:
                     st = os.stat(entry_path, follow_symlinks=False)
-                    atime = (
-                        local_time(st.st_atime) if getattr(st, "st_atime", 0) else None
-                    )
-                    birth = getattr(st, "st_birthtime", 0)
-                    ctime = local_time(birth) if birth else None
-                    items.append(
-                        FileItem(
-                            name=entry_name,
-                            size=st.st_size,
-                            modified=local_time(st.st_mtime),
-                            is_dir=stat_module.S_ISDIR(st.st_mode),
-                            permissions=st.st_mode & 0o7777,
-                            accessed=atime,
-                            created=ctime,
-                        )
-                    )
+                    items.append(_stat_to_item(entry_name, st, entry_path))
                 except OSError as e:
                     # Listed, never dropped (as LocalFS): a recursive delete
                     # or move would not see it. os.listdir has no d_type, so
@@ -259,18 +271,7 @@ class NfsSession(SessionLifecycle):
         try:
             st = os.stat(full, follow_symlinks=False)
             name = os.path.basename(path.rstrip("/")) or "/"
-            accessed = local_time(st.st_atime) if getattr(st, "st_atime", 0) else None
-            birth = getattr(st, "st_birthtime", 0)
-            created = local_time(birth) if birth else None
-            return FileItem(
-                name=name,
-                size=st.st_size,
-                modified=local_time(st.st_mtime),
-                is_dir=stat_module.S_ISDIR(st.st_mode),
-                permissions=st.st_mode & 0o7777,
-                accessed=accessed,
-                created=created,
-            )
+            return _stat_to_item(name, st, full)
         except OSError as e:
             raise OSError(f"Cannot stat {path}: {e}") from e
 
@@ -310,7 +311,9 @@ class NfsSession(SessionLifecycle):
         os.rename(self._full_path(old_path, follow=False), self._full_path(new_path, follow=False))
 
     def open_read(self, path: str) -> IO[bytes]:
-        return open(self._full_path(path), "rb")
+        # LocalFS's open: non-blocking, refused unless a regular file. A
+        # plain open() of a FIFO without a writer blocked forever.
+        return LocalFS().open_read(self._full_path(path))
 
     def open_write(self, path: str, append: bool = False) -> IO[bytes]:
         mode = "ab" if append else "wb"
@@ -319,7 +322,10 @@ class NfsSession(SessionLifecycle):
         return open(self._full_path(path), mode)
 
     def normalize(self, path: str) -> str:
-        return os.path.normpath("/" + path)
+        # Not normpath("/" + path): POSIX keeps a leading "//", so "/"
+        # became "//" and "/dir" "//dir" - and normalize() was not
+        # idempotent.
+        return posixpath.normpath("/" + path.lstrip("/"))
 
     def separator(self) -> str:
         return "/"
@@ -425,7 +431,7 @@ class NfsSession(SessionLifecycle):
             h = hashlib.new(algorithm)
         except ValueError as exc:
             raise OSError(f"Unsupported algorithm: {algorithm}") from exc
-        with open(self._full_path(path), "rb") as f:
+        with self.open_read(path) as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(chunk)
         return f"{algorithm}:{h.hexdigest()}"
